@@ -91,6 +91,7 @@
             </div>
             <button id="settings-btn" class="settings-button" title="Settings">
                 <span class="material-symbols-outlined">settings</span>
+                <span class="settings-memory-indicator" id="settings-memory-indicator"></span>
             </button>
         </div>
     </div>
@@ -414,6 +415,17 @@
                         <span class="volume-value">50%</span>
                     </div>
                     <div class="settings-item-description">Adjust the volume for audio feedback</div>
+                </div>
+                <div class="settings-item">
+                    <label class="settings-item-label">Memory</label>
+                    <div class="memory-display-settings">
+                        <div class="memory-bar-container">
+                            <div class="memory-bar" id="settings-memory-bar"></div>
+                        </div>
+                        <div class="memory-percentage" id="settings-memory-percentage">---%</div>
+                    </div>
+                    <div class="settings-item-description">Close all editor browser tabs at 90% to prevent crashes.
+                        Remember to save your data.</div>
                 </div>
             </div>
         </div>

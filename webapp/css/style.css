@@ -2357,6 +2357,7 @@ body {
     justify-content: center;
     transition: all 0.2s ease;
     border-radius: 4px;
+    position: relative;
 }
 
 .settings-button:hover {
@@ -2366,6 +2367,38 @@ body {
 
 .settings-button .material-symbols-outlined {
     font-size: 24px;
+}
+
+/* Memory notification indicator on settings button */
+.settings-memory-indicator {
+    position: absolute;
+    top: 4px;
+    right: 4px;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    transition: all 0.3s ease;
+}
+
+.settings-memory-indicator.warning {
+    background-color: var(--accent-yellow);
+}
+
+.settings-memory-indicator.critical {
+    background-color: var(--accent-red);
+    animation: pulse-indicator 1s ease-in-out infinite;
+}
+
+@keyframes pulse-indicator {
+
+    0%,
+    100% {
+        opacity: 1;
+    }
+
+    50% {
+        opacity: 0.4;
+    }
 }
 
 .settings-panel {
@@ -2529,6 +2562,45 @@ body {
     min-width: 40px;
     text-align: right;
     font-weight: 500;
+}
+
+/* Memory Display in Settings */
+.memory-display-settings {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.memory-bar-container {
+    flex: 1;
+    height: 8px;
+    background-color: var(--bg-active);
+    border: 1px solid var(--border-primary);
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+.memory-bar {
+    height: 100%;
+    transition: width 0.3s ease, background-color 0.3s ease;
+    background-color: var(--accent-green);
+}
+
+.memory-bar.warning {
+    background-color: var(--accent-yellow);
+}
+
+.memory-bar.critical {
+    background-color: var(--accent-red);
+}
+
+.memory-percentage {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 13px;
+    color: var(--text-primary);
+    min-width: 45px;
+    text-align: right;
+    font-weight: 600;
 }
 
 /* Settings panel scrollbar */

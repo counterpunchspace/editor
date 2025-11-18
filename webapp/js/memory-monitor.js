@@ -7,9 +7,11 @@
     class MemoryMonitor {
         constructor() {
             this.monitorElement = null;
-            this.buttonElement = null;
+            this.settingsBarElement = null;
+            this.settingsPercentageElement = null;
+            this.settingsIndicator = null;
             this.updateInterval = null;
-            this.warningThreshold = 0.80; // 80% of limit
+            this.warningThreshold = 0.70; // 70% - show warning indicator
             this.criticalThreshold = 0.90; // 90% of limit
             this.isVisible = false;
         }
@@ -22,7 +24,7 @@
         }
 
         createMonitorElement() {
-            // Create floating memory monitor
+            // Create floating memory monitor (for Cmd+M)
             this.monitorElement = document.createElement('div');
             this.monitorElement.id = 'memory-monitor';
             this.monitorElement.style.cssText = `
@@ -44,24 +46,12 @@
 
             document.body.appendChild(this.monitorElement);
 
-            // Add toggle button to toolbar
-            const toolbar = document.querySelector('.toolbar-right');
-            if (toolbar) {
-                const toggleBtn = document.createElement('button');
-                toggleBtn.className = 'toolbar-button memory-button';
-                toggleBtn.textContent = '...';
-                toggleBtn.title = 'Toggle memory monitor (Cmd+M)';
-                toggleBtn.addEventListener('click', () => this.toggleVisibility());
-                this.buttonElement = toggleBtn;
+            // Get settings panel elements
+            this.settingsBarElement = document.getElementById('settings-memory-bar');
+            this.settingsPercentageElement = document.getElementById('settings-memory-percentage');
+            this.settingsIndicator = document.getElementById('settings-memory-indicator');
 
-                // Append to the end (all the way to the right)
-                toolbar.appendChild(toggleBtn);
-                console.log('✅ Memory button added to toolbar (at the end)');
-            } else {
-                console.warn('⚠️ Could not find .toolbar-right element');
-            }
-
-            // Keyboard shortcut: Cmd+M
+            // Keyboard shortcut: Cmd+M for detailed view
             document.addEventListener('keydown', (e) => {
                 if ((e.metaKey || e.ctrlKey) && e.key === 'm') {
                     e.preventDefault();
@@ -79,85 +69,60 @@
             }
         }
 
-        updateButtonDisplay() {
-            if (!this.buttonElement) return;
-
+        updateSettingsDisplay() {
             const info = this.getMemoryInfo();
 
             if (!info.supported) {
-                this.buttonElement.textContent = 'N/A';
-                this.buttonElement.style.backgroundColor = 'var(--text-muted)';
-                this.buttonElement.style.color = 'white';
+                if (this.settingsPercentageElement) {
+                    this.settingsPercentageElement.textContent = 'N/A';
+                }
+                if (this.settingsBarElement) {
+                    this.settingsBarElement.style.width = '0%';
+                }
                 return;
             }
 
-            // Display percentage (use raw percentage even if over 100%)
-            const displayPercent = info.percentUsedRaw.toFixed(0);
-            this.buttonElement.textContent = `${displayPercent}%`;
-
-            // Interpolate color, but cap at 100% for color calculation
             const percent = Math.min(100, parseFloat(info.percentUsedRaw));
-            const color = this.interpolateColor(percent);
-            this.buttonElement.style.backgroundColor = color;
-            this.buttonElement.style.color = 'white';
 
-            // Add pulsing animation if over limit
-            if (info.overLimit) {
-                this.buttonElement.style.animation = 'pulse 1s ease-in-out infinite';
-                // Add keyframes if not already added
-                if (!document.getElementById('memory-pulse-animation')) {
-                    const style = document.createElement('style');
-                    style.id = 'memory-pulse-animation';
-                    style.textContent = `
-                        @keyframes pulse {
-                            0%, 100% { opacity: 1; }
-                            50% { opacity: 0.5; }
-                        }
-                    `;
-                    document.head.appendChild(style);
+            // Update percentage display
+            if (this.settingsPercentageElement) {
+                this.settingsPercentageElement.textContent = `${percent.toFixed(0)}%`;
+            }
+
+            // Update bar
+            if (this.settingsBarElement) {
+                this.settingsBarElement.style.width = `${percent}%`;
+
+                // Update bar color
+                this.settingsBarElement.classList.remove('warning', 'critical');
+                if (percent >= this.criticalThreshold * 100) {
+                    this.settingsBarElement.classList.add('critical');
+                } else if (percent >= this.warningThreshold * 100) {
+                    this.settingsBarElement.classList.add('warning');
                 }
-            } else {
-                this.buttonElement.style.animation = '';
-            }
-        }
-
-        interpolateColor(percent) {
-            // Clamp between 0 and 100
-            percent = Math.max(0, Math.min(100, percent));
-
-            let r, g, b;
-
-            if (percent < 50) {
-                // Green to Yellow (0% to 50%)
-                // Green: rgb(0, 255, 0)
-                // Yellow: rgb(255, 255, 0)
-                const t = percent / 50; // 0 to 1
-                r = Math.round(255 * t);
-                g = 255;
-                b = 0;
-            } else {
-                // Yellow to Red (50% to 100%)
-                // Yellow: rgb(255, 255, 0)
-                // Red: rgb(255, 0, 0)
-                const t = (percent - 50) / 50; // 0 to 1
-                r = 255;
-                g = Math.round(255 * (1 - t));
-                b = 0;
             }
 
-            return `rgb(${r}, ${g}, ${b})`;
+            // Update notification indicator on settings button
+            if (this.settingsIndicator) {
+                this.settingsIndicator.classList.remove('warning', 'critical');
+                if (percent >= this.criticalThreshold * 100) {
+                    this.settingsIndicator.classList.add('critical');
+                } else if (percent >= this.warningThreshold * 100) {
+                    this.settingsIndicator.classList.add('warning');
+                }
+            }
         }
 
         startMonitoring() {
-            // Update continuously (both button and popup)
+            // Update continuously
             this.updateInterval = setInterval(() => {
                 this.updateMemoryDisplay();
-                this.updateButtonDisplay();
+                this.updateSettingsDisplay();
             }, 1000);
 
             // Initial update
             this.updateMemoryDisplay();
-            this.updateButtonDisplay();
+            this.updateSettingsDisplay();
         }
 
         updateMemoryDisplay() {
