@@ -164,13 +164,13 @@
                 // Use bold font when star is bright (twinkling)
                 const fontWeight = this.opacity > 0.7 ? '700' : '400';
                 ctx.font = `${fontWeight} ${this.size}px '${this.fontFamily}'`;
-                
+
                 // Get color based on theme attribute
                 const isLightTheme = document.documentElement.getAttribute('data-theme') === 'light';
                 const r = isLightTheme ? 26 : 255;
                 const g = isLightTheme ? 26 : 255;
                 const b = isLightTheme ? 26 : 255;
-                
+
                 ctx.fillStyle = `rgba(${r}, ${g}, ${b}, ${this.opacity})`;
                 ctx.textAlign = 'center';
                 ctx.textBaseline = 'middle';

@@ -80,7 +80,7 @@
         if (volumeSlider) {
             // Set initial value from localStorage
             volumeSlider.value = currentVolume;
-            
+
             // Update value display
             if (volumeValue) {
                 volumeValue.textContent = `${currentVolume}%`;
@@ -89,10 +89,10 @@
             // Update icons based on volume
             const updateVolumeIcons = (volume) => {
                 if (!volumeIcons.length) return;
-                
+
                 // First icon (always mute)
                 volumeIcons[0].textContent = 'volume_mute';
-                
+
                 // Second icon (changes based on volume)
                 if (volume === 0) {
                     volumeIcons[1].textContent = 'volume_mute';
@@ -110,7 +110,7 @@
                 const volume = parseInt(e.target.value);
                 window.setVolume(volume);
                 updateVolumeIcons(volume);
-                
+
                 // Update value display
                 if (volumeValue) {
                     volumeValue.textContent = `${volume}%`;

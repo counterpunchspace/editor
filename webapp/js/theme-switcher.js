@@ -3,7 +3,7 @@
  * Handles light/dark/auto theme switching with OS preference detection
  */
 
-(function() {
+(function () {
     'use strict';
 
     // Theme management
@@ -21,7 +21,7 @@
             this.settingsCloseBtn = document.getElementById('settings-close-btn');
             this.themeOptions = document.querySelectorAll('.theme-option');
             this.mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
-            
+
             this.init();
         }
 
@@ -37,10 +37,10 @@
                 this.toggleSettings();
             });
             this.settingsCloseBtn?.addEventListener('click', () => this.closeSettings());
-            
+
             // Click anywhere outside to close
             document.addEventListener('click', (e) => {
-                if (this.settingsPanel?.classList.contains('open') && 
+                if (this.settingsPanel?.classList.contains('open') &&
                     !this.settingsPanel.contains(e.target) &&
                     e.target !== this.settingsBtn) {
                     this.closeSettings();
@@ -96,20 +96,20 @@
 
         applyThemePreference(preference) {
             let actualTheme;
-            
+
             if (preference === THEMES.AUTO) {
                 // Use OS preference
                 actualTheme = this.mediaQuery.matches ? THEMES.DARK : THEMES.LIGHT;
             } else {
                 actualTheme = preference;
             }
-            
+
             this.applyTheme(actualTheme);
         }
 
         applyTheme(theme) {
             const root = document.documentElement;
-            
+
             if (theme === THEMES.LIGHT) {
                 root.setAttribute('data-theme', 'light');
             } else {
