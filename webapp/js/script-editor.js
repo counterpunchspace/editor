@@ -27,9 +27,23 @@
 
         // Create Ace editor
         editor = ace.edit('script-editor');
-        editor.setTheme('ace/theme/monokai');
+        
+        // Set theme based on current theme preference
+        const getInitialTheme = () => {
+            const savedTheme = localStorage.getItem('preferred-theme') || 'auto';
+            if (savedTheme === 'auto') {
+                const isDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+                return isDark ? 'ace/theme/monokai' : 'ace/theme/chrome';
+            }
+            return savedTheme === 'light' ? 'ace/theme/chrome' : 'ace/theme/monokai';
+        };
+        
+        editor.setTheme(getInitialTheme());
         editor.session.setMode('ace/mode/python');
         editor.setValue(savedScript, -1); // -1 moves cursor to start
+        
+        // Make editor globally accessible for theme updates
+        window.scriptEditor = editor;
 
         // Set top margin on the container
         container.style.marginTop = '11px';

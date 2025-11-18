@@ -86,7 +86,8 @@
 
             if (!info.supported) {
                 this.buttonElement.textContent = 'N/A';
-                this.buttonElement.style.color = '#888';
+                this.buttonElement.style.backgroundColor = 'var(--text-muted)';
+                this.buttonElement.style.color = 'white';
                 return;
             }
 
@@ -97,7 +98,8 @@
             // Interpolate color, but cap at 100% for color calculation
             const percent = Math.min(100, parseFloat(info.percentUsedRaw));
             const color = this.interpolateColor(percent);
-            this.buttonElement.style.color = color;
+            this.buttonElement.style.backgroundColor = color;
+            this.buttonElement.style.color = 'white';
 
             // Add pulsing animation if over limit
             if (info.overLimit) {

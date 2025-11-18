@@ -32,6 +32,8 @@
         rel="stylesheet">
     <link rel="stylesheet"
         href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" />
+    <link rel="stylesheet"
+        href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" />
     <link rel="stylesheet" href="css/style.css" id="local-css">
     <script src="https://cdn.jsdelivr.net/pyodide/v0.28.3/full/pyodide.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/jquery"></script>
@@ -76,10 +78,6 @@
             <h1 class="app-name">contxt <span style="opacity: 0.4;">Technical Prototype</span></h1>
         </div>
         <div class="toolbar-center">
-            <div class="volume-control">
-                <label for="volume-slider" class="volume-label">🔊</label>
-                <input type="range" id="volume-slider" class="volume-slider" min="0" max="100" value="50">
-            </div>
         </div>
         <div class="toolbar-right">
             <button id="compile-font-btn" class="toolbar-button" title="Compile font to TTF (Cmd+B)"
@@ -91,6 +89,9 @@
                     <option value="">No fonts open</option>
                 </select>
             </div>
+            <button id="settings-btn" class="settings-button" title="Settings">
+                <span class="material-symbols-outlined">settings</span>
+            </button>
         </div>
     </div>
 
@@ -251,6 +252,7 @@
             const version = isLocal ? '?v=' + Date.now() : '';
 
             const scripts = [
+                'js/theme-switcher.js',
                 'js/sound-preloader.js',
                 'js/memory-monitor.js',
                 'js/python-ui-sync.js',
@@ -375,6 +377,42 @@
             </div>
             <div class="matplotlib-modal-body" id="matplotlib-modal-body">
                 <!-- Plot canvas will be inserted here -->
+            </div>
+        </div>
+    </div>
+
+    <!-- Settings Panel -->
+    <div id="settings-panel" class="settings-panel">
+        <div class="settings-panel-content">
+            <div class="settings-section">
+                <div class="settings-item">
+                    <label class="settings-item-label">Theme</label>
+                    <div class="theme-switcher">
+                        <button class="theme-option" data-theme="light">
+                            <span class="material-symbols-rounded">light_mode</span>
+                            Light
+                        </button>
+                        <button class="theme-option active" data-theme="dark">
+                            <span class="material-symbols-rounded">dark_mode</span>
+                            Dark
+                        </button>
+                        <button class="theme-option" data-theme="auto">
+                            <span class="material-symbols-rounded">brightness_auto</span>
+                            Auto
+                        </button>
+                    </div>
+                    <div class="settings-item-description">Choose between light, dark, or automatic theme based on your system preferences</div>
+                </div>
+                <div class="settings-item">
+                    <label class="settings-item-label" for="volume-slider">Volume</label>
+                    <div class="volume-control-settings">
+                        <span class="material-symbols-rounded volume-icon">volume_mute</span>
+                        <input type="range" id="volume-slider" class="volume-slider-settings" min="0" max="100" value="50">
+                        <span class="material-symbols-rounded volume-icon">volume_up</span>
+                        <span class="volume-value">50%</span>
+                    </div>
+                    <div class="settings-item-description">Adjust the volume for audio feedback</div>
+                </div>
             </div>
         </div>
     </div>

@@ -74,32 +74,47 @@
     // Initialize volume slider when DOM is ready
     document.addEventListener('DOMContentLoaded', () => {
         const volumeSlider = document.getElementById('volume-slider');
-        const volumeLabel = document.querySelector('.volume-label');
+        const volumeValue = document.querySelector('.volume-value');
+        const volumeIcons = document.querySelectorAll('.volume-icon');
 
         if (volumeSlider) {
             // Set initial value from localStorage
             volumeSlider.value = currentVolume;
+            
+            // Update value display
+            if (volumeValue) {
+                volumeValue.textContent = `${currentVolume}%`;
+            }
 
-            // Update icon based on volume
-            const updateVolumeIcon = (volume) => {
+            // Update icons based on volume
+            const updateVolumeIcons = (volume) => {
+                if (!volumeIcons.length) return;
+                
+                // First icon (always mute)
+                volumeIcons[0].textContent = 'volume_mute';
+                
+                // Second icon (changes based on volume)
                 if (volume === 0) {
-                    volumeLabel.textContent = '🔇';
-                } else if (volume < 33) {
-                    volumeLabel.textContent = '🔈';
-                } else if (volume < 67) {
-                    volumeLabel.textContent = '🔉';
+                    volumeIcons[1].textContent = 'volume_mute';
+                } else if (volume < 50) {
+                    volumeIcons[1].textContent = 'volume_down';
                 } else {
-                    volumeLabel.textContent = '🔊';
+                    volumeIcons[1].textContent = 'volume_up';
                 }
             };
 
-            updateVolumeIcon(currentVolume);
+            updateVolumeIcons(currentVolume);
 
             // Listen for slider changes
             volumeSlider.addEventListener('input', (e) => {
                 const volume = parseInt(e.target.value);
                 window.setVolume(volume);
-                updateVolumeIcon(volume);
+                updateVolumeIcons(volume);
+                
+                // Update value display
+                if (volumeValue) {
+                    volumeValue.textContent = `${volume}%`;
+                }
             });
         }
     });

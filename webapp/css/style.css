@@ -1,3 +1,144 @@
+/* CSS Variables for Theming */
+:root {
+    /* Dark Theme (Default) */
+    --bg-primary: #1a1a1a;
+    --bg-secondary: #2a2a2a;
+    --bg-tertiary: #252525;
+    --bg-hover: #333333;
+    --bg-active: #1f1f1f;
+    --bg-loading: #000000;
+    
+    --text-primary: #e0e0e0;
+    --text-secondary: #b0b0b0;
+    --text-tertiary: rgba(255, 255, 255, 0.8);
+    --text-muted: rgba(255, 255, 255, 0.6);
+    --text-faint: rgba(255, 255, 255, 0.4);
+    --text-subtle: rgba(255, 255, 255, 0.5);
+    
+    --border-primary: #404040;
+    --border-secondary: #555555;
+    --border-tertiary: rgba(255, 255, 255, 0.3);
+    --border-active: #666666;
+    
+    /* Accent Colors - Keep cyberpunk theme */
+    --accent-cyan: #00ffff;
+    --accent-magenta: #ff00ff;
+    --accent-yellow: #ffff00;
+    --accent-green: #00ff00;
+    --accent-red: #ff3300;
+    --accent-purple: #9900ff;
+    --accent-blue: #0066ff;
+    --accent-orange: #ff9933;
+    
+    /* View Border Colors */
+    --view-fontinfo: #00ffff;
+    --view-editor: #ff00ff;
+    --view-files: #ffff00;
+    --view-console: #ff3300;
+    --view-scripts: #9900ff;
+    --view-assistant: #00ff00;
+    
+    /* UI Component Colors */
+    --button-bg: #2a2a2a;
+    --button-border: #555555;
+    --button-hover-bg: #333333;
+    --button-text: #e0e0e0;
+    
+    --input-bg: rgba(255, 255, 255, 0.05);
+    --input-border: rgba(255, 255, 255, 0.2);
+    
+    --modal-bg: #2a2a2a;
+    --modal-overlay: rgba(0, 0, 0, 0.5);
+    
+    --scrollbar-track: #1a1a1a;
+    --scrollbar-thumb: #555555;
+    --scrollbar-thumb-hover: #666666;
+    
+    /* AI Assistant Colors */
+    --ai-user-bg: rgba(100, 200, 255, 0.3);
+    --ai-user-text: rgba(150, 220, 255, 1);
+    --ai-assistant-bg: rgba(200, 150, 255, 0.3);
+    --ai-assistant-text: rgba(220, 180, 255, 1);
+    --ai-system-bg: rgba(255, 255, 0, 0.1);
+    --ai-error-bg: rgba(255, 51, 0, 0.1);
+    --ai-error-text: #ff3300;
+    
+    /* Code Editor Colors */
+    --code-bg: #1f1f1f;
+    --code-selection: rgba(153, 0, 255, 0.3);
+    --code-line-highlight: rgba(255, 0, 255, 0.08);
+}
+
+/* Light Theme */
+:root[data-theme="light"] {
+    --bg-primary: #ffffff;
+    --bg-secondary: #e8e8e8;
+    --bg-tertiary: #f0f0f0;
+    --bg-hover: #d8d8d8;
+    --bg-active: #fafafa;
+    --bg-loading: #ffffff;
+    
+    --text-primary: #1a1a1a;
+    --text-secondary: #333333;
+    --text-tertiary: rgba(0, 0, 0, 0.85);
+    --text-muted: rgba(0, 0, 0, 0.6);
+    --text-faint: rgba(0, 0, 0, 0.45);
+    --text-subtle: rgba(0, 0, 0, 0.5);
+    
+    --border-primary: #d0d0d0;
+    --border-secondary: #b0b0b0;
+    --border-tertiary: rgba(0, 0, 0, 0.2);
+    --border-active: #a0a0a0;
+    
+    /* Accent Colors - Adjusted for light theme */
+    --accent-cyan: #008888;
+    --accent-magenta: #b000b0;
+    --accent-yellow: #a0a000;
+    --accent-green: #009000;
+    --accent-red: #cc2600;
+    --accent-purple: #6600cc;
+    --accent-blue: #0052cc;
+    --accent-orange: #cc6600;
+    
+    /* View Border Colors - Keep similar but adjusted */
+    --view-fontinfo: #008888;
+    --view-editor: #b000b0;
+    --view-files: #a0a000;
+    --view-console: #cc2600;
+    --view-scripts: #6600cc;
+    --view-assistant: #009000;
+    
+    /* UI Component Colors */
+    --button-bg: #f0f0f0;
+    --button-border: #b0b0b0;
+    --button-hover-bg: #e0e0e0;
+    --button-text: #1a1a1a;
+    
+    --input-bg: rgba(0, 0, 0, 0.04);
+    --input-border: rgba(0, 0, 0, 0.2);
+    
+    --modal-bg: #ffffff;
+    --modal-overlay: rgba(0, 0, 0, 0.3);
+    
+    --scrollbar-track: #f0f0f0;
+    --scrollbar-thumb: #c0c0c0;
+    --scrollbar-thumb-hover: #a0a0a0;
+    
+    /* AI Assistant Colors */
+    --ai-user-bg: rgba(0, 120, 200, 0.12);
+    --ai-user-text: rgba(0, 70, 140, 1);
+    --ai-assistant-bg: rgba(120, 0, 200, 0.12);
+    --ai-assistant-text: rgba(90, 0, 160, 1);
+    --ai-system-bg: rgba(200, 200, 0, 0.1);
+    --ai-error-bg: rgba(200, 40, 0, 0.1);
+    --ai-error-text: #cc2600;
+    
+    /* Code Editor Colors */
+    --code-bg: #f8f8f8;
+    --code-selection: rgba(120, 0, 200, 0.15);
+    --code-line-highlight: rgba(200, 0, 200, 0.04);
+}
+
 * {
     margin: 0;
     padding: 0;
@@ -6,11 +147,12 @@
 
 body {
     font-family: 'IBM Plex Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-    background-color: #1a1a1a;
-    color: #e0e0e0;
+    background-color: var(--bg-primary);
+    color: var(--text-primary);
     height: 100vh;
     overflow: hidden;
     letter-spacing: 0.02em;
+    transition: background-color 0.3s ease, color 0.3s ease;
 }
 
 /* Material Symbols */
@@ -47,7 +189,7 @@ body {
     left: 0;
     width: 100%;
     height: 100%;
-    background-color: #000000;
+    background-color: var(--bg-loading);
     z-index: 999999;
     display: flex;
     align-items: center;
@@ -84,12 +226,12 @@ body {
     text-align: center;
     font-family: 'IBM Plex Mono', monospace;
     font-size: 18px;
-    color: rgba(255, 255, 255, 0.7);
+    color: var(--text-muted);
     z-index: 2;
 }
 
 .loading-status.ready {
-    color: #00ff00;
+    color: var(--accent-green);
     font-weight: bold;
 }
 
@@ -97,7 +239,7 @@ body {
     font-family: 'IBM Plex Mono', monospace;
     font-size: 150px;
     font-weight: 400;
-    color: #ffffff;
+    color: var(--text-primary);
     line-height: 0.82em;
     position: relative;
     top: -50px;
@@ -120,8 +262,8 @@ body {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    background-color: #252525;
-    border-bottom: 2px solid #404040;
+    background-color: var(--bg-tertiary);
+    border-bottom: 2px solid var(--border-primary);
     padding: 12px 20px;
     padding-left: 9px;
     height: 50px;
@@ -169,7 +311,7 @@ body {
     appearance: none;
     width: 120px;
     height: 4px;
-    background: #555555;
+    background: var(--border-secondary);
     border-radius: 2px;
     outline: none;
     cursor: pointer;
@@ -180,21 +322,21 @@ body {
     appearance: none;
     width: 14px;
     height: 14px;
-    background: #00ffff;
+    background: var(--accent-cyan);
     border-radius: 50%;
-    : pointer;
+    cursor: pointer;
     transition: all 0.2s ease;
 }
 
 .volume-slider::-webkit-slider-thumb:hover {
-    background: #00ffff;
-    box-shadow: 0 0 8px #00ffff;
+    background: var(--accent-cyan);
+    box-shadow: 0 0 8px var(--accent-cyan);
 }
 
 .volume-slider::-moz-range-thumb {
     width: 14px;
     height: 14px;
-    background: #00ffff;
+    background: var(--accent-cyan);
     border: none;
     border-radius: 50%;
     cursor: pointer;
@@ -202,8 +344,8 @@ body {
 }
 
 .volume-slider::-moz-range-thumb:hover {
-    background: #00ffff;
-    box-shadow: 0 0 8px #00ffff;
+    background: var(--accent-cyan);
+    box-shadow: 0 0 8px var(--accent-cyan);
 }
 
 .toolbar-right {
@@ -213,9 +355,9 @@ body {
 }
 
 .toolbar-button {
-    background-color: #2a2a2a;
-    border: 1px solid #555555;
-    color: #e0e0e0;
+    background-color: var(--button-bg);
+    border: 1px solid var(--button-border);
+    color: var(--button-text);
     padding: 6px 16px;
     border-radius: 4px;
     font-family: 'IBM Plex Mono', monospace;
@@ -225,9 +367,9 @@ body {
 }
 
 .toolbar-button:hover:not(:disabled) {
-    border-color: #00ffff;
-    background-color: #333333;
-    color: #00ffff;
+    border-color: var(--accent-cyan);
+    background-color: var(--button-hover-bg);
+    color: var(--accent-cyan);
 }
 
 .toolbar-button:active:not(:disabled) {
@@ -251,7 +393,7 @@ body {
     top: 50%;
     transform: translateY(-50%);
     font-size: 16px;
-    color: #ff6b6b;
+    color: var(--accent-red);
     opacity: 0;
     pointer-events: none;
     z-index: 10;
@@ -263,9 +405,9 @@ body {
 }
 
 .fonts-dropdown {
-    background-color: #2a2a2a;
-    border: 1px solid #555555;
-    color: #e0e0e0;
+    background-color: var(--button-bg);
+    border: 1px solid var(--button-border);
+    color: var(--button-text);
     padding: 6px 12px 6px 28px;
     border-radius: 4px;
     font-family: 'IBM Plex Mono', monospace;
@@ -276,19 +418,19 @@ body {
 }
 
 .fonts-dropdown:hover {
-    border-color: #00ffff;
-    background-color: #333333;
+    border-color: var(--accent-cyan);
+    background-color: var(--button-hover-bg);
 }
 
 .fonts-dropdown:focus {
     outline: none;
-    border-color: #ff00ff;
+    border-color: var(--accent-magenta);
     box-shadow: 0 0 8px rgba(255, 0, 255, 0.3);
 }
 
 .fonts-dropdown option {
-    background-color: #2a2a2a;
-    color: #e0e0e0;
+    background-color: var(--button-bg);
+    color: var(--button-text);
 }
 
 .container {
@@ -313,21 +455,21 @@ body {
 }
 
 .view {
-    background-color: #2a2a2a;
-    border: 1px solid #404040;
+    background-color: var(--bg-secondary);
+    border: 1px solid var(--border-primary);
     overflow: hidden;
     min-width: 100px;
     flex: 1;
     position: relative;
-    color: #b0b0b0;
+    color: var(--text-secondary);
     transition: background-color 0.2s ease, color 0.2s ease;
     display: flex;
     flex-direction: column;
 }
 
 .view.focused {
-    background-color: #1f1f1f;
-    color: #ffffff;
+    background-color: var(--bg-active);
+    color: var(--text-primary);
 }
 
 /* View Title Bar */
@@ -338,7 +480,7 @@ body {
     align-items: center;
     justify-content: space-between;
     padding: 0 0 0 8px;
-    border-bottom: 1px solid #404040;
+    border-bottom: 1px solid var(--border-primary);
     font-family: 'IBM Plex Mono', monospace;
     font-size: 11px;
     background-color: inherit;
@@ -361,7 +503,7 @@ body {
 }
 
 .view-title-shortcut {
-    color: rgba(255, 255, 255, 0.4);
+    color: var(--text-faint);
     font-size: 10px;
 }
 
@@ -417,17 +559,17 @@ body {
 
 /* Divider styles */
 .divider {
-    background-color: #404040;
+    background-color: var(--border-primary);
     position: relative;
     transition: background-color 0.2s ease;
 }
 
 .divider:hover {
-    background-color: #555555;
+    background-color: var(--border-secondary);
 }
 
 .divider.active {
-    background-color: #666666;
+    background-color: var(--border-active);
 }
 
 .vertical-divider {
@@ -449,37 +591,37 @@ body {
 
 /* View specific colors for better distinction - Cyberpunk style */
 .view-fontinfo {
-    border-left: 4px solid #00ffff;
+    border-left: 4px solid var(--view-fontinfo);
     flex: 1;
 }
 
 .view-editor {
-    border-left: 4px solid #ff00ff;
+    border-left: 4px solid var(--view-editor);
     flex: 2;
 }
 
 .view-files {
-    border-left: 4px solid #ffff00;
+    border-left: 4px solid var(--view-files);
 }
 
 .view-console {
-    border-left: 4px solid #ff3300;
+    border-left: 4px solid var(--view-console);
 }
 
 .view-scripts {
-    border-left: 4px solid #9900ff;
+    border-left: 4px solid var(--view-scripts);
 }
 
 .view-assistant {
-    border-left: 4px solid #00ff00;
+    border-left: 4px solid var(--view-assistant);
 }
 
 /* View Title Button */
 .view-title-button {
     background-color: transparent;
     border: none;
-    border-left: 1px solid #404040;
-    color: rgba(255, 255, 255, 0.8);
+    border-left: 1px solid var(--border-primary);
+    color: var(--text-primary) !important;
     padding: 0 8px;
     border-radius: 0;
     cursor: pointer;
@@ -494,13 +636,13 @@ body {
 }
 
 .view-title-button:hover {
-    background-color: rgba(255, 255, 255, 0.1);
-    border-left-color: rgba(255, 255, 255, 0.6);
+    background-color: var(--input-bg);
+    border-left-color: var(--text-secondary);
 }
 
 /* AI Context Label */
 .ai-context-label {
-    color: rgba(255, 255, 255, 0.6);
+    color: var(--text-muted);
     font-family: 'IBM Plex Mono', monospace;
     font-size: 10px;
     font-weight: normal;
@@ -515,7 +657,7 @@ body {
     display: flex;
     align-items: stretch;
     gap: 0;
-    border-right: 4px solid #404040;
+    border-right: 4px solid var(--border-primary);
     height: 100%;
     margin-left: auto;
 }
@@ -523,8 +665,8 @@ body {
 .ai-context-btn {
     background-color: transparent;
     border: none;
-    border-left: 1px solid rgba(255, 255, 255, 0.3);
-    color: rgba(255, 255, 255, 0.8);
+    border-left: 1px solid var(--text-secondary);
+    color: var(--text-primary) !important;
     padding: 0 8px;
     border-radius: 0;
     cursor: pointer;
@@ -539,7 +681,8 @@ body {
 }
 
 .ai-context-btn:hover:not(.active) {
-    background-color: rgba(255, 255, 255, 0.05);
+    background-color: var(--input-bg);
+    border-left-color: var(--text-primary);
 }
 
 /* AI Info Button */
@@ -547,7 +690,7 @@ body {
     margin-left: 0px;
     background-color: transparent;
     border: none;
-    color: #0066ff;
+    color: var(--accent-blue);
     padding: 0;
     display: flex;
     align-items: center;
@@ -557,7 +700,7 @@ body {
 }
 
 .ai-info-button:hover {
-    color: #3399ff;
+    color: var(--accent-cyan);
 }
 
 .ai-info-button .material-symbols-outlined {
@@ -584,8 +727,8 @@ body {
 }
 
 .modal-content {
-    background-color: #2a2a2a;
-    border: 2px solid rgba(255, 255, 255, 0.3);
+    background-color: var(--modal-bg);
+    border: 2px solid var(--border-tertiary);
     border-radius: 8px;
     padding: 0;
     box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
@@ -596,7 +739,7 @@ body {
 
 .modal-header {
     padding: 20px 24px;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.2);
+    border-bottom: 1px solid var(--border-tertiary);
     display: flex;
     justify-content: space-between;
     align-items: center;
@@ -606,13 +749,13 @@ body {
 .modal-header h2 {
     margin: 0;
     font-size: 20px;
-    color: #00ff00;
+    color: var(--accent-green);
 }
 
 .modal-close-btn {
     background: none;
     border: none;
-    color: rgba(255, 255, 255, 0.6);
+    color: var(--text-muted);
     font-size: 28px;
     cursor: pointer;
     padding: 0;
@@ -625,7 +768,7 @@ body {
 }
 
 .modal-close-btn:hover {
-    color: rgba(255, 255, 255, 1);
+    color: var(--text-primary);
 }
 
 .modal-body {
@@ -667,8 +810,8 @@ body {
 }
 
 .matplotlib-modal-content {
-    background-color: #2a2a2a;
-    border: 2px solid rgba(255, 255, 255, 0.3);
+    background-color: var(--modal-bg);
+    border: 2px solid var(--border-tertiary);
     border-radius: 8px;
     padding: 0;
     box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
@@ -680,7 +823,7 @@ body {
 
 .matplotlib-modal-header {
     padding: 12px 16px;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.2);
+    border-bottom: 1px solid var(--border-tertiary);
     display: flex;
     justify-content: space-between;
     align-items: center;
@@ -690,13 +833,13 @@ body {
 .matplotlib-modal-header h3 {
     margin: 0;
     font-size: 16px;
-    color: #00ff00;
+    color: var(--accent-green);
 }
 
 .matplotlib-modal-close {
     background: none;
     border: none;
-    color: rgba(255, 255, 255, 0.6);
+    color: var(--text-muted);
     font-size: 24px;
     cursor: pointer;
     padding: 0;
@@ -709,7 +852,7 @@ body {
 }
 
 .matplotlib-modal-close:hover {
-    color: rgba(255, 255, 255, 1);
+    color: var(--text-primary);
 }
 
 .matplotlib-modal-body {
@@ -735,7 +878,7 @@ body {
 .ai-info-section h3 {
     margin: 0 0 12px 0;
     font-size: 16px;
-    color: #00ff00;
+    color: var(--accent-green);
     font-weight: 600;
 }
 
@@ -757,10 +900,10 @@ body {
 .ai-api-key-modal-input {
     width: 100%;
     padding: 8px 12px;
-    background-color: rgba(255, 255, 255, 0.05);
-    border: 1px solid rgba(255, 255, 255, 0.2);
+    background-color: var(--input-bg);
+    border: 1px solid var(--input-border);
     border-radius: 4px;
-    color: rgba(255, 255, 255, 0.9);
+    color: var(--text-tertiary);
     font-family: 'IBM Plex Mono', monospace;
     font-size: 12px;
     margin-top: 8px;
@@ -768,13 +911,13 @@ body {
 
 .ai-api-key-modal-input:focus {
     outline: none;
-    border-color: #00ff00;
-    background-color: rgba(255, 255, 255, 0.08);
+    border-color: var(--accent-green);
+    background-color: var(--input-bg);
 }
 
 .ai-info-note {
     font-size: 11px;
-    color: rgba(255, 255, 255, 0.5);
+    color: var(--text-subtle);
     font-style: italic;
     margin-top: 8px;
 }
@@ -784,7 +927,7 @@ body {
 }
 
 .ai-example-text {
-    color: rgba(255, 255, 255, 0.7);
+    color: var(--text-muted);
     font-style: italic;
 }
 
@@ -830,11 +973,11 @@ body {
 
 /* Background color based on view focus state */
 .view-scripts.focused #script-editor {
-    background-color: #1f1f1f;
+    background-color: var(--bg-active);
 }
 
 .view-scripts:not(.focused) #script-editor {
-    background-color: #2a2a2a;
+    background-color: var(--bg-secondary);
 }
 
 /* Cyberpunk Syntax Highlighting */
@@ -935,16 +1078,92 @@ body {
 
 /* Cursor - bright cyan with custom width */
 #script-editor .ace_cursor {
-    color: #00ffff !important;
-    background-color: #00ffff !important;
+    color: var(--accent-cyan) !important;
+    background-color: var(--accent-cyan) !important;
     /* Width and positioning are controlled by script-editor.js */
     /* Don't override width, top, or left to preserve JS customization */
 }
 
+/* Light theme cursor - dark color */
+:root[data-theme="light"] #script-editor .ace_cursor {
+    color: #1a1a1a !important;
+    background-color: #1a1a1a !important;
+}
+
 /* Matching brackets - neon green */
 #script-editor .ace_bracket {
-    border: 1px solid #00ff00 !important;
-    background-color: rgba(0, 255, 0, 0.1) !important;
+    border: 1px solid var(--accent-green) !important;
+    background-color: var(--ai-system-bg) !important;
+}
+
+/* Light theme syntax adjustments - ensure good contrast */
+:root[data-theme="light"] #script-editor .ace_keyword {
+    color: #b000b0 !important;
+}
+
+:root[data-theme="light"] #script-editor .ace_storage {
+    color: #007777 !important;
+}
+
+:root[data-theme="light"] #script-editor .ace_string {
+    color: #c000c0 !important;
+}
+
+:root[data-theme="light"] #script-editor .ace_comment {
+    color: #666666 !important;
+}
+
+:root[data-theme="light"] #script-editor .ace_constant.ace_numeric {
+    color: #cc6600 !important;
+}
+
+:root[data-theme="light"] #script-editor .ace_support.ace_builtin {
+    color: #0052cc !important;
+}
+
+:root[data-theme="light"] #script-editor .ace_keyword.ace_operator {
+    color: #333333 !important;
+}
+
+:root[data-theme="light"] #script-editor .ace_entity.ace_name.ace_function,
+:root[data-theme="light"] #script-editor .ace_support.ace_function {
+    color: #a0a000 !important;
+}
+
+:root[data-theme="light"] #script-editor .ace_entity.ace_name.ace_class,
+:root[data-theme="light"] #script-editor .ace_support.ace_class {
+    color: #009000 !important;
+}
+
+:root[data-theme="light"] #script-editor .ace_variable {
+    color: #006666 !important;
+}
+
+:root[data-theme="light"] #script-editor .ace_meta.ace_tag,
+:root[data-theme="light"] #script-editor .ace_entity.ace_name.ace_tag {
+    color: #6600cc !important;
+}
+
+:root[data-theme="light"] #script-editor .ace_constant.ace_language {
+    color: #cc0066 !important;
+}
+
+:root[data-theme="light"] #script-editor .ace_variable.ace_parameter {
+    color: #996600 !important;
+}
+
+:root[data-theme="light"] #script-editor .ace_variable.ace_language {
+    color: #b000b0 !important;
+}
+
+:root[data-theme="light"] #script-editor .ace_bracket {
+    border-color: #009000 !important;
+    background-color: rgba(0, 144, 0, 0.08) !important;
+}
+
+/* Light theme AI prompt caret */
+:root[data-theme="light"] #ai-prompt {
+    caret-color: #1a1a1a !important;
 }
 
 /* Official Pyodide Console Styles */
@@ -960,12 +1179,13 @@ body {
     .terminal-output>:not(.raw) span {
         font-size: calc(var(--size, 1) * (12px / var(--pixel-density, 1)));
         font-family: 'IBM Plex Mono' !important;
+        color: var(--text-primary) !important;
     }
 }
 
 .terminal .terminal-output>:not(.raw) .terminal-error,
 .terminal .terminal-output>:not(.raw) .terminal-error * {
-    color: #ff3300 !important;
+    color: var(--accent-red) !important;
 }
 
 #console-container {
@@ -973,17 +1193,17 @@ body {
     flex: 1;
     position: relative;
     overflow: hidden;
-    background-color: #2a2a2a;
+    background-color: var(--bg-secondary);
     transition: background-color 0.2s ease;
 }
 
 .view.focused #console-container {
-    background-color: #1f1f1f;
+    background-color: var(--bg-active);
 }
 
 #console-container .terminal {
     --size: 1.2;
-    --color: rgba(255, 255, 255, 0.8);
+    --color: var(--text-tertiary);
     font-family: 'IBM Plex Mono', 'Courier New', 'Monaco', monospace !important;
     background-color: transparent !important;
     height: 100% !important;
@@ -991,7 +1211,7 @@ body {
 }
 
 #console-container .terminal .terminal-output {
-    color: #e0e0e0;
+    color: var(--text-primary);
 }
 
 #console-container .terminal .cmd {
@@ -999,7 +1219,7 @@ body {
 }
 
 #console-container .terminal .cmd-prompt {
-    color: #ff3300 !important;
+    color: var(--accent-red) !important;
     font-weight: bold;
 }
 
@@ -1015,9 +1235,9 @@ body {
     top: 50%;
     left: 50%;
     transform: translate(-50%, -50%);
-    border: 3px solid rgba(255, 51, 0, 0.3);
+    border: 3px solid var(--input-bg);
     border-radius: 50%;
-    border-top-color: #ff3300;
+    border-top-color: var(--accent-red);
     /* animation: spin 1s ease-in-out infinite; */
 }
 
@@ -1055,23 +1275,23 @@ body {
 }
 
 .view::-webkit-scrollbar-track {
-    background: #1a1a1a;
+    background: var(--scrollbar-track);
 }
 
 .view::-webkit-scrollbar-thumb {
-    background: #555555;
+    background: var(--scrollbar-thumb);
     border-radius: 4px;
 }
 
 .view::-webkit-scrollbar-thumb:hover {
-    background: #666666;
+    background: var(--scrollbar-thumb-hover);
 }
 
 /* File Browser Styles */
 #refresh-files-btn {
-    background: linear-gradient(45deg, #00ffff, #ff00ff);
-    border: none;
-    color: #1a1a1a;
+    background: var(--accent-cyan);
+    border: 1px solid var(--accent-cyan);
+    color: var(--bg-primary);
     padding: 8px 16px;
     margin-bottom: 15px;
     border-radius: 4px;
@@ -1083,9 +1303,10 @@ body {
 }
 
 #refresh-files-btn:hover {
-    background: linear-gradient(45deg, #ff00ff, #ffff00);
+    background: var(--accent-magenta);
+    border-color: var(--accent-magenta);
     transform: translateY(-2px);
-    box-shadow: 0 4px 8px rgba(0, 255, 255, 0.3);
+    box-shadow: 0 4px 8px var(--input-bg);
 }
 
 #file-browser {
@@ -1110,33 +1331,33 @@ body {
 }
 
 .file-item:hover {
-    background-color: rgba(0, 255, 255, 0.1);
+    background-color: var(--input-bg);
 }
 
 .file-item.directory {
-    color: #00ffff;
+    color: var(--accent-cyan);
     font-weight: 500;
 }
 
 .file-item.file {
-    color: #e0e0e0;
+    color: var(--text-primary);
 }
 
 .file-item.python-file {
-    color: #ffff00;
+    color: var(--accent-yellow);
 }
 
 .file-item .file-size {
-    color: #888;
+    color: var(--text-secondary);
     font-size: 11px;
     margin-left: 10px;
 }
 
 .file-path {
-    color: #ff00ff;
+    color: var(--accent-magenta);
     margin-bottom: 8px;
     font-weight: 500;
-    border-bottom: 1px solid #404040;
+    border-bottom: 1px solid var(--border-primary);
     padding-bottom: 4px;
 }
 
@@ -1146,14 +1367,14 @@ body {
     gap: 8px;
     margin-bottom: 12px;
     padding-bottom: 8px;
-    border-bottom: 1px solid #404040;
+    border-bottom: 1px solid var(--border-primary);
     flex-wrap: wrap;
 }
 
 .file-action-btn {
-    background: linear-gradient(135deg, #404040, #555555);
-    border: 1px solid #666666;
-    color: #e0e0e0;
+    background: var(--button-bg);
+    border: 1px solid var(--button-border);
+    color: var(--button-text);
     padding: 6px 12px;
     border-radius: 4px;
     cursor: pointer;
@@ -1164,10 +1385,10 @@ body {
 }
 
 .file-action-btn:hover {
-    background: linear-gradient(135deg, #555555, #666666);
-    border-color: #00ffff;
+    background: var(--button-hover-bg);
+    border-color: var(--accent-cyan);
     transform: translateY(-1px);
-    box-shadow: 0 2px 6px rgba(0, 255, 255, 0.2);
+    box-shadow: 0 2px 6px var(--input-bg);
 }
 
 .file-action-btn:active {
@@ -1196,9 +1417,9 @@ body {
 
 .file-item .open-font-btn {
     opacity: 0;
-    background: linear-gradient(135deg, #00ffff, #0099cc);
-    border: 1px solid #00ffff;
-    color: #1a1a1a;
+    background: var(--accent-cyan);
+    border: 1px solid var(--accent-cyan);
+    color: var(--bg-primary);
     cursor: pointer;
     padding: 3px 10px;
     border-radius: 3px;
@@ -1214,16 +1435,16 @@ body {
 }
 
 .file-item .open-font-btn:hover {
-    background: linear-gradient(135deg, #00ffff, #00ccff);
+    background: var(--accent-cyan);
     transform: scale(1.05);
-    box-shadow: 0 2px 8px rgba(0, 255, 255, 0.4);
+    filter: brightness(1.2);
 }
 
 .file-item .delete-btn {
     opacity: 0;
     background: transparent;
     border: 1px solid transparent;
-    color: #ff3300;
+    color: var(--accent-red);
     cursor: pointer;
     padding: 2px 6px;
     border-radius: 3px;
@@ -1237,15 +1458,15 @@ body {
 }
 
 .file-item .delete-btn:hover {
-    background: rgba(255, 51, 0, 0.2);
-    border-color: #ff3300;
+    background: var(--ai-error-bg);
+    border-color: var(--accent-red);
     transform: scale(1.1);
 }
 
 /* Drag and Drop Styling */
 #file-tree.drag-over {
-    background-color: rgba(0, 255, 255, 0.1);
-    border: 2px dashed #00ffff;
+    background-color: var(--input-bg);
+    border: 2px dashed var(--accent-cyan);
     border-radius: 8px;
 }
 
@@ -1259,8 +1480,8 @@ body {
     left: 0;
     right: 0;
     bottom: 0;
-    background: rgba(0, 255, 255, 0.05);
-    color: #00ffff;
+    background: var(--input-bg);
+    color: var(--accent-cyan);
     font-size: 18px;
     font-weight: 500;
     pointer-events: none;
@@ -1281,7 +1502,7 @@ body {
     font-family: 'IBM Plex Mono', monospace;
     font-size: calc(var(--size, 1) * (12px / var(--pixel-density, 1)));
     line-height: calc(var(--size) * (16px / var(--pixel-density, 1)) + 1px / var(--pixel-density, 1));
-    color: rgba(255, 255, 255, 0.8);
+    color: var(--text-tertiary);
 }
 
 .ai-info p {
@@ -1289,7 +1510,7 @@ body {
 }
 
 .ai-info strong {
-    color: rgba(255, 255, 255, 1);
+    color: var(--text-primary);
 }
 
 .ai-info ul {
@@ -1299,11 +1520,11 @@ body {
 
 .ai-info li {
     margin: 6px 0;
-    color: rgba(255, 255, 255, 0.8);
+    color: var(--text-tertiary);
 }
 
 .ai-info em {
-    color: rgba(255, 255, 255, 0.6);
+    color: var(--text-muted);
     font-style: normal;
 }
 
@@ -1336,7 +1557,7 @@ body {
 }
 
 #ai-auto-run-indicator {
-    color: #00ff00;
+    color: var(--accent-green);
     font-style: italic;
     font-size: calc(var(--size, 1) * (11px / var(--pixel-density, 1)));
     font-family: 'IBM Plex Mono', monospace;
@@ -1361,12 +1582,12 @@ body {
 }
 
 .ai-message-user {
-    color: rgba(255, 255, 255, 0.9);
-    background-color: rgba(100, 200, 255, 0.3);
+    color: var(--text-tertiary);
+    background-color: var(--ai-user-bg);
 }
 
 .ai-message-user .ai-message-header {
-    color: rgba(150, 220, 255, 1);
+    color: var(--ai-user-text);
     font-weight: bold;
 }
 
@@ -1388,23 +1609,23 @@ body {
 }
 
 .ai-message-assistant {
-    color: rgba(255, 255, 255, 0.9);
-    background-color: rgba(200, 150, 255, 0.3);
+    color: var(--text-tertiary);
+    background-color: var(--ai-assistant-bg);
 }
 
 .ai-message-assistant .ai-message-header {
-    color: rgba(220, 180, 255, 1);
+    color: var(--ai-assistant-text);
     font-weight: bold;
 }
 
 .ai-message-system {
-    color: rgba(255, 255, 255, 0.6);
-    background-color: rgba(255, 255, 0, 0.1);
+    color: var(--text-muted);
+    background-color: var(--ai-system-bg);
 }
 
 .ai-message-error {
-    color: #ff3300;
-    background-color: rgba(255, 51, 0, 0.1);
+    color: var(--ai-error-text);
+    background-color: var(--ai-error-bg);
 }
 
 .ai-message-error-fix {
@@ -1452,7 +1673,7 @@ body {
     padding: 12px 16px;
     font-family: 'IBM Plex Sans', sans-serif;
     font-size: calc(var(--size, 1) * (11px / var(--pixel-density, 1)));
-    color: rgba(255, 255, 255, 0.5);
+    color: var(--text-subtle);
     font-style: italic;
 }
 
@@ -1465,7 +1686,7 @@ body {
     width: 6px;
     height: 6px;
     border-radius: 50%;
-    background-color: rgba(255, 255, 255, 0.5);
+    background-color: var(--text-subtle);
     animation: typing-bounce 1.4s infinite ease-in-out;
 }
 
@@ -1520,8 +1741,8 @@ body {
     align-self: flex-start;
     padding: 8px 16px;
     background-color: transparent;
-    border: 1px solid rgba(255, 165, 0, 0.6);
-    color: rgba(255, 255, 255, 0.9);
+    border: 1px solid var(--accent-orange);
+    color: var(--text-tertiary);
     font-family: 'IBM Plex Mono', monospace;
     font-size: calc(var(--size, 1) * (12px / var(--pixel-density, 1)));
     cursor: pointer;
@@ -1529,8 +1750,8 @@ body {
 }
 
 .ai-fix-code-btn:hover {
-    background-color: rgba(255, 165, 0, 0.2);
-    border-color: rgba(255, 165, 0, 0.8);
+    background-color: var(--ai-error-bg);
+    border-color: var(--accent-orange);
 }
 
 .ai-fix-code-btn:disabled {
@@ -1547,8 +1768,8 @@ body {
 .ai-reuse-prompt-btn {
     padding: 6px 12px;
     background-color: transparent;
-    border: 1px solid rgba(100, 200, 255, 0.4);
-    color: rgba(100, 200, 255, 0.8);
+    border: 1px solid var(--ai-user-text);
+    color: var(--ai-user-text);
     font-family: 'IBM Plex Mono', monospace;
     font-size: calc(var(--size, 1) * (11px / var(--pixel-density, 1)));
     cursor: pointer;
@@ -1557,16 +1778,16 @@ body {
 }
 
 .ai-reuse-prompt-btn:hover {
-    background-color: rgba(100, 200, 255, 0.15);
-    border-color: rgba(100, 200, 255, 0.6);
-    color: rgba(100, 200, 255, 1);
+    background-color: var(--ai-user-bg);
+    border-color: var(--ai-user-text);
+    color: var(--ai-user-text);
 }
 
 .ai-copy-prompt-btn {
     padding: 6px 12px;
     background-color: transparent;
-    border: 1px solid rgba(100, 200, 255, 0.4);
-    color: rgba(100, 200, 255, 0.8);
+    border: 1px solid var(--ai-user-text);
+    color: var(--ai-user-text);
     font-family: 'IBM Plex Mono', monospace;
     font-size: calc(var(--size, 1) * (11px / var(--pixel-density, 1)));
     cursor: pointer;
@@ -1576,25 +1797,25 @@ body {
 }
 
 .ai-copy-prompt-btn:hover {
-    background-color: rgba(100, 200, 255, 0.15);
-    border-color: rgba(100, 200, 255, 0.6);
-    color: rgba(100, 200, 255, 1);
+    background-color: var(--ai-user-bg);
+    border-color: var(--ai-user-text);
+    color: var(--ai-user-text);
 }
 
 .ai-message-output {
-    color: rgba(255, 255, 255, 0.9);
-    background-color: rgba(200, 150, 255, 0.3);
+    color: var(--text-tertiary);
+    background-color: var(--ai-assistant-bg);
 }
 
 .ai-message-output .ai-message-header {
-    color: rgba(220, 180, 255, 1);
+    color: var(--ai-assistant-text);
     font-weight: bold;
 }
 
 .ai-message-header {
     font-weight: normal;
     font-size: calc(var(--size, 1) * (12px / var(--pixel-density, 1)));
-    color: rgba(255, 255, 255, 0.6);
+    color: var(--text-muted);
     margin-bottom: 4px;
     display: flex;
     justify-content: space-between;
@@ -1618,17 +1839,17 @@ body {
 }
 
 .ai-context-tag-script {
-    background-color: #9900ff;
-    color: #1a1a1a;
+    background-color: var(--accent-purple);
+    color: var(--bg-primary);
 }
 
 .ai-context-tag-font {
-    background-color: #ff00ff;
-    color: #1a1a1a;
+    background-color: var(--accent-magenta);
+    color: var(--bg-primary);
 }
 
 .ai-code-toggle-link {
-    color: rgba(255, 255, 255, 0.6);
+    color: var(--text-muted);
     cursor: pointer;
     font-size: calc(var(--size, 1) * (12px / var(--pixel-density, 1)));
     font-weight: normal;
@@ -1636,7 +1857,7 @@ body {
 }
 
 .ai-code-toggle-link:hover {
-    color: rgba(255, 255, 255, 0.8);
+    color: var(--text-tertiary);
 }
 
 .ai-message-content {
@@ -1644,7 +1865,7 @@ body {
     font-size: calc(var(--size, 1) * (12px / var(--pixel-density, 1)));
     line-height: 1.6;
     white-space: pre-wrap;
-    color: rgba(255, 255, 255, 0.8);
+    color: var(--text-tertiary);
 }
 
 .ai-message-content p {
@@ -1662,18 +1883,18 @@ body {
 }
 
 .ai-code {
-    background-color: #1f1f1f;
+    background-color: var(--code-bg);
     padding: 8px;
     overflow-x: auto;
     font-family: 'IBM Plex Mono', monospace;
     font-size: calc(var(--size, 1) * (12px / var(--pixel-density, 1)));
     line-height: 1.6;
     border: none;
-    color: rgba(255, 255, 255, 0.8);
+    color: var(--text-tertiary);
 }
 
 .ai-code code {
-    color: rgba(255, 255, 255, 0.8);
+    color: var(--text-tertiary);
 }
 
 .ai-code-collapsible {
@@ -1693,7 +1914,7 @@ body {
     font-family: 'IBM Plex Sans', sans-serif;
     font-size: calc(var(--size, 1) * (12px / var(--pixel-density, 1)));
     line-height: 1.6;
-    color: rgba(255, 255, 255, 0.9);
+    color: var(--text-tertiary);
     padding: 8px 0;
 }
 
@@ -1701,7 +1922,7 @@ body {
 .ai-markdown-explanation h2,
 .ai-markdown-explanation h3 {
     font-family: 'IBM Plex Mono', monospace;
-    color: rgba(255, 255, 255, 1);
+    color: var(--text-primary);
     margin: 12px 0 8px 0;
     font-weight: bold;
 }
@@ -1722,32 +1943,32 @@ body {
 
 .ai-markdown-explanation strong {
     font-weight: bold;
-    color: rgba(255, 255, 255, 1);
+    color: var(--text-primary);
 }
 
 .ai-markdown-explanation em {
     font-style: italic;
-    color: rgba(255, 255, 255, 0.8);
+    color: var(--text-tertiary);
 }
 
 .ai-markdown-explanation code {
     font-family: 'IBM Plex Mono', monospace;
-    background-color: rgba(0, 0, 0, 0.3);
+    background-color: var(--code-bg);
     padding: 2px 6px;
     border-radius: 3px;
-    color: rgba(255, 255, 255, 0.9);
+    color: var(--text-tertiary);
 }
 
 .ai-markdown-explanation a {
-    color: rgba(150, 200, 255, 0.9);
+    color: var(--accent-blue);
     text-decoration: none;
-    border-bottom: 1px solid rgba(150, 200, 255, 0.3);
+    border-bottom: 1px solid var(--accent-blue);
     transition: all 0.2s ease;
 }
 
 .ai-markdown-explanation a:hover {
-    color: rgba(180, 220, 255, 1);
-    border-bottom-color: rgba(180, 220, 255, 0.6);
+    color: var(--accent-cyan);
+    border-bottom-color: var(--accent-cyan);
 }
 
 .ai-markdown-explanation ul,
@@ -1782,7 +2003,7 @@ body {
 }
 
 .ai-markdown-explanation pre {
-    background-color: rgba(0, 0, 0, 0.3);
+    background-color: var(--code-bg);
     padding: 12px;
     border-radius: 4px;
     overflow-x: auto;
@@ -1793,20 +2014,20 @@ body {
     background-color: transparent;
     padding: 0;
     border-radius: 0;
-    color: rgba(255, 255, 255, 0.9);
+    color: var(--text-tertiary);
 }
 
 .ai-markdown-explanation blockquote {
-    border-left: 3px solid rgba(100, 200, 255, 0.5);
+    border-left: 3px solid var(--accent-blue);
     padding-left: 12px;
     margin: 8px 0;
-    color: rgba(255, 255, 255, 0.7);
+    color: var(--text-muted);
     font-style: italic;
 }
 
 .ai-markdown-explanation hr {
     border: none;
-    border-top: 1px solid rgba(255, 255, 255, 0.2);
+    border-top: 1px solid var(--border-tertiary);
     margin: 16px 0;
 }
 
@@ -1818,26 +2039,26 @@ body {
 
 .ai-markdown-explanation th,
 .ai-markdown-explanation td {
-    border: 1px solid rgba(255, 255, 255, 0.2);
+    border: 1px solid var(--border-tertiary);
     padding: 6px 12px;
     text-align: left;
 }
 
 .ai-markdown-explanation th {
-    background-color: rgba(255, 255, 255, 0.1);
+    background-color: var(--input-bg);
     font-weight: bold;
 }
 
 .ai-python-output {
-    background-color: rgba(31, 31, 31, 0.8);
+    background-color: var(--code-bg);
     padding: 8px;
     margin-top: 4px;
     font-family: 'IBM Plex Mono', monospace;
     font-size: calc(var(--size, 1) * (12px / var(--pixel-density, 1)));
     line-height: 1.6;
-    color: rgba(255, 255, 255, 0.8);
+    color: var(--text-tertiary);
     white-space: pre-wrap;
-    border-left: 2px solid rgba(200, 150, 255, 0.5);
+    border-left: 2px solid var(--ai-assistant-text);
 }
 
 .ai-code.collapsed {
@@ -1854,8 +2075,8 @@ body {
 .ai-open-in-editor-btn,
 .ai-review-changes-btn {
     border: 2px solid;
-    background-color: rgba(0, 0, 0, 0.2);
-    color: rgba(255, 255, 255, 0.9);
+    background-color: var(--input-bg);
+    color: var(--text-tertiary);
     padding: 6px 12px;
     border-radius: 0;
     cursor: pointer;
@@ -1867,12 +2088,12 @@ body {
 }
 
 .ai-run-in-console-btn {
-    border-color: #ff3300;
+    border-color: var(--accent-red);
 }
 
 .ai-open-in-editor-btn,
 .ai-review-changes-btn {
-    border-color: #9900ff;
+    border-color: var(--accent-purple);
 }
 
 .ai-run-in-console-btn:hover,
@@ -1889,7 +2110,7 @@ body {
 }
 
 .ai-button-shortcut {
-    color: rgba(255, 255, 255, 0.5);
+    color: var(--text-subtle);
 }
 
 /* Hide AI button shortcuts in messages when assistant view is not focused */
@@ -1914,21 +2135,21 @@ body {
 #ai-api-key {
     padding: 8px 12px;
     background-color: transparent;
-    border: 1px solid rgba(255, 255, 255, 0.3);
+    border: 1px solid var(--border-tertiary);
     border-radius: 0;
-    color: rgba(255, 255, 255, 0.8);
+    color: var(--text-tertiary);
     font-family: 'IBM Plex Mono', monospace;
     font-size: calc(var(--size, 1) * (12px / var(--pixel-density, 1)));
 }
 
 #ai-api-key::placeholder {
-    color: rgba(255, 255, 255, 0.4);
+    color: var(--text-faint);
 }
 
 #ai-prompt-label {
     font-family: 'IBM Plex Mono', monospace;
     font-size: calc(var(--size, 1) * (12px / var(--pixel-density, 1)));
-    color: rgba(255, 255, 255, 0.5);
+    color: var(--text-subtle);
     margin-bottom: 6px;
     font-style: italic;
 }
@@ -1936,7 +2157,7 @@ body {
 #ai-context-label-line {
     font-family: 'IBM Plex Mono', monospace;
     font-size: calc(var(--size, 1) * (12px / var(--pixel-density, 1)));
-    color: rgba(255, 255, 255, 0.5);
+    color: var(--text-subtle);
     margin-bottom: 0;
     font-style: italic;
 }
@@ -1974,7 +2195,8 @@ body {
     background-color: transparent;
     border: none;
     border-radius: 0;
-    color: rgba(255, 255, 255, 0.8);
+    color: var(--text-tertiary);
+    caret-color: var(--text-primary) !important;
     font-family: 'IBM Plex Mono', monospace;
     font-size: calc(var(--size, 1) * (12px / var(--pixel-density, 1)));
     min-height: 0;
@@ -1988,7 +2210,7 @@ body {
 }
 
 #ai-prompt::placeholder {
-    color: rgba(255, 255, 255, 0.4);
+    color: var(--text-faint);
 }
 
 #ai-prompt:focus,
@@ -2002,7 +2224,7 @@ body {
     padding: 0;
     background: transparent;
     border: none;
-    color: rgba(255, 255, 255, 0.5);
+    color: var(--text-subtle);
     font-family: 'IBM Plex Mono', monospace;
     font-size: calc(var(--size, 1) * (12px / var(--pixel-density, 1)));
     font-weight: normal;
@@ -2014,11 +2236,11 @@ body {
 }
 
 #ai-send-btn:hover {
-    color: rgba(255, 255, 255, 0.7);
+    color: var(--text-muted);
 }
 
 #ai-send-btn:active {
-    color: rgba(255, 255, 255, 0.9);
+    color: var(--text-tertiary);
 }
 
 #ai-send-btn:disabled {
@@ -2065,8 +2287,8 @@ body {
 }
 
 .diff-modal-content {
-    background-color: #1a1a1a;
-    border: 2px solid rgba(255, 255, 255, 0.3);
+    background-color: var(--bg-primary);
+    border: 2px solid var(--border-tertiary);
     width: 90%;
     max-width: 1400px;
     height: 85%;
@@ -2077,11 +2299,11 @@ body {
 
 .diff-modal-header {
     padding: 16px 24px;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.2);
+    border-bottom: 1px solid var(--border-tertiary);
     display: flex;
     justify-content: space-between;
     align-items: center;
-    background-color: #3d3d3d;
+    background-color: var(--bg-tertiary);
 }
 
 .diff-modal-header h2 {
@@ -2089,13 +2311,13 @@ body {
     font-family: 'IBM Plex Mono', monospace;
     font-size: calc(var(--size, 1) * (16px / var(--pixel-density, 1)));
     font-weight: bold;
-    color: rgba(255, 255, 255, 0.9);
+    color: var(--text-tertiary);
 }
 
 .diff-modal-close {
     background: transparent;
-    border: 1px solid rgba(255, 255, 255, 0.3);
-    color: rgba(255, 255, 255, 0.7);
+    border: 1px solid var(--border-tertiary);
+    color: var(--text-muted);
     font-size: 24px;
     width: 36px;
     height: 36px;
@@ -2110,26 +2332,232 @@ body {
 }
 
 .diff-modal-close:hover {
-    background: rgba(255, 255, 255, 0.1);
-    border-color: rgba(255, 255, 255, 0.6);
+    background: var(--input-bg);
+    border-color: var(--text-muted);
 }
 
 .diff-modal-body {
     flex: 1;
     overflow: auto;
     padding: 16px;
-    background-color: #2b2b2b;
+    background-color: var(--bg-secondary);
+}
+
+/* Settings Panel */
+.settings-button {
+    background: transparent;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    padding: 0;
+    width: 32px;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s ease;
+    border-radius: 4px;
+}
+
+.settings-button:hover {
+    background: var(--input-bg);
+    color: var(--text-primary);
+}
+
+.settings-button .material-symbols-outlined {
+    font-size: 24px;
+}
+
+.settings-panel {
+    position: fixed;
+    top: 50px;
+    right: -350px;
+    width: 350px;
+    height: calc(100vh - 50px);
+    background-color: var(--bg-secondary);
+    border-left: 3px solid var(--border-primary);
+    transition: right 0.3s cubic-bezier(0.4, 0.0, 0.2, 1);
+    z-index: 9999;
+    display: flex;
+    flex-direction: column;
+}
+
+.settings-panel.open {
+    right: 0;
+}
+
+.settings-panel-content {
+    flex: 1;
+    overflow-y: auto;
+    padding: 20px;
+}
+
+.settings-section {
+    margin-bottom: 32px;
+}
+
+.settings-section:last-child {
+    margin-bottom: 0;
+}
+
+.settings-item {
+    margin-bottom: 16px;
+}
+
+.settings-item-label {
+    font-family: 'IBM Plex Sans', sans-serif;
+    font-size: 14px;
+    color: var(--text-primary);
+    margin-bottom: 8px;
+    display: block;
+    font-weight: 500;
+}
+
+.settings-item-description {
+    font-family: 'IBM Plex Sans', sans-serif;
+    font-size: 12px;
+    color: var(--text-secondary);
+    margin-top: 4px;
+    line-height: 1.5;
+}
+
+/* Theme Switcher */
+.theme-switcher {
+    display: flex;
+    gap: 8px;
+}
+
+.theme-option {
+    flex: 1;
+    background: transparent;
+    border: 1px solid var(--border-primary);
+    padding: 10px 12px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-family: 'IBM Plex Sans', sans-serif;
+    font-size: 13px;
+    color: var(--text-secondary);
+    transition: all 0.2s ease;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    font-weight: 500;
+}
+
+.theme-option:hover {
+    background-color: var(--input-bg);
+    color: var(--text-primary);
+    border-color: var(--border-secondary);
+}
+
+.theme-option.active {
+    background-color: var(--bg-active);
+    color: var(--text-primary);
+    border-color: var(--border-secondary);
+}
+
+.theme-option .material-symbols-outlined {
+    font-size: 18px;
+}
+
+/* Volume Control in Settings */
+.volume-control-settings {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.volume-icon {
+    font-size: 20px;
+    color: var(--text-secondary);
+    user-select: none;
+}
+
+.volume-icon.material-symbols-rounded {
+    font-variation-settings: 'FILL' 1, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+}
+
+.volume-slider-settings {
+    -webkit-appearance: none;
+    appearance: none;
+    flex: 1;
+    height: 4px;
+    background: var(--border-secondary);
+    border-radius: 2px;
+    outline: none;
+    cursor: pointer;
+}
+
+.volume-slider-settings::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 16px;
+    height: 16px;
+    background: var(--accent-cyan);
+    border-radius: 50%;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.volume-slider-settings::-webkit-slider-thumb:hover {
+    background: var(--accent-cyan);
+    box-shadow: 0 0 10px var(--accent-cyan);
+    transform: scale(1.1);
+}
+
+.volume-slider-settings::-moz-range-thumb {
+    width: 16px;
+    height: 16px;
+    background: var(--accent-cyan);
+    border: none;
+    border-radius: 50%;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.volume-slider-settings::-moz-range-thumb:hover {
+    background: var(--accent-cyan);
+    box-shadow: 0 0 10px var(--accent-cyan);
+    transform: scale(1.1);
+}
+
+.volume-value {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 13px;
+    color: var(--text-primary);
+    min-width: 40px;
+    text-align: right;
+    font-weight: 500;
+}
+
+/* Settings panel scrollbar */
+.settings-panel-content::-webkit-scrollbar {
+    width: 8px;
+}
+
+.settings-panel-content::-webkit-scrollbar-track {
+    background: var(--scrollbar-track);
+}
+
+.settings-panel-content::-webkit-scrollbar-thumb {
+    background: var(--scrollbar-thumb);
+    border-radius: 4px;
+}
+
+.settings-panel-content::-webkit-scrollbar-thumb:hover {
+    background: var(--scrollbar-thumb-hover);
 }
 
 .diff-explanation {
     margin-top: 24px;
     padding: 16px;
-    background-color: rgba(255, 255, 255, 0.05);
-    border-top: 1px solid rgba(255, 255, 255, 0.2);
+    background-color: var(--input-bg);
+    border-top: 1px solid var(--border-tertiary);
     font-family: 'IBM Plex Sans', sans-serif;
     font-size: calc(var(--size, 1) * (12px / var(--pixel-density, 1)));
     line-height: 1.6;
-    color: rgba(255, 255, 255, 0.9);
+    color: var(--text-tertiary);
     max-width: 600px;
     margin-left: auto;
     margin-right: auto;
@@ -2140,7 +2568,7 @@ body {
 .diff-explanation h2,
 .diff-explanation h3 {
     font-family: 'IBM Plex Mono', monospace;
-    color: rgba(255, 255, 255, 1);
+    color: var(--text-primary);
     margin: 12px 0 8px 0;
     font-weight: bold;
 }
@@ -2161,32 +2589,32 @@ body {
 
 .diff-explanation strong {
     font-weight: bold;
-    color: rgba(255, 255, 255, 1);
+    color: var(--text-primary);
 }
 
 .diff-explanation em {
     font-style: italic;
-    color: rgba(255, 255, 255, 0.8);
+    color: var(--text-tertiary);
 }
 
 .diff-explanation code {
     font-family: 'IBM Plex Mono', monospace;
-    background-color: rgba(0, 0, 0, 0.3);
+    background-color: var(--code-bg);
     padding: 2px 6px;
     border-radius: 3px;
-    color: rgba(255, 255, 255, 0.9);
+    color: var(--text-tertiary);
 }
 
 .diff-explanation a {
-    color: rgba(150, 200, 255, 0.9);
+    color: var(--accent-blue);
     text-decoration: none;
-    border-bottom: 1px solid rgba(150, 200, 255, 0.3);
+    border-bottom: 1px solid var(--accent-blue);
     transition: all 0.2s ease;
 }
 
 .diff-explanation a:hover {
-    color: rgba(180, 220, 255, 1);
-    border-bottom-color: rgba(180, 220, 255, 0.6);
+    color: var(--accent-cyan);
+    border-bottom-color: var(--accent-cyan);
 }
 
 .diff-explanation ul,
@@ -2221,7 +2649,7 @@ body {
 }
 
 .diff-explanation pre {
-    background-color: rgba(0, 0, 0, 0.3);
+    background-color: var(--code-bg);
     padding: 12px;
     border-radius: 4px;
     overflow-x: auto;
@@ -2232,20 +2660,20 @@ body {
     background-color: transparent;
     padding: 0;
     border-radius: 0;
-    color: rgba(255, 255, 255, 0.9);
+    color: var(--text-tertiary);
 }
 
 .diff-explanation blockquote {
-    border-left: 3px solid rgba(100, 200, 255, 0.5);
+    border-left: 3px solid var(--accent-blue);
     padding-left: 12px;
     margin: 8px 0;
-    color: rgba(255, 255, 255, 0.7);
+    color: var(--text-muted);
     font-style: italic;
 }
 
 .diff-explanation hr {
     border: none;
-    border-top: 1px solid rgba(255, 255, 255, 0.2);
+    border-top: 1px solid var(--border-tertiary);
     margin: 16px 0;
 }
 
@@ -2257,23 +2685,23 @@ body {
 
 .diff-explanation th,
 .diff-explanation td {
-    border: 1px solid rgba(255, 255, 255, 0.2);
+    border: 1px solid var(--border-tertiary);
     padding: 6px 12px;
     text-align: left;
 }
 
 .diff-explanation th {
-    background-color: rgba(255, 255, 255, 0.1);
+    background-color: var(--input-bg);
     font-weight: bold;
 }
 
 .diff-modal-footer {
     padding: 16px 24px;
-    border-top: 1px solid rgba(255, 255, 255, 0.2);
+    border-top: 1px solid var(--border-tertiary);
     display: flex;
     justify-content: flex-end;
     gap: 12px;
-    background-color: #3d3d3d;
+    background-color: var(--bg-tertiary);
 }
 
 .diff-modal-button {
@@ -2281,32 +2709,32 @@ body {
     font-family: 'IBM Plex Mono', monospace;
     font-size: calc(var(--size, 1) * (12px / var(--pixel-density, 1)));
     border: 2px solid;
-    background-color: rgba(0, 0, 0, 0.2);
+    background-color: var(--input-bg);
     cursor: pointer;
     transition: all 0.2s ease;
     font-weight: normal;
 }
 
 .diff-cancel-btn {
-    border-color: rgba(255, 255, 255, 0.3);
-    color: rgba(255, 255, 255, 0.7);
+    border-color: var(--border-tertiary);
+    color: var(--text-muted);
 }
 
 .diff-cancel-btn:hover {
-    background-color: rgba(255, 255, 255, 0.1);
-    border-color: rgba(255, 255, 255, 0.5);
-    color: rgba(255, 255, 255, 0.9);
+    background-color: var(--input-bg);
+    border-color: var(--text-subtle);
+    color: var(--text-tertiary);
 }
 
 .diff-accept-btn {
-    border-color: #9900ff;
-    color: rgba(255, 255, 255, 0.9);
-    background-color: rgba(153, 0, 255, 0.2);
+    border-color: var(--accent-purple);
+    color: var(--text-tertiary);
+    background-color: var(--input-bg);
 }
 
 .diff-accept-btn:hover {
-    background-color: rgba(153, 0, 255, 0.3);
-    border-color: #bb00ff;
+    background-color: var(--ai-assistant-bg);
+    border-color: var(--accent-purple);
 }
 
 /* Override diff2html styles for dark theme */
@@ -2325,12 +2753,12 @@ body {
 
 #diff-container .d2h-code-line ins,
 #diff-container .d2h-code-side-line ins {
-    color: #000000 !important;
+    color: var(--text-primary) !important;
 }
 
 #diff-container .d2h-code-line del,
 #diff-container .d2h-code-side-line del {
-    color: #000000 !important;
+    color: var(--text-primary) !important;
 }
 
 /* Dark borders */
@@ -2342,40 +2770,40 @@ body {
 #diff-container ::-webkit-scrollbar {
     width: 12px;
     height: 12px;
-    background-color: #0d0d0d;
+    background-color: var(--scrollbar-track);
 }
 
 #diff-container ::-webkit-scrollbar-track {
-    background-color: #0d0d0d;
+    background-color: var(--scrollbar-track);
 }
 
 #diff-container ::-webkit-scrollbar-thumb {
-    background-color: rgba(255, 255, 255, 0.2);
+    background-color: var(--scrollbar-thumb);
     border-radius: 0;
 }
 
 #diff-container ::-webkit-scrollbar-thumb:hover {
-    background-color: rgba(255, 255, 255, 0.3);
+    background-color: var(--scrollbar-thumb-hover);
 }
 
 #diff-container ::-webkit-scrollbar-corner {
-    background-color: #0d0d0d;
+    background-color: var(--scrollbar-track);
 }
 
 #diff-container .d2h-file-header {
-    background-color: #1a1a1a;
-    border-color: rgba(255, 255, 255, 0.2);
+    background-color: var(--bg-primary);
+    border-color: var(--border-tertiary);
 }
 
 #diff-container .d2h-file-diff {
-    border-color: rgba(255, 255, 255, 0.2);
+    border-color: var(--border-tertiary);
 }
 
 #diff-container .d2h-code-side-linenumber,
 #diff-container .d2h-code-linenumber {
-    background-color: #0d0d0d;
-    border-color: rgba(255, 255, 255, 0.1);
-    color: rgba(255, 255, 255, 0.4);
+    background-color: var(--bg-tertiary);
+    border-color: var(--border-primary);
+    color: var(--text-faint);
     position: static !important;
 }
 
@@ -2400,10 +2828,10 @@ body {
 }
 
 #diff-container .d2h-code-line {
-    color: rgba(255, 255, 255, 0.9);
+    color: var(--text-tertiary);
 }
 
 #diff-container .d2h-info {
-    background-color: rgba(100, 150, 255, 0.1);
-    color: rgba(100, 150, 255, 0.9);
+    background-color: var(--ai-user-bg);
+    color: var(--ai-user-text);
 }
