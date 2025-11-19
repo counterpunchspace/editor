@@ -161,9 +161,49 @@
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', () => {
             window.themeSwitcher = new ThemeSwitcher();
+            initFullscreenToggle();
         });
     } else {
         window.themeSwitcher = new ThemeSwitcher();
+        initFullscreenToggle();
+    }
+
+    // Fullscreen toggle functionality
+    function initFullscreenToggle() {
+        const fullscreenBtn = document.getElementById('fullscreen-btn');
+        const fullscreenIcon = fullscreenBtn?.querySelector('.material-symbols-outlined');
+
+        if (!fullscreenBtn) return;
+
+        // Update icon based on fullscreen state
+        function updateIcon() {
+            if (document.fullscreenElement) {
+                fullscreenIcon.textContent = 'fullscreen_exit';
+                fullscreenBtn.title = 'Exit fullscreen';
+            } else {
+                fullscreenIcon.textContent = 'fullscreen';
+                fullscreenBtn.title = 'Toggle fullscreen';
+            }
+        }
+
+        // Toggle fullscreen
+        fullscreenBtn.addEventListener('click', async () => {
+            try {
+                if (!document.fullscreenElement) {
+                    await document.documentElement.requestFullscreen();
+                } else {
+                    await document.exitFullscreen();
+                }
+            } catch (err) {
+                console.error('Error toggling fullscreen:', err);
+            }
+        });
+
+        // Listen for fullscreen changes (also triggered by F11, Esc, etc.)
+        document.addEventListener('fullscreenchange', updateIcon);
+
+        // Initial icon update
+        updateIcon();
     }
 
 })();
