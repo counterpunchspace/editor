@@ -86,6 +86,9 @@
     --script-context-focused-bg: #9900ff;
     --script-context-text: rgba(255, 255, 255, 0.8);
     --script-context-focused-text: #1a1a1a;
+
+    /* Custom Cursor Colors */
+    --custom-cursor-color: rgba(255, 255, 255, 0.8);
 }
 
 /* Light Theme */
@@ -176,6 +179,9 @@
     --script-context-focused-bg: #9900ff;
     --script-context-text: #330066;
     --script-context-focused-text: #ffffff;
+
+    /* Custom Cursor Colors */
+    --custom-cursor-color: rgba(0, 0, 0, 0.8);
 }
 
 * {
@@ -1317,11 +1323,6 @@ body {
     background-color: rgba(0, 144, 0, 0.08) !important;
 }
 
-/* Light theme AI prompt caret */
-:root[data-theme="light"] #ai-prompt {
-    caret-color: #1a1a1a !important;
-}
-
 /* Official Pyodide Console Styles */
 
 @supports (--css:variables) {
@@ -2347,7 +2348,7 @@ body {
     border: none;
     border-radius: 0;
     color: var(--text-tertiary);
-    caret-color: var(--text-primary) !important;
+    caret-color: transparent;
     font-family: 'IBM Plex Mono', monospace;
     font-size: calc(var(--size, 1) * (12px / var(--pixel-density, 1)));
     min-height: 0;

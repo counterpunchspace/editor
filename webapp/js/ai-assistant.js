@@ -1629,7 +1629,7 @@ if '_original_stdout' in dir():
                 .custom-textarea-cursor {
                     position: absolute;
                     width: 7px;
-                    background-color: rgba(255, 255, 255, 0.8);
+                    background-color: var(--custom-cursor-color);
                     pointer-events: none;
                     z-index: 1;
                     animation: cursor-blink 1s step-end infinite;
