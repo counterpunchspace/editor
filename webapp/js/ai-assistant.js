@@ -307,20 +307,19 @@ class AIAssistant {
 
         if (!contextLabel || !promptPrefix) return;
 
+        // Update text content and context classes
         if (this.context === 'font') {
-            const fontColor = this.isAssistantViewFocused ? '#ff00ff' : '#660066';
             contextLabel.textContent = 'Font Context';
-            contextLabel.style.backgroundColor = fontColor;
-            contextLabel.style.color = '#1a1a1a';
-            promptPrefix.style.backgroundColor = fontColor;
-            promptPrefix.style.color = '#1a1a1a';
+            contextLabel.classList.add('font-context');
+            contextLabel.classList.remove('script-context');
+            promptPrefix.classList.add('font-context');
+            promptPrefix.classList.remove('script-context');
         } else {
-            const scriptColor = this.isAssistantViewFocused ? '#9900ff' : '#4d0080';
             contextLabel.textContent = 'Script Context';
-            contextLabel.style.backgroundColor = scriptColor;
-            contextLabel.style.color = '#1a1a1a';
-            promptPrefix.style.backgroundColor = scriptColor;
-            promptPrefix.style.color = '#1a1a1a';
+            contextLabel.classList.add('script-context');
+            contextLabel.classList.remove('font-context');
+            promptPrefix.classList.add('script-context');
+            promptPrefix.classList.remove('font-context');
         }
     }
 
@@ -393,31 +392,11 @@ class AIAssistant {
     updateContextButtons() {
         if (!this.contextFontButton || !this.contextScriptButton) return;
 
-        // Update font button
-        if (this.contextFontButton.classList.contains('active')) {
-            const fontBgColor = this.isAssistantViewFocused ? '#ff00ff' : '#660066';
-            const fontBorderColor = this.isAssistantViewFocused ? '#ff00ff' : '#660066';
-            this.contextFontButton.style.backgroundColor = fontBgColor;
-            this.contextFontButton.style.borderColor = fontBorderColor;
-            this.contextFontButton.style.color = '#1a1a1a';
-        } else {
-            this.contextFontButton.style.backgroundColor = 'transparent';
-            this.contextFontButton.style.borderColor = 'rgba(255, 255, 255, 0.3)';
-            this.contextFontButton.style.color = 'rgba(255, 255, 255, 0.8)';
-        }
+        // Font button - toggle active state and context class
+        this.contextFontButton.classList.toggle('active', this.context === 'font');
 
-        // Update script button
-        if (this.contextScriptButton.classList.contains('active')) {
-            const scriptBgColor = this.isAssistantViewFocused ? '#9900ff' : '#4d0080';
-            const scriptBorderColor = this.isAssistantViewFocused ? '#9900ff' : '#4d0080';
-            this.contextScriptButton.style.backgroundColor = scriptBgColor;
-            this.contextScriptButton.style.borderColor = scriptBorderColor;
-            this.contextScriptButton.style.color = '#1a1a1a';
-        } else {
-            this.contextScriptButton.style.backgroundColor = 'transparent';
-            this.contextScriptButton.style.borderColor = 'rgba(255, 255, 255, 0.3)';
-            this.contextScriptButton.style.color = 'rgba(255, 255, 255, 0.8)';
-        }
+        // Script button - toggle active state and context class
+        this.contextScriptButton.classList.toggle('active', this.context === 'script');
     }
 
     toggleAutoRun() {
@@ -450,27 +429,24 @@ class AIAssistant {
             if (this.context === 'script') {
                 this.autoRunButton.disabled = false; // Keep enabled so click event fires
                 this.autoRunButton.innerHTML = 'Auto-Run <span class="ai-button-shortcut"><span class="material-symbols-outlined">keyboard_option_key</span>R</span>';
-                this.autoRunButton.style.backgroundColor = 'transparent';
-                this.autoRunButton.style.color = 'rgba(255, 255, 255, 0.3)';
-                this.autoRunButton.style.borderColor = 'rgba(255, 255, 255, 0.2)';
+                this.autoRunButton.classList.remove('active');
+                this.autoRunButton.classList.add('disabled-in-script');
             } else {
                 this.autoRunButton.disabled = false;
+                this.autoRunButton.classList.remove('disabled-in-script');
+                this.autoRunButton.classList.toggle('active', this.autoRun);
 
-                if (this.autoRun) {
-                    // Use darker green when not focused
-                    const bgColor = this.isAssistantViewFocused ? '#00ff00' : '#006600';
-                    const borderColor = this.isAssistantViewFocused ? '#00ff00' : '#006600';
-
-                    this.autoRunButton.innerHTML = 'Auto-Run <span class="ai-button-shortcut" style="color: rgba(0, 0, 0, 0.5);"><span class="material-symbols-outlined">keyboard_option_key</span>R</span>';
-                    this.autoRunButton.style.backgroundColor = bgColor;
-                    this.autoRunButton.style.color = '#1a1a1a';
-                    this.autoRunButton.style.borderColor = borderColor;
-                } else {
-                    this.autoRunButton.innerHTML = 'Auto-Run <span class="ai-button-shortcut"><span class="material-symbols-outlined">keyboard_option_key</span>R</span>';
-                    this.autoRunButton.style.backgroundColor = 'transparent';
-                    this.autoRunButton.style.color = 'rgba(255, 255, 255, 0.8)';
-                    this.autoRunButton.style.borderColor = 'rgba(255, 255, 255, 0.3)';
+                // Update keyboard shortcut color based on active state
+                const shortcutSpan = this.autoRunButton.querySelector('.ai-button-shortcut');
+                if (shortcutSpan) {
+                    if (this.autoRun) {
+                        shortcutSpan.style.opacity = '0.6';
+                    } else {
+                        shortcutSpan.style.opacity = '';
+                    }
                 }
+
+                this.autoRunButton.innerHTML = `Auto-Run <span class="ai-button-shortcut"><span class="material-symbols-outlined">keyboard_option_key</span>R</span>`;
             }
         }
 

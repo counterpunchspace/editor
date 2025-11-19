@@ -173,16 +173,16 @@
                         </button>
                     </div>
                     <div class="ai-context-toggle">
-                        <button id="ai-context-script-btn" class="ai-context-btn"
+                        <button id="ai-context-script-btn" class="ai-context-btn script-context"
                             title="Script context: The assistant will work on the code in the script editor (Alt+S)">Script
                             <span class="ai-button-shortcut"><span
                                     class="material-symbols-outlined">keyboard_option_key</span>S</span></button>
-                        <button id="ai-context-font-btn" class="ai-context-btn active"
+                        <button id="ai-context-font-btn" class="ai-context-btn font-context active"
                             title="Font context: The assistant will work on the font object (Alt+F)">Font
                             <span class="ai-button-shortcut"><span
                                     class="material-symbols-outlined">keyboard_option_key</span>F</span></button>
                     </div>
-                    <button id="ai-auto-run-btn" class="view-title-button"
+                    <button id="ai-auto-run-btn" class="view-title-button auto-run"
                         title="Automatically run assistant-generated code (Alt+R)">Auto-Run <span
                             class="ai-button-shortcut"><span
                                 class="material-symbols-outlined">keyboard_option_key</span>R</span></button>
@@ -198,9 +198,10 @@
                         <div id="ai-input-container">
                             <div id="ai-prompt-label">I’m your assistant. How may I help?
                             </div>
-                            <div id="ai-context-label-line"><span id="ai-context-label">Font Context</span></div>
+                            <div id="ai-context-label-line"><span id="ai-context-label" class="font-context">Font
+                                    Context</span></div>
                             <div id="ai-prompt-wrapper">
-                                <div id="ai-prompt-prefix">>>> </div>
+                                <div id="ai-prompt-prefix" class="font-context">>>> </div>
                                 <textarea id="ai-prompt" placeholder="" data-1p-ignore></textarea>
                             </div>
                             <div id="ai-button-container">

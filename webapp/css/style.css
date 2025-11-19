@@ -35,7 +35,7 @@
     --view-editor: #ff00ff;
     --view-files: #ffff00;
     --view-console: #ff3300;
-    --view-scripts: #9900ff;
+    --view-scripts: #ac38f9;
     --view-assistant: #00ff00;
 
     /* UI Component Colors */
@@ -67,6 +67,25 @@
     --code-bg: #1f1f1f;
     --code-selection: rgba(153, 0, 255, 0.3);
     --code-line-highlight: rgba(255, 0, 255, 0.08);
+
+    /* Auto-run Button Colors */
+    --autorun-disabled-border: rgba(255, 255, 255, 0.2);
+    --autorun-disabled-text: rgba(255, 255, 255, 0.3);
+    --autorun-active-bg: #006600;
+    --autorun-active-focused-bg: var(--accent-green);
+    --autorun-active-text: #1a1a1a;
+
+    /* Font Context Colors */
+    --font-context-bg: #660066;
+    --font-context-focused-bg: #ff00ff;
+    --font-context-text: rgba(255, 255, 255, 0.8);
+    --font-context-focused-text: #1a1a1a;
+
+    /* Script Context Colors */
+    --script-context-bg: #4d0080;
+    --script-context-focused-bg: #9900ff;
+    --script-context-text: rgba(255, 255, 255, 0.8);
+    --script-context-focused-text: #1a1a1a;
 }
 
 /* Light Theme */
@@ -101,12 +120,12 @@
     --accent-orange: #cc6600;
 
     /* View Border Colors - Keep similar but adjusted */
-    --view-fontinfo: #008888;
-    --view-editor: #b000b0;
-    --view-files: #a0a000;
-    --view-console: #cc2600;
-    --view-scripts: #6600cc;
-    --view-assistant: #009000;
+    --view-fontinfo: #00ffff;
+    --view-editor: #ff00ff;
+    --view-files: #ffff00;
+    --view-console: #ff3300;
+    --view-scripts: #ac38f9;
+    --view-assistant: #00ff00;
 
     /* UI Component Colors */
     --button-bg: #f0f0f0;
@@ -137,6 +156,26 @@
     --code-bg: #f8f8f8;
     --code-selection: rgba(120, 0, 200, 0.15);
     --code-line-highlight: rgba(200, 0, 200, 0.04);
+
+    /* Auto-run Button Colors */
+    --autorun-disabled-border: rgba(0, 0, 0, 0.15);
+    --autorun-disabled-text: rgba(0, 0, 0, 0.3);
+    --autorun-active-bg: #b3e6b3;
+    --autorun-active-focused-bg: #00cc00;
+    --autorun-active-text: #004d00;
+    --autorun-active-focused-text: #ffffff;
+
+    /* Font Context Colors */
+    --font-context-bg: #e6b3e6;
+    --font-context-focused-bg: #cc00cc;
+    --font-context-text: #4d004d;
+    --font-context-focused-text: #ffffff;
+
+    /* Script Context Colors */
+    --script-context-bg: #d9b3ff;
+    --script-context-focused-bg: #9900ff;
+    --script-context-text: #330066;
+    --script-context-focused-text: #ffffff;
 }
 
 * {
@@ -641,9 +680,166 @@ body {
     border-left-color: var(--text-secondary);
 }
 
+/* Auto-run button - default (inactive) state */
+.view-title-button.auto-run {
+    background-color: transparent;
+    border-color: var(--border-primary);
+    color: var(--text-primary) !important;
+}
+
+/* Auto-run button - disabled in script context - Dark Theme */
+:root:not([data-theme="light"]) .view-title-button.auto-run.disabled-in-script {
+    background-color: transparent;
+    border-color: var(--autorun-disabled-border);
+    color: var(--autorun-disabled-text) !important;
+}
+
+/* Auto-run button - disabled in script context - Light Theme */
+:root[data-theme="light"] .view-title-button.auto-run.disabled-in-script {
+    background-color: transparent;
+    border-color: var(--autorun-disabled-border);
+    color: var(--autorun-disabled-text) !important;
+}
+
+/* Auto-run button - active state in dark theme */
+:root:not([data-theme="light"]) .view-title-button.auto-run.active {
+    background-color: var(--autorun-active-bg);
+    border-color: var(--autorun-active-bg);
+    color: var(--autorun-active-text) !important;
+}
+
+:root:not([data-theme="light"]) .view-assistant.focused .view-title-button.auto-run.active {
+    background-color: var(--autorun-active-focused-bg);
+    border-color: var(--autorun-active-focused-bg);
+    color: var(--autorun-active-text) !important;
+}
+
+/* Auto-run button - active state in light theme */
+:root[data-theme="light"] .view-title-button.auto-run.active {
+    background-color: var(--autorun-active-bg);
+    border-color: var(--autorun-active-bg);
+    color: var(--autorun-active-text) !important;
+}
+
+:root[data-theme="light"] .view-assistant.focused .view-title-button.auto-run.active {
+    background-color: var(--autorun-active-focused-bg);
+    border-color: var(--autorun-active-focused-bg);
+    color: var(--autorun-active-focused-text) !important;
+}
+
+/* AI Context Buttons - Font Context - Dark Theme */
+:root:not([data-theme="light"]) .ai-context-btn.font-context.active {
+    background-color: var(--font-context-bg);
+    border-color: var(--font-context-bg);
+    color: var(--font-context-text);
+}
+
+:root:not([data-theme="light"]) .view-assistant.focused .ai-context-btn.font-context.active {
+    background-color: var(--font-context-focused-bg);
+    border-color: var(--font-context-focused-bg);
+    color: var(--font-context-focused-text);
+}
+
+/* AI Context Buttons - Font Context - Light Theme */
+:root[data-theme="light"] .ai-context-btn.font-context.active {
+    background-color: var(--font-context-bg);
+    border-color: var(--font-context-bg);
+    color: var(--font-context-text);
+}
+
+:root[data-theme="light"] .view-assistant.focused .ai-context-btn.font-context.active {
+    background-color: var(--font-context-focused-bg);
+    border-color: var(--font-context-focused-bg);
+    color: var(--font-context-focused-text);
+}
+
+/* AI Context Buttons - Script Context - Dark Theme */
+:root:not([data-theme="light"]) .ai-context-btn.script-context.active {
+    background-color: var(--script-context-bg);
+    border-color: var(--script-context-bg);
+    color: var(--script-context-text);
+}
+
+:root:not([data-theme="light"]) .view-assistant.focused .ai-context-btn.script-context.active {
+    background-color: var(--script-context-focused-bg);
+    border-color: var(--script-context-focused-bg);
+    color: var(--script-context-focused-text);
+}
+
+/* AI Context Buttons - Script Context - Light Theme */
+:root[data-theme="light"] .ai-context-btn.script-context.active {
+    background-color: var(--script-context-bg);
+    border-color: var(--script-context-bg);
+    color: var(--script-context-text);
+}
+
+:root[data-theme="light"] .view-assistant.focused .ai-context-btn.script-context.active {
+    background-color: var(--script-context-focused-bg);
+    border-color: var(--script-context-focused-bg);
+    color: var(--script-context-focused-text);
+}
+
+/* AI Context Buttons - Inactive state (no background) */
+.ai-context-btn:not(.active) {
+    background-color: transparent;
+    border-color: var(--border-primary);
+    color: var(--text-primary) !important;
+}
+
+/* AI Context Label & Prompt Prefix - Font Context - Dark Theme */
+:root:not([data-theme="light"]) .ai-context-label.font-context,
+:root:not([data-theme="light"]) .ai-prompt-prefix.font-context {
+    background-color: var(--font-context-bg);
+    color: var(--font-context-text);
+}
+
+:root:not([data-theme="light"]) .view-assistant.focused .ai-context-label.font-context,
+:root:not([data-theme="light"]) .view-assistant.focused .ai-prompt-prefix.font-context {
+    background-color: var(--font-context-focused-bg);
+    color: var(--font-context-focused-text);
+}
+
+/* AI Context Label & Prompt Prefix - Font Context - Light Theme */
+:root[data-theme="light"] .ai-context-label.font-context,
+:root[data-theme="light"] .ai-prompt-prefix.font-context {
+    background-color: var(--font-context-bg);
+    color: var(--font-context-text);
+}
+
+:root[data-theme="light"] .view-assistant.focused .ai-context-label.font-context,
+:root[data-theme="light"] .view-assistant.focused .ai-prompt-prefix.font-context {
+    background-color: var(--font-context-focused-bg);
+    color: var(--font-context-focused-text);
+}
+
+/* AI Context Label & Prompt Prefix - Script Context - Dark Theme */
+:root:not([data-theme="light"]) .ai-context-label.script-context,
+:root:not([data-theme="light"]) .ai-prompt-prefix.script-context {
+    background-color: var(--script-context-bg);
+    color: var(--script-context-text);
+}
+
+:root:not([data-theme="light"]) .view-assistant.focused .ai-context-label.script-context,
+:root:not([data-theme="light"]) .view-assistant.focused .ai-prompt-prefix.script-context {
+    background-color: var(--script-context-focused-bg);
+    color: var(--script-context-focused-text);
+}
+
+/* AI Context Label & Prompt Prefix - Script Context - Light Theme */
+:root[data-theme="light"] .ai-context-label.script-context,
+:root[data-theme="light"] .ai-prompt-prefix.script-context {
+    background-color: var(--script-context-bg);
+    color: var(--script-context-text);
+}
+
+:root[data-theme="light"] .view-assistant.focused .ai-context-label.script-context,
+:root[data-theme="light"] .view-assistant.focused .ai-prompt-prefix.script-context {
+    background-color: var(--script-context-focused-bg);
+    color: var(--script-context-focused-text);
+}
+
 /* AI Context Label */
 .ai-context-label {
-    color: var(--text-muted);
     font-family: 'IBM Plex Mono', monospace;
     font-size: 10px;
     font-weight: normal;
