@@ -51,7 +51,7 @@ def export_to_json(input_file, output_json):
 
     try:
         font_dict = font.to_dict()
-        babelfont_json = orjson.dumps(font_dict)
+        babelfont_json = orjson.dumps(font_dict, option=orjson.OPT_INDENT_2)
         export_time = time.time() - export_start
 
         json_size_kb = len(babelfont_json) / 1024
