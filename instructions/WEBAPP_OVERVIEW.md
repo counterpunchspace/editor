@@ -24,3 +24,7 @@ The editor provides real-time visualization of how outline edits affect the fina
 ## Development Instructions
 
 If necessary, create command-line workflows for development and testing, for instance to proof font compilation via node using the compiled fontc wasm binary ("test-compiler" folder), as you can easily debug its output without user interaction.
+
+## Compilation Testing
+
+The "test-compiler" folder contains the file Fustat.json.babelfont, which is an official conversion from babelfont-rs. It shall form the basis for offline compilation testing.
