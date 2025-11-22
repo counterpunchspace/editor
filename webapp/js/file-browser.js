@@ -39,11 +39,10 @@ function getFileClass(filename, isDir) {
 }
 
 function isSupportedFontFormat(name, isDir) {
-    // Check if it's a .context or .babelfont folder
-    if (isDir && name.endsWith('.babelfont')) {
+    // Check if it's a .babelfont file (JSON format, not a folder)
+    if (!isDir && name.endsWith('.babelfont')) {
         return true;
     }
-    // Add more formats in the future (.glyphs, .ufo, etc.)
     return false;
 }
 
