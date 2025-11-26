@@ -26,6 +26,8 @@ function getFileIcon(filename, isDir) {
         case 'png': case 'jpg': case 'jpeg': case 'gif': return '🖼️';
         case 'pdf': return '📕';
         case 'zip': return '🗜️';
+        case 'ttf': case 'otf': case 'woff': case 'woff2': return '🔤';
+        case 'babelfont': case 'glyphs': case 'ufo': case 'designspace': return '✏️';
         default: return '📄';
     }
 }
@@ -205,6 +207,31 @@ os.makedirs(path, exist_ok=True)
     }
 }
 
+async function downloadFile(filePath, fileName) {
+    try {
+        // Read file from Pyodide filesystem
+        const fileData = window.pyodide.FS.readFile(filePath);
+        
+        // Create blob and download
+        const blob = new Blob([fileData]);
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = fileName;
+        a.click();
+        URL.revokeObjectURL(url);
+        
+        console.log(`Downloaded: ${fileName}`);
+        
+        if (window.term) {
+            window.term.echo(`[[;lime;]📥 Downloaded: ${fileName}]`);
+        }
+    } catch (error) {
+        console.error('Error downloading file:', error);
+        alert(`Error downloading file: ${error.message}`);
+    }
+}
+
 async function deleteItem(itemPath, itemName, isDir) {
     const confirmMsg = isDir ?
         `Delete folder "${itemName}" and all its contents?` :
@@ -338,6 +365,11 @@ if parent_dir:
             `navigateToPath('${data.path}')` :
             `selectFile('${data.path}')`;
 
+        // Add download button for files
+        const downloadBtn = !data.is_dir ?
+            `<button class="download-btn" onclick="event.stopPropagation(); downloadFile('${data.path}', '${name}')" title="Download">💾</button>` :
+            '';
+
         const deleteBtn = `<button class="delete-btn" onclick="event.stopPropagation(); deleteItem('${data.path}', '${name}', ${data.is_dir})" title="Delete">🗑️</button>`;
 
         // Add "Open" button for supported font formats
@@ -347,7 +379,7 @@ if parent_dir:
             '';
 
         html += `<div class="file-item ${fileClass}" onclick="${clickHandler}">
-            <span class="file-name">${icon} ${name}</span>${sizeText}${openBtn}${deleteBtn}
+            <span class="file-name">${icon} ${name}</span>${sizeText}${openBtn}${downloadBtn}${deleteBtn}
         </div>`;
     }
 
@@ -471,4 +503,4 @@ window.createFolder = createFolder;
 window.deleteItem = deleteItem;
 window.uploadFiles = uploadFiles;
 window.handleFileUpload = handleFileUpload;
-window.openFont = openFont;
+window.openFont = openFont;window.downloadFile = downloadFile;

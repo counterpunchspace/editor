@@ -1610,13 +1610,33 @@ body {
     margin-left: 8px;
 }
 
-.file-item:hover .delete-btn {
+.file-item .download-btn {
+    opacity: 0;
+    background: transparent;
+    border: 1px solid transparent;
+    color: var(--accent-cyan);
+    cursor: pointer;
+    padding: 2px 6px;
+    border-radius: 3px;
+    font-size: 14px;
+    transition: all 0.2s ease;
+    margin-left: 4px;
+}
+
+.file-item:hover .delete-btn,
+.file-item:hover .download-btn {
     opacity: 1;
 }
 
 .file-item .delete-btn:hover {
     background: var(--ai-error-bg);
     border-color: var(--accent-red);
+    transform: scale(1.1);
+}
+
+.file-item .download-btn:hover {
+    background: var(--ai-result-bg);
+    border-color: var(--accent-cyan);
     transform: scale(1.1);
 }
 

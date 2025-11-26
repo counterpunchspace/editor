@@ -6,6 +6,87 @@
 
     const compileBtn = document.getElementById('compile-font-btn');
     let isCompiling = false;
+    let worker = null;
+    let workerReady = false;
+    let compilationId = 0;
+    let pendingCompilations = new Map();
+
+    // Initialize the Web Worker
+    async function initWorker() {
+        if (worker) return workerReady;
+
+        console.log('🔧 Initializing fontc worker...');
+        
+        try {
+            worker = new Worker('js/fontc-compile-worker.js', { type: 'module' });
+            
+            worker.onmessage = (e) => {
+                const { type, id, ttfBytes, duration, error, version } = e.data;
+                
+                if (type === 'ready') {
+                    workerReady = true;
+                    console.log('✅ Fontc worker ready:', version);
+                } else if (type === 'compiled') {
+                    const resolve = pendingCompilations.get(id);
+                    if (resolve) {
+                        resolve({ ttfBytes, duration });
+                        pendingCompilations.delete(id);
+                    }
+                } else if (type === 'error') {
+                    const resolve = pendingCompilations.get(id);
+                    if (resolve) {
+                        resolve({ error });
+                        pendingCompilations.delete(id);
+                    }
+                }
+            };
+
+            worker.onerror = (e) => {
+                console.error('❌ Worker error:', e);
+                workerReady = false;
+            };
+
+            // Send init message
+            worker.postMessage({ type: 'init' });
+
+            // Wait for ready
+            await new Promise((resolve, reject) => {
+                const timeout = setTimeout(() => reject(new Error('Worker init timeout')), 10000);
+                const checkReady = () => {
+                    if (workerReady) {
+                        clearTimeout(timeout);
+                        resolve();
+                    } else {
+                        setTimeout(checkReady, 100);
+                    }
+                };
+                checkReady();
+            });
+
+            return true;
+        } catch (error) {
+            console.error('❌ Failed to initialize worker:', error);
+            return false;
+        }
+    }
+
+    // Compile using the worker
+    async function compileWithWorker(babelfontJson) {
+        if (!workerReady) {
+            throw new Error('Worker not ready');
+        }
+
+        const id = ++compilationId;
+        
+        return new Promise((resolve) => {
+            pendingCompilations.set(id, resolve);
+            worker.postMessage({
+                type: 'compile',
+                id: id,
+                data: { babelfontJson }
+            });
+        });
+    }
 
     // Enable/disable compile button based on font availability
     function updateCompileButtonState() {
@@ -27,9 +108,14 @@
             return;
         }
 
-        if (!window.fontCompilation || !window.fontCompilation.isInitialized) {
-            alert('Font compilation module not ready. Make sure WASM module is built and loaded.');
-            return;
+        // Initialize worker if needed
+        if (!workerReady) {
+            console.log('Initializing worker...');
+            const initialized = await initWorker();
+            if (!initialized) {
+                alert('Failed to initialize font compiler. Check console for errors.');
+                return;
+            }
         }
 
         try {
@@ -50,6 +136,7 @@
             const startTime = performance.now();
             const pythonResult = await window.pyodide.runPythonAsync(`
 import orjson
+import os
 
 # Get current font using CurrentFont()
 font = CurrentFont()
@@ -59,48 +146,55 @@ if not font:
 # Get the font's file path for naming the output
 font_path = font.path if hasattr(font, 'path') and font.path else 'font.context'
 
+# Get directory of source file
+source_dir = os.path.dirname(font_path) if font_path else '.'
+
 # Export to .babelfont JSON format using orjson (handles datetime objects)
 font_dict = font.to_dict()
 babelfont_json = orjson.dumps(font_dict).decode('utf-8')
 
-# Return both JSON and path
-(babelfont_json, font_path)
+# Return JSON, path, and directory
+(babelfont_json, font_path, source_dir)
             `);
 
             const babelfontJson = pythonResult[0];
             const fontPath = pythonResult[1];
+            const sourceDir = pythonResult[2];
             const exportTime = performance.now() - startTime;
             console.log(`✅ Exported to JSON in ${exportTime.toFixed(0)}ms (${babelfontJson.length} bytes)`);
 
-            // Compile using the WASM module
-            const filename = fontPath.replace(/\.(glyphs|designspace|ufo|babelfont|context)$/, '.ttf').split('/').pop() || 'font.ttf';
-            const result = await window.fontCompilation.compileFromJson(babelfontJson, filename);
+            // Compile using the Web Worker
+            const compileStart = performance.now();
+            const result = await compileWithWorker(babelfontJson);
+            
+            if (result.error) {
+                throw new Error(result.error);
+            }
 
-            const totalTime = performance.now() - startTime;
-            console.log(`✅ Total compilation time: ${totalTime.toFixed(0)}ms`);
+            const { ttfBytes, duration } = result;
+            console.log(`✅ Compiled in ${duration.toFixed(0)}ms (${ttfBytes.length} bytes)`);
 
-            // Save to Pyodide's virtual filesystem
+            // Determine output filename
+            const basename = fontPath.replace(/\.(glyphs|designspace|ufo|babelfont|context)$/, '').split('/').pop() || 'font';
+            const outputFilename = `${basename}.ttf`;
+            const outputPath = sourceDir === '.' ? outputFilename : `${sourceDir}/${outputFilename}`;
+
+            // Save to Pyodide's virtual filesystem in the same directory as source
             await window.pyodide.runPythonAsync(`
 import os
 
 # Convert JavaScript Uint8Array to Python bytes
-output_data = bytes(${JSON.stringify(Array.from(result.result))})
+output_data = bytes(${JSON.stringify(Array.from(ttfBytes))})
 
 # Save to virtual filesystem
-output_path = '${filename}'
+output_path = '${outputPath}'
 with open(output_path, 'wb') as f:
     f.write(output_data)
 
 print(f"✅ Compiled font saved to: {output_path} ({len(output_data)} bytes)")
-print(f"")
-print(f"📊 Compilation timing:")
-print(f"   to_dict() export: ${exportTime.toFixed(0)}ms")
-print(f"   WASM compilation: ${result.time_taken}ms")
-print(f"   Total time: ${totalTime.toFixed(0)}ms")
             `);
 
-            // Trigger download
-            window.fontCompilation.downloadFont(result.result, filename);
+            const totalTime = performance.now() - startTime;
 
             // Refresh file browser to show the new file
             if (window.refreshFileSystem) {
@@ -110,8 +204,8 @@ print(f"   Total time: ${totalTime.toFixed(0)}ms")
             // Show success message
             if (window.term) {
                 window.term.echo(`[[;lime;]✅ Compiled successfully in ${totalTime.toFixed(0)}ms]`);
-                window.term.echo(`[[;lime;]📥 Downloaded: ${filename} (${result.result.length} bytes)]`);
-                window.term.echo(`[[;gray;]   Export: ${exportTime.toFixed(0)}ms | Compile: ${result.time_taken}ms]`);
+                window.term.echo(`[[;lime;]💾 Saved: ${outputPath} (${ttfBytes.length} bytes)]`);
+                window.term.echo(`[[;gray;]   Export: ${exportTime.toFixed(0)}ms | Compile: ${duration.toFixed(0)}ms]`);
                 window.term.echo('');
             }
 
