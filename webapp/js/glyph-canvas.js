@@ -571,6 +571,9 @@ class GlyphCanvas {
         // Draw shaped glyphs
         this.drawShapedGlyphs();
 
+        // Draw glyph name tooltip (still in transformed space)
+        this.drawGlyphTooltip();
+
         this.ctx.restore();
 
         // Draw UI overlay (zoom level, etc.)
@@ -718,7 +721,80 @@ class GlyphCanvas {
 
             xPosition += xAdvance;
         });
-    } drawUIOverlay() {
+    }
+
+    drawGlyphTooltip() {
+        // Draw glyph name tooltip on hover (in font coordinate space)
+        if (this.hoveredGlyphIndex >= 0 && this.hoveredGlyphIndex < this.shapedGlyphs.length) {
+            const glyphId = this.shapedGlyphs[this.hoveredGlyphIndex].g;
+            let glyphName = `GID ${glyphId}`;
+
+            // Get glyph name from compiled font via OpenType.js
+            if (this.opentypeFont && this.opentypeFont.glyphs.get(glyphId)) {
+                const glyph = this.opentypeFont.glyphs.get(glyphId);
+                if (glyph.name) {
+                    glyphName = glyph.name;
+                }
+            }
+
+            // Get glyph position and advance from shaped data
+            const shapedGlyph = this.shapedGlyphs[this.hoveredGlyphIndex];
+            const glyphBounds = this.glyphBounds[this.hoveredGlyphIndex];
+            const glyphWidth = shapedGlyph.ax || 0;
+            const glyphYOffset = shapedGlyph.dy || 0; // Y offset from HarfBuzz shaping
+
+            // Get glyph bounding box to find bottom edge
+            let glyphYMin = 0;
+            if (this.opentypeFont && this.opentypeFont.glyphs.get(glyphId)) {
+                const glyph = this.opentypeFont.glyphs.get(glyphId);
+                const bbox = glyph.getBoundingBox();
+                glyphYMin = bbox.y1; // y1 is the minimum Y (bottom edge)
+            }
+
+            // Position tooltip centered under the glyph
+            // In font coordinates: Y increases upward, so negative Y is below baseline
+            // Note: glyphBounds.x already includes dx offset from HarfBuzz
+            const tooltipX = glyphBounds.x + (glyphWidth / 2);
+            const tooltipY = glyphYOffset + glyphYMin - 100; // 100 units below bottom of bounding box, including HB Y offset
+
+            const invScale = 1 / this.scale;
+            const isDarkTheme = document.documentElement.getAttribute('data-theme') !== 'light';
+
+            // Save context to flip text right-side up
+            this.ctx.save();
+            this.ctx.translate(tooltipX, tooltipY);
+            this.ctx.scale(1, -1); // Flip Y to make text right-side up
+
+            // Font size and metrics (scaled to remain constant regardless of zoom)
+            const fontSize = 16 * invScale;
+            this.ctx.font = `${fontSize}px IBM Plex Mono`;
+            const metrics = this.ctx.measureText(glyphName);
+            const padding = 10 * invScale;
+            const bgWidth = metrics.width + padding * 2;
+            const bgHeight = fontSize * 1.8;
+
+            // Center horizontally around origin
+            const bgX = -bgWidth / 2;
+            const bgY = 0; // Top of box at origin
+
+            // Draw background
+            this.ctx.fillStyle = isDarkTheme ? 'rgba(40, 40, 40, 0.95)' : 'rgba(255, 255, 255, 0.95)';
+            this.ctx.fillRect(bgX, bgY, bgWidth, bgHeight);
+
+            // Draw border
+            this.ctx.strokeStyle = isDarkTheme ? 'rgba(255, 255, 255, 0.3)' : 'rgba(0, 0, 0, 0.3)';
+            this.ctx.lineWidth = 2 * invScale;
+            this.ctx.strokeRect(bgX, bgY, bgWidth, bgHeight);
+
+            // Draw text
+            this.ctx.fillStyle = isDarkTheme ? 'rgba(255, 255, 255, 0.9)' : 'rgba(0, 0, 0, 0.9)';
+            this.ctx.fillText(glyphName, bgX + padding, bgY + fontSize * 0.85 + padding / 2 + 3);
+
+            this.ctx.restore();
+        }
+    }
+
+    drawUIOverlay() {
         this.ctx.save();
         this.ctx.setTransform(1, 0, 0, 1, 0, 0);
 
@@ -741,44 +817,6 @@ class GlyphCanvas {
         if (this.textBuffer) {
             const textInfo = `Text: "${this.textBuffer}" (${this.shapedGlyphs.length} glyphs)`;
             this.ctx.fillText(textInfo, 10, 20);
-        }
-
-        // Draw glyph name tooltip on hover
-        if (this.hoveredGlyphIndex >= 0 && this.hoveredGlyphIndex < this.shapedGlyphs.length) {
-            const glyphId = this.shapedGlyphs[this.hoveredGlyphIndex].g;
-            let glyphName = `GID ${glyphId}`;
-
-            // Get glyph name from compiled font via OpenType.js
-            if (this.opentypeFont && this.opentypeFont.glyphs.get(glyphId)) {
-                const glyph = this.opentypeFont.glyphs.get(glyphId);
-                if (glyph.name) {
-                    glyphName = glyph.name;
-                }
-            }
-
-            // Position tooltip near mouse (using canvas coordinates)
-            const tooltipX = (this.mouseCanvasX || this.mouseX) + 15;
-            const tooltipY = (this.mouseCanvasY || this.mouseY) - 10;
-
-            // Measure text for background (bigger size)
-            this.ctx.font = '20px monospace';
-            const metrics = this.ctx.measureText(glyphName);
-            const padding = 16;
-            const bgWidth = metrics.width + padding * 2;
-            const bgHeight = 40;
-
-            // Draw background
-            this.ctx.fillStyle = isDarkTheme ? 'rgba(40, 40, 40, 0.95)' : 'rgba(255, 255, 255, 0.95)';
-            this.ctx.fillRect(tooltipX, tooltipY - bgHeight + padding, bgWidth, bgHeight);
-
-            // Draw border
-            this.ctx.strokeStyle = isDarkTheme ? 'rgba(255, 255, 255, 0.3)' : 'rgba(0, 0, 0, 0.3)';
-            this.ctx.lineWidth = 1;
-            this.ctx.strokeRect(tooltipX, tooltipY - bgHeight + padding, bgWidth, bgHeight);
-
-            // Draw text
-            this.ctx.fillStyle = isDarkTheme ? 'rgba(255, 255, 255, 0.9)' : 'rgba(0, 0, 0, 0.9)';
-            this.ctx.fillText(glyphName, tooltipX + padding, tooltipY + 2);
         }
 
         this.ctx.restore();
