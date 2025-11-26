@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -12,16 +13,19 @@
             padding: 20px;
             background: #f5f5f5;
         }
+
         .container {
             background: white;
             padding: 30px;
             border-radius: 8px;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
         }
+
         h1 {
             color: #333;
             margin-top: 0;
         }
+
         .status {
             padding: 15px;
             margin: 15px 0;
@@ -29,22 +33,27 @@
             font-family: monospace;
             font-size: 14px;
         }
+
         .loading {
             background: #fff3cd;
             border-left: 4px solid #ffc107;
         }
+
         .success {
             background: #d4edda;
             border-left: 4px solid #28a745;
         }
+
         .error {
             background: #f8d7da;
             border-left: 4px solid #dc3545;
         }
+
         .info {
             background: #d1ecf1;
             border-left: 4px solid #17a2b8;
         }
+
         button {
             background: #007bff;
             color: white;
@@ -55,13 +64,16 @@
             cursor: pointer;
             margin: 10px 5px 10px 0;
         }
+
         button:hover {
             background: #0056b3;
         }
+
         button:disabled {
             background: #6c757d;
             cursor: not-allowed;
         }
+
         .download-link {
             display: inline-block;
             padding: 12px 24px;
@@ -71,9 +83,11 @@
             border-radius: 4px;
             margin-top: 10px;
         }
+
         .download-link:hover {
             background: #218838;
         }
+
         pre {
             background: #f8f9fa;
             padding: 15px;
@@ -82,24 +96,28 @@
             max-height: 300px;
             overflow-y: auto;
         }
+
         .stats {
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
             gap: 15px;
             margin: 20px 0;
         }
+
         .stat-box {
             background: #f8f9fa;
             padding: 15px;
             border-radius: 4px;
             text-align: center;
         }
+
         .stat-label {
             font-size: 12px;
             color: #6c757d;
             text-transform: uppercase;
             margin-bottom: 5px;
         }
+
         .stat-value {
             font-size: 24px;
             font-weight: bold;
@@ -107,18 +125,19 @@
         }
     </style>
 </head>
+
 <body>
     <div class="container">
         <h1>🦀 Babelfont WASM Compiler Test</h1>
         <p>Test the babelfont → fontc → TTF compilation pipeline in the browser.</p>
-        
+
         <div id="status"></div>
-        
+
         <div id="controls">
             <button id="runTest" disabled>Run Test</button>
             <button id="clearLog">Clear Log</button>
         </div>
-        
+
         <div id="stats" class="stats" style="display: none;">
             <div class="stat-box">
                 <div class="stat-label">Input Size</div>
@@ -133,9 +152,9 @@
                 <div class="stat-value" id="compileTime">-</div>
             </div>
         </div>
-        
+
         <div id="downloadArea"></div>
-        
+
         <h3>Log</h3>
         <pre id="log"></pre>
     </div>
@@ -186,11 +205,11 @@
             }
             const text = await response.text();
             log(`✅ Loaded ${formatBytes(text.length)} of JSON`);
-            
+
             // Validate JSON
             JSON.parse(text);
             log('✅ JSON is valid');
-            
+
             return text;
         }
 
@@ -199,7 +218,7 @@
                 runButton.disabled = true;
                 downloadArea.innerHTML = '';
                 statsDiv.style.display = 'none';
-                
+
                 log('='.repeat(60));
                 log('🚀 Starting compilation test');
                 log('='.repeat(60));
@@ -212,11 +231,11 @@
                 // Compile using worker
                 log('🔨 Compiling font with WASM (in Web Worker)...');
                 setStatus('⚙️ Compiling...', 'loading');
-                
+
                 const ttfBytes = await compileInWorker(babelfontJson);
 
                 const duration = ttfBytes.duration.toFixed(2);
-                
+
                 log(`✅ Compilation successful!`);
                 log(`📊 Compiled in ${duration}ms`);
                 log(`📦 Output size: ${formatBytes(ttfBytes.data.length)}`);
@@ -255,10 +274,10 @@
         function compileInWorker(babelfontJson) {
             return new Promise((resolve, reject) => {
                 worker.postMessage({ type: 'compile', data: { babelfontJson } });
-                
+
                 const handler = (event) => {
                     const { type, ttfBytes, duration, error, stack } = event.data;
-                    
+
                     if (type === 'success') {
                         worker.removeEventListener('message', handler);
                         resolve({ data: ttfBytes, duration });
@@ -269,7 +288,7 @@
                         reject(err);
                     }
                 };
-                
+
                 worker.addEventListener('message', handler);
             });
         }
@@ -282,7 +301,7 @@
 
                 // Create worker
                 worker = new Worker('./test-compile-worker.js', { type: 'module' });
-                
+
                 // Wait for worker to be ready
                 await new Promise((resolve, reject) => {
                     worker.onmessage = (event) => {
@@ -293,15 +312,15 @@
                             reject(new Error(event.data.error));
                         }
                     };
-                    
+
                     worker.onerror = (error) => {
                         reject(error);
                     };
-                    
+
                     // Initialize the worker
                     worker.postMessage({ type: 'init' });
                 });
-                
+
                 setStatus('✅ Ready to compile', 'success');
                 runButton.disabled = false;
                 runButton.addEventListener('click', runCompilationTest);
@@ -319,4 +338,5 @@
         initialize();
     </script>
 </body>
+
 </html>

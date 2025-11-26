@@ -28,7 +28,7 @@ class CORSRequestHandler(SimpleHTTPRequestHandler):
 
 
 def run(port=8080):
-    server_address = ('', port)
+    server_address = ("", port)
     httpd = HTTPServer(server_address, CORSRequestHandler)
     print(f"🌐 Server running at http://localhost:{port}/")
     print(f"📂 Serving from: {os.getcwd()}")

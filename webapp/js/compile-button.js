@@ -16,13 +16,13 @@
         if (worker) return workerReady;
 
         console.log('🔧 Initializing fontc worker...');
-        
+
         try {
             worker = new Worker('js/fontc-compile-worker.js', { type: 'module' });
-            
+
             worker.onmessage = (e) => {
                 const { type, id, ttfBytes, duration, error, version } = e.data;
-                
+
                 if (type === 'ready') {
                     workerReady = true;
                     console.log('✅ Fontc worker ready:', version);
@@ -77,7 +77,7 @@
         }
 
         const id = ++compilationId;
-        
+
         return new Promise((resolve) => {
             pendingCompilations.set(id, resolve);
             worker.postMessage({
@@ -166,7 +166,7 @@ babelfont_json = orjson.dumps(font_dict).decode('utf-8')
             // Compile using the Web Worker
             const compileStart = performance.now();
             const result = await compileWithWorker(babelfontJson);
-            
+
             if (result.error) {
                 throw new Error(result.error);
             }

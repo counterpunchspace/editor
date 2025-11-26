@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -12,13 +13,19 @@
             padding: 20px;
             background: #f5f5f5;
         }
+
         .container {
             background: white;
             padding: 30px;
             border-radius: 8px;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
         }
-        h1 { color: #333; margin-top: 0; }
+
+        h1 {
+            color: #333;
+            margin-top: 0;
+        }
+
         button {
             background: #007bff;
             color: white;
@@ -29,11 +36,16 @@
             cursor: pointer;
             margin-right: 10px;
         }
-        button:hover { background: #0056b3; }
+
+        button:hover {
+            background: #0056b3;
+        }
+
         button:disabled {
             background: #ccc;
             cursor: not-allowed;
         }
+
         #log {
             background: #f8f9fa;
             border: 1px solid #dee2e6;
@@ -45,34 +57,49 @@
             font-family: 'Monaco', 'Courier New', monospace;
             font-size: 13px;
         }
+
         .log-entry {
             margin: 4px 0;
             padding: 2px 0;
         }
+
         .timestamp {
             color: #6c757d;
             margin-right: 8px;
         }
-        .success { color: #28a745; }
-        .error { color: #dc3545; }
-        .info { color: #17a2b8; }
+
+        .success {
+            color: #28a745;
+        }
+
+        .error {
+            color: #dc3545;
+        }
+
+        .info {
+            color: #17a2b8;
+        }
+
         .stats {
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
             gap: 15px;
             margin: 20px 0;
         }
+
         .stat-card {
             background: #f8f9fa;
             padding: 15px;
             border-radius: 4px;
             border-left: 4px solid #007bff;
         }
+
         .stat-label {
             font-size: 12px;
             color: #6c757d;
             text-transform: uppercase;
         }
+
         .stat-value {
             font-size: 24px;
             font-weight: bold;
@@ -81,11 +108,12 @@
         }
     </style>
 </head>
+
 <body>
     <div class="container">
         <h1>🦀 Font Compilation Test (Multi-threaded)</h1>
         <p>Testing babelfont → TTF compilation with rayon parallelism</p>
-        
+
         <div>
             <button id="compileBtn">Compile Fustat.babelfont</button>
             <button id="downloadBtn" disabled>Download TTF</button>
@@ -135,18 +163,18 @@
 
         async function initializeWasm() {
             addLog('🔧 Initializing WASM module with rayon...');
-            
+
             // Initialize the main WASM module
             const wasmModule = await init();
-            
+
             // Get memory and module for worker initialization
             const memory = wasmModule.memory;
             const module = wasmModule.module;
-            
+
             // Determine number of threads
             const numThreads = navigator.hardwareConcurrency || 4;
             addLog(`🧵 Starting ${numThreads} worker threads...`);
-            
+
             // Start rayon workers using wasm-bindgen-rayon helper
             // Note: This requires a special ThreadPoolBuilder from the WASM
             // For now, let's try without explicit worker startup
@@ -158,33 +186,33 @@
                 compileBtn.disabled = true;
                 downloadBtn.disabled = true;
                 statsDiv.style.display = 'none';
-                
+
                 addLog('📥 Loading Fustat.babelfont...');
                 const response = await fetch('examples/Fustat.babelfont');
                 const babelfontJson = await response.text();
                 const inputSize = babelfontJson.length;
                 addLog(`📄 Loaded ${(inputSize / 1024).toFixed(1)} KB`);
-                
+
                 addLog('🔨 Compiling font with rayon multi-threading...');
                 const startTime = performance.now();
-                
+
                 compiledTTF = compile_babelfont(babelfontJson);
-                
+
                 const endTime = performance.now();
                 const duration = endTime - startTime;
-                
+
                 addLog(`✅ Compilation successful in ${duration.toFixed(0)}ms`, 'success');
                 addLog(`📦 Output: ${(compiledTTF.length / 1024).toFixed(1)} KB`);
-                
+
                 // Update stats
                 document.getElementById('inputSize').textContent = `${(inputSize / 1024).toFixed(1)} KB`;
                 document.getElementById('outputSize').textContent = `${(compiledTTF.length / 1024).toFixed(1)} KB`;
                 document.getElementById('compileTime').textContent = `${duration.toFixed(0)} ms`;
                 document.getElementById('threadsUsed').textContent = navigator.hardwareConcurrency || '?';
                 statsDiv.style.display = 'grid';
-                
+
                 downloadBtn.disabled = false;
-                
+
             } catch (error) {
                 addLog(`❌ Error: ${error.message}`, 'error');
                 if (error.stack) {
@@ -197,7 +225,7 @@
 
         downloadBtn.addEventListener('click', () => {
             if (!compiledTTF) return;
-            
+
             const blob = new Blob([compiledTTF], { type: 'font/ttf' });
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
@@ -205,7 +233,7 @@
             a.download = 'Fustat-compiled.ttf';
             a.click();
             URL.revokeObjectURL(url);
-            
+
             addLog('💾 TTF file downloaded');
         });
 
@@ -215,4 +243,5 @@
         });
     </script>
 </body>
+
 </html>

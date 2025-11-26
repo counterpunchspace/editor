@@ -25,7 +25,7 @@ self.onmessage = async (event) => {
             const startTime = performance.now();
             const ttfBytes = compile_babelfont(data.babelfontJson);
             const endTime = performance.now();
-            
+
             console.log(`[Fontc Worker] Compiled in ${(endTime - startTime).toFixed(0)}ms`);
 
             self.postMessage({

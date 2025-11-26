@@ -1,9 +1,11 @@
 <!DOCTYPE html>
 <html>
+
 <head>
     <meta charset="UTF-8">
     <title>Simple WASM Test (No Worker)</title>
 </head>
+
 <body>
     <h1>Direct WASM Test</h1>
     <button id="test">Test Compilation</button>
@@ -23,17 +25,17 @@
                 addLog('1. Initializing WASM...');
                 await init();
                 addLog('2. WASM initialized: ' + version());
-                
+
                 addLog('3. Loading test font...');
                 const response = await fetch('examples/Fustat.babelfont');
                 const json = await response.text();
                 addLog('4. Loaded ' + (json.length / 1024).toFixed(1) + ' KB');
-                
+
                 addLog('5. Starting compilation...');
                 const start = Date.now();
                 const ttf = compile_babelfont(json);
                 const duration = Date.now() - start;
-                
+
                 addLog('6. SUCCESS! Compiled in ' + duration + 'ms');
                 addLog('   Output: ' + (ttf.length / 1024).toFixed(1) + ' KB');
             } catch (e) {
@@ -43,4 +45,5 @@
         });
     </script>
 </body>
+
 </html>

@@ -211,7 +211,7 @@ async function downloadFile(filePath, fileName) {
     try {
         // Read file from Pyodide filesystem
         const fileData = window.pyodide.FS.readFile(filePath);
-        
+
         // Create blob and download
         const blob = new Blob([fileData]);
         const url = URL.createObjectURL(blob);
@@ -220,9 +220,9 @@ async function downloadFile(filePath, fileName) {
         a.download = fileName;
         a.click();
         URL.revokeObjectURL(url);
-        
+
         console.log(`Downloaded: ${fileName}`);
-        
+
         if (window.term) {
             window.term.echo(`[[;lime;]📥 Downloaded: ${fileName}]`);
         }
@@ -503,4 +503,4 @@ window.createFolder = createFolder;
 window.deleteItem = deleteItem;
 window.uploadFiles = uploadFiles;
 window.handleFileUpload = handleFileUpload;
-window.openFont = openFont;window.downloadFile = downloadFile;
+window.openFont = openFont; window.downloadFile = downloadFile;

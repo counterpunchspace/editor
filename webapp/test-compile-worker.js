@@ -12,11 +12,11 @@ self.onmessage = async (event) => {
     try {
         if (type === 'init') {
             console.log('[Worker] Initializing WASM...');
-            
+
             // Initialize WASM module
             await init();
             console.log('[Worker] WASM module loaded');
-            
+
             initialized = true;
             const ver = version();
             console.log('[Worker] WASM initialized, version:', ver);
@@ -32,7 +32,7 @@ self.onmessage = async (event) => {
             const startTime = performance.now();
             const ttfBytes = compile_babelfont(data.babelfontJson);
             const endTime = performance.now();
-            
+
             console.log('[Worker] Compilation done!');
 
             self.postMessage({
