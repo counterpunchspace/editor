@@ -5,7 +5,7 @@
 (function () {
     'use strict';
 
-    const AUTO_COMPILE_DELAY = 1000; // 1 second of inactivity before compiling
+    const AUTO_COMPILE_DELAY = 500; // 1 second of inactivity before compiling
     let compileTimeout = null;
     let isEnabled = true;
     let isChecking = false; // Prevent recursive checks
