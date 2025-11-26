@@ -27,6 +27,9 @@ class GlyphCanvas {
         this.opentypeFont = null; // For glyph path extraction
         this.variationSettings = {}; // Store variable axis values
 
+        // Focus state for background color
+        this.isFocused = false;
+
         // Mouse interaction
         this.mouseX = 0;
         this.mouseY = 0;
@@ -63,6 +66,8 @@ class GlyphCanvas {
         this.canvas.style.height = '100%';
         this.canvas.style.display = 'block';
         this.canvas.style.cursor = 'grab';
+        this.canvas.style.outline = 'none'; // Remove focus outline
+        this.canvas.tabIndex = 0; // Make canvas focusable
         this.container.appendChild(this.canvas);
 
         // Get context
@@ -122,6 +127,16 @@ class GlyphCanvas {
         // Mouse move for hover detection
         this.canvas.addEventListener('mousemove', (e) => this.onMouseMoveHover(e));
 
+        // Focus/blur events for background color
+        this.canvas.addEventListener('focus', () => {
+            this.isFocused = true;
+            this.render();
+        });
+        this.canvas.addEventListener('blur', () => {
+            this.isFocused = false;
+            this.render();
+        });
+
         // Window resize
         window.addEventListener('resize', () => this.onResize());
 
@@ -131,6 +146,9 @@ class GlyphCanvas {
     }
 
     onMouseDown(e) {
+        // Focus the canvas when clicked
+        this.canvas.focus();
+        
         this.isDragging = true;
         this.lastMouseX = e.clientX;
         this.lastMouseY = e.clientY;
@@ -530,9 +548,20 @@ class GlyphCanvas {
         this.ctx.setTransform(1, 0, 0, 1, 0, 0);
         this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
 
-        // Fill background (white or dark based on theme)
-        const isDarkTheme = document.documentElement.getAttribute('data-theme') !== 'light';
-        this.ctx.fillStyle = isDarkTheme ? '#1e1e1e' : '#ffffff';
+        // Fill background (different color based on focus state)
+        // Get computed CSS variable values
+        const computedStyle = getComputedStyle(document.documentElement);
+        
+        // Check if canvas actually has focus
+        const actuallyFocused = document.activeElement === this.canvas;
+        
+        if (actuallyFocused) {
+            // Active/focused background (same as .view.focused)
+            this.ctx.fillStyle = computedStyle.getPropertyValue('--bg-active').trim();
+        } else {
+            // Inactive background (same as .view)
+            this.ctx.fillStyle = computedStyle.getPropertyValue('--bg-secondary').trim();
+        }
         this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
         this.ctx.restore();
 
