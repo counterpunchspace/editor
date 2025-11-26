@@ -82,6 +82,11 @@ SetCurrentFont("${fontId}")
                 console.log(`Set current font to ID: ${fontId}`);
                 // Update dirty indicator for newly selected font
                 await this.updateDirtyIndicator();
+                
+                // Dispatch fontLoaded event
+                window.dispatchEvent(new CustomEvent('fontLoaded', {
+                    detail: { fontId }
+                }));
             } else {
                 console.error(`Failed to set current font to ID: ${fontId}`);
             }

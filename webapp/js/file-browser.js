@@ -121,6 +121,11 @@ json.dumps(result)
 
         // Clear tracking promise (for save button compatibility)
         window._trackingInitPromise = Promise.resolve();
+        
+        // Dispatch fontLoaded event
+        window.dispatchEvent(new CustomEvent('fontLoaded', {
+            detail: { fontId: data.font_id, path }
+        }));
 
         // Play done sound
         if (window.playSound) {

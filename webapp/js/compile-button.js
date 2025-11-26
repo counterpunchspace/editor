@@ -238,7 +238,11 @@ babelfont_json = orjson.dumps(font_dict).decode('utf-8')
     });
 
     // Listen for font changes to update button state
-    window.addEventListener('fontLoaded', updateCompileButtonState);
+    window.addEventListener('fontLoaded', () => {
+        updateCompileButtonState();
+        // Auto-compile when font is loaded so glyphs appear in canvas
+        setTimeout(() => compileFont(), 100);
+    });
     window.addEventListener('fontClosed', updateCompileButtonState);
 
     // Initial state
