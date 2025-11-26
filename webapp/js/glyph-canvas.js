@@ -85,7 +85,7 @@ class GlyphCanvas {
 
     setupHiDPI() {
         const dpr = window.devicePixelRatio || 1;
-        
+
         // Get the container size (not the canvas bounding rect, which might be stale)
         const containerWidth = this.container.clientWidth;
         const containerHeight = this.container.clientHeight;
@@ -265,7 +265,7 @@ class GlyphCanvas {
 
                 // Update axes UI
                 this.updateAxesUI();
-                
+
                 // Shape text with new font
                 this.shapeText();
             }
@@ -276,14 +276,14 @@ class GlyphCanvas {
 
     setTextBuffer(text) {
         this.textBuffer = text || "";
-        
+
         // Save to localStorage
         try {
             localStorage.setItem('glyphCanvasTextBuffer', this.textBuffer);
         } catch (e) {
             console.warn('Failed to save text buffer to localStorage:', e);
         }
-        
+
         this.shapeText();
     }
 
@@ -302,16 +302,16 @@ class GlyphCanvas {
 
     updateAxesUI() {
         if (!this.axesSection) return;
-        
+
         // Clear existing axes
         this.axesSection.innerHTML = '';
-        
+
         const axes = this.getVariationAxes();
-        
+
         if (axes.length === 0) {
             return; // No variable axes
         }
-        
+
         // Add section title
         const title = document.createElement('div');
         title.textContent = 'Variable Axes';
@@ -322,35 +322,35 @@ class GlyphCanvas {
         title.style.letterSpacing = '0.5px';
         title.style.marginTop = '8px';
         this.axesSection.appendChild(title);
-        
+
         // Create slider for each axis
         axes.forEach(axis => {
             const axisContainer = document.createElement('div');
             axisContainer.style.display = 'flex';
             axisContainer.style.flexDirection = 'column';
             axisContainer.style.gap = '4px';
-            
+
             // Label row (axis name and value)
             const labelRow = document.createElement('div');
             labelRow.style.display = 'flex';
             labelRow.style.justifyContent = 'space-between';
             labelRow.style.alignItems = 'center';
             labelRow.style.fontSize = '13px';
-            
+
             const axisLabel = document.createElement('span');
             axisLabel.textContent = axis.name.en || axis.tag;
             axisLabel.style.color = 'var(--text-primary)';
             axisLabel.style.fontWeight = '500';
-            
+
             const valueLabel = document.createElement('span');
             valueLabel.style.color = 'var(--text-secondary)';
             valueLabel.style.fontFamily = 'var(--font-mono)';
             valueLabel.style.fontSize = '12px';
             valueLabel.textContent = axis.defaultValue.toFixed(0);
-            
+
             labelRow.appendChild(axisLabel);
             labelRow.appendChild(valueLabel);
-            
+
             // Slider
             const slider = document.createElement('input');
             slider.type = 'range';
@@ -359,22 +359,22 @@ class GlyphCanvas {
             slider.value = axis.defaultValue;
             slider.step = 1;
             slider.style.width = '100%';
-            
+
             // Initialize variation setting to default
             this.variationSettings[axis.tag] = axis.defaultValue;
-            
+
             // Update on change
             slider.addEventListener('input', (e) => {
                 const value = parseFloat(e.target.value);
                 valueLabel.textContent = value.toFixed(0);
                 this.setVariation(axis.tag, value);
             });
-            
+
             axisContainer.appendChild(labelRow);
             axisContainer.appendChild(slider);
             this.axesSection.appendChild(axisContainer);
         });
-        
+
         console.log(`Created ${axes.length} variable axis sliders`);
     }
 
@@ -390,7 +390,7 @@ class GlyphCanvas {
             if (Object.keys(this.variationSettings).length > 0) {
                 this.hbFont.setVariations(this.variationSettings);
             }
-            
+
             // Create HarfBuzz buffer
             const buffer = this.hb.createBuffer();
             buffer.addText(this.textBuffer);
@@ -525,7 +525,7 @@ class GlyphCanvas {
             try {
                 // Get glyph outline from HarfBuzz (supports variations)
                 const glyphData = this.hbFont.glyphToPath(glyphId);
-                
+
                 if (glyphData) {
                     this.ctx.save();
                     this.ctx.translate(x, y);
@@ -533,10 +533,10 @@ class GlyphCanvas {
                     // Draw the path from HarfBuzz data
                     // No need to flip Y here - the main transform matrix already flips Y
                     this.ctx.beginPath();
-                    
+
                     // Parse the SVG path data
                     const path = new Path2D(glyphData);
-                    
+
                     this.ctx.fill(path);
 
                     this.ctx.restore();
@@ -545,7 +545,7 @@ class GlyphCanvas {
                 // Fallback to OpenType.js if HarfBuzz glyph drawing fails
                 if (this.opentypeFont) {
                     const otGlyph = this.opentypeFont.glyphs.get(glyphId);
-                    
+
                     if (otGlyph) {
                         this.ctx.save();
                         this.ctx.translate(x, y);
@@ -593,7 +593,7 @@ class GlyphCanvas {
         const isDarkTheme = document.documentElement.getAttribute('data-theme') !== 'light';
         this.ctx.fillStyle = isDarkTheme ? 'rgba(255, 255, 255, 0.7)' : 'rgba(0, 0, 0, 0.7)';
         this.ctx.font = '12px monospace';
-        
+
         // Draw zoom level
         const zoomText = `Zoom: ${(this.scale * 100).toFixed(1)}%`;
         this.ctx.fillText(zoomText, 10, rect.height - 10);
@@ -651,7 +651,7 @@ document.addEventListener('DOMContentLoaded', () => {
             mainContainer.style.width = '100%';
             mainContainer.style.height = '100%';
             mainContainer.style.overflow = 'hidden';
-            
+
             // Create sidebar toolbar
             const sidebar = document.createElement('div');
             sidebar.id = 'glyph-editor-sidebar';
@@ -659,16 +659,16 @@ document.addEventListener('DOMContentLoaded', () => {
             sidebar.style.minWidth = '300px';
             sidebar.style.height = '100%';
             sidebar.style.backgroundColor = 'var(--bg-secondary)';
-            sidebar.style.borderRight = '1px solid var(--border-primary)';
+            sidebar.style.borderLeft = '1px solid var(--border-primary)';
             sidebar.style.padding = '16px';
             sidebar.style.overflowY = 'auto';
             sidebar.style.display = 'flex';
             sidebar.style.flexDirection = 'column';
             sidebar.style.gap = '16px';
-            
+
             // Create text input section
             const textInputSection = document.createElement('div');
-            
+
             const textInputLabel = document.createElement('label');
             textInputLabel.textContent = 'Text to Render';
             textInputLabel.style.display = 'block';
@@ -678,33 +678,33 @@ document.addEventListener('DOMContentLoaded', () => {
             textInputLabel.style.color = 'var(--text-secondary)';
             textInputLabel.style.textTransform = 'uppercase';
             textInputLabel.style.letterSpacing = '0.5px';
-            
+
             const textInput = document.createElement('input');
             textInput.type = 'text';
             textInput.id = 'glyph-text-input';
             textInput.placeholder = 'Enter text to render...';
             textInput.style.width = '100%';
             textInput.style.boxSizing = 'border-box';
-            
+
             textInputSection.appendChild(textInputLabel);
             textInputSection.appendChild(textInput);
             sidebar.appendChild(textInputSection);
-            
+
             // Create canvas container
             const canvasContainer = document.createElement('div');
             canvasContainer.id = 'glyph-canvas-container';
             canvasContainer.style.flex = '1';
             canvasContainer.style.height = '100%';
             canvasContainer.style.position = 'relative';
-            
-            // Assemble layout
-            mainContainer.appendChild(sidebar);
+
+            // Assemble layout (canvas first, then sidebar on the right)
             mainContainer.appendChild(canvasContainer);
+            mainContainer.appendChild(sidebar);
             editorContent.appendChild(mainContainer);
 
             // Initialize canvas
             window.glyphCanvas = new GlyphCanvas('glyph-canvas-container');
-            
+
             // Set input value from canvas's textBuffer (which loads from localStorage)
             textInput.value = window.glyphCanvas.textBuffer;
 
@@ -714,7 +714,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     window.glyphCanvas.setTextBuffer(e.target.value);
                 }
             });
-            
+
             // Create variable axes container (initially empty)
             const axesSection = document.createElement('div');
             axesSection.id = 'glyph-axes-section';
@@ -722,7 +722,7 @@ document.addEventListener('DOMContentLoaded', () => {
             axesSection.style.flexDirection = 'column';
             axesSection.style.gap = '12px';
             sidebar.appendChild(axesSection);
-            
+
             // Store reference to sidebar for later updates
             window.glyphCanvas.sidebar = sidebar;
             window.glyphCanvas.axesSection = axesSection;

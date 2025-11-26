@@ -52,7 +52,16 @@
         if (settings.animation && settings.animation.enabled) {
             setTimeout(() => {
                 disableTransitions();
+                // Save layout after resize completes
+                if (window.resizableViews) {
+                    window.resizableViews.saveLayout();
+                }
             }, settings.animation.duration);
+        } else {
+            // Save immediately if no animation
+            if (window.resizableViews) {
+                window.resizableViews.saveLayout();
+            }
         }
     }
 

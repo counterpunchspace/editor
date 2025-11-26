@@ -1,5 +1,8 @@
+console.log('resizer.js loaded');
+
 class ResizableViews {
     constructor() {
+        console.log('ResizableViews constructor called');
         this.isResizing = false;
         this.currentDivider = null;
         this.startX = 0;
@@ -33,6 +36,96 @@ class ResizableViews {
                 e.preventDefault();
             }
         });
+
+        // Load saved layout after a short delay to ensure DOM is ready
+        setTimeout(() => this.loadLayout(), 100);
+    }
+
+    loadLayout() {
+        try {
+            const saved = localStorage.getItem('viewLayout');
+            if (!saved) {
+                console.log('No saved view layout found');
+                return;
+            }
+
+            const layout = JSON.parse(saved);
+            console.log('Loading view layout:', layout);
+
+            // Apply horizontal layout
+            if (layout.horizontal) {
+                const topRow = document.querySelector('.top-row');
+                const bottomRow = document.querySelector('.bottom-row');
+                if (topRow && bottomRow) {
+                    topRow.style.flex = layout.horizontal.top;
+                    bottomRow.style.flex = layout.horizontal.bottom;
+                    console.log('Applied horizontal layout');
+                }
+            }
+
+            // Apply vertical layouts
+            if (layout.vertical) {
+                if (layout.vertical.top) {
+                    const topRow = document.querySelector('.top-row');
+                    const topViews = topRow?.querySelectorAll('.view');
+                    topViews?.forEach((view, index) => {
+                        if (layout.vertical.top[index] !== undefined) {
+                            view.style.flex = layout.vertical.top[index];
+                        }
+                    });
+                    console.log(`Applied ${topViews?.length} top view layouts`);
+                }
+
+                if (layout.vertical.bottom) {
+                    const bottomRow = document.querySelector('.bottom-row');
+                    const bottomViews = bottomRow?.querySelectorAll('.view');
+                    bottomViews?.forEach((view, index) => {
+                        if (layout.vertical.bottom[index] !== undefined) {
+                            view.style.flex = layout.vertical.bottom[index];
+                        }
+                    });
+                    console.log(`Applied ${bottomViews?.length} bottom view layouts`);
+                }
+            }
+
+            console.log('✅ View layout restored from localStorage');
+        } catch (e) {
+            console.warn('Failed to load view layout:', e);
+        }
+    }
+
+    saveLayout() {
+        try {
+            const topRow = document.querySelector('.top-row');
+            const bottomRow = document.querySelector('.bottom-row');
+
+            const layout = {
+                horizontal: {
+                    top: topRow?.style.flex || '1',
+                    bottom: bottomRow?.style.flex || '1'
+                },
+                vertical: {
+                    top: [],
+                    bottom: []
+                }
+            };
+
+            // Save top row views
+            const topViews = topRow?.querySelectorAll('.view');
+            topViews?.forEach(view => {
+                layout.vertical.top.push(view.style.flex || '1');
+            });
+
+            // Save bottom row views
+            const bottomViews = bottomRow?.querySelectorAll('.view');
+            bottomViews?.forEach(view => {
+                layout.vertical.bottom.push(view.style.flex || '1');
+            });
+
+            localStorage.setItem('viewLayout', JSON.stringify(layout));
+        } catch (e) {
+            console.warn('Failed to save view layout:', e);
+        }
     }
 
     startResize(e, direction) {
@@ -106,7 +199,7 @@ class ResizableViews {
             // Dragging left - resize left views proportionally, only the immediate right view changes
             const leftViews = views.slice(0, dividerIndex + 1);
             const rightView = views[dividerIndex + 1];
-            
+
             if (leftViews.length === 0 || !rightView) return;
 
             // Calculate total width of left group
@@ -124,13 +217,13 @@ class ResizableViews {
             if (newLeftTotalWidth >= minLeftTotalWidth && newRightWidth >= minWidth) {
                 // Scale left views proportionally
                 const leftScale = newLeftTotalWidth / leftTotalWidth;
-                
+
                 const newWidths = {};
                 leftViews.forEach((view, i) => {
                     newWidths[i] = this.startWidths[i] * leftScale;
                 });
                 newWidths[dividerIndex + 1] = newRightWidth;
-                
+
                 // Keep other views unchanged
                 for (let i = dividerIndex + 2; i < views.length; i++) {
                     newWidths[i] = this.startWidths[i];
@@ -150,11 +243,11 @@ class ResizableViews {
             // Dragging right - resize right views proportionally, only the immediate left view changes
             const leftView = views[dividerIndex];
             const rightViews = views.slice(dividerIndex + 1);
-            
+
             if (!leftView || rightViews.length === 0) return;
 
             const leftStartWidth = this.startWidths[dividerIndex];
-            
+
             // Calculate total width of right group
             let rightTotalWidth = 0;
             rightViews.forEach((view, i) => {
@@ -169,15 +262,15 @@ class ResizableViews {
             if (newLeftWidth >= minWidth && newRightTotalWidth >= minRightTotalWidth) {
                 // Scale right views proportionally
                 const rightScale = newRightTotalWidth / rightTotalWidth;
-                
+
                 const newWidths = {};
-                
+
                 // Keep left views unchanged except the immediate one
                 for (let i = 0; i < dividerIndex; i++) {
                     newWidths[i] = this.startWidths[i];
                 }
                 newWidths[dividerIndex] = newLeftWidth;
-                
+
                 // Scale right views
                 rightViews.forEach((view, i) => {
                     const index = dividerIndex + 1 + i;
@@ -238,13 +331,26 @@ class ResizableViews {
         // Reset cursor and selection
         document.body.style.cursor = 'default';
         document.body.style.userSelect = 'auto';
+
+        // Save layout after resize
+        this.saveLayout();
     }
 }
 
 // Initialize the resizable views when the DOM is loaded
-document.addEventListener('DOMContentLoaded', () => {
-    new ResizableViews();
-});
+function initResizableViews() {
+    console.log('Initializing ResizableViews...');
+    window.resizableViews = new ResizableViews();
+    console.log('ResizableViews initialized');
+}
+
+// Check if DOM is already loaded (in case script loads late)
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initResizableViews);
+} else {
+    // DOM already loaded, run immediately
+    initResizableViews();
+}
 
 // Handle window resize to maintain proportions
 window.addEventListener('resize', () => {
