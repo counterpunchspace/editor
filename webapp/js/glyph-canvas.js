@@ -27,6 +27,12 @@ class GlyphCanvas {
         this.opentypeFont = null; // For glyph path extraction
         this.variationSettings = {}; // Store variable axis values
 
+        // Mouse interaction
+        this.mouseX = 0;
+        this.mouseY = 0;
+        this.hoveredGlyphIndex = -1; // Index of glyph being hovered
+        this.glyphBounds = []; // Store bounding boxes for hit testing
+
         // HarfBuzz instance and objects
         this.hb = null;
         this.hbFont = null;
@@ -113,6 +119,9 @@ class GlyphCanvas {
         // Wheel event for zooming
         this.canvas.addEventListener('wheel', (e) => this.onWheel(e), { passive: false });
 
+        // Mouse move for hover detection
+        this.canvas.addEventListener('mousemove', (e) => this.onMouseMoveHover(e));
+
         // Window resize
         window.addEventListener('resize', () => this.onResize());
 
@@ -168,6 +177,83 @@ class GlyphCanvas {
 
         this.scale = newScale;
         this.render();
+    }
+
+    onMouseMoveHover(e) {
+        if (this.isDragging) return; // Don't detect hover while dragging
+
+        const rect = this.canvas.getBoundingClientRect();
+        // Store both canvas and client coordinates
+        this.mouseX = e.clientX - rect.left;
+        this.mouseY = e.clientY - rect.top;
+        // Scale for HiDPI
+        this.mouseCanvasX = this.mouseX * this.canvas.width / rect.width;
+        this.mouseCanvasY = this.mouseY * this.canvas.height / rect.height;
+
+        // Check which glyph is being hovered
+        this.updateHoveredGlyph();
+    }
+
+    updateHoveredGlyph() {
+        // Use HiDPI-scaled mouse coordinates for hit testing
+        const mouseX = this.mouseCanvasX || this.mouseX;
+        const mouseY = this.mouseCanvasY || this.mouseY;
+
+        // Transform mouse coordinates to glyph space
+        const transform = this.getTransformMatrix();
+
+        // Inverse transform to get glyph-space coordinates
+        const det = transform.a * transform.d - transform.b * transform.c;
+        const glyphX = (transform.d * (mouseX - transform.e) - transform.c * (mouseY - transform.f)) / det;
+        const glyphY = (transform.a * (mouseY - transform.f) - transform.b * (mouseX - transform.e)) / det;
+
+        let foundIndex = -1;
+
+        // Check each glyph using path hit testing
+        let xPosition = 0;
+        for (let i = 0; i < this.shapedGlyphs.length; i++) {
+            const glyph = this.shapedGlyphs[i];
+            const glyphId = glyph.g;
+            const xOffset = glyph.dx || 0;
+            const yOffset = glyph.dy || 0;
+            const xAdvance = glyph.ax || 0;
+
+            const x = xPosition + xOffset;
+            const y = yOffset;
+
+            // Check if point is within this glyph's path
+            try {
+                const glyphData = this.hbFont.glyphToPath(glyphId);
+                if (glyphData) {
+                    const path = new Path2D(glyphData);
+
+                    // Create a temporary context for hit testing with proper transform
+                    this.ctx.save();
+
+                    // Apply the same transform as rendering
+                    this.ctx.setTransform(transform.a, transform.b, transform.c, transform.d, transform.e, transform.f);
+                    this.ctx.translate(x, y);
+
+                    // Test if mouse point is in path (in canvas coordinates)
+                    if (this.ctx.isPointInPath(path, this.mouseX, this.mouseY)) {
+                        foundIndex = i;
+                        this.ctx.restore();
+                        break;
+                    }
+
+                    this.ctx.restore();
+                }
+            } catch (error) {
+                // Skip this glyph if path extraction fails
+            }
+
+            xPosition += xAdvance;
+        }
+
+        if (foundIndex !== this.hoveredGlyphIndex) {
+            this.hoveredGlyphIndex = foundIndex;
+            this.render();
+        }
     }
 
     onResize() {
@@ -508,11 +594,15 @@ class GlyphCanvas {
         const invScale = 1 / this.scale;
         let xPosition = 0;
 
+        // Clear glyph bounds for hit testing
+        this.glyphBounds = [];
+
         // Use black on white or white on black based on theme
         const isDarkTheme = document.documentElement.getAttribute('data-theme') !== 'light';
-        this.ctx.fillStyle = isDarkTheme ? '#ffffff' : '#000000';
+        const normalColor = isDarkTheme ? '#ffffff' : '#000000';
+        const hoverColor = '#ff00ff'; // Magenta for hover
 
-        for (const glyph of this.shapedGlyphs) {
+        this.shapedGlyphs.forEach((glyph, glyphIndex) => {
             const glyphId = glyph.g;
             const xOffset = glyph.dx || 0;
             const yOffset = glyph.dy || 0;
@@ -521,6 +611,18 @@ class GlyphCanvas {
 
             const x = xPosition + xOffset;
             const y = yOffset;
+
+            // Store bounds for hit testing (approximate with advance width)
+            this.glyphBounds.push({
+                x: x,
+                y: y,
+                width: xAdvance,
+                height: 1000 // Font units height approximation
+            });
+
+            // Set color based on hover state
+            const isHovered = glyphIndex === this.hoveredGlyphIndex;
+            this.ctx.fillStyle = isHovered ? hoverColor : normalColor;
 
             try {
                 // Get glyph outline from HarfBuzz (supports variations)
@@ -580,10 +682,8 @@ class GlyphCanvas {
             }
 
             xPosition += xAdvance;
-        }
-    }
-
-    drawUIOverlay() {
+        });
+    } drawUIOverlay() {
         this.ctx.save();
         this.ctx.setTransform(1, 0, 0, 1, 0, 0);
 
@@ -606,6 +706,44 @@ class GlyphCanvas {
         if (this.textBuffer) {
             const textInfo = `Text: "${this.textBuffer}" (${this.shapedGlyphs.length} glyphs)`;
             this.ctx.fillText(textInfo, 10, 20);
+        }
+
+        // Draw glyph name tooltip on hover
+        if (this.hoveredGlyphIndex >= 0 && this.hoveredGlyphIndex < this.shapedGlyphs.length) {
+            const glyphId = this.shapedGlyphs[this.hoveredGlyphIndex].g;
+            let glyphName = `GID ${glyphId}`;
+
+            // Try to get glyph name from OpenType.js
+            if (this.opentypeFont && this.opentypeFont.glyphs.get(glyphId)) {
+                const glyph = this.opentypeFont.glyphs.get(glyphId);
+                if (glyph.name) {
+                    glyphName = glyph.name;
+                }
+            }
+
+            // Position tooltip near mouse (using canvas coordinates)
+            const tooltipX = (this.mouseCanvasX || this.mouseX) + 15;
+            const tooltipY = (this.mouseCanvasY || this.mouseY) - 10;
+
+            // Measure text for background
+            this.ctx.font = '14px monospace';
+            const metrics = this.ctx.measureText(glyphName);
+            const padding = 6;
+            const bgWidth = metrics.width + padding * 2;
+            const bgHeight = 20;
+
+            // Draw background
+            this.ctx.fillStyle = isDarkTheme ? 'rgba(40, 40, 40, 0.95)' : 'rgba(255, 255, 255, 0.95)';
+            this.ctx.fillRect(tooltipX, tooltipY - bgHeight + padding, bgWidth, bgHeight);
+
+            // Draw border
+            this.ctx.strokeStyle = isDarkTheme ? 'rgba(255, 255, 255, 0.3)' : 'rgba(0, 0, 0, 0.3)';
+            this.ctx.lineWidth = 1;
+            this.ctx.strokeRect(tooltipX, tooltipY - bgHeight + padding, bgWidth, bgHeight);
+
+            // Draw text
+            this.ctx.fillStyle = isDarkTheme ? 'rgba(255, 255, 255, 0.9)' : 'rgba(0, 0, 0, 0.9)';
+            this.ctx.fillText(glyphName, tooltipX + padding, tooltipY);
         }
 
         this.ctx.restore();
