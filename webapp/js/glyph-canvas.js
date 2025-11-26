@@ -317,6 +317,9 @@ class GlyphCanvas {
         }
 
         try {
+            // Store current variation settings to restore after font reload
+            const previousVariationSettings = { ...this.variationSettings };
+
             // Store font blob
             this.fontBlob = fontArrayBuffer;
 
@@ -349,7 +352,11 @@ class GlyphCanvas {
 
                 console.log('Font loaded into HarfBuzz');
 
-                // Update axes UI
+                // Restore previous variation settings before updating UI
+                // This ensures the sliders show the previous values
+                this.variationSettings = previousVariationSettings;
+
+                // Update axes UI (will restore slider positions from variationSettings)
                 this.updateAxesUI();
 
                 // Shape text with new font
@@ -442,12 +449,19 @@ class GlyphCanvas {
             slider.type = 'range';
             slider.min = axis.minValue;
             slider.max = axis.maxValue;
-            slider.value = axis.defaultValue;
             slider.step = 1;
             slider.style.width = '100%';
 
-            // Initialize variation setting to default
-            this.variationSettings[axis.tag] = axis.defaultValue;
+            // Restore previous value if it exists, otherwise use default
+            const initialValue = this.variationSettings[axis.tag] !== undefined 
+                ? this.variationSettings[axis.tag]
+                : axis.defaultValue;
+            
+            slider.value = initialValue;
+            valueLabel.textContent = initialValue.toFixed(0);
+
+            // Initialize variation setting
+            this.variationSettings[axis.tag] = initialValue;
 
             // Update on change
             slider.addEventListener('input', (e) => {
