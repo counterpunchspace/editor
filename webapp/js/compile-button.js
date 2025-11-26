@@ -198,6 +198,11 @@ babelfont_json = orjson.dumps(font_dict).decode('utf-8')
                 window.term.echo('');
             }
 
+            // Dispatch event for canvas to load the compiled font
+            window.dispatchEvent(new CustomEvent('fontCompiled', {
+                detail: { ttfBytes, outputPath, duration: totalTime }
+            }));
+
             // Reset button text
             compileBtn.textContent = originalText;
 

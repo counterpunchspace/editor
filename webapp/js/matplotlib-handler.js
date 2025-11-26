@@ -180,6 +180,11 @@
             return false;
         }
 
+        // Skip the glyph editor canvas
+        if (canvas.closest('#glyph-canvas-container')) {
+            return false;
+        }
+
         // Skip very small canvases (likely not plots)
         if (canvas.width < 100 || canvas.height < 100) {
             return false;

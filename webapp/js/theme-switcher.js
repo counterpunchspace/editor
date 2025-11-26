@@ -126,6 +126,11 @@
 
             // Update Ace editor theme if it exists
             this.updateAceTheme(theme);
+            
+            // Update glyph canvas if it exists
+            if (window.glyphCanvas) {
+                window.glyphCanvas.render();
+            }
         }
 
         updateAceTheme(theme) {
