@@ -1484,41 +1484,74 @@ class GlyphCanvas {
             return 0;
         }
 
-        // Find closest cluster
+        // Find closest cursor position accounting for RTL
         let closestPos = 0;
         let closestDist = Infinity;
 
-        // Check start of text
-        if (Math.abs(glyphX - 0) < closestDist) {
-            closestDist = Math.abs(glyphX - 0);
-            closestPos = 0;
-        }
-
-        // Check each cluster boundary
+        // Check each cluster
         for (const cluster of this.clusterMap) {
-            // Start of cluster
-            const distStart = Math.abs(glyphX - cluster.x);
-            if (distStart < closestDist) {
-                closestDist = distStart;
-                closestPos = cluster.start;
-            }
+            if (cluster.isRTL) {
+                // RTL: start position is at RIGHT edge, end position is at LEFT edge
+                const rightEdge = cluster.x + cluster.width;
+                const leftEdge = cluster.x;
 
-            // End of cluster
-            const distEnd = Math.abs(glyphX - (cluster.x + cluster.width));
-            if (distEnd < closestDist) {
-                closestDist = distEnd;
-                closestPos = cluster.end;
-            }
+                // Distance to start position (right edge)
+                const distStart = Math.abs(glyphX - rightEdge);
+                if (distStart < closestDist) {
+                    closestDist = distStart;
+                    closestPos = cluster.start;
+                }
 
-            // Inside cluster - find intermediate positions if multi-character
-            if (cluster.end - cluster.start > 1) {
-                for (let i = cluster.start + 1; i < cluster.end; i++) {
-                    const progress = (i - cluster.start) / (cluster.end - cluster.start);
-                    const intermediateX = cluster.x + cluster.width * progress;
-                    const distIntermediate = Math.abs(glyphX - intermediateX);
-                    if (distIntermediate < closestDist) {
-                        closestDist = distIntermediate;
-                        closestPos = i;
+                // Distance to end position (left edge)
+                const distEnd = Math.abs(glyphX - leftEdge);
+                if (distEnd < closestDist) {
+                    closestDist = distEnd;
+                    closestPos = cluster.end;
+                }
+
+                // Intermediate positions if multi-character cluster
+                if (cluster.end - cluster.start > 1) {
+                    for (let i = cluster.start + 1; i < cluster.end; i++) {
+                        const progress = (i - cluster.start) / (cluster.end - cluster.start);
+                        // RTL: interpolate from right to left
+                        const intermediateX = rightEdge - cluster.width * progress;
+                        const distIntermediate = Math.abs(glyphX - intermediateX);
+                        if (distIntermediate < closestDist) {
+                            closestDist = distIntermediate;
+                            closestPos = i;
+                        }
+                    }
+                }
+            } else {
+                // LTR: start position is at LEFT edge, end position is at RIGHT edge
+                const leftEdge = cluster.x;
+                const rightEdge = cluster.x + cluster.width;
+
+                // Distance to start position (left edge)
+                const distStart = Math.abs(glyphX - leftEdge);
+                if (distStart < closestDist) {
+                    closestDist = distStart;
+                    closestPos = cluster.start;
+                }
+
+                // Distance to end position (right edge)
+                const distEnd = Math.abs(glyphX - rightEdge);
+                if (distEnd < closestDist) {
+                    closestDist = distEnd;
+                    closestPos = cluster.end;
+                }
+
+                // Intermediate positions if multi-character cluster
+                if (cluster.end - cluster.start > 1) {
+                    for (let i = cluster.start + 1; i < cluster.end; i++) {
+                        const progress = (i - cluster.start) / (cluster.end - cluster.start);
+                        // LTR: interpolate from left to right
+                        const intermediateX = leftEdge + cluster.width * progress;
+                        const distIntermediate = Math.abs(glyphX - intermediateX);
+                        if (distIntermediate < closestDist) {
+                            closestDist = distIntermediate;
+                            closestPos = i;
+                        }
                     }
                 }
             }
