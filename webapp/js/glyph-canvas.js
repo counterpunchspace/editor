@@ -39,7 +39,7 @@ class GlyphCanvas {
         this.cursorX = 0; // Visual X position for rendering
         this.clusterMap = []; // Maps logical char positions to visual glyph info
         this.embeddingLevels = null; // BiDi embedding levels for cursor logic
-        
+
         // Selection state
         this.selectionStart = null; // Start of selection (null = no selection)
         this.selectionEnd = null;   // End of selection
@@ -792,7 +792,7 @@ class GlyphCanvas {
 
         // Draw baseline
         this.drawBaseline();
-        
+
         // Draw selection highlight
         this.drawSelection();
 
@@ -1095,7 +1095,7 @@ class GlyphCanvas {
 
     onKeyDown(e) {
         // Handle cursor navigation and text editing
-        
+
         // Cmd+A / Ctrl+A - Select All
         if ((e.metaKey || e.ctrlKey) && e.key === 'a') {
             e.preventDefault();
@@ -1103,6 +1103,27 @@ class GlyphCanvas {
             return;
         }
         
+        // Cmd+C / Ctrl+C - Copy
+        if ((e.metaKey || e.ctrlKey) && e.key === 'c') {
+            e.preventDefault();
+            this.copySelection();
+            return;
+        }
+        
+        // Cmd+X / Ctrl+X - Cut
+        if ((e.metaKey || e.ctrlKey) && e.key === 'x') {
+            e.preventDefault();
+            this.cutSelection();
+            return;
+        }
+        
+        // Cmd+V / Ctrl+V - Paste
+        if ((e.metaKey || e.ctrlKey) && e.key === 'v') {
+            e.preventDefault();
+            this.paste();
+            return;
+        }
+
         if (e.key === 'ArrowLeft') {
             e.preventDefault();
             if (e.shiftKey) {
@@ -1235,18 +1256,18 @@ class GlyphCanvas {
         }
         console.log('==================');
     }
-    
+
     // ==================== Selection Methods ====================
-    
+
     clearSelection() {
         this.selectionStart = null;
         this.selectionEnd = null;
     }
-    
+
     hasSelection() {
         return this.selectionStart !== null && this.selectionEnd !== null && this.selectionStart !== this.selectionEnd;
     }
-    
+
     getSelectionRange() {
         if (!this.hasSelection()) {
             return { start: this.cursorPosition, end: this.cursorPosition };
@@ -1256,7 +1277,7 @@ class GlyphCanvas {
             end: Math.max(this.selectionStart, this.selectionEnd)
         };
     }
-    
+
     selectAll() {
         this.selectionStart = 0;
         this.selectionEnd = this.textBuffer.length;
@@ -1265,47 +1286,47 @@ class GlyphCanvas {
         this.updateCursorVisualPosition();
         this.render();
     }
-    
+
     moveCursorLeftWithSelection() {
         // Start selection if none exists
         if (!this.hasSelection()) {
             this.selectionStart = this.cursorPosition;
         }
-        
+
         // Move cursor
         this.moveCursorLogicalBackward();
-        
+
         // Update selection end
         this.selectionEnd = this.cursorPosition;
-        
+
         if (this.hasSelection()) {
             const range = this.getSelectionRange();
             console.log('Selection:', `"${this.textBuffer.slice(range.start, range.end)}"`, `[${range.start}-${range.end}]`);
         }
-        
+
         this.render();
     }
-    
+
     moveCursorRightWithSelection() {
         // Start selection if none exists
         if (!this.hasSelection()) {
             this.selectionStart = this.cursorPosition;
         }
-        
+
         // Move cursor
         this.moveCursorLogicalForward();
-        
+
         // Update selection end
         this.selectionEnd = this.cursorPosition;
-        
+
         if (this.hasSelection()) {
             const range = this.getSelectionRange();
             console.log('Selection:', `"${this.textBuffer.slice(range.start, range.end)}"`, `[${range.start}-${range.end}]`);
         }
-        
+
         this.render();
     }
-    
+
     moveToStartWithSelection() {
         if (!this.hasSelection()) {
             this.selectionStart = this.cursorPosition;
@@ -1319,7 +1340,7 @@ class GlyphCanvas {
         this.updateCursorVisualPosition();
         this.render();
     }
-    
+
     moveToEndWithSelection() {
         if (!this.hasSelection()) {
             this.selectionStart = this.cursorPosition;
@@ -1333,6 +1354,70 @@ class GlyphCanvas {
         this.updateCursorVisualPosition();
         this.render();
     }
+    
+    // ==================== Clipboard Methods ====================
+    
+    async copySelection() {
+        if (!this.hasSelection()) {
+            return;
+        }
+        
+        const range = this.getSelectionRange();
+        const selectedText = this.textBuffer.slice(range.start, range.end);
+        
+        try {
+            await navigator.clipboard.writeText(selectedText);
+            console.log('Copied to clipboard:', `"${selectedText}"`);
+        } catch (err) {
+            console.error('Failed to copy to clipboard:', err);
+        }
+    }
+    
+    async cutSelection() {
+        if (!this.hasSelection()) {
+            return;
+        }
+        
+        // Copy first
+        await this.copySelection();
+        
+        // Then delete
+        const range = this.getSelectionRange();
+        console.log('Cutting selection:', `"${this.textBuffer.slice(range.start, range.end)}"`, `[${range.start}-${range.end}]`);
+        this.textBuffer = this.textBuffer.slice(0, range.start) + this.textBuffer.slice(range.end);
+        this.cursorPosition = range.start;
+        this.clearSelection();
+        
+        console.log('New cursor position:', this.cursorPosition);
+        console.log('New text:', this.textBuffer);
+        
+        // Save to localStorage
+        localStorage.setItem('glyphCanvasTextBuffer', this.textBuffer);
+        
+        // Reshape and render
+        this.shapeText();
+        this.updateCursorVisualPosition();
+        
+        // If text is now empty, reset cursor to origin
+        if (this.textBuffer.length === 0) {
+            this.cursorPosition = 0;
+            this.cursorX = 0;
+        }
+        
+        this.render();
+    }
+    
+    async paste() {
+        try {
+            const text = await navigator.clipboard.readText();
+            console.log('Pasting from clipboard:', `"${text}"`);
+            
+            // insertText already handles replacing selection
+            this.insertText(text);
+        } catch (err) {
+            console.error('Failed to paste from clipboard:', err);
+        }
+    }
 
     insertText(text) {
         // If there's a selection, delete it first
@@ -1342,7 +1427,7 @@ class GlyphCanvas {
             this.cursorPosition = range.start;
             this.clearSelection();
         }
-        
+
         // Insert text at cursor position
         this.textBuffer = this.textBuffer.slice(0, this.cursorPosition) +
             text +
@@ -1361,7 +1446,7 @@ class GlyphCanvas {
     deleteBackward() {
         console.log('=== Delete Backward (Backspace) ===');
         this.logCursorState();
-        
+
         // If there's a selection, delete it
         if (this.hasSelection()) {
             const range = this.getSelectionRange();
@@ -1369,23 +1454,23 @@ class GlyphCanvas {
             this.textBuffer = this.textBuffer.slice(0, range.start) + this.textBuffer.slice(range.end);
             this.cursorPosition = range.start;
             this.clearSelection();
-            
+
             console.log('New cursor position:', this.cursorPosition);
             console.log('New text:', this.textBuffer);
-            
+
             // Save to localStorage
             localStorage.setItem('glyphCanvasTextBuffer', this.textBuffer);
-            
+
             // Reshape and render
             this.shapeText();
             this.updateCursorVisualPosition();
-            
+
             // If text is now empty, reset cursor to origin
             if (this.textBuffer.length === 0) {
                 this.cursorPosition = 0;
                 this.cursorX = 0;
             }
-            
+
             this.render();
         } else if (this.cursorPosition > 0) {
             // Backspace always deletes the character BEFORE cursor (position - 1)
@@ -1417,7 +1502,7 @@ class GlyphCanvas {
     deleteForward() {
         console.log('=== Delete Forward (Delete key) ===');
         this.logCursorState();
-        
+
         // If there's a selection, delete it
         if (this.hasSelection()) {
             const range = this.getSelectionRange();
@@ -1425,23 +1510,23 @@ class GlyphCanvas {
             this.textBuffer = this.textBuffer.slice(0, range.start) + this.textBuffer.slice(range.end);
             this.cursorPosition = range.start;
             this.clearSelection();
-            
+
             console.log('New cursor position:', this.cursorPosition);
             console.log('New text:', this.textBuffer);
-            
+
             // Save to localStorage
             localStorage.setItem('glyphCanvasTextBuffer', this.textBuffer);
-            
+
             // Reshape and render
             this.shapeText();
             this.updateCursorVisualPosition();
-            
+
             // If text is now empty, reset cursor to origin
             if (this.textBuffer.length === 0) {
                 this.cursorPosition = 0;
                 this.cursorX = 0;
             }
-            
+
             this.render();
         } else if (this.cursorPosition < this.textBuffer.length) {
             // Delete key always deletes the character AT cursor (position)
@@ -1758,49 +1843,49 @@ class GlyphCanvas {
 
         return closestPos;
     }
-    
+
     drawSelection() {
         // Draw selection highlight
         if (!this.hasSelection() || !this.clusterMap || this.clusterMap.length === 0) {
             return;
         }
-        
+
         const range = this.getSelectionRange();
         const invScale = 1 / this.scale;
-        
+
         console.log('=== Drawing Selection ===');
         console.log('Selection range:', range);
         console.log('Text:', `"${this.textBuffer.slice(range.start, range.end)}"`);
-        
+
         // Draw selection highlight for each cluster in range
         this.ctx.fillStyle = 'rgba(100, 150, 255, 0.3)';
-        
+
         for (const cluster of this.clusterMap) {
             // Check if this cluster overlaps with selection
             const clusterStart = cluster.start;
             const clusterEnd = cluster.end;
-            
+
             // Skip if cluster is completely outside selection
             if (clusterEnd <= range.start || clusterStart >= range.end) {
                 continue;
             }
-            
+
             console.log(`Drawing selection for cluster [${clusterStart}-${clusterEnd}), RTL=${cluster.isRTL}, x=${cluster.x.toFixed(0)}, width=${cluster.width.toFixed(0)}`);
-            
+
             // Calculate which part of the cluster is selected
             // Use the actual overlap, not interpolated positions
             const selStart = Math.max(range.start, clusterStart);
             const selEnd = Math.min(range.end, clusterEnd);
-            
+
             console.log(`  Selection overlap: [${selStart}-${selEnd})`);
-            
+
             // Check if we're selecting the entire cluster or just part of it
             const isFullySelected = (selStart === clusterStart && selEnd === clusterEnd);
             const isPartiallySelected = !isFullySelected;
-            
+
             // Calculate visual position and width for selected portion
             let highlightX, highlightWidth;
-            
+
             if (isFullySelected) {
                 // Entire cluster is selected - draw full width
                 highlightX = cluster.x;
@@ -1810,15 +1895,15 @@ class GlyphCanvas {
                 // RTL: right edge is start, left edge is end
                 const rightEdge = cluster.x + cluster.width;
                 const leftEdge = cluster.x;
-                
+
                 // Only interpolate if this is a multi-character cluster
                 if (clusterEnd - clusterStart > 1) {
                     const startProgress = (selStart - clusterStart) / (clusterEnd - clusterStart);
                     const endProgress = (selEnd - clusterStart) / (clusterEnd - clusterStart);
-                    
+
                     const startX = rightEdge - cluster.width * startProgress;
                     const endX = rightEdge - cluster.width * endProgress;
-                    
+
                     highlightX = Math.min(startX, endX);
                     highlightWidth = Math.abs(startX - endX);
                     console.log(`  RTL partial (multi-char): progress ${startProgress.toFixed(2)}-${endProgress.toFixed(2)}, x=${highlightX.toFixed(0)}, width=${highlightWidth.toFixed(0)}`);
@@ -1830,12 +1915,12 @@ class GlyphCanvas {
                 }
             } else {
                 // LTR: left edge is start, right edge is end
-                
+
                 // Only interpolate if this is a multi-character cluster
                 if (clusterEnd - clusterStart > 1) {
                     const startProgress = (selStart - clusterStart) / (clusterEnd - clusterStart);
                     const endProgress = (selEnd - clusterStart) / (clusterEnd - clusterStart);
-                    
+
                     highlightX = cluster.x + cluster.width * startProgress;
                     highlightWidth = cluster.width * (endProgress - startProgress);
                     console.log(`  LTR partial (multi-char): progress ${startProgress.toFixed(2)}-${endProgress.toFixed(2)}, x=${highlightX.toFixed(0)}, width=${highlightWidth.toFixed(0)}`);
@@ -1846,11 +1931,11 @@ class GlyphCanvas {
                     console.log(`  LTR partial (single-char): x=${highlightX.toFixed(0)}, width=${highlightWidth.toFixed(0)}`);
                 }
             }
-            
+
             // Draw highlight rectangle
             this.ctx.fillRect(highlightX, -300, highlightWidth, 1300);
         }
-        
+
         console.log('========================');
     }
 
