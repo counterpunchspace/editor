@@ -1154,6 +1154,7 @@ class GlyphCanvas {
                 this.clearSelection();
                 this.cursorPosition = 0;
                 this.updateCursorVisualPosition();
+                this.panToCursor();
                 this.render();
             }
         } else if (e.key === 'End') {
@@ -1164,6 +1165,7 @@ class GlyphCanvas {
                 this.clearSelection();
                 this.cursorPosition = this.textBuffer.length;
                 this.updateCursorVisualPosition();
+                this.panToCursor();
                 this.render();
             }
         } else if (e.key.length === 1 && !e.ctrlKey && !e.metaKey) {
@@ -1179,6 +1181,7 @@ class GlyphCanvas {
 
         // Left arrow = backward in logical order (decrease position)
         this.moveCursorLogicalBackward();
+        this.panToCursor();
         this.render();
     }
 
@@ -1188,6 +1191,7 @@ class GlyphCanvas {
 
         // Right arrow = forward in logical order (increase position)
         this.moveCursorLogicalForward();
+        this.panToCursor();
         this.render();
     }
 
@@ -1284,6 +1288,7 @@ class GlyphCanvas {
         this.cursorPosition = this.textBuffer.length;
         console.log('Selected all:', `"${this.textBuffer.slice(0, this.textBuffer.length)}"`, `[${this.selectionStart}-${this.selectionEnd}]`);
         this.updateCursorVisualPosition();
+        this.panToCursor();
         this.render();
     }
 
@@ -1304,6 +1309,7 @@ class GlyphCanvas {
             console.log('Selection:', `"${this.textBuffer.slice(range.start, range.end)}"`, `[${range.start}-${range.end}]`);
         }
 
+        this.panToCursor();
         this.render();
     }
 
@@ -1324,6 +1330,7 @@ class GlyphCanvas {
             console.log('Selection:', `"${this.textBuffer.slice(range.start, range.end)}"`, `[${range.start}-${range.end}]`);
         }
 
+        this.panToCursor();
         this.render();
     }
 
@@ -1338,6 +1345,7 @@ class GlyphCanvas {
             console.log('Selection:', `"${this.textBuffer.slice(range.start, range.end)}"`, `[${range.start}-${range.end}]`);
         }
         this.updateCursorVisualPosition();
+        this.panToCursor();
         this.render();
     }
 
@@ -1352,6 +1360,7 @@ class GlyphCanvas {
             console.log('Selection:', `"${this.textBuffer.slice(range.start, range.end)}"`, `[${range.start}-${range.end}]`);
         }
         this.updateCursorVisualPosition();
+        this.panToCursor();
         this.render();
     }
 
@@ -1397,6 +1406,7 @@ class GlyphCanvas {
         // Reshape and render
         this.shapeText();
         this.updateCursorVisualPosition();
+        this.panToCursor();
 
         // If text is now empty, reset cursor to origin
         if (this.textBuffer.length === 0) {
@@ -1440,6 +1450,7 @@ class GlyphCanvas {
         // Reshape and render
         this.shapeText();
         this.updateCursorVisualPosition();
+        this.panToCursor();
         this.render();
     }
 
@@ -1464,6 +1475,7 @@ class GlyphCanvas {
             // Reshape and render
             this.shapeText();
             this.updateCursorVisualPosition();
+            this.panToCursor();
 
             // If text is now empty, reset cursor to origin
             if (this.textBuffer.length === 0) {
@@ -1488,6 +1500,7 @@ class GlyphCanvas {
             // Reshape and render
             this.shapeText();
             this.updateCursorVisualPosition();
+            this.panToCursor();
 
             // If text is now empty, reset cursor to origin
             if (this.textBuffer.length === 0) {
@@ -1520,6 +1533,7 @@ class GlyphCanvas {
             // Reshape and render
             this.shapeText();
             this.updateCursorVisualPosition();
+            this.panToCursor();
 
             // If text is now empty, reset cursor to origin
             if (this.textBuffer.length === 0) {
@@ -1549,6 +1563,7 @@ class GlyphCanvas {
             // Reshape and render
             this.shapeText();
             this.updateCursorVisualPosition();
+            this.panToCursor();
 
             // If text is now empty, reset cursor to origin
             if (this.textBuffer.length === 0) {
@@ -1845,7 +1860,7 @@ class GlyphCanvas {
         if (closestPos > this.textBuffer.length) {
             closestPos = this.textBuffer.length;
         }
-        
+
         // If the closest position is too far away from the click, return null (allow panning)
         // This prevents clicking in empty space where text used to be
         const maxDistance = 500; // Maximum distance in font units to consider a valid click
@@ -1949,6 +1964,78 @@ class GlyphCanvas {
         }
 
         console.log('========================');
+    }
+
+    isCursorVisible() {
+        // Check if cursor is within the visible viewport
+        const rect = this.canvas.getBoundingClientRect();
+
+        // Transform cursor position from font space to screen space
+        const screenX = this.cursorX * this.scale + this.panX;
+
+        // Define margin from edges (in screen pixels)
+        const margin = 100;
+
+        // Check if cursor is within visible bounds with margin
+        return screenX >= margin && screenX <= rect.width - margin;
+    }
+
+    panToCursor() {
+        // Pan viewport to show cursor with smooth animation
+        if (this.isCursorVisible()) {
+            return; // Cursor is already visible
+        }
+
+        const rect = this.canvas.getBoundingClientRect();
+        const margin = 100; // Same margin as visibility check
+
+        // Calculate target panX to center cursor with margin
+        const screenX = this.cursorX * this.scale + this.panX;
+
+        let targetPanX;
+        if (screenX < margin) {
+            // Cursor is off left edge - position it at left margin
+            targetPanX = margin - this.cursorX * this.scale;
+        } else {
+            // Cursor is off right edge - position it at right margin
+            targetPanX = (rect.width - margin) - this.cursorX * this.scale;
+        }
+
+        // Start animation
+        this.animatePan(targetPanX, this.panY);
+    }
+
+    animatePan(targetPanX, targetPanY) {
+        // Set up animation state
+        const startPanX = this.panX;
+        const startPanY = this.panY;
+        const frames = 10;
+        let currentFrame = 0;
+
+        const animate = () => {
+            currentFrame++;
+            const progress = Math.min(currentFrame / frames, 1.0);
+
+            // Ease-out cubic for smooth deceleration
+            const easedProgress = 1 - Math.pow(1 - progress, 3);
+
+            // Interpolate pan values
+            this.panX = startPanX + (targetPanX - startPanX) * easedProgress;
+            this.panY = startPanY + (targetPanY - startPanY) * easedProgress;
+
+            this.render();
+
+            if (progress < 1.0) {
+                requestAnimationFrame(animate);
+            } else {
+                // Ensure we end exactly at target
+                this.panX = targetPanX;
+                this.panY = targetPanY;
+                this.render();
+            }
+        };
+
+        animate();
     }
 
     drawCursor() {
