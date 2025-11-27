@@ -1102,21 +1102,21 @@ class GlyphCanvas {
             this.selectAll();
             return;
         }
-        
+
         // Cmd+C / Ctrl+C - Copy
         if ((e.metaKey || e.ctrlKey) && e.key === 'c') {
             e.preventDefault();
             this.copySelection();
             return;
         }
-        
+
         // Cmd+X / Ctrl+X - Cut
         if ((e.metaKey || e.ctrlKey) && e.key === 'x') {
             e.preventDefault();
             this.cutSelection();
             return;
         }
-        
+
         // Cmd+V / Ctrl+V - Paste
         if ((e.metaKey || e.ctrlKey) && e.key === 'v') {
             e.preventDefault();
@@ -1354,17 +1354,17 @@ class GlyphCanvas {
         this.updateCursorVisualPosition();
         this.render();
     }
-    
+
     // ==================== Clipboard Methods ====================
-    
+
     async copySelection() {
         if (!this.hasSelection()) {
             return;
         }
-        
+
         const range = this.getSelectionRange();
         const selectedText = this.textBuffer.slice(range.start, range.end);
-        
+
         try {
             await navigator.clipboard.writeText(selectedText);
             console.log('Copied to clipboard:', `"${selectedText}"`);
@@ -1372,46 +1372,46 @@ class GlyphCanvas {
             console.error('Failed to copy to clipboard:', err);
         }
     }
-    
+
     async cutSelection() {
         if (!this.hasSelection()) {
             return;
         }
-        
+
         // Copy first
         await this.copySelection();
-        
+
         // Then delete
         const range = this.getSelectionRange();
         console.log('Cutting selection:', `"${this.textBuffer.slice(range.start, range.end)}"`, `[${range.start}-${range.end}]`);
         this.textBuffer = this.textBuffer.slice(0, range.start) + this.textBuffer.slice(range.end);
         this.cursorPosition = range.start;
         this.clearSelection();
-        
+
         console.log('New cursor position:', this.cursorPosition);
         console.log('New text:', this.textBuffer);
-        
+
         // Save to localStorage
         localStorage.setItem('glyphCanvasTextBuffer', this.textBuffer);
-        
+
         // Reshape and render
         this.shapeText();
         this.updateCursorVisualPosition();
-        
+
         // If text is now empty, reset cursor to origin
         if (this.textBuffer.length === 0) {
             this.cursorPosition = 0;
             this.cursorX = 0;
         }
-        
+
         this.render();
     }
-    
+
     async paste() {
         try {
             const text = await navigator.clipboard.readText();
             console.log('Pasting from clipboard:', `"${text}"`);
-            
+
             // insertText already handles replacing selection
             this.insertText(text);
         } catch (err) {
