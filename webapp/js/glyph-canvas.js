@@ -31,7 +31,7 @@ class GlyphCanvas {
         // Bidirectional text support
         this.bidi = null; // Will be initialized with UnicodeBidi instance
         this.bidiRuns = []; // Store bidirectional runs for rendering
-        
+
         // Cursor state
         this.cursorPosition = 0; // Logical position in textBuffer (0 = before first char)
         this.cursorVisible = true;
@@ -157,7 +157,7 @@ class GlyphCanvas {
 
         // Keyboard events for cursor and text input
         this.canvas.addEventListener('keydown', (e) => this.onKeyDown(e));
-        
+
         // Focus/blur for cursor blinking
         this.canvas.addEventListener('focus', () => this.onFocus());
         this.canvas.addEventListener('blur', () => this.onBlur());
@@ -173,7 +173,7 @@ class GlyphCanvas {
     onMouseDown(e) {
         // Focus the canvas when clicked
         this.canvas.focus();
-        
+
         // Check if clicking on text to position cursor
         if (!e.shiftKey && !e.ctrlKey && !e.metaKey) {
             const clickedPos = this.getClickedCursorPosition(e);
@@ -625,7 +625,7 @@ class GlyphCanvas {
 
         // Clean up
         buffer.destroy();
-        
+
         // Build cluster map for cursor positioning
         this.buildClusterMap();
         this.updateCursorVisualPosition();
@@ -674,7 +674,7 @@ class GlyphCanvas {
             this.hb.shape(this.hbFont, buffer);
             const glyphs = buffer.json();
             buffer.destroy();
-            
+
             // Adjust cluster values to be relative to the full string, not the run
             for (const glyph of glyphs) {
                 glyph.cl = (glyph.cl || 0) + run.start;
@@ -714,7 +714,7 @@ class GlyphCanvas {
 
         this.shapedGlyphs = allGlyphs;
         this.bidiRuns = shapedRuns;
-        
+
         // Build cluster map for cursor positioning
         this.buildClusterMap();
         this.updateCursorVisualPosition();
@@ -764,7 +764,7 @@ class GlyphCanvas {
 
         // Draw shaped glyphs
         this.drawShapedGlyphs();
-        
+
         // Draw cursor
         this.drawCursor();
 
@@ -1045,20 +1045,20 @@ class GlyphCanvas {
             this.canvas.parentNode.removeChild(this.canvas);
         }
     }
-    
+
     // ==================== Cursor Methods ====================
-    
+
     onFocus() {
         this.isFocused = true;
         this.cursorVisible = true;
         this.render();
     }
-    
+
     onBlur() {
         this.isFocused = false;
         this.render();
     }
-    
+
     onKeyDown(e) {
         // Handle cursor navigation and text editing
         if (e.key === 'ArrowLeft') {
@@ -1089,23 +1089,23 @@ class GlyphCanvas {
             this.insertText(e.key);
         }
     }
-    
+
     moveCursorLeft() {
         console.log('=== Move Cursor Left ===');
         this.logCursorState();
-        
+
         // Left arrow = backward in logical order (decrease position)
         this.moveCursorLogicalBackward();
     }
-    
+
     moveCursorRight() {
         console.log('=== Move Cursor Right ===');
         this.logCursorState();
-        
+
         // Right arrow = forward in logical order (increase position)
         this.moveCursorLogicalForward();
     }
-    
+
     moveCursorLogicalBackward() {
         if (this.cursorPosition > 0) {
             this.cursorPosition--;
@@ -1114,7 +1114,7 @@ class GlyphCanvas {
             this.render();
         }
     }
-    
+
     moveCursorLogicalForward() {
         if (this.cursorPosition < this.textBuffer.length) {
             this.cursorPosition++;
@@ -1123,45 +1123,45 @@ class GlyphCanvas {
             this.render();
         }
     }
-    
+
     isPositionRTL(pos) {
         // Check if a logical position is in an RTL context
         if (!this.embeddingLevels || !this.embeddingLevels.levels) {
             return false;
         }
-        
+
         if (pos < 0 || pos >= this.embeddingLevels.levels.length) {
             return false;
         }
-        
+
         // Odd levels are RTL
         return this.embeddingLevels.levels[pos] % 2 === 1;
     }
-    
+
     getRunAtPosition(pos) {
         // Find which BiDi run contains this logical position
         if (!this.bidiRuns || this.bidiRuns.length === 0) {
             return null;
         }
-        
+
         for (const run of this.bidiRuns) {
             if (pos >= run.start && pos < run.end) {
                 console.log(`Position ${pos} is in ${run.direction} run [${run.start}-${run.end}]: "${run.text}"`);
                 return run;
             }
         }
-        
+
         // If at the very end, return the last run
         if (pos === this.textBuffer.length && this.bidiRuns.length > 0) {
             const lastRun = this.bidiRuns[this.bidiRuns.length - 1];
             console.log(`Position ${pos} is at end of ${lastRun.direction} run [${lastRun.start}-${lastRun.end}]: "${lastRun.text}"`);
             return lastRun;
         }
-        
+
         console.log(`Position ${pos} is not in any run`);
         return null;
     }
-    
+
     logCursorState() {
         console.log('=== Cursor State ===');
         console.log('Logical position:', this.cursorPosition);
@@ -1173,128 +1173,128 @@ class GlyphCanvas {
         }
         console.log('==================');
     }
-    
+
     insertText(text) {
         // Insert text at cursor position
-        this.textBuffer = this.textBuffer.slice(0, this.cursorPosition) + 
-                         text + 
-                         this.textBuffer.slice(this.cursorPosition);
+        this.textBuffer = this.textBuffer.slice(0, this.cursorPosition) +
+            text +
+            this.textBuffer.slice(this.cursorPosition);
         this.cursorPosition += text.length;
-        
+
         // Save to localStorage
         localStorage.setItem('glyphCanvasTextBuffer', this.textBuffer);
-        
+
         // Reshape and render
         this.shapeText();
         this.updateCursorVisualPosition();
         this.render();
     }
-    
+
     deleteBackward() {
         console.log('=== Delete Backward (Backspace) ===');
         this.logCursorState();
-        
+
         if (this.cursorPosition > 0) {
             // Backspace always deletes the character BEFORE cursor (position - 1)
             console.log('Deleting char at position', this.cursorPosition - 1, ':', this.textBuffer[this.cursorPosition - 1]);
-            this.textBuffer = this.textBuffer.slice(0, this.cursorPosition - 1) + 
-                             this.textBuffer.slice(this.cursorPosition);
+            this.textBuffer = this.textBuffer.slice(0, this.cursorPosition - 1) +
+                this.textBuffer.slice(this.cursorPosition);
             this.cursorPosition--;
-            
+
             console.log('New cursor position:', this.cursorPosition);
             console.log('New text:', this.textBuffer);
-            
+
             // Save to localStorage
             localStorage.setItem('glyphCanvasTextBuffer', this.textBuffer);
-            
+
             // Reshape and render
             this.shapeText();
             this.updateCursorVisualPosition();
-            
+
             // If text is now empty, reset cursor to origin
             if (this.textBuffer.length === 0) {
                 this.cursorPosition = 0;
                 this.cursorX = 0;
             }
-            
+
             this.render();
         }
     }
-    
+
     deleteForward() {
         console.log('=== Delete Forward (Delete key) ===');
         this.logCursorState();
-        
+
         if (this.cursorPosition < this.textBuffer.length) {
             // Delete key always deletes the character AT cursor (position)
             console.log('Deleting char at position', this.cursorPosition, ':', this.textBuffer[this.cursorPosition]);
-            this.textBuffer = this.textBuffer.slice(0, this.cursorPosition) + 
-                             this.textBuffer.slice(this.cursorPosition + 1);
-            
+            this.textBuffer = this.textBuffer.slice(0, this.cursorPosition) +
+                this.textBuffer.slice(this.cursorPosition + 1);
+
             // Cursor stays at same logical position
             // But we need to ensure it doesn't exceed text length
             if (this.cursorPosition > this.textBuffer.length) {
                 this.cursorPosition = this.textBuffer.length;
             }
-            
+
             console.log('New cursor position:', this.cursorPosition);
             console.log('New text:', this.textBuffer);
-            
+
             // Save to localStorage
             localStorage.setItem('glyphCanvasTextBuffer', this.textBuffer);
-            
+
             // Reshape and render
             this.shapeText();
             this.updateCursorVisualPosition();
-            
+
             // If text is now empty, reset cursor to origin
             if (this.textBuffer.length === 0) {
                 this.cursorPosition = 0;
                 this.cursorX = 0;
             }
-            
+
             this.render();
         }
     }
-    
+
     findClusterAt(logicalPos) {
         // Find the cluster (glyph + its character range) at a logical position
         if (!this.clusterMap || this.clusterMap.length === 0) {
             return null;
         }
-        
+
         // Find cluster that contains this logical position
         for (const cluster of this.clusterMap) {
             if (logicalPos >= cluster.start && logicalPos < cluster.end) {
                 return cluster;
             }
         }
-        
+
         return null;
     }
-    
+
     buildClusterMap() {
         // Build a map from logical character positions to visual glyphs
         // Group glyphs by cluster to handle multi-glyph clusters correctly
         this.clusterMap = [];
-        
+
         if (!this.shapedGlyphs || this.shapedGlyphs.length === 0) {
             return;
         }
-        
+
         console.log('=== Building Cluster Map ===');
         console.log('Text buffer:', this.textBuffer);
         console.log('Shaped glyphs count:', this.shapedGlyphs.length);
-        
+
         // Group consecutive glyphs with the same cluster value
         let xPosition = 0;
         let i = 0;
-        
+
         while (i < this.shapedGlyphs.length) {
             const glyph = this.shapedGlyphs[i];
             const clusterStart = glyph.cl || 0;
             const isRTL = this.isPositionRTL(clusterStart);
-            
+
             // Find all glyphs that belong to this cluster
             let clusterWidth = 0;
             let j = i;
@@ -1302,7 +1302,7 @@ class GlyphCanvas {
                 clusterWidth += this.shapedGlyphs[j].ax || 0;
                 j++;
             }
-            
+
             // Determine cluster end
             let clusterEnd;
             if (isRTL) {
@@ -1332,9 +1332,9 @@ class GlyphCanvas {
                     clusterEnd = this.textBuffer.length;
                 }
             }
-            
+
             console.log(`Cluster [${clusterStart}-${clusterEnd}): ${j - i} glyphs, x=${xPosition.toFixed(0)}, width=${clusterWidth.toFixed(0)}, RTL=${isRTL}`);
-            
+
             this.clusterMap.push({
                 glyphIndex: i,
                 glyphCount: j - i,
@@ -1344,35 +1344,35 @@ class GlyphCanvas {
                 width: clusterWidth,
                 isRTL: isRTL
             });
-            
+
             xPosition += clusterWidth;
             i = j; // Move to next cluster
         }
-        
+
         console.log('===========================');
     }
-    
+
     updateCursorVisualPosition() {
         // Calculate the visual X position of the cursor based on logical position
         console.log('updateCursorVisualPosition: cursor at logical position', this.cursorPosition);
         this.cursorX = 0;
-        
+
         if (!this.clusterMap || this.clusterMap.length === 0) {
             console.log('No cluster map');
             return;
         }
-        
+
         console.log('Cluster map:', this.clusterMap.map(c => `[${c.start}-${c.end}) @ x=${c.x.toFixed(0)}, RTL=${c.isRTL}`));
-        
+
         // Find the cluster that contains or is adjacent to this position
         // Priority: Check if position is the END of a cluster first (to handle boundaries correctly)
         let found = false;
-        
+
         // First pass: Check if this position is at the END of any cluster
         for (const cluster of this.clusterMap) {
             if (this.cursorPosition === cluster.end && this.cursorPosition > cluster.start) {
                 console.log(`Position ${this.cursorPosition} is at END of cluster [${cluster.start}-${cluster.end}), isRTL: ${cluster.isRTL}`);
-                
+
                 if (cluster.isRTL) {
                     // RTL: cursor after last char = left edge
                     this.cursorX = cluster.x;
@@ -1386,13 +1386,13 @@ class GlyphCanvas {
                 break;
             }
         }
-        
+
         // Second pass: Check if this position is at the START of a cluster
         if (!found) {
             for (const cluster of this.clusterMap) {
                 if (this.cursorPosition === cluster.start) {
                     console.log(`Position ${this.cursorPosition} is at START of cluster [${cluster.start}-${cluster.end}), isRTL: ${cluster.isRTL}`);
-                    
+
                     if (cluster.isRTL) {
                         // RTL: cursor before first char = right edge
                         this.cursorX = cluster.x + cluster.width;
@@ -1407,13 +1407,13 @@ class GlyphCanvas {
                 }
             }
         }
-        
+
         // Third pass: Check if position is INSIDE a cluster
         if (!found) {
             for (const cluster of this.clusterMap) {
                 if (this.cursorPosition > cluster.start && this.cursorPosition < cluster.end) {
                     console.log(`Position ${this.cursorPosition} is INSIDE cluster [${cluster.start}-${cluster.end}), isRTL: ${cluster.isRTL}`);
-                    
+
                     // Inside a cluster - interpolate
                     const progress = (this.cursorPosition - cluster.start) / (cluster.end - cluster.start);
                     if (cluster.isRTL) {
@@ -1430,43 +1430,43 @@ class GlyphCanvas {
                 }
             }
         }
-        
+
         if (!found) {
             console.warn('Could not find visual position for logical position', this.cursorPosition);
         }
     }
-    
+
     getClickedCursorPosition(e) {
         // Convert click position to cursor position
         const rect = this.canvas.getBoundingClientRect();
         const mouseX = e.clientX - rect.left;
         const mouseY = e.clientY - rect.top;
-        
+
         // Transform to glyph space
         const transform = this.getTransformMatrix();
         const det = transform.a * transform.d - transform.b * transform.c;
         const glyphX = (transform.d * (mouseX - transform.e) - transform.c * (mouseY - transform.f)) / det;
         const glyphY = (transform.a * (mouseY - transform.f) - transform.b * (mouseX - transform.e)) / det;
-        
+
         // Check if clicking near baseline (within reasonable Y range)
         if (Math.abs(glyphY) > 1500) {
             return null; // Clicked too far from text
         }
-        
+
         if (!this.clusterMap || this.clusterMap.length === 0) {
             return 0;
         }
-        
+
         // Find closest cluster
         let closestPos = 0;
         let closestDist = Infinity;
-        
+
         // Check start of text
         if (Math.abs(glyphX - 0) < closestDist) {
             closestDist = Math.abs(glyphX - 0);
             closestPos = 0;
         }
-        
+
         // Check each cluster boundary
         for (const cluster of this.clusterMap) {
             // Start of cluster
@@ -1475,14 +1475,14 @@ class GlyphCanvas {
                 closestDist = distStart;
                 closestPos = cluster.start;
             }
-            
+
             // End of cluster
             const distEnd = Math.abs(glyphX - (cluster.x + cluster.width));
             if (distEnd < closestDist) {
                 closestDist = distEnd;
                 closestPos = cluster.end;
             }
-            
+
             // Inside cluster - find intermediate positions if multi-character
             if (cluster.end - cluster.start > 1) {
                 for (let i = cluster.start + 1; i < cluster.end; i++) {
@@ -1496,26 +1496,27 @@ class GlyphCanvas {
                 }
             }
         }
-        
+
         return closestPos;
     }
-    
+
     drawCursor() {
         // Draw the text cursor at the current position
-        if (!this.isFocused || !this.cursorVisible) {
+        if (!this.cursorVisible) {
             return;
         }
-        
+
         const invScale = 1 / this.scale;
-        
+
         console.log(`Drawing cursor at x=${this.cursorX.toFixed(0)} for logical position ${this.cursorPosition}`);
-        
-        // Draw cursor line - light color for dark theme
-        this.ctx.strokeStyle = 'rgba(255, 255, 255, 0.8)';
+
+        // Draw cursor line - dimmed when not focused, bright when focused
+        const opacity = this.isFocused ? 0.8 : 0.3;
+        this.ctx.strokeStyle = `rgba(255, 255, 255, ${opacity})`;
         this.ctx.lineWidth = 2 * invScale;
         this.ctx.beginPath();
-        this.ctx.moveTo(this.cursorX, -1000); // Top (well above cap height)
-        this.ctx.lineTo(this.cursorX, 100);   // Bottom (slightly below baseline)
+        this.ctx.moveTo(this.cursorX, 1000); // Top (above cap height, positive Y is up in font space)
+        this.ctx.lineTo(this.cursorX, -300);   // Bottom (below baseline, negative Y is down)
         this.ctx.stroke();
     }
 }
