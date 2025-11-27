@@ -28,6 +28,10 @@ class GlyphCanvas {
         this.variationSettings = {}; // Store variable axis values
         this.sourceGlyphNames = {}; // Map of GID to glyph names from source font
 
+        // Bidirectional text support
+        this.bidi = null; // Will be initialized with UnicodeBidi instance
+        this.bidiRuns = []; // Store bidirectional runs for rendering
+
         // Animation state
         this.animationFrames = parseInt(localStorage.getItem('animationFrames') || '10', 10);
         this.isAnimating = false;
@@ -97,6 +101,14 @@ class GlyphCanvas {
 
         // Initial render
         this.render();
+
+        // Initialize BiDi support
+        if (typeof bidi_js !== 'undefined') {
+            this.bidi = bidi_js(); // It's a factory function
+            console.log('bidi-js support initialized', this.bidi);
+        } else {
+            console.warn('bidi-js not loaded - bidirectional text may not render correctly');
+        }
 
         // Load HarfBuzz
         this.loadHarfBuzz();
@@ -539,6 +551,7 @@ class GlyphCanvas {
     shapeText() {
         if (!this.hb || !this.hbFont || !this.textBuffer) {
             this.shapedGlyphs = [];
+            this.bidiRuns = [];
             this.render();
             return;
         }
@@ -549,32 +562,124 @@ class GlyphCanvas {
                 this.hbFont.setVariations(this.variationSettings);
             }
 
-            // Create HarfBuzz buffer
-            const buffer = this.hb.createBuffer();
-            buffer.addText(this.textBuffer);
-            buffer.guessSegmentProperties();
-
-            // Shape the text
-            this.hb.shape(this.hbFont, buffer);
-
-            // Get glyph information
-            const result = buffer.json();
-
-            // Clean up
-            buffer.destroy();
-
-            // Store shaped glyphs
-            this.shapedGlyphs = result;
+            // Use BiDi algorithm if available, otherwise fallback to simple shaping
+            if (this.bidi) {
+                this.shapeTextWithBidi();
+            } else {
+                this.shapeTextSimple();
+            }
 
             console.log('Shaped glyphs:', this.shapedGlyphs);
+            if (this.bidiRuns.length > 0) {
+                console.log('BiDi runs:', this.bidiRuns);
+            }
 
             // Render the result
             this.render();
         } catch (error) {
             console.error('Error shaping text:', error);
             this.shapedGlyphs = [];
+            this.bidiRuns = [];
             this.render();
         }
+    }
+
+    shapeTextSimple() {
+        // Simple shaping without BiDi support (old behavior)
+        const buffer = this.hb.createBuffer();
+        buffer.addText(this.textBuffer);
+        buffer.guessSegmentProperties();
+
+        // Shape the text
+        this.hb.shape(this.hbFont, buffer);
+
+        // Get glyph information
+        this.shapedGlyphs = buffer.json();
+        this.bidiRuns = [];
+
+        // Clean up
+        buffer.destroy();
+    }
+
+    shapeTextWithBidi() {
+        // Get embedding levels from bidi-js
+        const embedLevels = this.bidi.getEmbeddingLevels(this.textBuffer);
+        console.log('Embedding levels:', embedLevels);
+
+        // First, shape the text in LOGICAL order with proper direction per run
+        // Split into runs by embedding level
+        const runs = [];
+        let currentLevel = embedLevels.levels[0];
+        let runStart = 0;
+
+        for (let i = 1; i <= this.textBuffer.length; i++) {
+            if (i === this.textBuffer.length || embedLevels.levels[i] !== currentLevel) {
+                const runText = this.textBuffer.substring(runStart, i);
+                const direction = currentLevel % 2 === 0 ? 'ltr' : 'rtl';
+                runs.push({
+                    text: runText,
+                    level: currentLevel,
+                    direction: direction,
+                    start: runStart,
+                    end: i
+                });
+                if (i < this.textBuffer.length) {
+                    currentLevel = embedLevels.levels[i];
+                    runStart = i;
+                }
+            }
+        }
+
+        console.log('Logical runs:', runs.map(r => `${r.direction}:${r.level}:"${r.text}"`));
+
+        // Shape each run with HarfBuzz in its logical direction
+        const shapedRuns = [];
+        for (const run of runs) {
+            const buffer = this.hb.createBuffer();
+            buffer.addText(run.text);
+            buffer.setDirection(run.direction);
+            buffer.guessSegmentProperties();
+
+            this.hb.shape(this.hbFont, buffer);
+            const glyphs = buffer.json();
+            buffer.destroy();
+
+            shapedRuns.push({
+                ...run,
+                glyphs: glyphs
+            });
+        }
+
+        // Now reorder the runs using bidi-js
+        const reorderedIndices = this.bidi.getReorderedIndices(this.textBuffer, embedLevels);
+
+        // Map character indices to runs
+        const charToRun = [];
+        for (let i = 0; i < shapedRuns.length; i++) {
+            for (let j = shapedRuns[i].start; j < shapedRuns[i].end; j++) {
+                charToRun[j] = i;
+            }
+        }
+
+        // Build visual glyph order by following reordered indices
+        const allGlyphs = [];
+        let lastRunIdx = -1;
+        let runGlyphOffset = 0;
+
+        for (const charIdx of reorderedIndices) {
+            const runIdx = charToRun[charIdx];
+            if (runIdx !== lastRunIdx) {
+                // Switched to a different run - add all its glyphs
+                const run = shapedRuns[runIdx];
+                allGlyphs.push(...run.glyphs);
+                lastRunIdx = runIdx;
+            }
+        }
+
+        this.shapedGlyphs = allGlyphs;
+        this.bidiRuns = shapedRuns;
+
+        console.log('Final shaped glyphs:', this.shapedGlyphs.length);
     }
 
     render() {
