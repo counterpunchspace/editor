@@ -2050,7 +2050,12 @@ class GlyphCanvas {
 
         // Draw cursor line - dimmed when not focused, bright when focused
         const opacity = this.isFocused ? 0.8 : 0.3;
-        this.ctx.strokeStyle = `rgba(255, 255, 255, ${opacity})`;
+
+        // Use dark cursor for light theme, white cursor for dark theme
+        const isLightTheme = document.documentElement.getAttribute('data-theme') === 'light';
+        const cursorColor = isLightTheme ? `rgba(0, 0, 0, ${opacity})` : `rgba(255, 255, 255, ${opacity})`;
+
+        this.ctx.strokeStyle = cursorColor;
         this.ctx.lineWidth = 2 * invScale;
         this.ctx.beginPath();
         this.ctx.moveTo(this.cursorX, 1000); // Top (above cap height, positive Y is up in font space)
