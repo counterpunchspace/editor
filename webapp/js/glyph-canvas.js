@@ -63,6 +63,9 @@ class GlyphCanvas {
         // Selected glyph (glyph after cursor in logical order)
         this.selectedGlyphIndex = -1;
 
+        // Edit mode: false = text edit mode, true = glyph edit mode
+        this.isGlyphEditMode = false;
+
         // HarfBuzz instance and objects
         this.hb = null;
         this.hbFont = null;
@@ -190,8 +193,8 @@ class GlyphCanvas {
             }
         }
 
-        // Check if clicking on text to position cursor
-        if (!e.shiftKey && !e.ctrlKey && !e.metaKey) {
+        // Check if clicking on text to position cursor (only in text edit mode)
+        if (!this.isGlyphEditMode && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
             const clickedPos = this.getClickedCursorPosition(e);
             if (clickedPos !== null) {
                 this.clearSelection();
@@ -536,11 +539,22 @@ class GlyphCanvas {
         // Select a glyph by its index in the shaped glyphs array
         if (glyphIndex >= 0 && glyphIndex < this.shapedGlyphs.length) {
             this.selectedGlyphIndex = glyphIndex;
-            console.log(`Selected glyph at index ${this.selectedGlyphIndex}`);
+            this.isGlyphEditMode = true;
+            console.log(`Entered glyph edit mode - selected glyph at index ${this.selectedGlyphIndex}`);
         } else {
             this.selectedGlyphIndex = -1;
+            this.isGlyphEditMode = false;
             console.log(`Deselected glyph`);
         }
+        this.updatePropertiesUI();
+        this.render();
+    }
+
+    exitGlyphEditMode() {
+        // Exit glyph edit mode and return to text edit mode
+        this.isGlyphEditMode = false;
+        this.selectedGlyphIndex = -1;
+        console.log(`Exited glyph edit mode - returned to text edit mode`);
         this.updatePropertiesUI();
         this.render();
     }
@@ -550,6 +564,11 @@ class GlyphCanvas {
 
         // Clear existing content
         this.propertiesSection.innerHTML = '';
+
+        // Don't show properties if not in glyph edit mode
+        if (!this.isGlyphEditMode) {
+            return;
+        }
 
         // Add section title
         const title = document.createElement('div');
@@ -987,20 +1006,29 @@ class GlyphCanvas {
                 height: 1000 // Font units height approximation
             });
 
-            // Set color based on hover and selection state
+            // Set color based on hover, selection state, and edit mode
             const isHovered = glyphIndex === this.hoveredGlyphIndex;
             const isSelected = glyphIndex === this.selectedGlyphIndex;
             const selectedColor = '#00ff00'; // Green for selected (glyph after cursor)
 
-            if (isHovered) {
-                this.ctx.fillStyle = hoverColor;
-            } else if (isSelected) {
-                this.ctx.fillStyle = selectedColor;
+            if (this.isGlyphEditMode) {
+                // Glyph edit mode: active glyph in solid color, others dimmed
+                if (isSelected) {
+                    this.ctx.fillStyle = normalColor; // Solid black/white for active glyph
+                } else {
+                    // Dim other glyphs to 20% opacity
+                    this.ctx.fillStyle = isDarkTheme ? 'rgba(255, 255, 255, 0.2)' : 'rgba(0, 0, 0, 0.2)';
+                }
             } else {
-                this.ctx.fillStyle = normalColor;
-            }
-
-            try {
+                // Text edit mode: normal coloring
+                if (isHovered) {
+                    this.ctx.fillStyle = hoverColor;
+                } else if (isSelected) {
+                    this.ctx.fillStyle = selectedColor;
+                } else {
+                    this.ctx.fillStyle = normalColor;
+                }
+            } try {
                 // Get glyph outline from HarfBuzz (supports variations)
                 const glyphData = this.hbFont.glyphToPath(glyphId);
 
@@ -1063,7 +1091,13 @@ class GlyphCanvas {
 
     drawGlyphTooltip() {
         // Draw glyph name tooltip on hover (in font coordinate space)
+        // Don't show tooltip for the selected glyph in glyph edit mode
         if (this.hoveredGlyphIndex >= 0 && this.hoveredGlyphIndex < this.shapedGlyphs.length) {
+            // Skip tooltip for selected glyph in glyph edit mode
+            if (this.isGlyphEditMode && this.hoveredGlyphIndex === this.selectedGlyphIndex) {
+                return;
+            }
+
             const glyphId = this.shapedGlyphs[this.hoveredGlyphIndex].g;
             let glyphName = `GID ${glyphId}`;
 
@@ -1202,6 +1236,21 @@ class GlyphCanvas {
 
     onKeyDown(e) {
         // Handle cursor navigation and text editing
+
+        // Escape key - Exit glyph edit mode
+        if (e.key === 'Escape') {
+            if (this.isGlyphEditMode) {
+                e.preventDefault();
+                this.exitGlyphEditMode();
+                return;
+            }
+        }
+
+        // Prevent all text editing and cursor movement in glyph edit mode
+        if (this.isGlyphEditMode) {
+            e.preventDefault();
+            return;
+        }
 
         // Cmd+0 / Ctrl+0 - Reset zoom and position
         if ((e.metaKey || e.ctrlKey) && e.key === '0') {
@@ -1805,19 +1854,6 @@ class GlyphCanvas {
         console.log('===========================');
     }
 
-    selectGlyphByIndex(glyphIndex) {
-        // Select a glyph by its index in the shaped glyphs array
-        if (glyphIndex >= 0 && glyphIndex < this.shapedGlyphs.length) {
-            this.selectedGlyphIndex = glyphIndex;
-            console.log(`Selected glyph at index ${this.selectedGlyphIndex}`);
-        } else {
-            this.selectedGlyphIndex = -1;
-            console.log(`Deselected glyph`);
-        }
-        this.updatePropertiesUI();
-        this.render();
-    }
-
     updateCursorVisualPosition() {
         // Calculate the visual X position of the cursor based on logical position
         console.log('updateCursorVisualPosition: cursor at logical position', this.cursorPosition);
@@ -2227,7 +2263,8 @@ class GlyphCanvas {
 
     drawCursor() {
         // Draw the text cursor at the current position
-        if (!this.cursorVisible) {
+        // Don't draw cursor in glyph edit mode
+        if (!this.cursorVisible || this.isGlyphEditMode) {
             return;
         }
 
