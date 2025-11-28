@@ -356,8 +356,9 @@ class GlyphCanvas {
             }
         }
 
-        // Check if clicking on text to position cursor (only in text edit mode)
-        if (!this.isGlyphEditMode && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
+        // Check if clicking on text to position cursor (only in text edit mode, not on double-click or glyph)
+        // Skip if hovering over a glyph since that might be a double-click to enter edit mode
+        if (!this.isGlyphEditMode && !e.shiftKey && !e.ctrlKey && !e.metaKey && this.hoveredGlyphIndex < 0) {
             const clickedPos = this.getClickedCursorPosition(e);
             if (clickedPos !== null) {
                 this.clearSelection();
