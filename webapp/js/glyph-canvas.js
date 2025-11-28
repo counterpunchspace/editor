@@ -69,6 +69,8 @@ class GlyphCanvas {
         // Font data and selected layer for layer switching
         this.fontData = null;
         this.selectedLayerId = null;
+        this.previousSelectedLayerId = null; // For restoring on Escape
+        this.previousVariationSettings = null; // For restoring on Escape
 
         // HarfBuzz instance and objects
         this.hb = null;
@@ -171,6 +173,40 @@ class GlyphCanvas {
 
         // Keyboard events for cursor and text input
         this.canvas.addEventListener('keydown', (e) => this.onKeyDown(e));
+
+        // Global Escape key handler (works even when sliders have focus)
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' && this.isGlyphEditMode) {
+                e.preventDefault();
+
+                // Restore previous layer selection if exists
+                if (this.previousSelectedLayerId !== null && this.previousVariationSettings !== null) {
+                    this.selectedLayerId = this.previousSelectedLayerId;
+
+                    // Restore axis values with animation
+                    if (this.isAnimating) {
+                        this.isAnimating = false;
+                    }
+                    this.animationStartValues = { ...this.variationSettings };
+                    this.animationTargetValues = { ...this.previousVariationSettings };
+                    this.animationCurrentFrame = 0;
+                    this.isAnimating = true;
+                    this.animateVariation();
+
+                    // Update layer selection UI
+                    this.updateLayerSelection();
+
+                    // Clear previous state
+                    this.previousSelectedLayerId = null;
+                    this.previousVariationSettings = null;
+
+                    // Return focus to canvas
+                    this.canvas.focus();
+                } else {
+                    this.exitGlyphEditMode();
+                }
+            }
+        });
 
         // Focus/blur for cursor blinking
         this.canvas.addEventListener('focus', () => this.onFocus());
@@ -593,28 +629,36 @@ try:
     if current_font and hasattr(current_font, 'glyphs'):
         glyph = current_font.glyphs.get('${glyphName}')
         if glyph:
-            # Get foreground layers (filter out background layers)
+            # Get master IDs for filtering
+            master_ids = set(m.id for m in current_font.masters)
+            
+            # Get foreground layers (filter out background layers and non-master layers)
             layers_data = []
             for layer in glyph.layers:
                 if not layer.isBackground:
                     # For master layers, _master is None and the layer.id IS the master ID
                     # For alternate/intermediate layers, _master points to the parent master
                     master_id = layer._master if layer._master else layer.id
-                    layer_info = {
-                        'id': layer.id,
-                        'name': layer.name or 'Default',
-                        '_master': master_id,
-                        'location': layer.location
-                    }
-                    layers_data.append(layer_info)
+                    
+                    # Only include layers whose master ID exists in the masters list
+                    if master_id in master_ids:
+                        layer_info = {
+                            'id': layer.id,
+                            'name': layer.name or 'Default',
+                            '_master': master_id,
+                            'location': layer.location
+                        }
+                        layers_data.append(layer_info)
             
-            # Get masters data
+            # Get masters data with userspace locations
             masters_data = []
             for master in current_font.masters:
+                # Convert design space location to user space
+                userspace_location = current_font.map_backward(master.location)
                 masters_data.append({
                     'id': master.id,
                     'name': master.name,
-                    'location': master.location
+                    'location': userspace_location
                 })
             
             result = {
@@ -676,9 +720,17 @@ json.dumps(result)
 
             // Find the master for this layer
             const master = this.fontData.masters.find(m => m.id === layer._master);
-            const masterName = master ? master.name : 'Unknown Master';
 
-            layerItem.textContent = `${layer.name} (${masterName})`;
+            // Format axis values for display (e.g., "wght:400, wdth:100")
+            let axisValues = '';
+            if (master && master.location) {
+                const locationParts = Object.entries(master.location)
+                    .map(([tag, value]) => `${tag}:${Math.round(value)}`)
+                    .join(', ');
+                axisValues = locationParts;
+            }
+
+            layerItem.textContent = axisValues || layer.name || 'Default';
 
             // Hover effect
             layerItem.addEventListener('mouseenter', () => {
@@ -701,10 +753,52 @@ json.dumps(result)
         }
 
         this.propertiesSection.appendChild(layersList);
+
+        // Auto-select layer if current axis values match a layer's master location
+        this.autoSelectMatchingLayer();
+    }
+
+    autoSelectMatchingLayer() {
+        // Check if current variation settings match any layer's master location
+        if (!this.fontData || !this.fontData.layers || !this.fontData.masters) {
+            return;
+        }
+
+        // Get current axis tags and values
+        const currentLocation = { ...this.variationSettings };
+
+        // Check each layer to find a match
+        for (const layer of this.fontData.layers) {
+            const master = this.fontData.masters.find(m => m.id === layer._master);
+            if (!master || !master.location) {
+                continue;
+            }
+
+            // Check if all axis values match (within tolerance of 0.5)
+            let allMatch = true;
+            for (const [tag, value] of Object.entries(master.location)) {
+                if (Math.abs((currentLocation[tag] || 0) - value) > 0.5) {
+                    allMatch = false;
+                    break;
+                }
+            }
+
+            if (allMatch) {
+                // Found a matching layer - select it
+                this.selectedLayerId = layer.id;
+                this.updateLayerSelection();
+                console.log(`Auto-selected layer: ${layer.name || 'Default'} (${layer.id})`);
+                return;
+            }
+        }
     }
 
     selectLayer(layer) {
         // Select a layer and update axis sliders to match its master location
+        // Clear previous state when explicitly selecting a layer
+        this.previousSelectedLayerId = null;
+        this.previousVariationSettings = null;
+
         this.selectedLayerId = layer.id;
         console.log(`Selected layer: ${layer.name} (ID: ${layer.id})`);
         console.log('Layer data:', layer);
@@ -926,6 +1020,15 @@ json.dumps(result)
             slider.addEventListener('input', (e) => {
                 const value = parseFloat(e.target.value);
                 valueLabel.textContent = value.toFixed(0);
+
+                // Save current state before manual adjustment (only once per manual session)
+                if (this.selectedLayerId !== null && this.previousSelectedLayerId === null) {
+                    this.previousSelectedLayerId = this.selectedLayerId;
+                    this.previousVariationSettings = { ...this.variationSettings };
+                    this.selectedLayerId = null; // Deselect layer
+                    this.updateLayerSelection(); // Update UI
+                }
+
                 this.setVariation(axis.tag, value);
             });
 
@@ -1451,15 +1554,7 @@ json.dumps(result)
 
     onKeyDown(e) {
         // Handle cursor navigation and text editing
-
-        // Escape key - Exit glyph edit mode
-        if (e.key === 'Escape') {
-            if (this.isGlyphEditMode) {
-                e.preventDefault();
-                this.exitGlyphEditMode();
-                return;
-            }
-        }
+        // Note: Escape key is handled globally in constructor for better focus handling
 
         // Prevent all text editing and cursor movement in glyph edit mode
         if (this.isGlyphEditMode) {
