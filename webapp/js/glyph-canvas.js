@@ -78,8 +78,11 @@ class GlyphCanvas {
         this.hoveredPointIndex = null; // {contourIndex, nodeIndex} for hovered point
         this.selectedAnchors = []; // Array of anchor indices for selected anchors
         this.hoveredAnchorIndex = null; // Index for hovered anchor
+        this.selectedComponents = []; // Array of component indices for selected components
+        this.hoveredComponentIndex = null; // Index for hovered component
         this.isDraggingPoint = false;
         this.isDraggingAnchor = false;
+        this.isDraggingComponent = false;
         this.layerDataDirty = false; // Track if layer data needs saving
         this.isPreviewMode = false; // Preview mode hides outline editor
 
@@ -302,7 +305,38 @@ class GlyphCanvas {
 
         // In outline editor mode with layer selected (but not in preview mode)
         if (this.isGlyphEditMode && this.selectedLayerId && this.layerData && !this.isPreviewMode) {
-            // Check if clicking on an anchor first (anchors take priority)
+            // Check if clicking on a component first (components take priority)
+            if (this.hoveredComponentIndex !== null) {
+                if (e.shiftKey) {
+                    // Shift-click: add to or remove from selection (keep points and anchors for mixed selection)
+                    const existingIndex = this.selectedComponents.indexOf(this.hoveredComponentIndex);
+                    if (existingIndex >= 0) {
+                        this.selectedComponents.splice(existingIndex, 1);
+                    } else {
+                        this.selectedComponents.push(this.hoveredComponentIndex);
+                    }
+                    this.render();
+                } else {
+                    const isInSelection = this.selectedComponents.includes(this.hoveredComponentIndex);
+
+                    if (!isInSelection) {
+                        this.selectedComponents = [this.hoveredComponentIndex];
+                        this.selectedPoints = [];
+                        this.selectedAnchors = [];
+                    }
+                    // If already in selection, keep all selected components, points, and anchors
+
+                    this.isDraggingComponent = true;
+                    this.lastMouseX = e.clientX;
+                    this.lastMouseY = e.clientY;
+                    this.lastGlyphX = null;
+                    this.lastGlyphY = null;
+                    this.render();
+                }
+                return;
+            }
+
+            // Check if clicking on an anchor (anchors take priority over points)
             if (this.hoveredAnchorIndex !== null) {
                 if (e.shiftKey) {
                     // Shift-click: add to or remove from selection (keep points selected for mixed selection)
@@ -380,6 +414,7 @@ class GlyphCanvas {
                 // Clicked on empty space without shift: clear selection
                 this.selectedPoints = [];
                 this.selectedAnchors = [];
+                this.selectedComponents = [];
                 this.render();
             }
         }
@@ -406,7 +441,74 @@ class GlyphCanvas {
     }
 
     onMouseMove(e) {
-        // Handle anchor dragging in outline editor (takes priority)
+        // Handle component dragging in outline editor (takes priority)
+        if (this.isDraggingComponent && this.selectedComponents.length > 0 && this.layerData) {
+            const rect = this.canvas.getBoundingClientRect();
+            const mouseX = e.clientX - rect.left;
+            const mouseY = e.clientY - rect.top;
+
+            const transform = this.getTransformMatrix();
+            const det = transform.a * transform.d - transform.b * transform.c;
+            let glyphX = (transform.d * (mouseX - transform.e) - transform.c * (mouseY - transform.f)) / det;
+            let glyphY = (transform.a * (mouseY - transform.f) - transform.b * (mouseX - transform.e)) / det;
+
+            let xPosition = 0;
+            for (let i = 0; i < this.selectedGlyphIndex; i++) {
+                xPosition += (this.shapedGlyphs[i].ax || 0);
+            }
+            const glyph = this.shapedGlyphs[this.selectedGlyphIndex];
+            const xOffset = glyph.dx || 0;
+            const yOffset = glyph.dy || 0;
+            glyphX -= (xPosition + xOffset);
+            glyphY -= yOffset;
+
+            const deltaX = Math.round(glyphX) - Math.round(this.lastGlyphX || glyphX);
+            const deltaY = Math.round(glyphY) - Math.round(this.lastGlyphY || glyphY);
+
+            this.lastGlyphX = glyphX;
+            this.lastGlyphY = glyphY;
+
+            // Update all selected components' transforms
+            for (const compIndex of this.selectedComponents) {
+                const shape = this.layerData.shapes[compIndex];
+                if (shape && shape.Component) {
+                    if (!shape.Component.transform) {
+                        // Initialize transform if it doesn't exist
+                        shape.Component.transform = [1, 0, 0, 1, 0, 0];
+                    }
+                    
+                    // Update translation part of transform (always array format)
+                    if (Array.isArray(shape.Component.transform)) {
+                        shape.Component.transform[4] += deltaX;
+                        shape.Component.transform[5] += deltaY;
+                    }
+                }
+            }
+
+            // Also update any selected points (mixed selection)
+            for (const point of this.selectedPoints) {
+                const { contourIndex, nodeIndex } = point;
+                if (this.layerData.shapes[contourIndex] && this.layerData.shapes[contourIndex].nodes[nodeIndex]) {
+                    this.layerData.shapes[contourIndex].nodes[nodeIndex][0] += deltaX;
+                    this.layerData.shapes[contourIndex].nodes[nodeIndex][1] += deltaY;
+                }
+            }
+
+            // Also update any selected anchors (mixed selection)
+            for (const anchorIndex of this.selectedAnchors) {
+                const anchor = this.layerData.anchors[anchorIndex];
+                if (anchor) {
+                    anchor.x += deltaX;
+                    anchor.y += deltaY;
+                }
+            }
+
+            this.saveLayerData();
+            this.render();
+            return;
+        }
+
+        // Handle anchor dragging in outline editor
         if (this.isDraggingAnchor && this.selectedAnchors.length > 0 && this.layerData) {
             const rect = this.canvas.getBoundingClientRect();
             const mouseX = e.clientX - rect.left;
@@ -451,6 +553,18 @@ class GlyphCanvas {
                 if (this.layerData.shapes[contourIndex] && this.layerData.shapes[contourIndex].nodes[nodeIndex]) {
                     this.layerData.shapes[contourIndex].nodes[nodeIndex][0] += deltaX;
                     this.layerData.shapes[contourIndex].nodes[nodeIndex][1] += deltaY;
+                }
+            }
+
+            // Also update any selected components (mixed selection)
+            for (const compIndex of this.selectedComponents) {
+                const shape = this.layerData.shapes[compIndex];
+                if (shape && shape.Component && shape.Component.transform) {
+                    if (!Array.isArray(shape.Component.transform)) {
+                        shape.Component.transform = [1, 0, 0, 1, 0, 0];
+                    }
+                    shape.Component.transform[4] += deltaX;
+                    shape.Component.transform[5] += deltaY;
                 }
             }
 
@@ -509,6 +623,18 @@ class GlyphCanvas {
                 }
             }
 
+            // Also update any selected components (mixed selection)
+            for (const compIndex of this.selectedComponents) {
+                const shape = this.layerData.shapes[compIndex];
+                if (shape && shape.Component && shape.Component.transform) {
+                    if (!Array.isArray(shape.Component.transform)) {
+                        shape.Component.transform = [1, 0, 0, 1, 0, 0];
+                    }
+                    shape.Component.transform[4] += deltaX;
+                    shape.Component.transform[5] += deltaY;
+                }
+            }
+
             // Save to Python immediately (non-blocking)
             // This lets the auto-compile system detect changes
             this.saveLayerData();
@@ -536,6 +662,7 @@ class GlyphCanvas {
         this.isDragging = false;
         this.isDraggingPoint = false;
         this.isDraggingAnchor = false;
+        this.isDraggingComponent = false;
         // Update cursor based on current mouse position
         this.updateCursorStyle(e);
     }
@@ -573,8 +700,9 @@ class GlyphCanvas {
         this.mouseCanvasX = this.mouseX * this.canvas.width / rect.width;
         this.mouseCanvasY = this.mouseY * this.canvas.height / rect.height;
 
-        // In outline editor mode, check for hovered anchors and points first (unless in preview mode), then other glyphs
+        // In outline editor mode, check for hovered components, anchors and points first (unless in preview mode), then other glyphs
         if (this.isGlyphEditMode && this.selectedLayerId && this.layerData && !this.isPreviewMode) {
+            this.updateHoveredComponent();
             this.updateHoveredAnchor();
             this.updateHoveredPoint();
             // Also check for hovering over other glyphs (for switching)
@@ -594,12 +722,12 @@ class GlyphCanvas {
         const mouseX = e.clientX - rect.left;
         const mouseY = e.clientY - rect.top;
 
-        // In outline editing mode, use pointer for points/anchors, grab for panning (NO text cursor)
+        // In outline editing mode, use pointer for components/points/anchors, grab for panning (NO text cursor)
         // In preview mode, always show grab cursor
         if (this.isGlyphEditMode) {
             if (this.isPreviewMode || !this.selectedLayerId || !this.layerData) {
                 this.canvas.style.cursor = 'grab';
-            } else if (this.hoveredPointIndex || this.hoveredAnchorIndex !== null) {
+            } else if (this.hoveredComponentIndex !== null || this.hoveredPointIndex || this.hoveredAnchorIndex !== null) {
                 this.canvas.style.cursor = 'pointer';
             } else {
                 this.canvas.style.cursor = 'grab';
@@ -679,6 +807,111 @@ class GlyphCanvas {
 
         if (foundIndex !== this.hoveredGlyphIndex) {
             this.hoveredGlyphIndex = foundIndex;
+            this.render();
+        }
+    }
+
+    updateHoveredComponent() {
+        // Check which component is being hovered in outline editor mode
+        if (!this.layerData || !this.layerData.shapes) {
+            return;
+        }
+
+        const mouseX = this.mouseX;
+        const mouseY = this.mouseY;
+
+        const transform = this.getTransformMatrix();
+
+        // Calculate glyph offset for selected glyph
+        let xPosition = 0;
+        for (let i = 0; i < this.selectedGlyphIndex; i++) {
+            xPosition += (this.shapedGlyphs[i].ax || 0);
+        }
+        const glyph = this.shapedGlyphs[this.selectedGlyphIndex];
+        const xOffset = glyph.dx || 0;
+        const yOffset = glyph.dy || 0;
+
+        const hitRadius = 20 / this.scale; // Larger hit radius for origin marker
+        let foundComponentIndex = null;
+
+        // Transform mouse to glyph space for origin marker hit test
+        const det = transform.a * transform.d - transform.b * transform.c;
+        let glyphX = (transform.d * (mouseX - transform.e) - transform.c * (mouseY - transform.f)) / det;
+        let glyphY = (transform.a * (mouseY - transform.f) - transform.b * (mouseX - transform.e)) / det;
+        glyphX -= (xPosition + xOffset);
+        glyphY -= yOffset;
+
+        this.layerData.shapes.forEach((shape, index) => {
+            if (shape.Component) {
+                // This is a component - check if hovering near its origin OR inside its outline
+                let a = 1, b = 0, c = 0, d = 1, tx = 0, ty = 0;
+                if (shape.Component.transform && Array.isArray(shape.Component.transform)) {
+                    a = shape.Component.transform[0] || 1;
+                    b = shape.Component.transform[1] || 0;
+                    c = shape.Component.transform[2] || 0;
+                    d = shape.Component.transform[3] || 1;
+                    tx = shape.Component.transform[4] || 0;
+                    ty = shape.Component.transform[5] || 0;
+                }
+                
+                // Check distance to origin marker first
+                const dist = Math.sqrt((tx - glyphX) ** 2 + (ty - glyphY) ** 2);
+                if (dist <= hitRadius) {
+                    foundComponentIndex = index;
+                    return;
+                }
+                
+                // Check if inside component outline
+                if (shape.Component.layerData && shape.Component.layerData.shapes) {
+                    // Build the component path and test with canvas transform
+                    for (const componentShape of shape.Component.layerData.shapes) {
+                        if (componentShape.nodes && componentShape.nodes.length > 0) {
+                            const path = new Path2D();
+                            
+                            for (let i = 0; i < componentShape.nodes.length; i++) {
+                                const node = componentShape.nodes[i];
+                                const type = node[2];
+                                
+                                if (i === 0 || type === 'm') {
+                                    path.moveTo(node[0], node[1]);
+                                } else if (type === 'l' || type === 'ls') {
+                                    path.lineTo(node[0], node[1]);
+                                } else if (type === 'c' || type === 'cs') {
+                                    // Cubic bezier
+                                    if (i + 2 < componentShape.nodes.length) {
+                                        const cp1 = node;
+                                        const cp2 = componentShape.nodes[i + 1];
+                                        const end = componentShape.nodes[i + 2];
+                                        path.bezierCurveTo(cp1[0], cp1[1], cp2[0], cp2[1], end[0], end[1]);
+                                        i += 2;
+                                    }
+                                }
+                            }
+                            
+                            path.closePath();
+                            
+                            // Apply transform to canvas for hit testing
+                            this.ctx.save();
+                            this.ctx.setTransform(transform.a, transform.b, transform.c, transform.d, transform.e, transform.f);
+                            this.ctx.translate(xPosition + xOffset, yOffset);
+                            this.ctx.transform(a, b, c, d, tx, ty);
+                            
+                            // Test if mouse point is in path (in canvas coordinates)
+                            if (this.ctx.isPointInPath(path, mouseX, mouseY)) {
+                                foundComponentIndex = index;
+                                this.ctx.restore();
+                                return;
+                            }
+                            
+                            this.ctx.restore();
+                        }
+                    }
+                }
+            }
+        });
+
+        if (foundComponentIndex !== this.hoveredComponentIndex) {
+            this.hoveredComponentIndex = foundComponentIndex;
             this.render();
         }
     }
@@ -820,6 +1053,31 @@ class GlyphCanvas {
             if (anchor) {
                 anchor.x += deltaX;
                 anchor.y += deltaY;
+            }
+        }
+
+        // Save to Python (non-blocking)
+        this.saveLayerData();
+        this.render();
+    }
+
+    moveSelectedComponents(deltaX, deltaY) {
+        // Move all selected components by the given delta
+        if (!this.layerData || !this.layerData.shapes || this.selectedComponents.length === 0) {
+            return;
+        }
+
+        for (const compIndex of this.selectedComponents) {
+            const shape = this.layerData.shapes[compIndex];
+            if (shape && shape.Component) {
+                if (!shape.Component.transform) {
+                    // Initialize transform if it doesn't exist
+                    shape.Component.transform = [1, 0, 0, 1, 0, 0];
+                }
+                if (Array.isArray(shape.Component.transform)) {
+                    shape.Component.transform[4] += deltaX;
+                    shape.Component.transform[5] += deltaY;
+                }
             }
         }
 
@@ -1436,6 +1694,23 @@ try:
             if layer:
                 # Use to_dict() to serialize the layer
                 result = layer.to_dict()
+                
+                # Fetch component layer data
+                if result and 'shapes' in result:
+                    for shape in result['shapes']:
+                        if 'Component' in shape and 'reference' in shape['Component']:
+                            ref_name = shape['Component']['reference']
+                            ref_glyph = current_font.glyphs.get(ref_name)
+                            if ref_glyph:
+                                # Get the same layer from the referenced glyph
+                                ref_layer = None
+                                for l in ref_glyph.layers:
+                                    if l.id == '${this.selectedLayerId}':
+                                        ref_layer = l
+                                        break
+                                
+                                if ref_layer:
+                                    shape['Component']['layerData'] = ref_layer.to_dict()
 except Exception as e:
     print(f"Error fetching layer data: {e}")
     import traceback
@@ -1446,6 +1721,33 @@ json.dumps(result)
 `);
 
             this.layerData = JSON.parse(dataJson);
+            
+            // Parse component layer data nodes strings into arrays
+            if (this.layerData && this.layerData.shapes) {
+                this.layerData.shapes.forEach(shape => {
+                    if (shape.Component && shape.Component.layerData && shape.Component.layerData.shapes) {
+                        shape.Component.layerData.shapes.forEach(componentShape => {
+                            if (componentShape.Path && componentShape.Path.nodes) {
+                                // Parse "x y type x y type ..." into [[x, y, type], ...]
+                                const nodesStr = componentShape.Path.nodes.trim();
+                                const tokens = nodesStr.split(/\s+/);
+                                const nodesArray = [];
+                                
+                                for (let i = 0; i + 2 < tokens.length; i += 3) {
+                                    nodesArray.push([
+                                        parseFloat(tokens[i]),
+                                        parseFloat(tokens[i + 1]),
+                                        tokens[i + 2]
+                                    ]);
+                                }
+                                
+                                componentShape.nodes = nodesArray;
+                            }
+                        });
+                    }
+                });
+            }
+            
             console.log('Fetched layer data:', this.layerData);
             this.render();
         } catch (error) {
@@ -2222,10 +2524,10 @@ except Exception as e:
         const invScale = 1 / this.scale;
         const isDarkTheme = document.documentElement.getAttribute('data-theme') !== 'light';
 
-        // Draw each shape (contour)
+        // Draw each shape (contour or component)
         this.layerData.shapes.forEach((shape, contourIndex) => {
             if (shape.ref) {
-                // Component - skip for now
+                // Component - will be drawn separately as markers
                 return;
             }
 
@@ -2415,6 +2717,116 @@ except Exception as e:
             });
         });
 
+        // Draw components
+        this.layerData.shapes.forEach((shape, index) => {
+            if (!shape.Component) {
+                return; // Not a component
+            }
+
+            const isHovered = this.hoveredComponentIndex === index;
+            const isSelected = this.selectedComponents.includes(index);
+
+            // Get full transform matrix [a, b, c, d, tx, ty]
+            let a = 1, b = 0, c = 0, d = 1, tx = 0, ty = 0;
+            if (shape.Component.transform && Array.isArray(shape.Component.transform)) {
+                a = shape.Component.transform[0] || 1;
+                b = shape.Component.transform[1] || 0;
+                c = shape.Component.transform[2] || 0;
+                d = shape.Component.transform[3] || 1;
+                tx = shape.Component.transform[4] || 0;
+                ty = shape.Component.transform[5] || 0;
+            }
+
+            this.ctx.save();
+            
+            // Apply component transform
+            this.ctx.transform(a, b, c, d, tx, ty);
+
+            // Draw the component's outline shapes if they were fetched
+            if (shape.Component.layerData && shape.Component.layerData.shapes) {
+                // Draw each contour in the component
+                shape.Component.layerData.shapes.forEach(componentShape => {
+                    if (componentShape.nodes) {
+                        this.ctx.beginPath();
+                        
+                        const nodes = componentShape.nodes;
+                        let prevX = null, prevY = null;
+                        
+                        for (let i = 0; i < nodes.length; i++) {
+                            const node = nodes[i];
+                            const x = node[0];
+                            const y = node[1];
+                            const type = node[2];
+                            
+                            if (type === 'm' || (prevX === null && prevY === null)) {
+                                this.ctx.moveTo(x, y);
+                            } else if (type === 'l') {
+                                this.ctx.lineTo(x, y);
+                            } else if (type === 'c') {
+                                // Cubic bezier - need 3 points
+                                const cp1 = node;
+                                const cp2 = nodes[(i + 1) % nodes.length];
+                                const end = nodes[(i + 2) % nodes.length];
+                                this.ctx.bezierCurveTo(cp1[0], cp1[1], cp2[0], cp2[1], end[0], end[1]);
+                                i += 2; // Skip the next two points as they were part of the curve
+                            } else if (type === 'q') {
+                                // Quadratic bezier
+                                const cp = node;
+                                const end = nodes[(i + 1) % nodes.length];
+                                this.ctx.quadraticCurveTo(cp[0], cp[1], end[0], end[1]);
+                                i += 1;
+                            }
+                            
+                            prevX = x;
+                            prevY = y;
+                        }
+                        
+                        this.ctx.closePath();
+                        
+                        // Fill with semi-transparent color
+                        this.ctx.fillStyle = isDarkTheme 
+                            ? (isSelected ? 'rgba(255, 0, 255, 0.3)' : (isHovered ? 'rgba(255, 136, 255, 0.2)' : 'rgba(0, 255, 255, 0.15)'))
+                            : (isSelected ? 'rgba(255, 0, 255, 0.2)' : (isHovered ? 'rgba(255, 136, 255, 0.15)' : 'rgba(0, 255, 255, 0.1)'));
+                        this.ctx.fill();
+                        
+                        // Stroke the outline
+                        this.ctx.strokeStyle = isSelected ? '#ff00ff' : (isHovered ? '#ff88ff' : '#00ffff');
+                        this.ctx.lineWidth = 1 * invScale;
+                        this.ctx.stroke();
+                    }
+                });
+            }
+
+            // Draw component reference marker at origin
+            const markerSize = 10 * invScale;
+
+            // Draw cross marker
+            this.ctx.strokeStyle = isSelected ? '#ff00ff' : (isHovered ? '#ff88ff' : '#00ffff');
+            this.ctx.lineWidth = 2 * invScale;
+            this.ctx.beginPath();
+            this.ctx.moveTo(-markerSize, 0);
+            this.ctx.lineTo(markerSize, 0);
+            this.ctx.moveTo(0, -markerSize);
+            this.ctx.lineTo(0, markerSize);
+            this.ctx.stroke();
+
+            // Draw circle around cross
+            this.ctx.beginPath();
+            this.ctx.arc(0, 0, markerSize, 0, Math.PI * 2);
+            this.ctx.stroke();
+
+            // Draw component reference name
+            const fontSize = 12 * invScale;
+            this.ctx.save();
+            this.ctx.scale(1, -1); // Flip Y axis
+            this.ctx.font = `${fontSize}px monospace`;
+            this.ctx.fillStyle = isDarkTheme ? 'rgba(255, 255, 255, 0.8)' : 'rgba(0, 0, 0, 0.8)';
+            this.ctx.fillText(shape.Component.reference || 'component', markerSize * 1.5, markerSize);
+            this.ctx.restore();
+
+            this.ctx.restore();
+        });
+
         // Draw anchors
         if (this.layerData.anchors && this.layerData.anchors.length > 0) {
             const anchorSize = 8 * invScale;
@@ -2542,8 +2954,8 @@ except Exception as e:
         // Handle cursor navigation and text editing
         // Note: Escape key is handled globally in constructor for better focus handling
 
-        // Handle arrow keys for point/anchor movement in glyph edit mode
-        if (this.isGlyphEditMode && this.selectedLayerId && (this.selectedPoints.length > 0 || this.selectedAnchors.length > 0)) {
+        // Handle arrow keys for point/anchor/component movement in glyph edit mode
+        if (this.isGlyphEditMode && this.selectedLayerId && (this.selectedPoints.length > 0 || this.selectedAnchors.length > 0 || this.selectedComponents.length > 0)) {
             const multiplier = e.shiftKey ? 10 : 1;
             let moved = false;
 
@@ -2555,6 +2967,9 @@ except Exception as e:
                 if (this.selectedAnchors.length > 0) {
                     this.moveSelectedAnchors(-multiplier, 0);
                 }
+                if (this.selectedComponents.length > 0) {
+                    this.moveSelectedComponents(-multiplier, 0);
+                }
                 moved = true;
             } else if (e.key === 'ArrowRight') {
                 e.preventDefault();
@@ -2563,6 +2978,9 @@ except Exception as e:
                 }
                 if (this.selectedAnchors.length > 0) {
                     this.moveSelectedAnchors(multiplier, 0);
+                }
+                if (this.selectedComponents.length > 0) {
+                    this.moveSelectedComponents(multiplier, 0);
                 }
                 moved = true;
             } else if (e.key === 'ArrowUp') {
@@ -2573,6 +2991,9 @@ except Exception as e:
                 if (this.selectedAnchors.length > 0) {
                     this.moveSelectedAnchors(0, multiplier);
                 }
+                if (this.selectedComponents.length > 0) {
+                    this.moveSelectedComponents(0, multiplier);
+                }
                 moved = true;
             } else if (e.key === 'ArrowDown') {
                 e.preventDefault();
@@ -2581,6 +3002,9 @@ except Exception as e:
                 }
                 if (this.selectedAnchors.length > 0) {
                     this.moveSelectedAnchors(0, -multiplier);
+                }
+                if (this.selectedComponents.length > 0) {
+                    this.moveSelectedComponents(0, -multiplier);
                 }
                 moved = true;
             }
