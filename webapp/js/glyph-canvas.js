@@ -240,10 +240,15 @@ class GlyphCanvas {
                     this.togglePointSmooth(this.hoveredPointIndex);
                     return;
                 }
+                // Double-click on other glyph - switch to that glyph
+                if (this.hoveredGlyphIndex >= 0 && this.hoveredGlyphIndex !== this.selectedGlyphIndex) {
+                    this.selectGlyphByIndex(this.hoveredGlyphIndex);
+                    return;
+                }
             }
 
-            // Double-click on glyph - select glyph
-            if (this.hoveredGlyphIndex >= 0) {
+            // Double-click on glyph - select glyph (when not in edit mode)
+            if (!this.isGlyphEditMode && this.hoveredGlyphIndex >= 0) {
                 this.selectGlyphByIndex(this.hoveredGlyphIndex);
                 return;
             }
@@ -386,16 +391,18 @@ class GlyphCanvas {
         this.mouseCanvasX = this.mouseX * this.canvas.width / rect.width;
         this.mouseCanvasY = this.mouseY * this.canvas.height / rect.height;
 
-        // Update cursor style based on position
-        this.updateCursorStyle(e);
-
-        // In outline editor mode, check for hovered points first
+        // In outline editor mode, check for hovered points first, then other glyphs
         if (this.isGlyphEditMode && this.selectedLayerId && this.layerData) {
             this.updateHoveredPoint();
+            // Also check for hovering over other glyphs (for switching)
+            this.updateHoveredGlyph();
         } else {
             // Check which glyph is being hovered
             this.updateHoveredGlyph();
         }
+
+        // Update cursor style based on position (after updating hover states)
+        this.updateCursorStyle(e);
     }
 
     updateCursorStyle(e) {
@@ -403,6 +410,16 @@ class GlyphCanvas {
         const rect = this.canvas.getBoundingClientRect();
         const mouseX = e.clientX - rect.left;
         const mouseY = e.clientY - rect.top;
+
+        // In outline editing mode, use pointer for points, grab for panning
+        if (this.isGlyphEditMode && this.selectedLayerId && this.layerData) {
+            if (this.hoveredPointIndex) {
+                this.canvas.style.cursor = 'pointer';
+            } else {
+                this.canvas.style.cursor = 'grab';
+            }
+            return;
+        }
 
         // Transform mouse coordinates to glyph space to check if over text area
         const transform = this.getTransformMatrix();
