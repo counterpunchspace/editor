@@ -1636,13 +1636,27 @@ class GlyphCanvas {
                     const prevCluster = this.shapedGlyphs[i - 1].cl || 0;
                     clusterEnd = prevCluster;
                 } else {
-                    // First cluster - look forward for next different cluster
+                    // First RTL glyph cluster (rightmost/last in logical text)
+                    // Need to find where this cluster ends in logical order
+                    // Look for the next higher cluster value (later in text) or end of RTL run
                     clusterEnd = this.textBuffer.length;
+
+                    // Check subsequent glyphs for a cluster with higher value
                     for (let k = j; k < this.shapedGlyphs.length; k++) {
-                        const nextCluster = this.shapedGlyphs[k].cl || 0;
-                        if (nextCluster !== clusterStart) {
-                            clusterEnd = nextCluster;
+                        const kCluster = this.shapedGlyphs[k].cl || 0;
+                        if (kCluster > clusterStart) {
+                            clusterEnd = kCluster;
                             break;
+                        }
+                    }
+
+                    // If still at text.length, check if RTL continues or ends
+                    if (clusterEnd === this.textBuffer.length) {
+                        for (let k = clusterStart + 1; k < this.textBuffer.length; k++) {
+                            if (!this.isPositionRTL(k)) {
+                                clusterEnd = k;
+                                break;
+                            }
                         }
                     }
                 }
