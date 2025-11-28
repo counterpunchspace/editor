@@ -78,6 +78,7 @@ class GlyphCanvas {
         this.hoveredPointIndex = null; // {contourIndex, nodeIndex} for hovered point
         this.isDraggingPoint = false;
         this.layerDataDirty = false; // Track if layer data needs saving
+        this.isPreviewMode = false; // Preview mode hides outline editor
 
         // HarfBuzz instance and objects
         this.hb = null;
@@ -180,14 +181,20 @@ class GlyphCanvas {
 
         // Keyboard events for cursor and text input
         this.canvas.addEventListener('keydown', (e) => this.onKeyDown(e));
+        this.canvas.addEventListener('keyup', (e) => this.onKeyUp(e));
 
         // Global Escape key handler (works even when sliders have focus)
         document.addEventListener('keydown', (e) => {
             if (e.key === 'Escape' && this.isGlyphEditMode) {
                 e.preventDefault();
 
-                // Restore previous layer selection if exists
-                if (this.previousSelectedLayerId !== null && this.previousVariationSettings !== null) {
+                // If a layer is currently selected, just exit edit mode directly
+                // Otherwise, restore previous layer selection if exists
+                if (this.selectedLayerId !== null) {
+                    // Layer is active - just exit edit mode
+                    this.exitGlyphEditMode();
+                } else if (this.previousSelectedLayerId !== null && this.previousVariationSettings !== null) {
+                    // No active layer but previous state exists - restore it
                     this.selectedLayerId = this.previousSelectedLayerId;
 
                     // Restore axis values with animation
@@ -210,6 +217,7 @@ class GlyphCanvas {
                     // Return focus to canvas
                     this.canvas.focus();
                 } else {
+                    // No layer and no previous state - just exit
                     this.exitGlyphEditMode();
                 }
             }
@@ -401,9 +409,9 @@ class GlyphCanvas {
         const mouseX = e.clientX - rect.left;
         const mouseY = e.clientY - rect.top;
 
-        // In outline editing mode, use pointer for points, grab for panning
-        if (this.isGlyphEditMode && this.selectedLayerId && this.layerData) {
-            if (this.hoveredPointIndex) {
+        // In outline editing mode, use pointer for points, grab for panning (NO text cursor)
+        if (this.isGlyphEditMode) {
+            if (this.selectedLayerId && this.layerData && this.hoveredPointIndex) {
                 this.canvas.style.cursor = 'pointer';
             } else {
                 this.canvas.style.cursor = 'grab';
@@ -1416,6 +1424,24 @@ except Exception as e:
             // Initialize variation setting
             this.variationSettings[axis.tag] = initialValue;
 
+            // Enter preview mode on mousedown
+            slider.addEventListener('mousedown', () => {
+                if (this.isGlyphEditMode) {
+                    this.isPreviewMode = true;
+                    this.render();
+                }
+            });
+
+            // Exit preview mode and restore focus on mouseup
+            slider.addEventListener('mouseup', () => {
+                if (this.isGlyphEditMode) {
+                    this.isPreviewMode = false;
+                    this.render();
+                    // Restore focus to canvas
+                    setTimeout(() => this.canvas.focus(), 0);
+                }
+            });
+
             // Update on change
             slider.addEventListener('input', (e) => {
                 const value = parseFloat(e.target.value);
@@ -1733,19 +1759,23 @@ except Exception as e:
             const selectedColor = '#00ff00'; // Green for selected (glyph after cursor)
 
             // Skip drawing the selected glyph if we have layer data (outline editor will draw it)
-            if (isSelected && this.selectedLayerId && this.layerData) {
+            // UNLESS we're in preview mode, then show it in solid color
+            if (isSelected && this.selectedLayerId && this.layerData && !this.isPreviewMode) {
                 xPosition += xAdvance;
                 return;
             }
 
-            if (this.isGlyphEditMode) {
-                // Glyph edit mode: active glyph in solid color, others dimmed
+            if (this.isGlyphEditMode && !this.isPreviewMode) {
+                // Glyph edit mode (not preview): active glyph in solid color, others dimmed
                 if (isSelected) {
                     this.ctx.fillStyle = normalColor; // Solid black/white for active glyph
                 } else {
                     // Dim other glyphs to 20% opacity
                     this.ctx.fillStyle = isDarkTheme ? 'rgba(255, 255, 255, 0.2)' : 'rgba(0, 0, 0, 0.2)';
                 }
+            } else if (this.isGlyphEditMode && this.isPreviewMode) {
+                // Preview mode: all glyphs in solid color
+                this.ctx.fillStyle = normalColor;
             } else {
                 // Text edit mode: normal coloring
                 if (isHovered) {
@@ -1894,8 +1924,8 @@ except Exception as e:
     }
 
     drawOutlineEditor() {
-        // Draw outline editor when a layer is selected
-        if (!this.selectedLayerId || !this.layerData || !this.layerData.shapes) {
+        // Draw outline editor when a layer is selected (skip in preview mode)
+        if (!this.selectedLayerId || !this.layerData || !this.layerData.shapes || this.isPreviewMode) {
             return;
         }
 
@@ -2133,7 +2163,23 @@ except Exception as e:
         this.render();
     }
 
+    onKeyUp(e) {
+        // Handle space bar release to exit preview mode
+        if (e.code === 'Space' && this.isGlyphEditMode) {
+            this.isPreviewMode = false;
+            this.render();
+        }
+    }
+
     onKeyDown(e) {
+        // Handle space bar press to enter preview mode
+        if (e.code === 'Space' && this.isGlyphEditMode) {
+            e.preventDefault();
+            this.isPreviewMode = true;
+            this.render();
+            return;
+        }
+
         // Handle cursor navigation and text editing
         // Note: Escape key is handled globally in constructor for better focus handling
 
