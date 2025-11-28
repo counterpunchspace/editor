@@ -72,6 +72,13 @@ class GlyphCanvas {
         this.previousSelectedLayerId = null; // For restoring on Escape
         this.previousVariationSettings = null; // For restoring on Escape
 
+        // Outline editor state
+        this.layerData = null; // Cached layer data with shapes
+        this.selectedPointIndex = null; // {contourIndex, nodeIndex} for selected point
+        this.hoveredPointIndex = null; // {contourIndex, nodeIndex} for hovered point
+        this.isDraggingPoint = false;
+        this.layerDataDirty = false; // Track if layer data needs saving
+
         // HarfBuzz instance and objects
         this.hb = null;
         this.hbFont = null;
@@ -224,11 +231,31 @@ class GlyphCanvas {
         // Focus the canvas when clicked
         this.canvas.focus();
 
-        // Check for double-click on glyph
+        // Check for double-click
         if (e.detail === 2) {
-            // Double-click - select glyph
+            // In outline editor mode with layer selected
+            if (this.isGlyphEditMode && this.selectedLayerId && this.layerData) {
+                // Double-click on point - toggle smooth
+                if (this.hoveredPointIndex) {
+                    this.togglePointSmooth(this.hoveredPointIndex);
+                    return;
+                }
+            }
+
+            // Double-click on glyph - select glyph
             if (this.hoveredGlyphIndex >= 0) {
                 this.selectGlyphByIndex(this.hoveredGlyphIndex);
+                return;
+            }
+        }
+
+        // In outline editor mode with layer selected
+        if (this.isGlyphEditMode && this.selectedLayerId && this.layerData) {
+            // Check if clicking on a point
+            if (this.hoveredPointIndex) {
+                this.selectedPointIndex = { ...this.hoveredPointIndex };
+                this.isDraggingPoint = true;
+                this.render();
                 return;
             }
         }
@@ -254,6 +281,43 @@ class GlyphCanvas {
     }
 
     onMouseMove(e) {
+        // Handle point dragging in outline editor
+        if (this.isDraggingPoint && this.selectedPointIndex && this.layerData) {
+            const rect = this.canvas.getBoundingClientRect();
+            const mouseX = e.clientX - rect.left;
+            const mouseY = e.clientY - rect.top;
+
+            // Transform to glyph space
+            const transform = this.getTransformMatrix();
+            const det = transform.a * transform.d - transform.b * transform.c;
+            let glyphX = (transform.d * (mouseX - transform.e) - transform.c * (mouseY - transform.f)) / det;
+            let glyphY = (transform.a * (mouseY - transform.f) - transform.b * (mouseX - transform.e)) / det;
+
+            // Adjust for selected glyph position
+            let xPosition = 0;
+            for (let i = 0; i < this.selectedGlyphIndex; i++) {
+                xPosition += (this.shapedGlyphs[i].ax || 0);
+            }
+            const glyph = this.shapedGlyphs[this.selectedGlyphIndex];
+            const xOffset = glyph.dx || 0;
+            const yOffset = glyph.dy || 0;
+            glyphX -= (xPosition + xOffset);
+            glyphY -= yOffset;
+
+            // Update point position
+            const { contourIndex, nodeIndex } = this.selectedPointIndex;
+            if (this.layerData.shapes[contourIndex] && this.layerData.shapes[contourIndex].nodes[nodeIndex]) {
+                this.layerData.shapes[contourIndex].nodes[nodeIndex][0] = Math.round(glyphX);
+                this.layerData.shapes[contourIndex].nodes[nodeIndex][1] = Math.round(glyphY);
+
+                // Mark as needing save
+                this.layerDataDirty = true;
+
+                this.render();
+            }
+            return;
+        }
+
         if (!this.isDragging) return;
 
         const dx = e.clientX - this.lastMouseX;
@@ -269,7 +333,14 @@ class GlyphCanvas {
     }
 
     onMouseUp(e) {
+        // Save layer data if point was being dragged
+        if (this.isDraggingPoint && this.layerDataDirty) {
+            this.saveLayerData();
+            this.layerDataDirty = false;
+        }
+
         this.isDragging = false;
+        this.isDraggingPoint = false;
         // Update cursor based on current mouse position
         this.updateCursorStyle(e);
     }
@@ -297,7 +368,7 @@ class GlyphCanvas {
     }
 
     onMouseMoveHover(e) {
-        if (this.isDragging) return; // Don't detect hover while dragging
+        if (this.isDragging || this.isDraggingPoint) return; // Don't detect hover while dragging
 
         const rect = this.canvas.getBoundingClientRect();
         // Store both canvas and client coordinates
@@ -310,8 +381,13 @@ class GlyphCanvas {
         // Update cursor style based on position
         this.updateCursorStyle(e);
 
-        // Check which glyph is being hovered
-        this.updateHoveredGlyph();
+        // In outline editor mode, check for hovered points first
+        if (this.isGlyphEditMode && this.selectedLayerId && this.layerData) {
+            this.updateHoveredPoint();
+        } else {
+            // Check which glyph is being hovered
+            this.updateHoveredGlyph();
+        }
     }
 
     updateCursorStyle(e) {
@@ -394,6 +470,98 @@ class GlyphCanvas {
             this.hoveredGlyphIndex = foundIndex;
             this.render();
         }
+    }
+
+    updateHoveredPoint() {
+        // Check which point is being hovered in outline editor mode
+        if (!this.layerData || !this.layerData.shapes) {
+            return;
+        }
+
+        const mouseX = this.mouseCanvasX || this.mouseX;
+        const mouseY = this.mouseCanvasY || this.mouseY;
+
+        // Transform mouse coordinates to glyph space
+        const transform = this.getTransformMatrix();
+        const det = transform.a * transform.d - transform.b * transform.c;
+        let glyphX = (transform.d * (mouseX - transform.e) - transform.c * (mouseY - transform.f)) / det;
+        let glyphY = (transform.a * (mouseY - transform.f) - transform.b * (mouseX - transform.e)) / det;
+
+        // Adjust for selected glyph position
+        let xPosition = 0;
+        for (let i = 0; i < this.selectedGlyphIndex; i++) {
+            xPosition += (this.shapedGlyphs[i].ax || 0);
+        }
+        const glyph = this.shapedGlyphs[this.selectedGlyphIndex];
+        const xOffset = glyph.dx || 0;
+        const yOffset = glyph.dy || 0;
+        glyphX -= (xPosition + xOffset);
+        glyphY -= yOffset;
+
+        // Check each point in each contour
+        const hitRadius = 10 / this.scale; // 10 pixels in screen space
+        let foundPoint = null;
+
+        this.layerData.shapes.forEach((shape, contourIndex) => {
+            if (shape.ref || !shape.nodes) return;
+
+            shape.nodes.forEach((node, nodeIndex) => {
+                const [x, y] = node;
+                const dist = Math.sqrt((x - glyphX) ** 2 + (y - glyphY) ** 2);
+
+                if (dist <= hitRadius) {
+                    foundPoint = { contourIndex, nodeIndex };
+                }
+            });
+        });
+
+        if (JSON.stringify(foundPoint) !== JSON.stringify(this.hoveredPointIndex)) {
+            this.hoveredPointIndex = foundPoint;
+            this.render();
+        }
+    }
+
+    togglePointSmooth(pointIndex) {
+        // Toggle smooth state of a point
+        if (!this.layerData || !this.layerData.shapes) {
+            return;
+        }
+
+        const { contourIndex, nodeIndex } = pointIndex;
+        const shape = this.layerData.shapes[contourIndex];
+
+        if (!shape || !shape.nodes || !shape.nodes[nodeIndex]) {
+            return;
+        }
+
+        const node = shape.nodes[nodeIndex];
+        const [x, y, type] = node;
+
+        // Toggle smooth state based on current type
+        let newType = type;
+
+        if (type === 'c') {
+            newType = 'cs'; // on-curve -> smooth on-curve
+        } else if (type === 'cs') {
+            newType = 'c'; // smooth on-curve -> on-curve
+        } else if (type === 'l') {
+            newType = 'ls'; // line -> smooth line
+        } else if (type === 'ls') {
+            newType = 'l'; // smooth line -> line
+        } else if (type === 'o') {
+            newType = 'os'; // off-curve -> smooth off-curve
+        } else if (type === 'os') {
+            newType = 'o'; // smooth off-curve -> off-curve
+        }
+
+        node[2] = newType;
+
+        // Mark as needing save and update
+        this.layerDataDirty = true;
+        this.saveLayerData();
+        this.render();
+
+        console.log(`Toggled point smooth: ${type} -> ${newType}`);
     }
 
     onResize() {
@@ -540,7 +708,7 @@ class GlyphCanvas {
         this.animateVariation();
     }
 
-    animateVariation() {
+    async animateVariation() {
         if (!this.isAnimating) return;
 
         this.animationCurrentFrame++;
@@ -568,12 +736,12 @@ class GlyphCanvas {
             this.variationSettings = { ...this.animationTargetValues };
             this.isAnimating = false;
             this.updateAxisSliders(); // Update slider UI to match final values
-            
+
             // Check if new variation settings match any layer
             if (this.isGlyphEditMode && this.fontData) {
-                this.autoSelectMatchingLayer();
+                await this.autoSelectMatchingLayer();
             }
-            
+
             this.shapeText();
         }
     }
@@ -605,6 +773,14 @@ class GlyphCanvas {
         this.isGlyphEditMode = false;
         this.selectedGlyphIndex = -1;
         this.selectedLayerId = null;
+
+        // Clear outline editor state
+        this.layerData = null;
+        this.selectedPointIndex = null;
+        this.hoveredPointIndex = null;
+        this.isDraggingPoint = false;
+        this.layerDataDirty = false;
+
         console.log(`Exited glyph edit mode - returned to text edit mode`);
         this.updatePropertiesUI();
         this.render();
@@ -801,10 +977,10 @@ json.dumps(result)
         this.propertiesSection.appendChild(layersList);
 
         // Auto-select layer if current axis values match a layer's master location
-        this.autoSelectMatchingLayer();
+        await this.autoSelectMatchingLayer();
     }
 
-    autoSelectMatchingLayer() {
+    async autoSelectMatchingLayer() {
         // Check if current variation settings match any layer's master location
         if (!this.fontData || !this.fontData.layers || !this.fontData.masters) {
             return;
@@ -832,6 +1008,7 @@ json.dumps(result)
             if (allMatch) {
                 // Found a matching layer - select it
                 this.selectedLayerId = layer.id;
+                await this.fetchLayerData(); // Fetch layer data for outline editor
                 this.updateLayerSelection();
                 console.log(`Auto-selected layer: ${layer.name || 'Default'} (${layer.id})`);
                 return;
@@ -841,12 +1018,15 @@ json.dumps(result)
         // No matching layer found - deselect current layer
         if (this.selectedLayerId !== null) {
             this.selectedLayerId = null;
+            this.layerData = null; // Clear layer data when deselecting
+            this.selectedPointIndex = null;
+            this.hoveredPointIndex = null;
             this.updateLayerSelection();
             console.log('No matching layer - deselected');
         }
     }
 
-    selectLayer(layer) {
+    async selectLayer(layer) {
         // Select a layer and update axis sliders to match its master location
         // Clear previous state when explicitly selecting a layer
         this.previousSelectedLayerId = null;
@@ -856,6 +1036,9 @@ json.dumps(result)
         console.log(`Selected layer: ${layer.name} (ID: ${layer.id})`);
         console.log('Layer data:', layer);
         console.log('Available masters:', this.fontData.masters);
+
+        // Fetch full layer data with shapes
+        await this.fetchLayerData();
 
         // Find the master for this layer
         const master = this.fontData.masters.find(m => m.id === layer._master);
@@ -907,6 +1090,132 @@ json.dumps(result)
                 item.style.backgroundColor = 'transparent';
             }
         });
+    }
+
+    async fetchLayerData() {
+        // Fetch full layer data including shapes using to_dict()
+        if (!window.pyodide || !this.selectedLayerId) {
+            this.layerData = null;
+            return;
+        }
+
+        try {
+            const glyphId = this.shapedGlyphs[this.selectedGlyphIndex].g;
+            let glyphName = `GID ${glyphId}`;
+
+            // Get glyph name from compiled font
+            if (this.opentypeFont && this.opentypeFont.glyphs.get(glyphId)) {
+                const glyph = this.opentypeFont.glyphs.get(glyphId);
+                if (glyph.name) {
+                    glyphName = glyph.name;
+                }
+            }
+
+            const dataJson = await window.pyodide.runPythonAsync(`
+import json
+
+result = None
+try:
+    current_font = CurrentFont()
+    if current_font and hasattr(current_font, 'glyphs'):
+        glyph = current_font.glyphs.get('${glyphName}')
+        if glyph:
+            # Find the layer by ID
+            layer = None
+            for l in glyph.layers:
+                if l.id == '${this.selectedLayerId}':
+                    layer = l
+                    break
+            
+            if layer:
+                # Use to_dict() to serialize the layer
+                result = layer.to_dict()
+except Exception as e:
+    print(f"Error fetching layer data: {e}")
+    import traceback
+    traceback.print_exc()
+    result = None
+
+json.dumps(result)
+`);
+
+            this.layerData = JSON.parse(dataJson);
+            console.log('Fetched layer data:', this.layerData);
+            this.render();
+        } catch (error) {
+            console.error('Error fetching layer data from Python:', error);
+            this.layerData = null;
+        }
+    }
+
+    async saveLayerData() {
+        // Save layer data back to Python using from_dict()
+        if (!window.pyodide || !this.selectedLayerId || !this.layerData) {
+            return;
+        }
+
+        try {
+            const glyphId = this.shapedGlyphs[this.selectedGlyphIndex].g;
+            let glyphName = `GID ${glyphId}`;
+
+            if (this.opentypeFont && this.opentypeFont.glyphs.get(glyphId)) {
+                const glyph = this.opentypeFont.glyphs.get(glyphId);
+                if (glyph.name) {
+                    glyphName = glyph.name;
+                }
+            }
+
+            // Convert nodes array back to string format for Python
+            const layerDataCopy = JSON.parse(JSON.stringify(this.layerData));
+            if (layerDataCopy.shapes) {
+                layerDataCopy.shapes.forEach(shape => {
+                    if (shape.nodes && Array.isArray(shape.nodes)) {
+                        // Convert array back to string: [[x, y, type], ...] -> "x y type x y type ..."
+                        const nodesString = shape.nodes.map(node => `${node[0]} ${node[1]} ${node[2]}`).join(' ');
+                        // Store in Path.nodes format
+                        if (!shape.Path) {
+                            shape.Path = {};
+                        }
+                        shape.Path.nodes = nodesString;
+                        shape.Path.closed = true; // Assume closed for now
+                        delete shape.nodes; // Remove the parsed array
+                    }
+                });
+            }
+
+            const layerDataJson = JSON.stringify(layerDataCopy);
+
+            await window.pyodide.runPythonAsync(`
+import json
+
+try:
+    current_font = CurrentFont()
+    if current_font and hasattr(current_font, 'glyphs'):
+        glyph = current_font.glyphs.get('${glyphName}')
+        if glyph:
+            # Find the layer by ID
+            layer = None
+            for l in glyph.layers:
+                if l.id == '${this.selectedLayerId}':
+                    layer = l
+                    break
+            
+            if layer:
+                # Parse the JSON data
+                layer_dict = json.loads('''${layerDataJson}''')
+                # Use from_dict() to update the layer
+                layer.from_dict(layer_dict)
+                print(f"Layer data saved successfully")
+except Exception as e:
+    print(f"Error saving layer data: {e}")
+    import traceback
+    traceback.print_exc()
+`);
+
+            console.log('Layer data saved successfully');
+        } catch (error) {
+            console.error('Error saving layer data to Python:', error);
+        }
     }
 
     updateAxisSliders() {
@@ -1287,6 +1596,9 @@ json.dumps(result)
         // Draw shaped glyphs
         this.drawShapedGlyphs();
 
+        // Draw outline editor (when layer is selected)
+        this.drawOutlineEditor();
+
         // Draw cursor
         this.drawCursor();
 
@@ -1381,6 +1693,12 @@ json.dumps(result)
             const isHovered = glyphIndex === this.hoveredGlyphIndex;
             const isSelected = glyphIndex === this.selectedGlyphIndex;
             const selectedColor = '#00ff00'; // Green for selected (glyph after cursor)
+
+            // Skip drawing the selected glyph if we have layer data (outline editor will draw it)
+            if (isSelected && this.selectedLayerId && this.layerData) {
+                xPosition += xAdvance;
+                return;
+            }
 
             if (this.isGlyphEditMode) {
                 // Glyph edit mode: active glyph in solid color, others dimmed
@@ -1535,6 +1853,200 @@ json.dumps(result)
 
             this.ctx.restore();
         }
+    }
+
+    drawOutlineEditor() {
+        // Draw outline editor when a layer is selected
+        if (!this.selectedLayerId || !this.layerData || !this.layerData.shapes) {
+            console.log('Outline editor not drawing:', {
+                selectedLayerId: this.selectedLayerId,
+                hasLayerData: !!this.layerData,
+                hasShapes: this.layerData?.shapes ? true : false,
+                shapesCount: this.layerData?.shapes?.length
+            });
+            return;
+        }
+
+        console.log('Drawing outline editor with', this.layerData.shapes.length, 'shapes');
+        console.log('Layer data shapes:', this.layerData.shapes);
+
+        // Get the position of the selected glyph
+        if (this.selectedGlyphIndex < 0 || this.selectedGlyphIndex >= this.shapedGlyphs.length) {
+            console.log('Invalid selected glyph index:', this.selectedGlyphIndex);
+            return;
+        }
+
+        let xPosition = 0;
+        for (let i = 0; i < this.selectedGlyphIndex; i++) {
+            xPosition += (this.shapedGlyphs[i].ax || 0);
+        }
+
+        const glyph = this.shapedGlyphs[this.selectedGlyphIndex];
+        const xOffset = glyph.dx || 0;
+        const yOffset = glyph.dy || 0;
+        const x = xPosition + xOffset;
+        const y = yOffset;
+
+        console.log('Drawing at position:', x, y, 'with scale:', this.scale);
+
+        this.ctx.save();
+        this.ctx.translate(x, y);
+
+        const invScale = 1 / this.scale;
+        const isDarkTheme = document.documentElement.getAttribute('data-theme') !== 'light';
+
+        // Draw each shape (contour)
+        this.layerData.shapes.forEach((shape, contourIndex) => {
+            console.log('Processing shape', contourIndex, ':', shape);
+
+            if (shape.ref) {
+                // Component - skip for now
+                console.log('Skipping component');
+                return;
+            }
+
+            // Handle Path object from to_dict() - nodes might be in shape.Path.nodes
+            let nodes = shape.nodes;
+            if (!nodes && shape.Path && shape.Path.nodes) {
+                // Nodes are in a string format from to_dict() - parse them
+                const nodesString = shape.Path.nodes;
+                console.log('Parsing nodes string:', nodesString);
+
+                // Parse string format: "x y type x y type ..."
+                const parts = nodesString.trim().split(/\s+/);
+                nodes = [];
+                for (let i = 0; i < parts.length; i += 3) {
+                    if (i + 2 < parts.length) {
+                        const x = parseFloat(parts[i]);
+                        const y = parseFloat(parts[i + 1]);
+                        const type = parts[i + 2];
+                        nodes.push([x, y, type]);
+                    }
+                }
+
+                // Cache parsed nodes back to shape for reuse
+                shape.nodes = nodes;
+                console.log('Parsed', nodes.length, 'nodes');
+            }
+
+            if (!nodes || nodes.length === 0) {
+                console.log('No nodes in shape after parsing');
+                return;
+            }
+
+            console.log('Drawing shape with', nodes.length, 'nodes');
+
+            // Draw the outline path
+            this.ctx.beginPath();
+            this.ctx.strokeStyle = isDarkTheme ? '#ffffff' : '#000000';
+            this.ctx.lineWidth = 2 * invScale;
+
+            // Build the path using proper cubic bezier handling
+            let startIdx = 0;
+
+            // Find first on-curve point to start
+            for (let i = 0; i < nodes.length; i++) {
+                const [, , type] = nodes[i];
+                if (type === 'c' || type === 'cs' || type === 'l' || type === 'ls') {
+                    startIdx = i;
+                    break;
+                }
+            }
+
+            const [startX, startY] = nodes[startIdx];
+            this.ctx.moveTo(startX, startY);
+
+            // Draw contour by looking ahead for control points
+            let i = 0;
+            while (i < nodes.length) {
+                const idx = (startIdx + i) % nodes.length;
+                const nextIdx = (startIdx + i + 1) % nodes.length;
+                const next2Idx = (startIdx + i + 2) % nodes.length;
+                const next3Idx = (startIdx + i + 3) % nodes.length;
+
+                const [, , type] = nodes[idx];
+                const [next1X, next1Y, next1Type] = nodes[nextIdx];
+
+                if (type === 'l' || type === 'ls' || type === 'c' || type === 'cs') {
+                    // We're at an on-curve point, look ahead for next segment
+                    if (next1Type === 'o' || next1Type === 'os') {
+                        // Next is off-curve - check if cubic (two consecutive off-curve)
+                        const [next2X, next2Y, next2Type] = nodes[next2Idx];
+                        const [next3X, next3Y] = nodes[next3Idx];
+
+                        if (next2Type === 'o' || next2Type === 'os') {
+                            // Cubic bezier: two off-curve control points + on-curve endpoint
+                            this.ctx.bezierCurveTo(next1X, next1Y, next2X, next2Y, next3X, next3Y);
+                            i += 3; // Skip the two control points and endpoint
+                        } else {
+                            // Single off-curve - shouldn't happen with cubic, just draw line
+                            this.ctx.lineTo(next2X, next2Y);
+                            i += 2;
+                        }
+                    } else if (next1Type === 'l' || next1Type === 'ls' || next1Type === 'c' || next1Type === 'cs') {
+                        // Next is on-curve - draw line
+                        this.ctx.lineTo(next1X, next1Y);
+                        i++;
+                    } else {
+                        // Skip quadratic
+                        i++;
+                    }
+                } else {
+                    // Skip off-curve or quadratic points (should be handled by looking ahead)
+                    i++;
+                }
+            }
+
+            this.ctx.closePath();
+            this.ctx.stroke();
+
+            // Draw nodes (points)
+            shape.nodes.forEach((node, nodeIndex) => {
+                const [x, y, type] = node;
+                const isHovered = this.hoveredPointIndex &&
+                    this.hoveredPointIndex.contourIndex === contourIndex &&
+                    this.hoveredPointIndex.nodeIndex === nodeIndex;
+                const isSelected = this.selectedPointIndex &&
+                    this.selectedPointIndex.contourIndex === contourIndex &&
+                    this.selectedPointIndex.nodeIndex === nodeIndex;
+
+                // Skip quadratic bezier points for now
+                if (type === 'q' || type === 'qs') {
+                    return;
+                }
+
+                // Draw point based on type
+                const pointSize = 6 * invScale;
+
+                if (type === 'o' || type === 'os') {
+                    // Off-curve point (cubic bezier control point) - draw as circle
+                    this.ctx.beginPath();
+                    this.ctx.arc(x, y, pointSize, 0, Math.PI * 2);
+                    this.ctx.fillStyle = isSelected ? '#ff0000' : (isHovered ? '#ff8800' : '#00aaff');
+                    this.ctx.fill();
+                    this.ctx.strokeStyle = isDarkTheme ? '#ffffff' : '#000000';
+                    this.ctx.lineWidth = 1 * invScale;
+                    this.ctx.stroke();
+                } else {
+                    // On-curve point - draw as square
+                    this.ctx.fillStyle = isSelected ? '#ff0000' : (isHovered ? '#ff8800' : '#00ff00');
+                    this.ctx.fillRect(x - pointSize, y - pointSize, pointSize * 2, pointSize * 2);
+                    this.ctx.strokeStyle = isDarkTheme ? '#ffffff' : '#000000';
+                    this.ctx.lineWidth = 1 * invScale;
+                    this.ctx.strokeRect(x - pointSize, y - pointSize, pointSize * 2, pointSize * 2);
+                }
+
+                // Draw smooth indicator for smooth nodes
+                if (type === 'cs' || type === 'os' || type === 'ls') {
+                    this.ctx.beginPath();
+                    this.ctx.arc(x, y, pointSize * 0.4, 0, Math.PI * 2);
+                    this.ctx.fillStyle = isDarkTheme ? '#ffffff' : '#000000';
+                    this.ctx.fill();
+                }
+            });
+        });
+
+        this.ctx.restore();
     }
 
     drawUIOverlay() {
