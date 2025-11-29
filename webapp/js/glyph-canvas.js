@@ -2814,6 +2814,47 @@ except Exception as e:
             this.ctx.restore(); // Restore to component-transformed state
         }
 
+        // Draw 1-unit grid at high zoom levels
+        if (this.scale >= APP_SETTINGS.OUTLINE_EDITOR.MIN_ZOOM_FOR_GRID) {
+            // Get glyph bounds from layer data (if available)
+            let minX = -100, maxX = 700, minY = -200, maxY = 1000; // Default bounds
+
+            if (this.layerData && this.layerData.shapes) {
+                // Calculate bounds from all contours
+                this.layerData.shapes.forEach(shape => {
+                    if (shape.nodes && shape.nodes.length > 0) {
+                        shape.nodes.forEach(([x, y]) => {
+                            minX = Math.min(minX, x);
+                            maxX = Math.max(maxX, x);
+                            minY = Math.min(minY, y);
+                            maxY = Math.max(maxY, y);
+                        });
+                    }
+                });
+                // Add padding
+                minX = Math.floor(minX - 50);
+                maxX = Math.ceil(maxX + 50);
+                minY = Math.floor(minY - 50);
+                maxY = Math.ceil(maxY + 50);
+            }
+
+            // Draw vertical lines (every 1 unit)
+            this.ctx.strokeStyle = isDarkTheme ? 'rgba(255, 255, 255, 0.07)' : 'rgba(0, 0, 0, 0.07)';
+            this.ctx.lineWidth = 1 * invScale;
+            this.ctx.beginPath();
+            for (let x = Math.floor(minX); x <= Math.ceil(maxX); x++) {
+                this.ctx.moveTo(x, minY);
+                this.ctx.lineTo(x, maxY);
+            }
+
+            // Draw horizontal lines (every 1 unit)
+            for (let y = Math.floor(minY); y <= Math.ceil(maxY); y++) {
+                this.ctx.moveTo(minX, y);
+                this.ctx.lineTo(maxX, y);
+            }
+            this.ctx.stroke();
+        }
+
         // Draw each shape (contour or component)
         console.log('Drawing shapes. Component stack depth:', this.componentStack.length, 'layerData.shapes.length:', this.layerData?.shapes?.length);
         this.layerData.shapes.forEach((shape, contourIndex) => {
