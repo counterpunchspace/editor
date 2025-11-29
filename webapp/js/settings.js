@@ -29,6 +29,72 @@ const APP_SETTINGS = {
 
         // Stroke widths
         OUTLINE_STROKE_WIDTH: 1,           // px - width of glyph outline paths
+
+        // Colors - Light Theme
+        COLORS_LIGHT: {
+            // Grid
+            GRID: 'rgba(0, 0, 0, 0.075)',
+
+            // Nodes (on-curve points)
+            NODE_NORMAL: '#00ff00',
+            NODE_HOVERED: '#ff8800',
+            NODE_SELECTED: '#ff0000',
+            NODE_STROKE: '#000000',
+
+            // Off-curve control points
+            CONTROL_POINT_NORMAL: '#00aaff',
+            CONTROL_POINT_HOVERED: '#ff8800',
+            CONTROL_POINT_SELECTED: '#ff0000',
+            CONTROL_POINT_STROKE: '#000000',
+
+            // Anchors
+            ANCHOR_NORMAL: '#8800ff',
+            ANCHOR_HOVERED: '#ff88ff',
+            ANCHOR_SELECTED: '#ff00ff',
+            ANCHOR_STROKE: '#000000',
+
+            // Components
+            COMPONENT_NORMAL: '#00ffff',
+            COMPONENT_HOVERED: '#ff88ff',
+            COMPONENT_SELECTED: '#ff00ff',
+            COMPONENT_STROKE: '#000000',
+            COMPONENT_FILL_NORMAL: 'rgba(0, 255, 255, 0.1)',
+            COMPONENT_FILL_HOVERED: 'rgba(255, 136, 255, 0.15)',
+            COMPONENT_FILL_SELECTED: 'rgba(255, 0, 255, 0.2)',
+        },
+
+        // Colors - Dark Theme
+        COLORS_DARK: {
+            // Grid
+            GRID: 'rgba(255, 255, 255, 0.075)',
+
+            // Nodes (on-curve points)
+            NODE_NORMAL: '#00ff00',
+            NODE_HOVERED: '#ff8800',
+            NODE_SELECTED: '#ff0000',
+            NODE_STROKE: '#ffffff',
+
+            // Off-curve control points
+            CONTROL_POINT_NORMAL: '#00aaff',
+            CONTROL_POINT_HOVERED: '#ff8800',
+            CONTROL_POINT_SELECTED: '#ff0000',
+            CONTROL_POINT_STROKE: '#ffffff',
+
+            // Anchors
+            ANCHOR_NORMAL: '#8800ff',
+            ANCHOR_HOVERED: '#ff88ff',
+            ANCHOR_SELECTED: '#ff00ff',
+            ANCHOR_STROKE: '#ffffff',
+
+            // Components
+            COMPONENT_NORMAL: '#00ffff',
+            COMPONENT_HOVERED: '#ff88ff',
+            COMPONENT_SELECTED: '#ff00ff',
+            COMPONENT_STROKE: '#ffffff',
+            COMPONENT_FILL_NORMAL: 'rgba(0, 255, 255, 0.15)',
+            COMPONENT_FILL_HOVERED: 'rgba(255, 136, 255, 0.2)',
+            COMPONENT_FILL_SELECTED: 'rgba(255, 0, 255, 0.3)',
+        },
     },
 
     // Add other settings here as needed

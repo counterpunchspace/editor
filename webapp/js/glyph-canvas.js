@@ -2839,7 +2839,8 @@ except Exception as e:
             }
 
             // Draw vertical lines (every 1 unit)
-            this.ctx.strokeStyle = isDarkTheme ? 'rgba(255, 255, 255, 0.07)' : 'rgba(0, 0, 0, 0.07)';
+            const colors = isDarkTheme ? APP_SETTINGS.OUTLINE_EDITOR.COLORS_DARK : APP_SETTINGS.OUTLINE_EDITOR.COLORS_LIGHT;
+            this.ctx.strokeStyle = colors.GRID;
             this.ctx.lineWidth = 1 * invScale;
             this.ctx.beginPath();
             for (let x = Math.floor(minX); x <= Math.ceil(maxX); x++) {
@@ -3041,18 +3042,20 @@ except Exception as e:
                     pointSize = (nodeSizeMin + (nodeSizeMax - nodeSizeMin) * zoomFactor) * invScale;
                 } if (type === 'o' || type === 'os') {
                     // Off-curve point (cubic bezier control point) - draw as circle
+                    const colors = isDarkTheme ? APP_SETTINGS.OUTLINE_EDITOR.COLORS_DARK : APP_SETTINGS.OUTLINE_EDITOR.COLORS_LIGHT;
                     this.ctx.beginPath();
                     this.ctx.arc(x, y, pointSize, 0, Math.PI * 2);
-                    this.ctx.fillStyle = isSelected ? '#ff0000' : (isHovered ? '#ff8800' : '#00aaff');
+                    this.ctx.fillStyle = isSelected ? colors.CONTROL_POINT_SELECTED : (isHovered ? colors.CONTROL_POINT_HOVERED : colors.CONTROL_POINT_NORMAL);
                     this.ctx.fill();
-                    this.ctx.strokeStyle = isDarkTheme ? '#ffffff' : '#000000';
+                    this.ctx.strokeStyle = colors.CONTROL_POINT_STROKE;
                     this.ctx.lineWidth = 1 * invScale;
                     this.ctx.stroke();
                 } else {
                     // On-curve point - draw as square
-                    this.ctx.fillStyle = isSelected ? '#ff0000' : (isHovered ? '#ff8800' : '#00ff00');
+                    const colors = isDarkTheme ? APP_SETTINGS.OUTLINE_EDITOR.COLORS_DARK : APP_SETTINGS.OUTLINE_EDITOR.COLORS_LIGHT;
+                    this.ctx.fillStyle = isSelected ? colors.NODE_SELECTED : (isHovered ? colors.NODE_HOVERED : colors.NODE_NORMAL);
                     this.ctx.fillRect(x - pointSize, y - pointSize, pointSize * 2, pointSize * 2);
-                    this.ctx.strokeStyle = isDarkTheme ? '#ffffff' : '#000000';
+                    this.ctx.strokeStyle = colors.NODE_STROKE;
                     this.ctx.lineWidth = 1 * invScale;
                     this.ctx.strokeRect(x - pointSize, y - pointSize, pointSize * 2, pointSize * 2);
                 }
@@ -3160,13 +3163,12 @@ except Exception as e:
                         this.ctx.closePath();
 
                         // Fill with semi-transparent color
-                        this.ctx.fillStyle = isDarkTheme
-                            ? (isSelected ? 'rgba(255, 0, 255, 0.3)' : (isHovered ? 'rgba(255, 136, 255, 0.2)' : 'rgba(0, 255, 255, 0.15)'))
-                            : (isSelected ? 'rgba(255, 0, 255, 0.2)' : (isHovered ? 'rgba(255, 136, 255, 0.15)' : 'rgba(0, 255, 255, 0.1)'));
+                        const colors = isDarkTheme ? APP_SETTINGS.OUTLINE_EDITOR.COLORS_DARK : APP_SETTINGS.OUTLINE_EDITOR.COLORS_LIGHT;
+                        this.ctx.fillStyle = isSelected ? colors.COMPONENT_FILL_SELECTED : (isHovered ? colors.COMPONENT_FILL_HOVERED : colors.COMPONENT_FILL_NORMAL);
                         this.ctx.fill();
 
                         // Stroke the outline
-                        this.ctx.strokeStyle = isSelected ? '#ff00ff' : (isHovered ? '#ff88ff' : '#00ffff');
+                        this.ctx.strokeStyle = isSelected ? colors.COMPONENT_SELECTED : (isHovered ? colors.COMPONENT_HOVERED : colors.COMPONENT_NORMAL);
                         this.ctx.lineWidth = 1 * invScale;
                         this.ctx.stroke();
                     }
@@ -3182,7 +3184,8 @@ except Exception as e:
             }
 
             const markerSize = APP_SETTINGS.OUTLINE_EDITOR.COMPONENT_MARKER_SIZE * invScale;            // Draw cross marker
-            this.ctx.strokeStyle = isSelected ? '#ff00ff' : (isHovered ? '#ff88ff' : '#00ffff');
+            const colors = isDarkTheme ? APP_SETTINGS.OUTLINE_EDITOR.COLORS_DARK : APP_SETTINGS.OUTLINE_EDITOR.COLORS_LIGHT;
+            this.ctx.strokeStyle = isSelected ? colors.COMPONENT_SELECTED : (isHovered ? colors.COMPONENT_HOVERED : colors.COMPONENT_NORMAL);
             this.ctx.lineWidth = 2 * invScale;
             this.ctx.beginPath();
             this.ctx.moveTo(-markerSize, 0);
@@ -3240,9 +3243,10 @@ except Exception as e:
                 this.ctx.translate(x, y);
                 this.ctx.rotate(Math.PI / 4); // Rotate 45 degrees to make diamond
 
-                this.ctx.fillStyle = isSelected ? '#ff00ff' : (isHovered ? '#ff88ff' : '#8800ff');
+                const colors = isDarkTheme ? APP_SETTINGS.OUTLINE_EDITOR.COLORS_DARK : APP_SETTINGS.OUTLINE_EDITOR.COLORS_LIGHT;
+                this.ctx.fillStyle = isSelected ? colors.ANCHOR_SELECTED : (isHovered ? colors.ANCHOR_HOVERED : colors.ANCHOR_NORMAL);
                 this.ctx.fillRect(-anchorSize, -anchorSize, anchorSize * 2, anchorSize * 2);
-                this.ctx.strokeStyle = isDarkTheme ? '#ffffff' : '#000000';
+                this.ctx.strokeStyle = colors.ANCHOR_STROKE;
                 this.ctx.lineWidth = 1 * invScale;
                 this.ctx.strokeRect(-anchorSize, -anchorSize, anchorSize * 2, anchorSize * 2);
 
