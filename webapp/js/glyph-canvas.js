@@ -1378,6 +1378,13 @@ class GlyphCanvas {
             }
 
             this.shapeText();
+            
+            // After animation completes, refresh component stack if editing a component
+            // This updates the outline editor with the new layer data
+            if (this.componentStack.length > 0 && this.selectedLayerId) {
+                console.log('Animation complete - refreshing component stack for new layer');
+                await this.refreshComponentStack();
+            }
         }
     }
 
@@ -1676,8 +1683,11 @@ json.dumps(result)
         console.log('Layer data:', layer);
         console.log('Available masters:', this.fontData.masters);
 
-        // Fetch full layer data with shapes
-        await this.fetchLayerData();
+        // Don't fetch layer data yet if editing a component - wait for animation to finish
+        // Otherwise fetch now for immediate outline editor update
+        if (this.componentStack.length === 0) {
+            await this.fetchLayerData();
+        }
 
         // Find the master for this layer
         const master = this.fontData.masters.find(m => m.id === layer._master);
@@ -2170,32 +2180,97 @@ except Exception as e:
 
         console.log('Refreshing component stack for new layer, stack depth:', this.componentStack.length);
 
-        // We need to rebuild the component hierarchy from the root
-        // First, fetch the root glyph data
-        const glyphId = this.shapedGlyphs[this.selectedGlyphIndex].g;
-        let rootGlyphName = `GID ${glyphId}`;
-        if (this.opentypeFont && this.opentypeFont.glyphs.get(glyphId)) {
-            const glyph = this.opentypeFont.glyphs.get(glyphId);
-            if (glyph.name) {
-                rootGlyphName = glyph.name;
-            }
-        }
-
-        // Rebuild the stack by re-entering each component level
+        // Save the path of component indices from the stack
         const componentPath = [];
-
-        // Build the path of component indices from the stack
         for (let i = 0; i < this.componentStack.length; i++) {
             componentPath.push(this.componentStack[i].componentIndex);
         }
 
-        // Clear the stack
+        // Clear the stack and editing state
         this.componentStack = [];
+        this.editingComponentIndex = null;
         this.layerData = null;
 
-        // Fetch root layer data
+        // Fetch root layer data (bypassing the component check since stack is now empty)
         try {
-            await this.fetchLayerData();
+            // Fetch full root layer data including shapes
+            if (!window.pyodide || !this.selectedLayerId) {
+                this.layerData = null;
+                return;
+            }
+
+            const glyphId = this.shapedGlyphs[this.selectedGlyphIndex].g;
+            let glyphName = `GID ${glyphId}`;
+
+            // Get glyph name from compiled font
+            if (this.opentypeFont && this.opentypeFont.glyphs.get(glyphId)) {
+                const glyph = this.opentypeFont.glyphs.get(glyphId);
+                if (glyph.name) {
+                    glyphName = glyph.name;
+                }
+            }
+
+            const dataJson = await window.pyodide.runPythonAsync(`
+import json
+
+def fetch_component_recursive(glyph_name, layer_id, visited=None):
+    """Recursively fetch component data including nested components"""
+    if visited is None:
+        visited = set()
+    
+    if glyph_name in visited:
+        print(f"Warning: Circular component reference detected for {glyph_name}")
+        return None
+    
+    visited.add(glyph_name)
+    
+    current_font = CurrentFont()
+    if not current_font or not hasattr(current_font, 'glyphs'):
+        return None
+    
+    glyph = current_font.glyphs.get(glyph_name)
+    if not glyph:
+        return None
+    
+    # Find the layer by ID
+    layer = None
+    for l in glyph.layers:
+        if l.id == layer_id:
+            layer = l
+            break
+    
+    if not layer:
+        return None
+    
+    # Serialize the layer
+    result = layer.to_dict()
+    
+    # Recursively fetch nested component data
+    if result and 'shapes' in result:
+        for shape in result['shapes']:
+            if 'Component' in shape and 'reference' in shape['Component']:
+                ref_name = shape['Component']['reference']
+                # Fetch nested component data
+                nested_data = fetch_component_recursive(ref_name, layer_id, visited.copy())
+                if nested_data:
+                    shape['Component']['layerData'] = nested_data
+    
+    return result
+
+result = None
+try:
+    result = fetch_component_recursive('${glyphName}', '${this.selectedLayerId}')
+except Exception as e:
+    print(f"Error fetching layer data: {e}")
+    import traceback
+    traceback.print_exc()
+    result = None
+
+json.dumps(result)
+`);
+
+            this.layerData = JSON.parse(dataJson);
+            console.log('Fetched root layer data with', this.layerData?.shapes?.length || 0, 'shapes');
 
             // Re-enter each component level
             for (const componentIndex of componentPath) {
