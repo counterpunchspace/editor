@@ -198,20 +198,10 @@ class GlyphCanvas {
             if (e.key === 'Escape' && this.isGlyphEditMode) {
                 e.preventDefault();
 
-                // First check if we're in component editing mode
-                if (this.componentStack.length > 0) {
-                    // Exit one level of component editing
-                    this.exitComponentEditing();
-                    return;
-                }
-
-                // If a layer is currently selected, just exit edit mode directly
-                // Otherwise, restore previous layer selection if exists
-                if (this.selectedLayerId !== null) {
-                    // Layer is active - just exit edit mode
-                    this.exitGlyphEditMode();
-                } else if (this.previousSelectedLayerId !== null && this.previousVariationSettings !== null) {
-                    // No active layer but previous state exists - restore it
+                // Priority 1: If we have a saved previous state from slider interaction, restore it first
+                // (This takes precedence over exiting component editing)
+                if (this.previousSelectedLayerId !== null && this.previousVariationSettings !== null) {
+                    // Restore previous layer selection and axis values
                     this.selectedLayerId = this.previousSelectedLayerId;
 
                     // Restore axis values with animation
@@ -233,10 +223,18 @@ class GlyphCanvas {
 
                     // Return focus to canvas
                     this.canvas.focus();
-                } else {
-                    // No layer and no previous state - just exit
-                    this.exitGlyphEditMode();
+                    return;
                 }
+
+                // Priority 2: Check if we're in component editing mode
+                if (this.componentStack.length > 0) {
+                    // Exit one level of component editing
+                    this.exitComponentEditing();
+                    return;
+                }
+
+                // Priority 3: No previous state and not in component - just exit edit mode
+                this.exitGlyphEditMode();
             }
         });
 
@@ -1378,7 +1376,7 @@ class GlyphCanvas {
             }
 
             this.shapeText();
-            
+
             // After animation completes, refresh component stack if editing a component
             // This updates the outline editor with the new layer data
             if (this.componentStack.length > 0 && this.selectedLayerId) {
