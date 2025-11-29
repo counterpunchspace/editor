@@ -1671,6 +1671,11 @@ json.dumps(result)
                 // If editing a component, the layer switch will be handled by refreshComponentStack
                 if (this.componentStack.length === 0) {
                     await this.fetchLayerData(); // Fetch layer data for outline editor
+
+                    // Perform mouse hit detection after layer data is loaded
+                    this.updateHoveredComponent();
+                    this.updateHoveredAnchor();
+                    this.updateHoveredPoint();
                 }
                 this.updateLayerSelection();
                 console.log(`Auto-selected layer: ${layer.name || 'Default'} (${layer.id})`);
@@ -1704,6 +1709,11 @@ json.dumps(result)
         // Otherwise fetch now for immediate outline editor update
         if (this.componentStack.length === 0) {
             await this.fetchLayerData();
+
+            // Perform mouse hit detection after layer data is loaded
+            this.updateHoveredComponent();
+            this.updateHoveredAnchor();
+            this.updateHoveredPoint();
         }
 
         // Find the master for this layer
