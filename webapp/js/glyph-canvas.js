@@ -2166,6 +2166,11 @@ except Exception as e:
         this.updateComponentBreadcrumb();
         this.updatePropertiesUI();
         this.render();
+        
+        // Re-check mouse position to detect components/points/anchors at current location
+        this.updateHoveredComponent();
+        this.updateHoveredAnchor();
+        this.updateHoveredPoint();
     }
 
     async refreshComponentStack() {
@@ -2309,6 +2314,12 @@ json.dumps(result)
         this.updateComponentBreadcrumb();
         this.updatePropertiesUI();
         this.render();
+        
+        // Re-check mouse position to detect components/points/anchors at current location
+        this.updateHoveredComponent();
+        this.updateHoveredAnchor();
+        this.updateHoveredPoint();
+        
         return true;
     }
 
