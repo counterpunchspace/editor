@@ -2067,8 +2067,9 @@ except Exception as e:
         }
     }
 
-    async enterComponentEditing(componentIndex) {
+    async enterComponentEditing(componentIndex, skipUIUpdate = false) {
         // Enter editing mode for a component
+        // skipUIUpdate: if true, skip UI updates (useful when rebuilding component stack)
         if (!this.layerData || !this.layerData.shapes[componentIndex]) {
             return;
         }
@@ -2175,14 +2176,17 @@ except Exception as e:
         this.hoveredComponentIndex = null;
 
         console.log(`Entered component editing: ${componentShape.Component.reference}, stack depth: ${this.componentStack.length}`);
-        this.updateComponentBreadcrumb();
-        this.updatePropertiesUI();
-        this.render();
+        
+        if (!skipUIUpdate) {
+            this.updateComponentBreadcrumb();
+            this.updatePropertiesUI();
+            this.render();
 
-        // Re-check mouse position to detect components/points/anchors at current location
-        this.updateHoveredComponent();
-        this.updateHoveredAnchor();
-        this.updateHoveredPoint();
+            // Re-check mouse position to detect components/points/anchors at current location
+            this.updateHoveredComponent();
+            this.updateHoveredAnchor();
+            this.updateHoveredPoint();
+        }
     }
 
     async refreshComponentStack() {
@@ -2287,17 +2291,21 @@ json.dumps(result)
             this.layerData = JSON.parse(dataJson);
             console.log('Fetched root layer data with', this.layerData?.shapes?.length || 0, 'shapes');
 
-            // Re-enter each component level
+            // Re-enter each component level without UI updates
             for (const componentIndex of componentPath) {
                 if (!this.layerData || !this.layerData.shapes[componentIndex]) {
                     console.error('Failed to refresh component stack - component not found at index', componentIndex);
                     break;
                 }
 
-                await this.enterComponentEditing(componentIndex);
+                await this.enterComponentEditing(componentIndex, true); // Skip UI updates
             }
 
             console.log('Component stack refreshed, new depth:', this.componentStack.length);
+            
+            // Update UI once at the end
+            this.updateComponentBreadcrumb();
+            this.updatePropertiesUI();
             this.render();
         } catch (error) {
             console.error('Error refreshing component stack:', error);
@@ -2401,7 +2409,7 @@ json.dumps(result)
         if (this.componentStack.length > 0) {
             // Add main glyph name as first item in trail
             trail.push(mainGlyphName);
-            
+
             // Add each level from the stack (skip the first one if it matches main glyph)
             for (let i = 0; i < this.componentStack.length; i++) {
                 const level = this.componentStack[i];
