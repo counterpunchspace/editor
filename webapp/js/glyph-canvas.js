@@ -1418,6 +1418,13 @@ class GlyphCanvas {
         this.updateComponentBreadcrumb();
         this.updatePropertiesUI();
         this.render();
+
+        // Perform mouse hit detection for objects at current mouse position
+        if (this.isGlyphEditMode && this.selectedLayerId && this.layerData) {
+            this.updateHoveredComponent();
+            this.updateHoveredAnchor();
+            this.updateHoveredPoint();
+        }
     }
 
     exitGlyphEditMode() {
@@ -2176,7 +2183,7 @@ except Exception as e:
         this.hoveredComponentIndex = null;
 
         console.log(`Entered component editing: ${componentShape.Component.reference}, stack depth: ${this.componentStack.length}`);
-        
+
         if (!skipUIUpdate) {
             this.updateComponentBreadcrumb();
             this.updatePropertiesUI();
@@ -2302,7 +2309,7 @@ json.dumps(result)
             }
 
             console.log('Component stack refreshed, new depth:', this.componentStack.length);
-            
+
             // Update UI once at the end
             this.updateComponentBreadcrumb();
             this.updatePropertiesUI();
