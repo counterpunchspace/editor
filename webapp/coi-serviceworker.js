@@ -3,80 +3,80 @@
 let coepCredentialless = false;
 
 // PWA Cache configuration
-const CACHE_NAME = 'contxt-pwa-v4';
-const CDN_CACHE_NAME = 'contxt-cdn-cache-v4';
+const CACHE_NAME = 'contxt-pwa-v5';
+const CDN_CACHE_NAME = 'contxt-cdn-cache-v5';
 const OFFLINE_URL = '/index.html';
 
 // Assets to cache on install
 const PRECACHE_ASSETS = [
-    '/',
-    '/index.html',
-    '/manifest.json',
+    './',
+    './index.html',
+    './manifest.json',
 
     // CSS
-    '/css/style.css',
+    './css/style.css',
 
     // JavaScript files
-    '/js/ai-assistant.js',
-    '/js/auto-compile-manager.js',
-    '/js/bidi-js.js',
-    '/js/cache-manager.js',
-    '/js/compile-button.js',
-    '/js/file-browser.js',
-    '/js/font-compilation.js',
-    '/js/font-dropdown.js',
-    '/js/fontc-compile-worker.js',
-    '/js/fontc-worker.js',
-    '/js/fonteditor.js',
-    '/js/glyph-canvas.js',
-    '/js/keyboard-navigation.js',
-    '/js/loading-animation.js',
-    '/js/matplotlib-handler.js',
-    '/js/memory-monitor.js',
-    '/js/pyodide-official-console.js',
-    '/js/python-execution-wrapper.js',
-    '/js/python-ui-sync.js',
-    '/js/resizer.js',
-    '/js/save-button.js',
-    '/js/script-editor.js',
-    '/js/settings.js',
-    '/js/sound-preloader.js',
-    '/js/theme-switcher.js',
-    '/js/view-settings.js',
+    './js/ai-assistant.js',
+    './js/auto-compile-manager.js',
+    './js/bidi-js.js',
+    './js/cache-manager.js',
+    './js/compile-button.js',
+    './js/file-browser.js',
+    './js/font-compilation.js',
+    './js/font-dropdown.js',
+    './js/fontc-compile-worker.js',
+    './js/fontc-worker.js',
+    './js/fonteditor.js',
+    './js/glyph-canvas.js',
+    './js/keyboard-navigation.js',
+    './js/loading-animation.js',
+    './js/matplotlib-handler.js',
+    './js/memory-monitor.js',
+    './js/pyodide-official-console.js',
+    './js/python-execution-wrapper.js',
+    './js/python-ui-sync.js',
+    './js/resizer.js',
+    './js/save-button.js',
+    './js/script-editor.js',
+    './js/settings.js',
+    './js/sound-preloader.js',
+    './js/theme-switcher.js',
+    './js/view-settings.js',
 
     // Python files
-    '/py/fonteditor.py',
+    './py/fonteditor.py',
 
     // WASM files (critical for font compilation)
-    '/wasm-dist/babelfont_fontc_web.js',
-    '/wasm-dist/babelfont_fontc_web_bg.wasm',
-    '/wasm-dist/babelfont_fontc_web_bg.wasm.d.ts',
-    '/wasm-dist/babelfont_fontc_web.d.ts',
-    '/wasm-dist/fontc_web.js',
-    '/wasm-dist/fontc_web_bg.wasm',
-    '/wasm-dist/fontc_web_bg.wasm.d.ts',
-    '/wasm-dist/fontc_web.d.ts',
+    './wasm-dist/babelfont_fontc_web.js',
+    './wasm-dist/babelfont_fontc_web_bg.wasm',
+    './wasm-dist/babelfont_fontc_web_bg.wasm.d.ts',
+    './wasm-dist/babelfont_fontc_web.d.ts',
+    './wasm-dist/fontc_web.js',
+    './wasm-dist/fontc_web_bg.wasm',
+    './wasm-dist/fontc_web_bg.wasm.d.ts',
+    './wasm-dist/fontc_web.d.ts',
 
     // Sound assets
-    '/assets/sounds/attention.wav',
-    '/assets/sounds/done.wav',
-    '/assets/sounds/error.wav',
-    '/assets/sounds/incoming_message.wav',
-    '/assets/sounds/message_sent.wav',
+    './assets/sounds/attention.wav',
+    './assets/sounds/done.wav',
+    './assets/sounds/error.wav',
+    './assets/sounds/incoming_message.wav',
+    './assets/sounds/message_sent.wav',
 
     // Icons
-    '/assets/icons/icon-72x72.png',
-    '/assets/icons/icon-96x96.png',
-    '/assets/icons/icon-128x128.png',
-    '/assets/icons/icon-144x144.png',
-    '/assets/icons/icon-152x152.png',
-    '/assets/icons/icon-192x192.png',
-    '/assets/icons/icon-384x384.png',
-    '/assets/icons/icon-512x512.png',
-    '/assets/icons/icon.svg',
+    './assets/icons/icon-72x72.png',
+    './assets/icons/icon-96x96.png',
+    './assets/icons/icon-128x128.png',
+    './assets/icons/icon-144x144.png',
+    './assets/icons/icon-152x152.png',
+    './assets/icons/icon-192x192.png',
+    './assets/icons/icon-384x384.png',
+    './assets/icons/icon-512x512.png',
+    './assets/icons/icon.svg',
 
     // Service worker itself
-    '/coi-serviceworker.js'
+    './coi-serviceworker.js'
 ];
 
 // CDN resources to precache for offline support
@@ -128,7 +128,7 @@ if (typeof window === 'undefined') {
                 console.log('[SW] Caching app shell - ' + PRECACHE_ASSETS.length + ' files');
                 // Cache files individually to see which ones fail
                 return Promise.allSettled(
-                    PRECACHE_ASSETS.map(url => 
+                    PRECACHE_ASSETS.map(url =>
                         fetch(new Request(url, { cache: 'reload' }))
                             .then(response => {
                                 if (response.ok) {
