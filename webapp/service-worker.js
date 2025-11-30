@@ -1,6 +1,9 @@
-const CACHE_NAME = 'contxt-font-editor-v2';
+const CACHE_NAME = 'contxt-font-editor-v3';
 const CDN_CACHE_NAME = 'contxt-cdn-cache-v1';
 const OFFLINE_URL = '/index.html';
+
+// Cross-Origin Isolation (COI) for SharedArrayBuffer support
+let coepCredentialless = false;
 
 // Assets to cache on install
 const PRECACHE_ASSETS = [
@@ -140,19 +143,51 @@ function isCDNResource(url) {
         url.includes('fonts.gstatic.com');
 }
 
+// Helper function to add COOP/COEP headers to response
+function addCOIHeaders(response) {
+    const newHeaders = new Headers(response.headers);
+    newHeaders.set("Cross-Origin-Embedder-Policy",
+        coepCredentialless ? "credentialless" : "require-corp"
+    );
+    if (!coepCredentialless) {
+        newHeaders.set("Cross-Origin-Resource-Policy", "cross-origin");
+    }
+    newHeaders.set("Cross-Origin-Opener-Policy", "same-origin");
+    
+    return new Response(response.body, {
+        status: response.status,
+        statusText: response.statusText,
+        headers: newHeaders
+    });
+}
+
 // Fetch event - serve from cache, fallback to network
 self.addEventListener('fetch', (event) => {
-    const requestURL = event.request.url;
+    const r = event.request;
+    const requestURL = r.url;
+    
+    // Skip certain cache modes that cause issues
+    if (r.cache === "only-if-cached" && r.mode !== "same-origin") {
+        return;
+    }
 
     // Handle CDN resources with stale-while-revalidate strategy
     if (isCDNResource(requestURL)) {
+        const request = (coepCredentialless && r.mode === "no-cors")
+            ? new Request(r, { credentials: "omit" })
+            : r;
+            
         event.respondWith(
             caches.open(CDN_CACHE_NAME).then((cache) => {
-                return cache.match(event.request).then((cachedResponse) => {
-                    const fetchPromise = fetch(event.request).then((networkResponse) => {
+                return cache.match(request).then((cachedResponse) => {
+                    const fetchPromise = fetch(request).then((networkResponse) => {
+                        if (networkResponse.status === 0) {
+                            return networkResponse;
+                        }
+                        
                         // Cache successful responses
                         if (networkResponse && networkResponse.status === 200) {
-                            cache.put(event.request, networkResponse.clone());
+                            cache.put(request, networkResponse.clone());
                         }
                         return networkResponse;
                     }).catch(() => {
@@ -172,66 +207,69 @@ self.addEventListener('fetch', (event) => {
     if (!event.request.url.startsWith(self.location.origin)) {
         return;
     }
+    
+    const request = (coepCredentialless && r.mode === "no-cors")
+        ? new Request(r, { credentials: "omit" })
+        : r;
 
     event.respondWith(
-        caches.match(event.request).then((cachedResponse) => {
+        caches.match(request).then((cachedResponse) => {
             if (cachedResponse) {
-                // For WASM files, ensure proper headers are set
-                if (requestURL.endsWith('.wasm')) {
-                    return new Response(cachedResponse.body, {
-                        status: cachedResponse.status,
-                        statusText: cachedResponse.statusText,
-                        headers: {
-                            ...Object.fromEntries(cachedResponse.headers.entries()),
-                            'Content-Type': 'application/wasm',
-                            'Cross-Origin-Embedder-Policy': 'require-corp',
-                            'Cross-Origin-Opener-Policy': 'same-origin'
-                        }
-                    });
-                }
-                return cachedResponse;
+                // Add COI headers to cached response
+                return addCOIHeaders(cachedResponse);
             }
 
-            return fetch(event.request).then((response) => {
+            return fetch(request).then((response) => {
+                if (response.status === 0) {
+                    return response;
+                }
+                
                 // Don't cache non-successful responses
                 if (!response || response.status !== 200 || response.type !== 'basic') {
-                    return response;
+                    return addCOIHeaders(response);
                 }
 
                 // Clone the response as it can only be consumed once
                 const responseToCache = response.clone();
 
                 caches.open(CACHE_NAME).then((cache) => {
-                    cache.put(event.request, responseToCache);
+                    cache.put(request, responseToCache);
                 });
 
-                // For WASM files, ensure proper headers
-                if (requestURL.endsWith('.wasm')) {
-                    return new Response(response.body, {
-                        status: response.status,
-                        statusText: response.statusText,
-                        headers: {
-                            ...Object.fromEntries(response.headers.entries()),
-                            'Content-Type': 'application/wasm',
-                            'Cross-Origin-Embedder-Policy': 'require-corp',
-                            'Cross-Origin-Opener-Policy': 'same-origin'
-                        }
-                    });
-                }
-
-                return response;
+                // Add COI headers to the response
+                return addCOIHeaders(response);
             }).catch((error) => {
                 console.log('[Service Worker] Fetch failed, returning offline page:', error);
                 // Return offline page for navigation requests
-                if (event.request.mode === 'navigate') {
-                    return caches.match(OFFLINE_URL);
+                if (request.mode === 'navigate') {
+                    return caches.match(OFFLINE_URL).then((offlineResponse) => {
+                        return offlineResponse ? addCOIHeaders(offlineResponse) : null;
+                    });
                 }
             });
         })
     );
-});// Handle messages from clients
+});
+
+// Handle messages from clients
 self.addEventListener('message', (event) => {
-    if (event.data && event.data.type === 'SKIP_WAITING') {
+    if (!event.data) {
+        return;
+    }
+    
+    if (event.data.type === 'SKIP_WAITING') {
         self.skipWaiting();
+    } else if (event.data.type === 'deregister') {
+        // Handle COI service worker deregistration
+        self.registration
+            .unregister()
+            .then(() => {
+                return self.clients.matchAll();
+            })
+            .then(clients => {
+                clients.forEach((client) => client.navigate(client.url));
+            });
+    } else if (event.data.type === 'coepCredentialless') {
+        coepCredentialless = event.data.value;
     }
 });
