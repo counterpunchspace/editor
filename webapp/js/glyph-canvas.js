@@ -194,8 +194,17 @@ class GlyphCanvas {
         this.canvas.addEventListener('keyup', (e) => this.onKeyUp(e));
 
         // Global Escape key handler (works even when sliders have focus)
+        // Only active when editor view is focused
         document.addEventListener('keydown', (e) => {
             if (e.key === 'Escape' && this.isGlyphEditMode) {
+                // Check if editor view is focused
+                const editorView = document.querySelector('#view-editor');
+                const isEditorFocused = editorView && editorView.classList.contains('focused');
+                
+                if (!isEditorFocused) {
+                    return; // Don't handle Escape if editor view is not focused
+                }
+                
                 e.preventDefault();
 
                 // Priority 1: If we have a saved previous state from slider interaction, restore it first
