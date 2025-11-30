@@ -1544,13 +1544,13 @@ json.dumps(result)
         // Add layers section title
         const layersTitle = document.createElement('div');
         layersTitle.textContent = 'Foreground Layers';
-        layersTitle.style.fontSize = '12px';
+        layersTitle.style.fontSize = '10px';
         layersTitle.style.fontWeight = '600';
         layersTitle.style.color = 'var(--text-secondary)';
         layersTitle.style.textTransform = 'uppercase';
         layersTitle.style.letterSpacing = '0.5px';
-        layersTitle.style.marginTop = '16px';
-        layersTitle.style.marginBottom = '8px';
+        layersTitle.style.marginTop = '12px';
+        layersTitle.style.marginBottom = '6px';
         this.propertiesSection.appendChild(layersTitle);
 
         // Sort layers by their axis values (userspace locations)
@@ -1594,15 +1594,15 @@ json.dumps(result)
         const layersList = document.createElement('div');
         layersList.style.display = 'flex';
         layersList.style.flexDirection = 'column';
-        layersList.style.gap = '4px';
+        layersList.style.gap = '3px';
 
         for (const layer of sortedLayers) {
             const layerItem = document.createElement('div');
             layerItem.setAttribute('data-layer-id', layer.id); // Add data attribute for selection updates
-            layerItem.style.padding = '8px';
-            layerItem.style.borderRadius = '4px';
+            layerItem.style.padding = '6px';
+            layerItem.style.borderRadius = '3px';
             layerItem.style.cursor = 'pointer';
-            layerItem.style.fontSize = '13px';
+            layerItem.style.fontSize = '11px';
             layerItem.style.color = 'var(--text-primary)';
             layerItem.style.backgroundColor = this.selectedLayerId === layer.id ? 'var(--bg-active)' : 'transparent';
             layerItem.style.border = '1px solid var(--border-primary)';
@@ -2647,7 +2647,7 @@ json.dumps(result)
         } else {
             // No glyph selected
             const emptyMessage = document.createElement('div');
-            emptyMessage.style.fontSize = '13px';
+            emptyMessage.style.fontSize = '11px';
             emptyMessage.style.color = 'var(--text-secondary)';
             emptyMessage.style.fontStyle = 'italic';
             emptyMessage.textContent = 'No glyph selected';
@@ -2670,12 +2670,12 @@ json.dumps(result)
         // Add section title
         const title = document.createElement('div');
         title.textContent = 'Variable Axes';
-        title.style.fontSize = '12px';
+        title.style.fontSize = '10px';
         title.style.fontWeight = '600';
         title.style.color = 'var(--text-secondary)';
         title.style.textTransform = 'uppercase';
         title.style.letterSpacing = '0.5px';
-        title.style.marginTop = '8px';
+        title.style.marginTop = '6px';
         this.axesSection.appendChild(title);
 
         // Create slider for each axis
@@ -2683,14 +2683,14 @@ json.dumps(result)
             const axisContainer = document.createElement('div');
             axisContainer.style.display = 'flex';
             axisContainer.style.flexDirection = 'column';
-            axisContainer.style.gap = '4px';
+            axisContainer.style.gap = '3px';
 
             // Label row (axis name and value)
             const labelRow = document.createElement('div');
             labelRow.style.display = 'flex';
             labelRow.style.justifyContent = 'space-between';
             labelRow.style.alignItems = 'center';
-            labelRow.style.fontSize = '13px';
+            labelRow.style.fontSize = '11px';
 
             const axisLabel = document.createElement('span');
             axisLabel.textContent = axis.name.en || axis.tag;
@@ -2700,7 +2700,7 @@ json.dumps(result)
             const valueLabel = document.createElement('span');
             valueLabel.style.color = 'var(--text-secondary)';
             valueLabel.style.fontFamily = 'var(--font-mono)';
-            valueLabel.style.fontSize = '12px';
+            valueLabel.style.fontSize = '10px';
             valueLabel.textContent = axis.defaultValue.toFixed(0);
             valueLabel.setAttribute('data-axis-tag', axis.tag); // Add identifier for programmatic updates
 
@@ -4998,30 +4998,30 @@ document.addEventListener('DOMContentLoaded', () => {
             // Create left sidebar for glyph properties
             const leftSidebar = document.createElement('div');
             leftSidebar.id = 'glyph-properties-sidebar';
-            leftSidebar.style.width = '300px';
-            leftSidebar.style.minWidth = '300px';
+            leftSidebar.style.width = '200px';
+            leftSidebar.style.minWidth = '200px';
             leftSidebar.style.height = '100%';
-            leftSidebar.style.backgroundColor = 'var(--bg-secondary)';
+            leftSidebar.style.backgroundColor = 'var(--bg-editor-sidebar)';
             leftSidebar.style.borderRight = '1px solid var(--border-primary)';
-            leftSidebar.style.padding = '16px';
+            leftSidebar.style.padding = '12px';
             leftSidebar.style.overflowY = 'auto';
             leftSidebar.style.display = 'flex';
             leftSidebar.style.flexDirection = 'column';
-            leftSidebar.style.gap = '16px';
+            leftSidebar.style.gap = '12px';
 
             // Create right sidebar for axes
             const rightSidebar = document.createElement('div');
             rightSidebar.id = 'glyph-editor-sidebar';
-            rightSidebar.style.width = '300px';
-            rightSidebar.style.minWidth = '300px';
+            rightSidebar.style.width = '200px';
+            rightSidebar.style.minWidth = '200px';
             rightSidebar.style.height = '100%';
-            rightSidebar.style.backgroundColor = 'var(--bg-secondary)';
+            rightSidebar.style.backgroundColor = 'var(--bg-editor-sidebar)';
             rightSidebar.style.borderLeft = '1px solid var(--border-primary)';
-            rightSidebar.style.padding = '16px';
+            rightSidebar.style.padding = '12px';
             rightSidebar.style.overflowY = 'auto';
             rightSidebar.style.display = 'flex';
             rightSidebar.style.flexDirection = 'column';
-            rightSidebar.style.gap = '16px';
+            rightSidebar.style.gap = '12px';
 
             // Create canvas container
             const canvasContainer = document.createElement('div');
@@ -5044,7 +5044,7 @@ document.addEventListener('DOMContentLoaded', () => {
             propertiesSection.id = 'glyph-properties-section';
             propertiesSection.style.display = 'flex';
             propertiesSection.style.flexDirection = 'column';
-            propertiesSection.style.gap = '12px';
+            propertiesSection.style.gap = '10px';
             leftSidebar.appendChild(propertiesSection);
 
             // Create variable axes container (initially empty)
@@ -5052,7 +5052,7 @@ document.addEventListener('DOMContentLoaded', () => {
             axesSection.id = 'glyph-axes-section';
             axesSection.style.display = 'flex';
             axesSection.style.flexDirection = 'column';
-            axesSection.style.gap = '12px';
+            axesSection.style.gap = '10px';
             rightSidebar.appendChild(axesSection);
 
             // Store reference to sidebars for later updates
@@ -5064,15 +5064,27 @@ document.addEventListener('DOMContentLoaded', () => {
             // Observe when the editor view gains/loses focus (via 'focused' class)
             const editorView = document.querySelector('#view-editor');
             if (editorView) {
+                const updateSidebarStyles = () => {
+                    const isFocused = editorView.classList.contains('focused');
+                    const bgColor = isFocused ? 'var(--bg-editor-sidebar)' : 'var(--bg-secondary)';
+                    leftSidebar.style.backgroundColor = bgColor;
+                    rightSidebar.style.backgroundColor = bgColor;
+                };
+                
                 const observer = new MutationObserver((mutations) => {
                     mutations.forEach((mutation) => {
                         if (mutation.type === 'attributes' && mutation.attributeName === 'class') {
+                            // Update sidebar styles when focus changes
+                            updateSidebarStyles();
                             // Render when focused class changes
                             window.glyphCanvas.render();
                         }
                     });
                 });
                 observer.observe(editorView, { attributes: true, attributeFilter: ['class'] });
+                
+                // Set initial state
+                updateSidebarStyles();
             }
 
             // Listen for font compilation events
