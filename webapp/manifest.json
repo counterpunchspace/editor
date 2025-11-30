@@ -2,7 +2,7 @@
     "name": "contxt - Font Editor",
     "short_name": "contxt",
     "description": "Modern font editor for creating and editing fonts",
-    "start_url": "./",
+    "start_url": "./index.html",
     "scope": "./",
     "display": "standalone",
     "background_color": "#ffffff",
