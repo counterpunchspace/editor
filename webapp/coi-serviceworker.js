@@ -393,19 +393,22 @@ if (typeof window === 'undefined') {
                         });
                     }
 
-                    // Wait for service worker to finish installing and caching
-                    if (registration.installing) {
-                        registration.installing.addEventListener('statechange', (e) => {
-                            if (e.target.state === 'activated') {
-                                console.log('[SW] Service worker activated and ready');
-                            }
-                        });
-                    }
-
-                    // Reload page when service worker is ready
+                    // Reload page when service worker is ready (but only once)
                     if (registration.active && !navigator.serviceWorker.controller) {
                         window.sessionStorage.setItem("coiReloadedBySelf", "true");
+                        console.log('[COI] Service worker registered but not controlling - reloading...');
                         window.location.reload();
+                    }
+                    
+                    // Also handle the case where SW just activated
+                    if (registration.installing) {
+                        registration.installing.addEventListener('statechange', (e) => {
+                            if (e.target.state === 'activated' && !navigator.serviceWorker.controller) {
+                                window.sessionStorage.setItem("coiReloadedBySelf", "true");
+                                console.log('[COI] Service worker activated - reloading to enable control...');
+                                window.location.reload();
+                            }
+                        });
                     }
                 },
                 (err) => {
