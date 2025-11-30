@@ -153,7 +153,7 @@ function addCOIHeaders(response) {
         newHeaders.set("Cross-Origin-Resource-Policy", "cross-origin");
     }
     newHeaders.set("Cross-Origin-Opener-Policy", "same-origin");
-    
+
     return new Response(response.body, {
         status: response.status,
         statusText: response.statusText,
@@ -165,7 +165,7 @@ function addCOIHeaders(response) {
 self.addEventListener('fetch', (event) => {
     const r = event.request;
     const requestURL = r.url;
-    
+
     // Skip certain cache modes that cause issues
     if (r.cache === "only-if-cached" && r.mode !== "same-origin") {
         return;
@@ -176,7 +176,7 @@ self.addEventListener('fetch', (event) => {
         const request = (coepCredentialless && r.mode === "no-cors")
             ? new Request(r, { credentials: "omit" })
             : r;
-            
+
         event.respondWith(
             caches.open(CDN_CACHE_NAME).then((cache) => {
                 return cache.match(request).then((cachedResponse) => {
@@ -184,7 +184,7 @@ self.addEventListener('fetch', (event) => {
                         if (networkResponse.status === 0) {
                             return networkResponse;
                         }
-                        
+
                         // Cache successful responses
                         if (networkResponse && networkResponse.status === 200) {
                             cache.put(request, networkResponse.clone());
@@ -207,7 +207,7 @@ self.addEventListener('fetch', (event) => {
     if (!event.request.url.startsWith(self.location.origin)) {
         return;
     }
-    
+
     const request = (coepCredentialless && r.mode === "no-cors")
         ? new Request(r, { credentials: "omit" })
         : r;
@@ -223,7 +223,7 @@ self.addEventListener('fetch', (event) => {
                 if (response.status === 0) {
                     return response;
                 }
-                
+
                 // Don't cache non-successful responses
                 if (!response || response.status !== 200 || response.type !== 'basic') {
                     return addCOIHeaders(response);
@@ -256,7 +256,7 @@ self.addEventListener('message', (event) => {
     if (!event.data) {
         return;
     }
-    
+
     if (event.data.type === 'SKIP_WAITING') {
         self.skipWaiting();
     } else if (event.data.type === 'deregister') {

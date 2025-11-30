@@ -10,12 +10,13 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black">
     <meta name="apple-mobile-web-app-title" content="contxt">
     <title>contxt</title>
+    <!-- COI Service Worker for GitHub Pages (adds COOP/COEP headers) -->
+    <script src="coi-serviceworker.js"></script>
     <!-- PWA Manifest -->
     <link rel="manifest" href="manifest.json">
     <!-- Apple Touch Icons -->
     <link rel="apple-touch-icon" sizes="192x192" href="assets/icons/icon-192x192.png">
     <link rel="apple-touch-icon" sizes="512x512" href="assets/icons/icon-512x512.png">
-    <!-- Note: COI headers now handled by service-worker.js -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <!-- IBM Plex Sans - Latin, Greek, Cyrillic (Regular + Bold for loading animation) -->
@@ -336,6 +337,11 @@
             const hasSAB = typeof SharedArrayBuffer !== 'undefined';
             const isIsolated = typeof crossOriginIsolated !== 'undefined' ? crossOriginIsolated : false;
 
+            // Log diagnostic info
+            console.log('[COI Check] SharedArrayBuffer:', hasSAB);
+            console.log('[COI Check] crossOriginIsolated:', isIsolated);
+            console.log('[COI Check] Service Worker:', navigator.serviceWorker?.controller ? 'Active' : 'Not active');
+
             if (isVSCode || !hasSAB || !isIsolated) {
                 const notice = document.getElementById('browser-compat');
                 if (notice) {
@@ -347,8 +353,8 @@
                             '<p style="margin: 5px 0;">Recommended: Chrome, Firefox, or Safari</p>';
                     } else if (!isIsolated) {
                         notice.innerHTML = '<strong>⚠️ Cross-Origin Isolation Required</strong>' +
-                            '<p style="margin: 5px 0;">The page will reload automatically to enable SharedArrayBuffer support.</p>' +
-                            '<p style="margin: 5px 0;">If this message persists, try clearing your browser cache.</p>';
+                            '<p style="margin: 5px 0;">Waiting for service worker to activate...</p>' +
+                            '<p style="margin: 5px 0;">If this message persists after reload, check server headers.</p>';
                     }
                 }
             }
@@ -552,24 +558,8 @@
         // Service Worker Registration
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', () => {
-                navigator.serviceWorker.register('service-worker.js')
-                    .then((registration) => {
-                        console.log('[PWA] Service Worker registered:', registration.scope);
-
-                        // Check for updates
-                        registration.addEventListener('updatefound', () => {
-                            const newWorker = registration.installing;
-                            newWorker.addEventListener('statechange', () => {
-                                if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
-                                    console.log('[PWA] New content available, please refresh.');
-                                    // You could show a notification to the user here
-                                }
-                            });
-                        });
-                    })
-                    .catch((error) => {
-                        console.log('[PWA] Service Worker registration failed:', error);
-                    });
+                // Don't register service-worker.js - coi-serviceworker.js handles everything
+                console.log('[PWA] Using COI service worker for GitHub Pages compatibility');
             });
         }
     </script>

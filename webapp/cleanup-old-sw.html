@@ -1,45 +1,48 @@
 <!DOCTYPE html>
 <html>
+
 <head>
     <title>Service Worker Cleanup</title>
     <meta charset="UTF-8">
 </head>
+
 <body>
     <h1>Service Worker Cleanup</h1>
     <p id="status">Cleaning up old service workers...</p>
     <button onclick="location.href='index.html'">Go to App</button>
-    
+
     <script>
         async function cleanup() {
             const status = document.getElementById('status');
-            
+
             try {
                 // Get all registrations
                 const registrations = await navigator.serviceWorker.getRegistrations();
                 status.innerHTML += `<br>Found ${registrations.length} service worker(s)`;
-                
+
                 // Unregister all
                 for (let registration of registrations) {
                     await registration.unregister();
                     status.innerHTML += `<br>✅ Unregistered: ${registration.scope}`;
                 }
-                
+
                 // Clear caches
                 const cacheNames = await caches.keys();
                 status.innerHTML += `<br><br>Found ${cacheNames.length} cache(s)`;
-                
+
                 for (let cacheName of cacheNames) {
                     await caches.delete(cacheName);
                     status.innerHTML += `<br>✅ Deleted cache: ${cacheName}`;
                 }
-                
+
                 status.innerHTML += `<br><br><strong>✅ Cleanup complete! Please reload the main app.</strong>`;
             } catch (error) {
                 status.innerHTML += `<br>❌ Error: ${error.message}`;
             }
         }
-        
+
         cleanup();
     </script>
 </body>
+
 </html>
