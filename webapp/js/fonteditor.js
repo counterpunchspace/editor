@@ -13,16 +13,32 @@ async function initFontEditor() {
 
         // Check if SharedArrayBuffer is available (needed for WASM threading)
         if (typeof SharedArrayBuffer === 'undefined') {
-            console.log('[COI] SharedArrayBuffer not available - reloading to enable service worker headers...');
-            if (window.updateLoadingStatus) {
-                window.updateLoadingStatus("Enabling cross-origin isolation & reloading...");
+            // Check if we already tried reloading
+            const alreadyReloaded = window.sessionStorage.getItem("coiReloadedBySelf") === "true";
+            
+            // Detect iOS (including all browsers on iOS which use WebKit)
+            const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || 
+                         (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1) ||
+                         /iPad|iPhone|iPod/.test(navigator.platform);
+            
+            if (isIOS) {
+                console.warn('[COI] iOS detected - SharedArrayBuffer not supported on iOS (all browsers). Some features may be limited.');
+                // Don't reload on iOS, just continue without SAB
+            } else if (!alreadyReloaded) {
+                console.log('[COI] SharedArrayBuffer not available - reloading to enable service worker headers...');
+                if (window.updateLoadingStatus) {
+                    window.updateLoadingStatus("Enabling cross-origin isolation...");
+                }
+                // Wait a moment for status to show, then reload
+                setTimeout(() => {
+                    window.sessionStorage.setItem("coiReloadedBySelf", "true");
+                    window.location.reload();
+                }, 500);
+                return false;
+            } else {
+                console.error('[COI] SharedArrayBuffer still unavailable after reload. Browser may not support it.');
+                // Already reloaded once, don't try again (prevents infinite loop)
             }
-            // Wait a moment for status to show, then reload
-            setTimeout(() => {
-                window.sessionStorage.setItem("coiReloadedBySelf", "true");
-                window.location.reload();
-            }, 500);
-            return false;
         }
 
         console.log("Initializing FontEditor...");

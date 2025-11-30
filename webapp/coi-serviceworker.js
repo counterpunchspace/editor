@@ -359,17 +359,23 @@ if (typeof window === 'undefined') {
 
         // Check if SharedArrayBuffer is available
         const hasSAB = typeof SharedArrayBuffer !== 'undefined';
+        
+        // Detect iOS (all browsers on iOS use WebKit and don't support SharedArrayBuffer)
+        const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || 
+                     (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1) ||
+                     /iPad|iPhone|iPod/.test(navigator.platform);
 
         // If we already reloaded once but still no SAB, something is wrong - don't loop
         if (reloadedBySelf == "true") {
-            if (!hasSAB) {
+            if (!hasSAB && !isIOS) {
                 console.error('[COI] Service worker active but SharedArrayBuffer still unavailable. Check browser support.');
             }
             return;
         }
 
         // If we have a controller but no SAB, reload immediately (page wasn't served through SW)
-        if (navigator.serviceWorker.controller && !hasSAB) {
+        // Skip reload on iOS where SAB is not supported
+        if (navigator.serviceWorker.controller && !hasSAB && !isIOS) {
             console.log('[COI] Service worker present but page not served through it - reloading...');
             window.sessionStorage.setItem("coiReloadedBySelf", "true");
             window.location.reload();
@@ -427,7 +433,8 @@ if (typeof window === 'undefined') {
                     }
 
                     // If service worker is controlling but SAB still missing, try one reload
-                    if (navigator.serviceWorker.controller && !hasSAB) {
+                    // Skip on iOS where SAB is not supported
+                    if (navigator.serviceWorker.controller && !hasSAB && !isIOS) {
                         console.log('[COI] Service worker controlling but no SharedArrayBuffer - reloading...');
                         window.sessionStorage.setItem("coiReloadedBySelf", "true");
                         window.location.reload();
