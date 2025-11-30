@@ -514,49 +514,49 @@
     <script>
         // PWA Install Prompt Handler
         let deferredPrompt;
-        
+
         window.addEventListener('beforeinstallprompt', (e) => {
             // Prevent Chrome's default install prompt
             e.preventDefault();
             // Store the event for later use
             deferredPrompt = e;
             console.log('[PWA] Install prompt available');
-            
+
             // You can show your own custom install button here
             // Example: showInstallButton();
         });
-        
+
         // Function to trigger install (call this from a button click)
         window.installPWA = async () => {
             if (!deferredPrompt) {
                 console.log('[PWA] Install prompt not available');
                 return;
             }
-            
+
             // Show the install prompt
             deferredPrompt.prompt();
-            
+
             // Wait for the user's response
             const { outcome } = await deferredPrompt.userChoice;
             console.log(`[PWA] User response: ${outcome}`);
-            
+
             // Clear the prompt
             deferredPrompt = null;
         };
-        
+
         // Listen for app installation
         window.addEventListener('appinstalled', (e) => {
             console.log('[PWA] App installed successfully');
             deferredPrompt = null;
         });
-        
+
         // Service Worker Registration
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', () => {
                 navigator.serviceWorker.register('service-worker.js')
                     .then((registration) => {
                         console.log('[PWA] Service Worker registered:', registration.scope);
-                        
+
                         // Check for updates
                         registration.addEventListener('updatefound', () => {
                             const newWorker = registration.installing;
