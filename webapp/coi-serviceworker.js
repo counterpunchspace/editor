@@ -359,7 +359,7 @@ if (typeof window === 'undefined') {
 
         // Check if SharedArrayBuffer is available
         const hasSAB = typeof SharedArrayBuffer !== 'undefined';
-        
+
         // If we already reloaded once but still no SAB, something is wrong - don't loop
         if (reloadedBySelf == "true") {
             if (!hasSAB) {
@@ -367,7 +367,7 @@ if (typeof window === 'undefined') {
             }
             return;
         }
-        
+
         // If we have a controller but no SAB, reload immediately (page wasn't served through SW)
         if (navigator.serviceWorker.controller && !hasSAB) {
             console.log('[COI] Service worker present but page not served through it - reloading...');
@@ -414,7 +414,7 @@ if (typeof window === 'undefined') {
                         window.location.reload();
                         return;
                     }
-                    
+
                     // Also handle the case where SW just activated
                     if (registration.installing) {
                         registration.installing.addEventListener('statechange', (e) => {
@@ -425,7 +425,7 @@ if (typeof window === 'undefined') {
                             }
                         });
                     }
-                    
+
                     // If service worker is controlling but SAB still missing, try one reload
                     if (navigator.serviceWorker.controller && !hasSAB) {
                         console.log('[COI] Service worker controlling but no SharedArrayBuffer - reloading...');

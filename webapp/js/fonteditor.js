@@ -15,7 +15,7 @@ async function initFontEditor() {
         if (typeof SharedArrayBuffer === 'undefined') {
             console.log('[COI] SharedArrayBuffer not available - reloading to enable service worker headers...');
             if (window.updateLoadingStatus) {
-                window.updateLoadingStatus("Enabling cross-origin isolation...");
+                window.updateLoadingStatus("Enabling cross-origin isolation & reloading...");
             }
             // Wait a moment for status to show, then reload
             setTimeout(() => {
