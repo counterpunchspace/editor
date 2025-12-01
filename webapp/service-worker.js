@@ -1,4 +1,4 @@
-const CACHE_NAME = 'contxt-font-editor-v3';
+const CACHE_NAME = 'contxt-font-editor-v4';
 const CDN_CACHE_NAME = 'contxt-cdn-cache-v1';
 const OFFLINE_URL = '/index.html';
 

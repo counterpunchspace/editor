@@ -1454,36 +1454,29 @@ class GlyphCanvas {
         // Determine cursor position based on whether glyph was typed or shaped
         const savedGlyphIndex = this.selectedGlyphIndex;
 
+        const glyph = this.shapedGlyphs[savedGlyphIndex];
+        console.log('[v2024-12-01-FIX] exitGlyphEditMode CALLED - selectedGlyphIndex:', this.selectedGlyphIndex, 'shapedGlyphs.length:', this.shapedGlyphs.length, 'glyph:', glyph);
+
         // Update cursor position to before the edited glyph
         if (savedGlyphIndex >= 0 && savedGlyphIndex < this.shapedGlyphs.length) {
             const glyphInfo = this.isGlyphFromTypedCharacter(savedGlyphIndex);
-            const glyph = this.shapedGlyphs[savedGlyphIndex];
             const clusterStart = glyph.cl || 0;
             const isRTL = this.isPositionRTL(clusterStart);
-            
-            console.log('Exit glyph edit mode - glyphInfo:', glyphInfo, 'clusterStart:', clusterStart, 'isRTL:', isRTL);
-            
+
+            console.log('Exit glyph edit mode [v2024-12-01-FIX] - glyphInfo:', glyphInfo, 'clusterStart:', clusterStart, 'isRTL:', isRTL);
+
             if (glyphInfo.isTyped) {
                 // For typed characters, check if it's the base glyph or a vowel mark
                 const isBaseGlyph = (glyphInfo.logicalPosition === clusterStart);
-                
+
                 if (isBaseGlyph) {
-                    // Base glyph: cursor positioning depends on direction and cluster size
-                    // For RTL clusters with vowel marks, position cursor after the base (in the middle)
-                    // For LTR or single-glyph clusters, position at cluster start
-                    if (isRTL) {
-                        // RTL: position cursor after the base glyph (visually in the middle)
-                        this.cursorPosition = clusterStart + 1;
-                        console.log('RTL base glyph - set cursor position after base:', this.cursorPosition);
-                    } else {
-                        // LTR: position at cluster start
-                        this.cursorPosition = clusterStart;
-                        console.log('LTR base glyph - set cursor position at cluster start:', this.cursorPosition);
-                    }
+                    // Base glyph (first character in cluster): position at cluster start
+                    this.cursorPosition = clusterStart;
+                    console.log('Base glyph - set cursor position at cluster start:', this.cursorPosition);
                 } else {
-                    // Vowel mark - position cursor at vowel mark position + 1
-                    this.cursorPosition = glyphInfo.logicalPosition + 1;
-                    console.log('Vowel mark - set cursor position at vowel mark position + 1:', this.cursorPosition);
+                    // Other characters in cluster: position at their logical position
+                    this.cursorPosition = glyphInfo.logicalPosition;
+                    console.log('Non-base character - set cursor position at logical position:', this.cursorPosition);
                 }
             } else {
                 // For shaped glyphs, position cursor at the cluster start
@@ -4454,7 +4447,7 @@ json.dumps(result)
     isGlyphFromTypedCharacter(glyphIndex) {
         // Determine if a glyph corresponds to a typed character or is a result of shaping
         // Returns: { isTyped: boolean, logicalPosition: number }
-        
+
         if (glyphIndex < 0 || glyphIndex >= this.shapedGlyphs.length) {
             return { isTyped: false, logicalPosition: -1 };
         }
@@ -4466,10 +4459,10 @@ json.dumps(result)
         // If clusterValue points to a valid position in textBuffer, it's typed
         // If clusterValue points beyond or the glyph is additional (like a ligature component),
         // it's shaped
-        
+
         // Get all glyphs in this cluster
         const glyphsInCluster = this.shapedGlyphs.filter(g => (g.cl || 0) === clusterValue);
-        
+
         // Count how many characters this cluster represents
         // Find the next cluster value to determine the range
         let nextClusterValue = this.textBuffer.length;
@@ -4479,24 +4472,41 @@ json.dumps(result)
                 nextClusterValue = cl;
             }
         }
-        
+
         const characterCount = nextClusterValue - clusterValue;
         const glyphCount = glyphsInCluster.length;
-        
+
         // Find which position this glyph is within the cluster
-        const positionInCluster = glyphsInCluster.findIndex(g => 
+        const positionInCluster = glyphsInCluster.findIndex(g =>
             this.shapedGlyphs.indexOf(g) === glyphIndex
         );
-        
+
         console.log(`Glyph ${glyphIndex}: cluster=${clusterValue}, pos in cluster=${positionInCluster}, chars=${characterCount}, glyphs=${glyphCount}`);
-        
+
         // If this glyph's position in the cluster is less than the character count,
         // it corresponds to a typed character
         const isTyped = positionInCluster < characterCount;
-        
-        // The logical position is the cluster value plus the position within the cluster
-        const logicalPosition = isTyped ? clusterValue + positionInCluster : clusterValue;
-        
+
+        // The logical position depends on direction
+        // For RTL, the visual buffer order is reversed from logical order
+        let logicalPosition;
+        if (isTyped) {
+            const isRTL = this.isPositionRTL(clusterValue);
+            if (isRTL) {
+                // RTL: reverse the position within the cluster
+                // Visual position 0 -> logical position (clusterValue + characterCount - 1)
+                // Visual position 1 -> logical position (clusterValue + characterCount - 2)
+                logicalPosition = clusterValue + (characterCount - 1 - positionInCluster);
+                console.log(`  RTL: visual pos ${positionInCluster} -> logical pos ${logicalPosition} (cluster ${clusterValue}, ${characterCount} chars)`);
+            } else {
+                // LTR: position is straightforward
+                logicalPosition = clusterValue + positionInCluster;
+                console.log(`  LTR: visual pos ${positionInCluster} -> logical pos ${logicalPosition}`);
+            }
+        } else {
+            logicalPosition = clusterValue;
+        }
+
         return { isTyped, logicalPosition };
     }
 
