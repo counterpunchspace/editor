@@ -2499,6 +2499,12 @@ json.dumps(result)
                 if (index === trail.length - 1) {
                     item.style.fontWeight = '500';
                     item.style.color = 'var(--text-primary)';
+                    
+                    // Add pop animation to last item for user attention
+                    item.style.animation = 'none';
+                    // Force reflow to restart animation
+                    void item.offsetWidth;
+                    item.style.animation = 'breadcrumb-pop 0.3s ease-out';
                 } else {
                     item.style.opacity = '0.7';
                     item.style.color = 'var(--text-secondary)';
@@ -2541,6 +2547,13 @@ json.dumps(result)
                 color: var(--text-primary);
                 font-weight: 500;
             `;
+            
+            // Add pop animation for user attention
+            mainNameSpan.style.animation = 'none';
+            // Force reflow to restart animation
+            void mainNameSpan.offsetWidth;
+            mainNameSpan.style.animation = 'breadcrumb-pop 0.3s ease-out';
+            
             glyphNameElement.appendChild(mainNameSpan);
         }
     }
