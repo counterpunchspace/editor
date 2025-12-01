@@ -1421,7 +1421,14 @@ class GlyphCanvas {
         if (glyphIndex >= 0 && glyphIndex < this.shapedGlyphs.length) {
             this.selectedGlyphIndex = glyphIndex;
             this.isGlyphEditMode = true;
-            console.log(`Entered glyph edit mode - selected glyph at index ${this.selectedGlyphIndex}`);
+            
+            // Set logical cursor position to the start of this glyph's cluster
+            const glyph = this.shapedGlyphs[glyphIndex];
+            const clusterPos = glyph.cl || 0;
+            this.cursorPosition = clusterPos;
+            this.updateCursorVisualPosition();
+            
+            console.log(`Entered glyph edit mode - selected glyph at index ${this.selectedGlyphIndex}, cluster position ${clusterPos}`);
         } else {
             this.selectedGlyphIndex = -1;
             this.isGlyphEditMode = false;
@@ -1469,6 +1476,120 @@ class GlyphCanvas {
         console.log(`Exited glyph edit mode - returned to text edit mode`);
         this.updatePropertiesUI();
         this.render();
+    }
+
+    navigateToNextGlyphLogical() {
+        // Navigate to the next glyph in logical order (forward in text)
+        if (!this.isGlyphEditMode || this.componentStack.length > 0) {
+            return; // Only works in top-level glyph edit mode
+        }
+
+        // Get current glyph's cluster position
+        if (this.selectedGlyphIndex >= 0 && this.selectedGlyphIndex < this.shapedGlyphs.length) {
+            const currentGlyph = this.shapedGlyphs[this.selectedGlyphIndex];
+            const currentClusterPos = currentGlyph.cl || 0;
+            
+            // First, try to find another glyph at the SAME cluster position (after current index)
+            // This handles multiple glyphs in the same cluster (base + marks)
+            for (let i = this.selectedGlyphIndex + 1; i < this.shapedGlyphs.length; i++) {
+                const glyph = this.shapedGlyphs[i];
+                if ((glyph.cl || 0) === currentClusterPos) {
+                    console.log(`Navigating to next glyph in same cluster ${currentClusterPos}: index ${i}`);
+                    this.selectGlyphByIndex(i);
+                    return;
+                }
+            }
+            
+            // No more glyphs at current cluster, move to next cluster position logically
+            let nextPosition = currentClusterPos + 1;
+            
+            // Find next cluster position that has a glyph
+            while (nextPosition <= this.textBuffer.length) {
+                // Look for all glyphs at this cluster position, take the first one
+                const glyphIndex = this.findFirstGlyphAtClusterPosition(nextPosition);
+                if (glyphIndex >= 0) {
+                    console.log(`Navigating from cluster ${currentClusterPos} to ${nextPosition} (glyph ${glyphIndex})`);
+                    this.selectGlyphByIndex(glyphIndex);
+                    return;
+                }
+                nextPosition++;
+            }
+            
+            console.log('Already at last glyph in logical order');
+        }
+    }
+
+    navigateToPreviousGlyphLogical() {
+        // Navigate to the previous glyph in logical order (backward in text)
+        if (!this.isGlyphEditMode || this.componentStack.length > 0) {
+            return; // Only works in top-level glyph edit mode
+        }
+
+        // Get current glyph's cluster position
+        if (this.selectedGlyphIndex >= 0 && this.selectedGlyphIndex < this.shapedGlyphs.length) {
+            const currentGlyph = this.shapedGlyphs[this.selectedGlyphIndex];
+            const currentClusterPos = currentGlyph.cl || 0;
+            
+            // First, try to find another glyph at the SAME cluster position (before current index)
+            // This handles multiple glyphs in the same cluster (base + marks)
+            for (let i = this.selectedGlyphIndex - 1; i >= 0; i--) {
+                const glyph = this.shapedGlyphs[i];
+                if ((glyph.cl || 0) === currentClusterPos) {
+                    console.log(`Navigating to previous glyph in same cluster ${currentClusterPos}: index ${i}`);
+                    this.selectGlyphByIndex(i);
+                    return;
+                }
+            }
+            
+            // No more glyphs at current cluster, move to previous cluster position logically
+            let prevPosition = currentClusterPos - 1;
+            
+            // Find previous cluster position that has a glyph
+            while (prevPosition >= 0) {
+                // Look for all glyphs at this cluster position, take the last one
+                const glyphIndex = this.findLastGlyphAtClusterPosition(prevPosition);
+                if (glyphIndex >= 0) {
+                    console.log(`Navigating from cluster ${currentClusterPos} to ${prevPosition} (glyph ${glyphIndex})`);
+                    this.selectGlyphByIndex(glyphIndex);
+                    return;
+                }
+                prevPosition--;
+            }
+            
+            console.log('Already at first glyph in logical order');
+        }
+    }
+
+    findFirstGlyphAtClusterPosition(clusterPos) {
+        // Find the first visual glyph index that corresponds to a logical cluster position
+        if (!this.shapedGlyphs || this.shapedGlyphs.length === 0) {
+            return -1;
+        }
+
+        for (let i = 0; i < this.shapedGlyphs.length; i++) {
+            const glyph = this.shapedGlyphs[i];
+            if ((glyph.cl || 0) === clusterPos) {
+                return i;
+            }
+        }
+
+        return -1;
+    }
+
+    findLastGlyphAtClusterPosition(clusterPos) {
+        // Find the last visual glyph index that corresponds to a logical cluster position
+        if (!this.shapedGlyphs || this.shapedGlyphs.length === 0) {
+            return -1;
+        }
+
+        for (let i = this.shapedGlyphs.length - 1; i >= 0; i--) {
+            const glyph = this.shapedGlyphs[i];
+            if ((glyph.cl || 0) === clusterPos) {
+                return i;
+            }
+        }
+
+        return -1;
     }
 
     async fetchGlyphData() {
@@ -4041,6 +4162,20 @@ json.dumps(result)
             if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
                 e.preventDefault();
                 this.cycleLayers(e.key === 'ArrowUp');
+                return;
+            }
+        }
+
+        // Handle Cmd+Left/Right to navigate through glyphs in logical order
+        // Only when in glyph edit mode but NOT in nested component mode
+        if ((e.metaKey || e.ctrlKey) && this.isGlyphEditMode && this.componentStack.length === 0) {
+            if (e.key === 'ArrowLeft') {
+                e.preventDefault();
+                this.navigateToPreviousGlyphLogical();
+                return;
+            } else if (e.key === 'ArrowRight') {
+                e.preventDefault();
+                this.navigateToNextGlyphLogical();
                 return;
             }
         }
