@@ -1443,6 +1443,18 @@ class GlyphCanvas {
 
     exitGlyphEditMode() {
         // Exit glyph edit mode and return to text edit mode
+
+        // Update cursor position to before the edited glyph
+        if (this.selectedGlyphIndex >= 0 && this.selectedGlyphIndex < this.shapedGlyphs.length) {
+            const glyph = this.shapedGlyphs[this.selectedGlyphIndex];
+            const clusterPos = glyph.cl || 0;
+
+            // Set cursor to the start of this glyph's cluster
+            this.cursorPosition = clusterPos;
+            this.updateCursorVisualPosition();
+            console.log(`Set cursor to position ${clusterPos} (before edited glyph)`);
+        }
+
         this.isGlyphEditMode = false;
         this.selectedGlyphIndex = -1;
         this.selectedLayerId = null;
