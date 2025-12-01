@@ -2936,26 +2936,53 @@ json.dumps(result)
         // Now reorder the runs using bidi-js
         const reorderedIndices = this.bidi.getReorderedIndices(this.textBuffer, embedLevels);
 
-        // Map character indices to runs
-        const charToRun = [];
-        for (let i = 0; i < shapedRuns.length; i++) {
-            for (let j = shapedRuns[i].start; j < shapedRuns[i].end; j++) {
-                charToRun[j] = i;
+        // For each run, create a map from logical position to glyphs
+        const logicalPosToGlyphs = new Map();
+        for (const run of shapedRuns) {
+            // Group glyphs by their cluster value within this run
+            for (const glyph of run.glyphs) {
+                const clusterPos = glyph.cl || 0;
+                if (!logicalPosToGlyphs.has(clusterPos)) {
+                    logicalPosToGlyphs.set(clusterPos, []);
+                }
+                logicalPosToGlyphs.get(clusterPos).push(glyph);
             }
         }
 
-        // Build visual glyph order by following reordered indices
+        // Build visual glyph order by following reordered character indices
+        // Track which clusters we've already added to avoid duplicates
+        const addedClusters = new Set();
         const allGlyphs = [];
-        let lastRunIdx = -1;
-        let runGlyphOffset = 0;
 
         for (const charIdx of reorderedIndices) {
-            const runIdx = charToRun[charIdx];
-            if (runIdx !== lastRunIdx) {
-                // Switched to a different run - add all its glyphs
-                const run = shapedRuns[runIdx];
-                allGlyphs.push(...run.glyphs);
-                lastRunIdx = runIdx;
+            // Find the cluster that contains this character position
+            // by looking for glyphs with cluster values <= charIdx
+            let clusterStart = charIdx;
+
+            // Find the actual cluster start for this character
+            for (const [clusterPos, glyphs] of logicalPosToGlyphs) {
+                if (clusterPos <= charIdx) {
+                    // Check if this cluster might contain our character
+                    // by finding the next cluster position
+                    let nextClusterPos = this.textBuffer.length;
+                    for (const [otherPos, _] of logicalPosToGlyphs) {
+                        if (otherPos > clusterPos && otherPos < nextClusterPos) {
+                            nextClusterPos = otherPos;
+                        }
+                    }
+
+                    if (charIdx >= clusterPos && charIdx < nextClusterPos) {
+                        clusterStart = clusterPos;
+                        break;
+                    }
+                }
+            }
+
+            // Add glyphs for this cluster if we haven't already
+            if (!addedClusters.has(clusterStart) && logicalPosToGlyphs.has(clusterStart)) {
+                const glyphs = logicalPosToGlyphs.get(clusterStart);
+                allGlyphs.push(...glyphs);
+                addedClusters.add(clusterStart);
             }
         }
 
@@ -4587,6 +4614,21 @@ json.dumps(result)
         console.log('Text buffer:', this.textBuffer);
         console.log('Shaped glyphs count:', this.shapedGlyphs.length);
 
+        // First pass: collect all unique cluster values to determine proper boundaries
+        const clusterValues = new Set();
+        for (const glyph of this.shapedGlyphs) {
+            clusterValues.add(glyph.cl || 0);
+        }
+        const sortedClusters = Array.from(clusterValues).sort((a, b) => a - b);
+
+        // Create a map from cluster start to cluster end
+        const clusterBounds = new Map();
+        for (let i = 0; i < sortedClusters.length; i++) {
+            const start = sortedClusters[i];
+            const end = i < sortedClusters.length - 1 ? sortedClusters[i + 1] : this.textBuffer.length;
+            clusterBounds.set(start, end);
+        }
+
         // Group consecutive glyphs with the same cluster value
         let xPosition = 0;
         let i = 0;
@@ -4594,7 +4636,6 @@ json.dumps(result)
         while (i < this.shapedGlyphs.length) {
             const glyph = this.shapedGlyphs[i];
             const clusterStart = glyph.cl || 0;
-            const isRTL = this.isPositionRTL(clusterStart);
 
             // Find all glyphs that belong to this cluster
             let clusterWidth = 0;
@@ -4604,56 +4645,11 @@ json.dumps(result)
                 j++;
             }
 
-            // Determine cluster end
-            let clusterEnd;
-            if (isRTL) {
-                // RTL: look backward for the next different cluster
-                if (i > 0) {
-                    const prevCluster = this.shapedGlyphs[i - 1].cl || 0;
-                    clusterEnd = prevCluster;
-                } else {
-                    // First RTL glyph cluster (rightmost/last in logical text)
-                    // Need to find where this cluster ends in logical order
-                    // Look for the next higher cluster value (later in text) or end of RTL run
-                    clusterEnd = this.textBuffer.length;
+            // Get the proper cluster end from our bounds map
+            const clusterEnd = clusterBounds.get(clusterStart) || (clusterStart + 1);
 
-                    // Check subsequent glyphs for a cluster with higher value
-                    for (let k = j; k < this.shapedGlyphs.length; k++) {
-                        const kCluster = this.shapedGlyphs[k].cl || 0;
-                        if (kCluster > clusterStart) {
-                            clusterEnd = kCluster;
-                            break;
-                        }
-                    }
-
-                    // If still at text.length, check if RTL continues or ends
-                    if (clusterEnd === this.textBuffer.length) {
-                        for (let k = clusterStart + 1; k < this.textBuffer.length; k++) {
-                            if (!this.isPositionRTL(k)) {
-                                clusterEnd = k;
-                                break;
-                            }
-                        }
-                    }
-                }
-                if (clusterStart >= clusterEnd) {
-                    clusterEnd = clusterStart + 1;
-                }
-            } else {
-                // LTR: look forward for the next cluster
-                if (j < this.shapedGlyphs.length) {
-                    const nextCluster = this.shapedGlyphs[j].cl || this.textBuffer.length;
-                    // If next cluster value is less than current (RTL following LTR), 
-                    // this cluster only covers one character
-                    if (nextCluster > clusterStart) {
-                        clusterEnd = nextCluster;
-                    } else {
-                        clusterEnd = clusterStart + 1;
-                    }
-                } else {
-                    clusterEnd = this.textBuffer.length;
-                }
-            }
+            // Determine the RTL status based on the cluster start position
+            const isRTL = this.isPositionRTL(clusterStart);
 
             console.log(`Cluster [${clusterStart}-${clusterEnd}): ${j - i} glyphs, x=${xPosition.toFixed(0)}, width=${clusterWidth.toFixed(0)}, RTL=${isRTL}`);
 
@@ -4687,42 +4683,42 @@ json.dumps(result)
         console.log('Cluster map:', this.clusterMap.map(c => `[${c.start}-${c.end}) @ x=${c.x.toFixed(0)}, RTL=${c.isRTL}`));
 
         // Find the cluster that contains or is adjacent to this position
-        // Priority: Check if position is the END of a cluster first (to handle boundaries correctly)
+        // Priority: Check if position is the START of a cluster FIRST (more important than END)
         let found = false;
 
-        // First pass: Check if this position is at the END of any cluster
+        // First pass: Check if this position is at the START of any cluster
         for (const cluster of this.clusterMap) {
-            if (this.cursorPosition === cluster.end && this.cursorPosition > cluster.start) {
-                console.log(`Position ${this.cursorPosition} is at END of cluster [${cluster.start}-${cluster.end}), isRTL: ${cluster.isRTL}`);
+            if (this.cursorPosition === cluster.start) {
+                console.log(`Position ${this.cursorPosition} is at START of cluster [${cluster.start}-${cluster.end}), isRTL: ${cluster.isRTL}`);
 
                 if (cluster.isRTL) {
-                    // RTL: cursor after last char = left edge
-                    this.cursorX = cluster.x;
-                    console.log('RTL cluster end -> left edge x =', this.cursorX);
-                } else {
-                    // LTR: cursor after last char = right edge
+                    // RTL: cursor before first char = right edge
                     this.cursorX = cluster.x + cluster.width;
-                    console.log('LTR cluster end -> right edge x =', this.cursorX);
+                    console.log('RTL cluster start -> right edge x =', this.cursorX);
+                } else {
+                    // LTR: cursor before first char = left edge
+                    this.cursorX = cluster.x;
+                    console.log('LTR cluster start -> left edge x =', this.cursorX);
                 }
                 found = true;
                 break;
             }
         }
 
-        // Second pass: Check if this position is at the START of a cluster
+        // Second pass: Check if this position is at the END of any cluster
         if (!found) {
             for (const cluster of this.clusterMap) {
-                if (this.cursorPosition === cluster.start) {
-                    console.log(`Position ${this.cursorPosition} is at START of cluster [${cluster.start}-${cluster.end}), isRTL: ${cluster.isRTL}`);
+                if (this.cursorPosition === cluster.end && this.cursorPosition > cluster.start) {
+                    console.log(`Position ${this.cursorPosition} is at END of cluster [${cluster.start}-${cluster.end}), isRTL: ${cluster.isRTL}`);
 
                     if (cluster.isRTL) {
-                        // RTL: cursor before first char = right edge
-                        this.cursorX = cluster.x + cluster.width;
-                        console.log('RTL cluster start -> right edge x =', this.cursorX);
-                    } else {
-                        // LTR: cursor before first char = left edge
+                        // RTL: cursor after last char = left edge
                         this.cursorX = cluster.x;
-                        console.log('LTR cluster start -> left edge x =', this.cursorX);
+                        console.log('RTL cluster end -> left edge x =', this.cursorX);
+                    } else {
+                        // LTR: cursor after last char = right edge
+                        this.cursorX = cluster.x + cluster.width;
+                        console.log('LTR cluster end -> right edge x =', this.cursorX);
                     }
                     found = true;
                     break;
