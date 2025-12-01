@@ -1676,6 +1676,12 @@ json.dumps(result)
             if (allMatch) {
                 // Found a matching layer - select it
                 this.selectedLayerId = layer.id;
+
+                // Clear previous state since we're now on a layer location
+                // This prevents Escape from trying to restore, allowing it to exit components instead
+                this.previousSelectedLayerId = null;
+                this.previousVariationSettings = null;
+
                 // Only fetch layer data if we're not currently editing a component
                 // If editing a component, the layer switch will be handled by refreshComponentStack
                 if (this.componentStack.length === 0) {
