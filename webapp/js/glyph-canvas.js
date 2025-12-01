@@ -4865,7 +4865,21 @@ json.dumps(result)
             return;
         }
 
-        console.log('Cluster map:', this.clusterMap.map(c => `[${c.start}-${c.end}) @ x=${c.x.toFixed(0)}, RTL=${c.isRTL}`));
+        // Get glyph names for each cluster for debugging
+        const clusterWithNames = this.clusterMap.map(c => {
+            const glyphNames = [];
+            for (let i = 0; i < c.glyphCount; i++) {
+                const glyph = this.shapedGlyphs[c.glyphIndex + i];
+                const glyphId = glyph.g;
+                let glyphName = `GID${glyphId}`;
+                if (this.opentypeFont && this.opentypeFont.glyphs.get(glyphId)) {
+                    glyphName = this.opentypeFont.glyphs.get(glyphId).name || glyphName;
+                }
+                glyphNames.push(glyphName);
+            }
+            return `[${c.start}-${c.end}) @ x=${c.x.toFixed(0)}, RTL=${c.isRTL}, glyphs=[${glyphNames.join(', ')}]`;
+        });
+        console.log('Cluster map:', clusterWithNames);
 
         // Find the cluster that contains or is adjacent to this position
         // Priority: Check if position is the START of a cluster FIRST (more important than END)
