@@ -65,13 +65,13 @@ const APP_SETTINGS = {
             ANCHOR_STROKE: '#000000',
 
             // Components
-            COMPONENT_NORMAL: '#00ffff',
-            COMPONENT_HOVERED: '#ff88ff',
-            COMPONENT_SELECTED: '#ff00ff',
+            COMPONENT_NORMAL: '#0099cc',
+            COMPONENT_HOVERED: '#cc66cc',
+            COMPONENT_SELECTED: '#cc00cc',
             COMPONENT_STROKE: '#000000',
-            COMPONENT_FILL_NORMAL: 'rgba(0, 255, 255, 0.1)',
-            COMPONENT_FILL_HOVERED: 'rgba(255, 136, 255, 0.15)',
-            COMPONENT_FILL_SELECTED: 'rgba(255, 0, 255, 0.2)',
+            COMPONENT_FILL_NORMAL: 'rgba(0, 153, 204, 0.15)',
+            COMPONENT_FILL_HOVERED: 'rgba(204, 102, 204, 0.2)',
+            COMPONENT_FILL_SELECTED: 'rgba(204, 0, 204, 0.25)',
         },
 
         // Colors - Dark Theme
