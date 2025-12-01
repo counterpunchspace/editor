@@ -1448,6 +1448,49 @@ class GlyphCanvas {
         }
     }
 
+    enterGlyphEditModeAtCursor() {
+        // Enter glyph edit mode for the glyph at the current cursor position
+        if (this.isGlyphEditMode || !this.shapedGlyphs || this.shapedGlyphs.length === 0) {
+            return;
+        }
+
+        // Find the glyph that corresponds to the character at the cursor position
+        // The cursor is logically BEFORE a character, so we want the glyph for cursorPosition
+        const targetPosition = this.cursorPosition;
+
+        console.log(`Looking for glyph at cursor position ${targetPosition}`);
+
+        // Search through all glyphs to find the one that matches this logical position
+        let glyphIndex = -1;
+        for (let i = 0; i < this.shapedGlyphs.length; i++) {
+            const glyphInfo = this.isGlyphFromTypedCharacter(i);
+            if (glyphInfo.isTyped && glyphInfo.logicalPosition === targetPosition) {
+                glyphIndex = i;
+                console.log(`Found glyph ${i} with logical position ${glyphInfo.logicalPosition}`);
+                break;
+            }
+        }
+
+        // If no typed character found at this position, try finding by cluster
+        if (glyphIndex < 0) {
+            const isRTL = this.isPositionRTL(targetPosition);
+            if (isRTL) {
+                // For RTL, select the last glyph at this cluster (visually first)
+                glyphIndex = this.findLastGlyphAtClusterPosition(targetPosition);
+            } else {
+                // For LTR, select the first glyph at this cluster
+                glyphIndex = this.findFirstGlyphAtClusterPosition(targetPosition);
+            }
+        }
+
+        if (glyphIndex >= 0) {
+            console.log(`Entering glyph edit mode at cursor position ${targetPosition}, glyph index ${glyphIndex}`);
+            this.selectGlyphByIndex(glyphIndex);
+        } else {
+            console.log(`No glyph found at cursor position ${targetPosition}`);
+        }
+    }
+
     exitGlyphEditMode() {
         // Exit glyph edit mode and return to text edit mode
 
@@ -4213,6 +4256,13 @@ json.dumps(result)
             e.preventDefault();
             this.isPreviewMode = true;
             this.render();
+            return;
+        }
+
+        // Handle Cmd+Enter to enter glyph edit mode at cursor position (text editing mode only)
+        if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && !this.isGlyphEditMode) {
+            e.preventDefault();
+            this.enterGlyphEditModeAtCursor();
             return;
         }
 
