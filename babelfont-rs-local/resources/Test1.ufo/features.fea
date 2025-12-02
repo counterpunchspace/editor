@@ -1,8 +1,0 @@
-@UpperCase = [ A B ];
-
-@AllLetters = [ A B i idotless ];
-
-feature rlig {
-sub A B by B;
-} rlig;
-

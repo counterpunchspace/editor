@@ -23,6 +23,3 @@ features = ["console"]
 [profile.release]
 opt-level = "z"
 lto = true
-
-[patch.'https://github.com/simoncozens/babelfont-rs.git']
-babelfont = { path = "../babelfont-rs-local" }

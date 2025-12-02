@@ -1,3 +1,4 @@
+use babelfont::convertors::fontir::{BabelfontIrSource, CompilationOptions};
 use wasm_bindgen::prelude::*;
 
 // Set up panic hook for better error messages
@@ -7,44 +8,31 @@ pub fn init() {
 }
 
 /// Compile a font from babelfont JSON directly to TTF
-/// 
+///
 /// This is the main entry point that takes a .babelfont JSON string
 /// and produces compiled TTF bytes.
-/// 
+///
 /// # Arguments
 /// * `babelfont_json` - JSON string in .babelfont format
-/// 
+///
 /// # Returns
 /// * `Vec<u8>` - Compiled TTF font bytes
 #[wasm_bindgen]
 pub fn compile_babelfont(babelfont_json: &str) -> Result<Vec<u8>, JsValue> {
-    // Step 1: Deserialize JSON → babelfont::Font
     let font: babelfont::Font = serde_json::from_str(babelfont_json)
         .map_err(|e| JsValue::from_str(&format!("JSON parse error: {}", e)))?;
-    
-    // Step 2: Create BabelfontIrSource from the Font
-    let source = babelfont::convertors::fontir::BabelfontIrSource::new_from_memory(font)
-        .map_err(|e| JsValue::from_str(&format!("Failed to create IR source: {}", e)))?;
-    
-    // Step 3: Use fontc to compile
-    // Use empty path - fontc will keep everything in memory when flags are disabled
-    let build_dir = std::path::Path::new("");
-    
-    // Disable filesystem-dependent flags to keep everything in memory
-    // Also disable PRODUCTION_NAMES to use source glyph names instead of production names
-    let mut flags = fontir::orchestration::Flags::default();
-    flags.remove(fontir::orchestration::Flags::EMIT_IR);
-    flags.remove(fontir::orchestration::Flags::EMIT_DEBUG);
-    flags.remove(fontir::orchestration::Flags::PRODUCTION_NAMES);
-    
-    let compiled_font = fontc::generate_font(
-        Box::new(source),
-        build_dir,
-        None,
-        flags,
-        false,
-    ).map_err(|e| JsValue::from_str(&format!("Compilation failed: {:?}", e)))?;
-    
+
+    let options = CompilationOptions {
+        skip_kerning: false,
+        skip_features: false,
+        skip_metrics: false,
+        skip_outlines: false,
+        dont_use_production_names: false,
+    };
+
+    let compiled_font = BabelfontIrSource::compile(font, options)
+        .map_err(|e| JsValue::from_str(&format!("Compilation failed: {:?}", e)))?;
+
     Ok(compiled_font)
 }
 
