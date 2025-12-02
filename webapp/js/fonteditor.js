@@ -59,15 +59,9 @@ async function initFontEditor() {
         const wheelFiles = manifest.wheels;
         console.log('Found wheel files:', wheelFiles);
 
-        if (window.updateLoadingStatus) {
-            window.updateLoadingStatus("Installing fonttools...");
-        }
-
         // Install context package from local wheels
         await window.pyodide.runPythonAsync(`
             import micropip
-            await micropip.install('fonttools==4.60.1')
-            await micropip.install('ufomerge')
         `);
 
         // Install each wheel file
