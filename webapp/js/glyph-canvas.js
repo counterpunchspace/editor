@@ -1725,7 +1725,7 @@ try:
             # Get foreground layers (filter out background layers and non-master layers)
             layers_data = []
             for layer in glyph.layers:
-                if not layer.isBackground:
+                if not layer.is_background:
                     # For master layers, _master is None and the layer.id IS the master ID
                     # For alternate/intermediate layers, _master points to the parent master
                     master_id = layer._master if layer._master else layer.id
