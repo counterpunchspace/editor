@@ -1,3 +1,0 @@
-feature kern {
-    pos p (wght=1000f:-100 wght=200D:0);
-} kern;

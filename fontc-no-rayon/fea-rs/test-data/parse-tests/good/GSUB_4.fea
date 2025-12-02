@@ -1,3 +1,0 @@
-lookup hi {
-    substitute [one one.oldstyle] [slash fraction] [two two.oldstyle] by onehalf;
-} hi;

@@ -1,3 +1,0 @@
-feature test {
-    pos [a b] [Y T]' <0 0 20 0 > [c d];
-} test;

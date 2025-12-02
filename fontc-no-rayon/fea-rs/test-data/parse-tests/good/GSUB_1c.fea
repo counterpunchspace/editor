@@ -1,3 +1,0 @@
-lookup hi {
-    substitute [a - z] by [A.sc - Z.sc];
-} hi;

@@ -1,7 +1,0 @@
-#!/bin/sh
-
-set -e
-
-cargo fmt --all -- --check
-cargo check --all --no-default-features
-cargo check --all

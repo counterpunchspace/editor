@@ -1,4 +1,0 @@
-feature nono {
-    # 'from' is not supported in contextual rules
-    sub a b' c from [d e];
-} nono;

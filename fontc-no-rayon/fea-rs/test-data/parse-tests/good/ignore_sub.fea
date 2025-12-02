@@ -1,4 +1,0 @@
-feature test {
-    ignore sub f [a e] d';
-    ignore sub a d' d;
-} test;

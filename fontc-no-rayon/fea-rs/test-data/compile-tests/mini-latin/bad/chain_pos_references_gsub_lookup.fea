@@ -1,7 +1,0 @@
-lookup dummy {
-    sub a by A;
-} dummy;
-
-feature test {
-    pos a' lookup dummy b;
-} test;

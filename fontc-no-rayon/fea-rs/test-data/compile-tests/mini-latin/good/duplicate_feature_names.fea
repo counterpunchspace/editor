@@ -1,9 +1,0 @@
-# https://github.com/googlefonts/fontc/issues/1019
-feature ss01 {
-    featureNames {
-        name "ss17";
-    };
-    featureNames {
-        name "Bulgarian letters";
-    };
-} ss01;

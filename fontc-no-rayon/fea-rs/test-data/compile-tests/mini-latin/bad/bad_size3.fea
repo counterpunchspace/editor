@@ -1,4 +1,0 @@
-feature size {
-    parameters 6 0 0 0;
-   sizemenuname "statement not allowed if no subfamily/range present";
-} size;

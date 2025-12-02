@@ -1,8 +1,0 @@
-lookup HI {
-    sub a by b;
-} HI;
-
-feature test {
-    # cannot have explicit lookup as well as inline rule:
-    sub a' lookup HI b' c by d;
-} test;

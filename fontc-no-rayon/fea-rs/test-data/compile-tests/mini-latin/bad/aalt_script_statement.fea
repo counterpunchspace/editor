@@ -1,4 +1,0 @@
-feature aalt {
-    # script statements are not allowed in aalt
-    script latn;
-} aalt;

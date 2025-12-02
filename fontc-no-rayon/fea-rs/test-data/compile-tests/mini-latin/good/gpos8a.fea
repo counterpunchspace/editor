@@ -1,3 +1,0 @@
-feature test {
-    pos a b' -20 c' 30 g' <-10 10 22 23> e;
-} test;

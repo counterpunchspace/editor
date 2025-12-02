@@ -1,3 +1,0 @@
-lookup hi {
-    substitute [ a e i o u] f_f' by f f;
-} hi;

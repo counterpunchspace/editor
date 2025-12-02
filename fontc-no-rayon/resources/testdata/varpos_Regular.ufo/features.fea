@@ -1,3 +1,0 @@
-feature test {
-    pos A <100 0 (wght=400:200 wght=900:400) 0>;
-} test;

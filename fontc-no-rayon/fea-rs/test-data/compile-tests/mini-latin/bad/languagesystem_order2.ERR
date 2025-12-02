@@ -1,5 +1,0 @@
-error: languagesystem with 'DFLT' script tag must precede non-'DFLT' languagesystems
-in ./test-data/compile-tests/mini-latin/bad/languagesystem_order2.fea at 3:15
-  | 
-3 | languagesystem DFLT autr;
-  |                ^^^^

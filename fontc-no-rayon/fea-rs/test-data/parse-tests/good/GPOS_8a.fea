@@ -1,3 +1,0 @@
-feature test {
-    pos T' lookup LOOKUP1 [o c]' @MARKS' lookup LOOKUP2;
-} test;

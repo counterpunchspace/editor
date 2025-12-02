@@ -1,2 +1,0 @@
-# normal name, an escaped glyph name, and a contextual keyword
-@tricks = [A \mark Ascender];

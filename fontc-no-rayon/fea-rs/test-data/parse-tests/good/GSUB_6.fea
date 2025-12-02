@@ -1,3 +1,0 @@
-lookup hi {
-    substitute [ a e i o u] f' lookup CNTXT_LIGS i' n' lookup CNTXT_SUB;
-} hi;

@@ -1,3 +1,0 @@
-# we had an issue where we would panic if the same file was included twice
-include(short-tag.fea);
-include(short-tag.fea);

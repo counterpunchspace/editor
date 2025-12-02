@@ -1,4 +1,0 @@
-feature derp {
-    pos a-z 10; # this is range
-    pos two-four 15; # this is a glyph name
-} derp;

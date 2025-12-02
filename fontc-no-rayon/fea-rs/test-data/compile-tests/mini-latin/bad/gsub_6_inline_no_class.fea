@@ -1,5 +1,0 @@
-feature test {
-    # replace by class only accepts single input
-    sub a' d by [z x];
-} test;
-

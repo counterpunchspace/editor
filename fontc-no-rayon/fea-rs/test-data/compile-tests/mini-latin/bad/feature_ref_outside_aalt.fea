@@ -1,3 +1,0 @@
-feature test {
-    feature none; # this syntax is only allowed in the 'aalt' feature
-} test;

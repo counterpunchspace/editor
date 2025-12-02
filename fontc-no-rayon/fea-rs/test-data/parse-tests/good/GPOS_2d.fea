@@ -1,3 +1,0 @@
-feature test {
-    pos @T [a o u] -100;
-} test;

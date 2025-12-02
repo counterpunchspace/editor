@@ -1,3 +1,0 @@
-lookup hi {
-    sub a by A.sc;
-} hi;

@@ -1,4 +1,0 @@
-feature test {
-    # equivalent to 'sub a by NULL;'
-    sub a;
-} test;

@@ -1,3 +1,0 @@
-feature ohno {
-    include(../includes/included_inside_feature.fea);
-} ohno;

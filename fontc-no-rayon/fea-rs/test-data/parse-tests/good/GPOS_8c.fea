@@ -1,4 +1,0 @@
-feature test {
-    pos s f' 10 t;
-    pos s f' 10 t' -5 period;
-} test;

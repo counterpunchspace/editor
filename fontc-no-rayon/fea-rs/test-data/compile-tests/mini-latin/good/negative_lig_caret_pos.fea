@@ -1,4 +1,0 @@
-table GDEF {
-    # positions can be negative, unlike indices
-    LigatureCaretByPos f_f -100;
-} GDEF;

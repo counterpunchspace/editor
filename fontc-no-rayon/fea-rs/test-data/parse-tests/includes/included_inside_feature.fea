@@ -1,3 +1,0 @@
-# not valid at top-level, only valid inside a feature
-script derp;
-sub j by k;
