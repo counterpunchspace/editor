@@ -183,29 +183,6 @@ class AIAssistant {
             this.updateContextLabel(); // Update context label appearance based on focus
         });
 
-        // // Click on view content to focus text field (except interactive elements)
-        // const assistantView = document.getElementById('view-assistant');
-        // if (assistantView) {
-        //     const viewContent = assistantView.querySelector('.view-content');
-        //     if (viewContent) {
-        //         viewContent.addEventListener('click', (event) => {
-        //             // Don't focus if clicking on interactive elements
-        //             if (event.target.tagName === 'BUTTON' ||
-        //                 event.target.tagName === 'INPUT' ||
-        //                 event.target.tagName === 'TEXTAREA' ||
-        //                 event.target.tagName === 'A' ||
-        //                 event.target.closest('button') ||
-        //                 event.target.closest('a')) {
-        //                 return;
-        //             }
-        //             // Focus the text field
-        //             if (this.promptInput) {
-        //                 this.promptInput.focus();
-        //             }
-        //         });
-        //     }
-        // }
-
         // Add global keyboard shortcuts when assistant is focused
         document.addEventListener('keydown', (event) => {
             // Skip if event already handled
