@@ -3110,55 +3110,49 @@ json.dumps(result)
             }
         });
 
-        // Create checkbox for each feature (no separate scrollable container)
+        // Create button for each feature (no separate scrollable container)
         features.forEach(feature => {
-            const featureRow = document.createElement('label');
+            const featureRow = document.createElement('div');
             featureRow.className = 'editor-feature-row';
             featureRow.style.display = 'flex';
             featureRow.style.alignItems = 'center';
-            featureRow.style.gap = '6px';
-            featureRow.style.cursor = 'pointer';
+            featureRow.style.gap = '8px';
             featureRow.style.fontSize = '12px';
             featureRow.style.padding = '2px 0';
 
-            const checkbox = document.createElement('input');
-            checkbox.type = 'checkbox';
-            checkbox.className = 'editor-feature-checkbox';
-            checkbox.checked = this.featureSettings[feature.tag];
-            checkbox.setAttribute('data-feature-tag', feature.tag);
+            const tagButton = document.createElement('button');
+            tagButton.className = 'editor-feature-tag-button';
+            tagButton.setAttribute('data-feature-tag', feature.tag);
+            tagButton.textContent = feature.tag;
 
-            checkbox.addEventListener('change', (e) => {
-                this.featureSettings[feature.tag] = e.target.checked;
+            // Set initial state
+            const isEnabled = this.featureSettings[feature.tag];
+            tagButton.classList.toggle('enabled', isEnabled);
+
+            tagButton.addEventListener('click', () => {
+                this.featureSettings[feature.tag] = !this.featureSettings[feature.tag];
+                tagButton.classList.toggle('enabled', this.featureSettings[feature.tag]);
                 this.updateFeatureResetButton();
                 this.shapeText(); // Re-shape text with new features
             });
 
-            const label = document.createElement('span');
-            label.className = 'editor-feature-label';
-
-            const tagSpan = document.createElement('span');
-            tagSpan.style.fontFamily = 'monospace';
-            tagSpan.style.fontWeight = '600';
-            tagSpan.textContent = feature.tag;
-
             const descSpan = document.createElement('span');
+            descSpan.className = 'editor-feature-description';
             descSpan.style.opacity = '0.7';
-            descSpan.style.marginLeft = '6px';
+            descSpan.style.fontSize = '11px';
+            descSpan.style.flex = '1';
             // Extract just the feature name (before the dash)
             const shortDesc = feature.description.split(' - ')[0];
             descSpan.textContent = shortDesc;
 
-            label.appendChild(tagSpan);
-            label.appendChild(descSpan);
-
-            featureRow.appendChild(checkbox);
-            featureRow.appendChild(label);
+            featureRow.appendChild(tagButton);
+            featureRow.appendChild(descSpan);
             this.featuresSection.appendChild(featureRow);
         });
 
         this.updateFeatureResetButton();
 
-        console.log(`Created ${features.length} feature checkboxes`);
+        console.log(`Created ${features.length} feature buttons`);
     }
 
     updateFeatureResetButton() {
@@ -3186,12 +3180,13 @@ json.dumps(result)
             this.featureSettings[tag] = this.defaultFeatureSettings[tag];
         });
 
-        // Update checkboxes
+        // Update buttons
         if (this.featuresSection) {
-            const checkboxes = this.featuresSection.querySelectorAll('input[data-feature-tag]');
-            checkboxes.forEach(checkbox => {
-                const tag = checkbox.getAttribute('data-feature-tag');
-                checkbox.checked = this.defaultFeatureSettings[tag];
+            const buttons = this.featuresSection.querySelectorAll('button[data-feature-tag]');
+            buttons.forEach(button => {
+                const tag = button.getAttribute('data-feature-tag');
+                const isEnabled = this.defaultFeatureSettings[tag];
+                button.classList.toggle('enabled', isEnabled);
             });
         }
 
