@@ -26,6 +26,8 @@ class GlyphCanvas {
         this.fontBlob = null;
         this.opentypeFont = null; // For glyph path extraction
         this.variationSettings = {}; // Store variable axis values
+        this.featureSettings = {}; // Store OpenType feature on/off states
+        this.defaultFeatureSettings = {}; // Store default states for reset
         this.sourceGlyphNames = {}; // Map of GID to glyph names from source font
 
         // Bidirectional text support
@@ -1311,8 +1313,11 @@ class GlyphCanvas {
                 // Update axes UI (will restore slider positions from variationSettings)
                 this.updateAxesUI();
 
-                // Shape text with new font
-                this.shapeText();
+                // Update features UI (async, then shape text)
+                this.updateFeaturesUI().then(() => {
+                    // Shape text with new font after features are initialized
+                    this.shapeText();
+                });
             }
         } catch (error) {
             console.error('Error setting font:', error);
@@ -3015,6 +3020,198 @@ json.dumps(result)
         console.log(`Created ${axes.length} variable axis sliders`);
     }
 
+    async getDiscretionaryFeatures() {
+        // Get discretionary features from the compiled font
+        if (!this.opentypeFont || !this.opentypeFont.tables.gsub) {
+            return [];
+        }
+
+        const gsub = this.opentypeFont.tables.gsub;
+        if (!gsub.features) return [];
+
+        // Get feature info from Python
+        let featureInfo = null;
+        try {
+            const pyResult = await window.pyodide.runPythonAsync(`GetOpentypeFeatureInfo()`);
+            featureInfo = pyResult.toJs();
+        } catch (error) {
+            console.error('Error getting feature info from Python:', error);
+            return [];
+        }
+
+        const defaultOnFeatures = new Set(featureInfo.get('default_on'));
+        const defaultOffFeatures = new Set(featureInfo.get('default_off'));
+        const allDiscretionary = new Set([...defaultOnFeatures, ...defaultOffFeatures]);
+        const descriptions = featureInfo.get('descriptions');
+
+        // Get features present in the font (deduplicate using Set)
+        const fontFeatures = [...new Set(gsub.features.map(f => f.tag))];
+        const discretionaryInFont = fontFeatures.filter(tag => allDiscretionary.has(tag));
+
+        // Build feature list with metadata
+        return discretionaryInFont.map(tag => ({
+            tag: tag,
+            defaultOn: defaultOnFeatures.has(tag),
+            description: descriptions.get(tag) || tag
+        }));
+    }
+
+    async updateFeaturesUI() {
+        if (!this.featuresSection) return;
+
+        // Clear existing features
+        this.featuresSection.innerHTML = '';
+
+        const features = await this.getDiscretionaryFeatures();
+
+        if (features.length === 0) {
+            return; // No discretionary features
+        }
+
+        // Add section header with reset button
+        const headerRow = document.createElement('div');
+        headerRow.className = 'editor-section-header';
+        headerRow.style.display = 'flex';
+        headerRow.style.justifyContent = 'space-between';
+        headerRow.style.alignItems = 'center';
+        headerRow.style.marginBottom = '8px';
+
+        const title = document.createElement('div');
+        title.className = 'editor-section-title';
+        title.textContent = 'OpenType Features';
+        title.style.margin = '0';
+
+        const resetButton = document.createElement('button');
+        resetButton.className = 'feature-reset-button';
+        resetButton.textContent = 'Reset';
+        resetButton.style.fontSize = '11px';
+        resetButton.style.padding = '2px 8px';
+        resetButton.style.cursor = 'pointer';
+        resetButton.style.opacity = '0.5';
+        resetButton.style.pointerEvents = 'none';
+        resetButton.disabled = true;
+
+        resetButton.addEventListener('click', () => {
+            this.resetFeaturesToDefaults();
+        });
+
+        headerRow.appendChild(title);
+        headerRow.appendChild(resetButton);
+        this.featuresSection.appendChild(headerRow);
+
+        // Store reset button reference
+        this.featureResetButton = resetButton;
+
+        // Initialize default states and current states
+        features.forEach(feature => {
+            this.defaultFeatureSettings[feature.tag] = feature.defaultOn;
+            if (this.featureSettings[feature.tag] === undefined) {
+                this.featureSettings[feature.tag] = feature.defaultOn;
+            }
+        });
+
+        // Create checkbox for each feature (no separate scrollable container)
+        features.forEach(feature => {
+            const featureRow = document.createElement('label');
+            featureRow.className = 'editor-feature-row';
+            featureRow.style.display = 'flex';
+            featureRow.style.alignItems = 'center';
+            featureRow.style.gap = '6px';
+            featureRow.style.cursor = 'pointer';
+            featureRow.style.fontSize = '12px';
+            featureRow.style.padding = '2px 0';
+
+            const checkbox = document.createElement('input');
+            checkbox.type = 'checkbox';
+            checkbox.className = 'editor-feature-checkbox';
+            checkbox.checked = this.featureSettings[feature.tag];
+            checkbox.setAttribute('data-feature-tag', feature.tag);
+
+            checkbox.addEventListener('change', (e) => {
+                this.featureSettings[feature.tag] = e.target.checked;
+                this.updateFeatureResetButton();
+                this.shapeText(); // Re-shape text with new features
+            });
+
+            const label = document.createElement('span');
+            label.className = 'editor-feature-label';
+
+            const tagSpan = document.createElement('span');
+            tagSpan.style.fontFamily = 'monospace';
+            tagSpan.style.fontWeight = '600';
+            tagSpan.textContent = feature.tag;
+
+            const descSpan = document.createElement('span');
+            descSpan.style.opacity = '0.7';
+            descSpan.style.marginLeft = '6px';
+            // Extract just the feature name (before the dash)
+            const shortDesc = feature.description.split(' - ')[0];
+            descSpan.textContent = shortDesc;
+
+            label.appendChild(tagSpan);
+            label.appendChild(descSpan);
+
+            featureRow.appendChild(checkbox);
+            featureRow.appendChild(label);
+            this.featuresSection.appendChild(featureRow);
+        });
+
+        this.updateFeatureResetButton();
+
+        console.log(`Created ${features.length} feature checkboxes`);
+    }
+
+    updateFeatureResetButton() {
+        if (!this.featureResetButton) return;
+
+        // Check if any feature is not in default state
+        const isNonDefault = Object.keys(this.featureSettings).some(tag => {
+            return this.featureSettings[tag] !== this.defaultFeatureSettings[tag];
+        });
+
+        if (isNonDefault) {
+            this.featureResetButton.style.opacity = '1';
+            this.featureResetButton.style.pointerEvents = 'auto';
+            this.featureResetButton.disabled = false;
+        } else {
+            this.featureResetButton.style.opacity = '0.5';
+            this.featureResetButton.style.pointerEvents = 'none';
+            this.featureResetButton.disabled = true;
+        }
+    }
+
+    resetFeaturesToDefaults() {
+        // Reset all features to their default states
+        Object.keys(this.defaultFeatureSettings).forEach(tag => {
+            this.featureSettings[tag] = this.defaultFeatureSettings[tag];
+        });
+
+        // Update checkboxes
+        if (this.featuresSection) {
+            const checkboxes = this.featuresSection.querySelectorAll('input[data-feature-tag]');
+            checkboxes.forEach(checkbox => {
+                const tag = checkbox.getAttribute('data-feature-tag');
+                checkbox.checked = this.defaultFeatureSettings[tag];
+            });
+        }
+
+        this.updateFeatureResetButton();
+        this.shapeText(); // Re-shape text with default features
+    }
+
+    getHarfBuzzFeatures() {
+        // Build HarfBuzz feature string from feature settings
+        // Format: "liga=1,dlig=0,kern=1" or undefined if no features
+        const featureParts = [];
+
+        for (const [tag, enabled] of Object.entries(this.featureSettings)) {
+            featureParts.push(`${tag}=${enabled ? 1 : 0}`);
+        }
+
+        // Return undefined if no features (allows HarfBuzz to use defaults)
+        return featureParts.length > 0 ? featureParts.join(',') : undefined;
+    }
+
     shapeText() {
         if (!this.hb || !this.hbFont || !this.textBuffer) {
             this.shapedGlyphs = [];
@@ -3057,8 +3254,13 @@ json.dumps(result)
         buffer.addText(this.textBuffer);
         buffer.guessSegmentProperties();
 
-        // Shape the text
-        this.hb.shape(this.hbFont, buffer);
+        // Shape the text with features
+        const features = this.getHarfBuzzFeatures();
+        if (features) {
+            this.hb.shape(this.hbFont, buffer, features);
+        } else {
+            this.hb.shape(this.hbFont, buffer);
+        }
 
         // Get glyph information
         this.shapedGlyphs = buffer.json();
@@ -3105,6 +3307,7 @@ json.dumps(result)
         console.log('Logical runs:', runs.map(r => `${r.direction}:${r.level}:"${r.text}"`));
 
         // Shape each run with HarfBuzz in its logical direction
+        const features = this.getHarfBuzzFeatures();
         const shapedRuns = [];
         for (const run of runs) {
             const buffer = this.hb.createBuffer();
@@ -3112,7 +3315,11 @@ json.dumps(result)
             buffer.setDirection(run.direction);
             buffer.guessSegmentProperties();
 
-            this.hb.shape(this.hbFont, buffer);
+            if (features) {
+                this.hb.shape(this.hbFont, buffer, features);
+            } else {
+                this.hb.shape(this.hbFont, buffer);
+            }
             const glyphs = buffer.json();
             buffer.destroy();
 
@@ -5472,11 +5679,21 @@ document.addEventListener('DOMContentLoaded', () => {
             axesSection.style.gap = '10px';
             rightSidebar.appendChild(axesSection);
 
+            // Create OpenType features container (initially empty)
+            const featuresSection = document.createElement('div');
+            featuresSection.id = 'glyph-features-section';
+            featuresSection.style.display = 'flex';
+            featuresSection.style.flexDirection = 'column';
+            featuresSection.style.gap = '2px';
+            featuresSection.style.marginTop = '10px';
+            rightSidebar.appendChild(featuresSection);
+
             // Store reference to sidebars for later updates
             window.glyphCanvas.leftSidebar = leftSidebar;
             window.glyphCanvas.propertiesSection = propertiesSection;
             window.glyphCanvas.rightSidebar = rightSidebar;
             window.glyphCanvas.axesSection = axesSection;
+            window.glyphCanvas.featuresSection = featuresSection;
 
             // Observe when the editor view gains/loses focus (via 'focused' class)
             const editorView = document.querySelector('#view-editor');

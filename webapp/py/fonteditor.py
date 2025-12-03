@@ -343,3 +343,32 @@ def GetOpenFonts():
         )
 
     return result
+
+
+def GetOpentypeFeatureInfo():
+    """
+    Get information about OpenType features, including which are discretionary
+    and which should be on by default.
+
+    Returns:
+        dict: Dictionary with feature information including:
+            - 'default_on': List of features that should be on by default
+            - 'default_off': List of features that should be off by default
+            - 'descriptions': Dictionary mapping feature tags to descriptions
+
+    Example:
+        >>> info = GetOpentypeFeatureInfo()
+        >>> print(info['default_on'])
+        ['calt', 'clig', 'liga', 'kern', 'cpsp', 'locl']
+    """
+    from context.opentype.features import (
+        DEFAULT_ON_FEATURES,
+        DEFAULT_OFF_FEATURES,
+        FEATURE_DESCRIPTIONS,
+    )
+
+    return {
+        "default_on": list(DEFAULT_ON_FEATURES),
+        "default_off": list(DEFAULT_OFF_FEATURES),
+        "descriptions": FEATURE_DESCRIPTIONS,
+    }
