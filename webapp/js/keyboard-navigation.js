@@ -398,6 +398,15 @@
                 }, 100);
             }
 
+            // If activating editor, focus the canvas
+            if (viewId === 'view-editor') {
+                setTimeout(() => {
+                    if (window.glyphCanvas && window.glyphCanvas.canvas) {
+                        window.glyphCanvas.canvas.focus();
+                    }
+                }, 100);
+            }
+
             // Trigger any view-specific focus handlers
             const event = new CustomEvent('viewFocused', { detail: { viewId } });
             window.dispatchEvent(event);
