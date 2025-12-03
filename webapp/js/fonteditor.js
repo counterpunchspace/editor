@@ -96,15 +96,15 @@ async function initFontEditor() {
         await window.pyodide.runPython(fonteditorCode);
         console.log("fonteditor.py module loaded");
 
-        // // Install context package from local wheels
-        // if (window.updateLoadingStatus) {
-        //     window.updateLoadingStatus("Installing visualization libraries...");
-        // }
-        // await window.pyodide.runPythonAsync(`
-        //     await micropip.install('matplotlib')
-        //     await micropip.install('numpy')
-        //     await micropip.install('pandas')
-        // `);
+        // Install context package from local wheels
+        if (window.updateLoadingStatus) {
+            window.updateLoadingStatus("Installing visualization libraries...");
+        }
+        await window.pyodide.runPythonAsync(`
+            await micropip.install('matplotlib')
+            await micropip.install('numpy')
+            await micropip.install('pandas')
+        `);
 
 
         console.log("FontEditor initialized successfully");
