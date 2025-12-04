@@ -1,0 +1,46 @@
+# Context Font Editor - Coding Instructions
+
+## Project Overview
+This is a WebAssembly-based font editor using Rust (fontc/babelfont) compiled to WASM and a JavaScript/HTML/CSS frontend. It uses a Python object model as the primary data storage which is exposed to the users via the Pyodide console and Python scripting environment.
+
+## Code Style
+
+### General
+- Scan for reusable code in any of the languages, avoid duplicate implementations where possible
+
+### JavaScript
+- Use modern ES6+ syntax
+- Prefer const over let, avoid var
+- Use camelCase for variables and functions
+- Use PascalCase for classes
+- Add JSDoc comments for complex functions
+
+### Rust
+- Follow standard Rust conventions
+- Use rustfmt for formatting
+- Write documentation comments with ///
+
+### CSS
+- Refer to instructions/CSS_COLOR_STYLING.md for color standards
+- Use CSS custom properties for theming
+- Keep selectors specific but not overly nested
+
+## Architecture Principles
+- Keep WASM boundary clean - minimize data passing between JS and Rust
+- Refer to instructions/WEBAPP_OVERVIEW.md for webapp structure
+- Refer to instructions/UI_ELEMENTS.md for UI component guidelines
+
+## File Organization
+- webapp/js/ - JavaScript modules
+- webapp/css/ - Stylesheets
+- webapp/py/ - Python (Pyodide) scripts
+- webapp/wasm-dist/ - WASM binaries
+
+## Build Process
+- Update Rust dependencies with update-rust-deps.sh
+- Build WASM with build-fontc-wasm.sh
+- Deploy to Cloudflare Workers using cloudflare-worker.js
+
+## Important Notes
+- CORS headers are required for SharedArrayBuffer (see _headers and coi-serviceworker.js)
+- Keep instructions/ directory updated with architectural decisions
