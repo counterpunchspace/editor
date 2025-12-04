@@ -17,6 +17,158 @@
 // Direct .babelfont JSON → TTF compilation (zero file system)
 // Based on: DIRECT_PYTHON_RUST_INTEGRATION.md
 
+// Compilation target definitions
+// All targets use production glyph names by default
+const COMPILATION_TARGETS = {
+    // Default target for user-initiated compilations (Compile button)
+    user: {
+        skip_kerning: false,
+        skip_features: false,
+        skip_metrics: false,
+        skip_outlines: false,
+        dont_use_production_names: false,
+    },
+
+    // Only compile outlines (glyf/gvar tables), skip everything else
+    glyph_overview: {
+        skip_kerning: true,
+        skip_features: true,
+        skip_metrics: false,
+        skip_outlines: false,
+        dont_use_production_names: true,
+    },
+
+    // No outlines, kerning, or metrics - used to retrieve glyph names from input strings
+    typing: {
+        skip_kerning: true,
+        skip_features: false,
+        skip_metrics: false, // Keep metrics - hits unimplemented code in babelfont-rs
+        skip_outlines: false,  // Keep outlines - skip_outlines hits unimplemented code in babelfont-rs
+        dont_use_production_names: true,
+    },
+
+    // Complete font compiled with a subset of glyph names
+    editing: {
+        skip_kerning: false,
+        skip_features: false,
+        skip_metrics: false,
+        skip_outlines: false,
+        dont_use_production_names: true,
+        // Note: subset_glyphs array should be added when calling compilation
+    },
+};
+
+/**
+ * Get glyph names for an input string by compiling a typing font
+ * This uses the 'typing' compilation target (no outlines), HarfBuzz for shaping,
+ * and opentype.js to map glyph IDs to names.
+ * 
+ * @param {string|object} babelfontJson - Font JSON (string or parsed object)
+ * @param {string} inputString - Text to get glyphs for
+ * @returns {Promise<Array<string>>} - Array of glyph names
+ */
+async function getGlyphNamesForString(babelfontJson, inputString) {
+    // Ensure we have a JSON string
+    const jsonString = typeof babelfontJson === 'string' ? babelfontJson : JSON.stringify(babelfontJson);
+
+    // Compile font with typing target (no outlines, minimal size)
+    let fontBuffer;
+
+    // Check if we're in a browser environment with the worker
+    if (typeof fontCompilation !== 'undefined' && fontCompilation.isInitialized) {
+        // Use web worker approach in browser
+        const result = await fontCompilation.compileFromJson(
+            jsonString,
+            'typing-temp.ttf',
+            'typing'
+        );
+        fontBuffer = new Uint8Array(result.result);
+    } else if (typeof window !== 'undefined' && typeof document !== 'undefined') {
+        // Browser environment but worker not initialized - initialize it
+        const fontCompilationInstance = new FontCompilation();
+        await fontCompilationInstance.initialize();
+        const result = await fontCompilationInstance.compileFromJson(
+            jsonString,
+            'typing-temp.ttf',
+            'typing'
+        );
+        fontBuffer = new Uint8Array(result.result);
+    } else {
+        // Node.js environment - use direct WASM compilation
+        // Assumes compile_babelfont is available (imported in Node.js context)
+        if (typeof compile_babelfont === 'undefined') {
+            throw new Error('compile_babelfont not available. Make sure WASM module is imported.');
+        }
+        const ttfBytes = compile_babelfont(jsonString, COMPILATION_TARGETS.typing);
+        fontBuffer = new Uint8Array(ttfBytes);
+    }
+
+    // Use shapeTextWithFont to get glyph names from the compiled font
+    return await shapeTextWithFont(fontBuffer, inputString);
+}
+
+/**
+ * Shape text with a compiled font buffer and return glyph names
+ * This is a lower-level function that works with font bytes directly
+ * 
+ * @param {Uint8Array} fontBytes - Compiled TTF font bytes
+ * @param {string} inputString - Text to shape
+ * @returns {Promise<Array<string>>} - Array of glyph names
+ */
+async function shapeTextWithFont(fontBytes, inputString) {
+    // Parse the compiled font with opentype.js
+    const fontBuffer = new Uint8Array(fontBytes);
+    const opentypeFont = opentype.parse(fontBuffer.buffer);
+
+    // Initialize HarfBuzz
+    let hbModule;
+    if (typeof createHarfBuzz !== 'undefined') {
+        // Browser environment - use createHarfBuzz
+        hbModule = await createHarfBuzz();
+    } else if (typeof hbInit !== 'undefined') {
+        // Node.js environment - use hbInit Promise
+        hbModule = await hbInit;
+    } else {
+        throw new Error('HarfBuzz not available. Make sure harfbuzzjs is loaded.');
+    }
+
+    // Create HarfBuzz blob and font
+    const blob = hbModule.createBlob(fontBuffer);
+    const face = hbModule.createFace(blob, 0);
+    const hbFont = hbModule.createFont(face);
+
+    // Create buffer and shape text
+    const buffer = hbModule.createBuffer();
+    buffer.addText(inputString);
+    buffer.guessSegmentProperties();
+
+    // Shape the text
+    hbModule.shape(hbFont, buffer);
+
+    // Get shaped glyphs (contains glyph IDs)
+    const shapedGlyphs = buffer.json();
+
+    // Map glyph IDs to glyph names using opentype.js
+    const glyphNames = new Set();
+    for (const shapedGlyph of shapedGlyphs) {
+        const glyphId = shapedGlyph.g;
+        if (opentypeFont && opentypeFont.glyphs.get(glyphId)) {
+            const glyph = opentypeFont.glyphs.get(glyphId);
+            if (glyph.name && glyph.name !== '.notdef') {
+                glyphNames.add(glyph.name);
+            }
+        }
+    }
+
+    // Clean up HarfBuzz resources
+    buffer.destroy();
+    hbFont.destroy();
+    face.destroy();
+    blob.destroy();
+
+    return Array.from(glyphNames);
+}
+
 class FontCompilation {
     constructor() {
         this.worker = null;
@@ -90,6 +242,10 @@ class FontCompilation {
                 };
 
                 this.worker.addEventListener('message', checkReady);
+
+                // Send an empty message to trigger worker auto-initialization
+                console.log('Sending initialization trigger to worker...');
+                this.worker.postMessage({});
             });
 
             this.isInitialized = ready;
@@ -145,9 +301,11 @@ class FontCompilation {
      * 
      * @param {string} babelfontJson - Complete .babelfont JSON string
      * @param {string} filename - Optional filename for output (default: 'font.ttf')
+     * @param {string|object} target - Compilation target name ('user', 'glyph_overview', 'typing', 'editing') or custom options object
+     * @param {Array<string>} subsetGlyphs - Optional array of glyph names to include (for 'editing' target)
      * @returns {Promise<Object>} - { font: Uint8Array, filename: string, timeTaken: number }
      */
-    async compileFromJson(babelfontJson, filename = 'font.babelfont') {
+    async compileFromJson(babelfontJson, filename = 'font.babelfont', target = 'user', subsetGlyphs = null) {
         if (!this.isInitialized) {
             const initialized = await this.initialize();
             if (!initialized) {
@@ -155,7 +313,23 @@ class FontCompilation {
             }
         }
 
-        console.log(`🔨 Compiling ${filename} from .babelfont JSON...`);
+        // Resolve compilation options
+        let options;
+        if (typeof target === 'string') {
+            options = { ...COMPILATION_TARGETS[target] };
+            if (!options) {
+                throw new Error(`Unknown compilation target: ${target}. Available: ${Object.keys(COMPILATION_TARGETS).join(', ')}`);
+            }
+        } else {
+            options = target;
+        }
+
+        // Add subset glyphs if provided
+        if (subsetGlyphs && subsetGlyphs.length > 0) {
+            options.subset_glyphs = subsetGlyphs;
+        }
+
+        console.log(`🔨 Compiling ${filename} from .babelfont JSON (target: ${typeof target === 'string' ? target : 'custom'})...`);
         console.log(`📊 JSON size: ${babelfontJson.length} bytes`);
 
         const id = this.compilationId++;
@@ -168,7 +342,8 @@ class FontCompilation {
             this.worker.postMessage({
                 id,
                 babelfontJson,  // Just a string - fast transfer!
-                filename
+                filename,
+                options         // NEW: Pass compilation options
             });
         });
     }
@@ -353,22 +528,36 @@ async function initFontCompilation() {
 }
 
 // Auto-initialize - wait longer to ensure service worker is active
-document.addEventListener('DOMContentLoaded', () => {
-    // Wait for service worker to be ready before initializing
-    if ('serviceWorker' in navigator) {
-        navigator.serviceWorker.ready.then(() => {
-            // Give it a bit more time to ensure controller is set
+// Only run in browser environment
+if (typeof document !== 'undefined') {
+    document.addEventListener('DOMContentLoaded', () => {
+        // Wait for service worker to be ready before initializing
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.ready.then(() => {
+                // Give it a bit more time to ensure controller is set
+                setTimeout(initFontCompilation, 2000);
+            });
+        } else {
             setTimeout(initFontCompilation, 2000);
-        });
-    } else {
-        setTimeout(initFontCompilation, 2000);
-    }
-});
+        }
+    });
+}
 
-// Export for global access
-window.fontCompilation = fontCompilation;
-window.compileFontFromPython = (cmd) => fontCompilation.compileFromPython(cmd);
+// Export for global access (browser only)
+if (typeof window !== 'undefined') {
+    window.fontCompilation = fontCompilation;
+    window.compileFontFromPython = (cmd) => fontCompilation.compileFromPython(cmd);
 
-// NEW: Direct compilation methods exposed globally
-window.compileFontDirect = (fontVarName, outputFile) => fontCompilation.compileFromPythonFont(fontVarName, outputFile);
-window.compileFontFromJson = (json, filename) => fontCompilation.compileFromJson(json, filename);
+    // NEW: Direct compilation methods exposed globally
+    window.compileFontDirect = (fontVarName, outputFile) => fontCompilation.compileFromPythonFont(fontVarName, outputFile);
+    window.compileFontFromJson = (json, filename) => fontCompilation.compileFromJson(json, filename);
+
+    // Export compilation targets and utilities for external use
+    window.COMPILATION_TARGETS = COMPILATION_TARGETS;
+    window.getGlyphNamesForString = getGlyphNamesForString;
+}
+
+// Node.js module export for testing
+if (typeof module !== 'undefined' && module.exports) {
+    module.exports = { FontCompilation, COMPILATION_TARGETS, getGlyphNamesForString, shapeTextWithFont };
+}

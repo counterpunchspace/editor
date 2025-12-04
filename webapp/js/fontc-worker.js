@@ -102,20 +102,24 @@ self.onmessage = async (event) => {
             self.postMessage({
                 error: `Failed to initialize babelfont-fontc WASM: ${error.message}`
             });
-            return;
         }
+        return; // Don't process as compilation request
     }
 
     // Handle direct compilation request
     const start = Date.now();
-    const { id, babelfontJson, filename } = data;
+    const { id, babelfontJson, filename, options } = data;
 
     try {
         console.log(`[Fontc Worker] Compiling ${filename} from .babelfont JSON...`);
         console.log(`[Fontc Worker] JSON size: ${babelfontJson.length} bytes`);
+        if (options) {
+            console.log(`[Fontc Worker] Options:`, options);
+        }
 
         // THE MAGIC: Direct JSON → compiled font (no file system!)
-        const result = compile_babelfont(babelfontJson);
+        // Pass options as second parameter to compile_babelfont
+        const result = compile_babelfont(babelfontJson, options || {});
 
         const time_taken = Date.now() - start;
         console.log(`[Fontc Worker] Compiled ${filename} in ${time_taken}ms`);

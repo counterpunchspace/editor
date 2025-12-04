@@ -11,6 +11,9 @@ pub fn init() {
 }
 
 fn get_option(options: &JsValue, key: &str, default: bool) -> bool {
+    if options.is_undefined() || options.is_null() {
+        return default;
+    }
     js_sys::Reflect::get(options, &JsValue::from_str(key))
         .unwrap_or(JsValue::from_bool(default))
         .as_bool()
@@ -39,20 +42,25 @@ pub fn compile_babelfont(babelfont_json: &str, options: &JsValue) -> Result<Vec<
     let mut font: babelfont::Font = serde_json::from_str(babelfont_json)
         .map_err(|e| JsValue::from_str(&format!("JSON parse error: {}", e)))?;
 
-    if let Some(subset_glyphs) = js_sys::Reflect::get(options, &JsValue::from_str("subset_glyphs"))
-        .ok()
-        .map(|val| {
-            val.dyn_into::<js_sys::Array>()
-                .unwrap()
-                .iter()
-                .filter_map(|v| v.as_string())
-                .collect::<Vec<String>>()
-        })
-    {
-        let subsetter = babelfont::filters::RetainGlyphs::new(subset_glyphs);
-        subsetter
-            .apply(&mut font)
-            .map_err(|e| JsValue::from_str(&format!("Subsetting failed: {:?}", e)))?;
+    // Handle subset_glyphs option if present
+    if !options.is_undefined() && !options.is_null() {
+        if let Ok(subset_val) = js_sys::Reflect::get(options, &JsValue::from_str("subset_glyphs")) {
+            if !subset_val.is_undefined() && !subset_val.is_null() {
+                if let Ok(array) = subset_val.dyn_into::<js_sys::Array>() {
+                    let subset_glyphs: Vec<String> = array
+                        .iter()
+                        .filter_map(|v| v.as_string())
+                        .collect();
+                    
+                    if !subset_glyphs.is_empty() {
+                        let subsetter = babelfont::filters::RetainGlyphs::new(subset_glyphs);
+                        subsetter
+                            .apply(&mut font)
+                            .map_err(|e| JsValue::from_str(&format!("Subsetting failed: {:?}", e)))?;
+                    }
+                }
+            }
+        }
     }
 
     let options = CompilationOptions {

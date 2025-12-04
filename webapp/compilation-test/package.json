@@ -1,0 +1,6 @@
+{
+  "dependencies": {
+    "harfbuzzjs": "^0.4.13",
+    "opentype.js": "^1.3.4"
+  }
+}

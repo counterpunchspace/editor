@@ -206,21 +206,12 @@ if cargo build --target wasm32-unknown-unknown --release; then
         echo ""
         echo "Files created:"
         ls -lh "$WEBAPP_DIR/wasm-dist/"
-        echo ""
-        echo "⚠️  IMPORTANT: This is a minimal wrapper. Full fontc functionality"
-        echo "   requires significant additional work to adapt for WASM."
     else
         echo "❌ WASM file not found: $WASM_FILE"
         exit 1
     fi
 else
     echo ""
-    echo "❌ Build failed. This is expected as fontc has dependencies that"
-    echo "   may not be fully compatible with WASM target."
-    echo ""
-    echo "💡 Alternative approaches:"
-    echo "   1. Use fontmake (Python) via Pyodide - works now!"
-    echo "   2. Set up a backend API for fontc compilation"
-    echo "   3. Contribute WASM support to fontc upstream"
+    echo "❌ Build failed."
     exit 1
 fi

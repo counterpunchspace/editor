@@ -97,5 +97,5 @@ fi
 echo ""
 echo "Next steps:"
 echo "  1. Run: ./build-fontc-wasm.sh"
-echo "  2. Test: cd test-compiler && ./test.sh"
+echo "  2. Test: cd webapp/compilation-test && node compile-test.mjs"
 echo ""

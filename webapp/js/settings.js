@@ -5,6 +5,11 @@ const APP_SETTINGS = {
     // Compilation settings
     COMPILE_DEBOUNCE_DELAY: 150, // ms - delay before auto-compile triggers after changes
 
+    // Font Manager settings
+    FONT_MANAGER: {
+        SAVE_DEBUG_FONTS: false, // Set to true to save typing/editing fonts to file system for inspection
+    },
+
     // Outline editor display settings
     OUTLINE_EDITOR: {
         // Zoom thresholds

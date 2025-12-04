@@ -52,6 +52,7 @@
 
             const isDirtyJson = await runPython.call(window.pyodide, `
 import json
+import orjson
 try:
     from context import DIRTY_COMPILE
     current_font = CurrentFont()
@@ -65,7 +66,15 @@ try:
         if DIRTY_COMPILE not in current_font._dirty_flags:
             current_font._dirty_flags[DIRTY_COMPILE] = False
         
-        result = {"dirty": current_font.is_dirty(DIRTY_COMPILE)}
+        is_dirty = current_font.is_dirty(DIRTY_COMPILE)
+        
+        # If dirty, get font JSON in same call to avoid double serialization
+        if is_dirty:
+            font_dict = current_font.to_dict()
+            babelfont_json = orjson.dumps(font_dict).decode('utf-8')
+            result = {"dirty": True, "json": babelfont_json}
+        else:
+            result = {"dirty": False}
 except Exception as e:
     import traceback
     result = {"dirty": False, "error": str(e), "traceback": traceback.format_exc()}
@@ -90,12 +99,13 @@ json.dumps(result)
 
                 // Show message in terminal if available
                 if (window.term) {
-                    window.term.echo('[[;cyan;]🔄 Auto-compiling font after data change...]');
+                    window.term.echo('[[;cyan;]🔄 Auto-recompiling editing font after data change...]');
                 }
 
-                // Trigger compilation
-                if (window.compileFontButton && window.compileFontButton.compile) {
-                    await window.compileFontButton.compile();
+                // Trigger recompilation of editing font via font manager
+                // Pass the pre-fetched JSON to avoid redundant serialization
+                if (window.fontManager && window.fontManager.isReady()) {
+                    await window.fontManager.recompileEditingFont(result.json);
 
                     // Mark font as clean for compilation after successful compile
                     // Use recursive=True to mark all children clean too
@@ -105,6 +115,8 @@ current_font = CurrentFont()
 if current_font:
     current_font.mark_clean(DIRTY_COMPILE, recursive=True)
                     `);
+                } else {
+                    console.warn('Font manager not ready for auto-compilation');
                 }
             }
         } catch (error) {
