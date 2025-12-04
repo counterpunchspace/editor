@@ -14,6 +14,7 @@ This is a WebAssembly-based font editor using Rust (fontc/babelfont) compiled to
 - Use camelCase for variables and functions
 - Use PascalCase for classes
 - Add JSDoc comments for complex functions
+- Use prettier for code formatting
 
 ### Rust
 - Follow standard Rust conventions
