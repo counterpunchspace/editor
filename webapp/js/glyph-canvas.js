@@ -925,55 +925,9 @@ class GlyphCanvas {
                                 console.log(`  ${'  '.repeat(depth)}Outline shape at depth ${depth}, parentTransform=[${parentTransform}]`);
                                 console.log(`  ${'  '.repeat(depth)}First node: [${componentShape.nodes[0]}]`);
                                 const path = new Path2D();
-                                const nodes = componentShape.nodes;
 
-                                // Find first on-curve point to start
-                                let startIdx = 0;
-                                for (let i = 0; i < nodes.length; i++) {
-                                    const [, , type] = nodes[i];
-                                    if (type === 'c' || type === 'cs' || type === 'l' || type === 'ls') {
-                                        startIdx = i;
-                                        break;
-                                    }
-                                }
-
-                                const [startX, startY] = nodes[startIdx];
-                                path.moveTo(startX, startY);
-
-                                // Build path using proper cubic bezier handling
-                                let i = 0;
-                                while (i < nodes.length) {
-                                    const idx = (startIdx + i) % nodes.length;
-                                    const nextIdx = (startIdx + i + 1) % nodes.length;
-                                    const next2Idx = (startIdx + i + 2) % nodes.length;
-                                    const next3Idx = (startIdx + i + 3) % nodes.length;
-
-                                    const [, , type] = nodes[idx];
-                                    const [next1X, next1Y, next1Type] = nodes[nextIdx];
-
-                                    if (type === 'l' || type === 'ls' || type === 'c' || type === 'cs') {
-                                        if (next1Type === 'o' || next1Type === 'os') {
-                                            const [next2X, next2Y, next2Type] = nodes[next2Idx];
-                                            const [next3X, next3Y] = nodes[next3Idx];
-
-                                            if (next2Type === 'o' || next2Type === 'os') {
-                                                path.bezierCurveTo(next1X, next1Y, next2X, next2Y, next3X, next3Y);
-                                                i += 3;
-                                            } else {
-                                                path.lineTo(next2X, next2Y);
-                                                i += 2;
-                                            }
-                                        } else if (next1Type === 'l' || next1Type === 'ls' || next1Type === 'c' || next1Type === 'cs') {
-                                            path.lineTo(next1X, next1Y);
-                                            i++;
-                                        } else {
-                                            i++;
-                                        }
-                                    } else {
-                                        i++;
-                                    }
-                                }
-
+                                // Build the path using the shared helper method
+                                this.buildPathFromNodes(componentShape.nodes, path);
                                 path.closePath();
 
                                 // Apply transform to canvas for hit testing
@@ -3623,12 +3577,16 @@ json.dumps(result)
         });
     }
 
-    buildPathFromNodes(nodes) {
+    buildPathFromNodes(nodes, pathTarget = null) {
         // Build a canvas path from a nodes array
+        // pathTarget: if provided (Path2D object), draws to it; otherwise draws to this.ctx
         // Returns the startIdx for use in drawing direction arrows
         if (!nodes || nodes.length === 0) {
             return -1;
         }
+
+        // Use the provided path target or default to canvas context
+        const target = pathTarget || this.ctx;
 
         // Find first on-curve point to start
         let startIdx = 0;
@@ -3641,7 +3599,7 @@ json.dumps(result)
         }
 
         const [startX, startY] = nodes[startIdx];
-        this.ctx.moveTo(startX, startY);
+        target.moveTo(startX, startY);
 
         // Draw contour by looking ahead for control points
         let i = 0;
@@ -3663,16 +3621,16 @@ json.dumps(result)
 
                     if (next2Type === 'o' || next2Type === 'os') {
                         // Cubic bezier: two off-curve control points + on-curve endpoint
-                        this.ctx.bezierCurveTo(next1X, next1Y, next2X, next2Y, next3X, next3Y);
+                        target.bezierCurveTo(next1X, next1Y, next2X, next2Y, next3X, next3Y);
                         i += 3; // Skip the two control points and endpoint
                     } else {
                         // Single off-curve - shouldn't happen with cubic, just draw line
-                        this.ctx.lineTo(next2X, next2Y);
+                        target.lineTo(next2X, next2Y);
                         i += 2;
                     }
                 } else if (next1Type === 'l' || next1Type === 'ls' || next1Type === 'c' || next1Type === 'cs') {
                     // Next is on-curve - draw line
-                    this.ctx.lineTo(next1X, next1Y);
+                    target.lineTo(next1X, next1Y);
                     i++;
                 } else {
                     // Skip quadratic
