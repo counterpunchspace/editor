@@ -102,8 +102,8 @@ self.onmessage = async (event) => {
             self.postMessage({
                 error: `Failed to initialize babelfont-fontc WASM: ${error.message}`
             });
-            return;
         }
+        return; // Don't process as compilation request
     }
 
     // Handle direct compilation request

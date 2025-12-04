@@ -3,8 +3,8 @@
 let coepCredentialless = false;
 
 // PWA Cache configuration
-const CACHE_NAME = 'contxt-pwa-v5';
-const CDN_CACHE_NAME = 'contxt-cdn-cache-v5';
+const CACHE_NAME = 'contxt-pwa-v6';
+const CDN_CACHE_NAME = 'contxt-cdn-cache-v6';
 const OFFLINE_URL = '/index.html';
 
 // Assets to cache on install
@@ -25,6 +25,7 @@ const PRECACHE_ASSETS = [
     './js/file-browser.js',
     './js/font-compilation.js',
     './js/font-dropdown.js',
+    './js/font-manager.js',
     './js/fontc-worker.js',
     './js/fonteditor.js',
     './js/glyph-canvas.js',

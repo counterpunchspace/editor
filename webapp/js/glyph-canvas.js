@@ -98,6 +98,10 @@ class GlyphCanvas {
         this.hbFace = null;
         this.hbBlob = null;
 
+        // Text change debouncing for font recompilation
+        this.textChangeDebounceTimer = null;
+        this.textChangeDebounceDelay = 1000; // 1 second delay
+
         // Mouse interaction
         this.isDragging = false;
         this.lastMouseX = 0;
@@ -1288,6 +1292,9 @@ class GlyphCanvas {
             console.warn('Failed to save text buffer to localStorage:', e);
         }
 
+        // Trigger font recompilation (debounced)
+        this.onTextChange();
+
         this.shapeText();
     }
 
@@ -1660,8 +1667,11 @@ class GlyphCanvas {
             const glyphId = this.shapedGlyphs[this.selectedGlyphIndex].g;
             let glyphName = `GID ${glyphId}`;
 
-            // Get glyph name from compiled font
-            if (this.opentypeFont && this.opentypeFont.glyphs.get(glyphId)) {
+            // Get glyph name from font manager (source font) instead of compiled font
+            if (window.fontManager && window.fontManager.babelfontData) {
+                glyphName = window.fontManager.getGlyphName(glyphId);
+            } else if (this.opentypeFont && this.opentypeFont.glyphs.get(glyphId)) {
+                // Fallback to compiled font name (will be production name like glyph00001)
                 const glyph = this.opentypeFont.glyphs.get(glyphId);
                 if (glyph.name) {
                     glyphName = glyph.name;
@@ -1999,65 +2009,72 @@ json.dumps(result)
             const glyphId = this.shapedGlyphs[this.selectedGlyphIndex].g;
             let glyphName = `GID ${glyphId}`;
 
-            // Get glyph name from compiled font
-            if (this.opentypeFont && this.opentypeFont.glyphs.get(glyphId)) {
+            // Get glyph name from font manager (source font) instead of compiled font
+            if (window.fontManager && window.fontManager.babelfontData) {
+                glyphName = window.fontManager.getGlyphName(glyphId);
+                console.log(`🔍 Fetching layer data for glyph: "${glyphName}" (GID ${glyphId}), layer: ${this.selectedLayerId}`);
+            } else if (this.opentypeFont && this.opentypeFont.glyphs.get(glyphId)) {
+                // Fallback to compiled font name (will be production name like glyph00001)
                 const glyph = this.opentypeFont.glyphs.get(glyphId);
                 if (glyph.name) {
                     glyphName = glyph.name;
                 }
+                console.log(`🔍 Fetching layer data for glyph: "${glyphName}" (GID ${glyphId}, production name), layer: ${this.selectedLayerId}`);
             }
 
             const dataJson = await window.pyodide.runPythonAsync(`
 import json
 
-def fetch_component_recursive(glyph_name, layer_id, visited=None):
-    """Recursively fetch component data including nested components"""
-    if visited is None:
-        visited = set()
-    
-    if glyph_name in visited:
-        print(f"Warning: Circular component reference detected for {glyph_name}")
-        return None
-    
-    visited.add(glyph_name)
-    
-    current_font = CurrentFont()
-    if not current_font or not hasattr(current_font, 'glyphs'):
-        return None
-    
-    glyph = current_font.glyphs.get(glyph_name)
-    if not glyph:
-        return None
-    
-    # Find the layer by ID
-    layer = None
-    for l in glyph.layers:
-        if l.id == layer_id:
-            layer = l
-            break
-    
-    if not layer:
-        return None
-    
-    # Serialize the layer
-    result = layer.to_dict()
-    
-    # Recursively fetch nested component data
-    if result and 'shapes' in result:
-        for shape in result['shapes']:
-            if 'Component' in shape and 'reference' in shape['Component']:
-                ref_name = shape['Component']['reference']
-                # Fetch nested component data
-                nested_data = fetch_component_recursive(ref_name, layer_id, visited.copy())
-                if nested_data:
-                    shape['Component']['layerData'] = nested_data
-    
-    return result
+# Get current font once at the top level
+current_font = CurrentFont()
+if not current_font or not hasattr(current_font, 'glyphs'):
+    result = None
+else:
+    def fetch_component_recursive(font, glyph_name, layer_id, visited=None):
+        """Recursively fetch component data including nested components"""
+        if visited is None:
+            visited = set()
+        
+        if glyph_name in visited:
+            print(f"Warning: Circular component reference detected for {glyph_name}")
+            return None
+        
+        visited.add(glyph_name)
+        
+        if not font or not hasattr(font, 'glyphs'):
+            return None
+        
+        glyph = font.glyphs.get(glyph_name)
+        if not glyph:
+            return None
+        
+        # Find the layer by ID
+        layer = None
+        for l in glyph.layers:
+            if l.id == layer_id:
+                layer = l
+                break
+        
+        if not layer:
+            return None
+        
+        # Serialize the layer
+        result = layer.to_dict()
+        
+        # Recursively fetch nested component data
+        if result and 'shapes' in result:
+            for shape in result['shapes']:
+                if 'Component' in shape and 'reference' in shape['Component']:
+                    ref_name = shape['Component']['reference']
+                    # Fetch nested component data
+                    nested_data = fetch_component_recursive(font, ref_name, layer_id, visited.copy())
+                    if nested_data:
+                        shape['Component']['layerData'] = nested_data
+        
+        return result
 
-result = None
-try:
-    current_font = CurrentFont()
-    if current_font and hasattr(current_font, 'glyphs'):
+    result = None
+    try:
         glyph = current_font.glyphs.get('${glyphName}')
         if glyph:
             # Find the layer by ID
@@ -2076,14 +2093,14 @@ try:
                     for shape in result['shapes']:
                         if 'Component' in shape and 'reference' in shape['Component']:
                             ref_name = shape['Component']['reference']
-                            nested_data = fetch_component_recursive(ref_name, '${this.selectedLayerId}')
+                            nested_data = fetch_component_recursive(current_font, ref_name, '${this.selectedLayerId}')
                             if nested_data:
                                 shape['Component']['layerData'] = nested_data
-except Exception as e:
-    print(f"Error fetching layer data: {e}")
-    import traceback
-    traceback.print_exc()
-    result = None
+    except Exception as e:
+        print(f"Error fetching layer data: {e}")
+        import traceback
+        traceback.print_exc()
+        result = None
 
 json.dumps(result)
 `);
@@ -2225,7 +2242,11 @@ json.dumps(result)
                 const glyphId = this.shapedGlyphs[this.selectedGlyphIndex].g;
                 glyphName = `GID ${glyphId}`;
 
-                if (this.opentypeFont && this.opentypeFont.glyphs.get(glyphId)) {
+                // Get glyph name from font manager (source font) instead of compiled font
+                if (window.fontManager && window.fontManager.babelfontData) {
+                    glyphName = window.fontManager.getGlyphName(glyphId);
+                } else if (this.opentypeFont && this.opentypeFont.glyphs.get(glyphId)) {
+                    // Fallback to compiled font name (will be production name like glyph00001)
                     const glyph = this.opentypeFont.glyphs.get(glyphId);
                     if (glyph.name) {
                         glyphName = glyph.name;
@@ -3159,6 +3180,35 @@ json.dumps(result)
 
         // Return undefined if no features (allows HarfBuzz to use defaults)
         return featureParts.length > 0 ? featureParts.join(',') : undefined;
+    }
+
+    onTextChange() {
+        // Debounce font recompilation when text changes
+        if (this.textChangeDebounceTimer) {
+            clearTimeout(this.textChangeDebounceTimer);
+        }
+
+        this.textChangeDebounceTimer = setTimeout(() => {
+            if (window.fontManager && window.fontManager.isReady()) {
+                console.log('🔄 Text changed, recompiling editing font...');
+                window.fontManager.compileEditingFont(this.textBuffer, this.featureSettings)
+                    .catch(error => {
+                        console.error('Failed to recompile editing font:', error);
+                    });
+            }
+        }, this.textChangeDebounceDelay);
+    }
+
+    // Helper to save text buffer and trigger recompilation
+    saveTextBuffer() {
+        try {
+            localStorage.setItem('glyphCanvasTextBuffer', this.textBuffer);
+        } catch (e) {
+            console.warn('Failed to save text buffer to localStorage:', e);
+        }
+
+        // Trigger font recompilation (debounced)
+        this.onTextChange();
     }
 
     shapeText() {
@@ -4775,8 +4825,8 @@ json.dumps(result)
         console.log('New cursor position:', this.cursorPosition);
         console.log('New text:', this.textBuffer);
 
-        // Save to localStorage
-        localStorage.setItem('glyphCanvasTextBuffer', this.textBuffer);
+        // Save to localStorage and trigger recompilation
+        this.saveTextBuffer();
 
         // Reshape and render
         this.shapeText();
@@ -4819,8 +4869,8 @@ json.dumps(result)
             this.textBuffer.slice(this.cursorPosition);
         this.cursorPosition += text.length;
 
-        // Save to localStorage
-        localStorage.setItem('glyphCanvasTextBuffer', this.textBuffer);
+        // Save to localStorage and trigger recompilation
+        this.saveTextBuffer();
 
         // Reshape and render
         this.shapeText();
@@ -4844,8 +4894,8 @@ json.dumps(result)
             console.log('New cursor position:', this.cursorPosition);
             console.log('New text:', this.textBuffer);
 
-            // Save to localStorage
-            localStorage.setItem('glyphCanvasTextBuffer', this.textBuffer);
+            // Save to localStorage and trigger recompilation
+            this.saveTextBuffer();
 
             // Reshape and render
             this.shapeText();
@@ -4869,8 +4919,8 @@ json.dumps(result)
             console.log('New cursor position:', this.cursorPosition);
             console.log('New text:', this.textBuffer);
 
-            // Save to localStorage
-            localStorage.setItem('glyphCanvasTextBuffer', this.textBuffer);
+            // Save to localStorage and trigger recompilation
+            this.saveTextBuffer();
 
             // Reshape and render
             this.shapeText();
@@ -4902,8 +4952,8 @@ json.dumps(result)
             console.log('New cursor position:', this.cursorPosition);
             console.log('New text:', this.textBuffer);
 
-            // Save to localStorage
-            localStorage.setItem('glyphCanvasTextBuffer', this.textBuffer);
+            // Save to localStorage and trigger recompilation
+            this.saveTextBuffer();
 
             // Reshape and render
             this.shapeText();
@@ -4932,8 +4982,8 @@ json.dumps(result)
             console.log('New cursor position:', this.cursorPosition);
             console.log('New text:', this.textBuffer);
 
-            // Save to localStorage
-            localStorage.setItem('glyphCanvasTextBuffer', this.textBuffer);
+            // Save to localStorage and trigger recompilation
+            this.saveTextBuffer();
 
             // Reshape and render
             this.shapeText();
@@ -5050,9 +5100,17 @@ json.dumps(result)
             const glyphNames = [];
             for (let i = 0; i < c.glyphCount; i++) {
                 const glyph = this.shapedGlyphs[c.glyphIndex + i];
+                if (!glyph) {
+                    console.warn('Missing glyph at index', c.glyphIndex + i);
+                    continue;
+                }
                 const glyphId = glyph.g;
                 let glyphName = `GID${glyphId}`;
-                if (this.opentypeFont && this.opentypeFont.glyphs.get(glyphId)) {
+
+                // Get glyph name from font manager (source font) instead of compiled font
+                if (window.fontManager && window.fontManager.babelfontData) {
+                    glyphName = window.fontManager.getGlyphName(glyphId);
+                } else if (this.opentypeFont && this.opentypeFont.glyphs.get(glyphId)) {
                     glyphName = this.opentypeFont.glyphs.get(glyphId).name || glyphName;
                 }
                 glyphNames.push(glyphName);
@@ -5612,9 +5670,29 @@ document.addEventListener('DOMContentLoaded', () => {
 
 // Set up listener for compiled fonts
 function setupFontLoadingListener() {
-    // Custom event when font is compiled
+    console.log('🔧 Setting up font loading listeners...');
+
+    // Listen for editing font compiled by font manager (primary)
+    window.addEventListener('editingFontCompiled', async (e) => {
+        console.log('✅ Editing font compiled event received');
+        console.log('   Event detail:', e.detail);
+        console.log('   Canvas exists:', !!window.glyphCanvas);
+        if (window.glyphCanvas && e.detail && e.detail.fontBytes) {
+            console.log('   Loading editing font into canvas...');
+            const arrayBuffer = e.detail.fontBytes.buffer.slice(
+                e.detail.fontBytes.byteOffset,
+                e.detail.fontBytes.byteOffset + e.detail.fontBytes.byteLength
+            );
+            window.glyphCanvas.setFont(arrayBuffer);
+            console.log('   ✅ Editing font loaded into canvas');
+        } else {
+            console.warn('   ⚠️ Cannot load font - missing canvas or fontBytes');
+        }
+    });
+
+    // Legacy: Custom event when font is compiled via compile button
     window.addEventListener('fontCompiled', async (e) => {
-        console.log('Font compiled event received');
+        console.log('Font compiled event received (legacy)');
         if (window.glyphCanvas && e.detail && e.detail.ttfBytes) {
             const arrayBuffer = e.detail.ttfBytes.buffer.slice(
                 e.detail.ttfBytes.byteOffset,

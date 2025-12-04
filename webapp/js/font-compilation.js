@@ -242,6 +242,10 @@ class FontCompilation {
                 };
 
                 this.worker.addEventListener('message', checkReady);
+
+                // Send an empty message to trigger worker auto-initialization
+                console.log('Sending initialization trigger to worker...');
+                this.worker.postMessage({});
             });
 
             this.isInitialized = ready;
