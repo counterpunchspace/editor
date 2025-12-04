@@ -26,6 +26,9 @@ __pycache__/
 node_modules/
 package-lock.json
 
+# Compilation test outputs
+webapp/compilation-test/output/
+
 # Logs
 *.log
 npm-debug.log*
