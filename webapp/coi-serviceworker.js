@@ -25,7 +25,6 @@ const PRECACHE_ASSETS = [
     './js/file-browser.js',
     './js/font-compilation.js',
     './js/font-dropdown.js',
-    './js/fontc-compile-worker.js',
     './js/fontc-worker.js',
     './js/fonteditor.js',
     './js/glyph-canvas.js',

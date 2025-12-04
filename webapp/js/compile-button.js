@@ -18,7 +18,7 @@
         console.log('🔧 Initializing fontc worker...');
 
         try {
-            worker = new Worker('js/fontc-compile-worker.js', { type: 'module' });
+            worker = new Worker('js/fontc-worker.js', { type: 'module' });
 
             worker.onmessage = (e) => {
                 const { type, id, ttfBytes, duration, error, version } = e.data;
