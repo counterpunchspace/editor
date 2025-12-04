@@ -14,10 +14,8 @@ class GlyphCanvas {
         this.ctx = null;
 
         // Transformation state
-        this.panX = 0;
-        this.panY = 0;
-        this.scale = 1.0;
-        this.initialScale = 0.2; // Start zoomed out to see glyphs better
+        this.initialScale = 0.2; // Zoomed out to see glyphs better
+        this.viewportManager = null; // Loaded in init() when we have a client rect
 
         // Text buffer and shaping
         this.textBuffer = localStorage.getItem('glyphCanvasTextBuffer') || "Hamburgevons";
@@ -138,12 +136,12 @@ class GlyphCanvas {
         this.setupHiDPI();
 
         // Set initial scale and position
-        this.scale = this.initialScale;
-
-        // Center the view
         const rect = this.canvas.getBoundingClientRect();
-        this.panX = rect.width / 4;  // Start a bit to the left
-        this.panY = rect.height / 2; // Center vertically
+        this.viewportManager = new ViewportManager(
+            this.initialScale,
+            rect.width / 4, // Start a bit to the left
+            rect.height / 2 // Center vertically
+        );
 
         // Set up event listeners
         this.setupEventListeners();
@@ -481,20 +479,13 @@ class GlyphCanvas {
             const mouseX = e.clientX - rect.left;
             const mouseY = e.clientY - rect.top;
 
-            const transform = this.getTransformMatrix();
-            const det = transform.a * transform.d - transform.b * transform.c;
-            let glyphX = (transform.d * (mouseX - transform.e) - transform.c * (mouseY - transform.f)) / det;
-            let glyphY = (transform.a * (mouseY - transform.f) - transform.b * (mouseX - transform.e)) / det;
-
-            let xPosition = 0;
-            for (let i = 0; i < this.selectedGlyphIndex; i++) {
-                xPosition += (this.shapedGlyphs[i].ax || 0);
-            }
-            const glyph = this.shapedGlyphs[this.selectedGlyphIndex];
-            const xOffset = glyph.dx || 0;
-            const yOffset = glyph.dy || 0;
-            glyphX -= (xPosition + xOffset);
-            glyphY -= yOffset;
+            const { glyphX, glyphY } =
+                this.viewportManager.getGlyphLocalCoordinates(
+                    mouseX,
+                    mouseY,
+                    this.shapedGlyphs,
+                    this.selectedGlyphIndex
+                );
 
             const deltaX = Math.round(glyphX) - Math.round(this.lastGlyphX || glyphX);
             const deltaY = Math.round(glyphY) - Math.round(this.lastGlyphY || glyphY);
@@ -549,21 +540,13 @@ class GlyphCanvas {
             const mouseY = e.clientY - rect.top;
 
             // Transform to glyph space
-            const transform = this.getTransformMatrix();
-            const det = transform.a * transform.d - transform.b * transform.c;
-            let glyphX = (transform.d * (mouseX - transform.e) - transform.c * (mouseY - transform.f)) / det;
-            let glyphY = (transform.a * (mouseY - transform.f) - transform.b * (mouseX - transform.e)) / det;
-
-            // Adjust for selected glyph position
-            let xPosition = 0;
-            for (let i = 0; i < this.selectedGlyphIndex; i++) {
-                xPosition += (this.shapedGlyphs[i].ax || 0);
-            }
-            const glyph = this.shapedGlyphs[this.selectedGlyphIndex];
-            const xOffset = glyph.dx || 0;
-            const yOffset = glyph.dy || 0;
-            glyphX -= (xPosition + xOffset);
-            glyphY -= yOffset;
+            const { glyphX, glyphY } =
+                this.viewportManager.getGlyphLocalCoordinates(
+                    mouseX,
+                    mouseY,
+                    this.shapedGlyphs,
+                    this.selectedGlyphIndex
+                );
 
             // Calculate delta from last position
             const deltaX = Math.round(glyphX) - Math.round(this.lastGlyphX || glyphX);
@@ -616,21 +599,13 @@ class GlyphCanvas {
             const mouseY = e.clientY - rect.top;
 
             // Transform to glyph space
-            const transform = this.getTransformMatrix();
-            const det = transform.a * transform.d - transform.b * transform.c;
-            let glyphX = (transform.d * (mouseX - transform.e) - transform.c * (mouseY - transform.f)) / det;
-            let glyphY = (transform.a * (mouseY - transform.f) - transform.b * (mouseX - transform.e)) / det;
-
-            // Adjust for selected glyph position
-            let xPosition = 0;
-            for (let i = 0; i < this.selectedGlyphIndex; i++) {
-                xPosition += (this.shapedGlyphs[i].ax || 0);
-            }
-            const glyph = this.shapedGlyphs[this.selectedGlyphIndex];
-            const xOffset = glyph.dx || 0;
-            const yOffset = glyph.dy || 0;
-            glyphX -= (xPosition + xOffset);
-            glyphY -= yOffset;
+            const { glyphX, glyphY } =
+                this.viewportManager.getGlyphLocalCoordinates(
+                    mouseX,
+                    mouseY,
+                    this.shapedGlyphs,
+                    this.selectedGlyphIndex
+                );
 
             // Calculate delta from last position
             const deltaX = Math.round(glyphX) - Math.round(this.lastGlyphX || glyphX);
@@ -683,8 +658,7 @@ class GlyphCanvas {
         const dx = e.clientX - this.lastMouseX;
         const dy = e.clientY - this.lastMouseY;
 
-        this.panX += dx;
-        this.panY += dy;
+        this.viewportManager.pan(dx, dy);
 
         this.lastMouseX = e.clientX;
         this.lastMouseY = e.clientY;
@@ -710,17 +684,10 @@ class GlyphCanvas {
 
         // Calculate zoom
         const zoomFactor = e.deltaY > 0 ? 0.9 : 1.1;
-        const newScale = this.scale * zoomFactor;
 
-        // Limit zoom range
-        if (newScale < 0.01 || newScale > 100) return;
-
-        // Adjust pan to zoom toward mouse position
-        this.panX = mouseX - (mouseX - this.panX) * zoomFactor;
-        this.panY = mouseY - (mouseY - this.panY) * zoomFactor;
-
-        this.scale = newScale;
-        this.render();
+        if (this.viewportManager.zoom(zoomFactor, mouseX, mouseY)) {
+            this.render();
+        }
     }
 
     onMouseMoveHover(e) {
@@ -770,10 +737,8 @@ class GlyphCanvas {
         }
 
         // Transform mouse coordinates to glyph space to check if over text area
-        const transform = this.getTransformMatrix();
-        const det = transform.a * transform.d - transform.b * transform.c;
-        const glyphX = (transform.d * (mouseX - transform.e) - transform.c * (mouseY - transform.f)) / det;
-        const glyphY = (transform.a * (mouseY - transform.f) - transform.b * (mouseX - transform.e)) / det;
+        const { x: glyphX, y: glyphY } =
+            this.viewportManager.getFontSpaceCoordinates(mouseX, mouseY);
 
         // Check if hovering within cursor height range (same as click detection)
         if (glyphY <= 1000 && glyphY >= -300) {
@@ -789,12 +754,8 @@ class GlyphCanvas {
         const mouseY = this.mouseCanvasY || this.mouseY;
 
         // Transform mouse coordinates to glyph space
-        const transform = this.getTransformMatrix();
-
-        // Inverse transform to get glyph-space coordinates
-        const det = transform.a * transform.d - transform.b * transform.c;
-        const glyphX = (transform.d * (mouseX - transform.e) - transform.c * (mouseY - transform.f)) / det;
-        const glyphY = (transform.a * (mouseY - transform.f) - transform.b * (mouseX - transform.e)) / det;
+        const { x: glyphX, y: glyphY } =
+            this.viewportManager.getFontSpaceCoordinates(mouseX, mouseY);
 
         let foundIndex = -1;
 
@@ -820,7 +781,15 @@ class GlyphCanvas {
                     this.ctx.save();
 
                     // Apply the same transform as rendering
-                    this.ctx.setTransform(transform.a, transform.b, transform.c, transform.d, transform.e, transform.f);
+                    const transform = this.viewportManager.getTransformMatrix();
+                    this.ctx.setTransform(
+                        transform.a,
+                        transform.b,
+                        transform.c,
+                        transform.d,
+                        transform.e,
+                        transform.f
+                    );
                     this.ctx.translate(x, y);
 
                     // Test if mouse point is in path (in canvas coordinates)
@@ -853,7 +822,7 @@ class GlyphCanvas {
 
         const mouseX = this.mouseX;
         const mouseY = this.mouseY;
-        const transform = this.getTransformMatrix();
+        const transform = this.viewportManager.getTransformMatrix();
 
         // Calculate glyph offset for selected glyph
         let xPosition = 0;
@@ -864,7 +833,7 @@ class GlyphCanvas {
         const xOffset = glyph.dx || 0;
         const yOffset = glyph.dy || 0;
 
-        const hitRadius = 20 / this.scale; // Larger hit radius for origin marker
+        const hitRadius = 20 / this.viewportManager.scale; // Larger hit radius for origin marker
         let foundComponentIndex = null;
 
         // Transform mouse to component local space
@@ -942,9 +911,27 @@ class GlyphCanvas {
                                 // (inverse transformed), so we need identity base transform
                                 // When at main level, mouseX/mouseY are in canvas space, so use full view transform
                                 if (this.componentStack.length === 0) {
-                                    this.ctx.setTransform(transform.a, transform.b, transform.c, transform.d, transform.e, transform.f);
-                                    this.ctx.translate(xPosition + xOffset, yOffset);
-                                    console.log(`  ${'  '.repeat(depth)}Canvas setup: base transform + translate(${xPosition + xOffset}, ${yOffset})`);
+                                    const transform =
+                                        this.viewportManager.getTransformMatrix();
+                                    this.ctx.setTransform(
+                                        transform.a,
+                                        transform.b,
+                                        transform.c,
+                                        transform.d,
+                                        transform.e,
+                                        transform.f
+                                    );
+                                    this.ctx.translate(
+                                        xPosition + xOffset,
+                                        yOffset
+                                    );
+                                    console.log(
+                                        `  ${'  '.repeat(
+                                            depth
+                                        )}Canvas setup: base transform + translate(${
+                                            xPosition + xOffset
+                                        }, ${yOffset})`
+                                    );
                                 } else {
                                     // Identity transform - glyphX/glyphY are already in the right space
                                     this.ctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -1000,10 +987,13 @@ class GlyphCanvas {
         }
 
         // Transform mouse coordinates to component local space
-        const { glyphX, glyphY } = this.transformMouseToComponentSpace(this.mouseX, this.mouseY);
+        const { glyphX, glyphY } = this.transformMouseToComponentSpace(
+            this.mouseX,
+            this.mouseY
+        );
 
         // Check each anchor
-        const hitRadius = 10 / this.scale; // 10 pixels in screen space
+        const hitRadius = 10 / this.viewportManager.scale; // 10 pixels in screen space
         let foundAnchorIndex = null;
 
         this.layerData.anchors.forEach((anchor, index) => {
@@ -1029,7 +1019,7 @@ class GlyphCanvas {
         const { glyphX, glyphY } = this.transformMouseToComponentSpace(this.mouseX, this.mouseY);
 
         // Check each point in each contour
-        const hitRadius = 10 / this.scale; // 10 pixels in screen space
+        const hitRadius = 10 / this.viewportManager.scale; // 10 pixels in screen space
         let foundPoint = null;
 
         this.layerData.shapes.forEach((shape, contourIndex) => {
@@ -2806,11 +2796,12 @@ json.dumps(result)
 
     transformMouseToComponentSpace(mouseX, mouseY) {
         // Transform mouse coordinates from canvas to component local space
-        const transform = this.getTransformMatrix();
-        const det = transform.a * transform.d - transform.b * transform.c;
-        let glyphX = (transform.d * (mouseX - transform.e) - transform.c * (mouseY - transform.f)) / det;
-        let glyphY = (transform.a * (mouseY - transform.f) - transform.b * (mouseX - transform.e)) / det;
-
+        let { glyphX, glyphY } = this.viewportManager.getGlyphLocalCoordinates(
+            mouseX,
+            mouseY,
+            this.shapedGlyphs,
+            this.selectedGlyphIndex
+        );
         // Adjust for selected glyph position
         let xPosition = 0;
         for (let i = 0; i < this.selectedGlyphIndex; i++) {
@@ -3441,7 +3432,7 @@ json.dumps(result)
         this.ctx.restore();
 
         // Apply transformation
-        const transform = this.getTransformMatrix();
+        const transform = this.viewportManager.getTransformMatrix();
         this.ctx.save();
         this.ctx.transform(transform.a, transform.b, transform.c, transform.d, transform.e, transform.f);
 
@@ -3474,7 +3465,7 @@ json.dumps(result)
 
     drawCoordinateSystem() {
         const rect = this.canvas.getBoundingClientRect();
-        const invScale = 1 / this.scale;
+        const invScale = 1 / this.viewportManager.scale;
 
         this.ctx.strokeStyle = 'rgba(255, 255, 0, 0.3)';
         this.ctx.lineWidth = 1 * invScale;
@@ -3495,7 +3486,7 @@ json.dumps(result)
     drawBaseline() {
         if (!this.shapedGlyphs || this.shapedGlyphs.length === 0) return;
 
-        const invScale = 1 / this.scale;
+        const invScale = 1 / this.viewportManager.scale;
 
         // Calculate total advance width
         let totalAdvance = 0;
@@ -3521,7 +3512,7 @@ json.dumps(result)
             return;
         }
 
-        const invScale = 1 / this.scale;
+        const invScale = 1 / this.viewportManager.scale;
         let xPosition = 0;
 
         // Clear glyph bounds for hit testing
@@ -3714,8 +3705,9 @@ json.dumps(result)
             const tooltipX = glyphBounds.x + (glyphWidth / 2);
             const tooltipY = glyphYOffset + glyphYMin - 100; // 100 units below bottom of bounding box, including HB Y offset
 
-            const invScale = 1 / this.scale;
-            const isDarkTheme = document.documentElement.getAttribute('data-theme') !== 'light';
+            const invScale = 1 / this.viewportManager.scale;
+            const isDarkTheme =
+                document.documentElement.getAttribute('data-theme') !== 'light';
 
             // Save context to flip text right-side up
             this.ctx.save();
@@ -3790,8 +3782,9 @@ json.dumps(result)
             this.ctx.transform(transform[0], transform[1], transform[2], transform[3], transform[4], transform[5]);
         }
 
-        const invScale = 1 / this.scale;
-        const isDarkTheme = document.documentElement.getAttribute('data-theme') !== 'light';
+        const invScale = 1 / this.viewportManager.scale;
+        const isDarkTheme =
+            document.documentElement.getAttribute('data-theme') !== 'light';
 
         // Draw parent glyph outlines in background if editing a component
         if (this.componentStack.length > 0) {
@@ -3839,7 +3832,10 @@ json.dumps(result)
         }
 
         // Draw 1-unit grid at high zoom levels
-        if (this.scale >= APP_SETTINGS.OUTLINE_EDITOR.MIN_ZOOM_FOR_GRID) {
+        if (
+            this.viewportManager.scale >=
+            APP_SETTINGS.OUTLINE_EDITOR.MIN_ZOOM_FOR_GRID
+        ) {
             // Get glyph bounds from layer data (if available)
             let minX = -100, maxX = 700, minY = -200, maxY = 1000; // Default bounds
 
@@ -3927,8 +3923,9 @@ json.dumps(result)
             this.ctx.stroke();
 
             // Skip drawing direction arrow and handles if zoom is under minimum threshold
-            const minZoomForHandles = APP_SETTINGS.OUTLINE_EDITOR.MIN_ZOOM_FOR_HANDLES;
-            if (this.scale >= minZoomForHandles) {
+            const minZoomForHandles =
+                APP_SETTINGS.OUTLINE_EDITOR.MIN_ZOOM_FOR_HANDLES;
+            if (this.viewportManager.scale >= minZoomForHandles) {
                 // Draw direction arrow from the first node
                 if (nodes.length > 1) {
                     const [firstX, firstY] = nodes[startIdx];
@@ -3952,12 +3949,19 @@ json.dumps(result)
                         const nodeInterpolationMax = APP_SETTINGS.OUTLINE_EDITOR.NODE_SIZE_INTERPOLATION_MAX;
 
                         let baseSize;
-                        if (this.scale >= nodeInterpolationMax) {
+                        if (
+                            this.viewportManager.scale >= nodeInterpolationMax
+                        ) {
                             baseSize = nodeSizeMax * invScale;
                         } else {
-                            const zoomFactor = (this.scale - nodeInterpolationMin) /
+                            const zoomFactor =
+                                (this.viewportManager.scale -
+                                    nodeInterpolationMin) /
                                 (nodeInterpolationMax - nodeInterpolationMin);
-                            baseSize = (nodeSizeMin + (nodeSizeMax - nodeSizeMin) * zoomFactor) * invScale;
+                            baseSize =
+                                (nodeSizeMin +
+                                    (nodeSizeMax - nodeSizeMin) * zoomFactor) *
+                                invScale;
                         }
 
                         // Arrow is slightly bigger than nodes
@@ -4046,7 +4050,7 @@ json.dumps(result)
 
             // Draw nodes (points)
             // Nodes are drawn at the same zoom threshold as handles
-            if (this.scale < minZoomForHandles) {
+            if (this.viewportManager.scale < minZoomForHandles) {
                 return;
             }
 
@@ -4071,11 +4075,12 @@ json.dumps(result)
                 const nodeInterpolationMax = APP_SETTINGS.OUTLINE_EDITOR.NODE_SIZE_INTERPOLATION_MAX;
 
                 let pointSize;
-                if (this.scale >= nodeInterpolationMax) {
+                if (this.viewportManager.scale >= nodeInterpolationMax) {
                     pointSize = nodeSizeMax * invScale;
                 } else {
                     // Interpolate between min and max size
-                    const zoomFactor = (this.scale - nodeInterpolationMin) /
+                    const zoomFactor =
+                        (this.viewportManager.scale - nodeInterpolationMin) /
                         (nodeInterpolationMax - nodeInterpolationMin);
                     pointSize = (nodeSizeMin + (nodeSizeMax - nodeSizeMin) * zoomFactor) * invScale;
                 } if (type === 'o' || type === 'os') {
@@ -4188,8 +4193,9 @@ json.dumps(result)
 
             // Draw component reference marker at origin
             // Skip drawing markers if zoom is under minimum threshold
-            const minZoomForHandles = APP_SETTINGS.OUTLINE_EDITOR.MIN_ZOOM_FOR_HANDLES;
-            if (this.scale < minZoomForHandles) {
+            const minZoomForHandles =
+                APP_SETTINGS.OUTLINE_EDITOR.MIN_ZOOM_FOR_HANDLES;
+            if (this.viewportManager.scale < minZoomForHandles) {
                 this.ctx.restore();
                 return;
             }
@@ -4224,10 +4230,16 @@ json.dumps(result)
 
         // Draw anchors
         // Skip drawing anchors if zoom is under minimum threshold
-        const minZoomForHandles = APP_SETTINGS.OUTLINE_EDITOR.MIN_ZOOM_FOR_HANDLES;
-        const minZoomForLabels = APP_SETTINGS.OUTLINE_EDITOR.MIN_ZOOM_FOR_ANCHOR_LABELS;
+        const minZoomForHandles =
+            APP_SETTINGS.OUTLINE_EDITOR.MIN_ZOOM_FOR_HANDLES;
+        const minZoomForLabels =
+            APP_SETTINGS.OUTLINE_EDITOR.MIN_ZOOM_FOR_ANCHOR_LABELS;
 
-        if (this.scale >= minZoomForHandles && this.layerData.anchors && this.layerData.anchors.length > 0) {
+        if (
+            this.viewportManager.scale >= minZoomForHandles &&
+            this.layerData.anchors &&
+            this.layerData.anchors.length > 0
+        ) {
             // Calculate anchor size based on zoom level
             const anchorSizeMax = APP_SETTINGS.OUTLINE_EDITOR.ANCHOR_SIZE_AT_MAX_ZOOM;
             const anchorSizeMin = APP_SETTINGS.OUTLINE_EDITOR.ANCHOR_SIZE_AT_MIN_ZOOM;
@@ -4235,14 +4247,19 @@ json.dumps(result)
             const anchorInterpolationMax = APP_SETTINGS.OUTLINE_EDITOR.ANCHOR_SIZE_INTERPOLATION_MAX;
 
             let anchorSize;
-            if (this.scale >= anchorInterpolationMax) {
+            if (this.viewportManager.scale >= anchorInterpolationMax) {
                 anchorSize = anchorSizeMax * invScale;
             } else {
                 // Interpolate between min and max size
-                const zoomFactor = (this.scale - anchorInterpolationMin) /
+                const zoomFactor =
+                    (this.viewportManager.scale - anchorInterpolationMin) /
                     (anchorInterpolationMax - anchorInterpolationMin);
-                anchorSize = (anchorSizeMin + (anchorSizeMax - anchorSizeMin) * zoomFactor) * invScale;
-            } const fontSize = 12 * invScale;
+                anchorSize =
+                    (anchorSizeMin +
+                        (anchorSizeMax - anchorSizeMin) * zoomFactor) *
+                    invScale;
+            }
+            const fontSize = 12 * invScale;
 
             this.layerData.anchors.forEach((anchor, index) => {
                 const { x, y, name } = anchor;
@@ -4264,7 +4281,7 @@ json.dumps(result)
                 this.ctx.restore();
 
                 // Draw anchor name only above minimum zoom threshold
-                if (name && this.scale > minZoomForLabels) {
+                if (name && this.viewportManager.scale > minZoomForLabels) {
                     this.ctx.save();
                     this.ctx.translate(x, y);
                     this.ctx.scale(1, -1); // Flip Y axis to fix upside-down text
@@ -4291,11 +4308,15 @@ json.dumps(result)
         this.ctx.font = '12px monospace';
 
         // Draw zoom level
-        const zoomText = `Zoom: ${(this.scale * 100).toFixed(1)}%`;
+        const zoomText = `Zoom: ${(this.viewportManager.scale * 100).toFixed(
+            1
+        )}%`;
         this.ctx.fillText(zoomText, 10, rect.height - 10);
 
         // Draw pan position
-        const panText = `Pan: (${Math.round(this.panX)}, ${Math.round(this.panY)})`;
+        const panText = `Pan: (${Math.round(
+            this.viewportManager.panX
+        )}, ${Math.round(this.viewportManager.panY)})`;
         this.ctx.fillText(panText, 10, rect.height - 25);
 
         // Draw text buffer info
@@ -5213,10 +5234,8 @@ json.dumps(result)
         const mouseY = e.clientY - rect.top;
 
         // Transform to glyph space
-        const transform = this.getTransformMatrix();
-        const det = transform.a * transform.d - transform.b * transform.c;
-        const glyphX = (transform.d * (mouseX - transform.e) - transform.c * (mouseY - transform.f)) / det;
-        const glyphY = (transform.a * (mouseY - transform.f) - transform.b * (mouseX - transform.e)) / det;
+        let { x: glyphX, y: glyphY } =
+            this.viewportManager.getFontSpaceCoordinates(mouseX, mouseY);
 
         // Check if clicking within cursor height range (same as cursor drawing)
         // Cursor goes from 1000 (top) to -300 (bottom)
@@ -5323,7 +5342,7 @@ json.dumps(result)
         }
 
         const range = this.getSelectionRange();
-        const invScale = 1 / this.scale;
+        const invScale = 1 / this.viewportManager.scale;
 
         console.log('=== Drawing Selection ===');
         console.log('Selection range:', range);
@@ -5416,7 +5435,9 @@ json.dumps(result)
         const rect = this.canvas.getBoundingClientRect();
 
         // Transform cursor position from font space to screen space
-        const screenX = this.cursorX * this.scale + this.panX;
+        const screenX =
+            this.cursorX * this.viewportManager.scale +
+            this.viewportManager.panX;
 
         // Define margin from edges (in screen pixels)
         const margin = 100;
@@ -5435,98 +5456,41 @@ json.dumps(result)
         const margin = 100; // Same margin as visibility check
 
         // Calculate target panX to center cursor with margin
-        const screenX = this.cursorX * this.scale + this.panX;
+        const screenX =
+            this.cursorX * this.viewportManager.scale +
+            this.viewportManager.panX;
 
         let targetPanX;
         if (screenX < margin) {
             // Cursor is off left edge - position it at left margin
-            targetPanX = margin - this.cursorX * this.scale;
+            targetPanX = margin - this.cursorX * this.viewportManager.scale;
         } else {
             // Cursor is off right edge - position it at right margin
-            targetPanX = (rect.width - margin) - this.cursorX * this.scale;
+            targetPanX =
+                rect.width - margin - this.cursorX * this.viewportManager.scale;
         }
 
         // Start animation
-        this.animatePan(targetPanX, this.panY);
+        this.viewportManager.animatePan(
+            targetPanX,
+            this.viewportManager.panY,
+            this.render.bind(this)
+        );
     }
 
     resetZoomAndPosition() {
         // Reset zoom to initial scale and position to origin with animation
         const rect = this.canvas.getBoundingClientRect();
         const targetScale = this.initialScale;
-        const targetPanX = rect.width / 4;  // Same as initial position
+        const targetPanX = rect.width / 4; // Same as initial position
         const targetPanY = rect.height / 2; // Same as initial position
 
-        this.animateZoomAndPan(targetScale, targetPanX, targetPanY);
-    }
-
-    animateZoomAndPan(targetScale, targetPanX, targetPanY) {
-        // Animate zoom and pan together
-        const startScale = this.scale;
-        const startPanX = this.panX;
-        const startPanY = this.panY;
-        const frames = 10;
-        let currentFrame = 0;
-
-        const animate = () => {
-            currentFrame++;
-            const progress = Math.min(currentFrame / frames, 1.0);
-
-            // Ease-out cubic for smooth deceleration
-            const easedProgress = 1 - Math.pow(1 - progress, 3);
-
-            // Interpolate scale and pan values
-            this.scale = startScale + (targetScale - startScale) * easedProgress;
-            this.panX = startPanX + (targetPanX - startPanX) * easedProgress;
-            this.panY = startPanY + (targetPanY - startPanY) * easedProgress;
-
-            this.render();
-
-            if (progress < 1.0) {
-                requestAnimationFrame(animate);
-            } else {
-                // Ensure we end exactly at target
-                this.scale = targetScale;
-                this.panX = targetPanX;
-                this.panY = targetPanY;
-                this.render();
-            }
-        };
-
-        animate();
-    }
-
-    animatePan(targetPanX, targetPanY) {
-        // Set up animation state
-        const startPanX = this.panX;
-        const startPanY = this.panY;
-        const frames = 10;
-        let currentFrame = 0;
-
-        const animate = () => {
-            currentFrame++;
-            const progress = Math.min(currentFrame / frames, 1.0);
-
-            // Ease-out cubic for smooth deceleration
-            const easedProgress = 1 - Math.pow(1 - progress, 3);
-
-            // Interpolate pan values
-            this.panX = startPanX + (targetPanX - startPanX) * easedProgress;
-            this.panY = startPanY + (targetPanY - startPanY) * easedProgress;
-
-            this.render();
-
-            if (progress < 1.0) {
-                requestAnimationFrame(animate);
-            } else {
-                // Ensure we end exactly at target
-                this.panX = targetPanX;
-                this.panY = targetPanY;
-                this.render();
-            }
-        };
-
-        animate();
+        this.viewportManager.animateZoomAndPan(
+            targetScale,
+            targetPanX,
+            targetPanY,
+            this.render.bind(this)
+        );
     }
 
     drawCursor() {
@@ -5536,22 +5500,29 @@ json.dumps(result)
             return;
         }
 
-        const invScale = 1 / this.scale;
+        const invScale = 1 / this.viewportManager.scale;
 
-        console.log(`Drawing cursor at x=${this.cursorX.toFixed(0)} for logical position ${this.cursorPosition}`);
+        console.log(
+            `Drawing cursor at x=${this.cursorX.toFixed(
+                0
+            )} for logical position ${this.cursorPosition}`
+        );
 
         // Draw cursor line - dimmed when not focused, bright when focused
         const opacity = this.isFocused ? 0.8 : 0.3;
 
         // Use dark cursor for light theme, white cursor for dark theme
-        const isLightTheme = document.documentElement.getAttribute('data-theme') === 'light';
-        const cursorColor = isLightTheme ? `rgba(0, 0, 0, ${opacity})` : `rgba(255, 255, 255, ${opacity})`;
+        const isLightTheme =
+            document.documentElement.getAttribute('data-theme') === 'light';
+        const cursorColor = isLightTheme
+            ? `rgba(0, 0, 0, ${opacity})`
+            : `rgba(255, 255, 255, ${opacity})`;
 
         this.ctx.strokeStyle = cursorColor;
         this.ctx.lineWidth = 2 * invScale;
         this.ctx.beginPath();
         this.ctx.moveTo(this.cursorX, 1000); // Top (above cap height, positive Y is up in font space)
-        this.ctx.lineTo(this.cursorX, -300);   // Bottom (below baseline, negative Y is down)
+        this.ctx.lineTo(this.cursorX, -300); // Bottom (below baseline, negative Y is down)
         this.ctx.stroke();
     }
 }
