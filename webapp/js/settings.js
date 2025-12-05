@@ -35,6 +35,9 @@ const APP_SETTINGS = {
         // Stroke widths
         OUTLINE_STROKE_WIDTH: 1, // px - width of glyph outline paths
 
+        // Debug/development
+        SHOW_BOUNDING_BOX: false, // Show calculated bounding box in editing mode
+
         // Colors - Light Theme
         COLORS_LIGHT: {
             // Grid

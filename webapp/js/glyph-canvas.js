@@ -329,7 +329,9 @@ class GlyphCanvas {
                 this.exitComponentEditing(true); // Skip UI updates
             }
         });
-        this.textRunEditor.on('glyphselected', async (ix) => {
+        this.textRunEditor.on('glyphselected', async (ix, previousIndex) => {
+            const wasInEditMode = this.isGlyphEditMode;
+
             if (ix != -1) {
                 this.isGlyphEditMode = true;
             }
@@ -341,6 +343,12 @@ class GlyphCanvas {
 
             // Now render with the loaded data
             this.render();
+
+            // Pan to glyph if we were already in edit mode (i.e., navigating between glyphs)
+            if (wasInEditMode && ix >= 0 && previousIndex !== ix) {
+                // Layer data should be loaded now after updatePropertiesUI completes
+                this.panToGlyph(ix);
+            }
 
             // Perform mouse hit detection for objects at current mouse position
             if (
@@ -2647,6 +2655,319 @@ json.dumps(result)
         return { glyphX, glyphY };
     }
 
+    calculateGlyphBoundingBox() {
+        // Calculate bounding box for the currently selected glyph in outline editing mode
+        // Returns {minX, minY, maxX, maxY, width, height} in glyph-local coordinates
+        // Returns null if no glyph is selected or no layer data is available
+
+        console.log('calculateGlyphBoundingBox: isGlyphEditMode=', this.isGlyphEditMode, 'layerData=', this.layerData);
+
+        if (!this.isGlyphEditMode || !this.layerData) {
+            return null;
+        }
+
+        console.log('calculateGlyphBoundingBox: layerData.shapes=', this.layerData.shapes, 'layerData.width=', this.layerData.width);
+
+        let minX = Infinity;
+        let minY = Infinity;
+        let maxX = -Infinity;
+        let maxY = -Infinity;
+        let hasPoints = false;
+
+        // Helper function to expand bounding box with a point
+        const expandBounds = (x, y) => {
+            minX = Math.min(minX, x);
+            minY = Math.min(minY, y);
+            maxX = Math.max(maxX, x);
+            maxY = Math.max(maxY, y);
+            hasPoints = true;
+        };
+
+        // Helper function to process shapes recursively (for components)
+        const processShapes = (shapes, transform = [1, 0, 0, 1, 0, 0]) => {
+            if (!shapes || !Array.isArray(shapes)) return;
+
+            for (const shape of shapes) {
+                if (shape.Component) {
+                    // Component - recursively process its outline shapes with accumulated transform
+                    const compTransform = shape.Component.transform || [1, 0, 0, 1, 0, 0];
+                    const [a1, b1, c1, d1, tx1, ty1] = transform;
+                    const [a2, b2, c2, d2, tx2, ty2] = compTransform;
+
+                    // Combine transforms
+                    const combinedTransform = [
+                        a1 * a2 + c1 * b2,
+                        b1 * a2 + d1 * b2,
+                        a1 * c2 + c1 * d2,
+                        b1 * c2 + d1 * d2,
+                        a1 * tx2 + c1 * ty2 + tx1,
+                        b1 * tx2 + d1 * ty2 + ty1
+                    ];
+
+                    // Recursively process the component's actual outline shapes
+                    if (shape.Component.layerData && shape.Component.layerData.shapes) {
+                        processShapes(shape.Component.layerData.shapes, combinedTransform);
+                    }
+                } else if (shape.nodes && Array.isArray(shape.nodes) && shape.nodes.length > 0) {
+                    // Path - process all nodes with the accumulated transform
+                    for (const node of shape.nodes) {
+                        const [x, y] = node;
+
+                        // Apply accumulated transform
+                        const [a, b, c, d, tx, ty] = transform;
+                        const transformedX = a * x + c * y + tx;
+                        const transformedY = b * x + d * y + ty;
+
+                        expandBounds(transformedX, transformedY);
+                    }
+                }
+            }
+        };
+
+        // Process all shapes
+        processShapes(this.layerData.shapes);
+
+        // Also include anchors in bounding box
+        if (this.layerData.anchors && Array.isArray(this.layerData.anchors)) {
+            for (const anchor of this.layerData.anchors) {
+                expandBounds(anchor.x, anchor.y);
+            }
+        }
+
+        if (!hasPoints) {
+            // No points found (e.g., space character) - use glyph width from layer data
+            // Create a small bbox: 10 units high, centered on baseline, as wide as the glyph
+            const glyphWidth = this.layerData.width || 250; // Fallback to 250 if no width
+            const height = 10;
+
+            console.log('calculateGlyphBoundingBox: No points found, creating bbox for empty glyph. width=', glyphWidth);
+
+            return {
+                minX: 0,
+                minY: -height / 2,
+                maxX: glyphWidth,
+                maxY: height / 2,
+                width: glyphWidth,
+                height: height
+            };
+        }
+
+        console.log('calculateGlyphBoundingBox: Found points, bbox=', { minX, minY, maxX, maxY });
+
+        return {
+            minX,
+            minY,
+            maxX,
+            maxY,
+            width: maxX - minX,
+            height: maxY - minY
+        };
+    }
+
+    frameCurrentGlyph(margin = 100) {
+        // Pan and zoom to show the current glyph with margin around it
+        // Uses animated camera movement (10 frames)
+
+        if (!this.isGlyphEditMode || this.textRunEditor.selectedGlyphIndex < 0) {
+            return;
+        }
+
+        const bounds = this.calculateGlyphBoundingBox();
+        if (!bounds) {
+            return;
+        }
+
+        const rect = this.canvas.getBoundingClientRect();
+
+        // Calculate center of the bounding box in glyph-local space
+        const centerX = (bounds.minX + bounds.maxX) / 2;
+        const centerY = (bounds.minY + bounds.maxY) / 2;
+
+        // Get glyph position in text run
+        const { xPosition, xOffset, yOffset } =
+            this.textRunEditor._getGlyphPosition(this.textRunEditor.selectedGlyphIndex);
+
+        // Convert bbox center to font space
+        const fontSpaceCenterX = xPosition + xOffset + centerX;
+        const fontSpaceCenterY = yOffset + centerY;
+
+        // Calculate the scale needed to fit the bounding box with margin
+        // Use fixed margin in screen pixels, not font units
+        const targetWidth = bounds.width + (margin * 2) / this.viewportManager.scale;
+        const targetHeight = bounds.height + (margin * 2) / this.viewportManager.scale;
+
+        // Calculate scale to fit in viewport with margin
+        const scaleX = (rect.width - margin * 2) / bounds.width;
+        const scaleY = (rect.height - margin * 2) / bounds.height;
+        const targetScale = Math.min(scaleX, scaleY);
+
+        // Clamp scale to reasonable limits
+        const clampedScale = Math.max(0.01, Math.min(100, targetScale));
+
+        // Calculate pan to center the glyph both horizontally and vertically
+        const targetPanX = rect.width / 2 - fontSpaceCenterX * clampedScale;
+        // Note: Y is flipped in canvas, so we negate fontSpaceCenterY
+        const targetPanY = rect.height / 2 - (-fontSpaceCenterY) * clampedScale;
+
+        // Animate to target
+        this.viewportManager.animateZoomAndPan(
+            clampedScale,
+            targetPanX,
+            targetPanY,
+            this.render.bind(this)
+        );
+    }
+
+    panToGlyph(glyphIndex) {
+        // Pan to show a specific glyph (used when switching glyphs with cmd+left/right)
+        // Only pans and zooms if the glyph bbox is outside the viewport margins
+        // Similar to bringing cursor into view - minimal movement
+
+        if (!this.isGlyphEditMode || glyphIndex < 0 || glyphIndex >= this.textRunEditor.shapedGlyphs.length) {
+            console.log('panToGlyph: early return - not in edit mode or invalid index', {
+                isGlyphEditMode: this.isGlyphEditMode,
+                glyphIndex,
+                shapedGlyphsLength: this.textRunEditor.shapedGlyphs?.length
+            });
+            return;
+        }
+
+        // Check if we have layer data (needed for bbox calculation)
+        if (!this.selectedLayerId || !this.layerData) {
+            console.log('panToGlyph: no layer data yet, skipping pan');
+            return;
+        }
+
+        const bounds = this.calculateGlyphBoundingBox();
+        if (!bounds) {
+            console.log('panToGlyph: no bounds calculated');
+            return;
+        }
+
+        console.log('panToGlyph: calculated bounds', bounds);
+
+        const rect = this.canvas.getBoundingClientRect();
+        const margin = 30;
+
+        // Get glyph position in text run
+        const { xPosition, xOffset, yOffset } =
+            this.textRunEditor._getGlyphPosition(glyphIndex);
+
+        // Calculate the full bounding box in font space
+        const fontSpaceMinX = xPosition + xOffset + bounds.minX;
+        const fontSpaceMaxX = xPosition + xOffset + bounds.maxX;
+        const fontSpaceMinY = yOffset + bounds.minY;
+        const fontSpaceMaxY = yOffset + bounds.maxY;
+
+        const currentScale = this.viewportManager.scale;
+
+        // Convert font space bbox to screen space
+        // Note: Y is flipped in canvas coordinates
+        const screenLeft = fontSpaceMinX * currentScale + this.viewportManager.panX;
+        const screenRight = fontSpaceMaxX * currentScale + this.viewportManager.panX;
+        const screenTop = -fontSpaceMaxY * currentScale + this.viewportManager.panY;
+        const screenBottom = -fontSpaceMinY * currentScale + this.viewportManager.panY;
+
+        console.log('panToGlyph: screen positions', {
+            screenLeft,
+            screenRight,
+            screenTop,
+            screenBottom,
+            viewportWidth: rect.width,
+            viewportHeight: rect.height,
+            margin
+        });
+
+        // Check if glyph bbox is within viewport margins
+        const isHorizontallyVisible = screenLeft >= margin && screenRight <= rect.width - margin;
+        const isVerticallyVisible = screenTop >= margin && screenBottom <= rect.height - margin;
+
+        // Check if glyph fits in viewport at current scale
+        const glyphScreenWidth = bounds.width * currentScale;
+        const glyphScreenHeight = bounds.height * currentScale;
+        const availableWidth = rect.width - margin * 2;
+        const availableHeight = rect.height - margin * 2;
+        const fitsHorizontally = glyphScreenWidth <= availableWidth;
+        const fitsVertically = glyphScreenHeight <= availableHeight;
+
+        // Determine if we need to zoom out
+        const needsZoomOut = !fitsHorizontally || !fitsVertically;
+
+        console.log('panToGlyph: visibility check', {
+            isHorizontallyVisible,
+            isVerticallyVisible,
+            fitsHorizontally,
+            fitsVertically,
+            needsZoomOut
+        });
+
+        // If everything is visible and fits, no need to pan
+        if (isHorizontallyVisible && isVerticallyVisible && !needsZoomOut) {
+            console.log('panToGlyph: glyph already visible, no pan needed');
+            return;
+        }
+
+        let targetScale = currentScale;
+        let targetPanX = this.viewportManager.panX;
+        let targetPanY = this.viewportManager.panY;
+
+        // Calculate new scale if needed (zoom out to fit, but don't zoom in)
+        if (needsZoomOut) {
+            const heightScale = availableHeight / bounds.height;
+            const widthScale = availableWidth / bounds.width;
+            targetScale = Math.min(heightScale, widthScale, currentScale);
+            // Clamp to reasonable limits
+            targetScale = Math.max(0.01, Math.min(100, targetScale));
+        }
+
+        // Recalculate screen positions with new scale
+        const newScreenLeft = fontSpaceMinX * targetScale + targetPanX;
+        const newScreenRight = fontSpaceMaxX * targetScale + targetPanX;
+        const newScreenTop = -fontSpaceMaxY * targetScale + targetPanY;
+        const newScreenBottom = -fontSpaceMinY * targetScale + targetPanY;
+
+        // Pan horizontally: only move as much as needed to bring glyph into view with margin
+        if (newScreenLeft < margin) {
+            // Glyph is off left edge - pan right to bring left edge to margin
+            targetPanX = margin - fontSpaceMinX * targetScale;
+        } else if (newScreenRight > rect.width - margin) {
+            // Glyph is off right edge - pan left to bring right edge to margin
+            targetPanX = rect.width - margin - fontSpaceMaxX * targetScale;
+        }
+
+        // Pan vertically: only move as much as needed to bring glyph into view with margin
+        if (newScreenTop < margin) {
+            // Glyph is off top edge - pan down to bring top edge to margin
+            targetPanY = margin + fontSpaceMaxY * targetScale;
+        } else if (newScreenBottom > rect.height - margin) {
+            // Glyph is off bottom edge - pan up to bring bottom edge to margin
+            targetPanY = rect.height - margin + fontSpaceMinY * targetScale;
+        }
+
+        console.log('panToGlyph: panning to', {
+            targetScale,
+            targetPanX,
+            targetPanY,
+            scaleChanged: targetScale !== currentScale
+        });
+
+        // Animate to target (zoom and pan together if scale changed, otherwise just pan)
+        if (targetScale !== currentScale) {
+            this.viewportManager.animateZoomAndPan(
+                targetScale,
+                targetPanX,
+                targetPanY,
+                this.render.bind(this)
+            );
+        } else {
+            this.viewportManager.animatePan(
+                targetPanX,
+                targetPanY,
+                this.render.bind(this)
+            );
+        }
+    }
+
     async updatePropertiesUI() {
         if (!this.propertiesSection) return;
 
@@ -3137,7 +3458,6 @@ json.dumps(result)
         if (
             !this.selectedLayerId ||
             !this.layerData ||
-            !this.layerData.shapes ||
             this.isPreviewMode
         ) {
             return;
@@ -3299,479 +3619,483 @@ json.dumps(result)
             'layerData.shapes.length:',
             this.layerData?.shapes?.length
         );
-        this.layerData.shapes.forEach((shape, contourIndex) => {
-            console.log(
-                'Drawing shape',
-                contourIndex,
-                ':',
-                shape.Component ? 'Component' : 'Path',
-                shape.Component
-                    ? `ref=${shape.Component.reference}`
-                    : `nodes=${shape.nodes?.length || 0}`
-            );
-            if (shape.ref) {
-                // Component - will be drawn separately as markers
-                return;
-            }
 
-            // Handle Path object from to_dict() - nodes might be in shape.Path.nodes
-            let nodes = shape.nodes;
-            if (!nodes && shape.Path && shape.Path.nodes) {
-                // Nodes are in a string format from to_dict() - parse them
-                const nodesString = shape.Path.nodes;
-
-                // Parse string format: "x y type x y type ..."
-                const parts = nodesString.trim().split(/\s+/);
-                nodes = [];
-                for (let i = 0; i < parts.length; i += 3) {
-                    if (i + 2 < parts.length) {
-                        const x = parseFloat(parts[i]);
-                        const y = parseFloat(parts[i + 1]);
-                        const type = parts[i + 2];
-                        nodes.push([x, y, type]);
-                    }
-                }
-
-                // Cache parsed nodes back to shape for reuse
-                shape.nodes = nodes;
-            }
-
-            if (!nodes || nodes.length === 0) {
-                return;
-            }
-
-            // Draw the outline path
-            this.ctx.beginPath();
-            this.ctx.strokeStyle = isDarkTheme ? '#ffffff' : '#000000';
-            this.ctx.lineWidth =
-                APP_SETTINGS.OUTLINE_EDITOR.OUTLINE_STROKE_WIDTH * invScale;
-
-            // Build the path using the helper method
-            const startIdx = this.buildPathFromNodes(nodes);
-
-            this.ctx.closePath();
-            this.ctx.stroke();
-
-            // Skip drawing direction arrow and handles if zoom is under minimum threshold
-            const minZoomForHandles =
-                APP_SETTINGS.OUTLINE_EDITOR.MIN_ZOOM_FOR_HANDLES;
-            if (this.viewportManager.scale >= minZoomForHandles) {
-                // Draw direction arrow from the first node
-                if (nodes.length > 1) {
-                    const [firstX, firstY] = nodes[startIdx];
-                    const nextIdx = (startIdx + 1) % nodes.length;
-                    const [nextX, nextY] = nodes[nextIdx];
-
-                    // Calculate direction vector from first node to next
-                    const dx = nextX - firstX;
-                    const dy = nextY - firstY;
-                    const distance = Math.sqrt(dx * dx + dy * dy);
-
-                    if (distance > 0) {
-                        // Normalize direction
-                        const ndx = dx / distance;
-                        const ndy = dy / distance;
-
-                        // Calculate arrow size based on node size (same scaling as nodes, but slightly bigger)
-                        const nodeSizeMax =
-                            APP_SETTINGS.OUTLINE_EDITOR.NODE_SIZE_AT_MAX_ZOOM;
-                        const nodeSizeMin =
-                            APP_SETTINGS.OUTLINE_EDITOR.NODE_SIZE_AT_MIN_ZOOM;
-                        const nodeInterpolationMin =
-                            APP_SETTINGS.OUTLINE_EDITOR
-                                .NODE_SIZE_INTERPOLATION_MIN;
-                        const nodeInterpolationMax =
-                            APP_SETTINGS.OUTLINE_EDITOR
-                                .NODE_SIZE_INTERPOLATION_MAX;
-
-                        let baseSize;
-                        if (
-                            this.viewportManager.scale >= nodeInterpolationMax
-                        ) {
-                            baseSize = nodeSizeMax * invScale;
-                        } else {
-                            const zoomFactor =
-                                (this.viewportManager.scale -
-                                    nodeInterpolationMin) /
-                                (nodeInterpolationMax - nodeInterpolationMin);
-                            baseSize =
-                                (nodeSizeMin +
-                                    (nodeSizeMax - nodeSizeMin) * zoomFactor) *
-                                invScale;
-                        }
-
-                        // Arrow is slightly bigger than nodes
-                        const arrowLength = baseSize * 4.5;
-                        const arrowWidth = baseSize * 2.5;
-
-                        // Arrow tip position starts at the first node and extends outward
-                        const tipX = firstX + ndx * arrowLength;
-                        const tipY = firstY + ndy * arrowLength;
-
-                        // Arrow base is at the first node
-                        const baseX = firstX;
-                        const baseY = firstY;
-
-                        // Arrow wings (perpendicular offsets)
-                        const perpX = -ndy * arrowWidth;
-                        const perpY = ndx * arrowWidth;
-
-                        // Draw arrow
-                        this.ctx.beginPath();
-                        this.ctx.moveTo(tipX, tipY);
-                        this.ctx.lineTo(baseX + perpX, baseY + perpY);
-                        this.ctx.lineTo(baseX - perpX, baseY - perpY);
-                        this.ctx.closePath();
-
-                        this.ctx.fillStyle = isDarkTheme
-                            ? 'rgba(0, 255, 255, 0.8)'
-                            : 'rgba(0, 150, 150, 0.8)';
-                        this.ctx.fill();
-                        this.ctx.strokeStyle = isDarkTheme
-                            ? 'rgba(0, 255, 255, 1)'
-                            : 'rgba(0, 100, 100, 1)';
-                        this.ctx.lineWidth = 1 * invScale;
-                        this.ctx.stroke();
-                    }
-                }
-
-                // Draw control point handle lines (from off-curve to adjacent on-curve points)
-                this.ctx.strokeStyle = isDarkTheme
-                    ? 'rgba(255, 255, 255, 0.5)'
-                    : 'rgba(0, 0, 0, 0.5)';
-                this.ctx.lineWidth = 1 * invScale;
-
-                nodes.forEach((node, nodeIndex) => {
-                    const [x, y, type] = node;
-
-                    // Only draw lines from off-curve points
-                    if (type === 'o' || type === 'os') {
-                        // Check if this is the first or second control point in a cubic bezier pair
-                        let prevIdx = nodeIndex - 1;
-                        if (prevIdx < 0) prevIdx = nodes.length - 1;
-                        const [, , prevType] = nodes[prevIdx];
-
-                        let nextIdx = nodeIndex + 1;
-                        if (nextIdx >= nodes.length) nextIdx = 0;
-                        const [, , nextType] = nodes[nextIdx];
-
-                        const isPrevOffCurve =
-                            prevType === 'o' || prevType === 'os';
-                        const isNextOffCurve =
-                            nextType === 'o' || nextType === 'os';
-
-                        if (isPrevOffCurve) {
-                            // This is the second control point - connect to NEXT on-curve point
-                            let targetIdx = nextIdx;
-                            // Skip the other off-curve point if needed
-                            if (isNextOffCurve) {
-                                targetIdx++;
-                                if (targetIdx >= nodes.length) targetIdx = 0;
-                            }
-
-                            const [targetX, targetY, targetType] =
-                                nodes[targetIdx];
-                            if (
-                                targetType === 'c' ||
-                                targetType === 'cs' ||
-                                targetType === 'l' ||
-                                targetType === 'ls'
-                            ) {
-                                this.ctx.beginPath();
-                                this.ctx.moveTo(x, y);
-                                this.ctx.lineTo(targetX, targetY);
-                                this.ctx.stroke();
-                            }
-                        } else {
-                            // This is the first control point - connect to PREVIOUS on-curve point
-                            let targetIdx = prevIdx;
-
-                            const [targetX, targetY, targetType] =
-                                nodes[targetIdx];
-                            if (
-                                targetType === 'c' ||
-                                targetType === 'cs' ||
-                                targetType === 'l' ||
-                                targetType === 'ls'
-                            ) {
-                                this.ctx.beginPath();
-                                this.ctx.moveTo(x, y);
-                                this.ctx.lineTo(targetX, targetY);
-                                this.ctx.stroke();
-                            }
-                        }
-                    }
-                });
-            }
-
-            // Draw nodes (points)
-            // Nodes are drawn at the same zoom threshold as handles
-            if (this.viewportManager.scale < minZoomForHandles) {
-                return;
-            }
-
-            shape.nodes.forEach((node, nodeIndex) => {
-                const [x, y, type] = node;
-                const isHovered =
-                    this.hoveredPointIndex &&
-                    this.hoveredPointIndex.contourIndex === contourIndex &&
-                    this.hoveredPointIndex.nodeIndex === nodeIndex;
-                const isSelected = this.selectedPoints.some(
-                    (p) =>
-                        p.contourIndex === contourIndex &&
-                        p.nodeIndex === nodeIndex
+        // Only draw shapes if they exist (empty glyphs like space won't have shapes)
+        if (this.layerData.shapes && Array.isArray(this.layerData.shapes)) {
+            this.layerData.shapes.forEach((shape, contourIndex) => {
+                console.log(
+                    'Drawing shape',
+                    contourIndex,
+                    ':',
+                    shape.Component ? 'Component' : 'Path',
+                    shape.Component
+                        ? `ref=${shape.Component.reference}`
+                        : `nodes=${shape.nodes?.length || 0}`
                 );
-
-                // Skip quadratic bezier points for now
-                if (type === 'q' || type === 'qs') {
+                if (shape.ref) {
+                    // Component - will be drawn separately as markers
                     return;
                 }
 
-                // Calculate point size based on zoom level
-                const nodeSizeMax =
-                    APP_SETTINGS.OUTLINE_EDITOR.NODE_SIZE_AT_MAX_ZOOM;
-                const nodeSizeMin =
-                    APP_SETTINGS.OUTLINE_EDITOR.NODE_SIZE_AT_MIN_ZOOM;
-                const nodeInterpolationMin =
-                    APP_SETTINGS.OUTLINE_EDITOR.NODE_SIZE_INTERPOLATION_MIN;
-                const nodeInterpolationMax =
-                    APP_SETTINGS.OUTLINE_EDITOR.NODE_SIZE_INTERPOLATION_MAX;
+                // Handle Path object from to_dict() - nodes might be in shape.Path.nodes
+                let nodes = shape.nodes;
+                if (!nodes && shape.Path && shape.Path.nodes) {
+                    // Nodes are in a string format from to_dict() - parse them
+                    const nodesString = shape.Path.nodes;
 
-                let pointSize;
-                if (this.viewportManager.scale >= nodeInterpolationMax) {
-                    pointSize = nodeSizeMax * invScale;
-                } else {
-                    // Interpolate between min and max size
-                    const zoomFactor =
-                        (this.viewportManager.scale - nodeInterpolationMin) /
-                        (nodeInterpolationMax - nodeInterpolationMin);
-                    pointSize =
-                        (nodeSizeMin +
-                            (nodeSizeMax - nodeSizeMin) * zoomFactor) *
-                        invScale;
-                }
-                if (type === 'o' || type === 'os') {
-                    // Off-curve point (cubic bezier control point) - draw as circle
-                    const colors = isDarkTheme
-                        ? APP_SETTINGS.OUTLINE_EDITOR.COLORS_DARK
-                        : APP_SETTINGS.OUTLINE_EDITOR.COLORS_LIGHT;
-                    this.ctx.beginPath();
-                    this.ctx.arc(x, y, pointSize, 0, Math.PI * 2);
-                    this.ctx.fillStyle = isSelected
-                        ? colors.CONTROL_POINT_SELECTED
-                        : isHovered
-                            ? colors.CONTROL_POINT_HOVERED
-                            : colors.CONTROL_POINT_NORMAL;
-                    this.ctx.fill();
-                    this.ctx.strokeStyle = colors.CONTROL_POINT_STROKE;
-                    this.ctx.lineWidth = 1 * invScale;
-                    this.ctx.stroke();
-                } else {
-                    // On-curve point - draw as square
-                    const colors = isDarkTheme
-                        ? APP_SETTINGS.OUTLINE_EDITOR.COLORS_DARK
-                        : APP_SETTINGS.OUTLINE_EDITOR.COLORS_LIGHT;
-                    this.ctx.fillStyle = isSelected
-                        ? colors.NODE_SELECTED
-                        : isHovered
-                            ? colors.NODE_HOVERED
-                            : colors.NODE_NORMAL;
-                    this.ctx.fillRect(
-                        x - pointSize,
-                        y - pointSize,
-                        pointSize * 2,
-                        pointSize * 2
-                    );
-                    this.ctx.strokeStyle = colors.NODE_STROKE;
-                    this.ctx.lineWidth = 1 * invScale;
-                    this.ctx.strokeRect(
-                        x - pointSize,
-                        y - pointSize,
-                        pointSize * 2,
-                        pointSize * 2
-                    );
-                }
-
-                // Draw smooth indicator for smooth nodes
-                if (type === 'cs' || type === 'os' || type === 'ls') {
-                    this.ctx.beginPath();
-                    this.ctx.arc(x, y, pointSize * 0.4, 0, Math.PI * 2);
-                    this.ctx.fillStyle = isDarkTheme ? '#ffffff' : '#000000';
-                    this.ctx.fill();
-                }
-            });
-        });
-
-        // Draw components
-        this.layerData.shapes.forEach((shape, index) => {
-            if (!shape.Component) {
-                return; // Not a component
-            }
-
-            console.log(
-                `Component ${index}: reference="${shape.Component.reference}", has layerData=${!!shape.Component.layerData}, shapes=${shape.Component.layerData?.shapes?.length || 0}`
-            );
-
-            const isHovered = this.hoveredComponentIndex === index;
-            const isSelected = this.selectedComponents.includes(index);
-
-            // Get full transform matrix [a, b, c, d, tx, ty]
-            let a = 1,
-                b = 0,
-                c = 0,
-                d = 1,
-                tx = 0,
-                ty = 0;
-            if (
-                shape.Component.transform &&
-                Array.isArray(shape.Component.transform)
-            ) {
-                a = shape.Component.transform[0] || 1;
-                b = shape.Component.transform[1] || 0;
-                c = shape.Component.transform[2] || 0;
-                d = shape.Component.transform[3] || 1;
-                tx = shape.Component.transform[4] || 0;
-                ty = shape.Component.transform[5] || 0;
-            }
-
-            this.ctx.save();
-
-            // Apply component transform
-            this.ctx.transform(a, b, c, d, tx, ty);
-
-            // Draw the component's outline shapes if they were fetched
-            if (shape.Component.layerData && shape.Component.layerData.shapes) {
-                // Recursively render all shapes in the component (including nested components)
-                const renderComponentShapes = (
-                    shapes,
-                    transform = [1, 0, 0, 1, 0, 0]
-                ) => {
-                    shapes.forEach((componentShape) => {
-                        // Handle nested components
-                        if (componentShape.Component) {
-                            // Save context for nested component transform
-                            this.ctx.save();
-
-                            // Apply nested component's transform
-                            if (
-                                componentShape.Component.transform &&
-                                Array.isArray(
-                                    componentShape.Component.transform
-                                )
-                            ) {
-                                const t = componentShape.Component.transform;
-                                this.ctx.transform(
-                                    t[0] || 1,
-                                    t[1] || 0,
-                                    t[2] || 0,
-                                    t[3] || 1,
-                                    t[4] || 0,
-                                    t[5] || 0
-                                );
-                            }
-
-                            // Recursively render nested component's shapes
-                            if (
-                                componentShape.Component.layerData &&
-                                componentShape.Component.layerData.shapes
-                            ) {
-                                renderComponentShapes(
-                                    componentShape.Component.layerData.shapes
-                                );
-                            }
-
-                            this.ctx.restore();
-                            return;
+                    // Parse string format: "x y type x y type ..."
+                    const parts = nodesString.trim().split(/\s+/);
+                    nodes = [];
+                    for (let i = 0; i < parts.length; i += 3) {
+                        if (i + 2 < parts.length) {
+                            const x = parseFloat(parts[i]);
+                            const y = parseFloat(parts[i + 1]);
+                            const type = parts[i + 2];
+                            nodes.push([x, y, type]);
                         }
+                    }
 
-                        // Handle outline shapes (with nodes)
-                        if (
-                            componentShape.nodes &&
-                            componentShape.nodes.length > 0
-                        ) {
+                    // Cache parsed nodes back to shape for reuse
+                    shape.nodes = nodes;
+                }
+
+                if (!nodes || nodes.length === 0) {
+                    return;
+                }
+
+                // Draw the outline path
+                this.ctx.beginPath();
+                this.ctx.strokeStyle = isDarkTheme ? '#ffffff' : '#000000';
+                this.ctx.lineWidth =
+                    APP_SETTINGS.OUTLINE_EDITOR.OUTLINE_STROKE_WIDTH * invScale;
+
+                // Build the path using the helper method
+                const startIdx = this.buildPathFromNodes(nodes);
+
+                this.ctx.closePath();
+                this.ctx.stroke();
+
+                // Skip drawing direction arrow and handles if zoom is under minimum threshold
+                const minZoomForHandles =
+                    APP_SETTINGS.OUTLINE_EDITOR.MIN_ZOOM_FOR_HANDLES;
+                if (this.viewportManager.scale >= minZoomForHandles) {
+                    // Draw direction arrow from the first node
+                    if (nodes.length > 1) {
+                        const [firstX, firstY] = nodes[startIdx];
+                        const nextIdx = (startIdx + 1) % nodes.length;
+                        const [nextX, nextY] = nodes[nextIdx];
+
+                        // Calculate direction vector from first node to next
+                        const dx = nextX - firstX;
+                        const dy = nextY - firstY;
+                        const distance = Math.sqrt(dx * dx + dy * dy);
+
+                        if (distance > 0) {
+                            // Normalize direction
+                            const ndx = dx / distance;
+                            const ndy = dy / distance;
+
+                            // Calculate arrow size based on node size (same scaling as nodes, but slightly bigger)
+                            const nodeSizeMax =
+                                APP_SETTINGS.OUTLINE_EDITOR.NODE_SIZE_AT_MAX_ZOOM;
+                            const nodeSizeMin =
+                                APP_SETTINGS.OUTLINE_EDITOR.NODE_SIZE_AT_MIN_ZOOM;
+                            const nodeInterpolationMin =
+                                APP_SETTINGS.OUTLINE_EDITOR
+                                    .NODE_SIZE_INTERPOLATION_MIN;
+                            const nodeInterpolationMax =
+                                APP_SETTINGS.OUTLINE_EDITOR
+                                    .NODE_SIZE_INTERPOLATION_MAX;
+
+                            let baseSize;
+                            if (
+                                this.viewportManager.scale >= nodeInterpolationMax
+                            ) {
+                                baseSize = nodeSizeMax * invScale;
+                            } else {
+                                const zoomFactor =
+                                    (this.viewportManager.scale -
+                                        nodeInterpolationMin) /
+                                    (nodeInterpolationMax - nodeInterpolationMin);
+                                baseSize =
+                                    (nodeSizeMin +
+                                        (nodeSizeMax - nodeSizeMin) * zoomFactor) *
+                                    invScale;
+                            }
+
+                            // Arrow is slightly bigger than nodes
+                            const arrowLength = baseSize * 4.5;
+                            const arrowWidth = baseSize * 2.5;
+
+                            // Arrow tip position starts at the first node and extends outward
+                            const tipX = firstX + ndx * arrowLength;
+                            const tipY = firstY + ndy * arrowLength;
+
+                            // Arrow base is at the first node
+                            const baseX = firstX;
+                            const baseY = firstY;
+
+                            // Arrow wings (perpendicular offsets)
+                            const perpX = -ndy * arrowWidth;
+                            const perpY = ndx * arrowWidth;
+
+                            // Draw arrow
                             this.ctx.beginPath();
-
-                            // Build the path using the helper method
-                            this.buildPathFromNodes(componentShape.nodes);
-
+                            this.ctx.moveTo(tipX, tipY);
+                            this.ctx.lineTo(baseX + perpX, baseY + perpY);
+                            this.ctx.lineTo(baseX - perpX, baseY - perpY);
                             this.ctx.closePath();
 
-                            // Fill with semi-transparent color
-                            const colors = isDarkTheme
-                                ? APP_SETTINGS.OUTLINE_EDITOR.COLORS_DARK
-                                : APP_SETTINGS.OUTLINE_EDITOR.COLORS_LIGHT;
-                            this.ctx.fillStyle = isSelected
-                                ? colors.COMPONENT_FILL_SELECTED
-                                : isHovered
-                                    ? colors.COMPONENT_FILL_HOVERED
-                                    : colors.COMPONENT_FILL_NORMAL;
+                            this.ctx.fillStyle = isDarkTheme
+                                ? 'rgba(0, 255, 255, 0.8)'
+                                : 'rgba(0, 150, 150, 0.8)';
                             this.ctx.fill();
-
-                            // Stroke the outline
-                            this.ctx.strokeStyle = isSelected
-                                ? colors.COMPONENT_SELECTED
-                                : isHovered
-                                    ? colors.COMPONENT_HOVERED
-                                    : colors.COMPONENT_NORMAL;
+                            this.ctx.strokeStyle = isDarkTheme
+                                ? 'rgba(0, 255, 255, 1)'
+                                : 'rgba(0, 100, 100, 1)';
                             this.ctx.lineWidth = 1 * invScale;
                             this.ctx.stroke();
                         }
+                    }
+
+                    // Draw control point handle lines (from off-curve to adjacent on-curve points)
+                    this.ctx.strokeStyle = isDarkTheme
+                        ? 'rgba(255, 255, 255, 0.5)'
+                        : 'rgba(0, 0, 0, 0.5)';
+                    this.ctx.lineWidth = 1 * invScale;
+
+                    nodes.forEach((node, nodeIndex) => {
+                        const [x, y, type] = node;
+
+                        // Only draw lines from off-curve points
+                        if (type === 'o' || type === 'os') {
+                            // Check if this is the first or second control point in a cubic bezier pair
+                            let prevIdx = nodeIndex - 1;
+                            if (prevIdx < 0) prevIdx = nodes.length - 1;
+                            const [, , prevType] = nodes[prevIdx];
+
+                            let nextIdx = nodeIndex + 1;
+                            if (nextIdx >= nodes.length) nextIdx = 0;
+                            const [, , nextType] = nodes[nextIdx];
+
+                            const isPrevOffCurve =
+                                prevType === 'o' || prevType === 'os';
+                            const isNextOffCurve =
+                                nextType === 'o' || nextType === 'os';
+
+                            if (isPrevOffCurve) {
+                                // This is the second control point - connect to NEXT on-curve point
+                                let targetIdx = nextIdx;
+                                // Skip the other off-curve point if needed
+                                if (isNextOffCurve) {
+                                    targetIdx++;
+                                    if (targetIdx >= nodes.length) targetIdx = 0;
+                                }
+
+                                const [targetX, targetY, targetType] =
+                                    nodes[targetIdx];
+                                if (
+                                    targetType === 'c' ||
+                                    targetType === 'cs' ||
+                                    targetType === 'l' ||
+                                    targetType === 'ls'
+                                ) {
+                                    this.ctx.beginPath();
+                                    this.ctx.moveTo(x, y);
+                                    this.ctx.lineTo(targetX, targetY);
+                                    this.ctx.stroke();
+                                }
+                            } else {
+                                // This is the first control point - connect to PREVIOUS on-curve point
+                                let targetIdx = prevIdx;
+
+                                const [targetX, targetY, targetType] =
+                                    nodes[targetIdx];
+                                if (
+                                    targetType === 'c' ||
+                                    targetType === 'cs' ||
+                                    targetType === 'l' ||
+                                    targetType === 'ls'
+                                ) {
+                                    this.ctx.beginPath();
+                                    this.ctx.moveTo(x, y);
+                                    this.ctx.lineTo(targetX, targetY);
+                                    this.ctx.stroke();
+                                }
+                            }
+                        }
                     });
-                };
+                }
 
-                // Start recursive rendering
-                renderComponentShapes(shape.Component.layerData.shapes);
-            }
+                // Draw nodes (points)
+                // Nodes are drawn at the same zoom threshold as handles
+                if (this.viewportManager.scale < minZoomForHandles) {
+                    return;
+                }
 
-            // Draw component reference marker at origin
-            // Skip drawing markers if zoom is under minimum threshold
-            const minZoomForHandles =
-                APP_SETTINGS.OUTLINE_EDITOR.MIN_ZOOM_FOR_HANDLES;
-            if (this.viewportManager.scale < minZoomForHandles) {
+                shape.nodes.forEach((node, nodeIndex) => {
+                    const [x, y, type] = node;
+                    const isHovered =
+                        this.hoveredPointIndex &&
+                        this.hoveredPointIndex.contourIndex === contourIndex &&
+                        this.hoveredPointIndex.nodeIndex === nodeIndex;
+                    const isSelected = this.selectedPoints.some(
+                        (p) =>
+                            p.contourIndex === contourIndex &&
+                            p.nodeIndex === nodeIndex
+                    );
+
+                    // Skip quadratic bezier points for now
+                    if (type === 'q' || type === 'qs') {
+                        return;
+                    }
+
+                    // Calculate point size based on zoom level
+                    const nodeSizeMax =
+                        APP_SETTINGS.OUTLINE_EDITOR.NODE_SIZE_AT_MAX_ZOOM;
+                    const nodeSizeMin =
+                        APP_SETTINGS.OUTLINE_EDITOR.NODE_SIZE_AT_MIN_ZOOM;
+                    const nodeInterpolationMin =
+                        APP_SETTINGS.OUTLINE_EDITOR.NODE_SIZE_INTERPOLATION_MIN;
+                    const nodeInterpolationMax =
+                        APP_SETTINGS.OUTLINE_EDITOR.NODE_SIZE_INTERPOLATION_MAX;
+
+                    let pointSize;
+                    if (this.viewportManager.scale >= nodeInterpolationMax) {
+                        pointSize = nodeSizeMax * invScale;
+                    } else {
+                        // Interpolate between min and max size
+                        const zoomFactor =
+                            (this.viewportManager.scale - nodeInterpolationMin) /
+                            (nodeInterpolationMax - nodeInterpolationMin);
+                        pointSize =
+                            (nodeSizeMin +
+                                (nodeSizeMax - nodeSizeMin) * zoomFactor) *
+                            invScale;
+                    }
+                    if (type === 'o' || type === 'os') {
+                        // Off-curve point (cubic bezier control point) - draw as circle
+                        const colors = isDarkTheme
+                            ? APP_SETTINGS.OUTLINE_EDITOR.COLORS_DARK
+                            : APP_SETTINGS.OUTLINE_EDITOR.COLORS_LIGHT;
+                        this.ctx.beginPath();
+                        this.ctx.arc(x, y, pointSize, 0, Math.PI * 2);
+                        this.ctx.fillStyle = isSelected
+                            ? colors.CONTROL_POINT_SELECTED
+                            : isHovered
+                                ? colors.CONTROL_POINT_HOVERED
+                                : colors.CONTROL_POINT_NORMAL;
+                        this.ctx.fill();
+                        this.ctx.strokeStyle = colors.CONTROL_POINT_STROKE;
+                        this.ctx.lineWidth = 1 * invScale;
+                        this.ctx.stroke();
+                    } else {
+                        // On-curve point - draw as square
+                        const colors = isDarkTheme
+                            ? APP_SETTINGS.OUTLINE_EDITOR.COLORS_DARK
+                            : APP_SETTINGS.OUTLINE_EDITOR.COLORS_LIGHT;
+                        this.ctx.fillStyle = isSelected
+                            ? colors.NODE_SELECTED
+                            : isHovered
+                                ? colors.NODE_HOVERED
+                                : colors.NODE_NORMAL;
+                        this.ctx.fillRect(
+                            x - pointSize,
+                            y - pointSize,
+                            pointSize * 2,
+                            pointSize * 2
+                        );
+                        this.ctx.strokeStyle = colors.NODE_STROKE;
+                        this.ctx.lineWidth = 1 * invScale;
+                        this.ctx.strokeRect(
+                            x - pointSize,
+                            y - pointSize,
+                            pointSize * 2,
+                            pointSize * 2
+                        );
+                    }
+
+                    // Draw smooth indicator for smooth nodes
+                    if (type === 'cs' || type === 'os' || type === 'ls') {
+                        this.ctx.beginPath();
+                        this.ctx.arc(x, y, pointSize * 0.4, 0, Math.PI * 2);
+                        this.ctx.fillStyle = isDarkTheme ? '#ffffff' : '#000000';
+                        this.ctx.fill();
+                    }
+                });
+            });
+
+            // Draw components
+            this.layerData.shapes.forEach((shape, index) => {
+                if (!shape.Component) {
+                    return; // Not a component
+                }
+
+                console.log(
+                    `Component ${index}: reference="${shape.Component.reference}", has layerData=${!!shape.Component.layerData}, shapes=${shape.Component.layerData?.shapes?.length || 0}`
+                );
+
+                const isHovered = this.hoveredComponentIndex === index;
+                const isSelected = this.selectedComponents.includes(index);
+
+                // Get full transform matrix [a, b, c, d, tx, ty]
+                let a = 1,
+                    b = 0,
+                    c = 0,
+                    d = 1,
+                    tx = 0,
+                    ty = 0;
+                if (
+                    shape.Component.transform &&
+                    Array.isArray(shape.Component.transform)
+                ) {
+                    a = shape.Component.transform[0] || 1;
+                    b = shape.Component.transform[1] || 0;
+                    c = shape.Component.transform[2] || 0;
+                    d = shape.Component.transform[3] || 1;
+                    tx = shape.Component.transform[4] || 0;
+                    ty = shape.Component.transform[5] || 0;
+                }
+
+                this.ctx.save();
+
+                // Apply component transform
+                this.ctx.transform(a, b, c, d, tx, ty);
+
+                // Draw the component's outline shapes if they were fetched
+                if (shape.Component.layerData && shape.Component.layerData.shapes) {
+                    // Recursively render all shapes in the component (including nested components)
+                    const renderComponentShapes = (
+                        shapes,
+                        transform = [1, 0, 0, 1, 0, 0]
+                    ) => {
+                        shapes.forEach((componentShape) => {
+                            // Handle nested components
+                            if (componentShape.Component) {
+                                // Save context for nested component transform
+                                this.ctx.save();
+
+                                // Apply nested component's transform
+                                if (
+                                    componentShape.Component.transform &&
+                                    Array.isArray(
+                                        componentShape.Component.transform
+                                    )
+                                ) {
+                                    const t = componentShape.Component.transform;
+                                    this.ctx.transform(
+                                        t[0] || 1,
+                                        t[1] || 0,
+                                        t[2] || 0,
+                                        t[3] || 1,
+                                        t[4] || 0,
+                                        t[5] || 0
+                                    );
+                                }
+
+                                // Recursively render nested component's shapes
+                                if (
+                                    componentShape.Component.layerData &&
+                                    componentShape.Component.layerData.shapes
+                                ) {
+                                    renderComponentShapes(
+                                        componentShape.Component.layerData.shapes
+                                    );
+                                }
+
+                                this.ctx.restore();
+                                return;
+                            }
+
+                            // Handle outline shapes (with nodes)
+                            if (
+                                componentShape.nodes &&
+                                componentShape.nodes.length > 0
+                            ) {
+                                this.ctx.beginPath();
+
+                                // Build the path using the helper method
+                                this.buildPathFromNodes(componentShape.nodes);
+
+                                this.ctx.closePath();
+
+                                // Fill with semi-transparent color
+                                const colors = isDarkTheme
+                                    ? APP_SETTINGS.OUTLINE_EDITOR.COLORS_DARK
+                                    : APP_SETTINGS.OUTLINE_EDITOR.COLORS_LIGHT;
+                                this.ctx.fillStyle = isSelected
+                                    ? colors.COMPONENT_FILL_SELECTED
+                                    : isHovered
+                                        ? colors.COMPONENT_FILL_HOVERED
+                                        : colors.COMPONENT_FILL_NORMAL;
+                                this.ctx.fill();
+
+                                // Stroke the outline
+                                this.ctx.strokeStyle = isSelected
+                                    ? colors.COMPONENT_SELECTED
+                                    : isHovered
+                                        ? colors.COMPONENT_HOVERED
+                                        : colors.COMPONENT_NORMAL;
+                                this.ctx.lineWidth = 1 * invScale;
+                                this.ctx.stroke();
+                            }
+                        });
+                    };
+
+                    // Start recursive rendering
+                    renderComponentShapes(shape.Component.layerData.shapes);
+                }
+
+                // Draw component reference marker at origin
+                // Skip drawing markers if zoom is under minimum threshold
+                const minZoomForHandles =
+                    APP_SETTINGS.OUTLINE_EDITOR.MIN_ZOOM_FOR_HANDLES;
+                if (this.viewportManager.scale < minZoomForHandles) {
+                    this.ctx.restore();
+                    return;
+                }
+
+                const markerSize =
+                    APP_SETTINGS.OUTLINE_EDITOR.COMPONENT_MARKER_SIZE * invScale; // Draw cross marker
+                const colors = isDarkTheme
+                    ? APP_SETTINGS.OUTLINE_EDITOR.COLORS_DARK
+                    : APP_SETTINGS.OUTLINE_EDITOR.COLORS_LIGHT;
+                this.ctx.strokeStyle = isSelected
+                    ? colors.COMPONENT_SELECTED
+                    : isHovered
+                        ? colors.COMPONENT_HOVERED
+                        : colors.COMPONENT_NORMAL;
+                this.ctx.lineWidth = 2 * invScale;
+                this.ctx.beginPath();
+                this.ctx.moveTo(-markerSize, 0);
+                this.ctx.lineTo(markerSize, 0);
+                this.ctx.moveTo(0, -markerSize);
+                this.ctx.lineTo(0, markerSize);
+                this.ctx.stroke();
+
+                // Draw circle around cross
+                this.ctx.beginPath();
+                this.ctx.arc(0, 0, markerSize, 0, Math.PI * 2);
+                this.ctx.stroke();
+
+                // Draw component reference name
+                const fontSize = 12 * invScale;
+                this.ctx.save();
+                this.ctx.scale(1, -1); // Flip Y axis
+                this.ctx.font = `${fontSize}px monospace`;
+                this.ctx.fillStyle = isDarkTheme
+                    ? 'rgba(255, 255, 255, 0.8)'
+                    : 'rgba(0, 0, 0, 0.8)';
+                this.ctx.fillText(
+                    shape.Component.reference || 'component',
+                    markerSize * 1.5,
+                    markerSize
+                );
                 this.ctx.restore();
-                return;
-            }
 
-            const markerSize =
-                APP_SETTINGS.OUTLINE_EDITOR.COMPONENT_MARKER_SIZE * invScale; // Draw cross marker
-            const colors = isDarkTheme
-                ? APP_SETTINGS.OUTLINE_EDITOR.COLORS_DARK
-                : APP_SETTINGS.OUTLINE_EDITOR.COLORS_LIGHT;
-            this.ctx.strokeStyle = isSelected
-                ? colors.COMPONENT_SELECTED
-                : isHovered
-                    ? colors.COMPONENT_HOVERED
-                    : colors.COMPONENT_NORMAL;
-            this.ctx.lineWidth = 2 * invScale;
-            this.ctx.beginPath();
-            this.ctx.moveTo(-markerSize, 0);
-            this.ctx.lineTo(markerSize, 0);
-            this.ctx.moveTo(0, -markerSize);
-            this.ctx.lineTo(0, markerSize);
-            this.ctx.stroke();
-
-            // Draw circle around cross
-            this.ctx.beginPath();
-            this.ctx.arc(0, 0, markerSize, 0, Math.PI * 2);
-            this.ctx.stroke();
-
-            // Draw component reference name
-            const fontSize = 12 * invScale;
-            this.ctx.save();
-            this.ctx.scale(1, -1); // Flip Y axis
-            this.ctx.font = `${fontSize}px monospace`;
-            this.ctx.fillStyle = isDarkTheme
-                ? 'rgba(255, 255, 255, 0.8)'
-                : 'rgba(0, 0, 0, 0.8)';
-            this.ctx.fillText(
-                shape.Component.reference || 'component',
-                markerSize * 1.5,
-                markerSize
-            );
-            this.ctx.restore();
-
-            this.ctx.restore();
-        });
+                this.ctx.restore();
+            });
+        } // End if (this.layerData.shapes)
 
         // Draw anchors
         // Skip drawing anchors if zoom is under minimum threshold
@@ -3860,6 +4184,88 @@ json.dumps(result)
             });
         }
 
+        // Draw bounding box for testing
+        this.drawBoundingBox();
+
+        this.ctx.restore();
+    }
+
+    drawBoundingBox() {
+        // Draw the calculated bounding box in outline editing mode
+        if (!this.isGlyphEditMode || !this.layerData) {
+            return;
+        }
+
+        // Check if bounding box display is enabled
+        if (!APP_SETTINGS?.OUTLINE_EDITOR?.SHOW_BOUNDING_BOX) {
+            return;
+        }
+
+        const bbox = this.calculateGlyphBoundingBox();
+        if (!bbox) {
+            return;
+        }
+
+        const invScale = 1 / this.viewportManager.scale;
+        const isDarkTheme =
+            document.documentElement.getAttribute('data-theme') !== 'light';
+
+        // Draw bounding box rectangle
+        this.ctx.strokeStyle = isDarkTheme
+            ? 'rgba(255, 0, 255, 0.8)' // Magenta for dark theme
+            : 'rgba(255, 0, 255, 0.8)'; // Magenta for light theme
+        this.ctx.lineWidth = 2 * invScale;
+        this.ctx.setLineDash([5 * invScale, 5 * invScale]); // Dashed line
+
+        this.ctx.strokeRect(
+            bbox.minX,
+            bbox.minY,
+            bbox.width,
+            bbox.height
+        );
+
+        this.ctx.setLineDash([]); // Reset to solid line
+
+        // Draw bbox dimensions as text labels
+        const fontSize = 12 * invScale;
+        this.ctx.font = `${fontSize}px monospace`;
+        this.ctx.fillStyle = isDarkTheme
+            ? 'rgba(255, 0, 255, 0.9)'
+            : 'rgba(255, 0, 255, 0.9)';
+
+        // Save context to flip text right-side up
+        this.ctx.save();
+
+        // Width label (centered at top)
+        this.ctx.translate(bbox.minX + bbox.width / 2, bbox.maxY);
+        this.ctx.scale(1, -1); // Flip Y to make text right-side up
+        const widthText = `${Math.round(bbox.width)}`;
+        const widthMetrics = this.ctx.measureText(widthText);
+        this.ctx.fillText(widthText, -widthMetrics.width / 2, -fontSize);
+        this.ctx.restore();
+
+        // Height label (centered at left)
+        this.ctx.save();
+        this.ctx.translate(bbox.minX, bbox.minY + bbox.height / 2);
+        this.ctx.scale(1, -1); // Flip Y to make text right-side up
+        const heightText = `${Math.round(bbox.height)}`;
+        this.ctx.fillText(heightText, -fontSize * 4, fontSize / 2);
+        this.ctx.restore();
+
+        // Corner coordinates (bottom-left and top-right)
+        this.ctx.save();
+        this.ctx.translate(bbox.minX, bbox.minY);
+        this.ctx.scale(1, -1);
+        const minText = `(${Math.round(bbox.minX)}, ${Math.round(bbox.minY)})`;
+        this.ctx.fillText(minText, 0, fontSize + 5 * invScale);
+        this.ctx.restore();
+
+        this.ctx.save();
+        this.ctx.translate(bbox.maxX, bbox.maxY);
+        this.ctx.scale(1, -1);
+        const maxText = `(${Math.round(bbox.maxX)}, ${Math.round(bbox.maxY)})`;
+        const maxMetrics = this.ctx.measureText(maxText);
+        this.ctx.fillText(maxText, -maxMetrics.width, -5 * invScale);
         this.ctx.restore();
     }
 
@@ -4059,16 +4465,22 @@ json.dumps(result)
             }
         }
 
-        // Prevent all other text editing and cursor movement in glyph edit mode
-        if (this.isGlyphEditMode) {
+        // Cmd+0 / Ctrl+0 - Frame current glyph (in edit mode) or reset zoom (in text mode)
+        if ((e.metaKey || e.ctrlKey) && e.key === '0') {
             e.preventDefault();
+            if (this.isGlyphEditMode && this.textRunEditor.selectedGlyphIndex >= 0) {
+                // In glyph edit mode: frame the current glyph
+                this.frameCurrentGlyph();
+            } else {
+                // In text mode: reset zoom and position
+                this.resetZoomAndPosition();
+            }
             return;
         }
 
-        // Cmd+0 / Ctrl+0 - Reset zoom and position
-        if ((e.metaKey || e.ctrlKey) && e.key === '0') {
+        // Prevent all other text editing and cursor movement in glyph edit mode
+        if (this.isGlyphEditMode) {
             e.preventDefault();
-            this.resetZoomAndPosition();
             return;
         }
 
@@ -4224,7 +4636,7 @@ json.dumps(result)
             this.viewportManager.panX;
 
         // Define margin from edges (in screen pixels)
-        const margin = 100;
+        const margin = 30;
 
         // Check if cursor is within visible bounds with margin
         return screenX >= margin && screenX <= rect.width - margin;
@@ -4237,7 +4649,7 @@ json.dumps(result)
         }
 
         const rect = this.canvas.getBoundingClientRect();
-        const margin = 100; // Same margin as visibility check
+        const margin = 30; // Same margin as visibility check
 
         // Calculate target panX to center cursor with margin
         const screenX =
