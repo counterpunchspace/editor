@@ -126,7 +126,7 @@ class TextRunEditor {
         ) {
             const glyph = this.shapedGlyphs[i];
             if ((glyph.cl || 0) === currentClusterPos) {
-                await this.selectGlyphByIndex(i);
+                await this.selectGlyphByIndex(i, true);
                 return;
             }
         }
@@ -142,7 +142,7 @@ class TextRunEditor {
                     ? this.findLastGlyphAtClusterPosition(nextPosition)
                     : this.findFirstGlyphAtClusterPosition(nextPosition);
             if (glyphIndex >= 0) {
-                await this.selectGlyphByIndex(glyphIndex);
+                await this.selectGlyphByIndex(glyphIndex, true);
                 return;
             }
             nextPosition += direction;
@@ -200,7 +200,7 @@ class TextRunEditor {
         this.shapeText();
     }
 
-    async selectGlyphByIndex(glyphIndex) {
+    async selectGlyphByIndex(glyphIndex, fromKeyboard = false) {
         // Select a glyph by its index in the shaped glyphs array
 
         this.call('exitcomponentediting'); // Ensure any component editing is exited
@@ -223,7 +223,7 @@ class TextRunEditor {
         } else {
             console.log(`Deselected glyph`);
         }
-        this.call('glyphselected', this.selectedGlyphIndex, previousIndex);
+        this.call('glyphselected', this.selectedGlyphIndex, previousIndex, fromKeyboard);
     }
 
     getGlyphIndexAtCursorPosition() {

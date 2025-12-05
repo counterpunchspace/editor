@@ -335,7 +335,7 @@ class GlyphCanvas {
                 this.exitComponentEditing(true); // Skip UI updates
             }
         });
-        this.textRunEditor.on('glyphselected', async (ix, previousIndex) => {
+        this.textRunEditor.on('glyphselected', async (ix, previousIndex, fromKeyboard = false) => {
             const wasInEditMode = this.isGlyphEditMode;
 
             // Increment sequence counter to track this selection
@@ -413,8 +413,8 @@ class GlyphCanvas {
             // Now render with the loaded data
             this.render();
 
-            // Pan to glyph if we were already in edit mode (i.e., navigating between glyphs)
-            if (wasInEditMode && ix >= 0 && previousIndex !== ix) {
+            // Pan to glyph only if navigating via keyboard (not mouse double-click)
+            if (fromKeyboard && wasInEditMode && ix >= 0 && previousIndex !== ix) {
                 // Layer data should be loaded now after updatePropertiesUI completes
                 this.panToGlyph(ix);
             }
