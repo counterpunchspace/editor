@@ -43,6 +43,9 @@ const APP_SETTINGS = {
         // Stroke widths
         OUTLINE_STROKE_WIDTH: 1, // px - width of glyph outline paths
 
+        // Canvas margins
+        CANVAS_MARGIN: 50, // px - margin around glyphs when framing or panning
+
         // Debug/development
         SHOW_BOUNDING_BOX: false, // Show calculated bounding box in editing mode
 

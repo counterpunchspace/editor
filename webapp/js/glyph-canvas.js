@@ -2878,9 +2878,14 @@ json.dumps(result)
         };
     }
 
-    frameCurrentGlyph(margin = 100) {
+    frameCurrentGlyph(margin = null) {
         // Pan and zoom to show the current glyph with margin around it
         // Uses animated camera movement (10 frames)
+
+        // Use setting if no margin specified
+        if (margin === null) {
+            margin = APP_SETTINGS.OUTLINE_EDITOR.CANVAS_MARGIN;
+        }
 
         // Reset accumulated vertical bounds on cmd+0
         this.accumulatedVerticalBounds = null;
@@ -2977,7 +2982,7 @@ json.dumps(result)
         console.log('panToGlyph: calculated bounds', bounds);
 
         const rect = this.canvas.getBoundingClientRect();
-        const margin = 30;
+        const margin = APP_SETTINGS.OUTLINE_EDITOR.CANVAS_MARGIN; // Canvas margin from settings
 
         // Get glyph position in text run
         const { xPosition, xOffset, yOffset } =
