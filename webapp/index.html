@@ -83,17 +83,17 @@
 
     <!-- Cache busting for local development only -->
     <script>
-            (function () {
-                const isLocal =
-                    window.location.hostname === 'localhost' ||
-                    window.location.hostname === '127.0.0.1';
-                if (isLocal) {
-                    const version = Date.now();
-                    // Update CSS
-                    const css = document.getElementById('local-css');
-                    if (css) href = 'css/style.css?v=' + version;
-                }
-            })();
+        (function () {
+            const isLocal =
+                window.location.hostname === 'localhost' ||
+                window.location.hostname === '127.0.0.1';
+            if (isLocal) {
+                const version = Date.now();
+                // Update CSS
+                const css = document.getElementById('local-css');
+                if (css) href = 'css/style.css?v=' + version;
+            }
+        })();
     </script>
 </head>
 
@@ -314,53 +314,53 @@
 
     <!-- Local scripts loaded with cache-busting for development -->
     <script>
-            (function () {
-                const isLocal =
-                    window.location.hostname === 'localhost' ||
-                    window.location.hostname === '127.0.0.1';
-                const version = isLocal ? '?v=' + Date.now() : '';
+        (function () {
+            const isLocal =
+                window.location.hostname === 'localhost' ||
+                window.location.hostname === '127.0.0.1';
+            const version = isLocal ? '?v=' + Date.now() : '';
 
-                const scripts = [
-                    'js/settings.js',
-                    'js/theme-switcher.js',
-                    'js/sound-preloader.js',
-                    'js/memory-monitor.js',
-                    'js/python-ui-sync.js',
-                    'js/python-execution-wrapper.js',
-                    'js/resizer.js',
-                    'js/view-settings.js',
-                    'js/keyboard-navigation.js',
-                    'js/matplotlib-handler.js',
-                    'js/pyodide-official-console.js',
-                    'js/fonteditor.js',
-                    'js/font-dropdown.js',
-                    'js/save-button.js',
-                    'js/font-manager.js',
-                    'js/compile-button.js',
-                    'js/auto-compile-manager.js',
-                    'js/file-browser.js',
-                    'js/script-editor.js',
-                    'js/ai-assistant.js',
-                    'js/glyph-canvas/features.js',
-                    'js/glyph-canvastrun.js',
-              yph-canvas/viewport.js',
-                    'js/glyph-canvas/variations.js',
-                    'js/glyph-canvas.js'
-                ];
+            const scripts = [
+                'js/settings.js',
+                'js/theme-switcher.js',
+                'js/sound-preloader.js',
+                'js/memory-monitor.js',
+                'js/python-ui-sync.js',
+                'js/python-execution-wrapper.js',
+                'js/resizer.js',
+                'js/view-settings.js',
+                'js/keyboard-navigation.js',
+                'js/matplotlib-handler.js',
+                'js/pyodide-official-console.js',
+                'js/fonteditor.js',
+                'js/font-dropdown.js',
+                'js/save-button.js',
+                'js/font-manager.js',
+                'js/compile-button.js',
+                'js/auto-compile-manager.js',
+                'js/file-browser.js',
+                'js/script-editor.js',
+                'js/ai-assistant.js',
+                'js/glyph-canvas/features.js',
+                'js/glyph-canvas/textrun.js',
+                'js/glyph-canvas/viewport.js',
+                'js/glyph-canvas/variations.js',
+                'js/glyph-canvas.js'
+            ];
 
-                scripts.forEach((src) => {
-                    document.write(
-                        '<script src="' + src + version + '"><\/script>'
-                    );
-                });
-
-                // Module script
+            scripts.forEach((src) => {
                 document.write(
-                    '<script type="module" src="js/font-compilation.js' +
-                        version +
-                        '"><\/script>'
+                    '<script src="' + src + version + '"><\/script>'
                 );
-            })();
+            });
+
+            // Module script
+            document.write(
+                '<script type="module" src="js/font-compilation.js' +
+                version +
+                '"><\/script>'
+            );
+        })();
     </script>
 
     <!-- Diff Review Modal -->
@@ -392,45 +392,46 @@
 
     <!-- Browser compatibility check -->
     <script>
-            // Detect if we're in a limited browser context
-            setTimeout(() => {
-                const isVSCode =
-                    navigator.userAgent.includes('Code') ||
-                    navigator.userAgent.includes('Electron');
-                const hasSAB = typeof SharedArrayBuffer !== 'undefined';
-                const isIsolated =
-                    typeof crossOriginIsolated !== 'undefined'
-                        ? crossOriginIsolated
-                        : false;
+        // Detect if we're in a limited browser context
+        setTimeout(() => {
+            const isVSCode =
+                navigator.userAgent.includes('Code') ||
+                navigator.userAgent.includes('Electron');
+            const hasSAB = typeof SharedArrayBuffer !== 'undefined';
+            const isIsolated =
+                typeof crossOriginIsolated !== 'undefined'
+                    ? crossOriginIsolated
+                    : false;
 
-                // Log diagnostic info
-                console.log('[COI Check] SharedArrayBuffer:', hasSAB);
-                console.log('[COI Check] crossOriginIsolated:', isIsolated);
-                console.log(
-                    '[COI Check] Service Worker:',
-                    navigator.serviceWorker?.controller
-                        ? 'Active'
-                        : 'Not active'
-                );
+            // Log diagnostic info
+            console.log('[COI Check] SharedArrayBuffer:', hasSAB);
+            console.log('[COI Check] crossOriginIsolated:', isIsolated);
+            console.log(
+                '[COI Check] Service Worker:',
+                navigator.serviceWorker?.controller
+                    ? 'Active'
+                    : 'Not active'
+            );
 
-                if (isVSCode || !hasSAB || !isIsolated) {
-                    const notice = document.getElementById('browser-compat');
-                    if (notice) {
-                        notice.style.display = 'block';
+            if (isVSCode || !hasSAB || !isIsolated) {
+                const notice = document.getElementById('browser-compat');
+                if (notice) {
+                    notice.style.display = 'block';
                     if (isVSCode) {
-                            notice.innerHTML =
-                                '<strong>⚠️ VS Code Simple Browser Detected</stron                          '<p style="margin: 5px 0;">For fontc WASM compilation, please open this URL in a regular browser:</p>' +
-                                '<p style="margin: 5px 0;"><code>http://localhost:8000</code></p>' +
-                                '<p style="margin: 5px 0;">Recommended: Chrome, Firefox, or Safari</p>';
-                        } else if (!isIsolated) {
-                            notice.innerHTML =
-                                '<strong>⚠️ Cross-Origin Isolation Required</strong>' +
-                                '<p style="margin: 5px 0;">Waiting for service worker to activate...</p>' +
-                                '<p style="margin: 5px 0;">If this message persists after reload, check server headers.</p>';
-                        }
+                        notice.innerHTML =
+                            '<strong>⚠️ VS Code Simple Browser Detected</strong>' +
+                            '<p style="margin: 5px 0;">For fontc WASM compilation, please open this URL in a regular browser:</p>' +
+                            '<p style="margin: 5px 0;"><code>http://localhost:8000</code></p>' +
+                            '<p style="margin: 5px 0;">Recommended: Chrome, Firefox, or Safari</p>';
+                    } else if (!isIsolated) {
+                        notice.innerHTML =
+                            '<strong>⚠️ Cross-Origin Isolation Required</strong>' +
+                            '<p style="margin: 5px 0;">Waiting for service worker to activate...</p>' +
+                            '<p style="margin: 5px 0;">If this message persists after reload, check server headers.</p>';
                     }
                 }
-            }, 500);
+            }
+        }, 500);
     </script>
 
     <!-- AI Assistant Info Popup -->
@@ -534,14 +535,11 @@
                     <h4>Text Mode</h4>
                     <ul>
                         <li>
-                            <strong>Enter:</strong> Enter outline editing
+                            <kbd>Cmd</kbd><kbd>Enter</kbd> Enter outline editing
                             mode at cursor position
                         </li>
                         <li>
-                            <strong>Cmd+0:</strong> Reset zoom and position
-                        </li>
-                        <li>
-                            <strong>Arrow keys:</strong> Move text cursor
+                            <kbd>Cmd</kbd><kbd>0</kbd> Reset zoom and position
                         </li>
                         <li>
                             <strong>Mouse wheel:</strong> Zoom in/out
@@ -555,41 +553,29 @@
                     <h4>Outline Editing Mode</h4>
                     <ul>
                         <li>
-                            <strong>Escape:</strong> Exit outline editing
-                            mode
+                            <kbd>Esc</kbd> Exit outline editing mode / Exit nested components editing
                         </li>
                         <li>
-                            <strong>Cmd+0:</strong> Frame current glyph
+                            <kbd>Cmd</kbd><kbd>0</kbd> Center current glyph
                         </li>
                         <li>
-                            <strong>Cmd+Left/Right:</strong> Navigate
-                            between glyphs
+                            <kbd>Cmd</kbd><kbd><span class="material-symbols-outlined">arrow_back</span></kbd> /
+                            <kbd>Cmd</kbd><kbd><span class="material-symbols-outlined">arrow_forward</span></kbd>
+                            Navigate between glyphs
                         </li>
                         <li>
-                            <strong>Cmd+Up/Down:</strong> Cycle through
-                            layers
+                            <kbd>Cmd</kbd><kbd><span class="material-symbols-outlined">arrow_upward</span></kbd> /
+                            <kbd>Cmd</kbd><kbd><span class="material-symbols-outlined">arrow_downward</span></kbd> Cycle
+                            through layers
                         </li>
                         <li>
-                            <strong>Arrow keys:</strong> Move selected
-                            points/anchors/components (1 unit)
-                        </li>
-                        <li>
-                            <strong>Shift+Arrow keys:</strong> Move selected
-                            items (10 units)
-                        </li>
-                        <li>
-                            <strong>Click:</strong> Select
-                            point/anchor/component
-                        </li>
-                        <li>
-                            <strong>Shift+Click:</strong> Add to selection
-                        </li>
-                        <li>
-                            <strong>Click + drag:</strong> Move selected
-                            items
-                        </li>
-                        <li>
-                            <strong>Mouse wheel:</strong> Zoom in/out
+                            <kbd><span class="material-symbols-outlined">arrow_upward</span></kbd><kbd><span
+                                    class="material-symbols-outlined">arrow_downward</span></kbd><kbd><span
+                                    class="material-symbols-outlined">arrow_back</span></kbd><kbd><span
+                                    class="material-symbols-outlined">arrow_forward</span></kbd> Move selected
+                            points/anchors/components
+                            (10x with
+                            <kbd>Shift</kbd>)
                         </li>
                     </ul>
                 </div>
@@ -732,72 +718,72 @@
 
     <!-- PWA Service Worker Registration -->
     <script>
-            // PWA Install Prompt Handler
-            let deferredPrompt;
+        // PWA Install Prompt Handler
+        let deferredPrompt;
 
-            window.addEventListener('beforeinstallprompt', (e) => {
-                // Prevent Chrome's default install prompt
-                e.preventDefault();
-                // Store the event for later use
-                deferredPrompt = e;
-                console.log('[PWA] Install prompt available');
+        window.addEventListener('beforeinstallprompt', (e) => {
+            // Prevent Chrome's default install prompt
+            e.preventDefault();
+            // Store the event for later use
+            deferredPrompt = e;
+            console.log('[PWA] Install prompt available');
 
-                // You can show your own custom install button here
-                // Example: showInstallButton();
-            });
+            // You can show your own custom install button here
+            // Example: showInstallButton();
+        });
 
-            // Function to trigger install (call this from a button click)
-            window.installPWA = async () => {
-                if (!deferredPrompt) {
-                    console.log('[PWA] Install prompt not available');
-                    return;
-                }
-
-                // Show the install prompt
-                deferredPrompt.prompt();
-
-                // Wait for the user's response
-           { outcome } = await deferredPrompt.userChoice;
-                console.log(`[PWA] User response: ${outcome}`);
-
-                // Clear the prompt
-                deferredPrompt = null;
-            };
-
-            // Listen for app installation
-            window.addEventListener('appinstalled', (e) => {
-                console.log('[PWA] App installed successfully');
-                deferredPrompt = null;
-            });
-
-            // Service Worker Registration
-            if ('serviceWorker' in navigator) {
-                window.addEventListener('load', () => {
-                    // Check service worker status
-                    if (navigator.serviceWorker.controller) {
-                        console.log(
-                            '[PWA] Service worker active - offline mode available'
-                        );
-
-                        // Listen for service worker updates
-                        navigator.serviceWorker.addEventListener(
-                            'message',
-                            (event) => {
-                                if (
-                                    event.data &&
-                                    event.data.type === 'OFFLINE_READY'
-                                ) {
-                                    console.log(
-                                        '[PWA] ✅ App fully cached and ready for offline use'
-                                    );
-                                }
-                            }
-                        );
-                    } else {
-                        console.log('[PWA] Service worker registering...');
-                    }
-                });
+        // Function to trigger install (call this from a button click)
+        window.installPWA = async () => {
+            if (!deferredPrompt) {
+                console.log('[PWA] Install prompt not available');
+                return;
             }
+
+            // Show the install prompt
+            deferredPrompt.prompt();
+
+            // Wait for the user's response
+            const { outcome } = await deferredPrompt.userChoice;
+            console.log(`[PWA] User response: ${outcome}`);
+
+            // Clear the prompt
+            deferredPrompt = null;
+        };
+
+        // Listen for app installation
+        window.addEventListener('appinstalled', (e) => {
+            console.log('[PWA] App installed successfully');
+            deferredPrompt = null;
+        });
+
+        // Service Worker Registration
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                // Check service worker status
+                if (navigator.serviceWorker.controller) {
+                    console.log(
+                        '[PWA] Service worker active - offline mode available'
+                    );
+
+                    // Listen for service worker updates
+                    navigator.serviceWorker.addEventListener(
+                        'message',
+                        (event) => {
+                            if (
+                                event.data &&
+                                event.data.type === 'OFFLINE_READY'
+                            ) {
+                                console.log(
+                                    '[PWA] ✅ App fully cached and ready for offline use'
+                                );
+                            }
+                        }
+                    );
+                } else {
+                    console.log('[PWA] Service worker registering...');
+                }
+            });
+        }
     </script>
 </body>
 
