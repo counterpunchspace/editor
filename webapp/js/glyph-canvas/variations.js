@@ -1,0 +1,232 @@
+class AxesManager {
+    constructor() {
+        this.variationSettings = {}; // Current variation settings
+        this.axesSection = null; // Container for axes UI
+        // Animation state
+        this.animationFrames = parseInt(
+            localStorage.getItem('animationFrames') || '10',
+            10
+        );
+        this.isAnimating = false;
+        this.animationStartValues = {};
+        this.animationTargetValues = {};
+        this.animationCurrentFrame = 0;
+
+        this.opentypeFont = null; // To be set externally
+        this.callbacks = {}; // Optional callbacks for interaction with GlyphCanvas
+    }
+
+    on(event, callback) {
+        this.callbacks[event] = callback;
+    }
+
+    call(event, ...args) {
+        if (this.callbacks[event]) {
+            this.callbacks[event](...args);
+        }
+    }
+
+    createAxesSection() {
+        const axesSection = document.createElement('div');
+        axesSection.id = 'glyph-axes-section';
+        axesSection.style.display = 'flex';
+        axesSection.style.flexDirection = 'column';
+        axesSection.style.gap = '10px';
+        this.axesSection = axesSection;
+        return axesSection;
+    }
+
+    updateAxisSliders() {
+        // Update axis slider positions to match current variationSettings
+        if (!this.axesSection) return;
+
+        // Update all sliders
+        /** @type {NodeListOf<HTMLInputElement>} */
+        const sliders = this.axesSection.querySelectorAll(
+            'input[data-axis-tag]'
+        );
+        sliders.forEach((slider) => {
+            const axisTag = slider.getAttribute('data-axis-tag');
+            if (this.variationSettings[axisTag] !== undefined) {
+                slider.value = this.variationSettings[axisTag];
+            }
+        });
+
+        // Update all value labels
+        const valueLabels = this.axesSection.querySelectorAll(
+            'span[data-axis-tag]'
+        );
+        valueLabels.forEach((label) => {
+            const axisTag = label.getAttribute('data-axis-tag');
+            if (this.variationSettings[axisTag] !== undefined) {
+                label.textContent = this.variationSettings[axisTag].toFixed(0);
+            }
+        });
+    }
+
+    getVariationAxes() {
+        if (!this.opentypeFont || !this.opentypeFont.tables.fvar) {
+            return [];
+        }
+        return this.opentypeFont.tables.fvar.axes || [];
+    }
+
+    updateAxesUI() {
+        if (!this.axesSection) return;
+
+        // Clear existing axes
+        this.axesSection.innerHTML = '';
+
+        const axes = this.getVariationAxes();
+
+        if (axes.length === 0) {
+            return; // No variable axes
+        }
+
+        // Add section title
+        const title = document.createElement('div');
+        title.className = 'editor-section-title';
+        title.textContent = 'Variable Axes';
+        this.axesSection.appendChild(title);
+
+        // Create slider for each axis
+        axes.forEach((axis) => {
+            const axisContainer = document.createElement('div');
+            axisContainer.className = 'editor-axis-container';
+
+            // Label row (axis name and value)
+            const labelRow = document.createElement('div');
+            labelRow.className = 'editor-axis-label-row';
+
+            const axisLabel = document.createElement('span');
+            axisLabel.className = 'editor-axis-name';
+            axisLabel.textContent = axis.name.en || axis.tag;
+
+            const valueLabel = document.createElement('span');
+            valueLabel.className = 'editor-axis-value';
+            valueLabel.textContent = axis.defaultValue.toFixed(0);
+            valueLabel.setAttribute('data-axis-tag', axis.tag); // Add identifier for programmatic updates
+
+            labelRow.appendChild(axisLabel);
+            labelRow.appendChild(valueLabel);
+
+            // Slider
+            const slider = document.createElement('input');
+            slider.type = 'range';
+            slider.className = 'editor-axis-slider';
+            slider.min = axis.minValue;
+            slider.max = axis.maxValue;
+            slider.step = '1';
+            slider.setAttribute('data-axis-tag', axis.tag); // Add identifier for programmatic updates
+
+            // Restore 7 value if it exists, otherwise use default
+            const initialValue =
+                this.variationSettings[axis.tag] !== undefined
+                    ? this.variationSettings[axis.tag]
+                    : axis.defaultValue;
+
+            slider.value = initialValue;
+            valueLabel.textContent = initialValue.toFixed(0);
+
+            // Initialize variation setting
+            this.variationSettings[axis.tag] = initialValue;
+
+            // Enter preview mode on mousedown
+            slider.addEventListener('mousedown', () => {
+                this.isSliderActive = true;
+                this.call('onSliderMouseDown');
+            });
+
+            // Exit preview mode and restore focus on mouseup
+            slider.addEventListener('mouseup', () => {
+                this.isSliderActive = false;
+                this.call('onSliderMouseUp');
+            });
+
+            // Update on change
+            slider.addEventListener('input', (e) => {
+                // @ts-ignore
+                const value = parseFloat(e.target.value);
+                valueLabel.textContent = value.toFixed(0);
+                this.call('onSliderChange', axis.tag, value);
+
+                this.setVariation(axis.tag, value);
+            });
+
+            axisContainer.appendChild(labelRow);
+            axisContainer.appendChild(slider);
+            this.axesSection.appendChild(axisContainer);
+        });
+
+        console.log(`Created ${axes.length} variable axis sliders`);
+
+        // Global mouseup handler to exit preview mode if slider was active
+        // This catches cases where mouse is released outside the slider element
+        document.addEventListener('mouseup', () => {
+            if (this.isSliderActive) {
+                this.isSliderActive = false;
+                this.call('onSliderMouseUp');
+            }
+        });
+    }
+
+    setVariation(axisTag, value) {
+        this._setupAnimation({ [axisTag]: value });
+    }
+
+    _setupAnimation(newSettings) {
+        if (this.isAnimating) {
+            this.isAnimating = false;
+        }
+
+        this.animationStartValues = { ...this.variationSettings };
+        this.animationTargetValues = {
+            ...this.variationSettings,
+            ...newSettings
+        };
+        this.animationCurrentFrame = 0;
+        this.isAnimating = true;
+        this.animateVariation();
+    }
+
+    async animateVariation() {
+        if (!this.isAnimating) return;
+
+        this.animationCurrentFrame++;
+        const progress = Math.min(
+            this.animationCurrentFrame / this.animationFrames,
+            1.0
+        );
+
+        // Ease-out cubic for smoother animation
+        const easedProgress = 1 - Math.pow(1 - progress, 3);
+
+        // Interpolate all axes
+        for (const axisTag in this.animationTargetValues) {
+            const startValue =
+                this.animationStartValues[axisTag] ||
+                this.animationTargetValues[axisTag];
+            const targetValue = this.animationTargetValues[axisTag];
+            this.variationSettings[axisTag] =
+                startValue + (targetValue - startValue) * easedProgress;
+        }
+
+        // Update sliders during animation
+        this.updateAxisSliders();
+        this.call('animationInProgress');
+
+        if (progress < 1.0) {
+            requestAnimationFrame(() => this.animateVariation());
+        } else {
+            // Ensure we end exactly at target values
+            this.variationSettings = { ...this.animationTargetValues };
+            this.isAnimating = false;
+            this.updateAxisSliders(); // Update slider UI to match final values
+            this.call('animationComplete');
+        }
+    }
+}
+
+if (typeof module !== 'undefined' && module.exports) {
+    module.exports = { AxesManager };
+}

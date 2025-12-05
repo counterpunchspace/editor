@@ -14,6 +14,7 @@ class GlyphCanvas {
         this.canvas = null;
         this.ctx = null;
 
+        this.axesManager = new AxesManager();
         // Transformation state
         this.initialScale = 0.2; // Zoomed out to see glyphs better
         this.viewportManager = null; // Loaded in init() when we have a client rect
@@ -25,7 +26,6 @@ class GlyphCanvas {
         this.currentFont = null;
         this.fontBlob = null;
         this.opentypeFont = null; // For glyph path extraction
-        this.variationSettings = {}; // Store variable axis values
         this.featureSettings = {}; // Store OpenType feature on/off states
         this.defaultFeatureSettings = {}; // Store default states for reset
         this.sourceGlyphNames = {}; // Map of GID to glyph names from source font
@@ -45,16 +45,6 @@ class GlyphCanvas {
         // Selection state
         this.selectionStart = null; // Start of selection (null = no selection)
         this.selectionEnd = null; // End of selection
-
-        // Animation state
-        this.animationFrames = parseInt(
-            localStorage.getItem('animationFrames') || '10',
-            10
-        );
-        this.isAnimating = false;
-        this.animationStartValues = {};
-        this.animationTargetValues = {};
-        this.animationCurrentFrame = 0;
 
         // Focus state for background color
         this.isFocused = false;
@@ -234,7 +224,9 @@ class GlyphCanvas {
                     this.selectedLayerId = this.previousSelectedLayerId;
 
                     // Restore axis values with animation
-                    this._setupAnimation({ ...this.previousVariationSettings });
+                    this.axesManager._setupAnimation({
+                        ...this.previousVariationSettings
+                    });
 
                     // Update layer selection UI
                     this.updateLayerSelection();
@@ -273,6 +265,7 @@ class GlyphCanvas {
 
         // Sidebar click handlers to restore canvas focus in editor mode
         this.setupSidebarFocusHandlers();
+        this.setupAxesManagerEventHandlers();
     }
 
     setupSidebarFocusHandlers() {
@@ -298,6 +291,58 @@ class GlyphCanvas {
         if (rightSidebar) {
             rightSidebar.addEventListener('mousedown', restoreFocus);
         }
+    }
+    setupAxesManagerEventHandlers() {
+        this.axesManager.on('sliderMouseDown', () => {
+            if (this.isGlyphEditMode) {
+                this.isPreviewMode = true;
+                this.render();
+            }
+        });
+        this.axesManager.on('sliderMouseUp', () => {
+            if (this.isGlyphEditMode && this.isPreviewMode) {
+                this.isPreviewMode = false;
+                this.render();
+            } else if (this.isGlyphEditMode) {
+                this.isPreviewMode = false;
+                this.render();
+                // Restore focus to canvas
+                setTimeout(() => this.canvas.focus(), 0);
+            } else {
+                // In text editing mode, restore focus to canvas
+                setTimeout(() => this.canvas.focus(), 0);
+            }
+        });
+        this.axesManager.on('animationInProgress', () => {
+            this.shapeText();
+        });
+        this.axesManager.on('animationComplete', async () => {
+            // Check if new variation settings match any layer
+            if (this.isGlyphEditMode && this.fontData) {
+                await this.autoSelectMatchingLayer();
+            }
+
+            this.shapeText();
+
+            // Restore focus to canvas after animation completes (for text editing mode)
+            if (!this.isGlyphEditMode) {
+                setTimeout(() => this.canvas.focus(), 0);
+            }
+        });
+        this.axesManager.on('sliderChange', (axisTag, value) => {
+            // Save current state before manual adjustment (only once per manual session)
+            if (
+                this.selectedLayerId !== null &&
+                this.previousSelectedLayerId === null
+            ) {
+                this.previousSelectedLayerId = this.selectedLayerId;
+                this.previousVariationSettings = {
+                    ...this.axesManager.variationSettings
+                };
+                this.selectedLayerId = null; // Deselect layer
+                this.updateLayerSelection(); // Update UI
+            }
+        });
     }
 
     onMouseDown(e) {
@@ -1219,7 +1264,9 @@ class GlyphCanvas {
 
         try {
             // Store current variation settings to restore after font reload
-            const previousVariationSettings = { ...this.variationSettings };
+            const previousVariationSettings = {
+                ...this.axesManager.variationSettings
+            };
 
             // Store font blob
             this.fontBlob = fontArrayBuffer;
@@ -1227,6 +1274,7 @@ class GlyphCanvas {
             // Parse with opentype.js for glyph path extraction
             if (window.opentype) {
                 this.opentypeFont = opentype.parse(fontArrayBuffer);
+                this.axesManager.opentypeFont = this.opentypeFont;
                 console.log(
                     'Font parsed with opentype.js:',
                     this.opentypeFont.names.fontFamily.en
@@ -1258,10 +1306,10 @@ class GlyphCanvas {
 
                 // Restore previous variation settings before updating UI
                 // This ensures the sliders show the previous values
-                this.variationSettings = previousVariationSettings;
+                this.axesManager.variationSettings = previousVariationSettings;
 
                 // Update axes UI (will restore slider positions from variationSettings)
-                this.updateAxesUI();
+                this.axesManager.updateAxesUI();
 
                 // Update features UI (async, then shape text)
                 this.updateFeaturesUI().then(() => {
@@ -1288,81 +1336,6 @@ class GlyphCanvas {
         this.onTextChange();
 
         this.shapeText();
-    }
-
-    _setupAnimation(newSettings) {
-        if (this.isAnimating) {
-            this.isAnimating = false;
-        }
-
-        this.animationStartValues = { ...this.variationSettings };
-        this.animationTargetValues = {
-            ...this.variationSettings,
-            ...newSettings
-        };
-        this.animationCurrentFrame = 0;
-        this.isAnimating = true;
-        this.animateVariation();
-    }
-
-    setVariation(axisTag, value) {
-        this._setupAnimation({ [axisTag]: value });
-    }
-
-    async animateVariation() {
-        if (!this.isAnimating) return;
-
-        this.animationCurrentFrame++;
-        const progress = Math.min(
-            this.animationCurrentFrame / this.animationFrames,
-            1.0
-        );
-
-        // Ease-out cubic for smoother animation
-        const easedProgress = 1 - Math.pow(1 - progress, 3);
-
-        // Interpolate all axes
-        for (const axisTag in this.animationTargetValues) {
-            const startValue =
-                this.animationStartValues[axisTag] ||
-                this.animationTargetValues[axisTag];
-            const targetValue = this.animationTargetValues[axisTag];
-            this.variationSettings[axisTag] =
-                startValue + (targetValue - startValue) * easedProgress;
-        }
-
-        // Update sliders during animation
-        this.updateAxisSliders();
-
-        this.shapeText();
-
-        if (progress < 1.0) {
-            requestAnimationFrame(() => this.animateVariation());
-        } else {
-            // Ensure we end exactly at target values
-            this.variationSettings = { ...this.animationTargetValues };
-            this.isAnimating = false;
-            this.updateAxisSliders(); // Update slider UI to match final values
-
-            // Check if new variation settings match any layer
-            if (this.isGlyphEditMode && this.fontData) {
-                await this.autoSelectMatchingLayer();
-            }
-
-            this.shapeText();
-
-            // Restore focus to canvas after animation completes (for text editing mode)
-            if (!this.isGlyphEditMode) {
-                setTimeout(() => this.canvas.focus(), 0);
-            }
-        }
-    }
-
-    getVariationAxes() {
-        if (!this.opentypeFont || !this.opentypeFont.tables.fvar) {
-            return [];
-        }
-        return this.opentypeFont.tables.fvar.axes || [];
     }
 
     async selectGlyphByIndex(glyphIndex) {
@@ -1806,7 +1779,7 @@ json.dumps(result)
         }
 
         // Get current axis tags and values
-        const currentLocation = { ...this.variationSettings };
+        const currentLocation = { ...this.axesManager.variationSettings };
 
         // Check each layer to find a match
         for (const layer of this.fontData.layers) {
@@ -1904,7 +1877,7 @@ json.dumps(result)
         for (const [axisTag, value] of Object.entries(master.location)) {
             newSettings[axisTag] = value;
         }
-        this._setupAnimation(newSettings);
+        this.axesManager._setupAnimation(newSettings);
 
         // Update the visual selection highlight for layers without rebuilding the entire UI
         this.updateLayerSelection();
@@ -2940,33 +2913,6 @@ json.dumps(result)
         return { glyphX, glyphY };
     }
 
-    updateAxisSliders() {
-        // Update axis slider positions to match current variationSettings
-        if (!this.axesSection) return;
-
-        // Update all sliders
-        const sliders = this.axesSection.querySelectorAll(
-            'input[data-axis-tag]'
-        );
-        sliders.forEach((slider) => {
-            const axisTag = slider.getAttribute('data-axis-tag');
-            if (this.variationSettings[axisTag] !== undefined) {
-                slider.value = this.variationSettings[axisTag];
-            }
-        });
-
-        // Update all value labels
-        const valueLabels = this.axesSection.querySelectorAll(
-            'span[data-axis-tag]'
-        );
-        valueLabels.forEach((label) => {
-            const axisTag = label.getAttribute('data-axis-tag');
-            if (this.variationSettings[axisTag] !== undefined) {
-                label.textContent = this.variationSettings[axisTag].toFixed(0);
-            }
-        });
-    }
-
     async updatePropertiesUI() {
         if (!this.propertiesSection) return;
 
@@ -2994,130 +2940,6 @@ json.dumps(result)
             emptyMessage.textContent = 'No glyph selected';
             this.propertiesSection.appendChild(emptyMessage);
         }
-    }
-
-    updateAxesUI() {
-        if (!this.axesSection) return;
-
-        // Clear existing axes
-        this.axesSection.innerHTML = '';
-
-        const axes = this.getVariationAxes();
-
-        if (axes.length === 0) {
-            return; // No variable axes
-        }
-
-        // Add section title
-        const title = document.createElement('div');
-        title.className = 'editor-section-title';
-        title.textContent = 'Variable Axes';
-        this.axesSection.appendChild(title);
-
-        // Create slider for each axis
-        axes.forEach((axis) => {
-            const axisContainer = document.createElement('div');
-            axisContainer.className = 'editor-axis-container';
-
-            // Label row (axis name and value)
-            const labelRow = document.createElement('div');
-            labelRow.className = 'editor-axis-label-row';
-
-            const axisLabel = document.createElement('span');
-            axisLabel.className = 'editor-axis-name';
-            axisLabel.textContent = axis.name.en || axis.tag;
-
-            const valueLabel = document.createElement('span');
-            valueLabel.className = 'editor-axis-value';
-            valueLabel.textContent = axis.defaultValue.toFixed(0);
-            valueLabel.setAttribute('data-axis-tag', axis.tag); // Add identifier for programmatic updates
-
-            labelRow.appendChild(axisLabel);
-            labelRow.appendChild(valueLabel);
-
-            // Slider
-            const slider = document.createElement('input');
-            slider.type = 'range';
-            slider.className = 'editor-axis-slider';
-            slider.min = axis.minValue;
-            slider.max = axis.maxValue;
-            slider.step = 1;
-            slider.setAttribute('data-axis-tag', axis.tag); // Add identifier for programmatic updates
-
-            // Restore previous value if it exists, otherwise use default
-            const initialValue =
-                this.variationSettings[axis.tag] !== undefined
-                    ? this.variationSettings[axis.tag]
-                    : axis.defaultValue;
-
-            slider.value = initialValue;
-            valueLabel.textContent = initialValue.toFixed(0);
-
-            // Initialize variation setting
-            this.variationSettings[axis.tag] = initialValue;
-
-            // Enter preview mode on mousedown
-            slider.addEventListener('mousedown', () => {
-                if (this.isGlyphEditMode) {
-                    this.isPreviewMode = true;
-                    this.isSliderActive = true;
-                    this.render();
-                }
-            });
-
-            // Exit preview mode and restore focus on mouseup
-            slider.addEventListener('mouseup', () => {
-                this.isSliderActive = false;
-                if (this.isGlyphEditMode) {
-                    this.isPreviewMode = false;
-                    this.render();
-                    // Restore focus to canvas
-                    setTimeout(() => this.canvas.focus(), 0);
-                } else {
-                    // In text editing mode, restore focus to canvas
-                    setTimeout(() => this.canvas.focus(), 0);
-                }
-            });
-
-            // Update on change
-            slider.addEventListener('input', (e) => {
-                const value = parseFloat(e.target.value);
-                valueLabel.textContent = value.toFixed(0);
-
-                // Save current state before manual adjustment (only once per manual session)
-                if (
-                    this.selectedLayerId !== null &&
-                    this.previousSelectedLayerId === null
-                ) {
-                    this.previousSelectedLayerId = this.selectedLayerId;
-                    this.previousVariationSettings = {
-                        ...this.variationSettings
-                    };
-                    this.selectedLayerId = null; // Deselect layer
-                    this.updateLayerSelection(); // Update UI
-                }
-
-                this.setVariation(axis.tag, value);
-            });
-
-            axisContainer.appendChild(labelRow);
-            axisContainer.appendChild(slider);
-            this.axesSection.appendChild(axisContainer);
-        });
-
-        console.log(`Created ${axes.length} variable axis sliders`);
-
-        // Global mouseup handler to exit preview mode if slider was active
-        // This catches cases where mouse is released outside the slider element
-        document.addEventListener('mouseup', () => {
-            if (this.isSliderActive) {
-                this.isSliderActive = false;
-                if (this.isGlyphEditMode && this.isPreviewMode) {
-                    this.isPreviewMode = false;
-                    this.render();
-                }
-            }
-        });
     }
 
     async getDiscretionaryFeatures() {
@@ -3332,7 +3154,7 @@ json.dumps(result)
             if (window.fontManager && window.fontManager.isReady()) {
                 console.log('🔄 Text changed, recompiling editing font...');
                 window.fontManager
-                    .compileEditingFont(this.textBuffer, this.featureSettings)
+                    .compileEditingFont(this.textBuffer)
                     .catch((error) => {
                         console.error(
                             'Failed to recompile editing font:',
@@ -3365,8 +3187,8 @@ json.dumps(result)
 
         try {
             // Apply variation settings if any
-            if (Object.keys(this.variationSettings).length > 0) {
-                this.hbFont.setVariations(this.variationSettings);
+            if (Object.keys(this.axesManager.variationSettings).length > 0) {
+                this.hbFont.setVariations(this.axesManager.variationSettings);
             }
 
             // Use BiDi algorithm if available, otherwise fallback to simple shaping
@@ -6170,11 +5992,7 @@ function initCanvas() {
         leftSidebar.appendChild(propertiesSection);
 
         // Create variable axes container (initially empty)
-        const axesSection = document.createElement('div');
-        axesSection.id = 'glyph-axes-section';
-        axesSection.style.display = 'flex';
-        axesSection.style.flexDirection = 'column';
-        axesSection.style.gap = '10px';
+        const axesSection = window.glyphCanvas.axesManager.createAxesSection();
         rightSidebar.appendChild(axesSection);
 
         // Create OpenType features container (initially empty)
