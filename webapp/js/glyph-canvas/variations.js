@@ -134,13 +134,13 @@ class AxesManager {
             // Enter preview mode on mousedown
             slider.addEventListener('mousedown', () => {
                 this.isSliderActive = true;
-                this.call('onSliderMouseDown');
+                this.call('sliderMouseDown');
             });
 
             // Exit preview mode and restore focus on mouseup
             slider.addEventListener('mouseup', () => {
                 this.isSliderActive = false;
-                this.call('onSliderMouseUp');
+                this.call('sliderMouseUp');
             });
 
             // Update on change
@@ -165,7 +165,7 @@ class AxesManager {
         document.addEventListener('mouseup', () => {
             if (this.isSliderActive) {
                 this.isSliderActive = false;
-                this.call('onSliderMouseUp');
+                this.call('sliderMouseUp');
             }
         });
     }
