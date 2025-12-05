@@ -3196,6 +3196,85 @@ json.dumps(result)
         }, this.textChangeDebounceDelay);
     }
 
+    // Helper function to shift a color's hue on the color wheel
+    // Takes an rgba(), rgb(), or hex string and returns a new color with shifted hue
+    shiftColorHue(colorString, hueDegrees) {
+        let r, g, b, a;
+
+        // Parse the color string
+        const rgbaMatch = colorString.match(
+            /rgba?\((\d+),\s*(\d+),\s*(\d+)(?:,\s*([\d.]+))?\)/
+        );
+        const hexMatch = colorString.match(/^#([0-9a-fA-F]{6})$/);
+
+        if (rgbaMatch) {
+            r = parseInt(rgbaMatch[1]) / 255;
+            g = parseInt(rgbaMatch[2]) / 255;
+            b = parseInt(rgbaMatch[3]) / 255;
+            a = rgbaMatch[4] !== undefined ? parseFloat(rgbaMatch[4]) : 1;
+        } else if (hexMatch) {
+            const hex = hexMatch[1];
+            r = parseInt(hex.substr(0, 2), 16) / 255;
+            g = parseInt(hex.substr(2, 2), 16) / 255;
+            b = parseInt(hex.substr(4, 2), 16) / 255;
+            a = 1;
+        } else {
+            return colorString; // Can't parse, return original
+        }
+
+        // Convert RGB to HSL
+        const max = Math.max(r, g, b);
+        const min = Math.min(r, g, b);
+        let h,
+            s,
+            l = (max + min) / 2;
+
+        if (max === min) {
+            h = s = 0; // achromatic
+        } else {
+            const d = max - min;
+            s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+            switch (max) {
+                case r:
+                    h = ((g - b) / d + (g < b ? 6 : 0)) / 6;
+                    break;
+                case g:
+                    h = ((b - r) / d + 2) / 6;
+                    break;
+                case b:
+                    h = ((r - g) / d + 4) / 6;
+                    break;
+            }
+        }
+
+        // Shift hue
+        h = (h + hueDegrees / 360) % 1;
+        if (h < 0) h += 1;
+
+        // Convert HSL back to RGB
+        let r2, g2, b2;
+        if (s === 0) {
+            r2 = g2 = b2 = l; // achromatic
+        } else {
+            const hue2rgb = (p, q, t) => {
+                if (t < 0) t += 1;
+                if (t > 1) t -= 1;
+                if (t < 1 / 6) return p + (q - p) * 6 * t;
+                if (t < 1 / 2) return q;
+                if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6;
+                return p;
+            };
+            const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+            const p = 2 * l - q;
+            r2 = hue2rgb(p, q, h + 1 / 3);
+            g2 = hue2rgb(p, q, h);
+            b2 = hue2rgb(p, q, h - 1 / 3);
+        }
+
+        // Return as rgba string
+        return `rgba(${Math.round(r2 * 255)}, ${Math.round(g2 * 255)}, ${Math.round(b2 * 255)}, ${a})`;
+    }
+
     render() {
         if (!this.ctx || !this.canvas) return;
 
@@ -4183,30 +4262,115 @@ json.dumps(result)
                                 componentShape.nodes &&
                                 componentShape.nodes.length > 0
                             ) {
-                                this.ctx.beginPath();
-
-                                // Build the path using the helper method
-                                this.buildPathFromNodes(componentShape.nodes);
-
-                                this.ctx.closePath();
-
-                                // Fill with semi-transparent color
+                                // Get colors
                                 const colors = isDarkTheme
                                     ? APP_SETTINGS.OUTLINE_EDITOR.COLORS_DARK
                                     : APP_SETTINGS.OUTLINE_EDITOR.COLORS_LIGHT;
-                                this.ctx.fillStyle = isSelected
+
+                                // Determine the fill color based on state
+                                const fillColor = isSelected
                                     ? colors.COMPONENT_FILL_SELECTED
                                     : isHovered
                                       ? colors.COMPONENT_FILL_HOVERED
                                       : colors.COMPONENT_FILL_NORMAL;
-                                this.ctx.fill();
 
-                                // Stroke the outline
-                                this.ctx.strokeStyle = isSelected
+                                const strokeColor = isSelected
                                     ? colors.COMPONENT_SELECTED
                                     : isHovered
                                       ? colors.COMPONENT_HOVERED
                                       : colors.COMPONENT_NORMAL;
+
+                                // Apply glow effect - blur stays constant in font units
+                                const glowBlur =
+                                    APP_SETTINGS.OUTLINE_EDITOR
+                                        .COMPONENT_GLOW_BLUR;
+                                const hueShift =
+                                    APP_SETTINGS.OUTLINE_EDITOR
+                                        .COMPONENT_GLOW_HUE_SHIFT;
+
+                                // Calculate glow stroke width based on zoom level
+                                const glowStrokeMin =
+                                    APP_SETTINGS.OUTLINE_EDITOR
+                                        .COMPONENT_GLOW_STROKE_WIDTH_AT_MIN_ZOOM;
+                                const glowStrokeMax =
+                                    APP_SETTINGS.OUTLINE_EDITOR
+                                        .COMPONENT_GLOW_STROKE_WIDTH_AT_MAX_ZOOM;
+                                const glowInterpolationMin =
+                                    APP_SETTINGS.OUTLINE_EDITOR
+                                        .COMPONENT_GLOW_STROKE_INTERPOLATION_MIN;
+                                const glowInterpolationMax =
+                                    APP_SETTINGS.OUTLINE_EDITOR
+                                        .COMPONENT_GLOW_STROKE_INTERPOLATION_MAX;
+
+                                let glowStrokeWidth;
+                                if (
+                                    this.viewportManager.scale <=
+                                    glowInterpolationMin
+                                ) {
+                                    glowStrokeWidth = glowStrokeMin * invScale;
+                                } else if (
+                                    this.viewportManager.scale >=
+                                    glowInterpolationMax
+                                ) {
+                                    glowStrokeWidth = glowStrokeMax * invScale;
+                                } else {
+                                    // Interpolate between min and max
+                                    const zoomFactor =
+                                        (this.viewportManager.scale -
+                                            glowInterpolationMin) /
+                                        (glowInterpolationMax -
+                                            glowInterpolationMin);
+                                    glowStrokeWidth =
+                                        (glowStrokeMin +
+                                            (glowStrokeMax - glowStrokeMin) *
+                                                zoomFactor) *
+                                        invScale;
+                                }
+
+                                // Shift hue and ensure full opacity for visible glow
+                                let glowColor = this.shiftColorHue(
+                                    strokeColor,
+                                    hueShift
+                                );
+                                // Parse and boost opacity if needed
+                                const glowMatch = glowColor.match(
+                                    /rgba?\((\d+),\s*(\d+),\s*(\d+)(?:,\s*([\d.]+))?\)/
+                                );
+                                if (glowMatch) {
+                                    const r = glowMatch[1];
+                                    const g = glowMatch[2];
+                                    const b = glowMatch[3];
+                                    glowColor = `rgba(${r}, ${g}, ${b}, 1.0)`; // Full opacity for strong glow
+                                }
+
+                                // First pass: Draw glow on the outside by stroking with shadow
+                                this.ctx.save();
+                                this.ctx.shadowBlur = glowBlur;
+                                this.ctx.shadowColor = glowColor;
+                                this.ctx.shadowOffsetX = 0;
+                                this.ctx.shadowOffsetY = 0;
+                                this.ctx.strokeStyle = glowColor;
+                                this.ctx.lineWidth = glowStrokeWidth;
+
+                                this.ctx.beginPath();
+                                this.buildPathFromNodes(componentShape.nodes);
+                                this.ctx.closePath();
+                                this.ctx.stroke();
+                                this.ctx.restore();
+
+                                // Second pass: Draw fill and stroke without shadow
+                                this.ctx.shadowBlur = 0;
+                                this.ctx.shadowColor = 'transparent';
+
+                                this.ctx.beginPath();
+                                this.buildPathFromNodes(componentShape.nodes);
+                                this.ctx.closePath();
+
+                                this.ctx.fillStyle = fillColor;
+                                this.ctx.fill();
+
+                                // Stroke the outline
+                                this.ctx.strokeStyle = strokeColor;
                                 this.ctx.lineWidth = 1 * invScale;
                                 this.ctx.stroke();
                             }

@@ -32,6 +32,14 @@ const APP_SETTINGS = {
         // Component marker size
         COMPONENT_MARKER_SIZE: 10, // px - size of component origin marker
 
+        // Component glow effect
+        COMPONENT_GLOW_BLUR: 60, // font units - blur radius for component glow (stays constant in font space)
+        COMPONENT_GLOW_HUE_SHIFT: -20, // degrees - amount to shift hue on color wheel for glow color
+        COMPONENT_GLOW_STROKE_WIDTH_AT_MIN_ZOOM: 1, // px - glow stroke width at min zoom
+        COMPONENT_GLOW_STROKE_WIDTH_AT_MAX_ZOOM: 5, // px - glow stroke width at max zoom
+        COMPONENT_GLOW_STROKE_INTERPOLATION_MIN: 0.2, // zoom level where min width starts (20%)
+        COMPONENT_GLOW_STROKE_INTERPOLATION_MAX: 1.5, // zoom level where max width is reached (150%)
+
         // Stroke widths
         OUTLINE_STROKE_WIDTH: 1, // px - width of glyph outline paths
 
