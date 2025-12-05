@@ -137,9 +137,10 @@ class TextRunEditor {
             // In RTL text, when moving forward (direction=1), we want the last glyph in the cluster (base glyph)
             // When moving backward (direction=-1), we want the first glyph (which may be a mark)
             // In LTR text, we always want the first glyph
-            const glyphIndex = (isNextRTL && direction > 0)
-                ? this.findLastGlyphAtClusterPosition(nextPosition)
-                : this.findFirstGlyphAtClusterPosition(nextPosition);
+            const glyphIndex =
+                isNextRTL && direction > 0
+                    ? this.findLastGlyphAtClusterPosition(nextPosition)
+                    : this.findFirstGlyphAtClusterPosition(nextPosition);
             if (glyphIndex >= 0) {
                 await this.selectGlyphByIndex(glyphIndex);
                 return;

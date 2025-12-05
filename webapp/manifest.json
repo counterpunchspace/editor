@@ -64,11 +64,7 @@
             "purpose": "maskable"
         }
     ],
-    "categories": [
-        "productivity",
-        "utilities",
-        "design"
-    ],
+    "categories": ["productivity", "utilities", "design"],
     "screenshots": [
         {
             "src": "assets/icons/icon-512x512.png",

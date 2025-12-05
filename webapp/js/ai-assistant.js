@@ -580,8 +580,8 @@ class AIAssistant {
             role === 'user'
                 ? '😀 You'
                 : role === 'output'
-                    ? '🤖 Output'
-                    : '🤖 AI';
+                  ? '🤖 Output'
+                  : '🤖 AI';
 
         // Add context tag with appropriate color
         const contextTag =
@@ -1595,8 +1595,9 @@ Oct. 23rd 2025:
 - Layer.anchor_objects changed to Layer.anchors
 
 EXAMPLE OPERATIONS:
-${this.context === 'font'
-                ? `# Make all glyphs 10% wider (FONT MODE)
+${
+    this.context === 'font'
+        ? `# Make all glyphs 10% wider (FONT MODE)
 font = CurrentFont()
 for glyph in font.glyphs:
     for layer in glyph.layers:
@@ -1611,7 +1612,7 @@ font = CurrentFont()
 print(f"Font has {len(font.glyphs)} glyphs:")
 for glyph in font.glyphs:
     print(f"  - {glyph.name}")`
-                : `# Example script for batch processing (SCRIPT MODE)
+        : `# Example script for batch processing (SCRIPT MODE)
 import context
 
 def process_font(font_path):
@@ -1622,7 +1623,7 @@ def process_font(font_path):
     return font
 
 # This is a script that can be saved and reused`
-            }
+}
 
 Generate Python code for: ${userPrompt}`;
 

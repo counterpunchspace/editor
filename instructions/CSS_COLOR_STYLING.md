@@ -22,14 +22,14 @@ Add your new color variable to BOTH theme definitions with appropriate values fo
 ```css
 /* Dark Theme */
 :root {
-    /* ... existing variables ... */
-    --button-hover-accent: #ff00ff;
+  /* ... existing variables ... */
+  --button-hover-accent: #ff00ff;
 }
 
 /* Light Theme */
 :root[data-theme="light"] {
-    /* ... existing variables ... */
-    --button-hover-accent: #cc00cc;
+  /* ... existing variables ... */
+  --button-hover-accent: #cc00cc;
 }
 ```
 
@@ -39,8 +39,8 @@ Reference the variable using `var()` in your CSS rules:
 
 ```css
 .my-button:hover {
-    background-color: var(--button-hover-accent);
-    color: var(--text-primary);
+  background-color: var(--button-hover-accent);
+  color: var(--text-primary);
 }
 ```
 
@@ -49,6 +49,7 @@ Reference the variable using `var()` in your CSS rules:
 Use semantic names that describe the purpose, not the color:
 
 ### ✅ Good Names
+
 - `--text-primary`, `--text-secondary`, `--text-muted`
 - `--bg-primary`, `--bg-hover`, `--bg-active`
 - `--border-primary`, `--border-active`
@@ -56,6 +57,7 @@ Use semantic names that describe the purpose, not the color:
 - `--button-hover-bg`, `--input-focus-border`
 
 ### ❌ Bad Names
+
 - `--dark-gray`, `--light-blue` (describes appearance, not purpose)
 - `--color-1`, `--color-2` (non-descriptive)
 
@@ -66,14 +68,14 @@ When you need different styling logic (not just colors) between themes:
 ```css
 /* Dark theme specific rule */
 :root:not([data-theme="light"]) .my-element {
-    background-color: var(--my-dark-bg);
-    border-color: var(--my-dark-border);
+  background-color: var(--my-dark-bg);
+  border-color: var(--my-dark-border);
 }
 
 /* Light theme specific rule */
 :root[data-theme="light"] .my-element {
-    background-color: var(--my-light-bg);
-    border-color: var(--my-light-border);
+  background-color: var(--my-light-bg);
+  border-color: var(--my-light-border);
 }
 ```
 
@@ -82,55 +84,62 @@ When you need different styling logic (not just colors) between themes:
 When applying colors to elements with ID selectors, ensure your color rules have sufficient specificity:
 
 ### ❌ Wrong - Will be overridden
+
 ```css
 .my-class.active {
-    color: var(--accent-color);
+  color: var(--accent-color);
 }
 ```
+
 If element has `id="my-element"`, the ID selector wins.
 
 ### ✅ Correct - Use ID in color rule
+
 ```css
 #my-element.active {
-    color: var(--accent-color);
+  color: var(--accent-color);
 }
 ```
 
 ## Common Mistakes to Avoid
 
 ### ❌ WRONG: Hard-coded colors
+
 ```css
 .button {
-    background-color: #ff00ff;  /* DON'T DO THIS */
-    color: rgba(255, 255, 255, 0.8);  /* DON'T DO THIS */
+  background-color: #ff00ff; /* DON'T DO THIS */
+  color: rgba(255, 255, 255, 0.8); /* DON'T DO THIS */
 }
 ```
 
 ### ✅ CORRECT: Use variables
+
 ```css
 .button {
-    background-color: var(--accent-magenta);
-    color: var(--text-tertiary);
+  background-color: var(--accent-magenta);
+  color: var(--text-tertiary);
 }
 ```
 
 ### ❌ WRONG: Theme-specific hard-coded colors
+
 ```css
 :root[data-theme="light"] .button {
-    background-color: #cc00cc;  /* DON'T DO THIS */
+  background-color: #cc00cc; /* DON'T DO THIS */
 }
 ```
 
 ### ✅ CORRECT: Define variable, then use it
+
 ```css
 /* In theme definitions */
 :root[data-theme="light"] {
-    --button-bg-active: #cc00cc;
+  --button-bg-active: #cc00cc;
 }
 
 /* In your rule */
 :root[data-theme="light"] .button.active {
-    background-color: var(--button-bg-active);
+  background-color: var(--button-bg-active);
 }
 ```
 
@@ -170,21 +179,23 @@ Refer to these existing categories when adding new variables:
 Inline styles (set via JavaScript `element.style.color = '#ff00ff'`) override CSS and prevent theme switching from working correctly.
 
 ### ❌ WRONG: JavaScript sets colors
+
 ```javascript
-element.style.backgroundColor = '#ff00ff';
-element.style.color = '#ffffff';
+element.style.backgroundColor = "#ff00ff";
+element.style.color = "#ffffff";
 ```
 
 ### ✅ CORRECT: JavaScript toggles classes, CSS handles colors
+
 ```javascript
-element.classList.toggle('active', isActive);
-element.classList.toggle('focused', isFocused);
+element.classList.toggle("active", isActive);
+element.classList.toggle("focused", isFocused);
 ```
 
 ```css
 .element.active {
-    background-color: var(--accent-magenta);
-    color: var(--text-primary);
+  background-color: var(--accent-magenta);
+  color: var(--text-primary);
 }
 ```
 

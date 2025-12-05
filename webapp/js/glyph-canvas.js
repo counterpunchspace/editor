@@ -343,11 +343,20 @@ class GlyphCanvas {
             const currentSequence = this.glyphSelectionSequence;
 
             // Save the previous glyph's vertical bounds BEFORE clearing layer data
-            if (wasInEditMode && previousIndex >= 0 && previousIndex !== ix && this.layerData) {
+            if (
+                wasInEditMode &&
+                previousIndex >= 0 &&
+                previousIndex !== ix &&
+                this.layerData
+            ) {
                 try {
                     const prevBounds = this.calculateGlyphBoundingBox();
-                    if (prevBounds && previousIndex < this.textRunEditor.shapedGlyphs.length) {
-                        const prevPos = this.textRunEditor._getGlyphPosition(previousIndex);
+                    if (
+                        prevBounds &&
+                        previousIndex < this.textRunEditor.shapedGlyphs.length
+                    ) {
+                        const prevPos =
+                            this.textRunEditor._getGlyphPosition(previousIndex);
                         const fontSpaceMinY = prevPos.yOffset + prevBounds.minY;
                         const fontSpaceMaxY = prevPos.yOffset + prevBounds.maxY;
 
@@ -358,13 +367,25 @@ class GlyphCanvas {
                                 maxY: fontSpaceMaxY
                             };
                         } else {
-                            this.accumulatedVerticalBounds.minY = Math.min(this.accumulatedVerticalBounds.minY, fontSpaceMinY);
-                            this.accumulatedVerticalBounds.maxY = Math.max(this.accumulatedVerticalBounds.maxY, fontSpaceMaxY);
+                            this.accumulatedVerticalBounds.minY = Math.min(
+                                this.accumulatedVerticalBounds.minY,
+                                fontSpaceMinY
+                            );
+                            this.accumulatedVerticalBounds.maxY = Math.max(
+                                this.accumulatedVerticalBounds.maxY,
+                                fontSpaceMaxY
+                            );
                         }
-                        console.log('Saved previous glyph vertical bounds:', { fontSpaceMinY, fontSpaceMaxY });
+                        console.log('Saved previous glyph vertical bounds:', {
+                            fontSpaceMinY,
+                            fontSpaceMaxY
+                        });
                     }
                 } catch (error) {
-                    console.warn('Could not save previous glyph bounds:', error);
+                    console.warn(
+                        'Could not save previous glyph bounds:',
+                        error
+                    );
                 }
             }
 
@@ -382,7 +403,10 @@ class GlyphCanvas {
 
             // Check if this selection is still current (not superseded by a newer one)
             if (currentSequence !== this.glyphSelectionSequence) {
-                console.log('Glyph selection superseded, skipping render/pan for sequence', currentSequence);
+                console.log(
+                    'Glyph selection superseded, skipping render/pan for sequence',
+                    currentSequence
+                );
                 return;
             }
 
@@ -455,7 +479,7 @@ class GlyphCanvas {
                 if (
                     this.hoveredGlyphIndex >= 0 &&
                     this.hoveredGlyphIndex !==
-                    this.textRunEditor.selectedGlyphIndex
+                        this.textRunEditor.selectedGlyphIndex
                 ) {
                     this.textRunEditor.selectGlyphByIndex(
                         this.hoveredGlyphIndex
@@ -561,7 +585,7 @@ class GlyphCanvas {
                     const existingIndex = this.selectedPoints.findIndex(
                         (p) =>
                             p.contourIndex ===
-                            this.hoveredPointIndex.contourIndex &&
+                                this.hoveredPointIndex.contourIndex &&
                             p.nodeIndex === this.hoveredPointIndex.nodeIndex
                     );
                     if (existingIndex >= 0) {
@@ -577,7 +601,7 @@ class GlyphCanvas {
                     const isInSelection = this.selectedPoints.some(
                         (p) =>
                             p.contourIndex ===
-                            this.hoveredPointIndex.contourIndex &&
+                                this.hoveredPointIndex.contourIndex &&
                             p.nodeIndex === this.hoveredPointIndex.nodeIndex
                     );
 
@@ -1010,19 +1034,19 @@ class GlyphCanvas {
                         .transform || [1, 0, 0, 1, 0, 0];
                     const combinedTransform = [
                         parentTransform[0] * nestedTransform[0] +
-                        parentTransform[2] * nestedTransform[1],
+                            parentTransform[2] * nestedTransform[1],
                         parentTransform[1] * nestedTransform[0] +
-                        parentTransform[3] * nestedTransform[1],
+                            parentTransform[3] * nestedTransform[1],
                         parentTransform[0] * nestedTransform[2] +
-                        parentTransform[2] * nestedTransform[3],
+                            parentTransform[2] * nestedTransform[3],
                         parentTransform[1] * nestedTransform[2] +
-                        parentTransform[3] * nestedTransform[3],
+                            parentTransform[3] * nestedTransform[3],
                         parentTransform[0] * nestedTransform[4] +
-                        parentTransform[2] * nestedTransform[5] +
-                        parentTransform[4],
+                            parentTransform[2] * nestedTransform[5] +
+                            parentTransform[4],
                         parentTransform[1] * nestedTransform[4] +
-                        parentTransform[3] * nestedTransform[5] +
-                        parentTransform[5]
+                            parentTransform[3] * nestedTransform[5] +
+                            parentTransform[5]
                     ];
 
                     if (
@@ -1066,7 +1090,11 @@ class GlyphCanvas {
                     );
 
                     // Always use glyphX/glyphY which are in glyph-local space
-                    const isInPath = this.ctx.isPointInPath(path, glyphX, glyphY);
+                    const isInPath = this.ctx.isPointInPath(
+                        path,
+                        glyphX,
+                        glyphY
+                    );
 
                     this.ctx.restore();
                     if (isInPath) return true;
@@ -2492,7 +2520,7 @@ json.dumps(result)
             !this.isGlyphEditMode ||
             this.textRunEditor.selectedGlyphIndex < 0 ||
             this.textRunEditor.selectedGlyphIndex >=
-            this.textRunEditor.shapedGlyphs.length
+                this.textRunEditor.shapedGlyphs.length
         ) {
             glyphNameElement.style.display = 'none';
             return;
@@ -2540,7 +2568,7 @@ json.dumps(result)
                 ) {
                     const currentComponent =
                         currentState.layerData.shapes[
-                        currentState.componentIndex
+                            currentState.componentIndex
                         ];
                     if (currentComponent && currentComponent.Component) {
                         trail.push(currentComponent.Component.reference);
@@ -2711,13 +2739,23 @@ json.dumps(result)
         // Returns {minX, minY, maxX, maxY, width, height} in glyph-local coordinates
         // Returns null if no glyph is selected or no layer data is available
 
-        console.log('calculateGlyphBoundingBox: isGlyphEditMode=', this.isGlyphEditMode, 'layerData=', this.layerData);
+        console.log(
+            'calculateGlyphBoundingBox: isGlyphEditMode=',
+            this.isGlyphEditMode,
+            'layerData=',
+            this.layerData
+        );
 
         if (!this.isGlyphEditMode || !this.layerData) {
             return null;
         }
 
-        console.log('calculateGlyphBoundingBox: layerData.shapes=', this.layerData.shapes, 'layerData.width=', this.layerData.width);
+        console.log(
+            'calculateGlyphBoundingBox: layerData.shapes=',
+            this.layerData.shapes,
+            'layerData.width=',
+            this.layerData.width
+        );
 
         let minX = Infinity;
         let minY = Infinity;
@@ -2741,7 +2779,9 @@ json.dumps(result)
             for (const shape of shapes) {
                 if (shape.Component) {
                     // Component - recursively process its outline shapes with accumulated transform
-                    const compTransform = shape.Component.transform || [1, 0, 0, 1, 0, 0];
+                    const compTransform = shape.Component.transform || [
+                        1, 0, 0, 1, 0, 0
+                    ];
                     const [a1, b1, c1, d1, tx1, ty1] = transform;
                     const [a2, b2, c2, d2, tx2, ty2] = compTransform;
 
@@ -2756,10 +2796,20 @@ json.dumps(result)
                     ];
 
                     // Recursively process the component's actual outline shapes
-                    if (shape.Component.layerData && shape.Component.layerData.shapes) {
-                        processShapes(shape.Component.layerData.shapes, combinedTransform);
+                    if (
+                        shape.Component.layerData &&
+                        shape.Component.layerData.shapes
+                    ) {
+                        processShapes(
+                            shape.Component.layerData.shapes,
+                            combinedTransform
+                        );
                     }
-                } else if (shape.nodes && Array.isArray(shape.nodes) && shape.nodes.length > 0) {
+                } else if (
+                    shape.nodes &&
+                    Array.isArray(shape.nodes) &&
+                    shape.nodes.length > 0
+                ) {
                     // Path - process all nodes with the accumulated transform
                     for (const node of shape.nodes) {
                         const [x, y] = node;
@@ -2791,7 +2841,10 @@ json.dumps(result)
             const glyphWidth = this.layerData.width || 250; // Fallback to 250 if no width
             const height = 10;
 
-            console.log('calculateGlyphBoundingBox: No points found, creating bbox for empty glyph. width=', glyphWidth);
+            console.log(
+                'calculateGlyphBoundingBox: No points found, creating bbox for empty glyph. width=',
+                glyphWidth
+            );
 
             return {
                 minX: 0,
@@ -2803,7 +2856,12 @@ json.dumps(result)
             };
         }
 
-        console.log('calculateGlyphBoundingBox: Found points, bbox=', { minX, minY, maxX, maxY });
+        console.log('calculateGlyphBoundingBox: Found points, bbox=', {
+            minX,
+            minY,
+            maxX,
+            maxY
+        });
 
         return {
             minX,
@@ -2822,7 +2880,10 @@ json.dumps(result)
         // Reset accumulated vertical bounds on cmd+0
         this.accumulatedVerticalBounds = null;
 
-        if (!this.isGlyphEditMode || this.textRunEditor.selectedGlyphIndex < 0) {
+        if (
+            !this.isGlyphEditMode ||
+            this.textRunEditor.selectedGlyphIndex < 0
+        ) {
             return;
         }
 
@@ -2839,7 +2900,9 @@ json.dumps(result)
 
         // Get glyph position in text run
         const { xPosition, xOffset, yOffset } =
-            this.textRunEditor._getGlyphPosition(this.textRunEditor.selectedGlyphIndex);
+            this.textRunEditor._getGlyphPosition(
+                this.textRunEditor.selectedGlyphIndex
+            );
 
         // Convert bbox center to font space
         const fontSpaceCenterX = xPosition + xOffset + centerX;
@@ -2847,8 +2910,10 @@ json.dumps(result)
 
         // Calculate the scale needed to fit the bounding box with margin
         // Use fixed margin in screen pixels, not font units
-        const targetWidth = bounds.width + (margin * 2) / this.viewportManager.scale;
-        const targetHeight = bounds.height + (margin * 2) / this.viewportManager.scale;
+        const targetWidth =
+            bounds.width + (margin * 2) / this.viewportManager.scale;
+        const targetHeight =
+            bounds.height + (margin * 2) / this.viewportManager.scale;
 
         // Calculate scale to fit in viewport with margin
         const scaleX = (rect.width - margin * 2) / bounds.width;
@@ -2861,7 +2926,7 @@ json.dumps(result)
         // Calculate pan to center the glyph both horizontally and vertically
         const targetPanX = rect.width / 2 - fontSpaceCenterX * clampedScale;
         // Note: Y is flipped in canvas, so we negate fontSpaceCenterY
-        const targetPanY = rect.height / 2 - (-fontSpaceCenterY) * clampedScale;
+        const targetPanY = rect.height / 2 - -fontSpaceCenterY * clampedScale;
 
         // Animate to target
         this.viewportManager.animateZoomAndPan(
@@ -2876,12 +2941,19 @@ json.dumps(result)
         // Pan to show a specific glyph (used when switching glyphs with cmd+left/right)
         // Uses accumulated vertical bounds to maintain consistent vertical view
 
-        if (!this.isGlyphEditMode || glyphIndex < 0 || glyphIndex >= this.textRunEditor.shapedGlyphs.length) {
-            console.log('panToGlyph: early return - not in edit mode or invalid index', {
-                isGlyphEditMode: this.isGlyphEditMode,
-                glyphIndex,
-                shapedGlyphsLength: this.textRunEditor.shapedGlyphs?.length
-            });
+        if (
+            !this.isGlyphEditMode ||
+            glyphIndex < 0 ||
+            glyphIndex >= this.textRunEditor.shapedGlyphs.length
+        ) {
+            console.log(
+                'panToGlyph: early return - not in edit mode or invalid index',
+                {
+                    isGlyphEditMode: this.isGlyphEditMode,
+                    glyphIndex,
+                    shapedGlyphsLength: this.textRunEditor.shapedGlyphs?.length
+                }
+            );
             return;
         }
 
@@ -2919,12 +2991,23 @@ json.dumps(result)
                 maxY: fontSpaceMaxY
             };
         } else {
-            this.accumulatedVerticalBounds.minY = Math.min(this.accumulatedVerticalBounds.minY, fontSpaceMinY);
-            this.accumulatedVerticalBounds.maxY = Math.max(this.accumulatedVerticalBounds.maxY, fontSpaceMaxY);
+            this.accumulatedVerticalBounds.minY = Math.min(
+                this.accumulatedVerticalBounds.minY,
+                fontSpaceMinY
+            );
+            this.accumulatedVerticalBounds.maxY = Math.max(
+                this.accumulatedVerticalBounds.maxY,
+                fontSpaceMaxY
+            );
         }
 
-        const accumulatedHeight = this.accumulatedVerticalBounds.maxY - this.accumulatedVerticalBounds.minY;
-        const accumulatedCenterY = (this.accumulatedVerticalBounds.minY + this.accumulatedVerticalBounds.maxY) / 2;
+        const accumulatedHeight =
+            this.accumulatedVerticalBounds.maxY -
+            this.accumulatedVerticalBounds.minY;
+        const accumulatedCenterY =
+            (this.accumulatedVerticalBounds.minY +
+                this.accumulatedVerticalBounds.maxY) /
+            2;
 
         console.log('panToGlyph: accumulated vertical bounds', {
             minY: this.accumulatedVerticalBounds.minY,
@@ -2942,13 +3025,21 @@ json.dumps(result)
         let targetPanY = this.viewportManager.panY;
 
         // Check if current glyph fits within the viewport at current scale
-        const currentScreenLeft = fontSpaceMinX * currentScale + this.viewportManager.panX;
-        const currentScreenRight = fontSpaceMaxX * currentScale + this.viewportManager.panX;
-        const currentScreenTop = (-fontSpaceMaxY) * currentScale + this.viewportManager.panY;
-        const currentScreenBottom = (-fontSpaceMinY) * currentScale + this.viewportManager.panY;
+        const currentScreenLeft =
+            fontSpaceMinX * currentScale + this.viewportManager.panX;
+        const currentScreenRight =
+            fontSpaceMaxX * currentScale + this.viewportManager.panX;
+        const currentScreenTop =
+            -fontSpaceMaxY * currentScale + this.viewportManager.panY;
+        const currentScreenBottom =
+            -fontSpaceMinY * currentScale + this.viewportManager.panY;
 
-        const fitsHorizontally = currentScreenLeft >= margin && currentScreenRight <= rect.width - margin;
-        const fitsVertically = currentScreenTop >= margin && currentScreenBottom <= rect.height - margin;
+        const fitsHorizontally =
+            currentScreenLeft >= margin &&
+            currentScreenRight <= rect.width - margin;
+        const fitsVertically =
+            currentScreenTop >= margin &&
+            currentScreenBottom <= rect.height - margin;
 
         // Only adjust viewport if glyph doesn't fit comfortably
         if (!fitsHorizontally || !fitsVertically) {
@@ -2965,28 +3056,35 @@ json.dumps(result)
                 const scaleFactor = targetScale / currentScale;
                 const centerX = rect.width / 2;
                 // Adjust panX to keep the horizontal center point stable during zoom
-                targetPanX = centerX - (centerX - this.viewportManager.panX) * scaleFactor;
+                targetPanX =
+                    centerX -
+                    (centerX - this.viewportManager.panX) * scaleFactor;
             }
 
             // Center vertically on the accumulated bounds
             // Note: Y is flipped in canvas, so we negate accumulatedCenterY
-            targetPanY = rect.height / 2 - (-accumulatedCenterY) * targetScale;
+            targetPanY = rect.height / 2 - -accumulatedCenterY * targetScale;
 
-            console.log('panToGlyph: centering vertically on accumulated bounds', {
-                accumulatedCenterY,
-                targetPanY,
-                targetScale,
-                scaleFactor: targetScale / currentScale
-            });
+            console.log(
+                'panToGlyph: centering vertically on accumulated bounds',
+                {
+                    accumulatedCenterY,
+                    targetPanY,
+                    targetScale,
+                    scaleFactor: targetScale / currentScale
+                }
+            );
 
             // Pan horizontally: only move if glyph is outside the viewport margins
             // IMPORTANT: Calculate screen position with the NEW scale and adjusted panX
-            const screenLeftAfterZoom = fontSpaceMinX * targetScale + targetPanX;
-            const screenRightAfterZoom = fontSpaceMaxX * targetScale + targetPanX;
+            const screenLeftAfterZoom =
+                fontSpaceMinX * targetScale + targetPanX;
+            const screenRightAfterZoom =
+                fontSpaceMaxX * targetScale + targetPanX;
 
             // Calculate how far outside the viewport the glyph extends
-            const leftOverhang = margin - screenLeftAfterZoom;  // Positive if glyph is off left edge
-            const rightOverhang = screenRightAfterZoom - (rect.width - margin);  // Positive if glyph is off right edge
+            const leftOverhang = margin - screenLeftAfterZoom; // Positive if glyph is off left edge
+            const rightOverhang = screenRightAfterZoom - (rect.width - margin); // Positive if glyph is off right edge
 
             if (leftOverhang > 0) {
                 // Glyph extends past left edge - pan right just enough to bring it to margin
@@ -3020,7 +3118,9 @@ json.dumps(result)
                 );
             }
         } else {
-            console.log('panToGlyph: glyph fits comfortably, no viewport adjustment needed');
+            console.log(
+                'panToGlyph: glyph fits comfortably, no viewport adjustment needed'
+            );
         }
     }
 
@@ -3041,7 +3141,7 @@ json.dumps(result)
         if (
             this.textRunEditor.selectedGlyphIndex >= 0 &&
             this.textRunEditor.selectedGlyphIndex <
-            this.textRunEditor.shapedGlyphs.length
+                this.textRunEditor.shapedGlyphs.length
         ) {
             // Build content off-screen first, then swap in one operation
             const tempContainer = document.createElement('div');
@@ -3511,11 +3611,7 @@ json.dumps(result)
         }
 
         // Draw outline editor when a layer is selected (skip in preview mode)
-        if (
-            !this.selectedLayerId ||
-            !this.layerData ||
-            this.isPreviewMode
-        ) {
+        if (!this.selectedLayerId || !this.layerData || this.isPreviewMode) {
             return;
         }
 
@@ -3523,7 +3619,7 @@ json.dumps(result)
         if (
             this.textRunEditor.selectedGlyphIndex < 0 ||
             this.textRunEditor.selectedGlyphIndex >=
-            this.textRunEditor.shapedGlyphs.length
+                this.textRunEditor.shapedGlyphs.length
         ) {
             return;
         }
@@ -3535,7 +3631,7 @@ json.dumps(result)
 
         const glyph =
             this.textRunEditor.shapedGlyphs[
-            this.textRunEditor.selectedGlyphIndex
+                this.textRunEditor.selectedGlyphIndex
             ];
         const xOffset = glyph.dx || 0;
         const yOffset = glyph.dy || 0;
@@ -3753,9 +3849,11 @@ json.dumps(result)
 
                             // Calculate arrow size based on node size (same scaling as nodes, but slightly bigger)
                             const nodeSizeMax =
-                                APP_SETTINGS.OUTLINE_EDITOR.NODE_SIZE_AT_MAX_ZOOM;
+                                APP_SETTINGS.OUTLINE_EDITOR
+                                    .NODE_SIZE_AT_MAX_ZOOM;
                             const nodeSizeMin =
-                                APP_SETTINGS.OUTLINE_EDITOR.NODE_SIZE_AT_MIN_ZOOM;
+                                APP_SETTINGS.OUTLINE_EDITOR
+                                    .NODE_SIZE_AT_MIN_ZOOM;
                             const nodeInterpolationMin =
                                 APP_SETTINGS.OUTLINE_EDITOR
                                     .NODE_SIZE_INTERPOLATION_MIN;
@@ -3765,17 +3863,20 @@ json.dumps(result)
 
                             let baseSize;
                             if (
-                                this.viewportManager.scale >= nodeInterpolationMax
+                                this.viewportManager.scale >=
+                                nodeInterpolationMax
                             ) {
                                 baseSize = nodeSizeMax * invScale;
                             } else {
                                 const zoomFactor =
                                     (this.viewportManager.scale -
                                         nodeInterpolationMin) /
-                                    (nodeInterpolationMax - nodeInterpolationMin);
+                                    (nodeInterpolationMax -
+                                        nodeInterpolationMin);
                                 baseSize =
                                     (nodeSizeMin +
-                                        (nodeSizeMax - nodeSizeMin) * zoomFactor) *
+                                        (nodeSizeMax - nodeSizeMin) *
+                                            zoomFactor) *
                                     invScale;
                             }
 
@@ -3845,7 +3946,8 @@ json.dumps(result)
                                 // Skip the other off-curve point if needed
                                 if (isNextOffCurve) {
                                     targetIdx++;
-                                    if (targetIdx >= nodes.length) targetIdx = 0;
+                                    if (targetIdx >= nodes.length)
+                                        targetIdx = 0;
                                 }
 
                                 const [targetX, targetY, targetType] =
@@ -3922,7 +4024,8 @@ json.dumps(result)
                     } else {
                         // Interpolate between min and max size
                         const zoomFactor =
-                            (this.viewportManager.scale - nodeInterpolationMin) /
+                            (this.viewportManager.scale -
+                                nodeInterpolationMin) /
                             (nodeInterpolationMax - nodeInterpolationMin);
                         pointSize =
                             (nodeSizeMin +
@@ -3939,8 +4042,8 @@ json.dumps(result)
                         this.ctx.fillStyle = isSelected
                             ? colors.CONTROL_POINT_SELECTED
                             : isHovered
-                                ? colors.CONTROL_POINT_HOVERED
-                                : colors.CONTROL_POINT_NORMAL;
+                              ? colors.CONTROL_POINT_HOVERED
+                              : colors.CONTROL_POINT_NORMAL;
                         this.ctx.fill();
                         this.ctx.strokeStyle = colors.CONTROL_POINT_STROKE;
                         this.ctx.lineWidth = 1 * invScale;
@@ -3953,8 +4056,8 @@ json.dumps(result)
                         this.ctx.fillStyle = isSelected
                             ? colors.NODE_SELECTED
                             : isHovered
-                                ? colors.NODE_HOVERED
-                                : colors.NODE_NORMAL;
+                              ? colors.NODE_HOVERED
+                              : colors.NODE_NORMAL;
                         this.ctx.fillRect(
                             x - pointSize,
                             y - pointSize,
@@ -3975,7 +4078,9 @@ json.dumps(result)
                     if (type === 'cs' || type === 'os' || type === 'ls') {
                         this.ctx.beginPath();
                         this.ctx.arc(x, y, pointSize * 0.4, 0, Math.PI * 2);
-                        this.ctx.fillStyle = isDarkTheme ? '#ffffff' : '#000000';
+                        this.ctx.fillStyle = isDarkTheme
+                            ? '#ffffff'
+                            : '#000000';
                         this.ctx.fill();
                     }
                 });
@@ -4019,7 +4124,10 @@ json.dumps(result)
                 this.ctx.transform(a, b, c, d, tx, ty);
 
                 // Draw the component's outline shapes if they were fetched
-                if (shape.Component.layerData && shape.Component.layerData.shapes) {
+                if (
+                    shape.Component.layerData &&
+                    shape.Component.layerData.shapes
+                ) {
                     // Recursively render all shapes in the component (including nested components)
                     const renderComponentShapes = (
                         shapes,
@@ -4038,7 +4146,8 @@ json.dumps(result)
                                         componentShape.Component.transform
                                     )
                                 ) {
-                                    const t = componentShape.Component.transform;
+                                    const t =
+                                        componentShape.Component.transform;
                                     this.ctx.transform(
                                         t[0] || 1,
                                         t[1] || 0,
@@ -4055,7 +4164,8 @@ json.dumps(result)
                                     componentShape.Component.layerData.shapes
                                 ) {
                                     renderComponentShapes(
-                                        componentShape.Component.layerData.shapes
+                                        componentShape.Component.layerData
+                                            .shapes
                                     );
                                 }
 
@@ -4082,16 +4192,16 @@ json.dumps(result)
                                 this.ctx.fillStyle = isSelected
                                     ? colors.COMPONENT_FILL_SELECTED
                                     : isHovered
-                                        ? colors.COMPONENT_FILL_HOVERED
-                                        : colors.COMPONENT_FILL_NORMAL;
+                                      ? colors.COMPONENT_FILL_HOVERED
+                                      : colors.COMPONENT_FILL_NORMAL;
                                 this.ctx.fill();
 
                                 // Stroke the outline
                                 this.ctx.strokeStyle = isSelected
                                     ? colors.COMPONENT_SELECTED
                                     : isHovered
-                                        ? colors.COMPONENT_HOVERED
-                                        : colors.COMPONENT_NORMAL;
+                                      ? colors.COMPONENT_HOVERED
+                                      : colors.COMPONENT_NORMAL;
                                 this.ctx.lineWidth = 1 * invScale;
                                 this.ctx.stroke();
                             }
@@ -4112,15 +4222,16 @@ json.dumps(result)
                 }
 
                 const markerSize =
-                    APP_SETTINGS.OUTLINE_EDITOR.COMPONENT_MARKER_SIZE * invScale; // Draw cross marker
+                    APP_SETTINGS.OUTLINE_EDITOR.COMPONENT_MARKER_SIZE *
+                    invScale; // Draw cross marker
                 const colors = isDarkTheme
                     ? APP_SETTINGS.OUTLINE_EDITOR.COLORS_DARK
                     : APP_SETTINGS.OUTLINE_EDITOR.COLORS_LIGHT;
                 this.ctx.strokeStyle = isSelected
                     ? colors.COMPONENT_SELECTED
                     : isHovered
-                        ? colors.COMPONENT_HOVERED
-                        : colors.COMPONENT_NORMAL;
+                      ? colors.COMPONENT_HOVERED
+                      : colors.COMPONENT_NORMAL;
                 this.ctx.lineWidth = 2 * invScale;
                 this.ctx.beginPath();
                 this.ctx.moveTo(-markerSize, 0);
@@ -4206,8 +4317,8 @@ json.dumps(result)
                 this.ctx.fillStyle = isSelected
                     ? colors.ANCHOR_SELECTED
                     : isHovered
-                        ? colors.ANCHOR_HOVERED
-                        : colors.ANCHOR_NORMAL;
+                      ? colors.ANCHOR_HOVERED
+                      : colors.ANCHOR_NORMAL;
                 this.ctx.fillRect(
                     -anchorSize,
                     -anchorSize,
@@ -4273,12 +4384,7 @@ json.dumps(result)
         this.ctx.lineWidth = 2 * invScale;
         this.ctx.setLineDash([5 * invScale, 5 * invScale]); // Dashed line
 
-        this.ctx.strokeRect(
-            bbox.minX,
-            bbox.minY,
-            bbox.width,
-            bbox.height
-        );
+        this.ctx.strokeRect(bbox.minX, bbox.minY, bbox.width, bbox.height);
 
         this.ctx.setLineDash([]); // Reset to solid line
 
@@ -4524,7 +4630,10 @@ json.dumps(result)
         // Cmd+0 / Ctrl+0 - Frame current glyph (in edit mode) or reset zoom (in text mode)
         if ((e.metaKey || e.ctrlKey) && e.key === '0') {
             e.preventDefault();
-            if (this.isGlyphEditMode && this.textRunEditor.selectedGlyphIndex >= 0) {
+            if (
+                this.isGlyphEditMode &&
+                this.textRunEditor.selectedGlyphIndex >= 0
+            ) {
                 // In glyph edit mode: frame the current glyph
                 this.frameCurrentGlyph();
             } else {
@@ -4930,7 +5039,7 @@ function setupFontLoadingListener() {
                 const arrayBuffer = e.detail.fontBytes.buffer.slice(
                     e.detail.fontBytes.byteOffset,
                     e.detail.fontBytes.byteOffset +
-                    e.detail.fontBytes.byteLength
+                        e.detail.fontBytes.byteLength
                 );
                 window.glyphCanvas.setFont(arrayBuffer);
                 console.log('   ✅ Editing font loaded into canvas');
@@ -4999,7 +5108,9 @@ else:
 function setupEditorShortcutsModal() {
     const infoButton = document.getElementById('editor-info-btn');
     const modal = document.getElementById('editor-shortcuts-modal');
-    const closeBtn = document.getElementById('editor-shortcuts-modal-close-btn');
+    const closeBtn = document.getElementById(
+        'editor-shortcuts-modal-close-btn'
+    );
 
     if (!infoButton || !modal || !closeBtn) return;
 
@@ -5014,7 +5125,12 @@ function setupEditorShortcutsModal() {
         modal.style.display = 'none';
         // Restore focus to canvas if editor view was active
         const editorView = document.getElementById('view-editor');
-        if (editorView && editorView.classList.contains('focused') && window.glyphCanvas && window.glyphCanvas.canvas) {
+        if (
+            editorView &&
+            editorView.classList.contains('focused') &&
+            window.glyphCanvas &&
+            window.glyphCanvas.canvas
+        ) {
             setTimeout(() => window.glyphCanvas.canvas.focus(), 0);
         }
     };

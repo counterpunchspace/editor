@@ -96,7 +96,7 @@
 }
 
 /* Light Theme */
-:root[data-theme="light"] {
+:root[data-theme='light'] {
     --bg-primary: #ffffff;
     --bg-secondary: #e8e8e8;
     --bg-tertiary: #f0f0f0;
@@ -196,13 +196,21 @@
 }
 
 body {
-    font-family: 'IBM Plex Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    font-family:
+        'IBM Plex Sans',
+        -apple-system,
+        BlinkMacSystemFont,
+        'Segoe UI',
+        Roboto,
+        sans-serif;
     background-color: var(--bg-primary);
     color: var(--text-primary);
     height: 100vh;
     overflow: hidden;
     letter-spacing: 0.02em;
-    transition: background-color 0.3s ease, color 0.3s ease;
+    transition:
+        background-color 0.3s ease,
+        color 0.3s ease;
 }
 
 /* Material Symbols */
@@ -237,7 +245,7 @@ kbd {
     vertical-align: baseline;
 }
 
-kbd+kbd {
+kbd + kbd {
     margin-left: 2px;
 }
 
@@ -246,11 +254,9 @@ kbd+kbd {
     position: relative;
 }
 
-
-.material-symbols-outlined+.material-symbols-outlined {
+.material-symbols-outlined + .material-symbols-outlined {
     margin-left: -0.12em;
 }
-
 
 /* Loading overlay */
 .loading-overlay {
@@ -264,7 +270,7 @@ kbd+kbd {
     display: flex;
     align-items: center;
     justify-content: center;
-    transition: opacity 1s cubic-bezier(0.4, 0.0, 0.2, 1);
+    transition: opacity 1s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .loading-overlay.hidden {
@@ -316,7 +322,6 @@ kbd+kbd {
 }
 
 @keyframes pulse {
-
     0%,
     100% {
         opacity: 1;
@@ -533,7 +538,9 @@ kbd+kbd {
     flex: 1;
     position: relative;
     color: var(--text-secondary);
-    transition: background-color 0.2s ease, color 0.2s ease;
+    transition:
+        background-color 0.2s ease,
+        color 0.2s ease;
     display: flex;
     flex-direction: column;
 }
@@ -584,7 +591,7 @@ kbd+kbd {
 }
 
 /* Hide button shortcuts in view title bars when view is not focused (inline shortcuts) */
-.view:not(.focused) .view-title-button span[style*="opacity"] {
+.view:not(.focused) .view-title-button span[style*='opacity'] {
     display: none;
 }
 
@@ -719,92 +726,104 @@ kbd+kbd {
 }
 
 /* Auto-run button - disabled in script context - Dark Theme */
-:root:not([data-theme="light"]) .view-title-button.auto-run.disabled-in-script {
+:root:not([data-theme='light']) .view-title-button.auto-run.disabled-in-script {
     background-color: transparent;
     border-color: var(--autorun-disabled-border);
     color: var(--autorun-disabled-text) !important;
 }
 
 /* Auto-run button - disabled in script context - Light Theme */
-:root[data-theme="light"] .view-title-button.auto-run.disabled-in-script {
+:root[data-theme='light'] .view-title-button.auto-run.disabled-in-script {
     background-color: transparent;
     border-color: var(--autorun-disabled-border);
     color: var(--autorun-disabled-text) !important;
 }
 
 /* Auto-run button - active state in dark theme */
-:root:not([data-theme="light"]) .view-title-button.auto-run.active {
+:root:not([data-theme='light']) .view-title-button.auto-run.active {
     background-color: var(--autorun-active-bg);
     border-color: var(--autorun-active-bg);
     color: var(--autorun-active-text) !important;
 }
 
-:root:not([data-theme="light"]) .view-assistant.focused .view-title-button.auto-run.active {
+:root:not([data-theme='light'])
+    .view-assistant.focused
+    .view-title-button.auto-run.active {
     background-color: var(--autorun-active-focused-bg);
     border-color: var(--autorun-active-focused-bg);
     color: var(--autorun-active-text) !important;
 }
 
 /* Auto-run button - active state in light theme */
-:root[data-theme="light"] .view-title-button.auto-run.active {
+:root[data-theme='light'] .view-title-button.auto-run.active {
     background-color: var(--autorun-active-bg);
     border-color: var(--autorun-active-bg);
     color: var(--autorun-active-text) !important;
 }
 
-:root[data-theme="light"] .view-assistant.focused .view-title-button.auto-run.active {
+:root[data-theme='light']
+    .view-assistant.focused
+    .view-title-button.auto-run.active {
     background-color: var(--autorun-active-focused-bg);
     border-color: var(--autorun-active-focused-bg);
     color: var(--autorun-active-focused-text) !important;
 }
 
 /* AI Context Buttons - Font Context - Dark Theme */
-:root:not([data-theme="light"]) .ai-context-btn.font-context.active {
+:root:not([data-theme='light']) .ai-context-btn.font-context.active {
     background-color: var(--font-context-bg);
     border-color: var(--font-context-bg);
     color: var(--font-context-text);
 }
 
-:root:not([data-theme="light"]) .view-assistant.focused .ai-context-btn.font-context.active {
+:root:not([data-theme='light'])
+    .view-assistant.focused
+    .ai-context-btn.font-context.active {
     background-color: var(--font-context-focused-bg);
     border-color: var(--font-context-focused-bg);
     color: var(--font-context-focused-text);
 }
 
 /* AI Context Buttons - Font Context - Light Theme */
-:root[data-theme="light"] .ai-context-btn.font-context.active {
+:root[data-theme='light'] .ai-context-btn.font-context.active {
     background-color: var(--font-context-bg);
     border-color: var(--font-context-bg);
     color: var(--font-context-text);
 }
 
-:root[data-theme="light"] .view-assistant.focused .ai-context-btn.font-context.active {
+:root[data-theme='light']
+    .view-assistant.focused
+    .ai-context-btn.font-context.active {
     background-color: var(--font-context-focused-bg);
     border-color: var(--font-context-focused-bg);
     color: var(--font-context-focused-text);
 }
 
 /* AI Context Buttons - Script Context - Dark Theme */
-:root:not([data-theme="light"]) .ai-context-btn.script-context.active {
+:root:not([data-theme='light']) .ai-context-btn.script-context.active {
     background-color: var(--script-context-bg);
     border-color: var(--script-context-bg);
     color: var(--script-context-text);
 }
 
-:root:not([data-theme="light"]) .view-assistant.focused .ai-context-btn.script-context.active {
+:root:not([data-theme='light'])
+    .view-assistant.focused
+    .ai-context-btn.script-context.active {
     background-color: var(--script-context-focused-bg);
     border-color: var(--script-context-focused-bg);
     color: var(--script-context-focused-text);
 }
 
 /* AI Context Buttons - Script Context - Light Theme */
-:root[data-theme="light"] .ai-context-btn.script-context.active {
+:root[data-theme='light'] .ai-context-btn.script-context.active {
     background-color: var(--script-context-bg);
     border-color: var(--script-context-bg);
     color: var(--script-context-text);
 }
 
-:root[data-theme="light"] .view-assistant.focused .ai-context-btn.script-context.active {
+:root[data-theme='light']
+    .view-assistant.focused
+    .ai-context-btn.script-context.active {
     background-color: var(--script-context-focused-bg);
     border-color: var(--script-context-focused-bg);
     color: var(--script-context-focused-text);
@@ -818,53 +837,69 @@ kbd+kbd {
 }
 
 /* AI Context Label & Prompt Prefix - Font Context - Dark Theme */
-:root:not([data-theme="light"]) #ai-context-label.font-context,
-:root:not([data-theme="light"]) #ai-prompt-prefix.font-context {
+:root:not([data-theme='light']) #ai-context-label.font-context,
+:root:not([data-theme='light']) #ai-prompt-prefix.font-context {
     background-color: var(--font-context-bg);
     color: var(--font-context-text);
 }
 
-:root:not([data-theme="light"]) .view-assistant.focused #ai-context-label.font-context,
-:root:not([data-theme="light"]) .view-assistant.focused #ai-prompt-prefix.font-context {
+:root:not([data-theme='light'])
+    .view-assistant.focused
+    #ai-context-label.font-context,
+:root:not([data-theme='light'])
+    .view-assistant.focused
+    #ai-prompt-prefix.font-context {
     background-color: var(--font-context-focused-bg);
     color: var(--font-context-focused-text);
 }
 
 /* AI Context Label & Prompt Prefix - Font Context - Light Theme */
-:root[data-theme="light"] #ai-context-label.font-context,
-:root[data-theme="light"] #ai-prompt-prefix.font-context {
+:root[data-theme='light'] #ai-context-label.font-context,
+:root[data-theme='light'] #ai-prompt-prefix.font-context {
     background-color: var(--font-context-bg);
     color: var(--font-context-text);
 }
 
-:root[data-theme="light"] .view-assistant.focused #ai-context-label.font-context,
-:root[data-theme="light"] .view-assistant.focused #ai-prompt-prefix.font-context {
+:root[data-theme='light']
+    .view-assistant.focused
+    #ai-context-label.font-context,
+:root[data-theme='light']
+    .view-assistant.focused
+    #ai-prompt-prefix.font-context {
     background-color: var(--font-context-focused-bg);
     color: var(--font-context-focused-text);
 }
 
 /* AI Context Label & Prompt Prefix - Script Context - Dark Theme */
-:root:not([data-theme="light"]) #ai-context-label.script-context,
-:root:not([data-theme="light"]) #ai-prompt-prefix.script-context {
+:root:not([data-theme='light']) #ai-context-label.script-context,
+:root:not([data-theme='light']) #ai-prompt-prefix.script-context {
     background-color: var(--script-context-bg);
     color: var(--script-context-text);
 }
 
-:root:not([data-theme="light"]) .view-assistant.focused #ai-context-label.script-context,
-:root:not([data-theme="light"]) .view-assistant.focused #ai-prompt-prefix.script-context {
+:root:not([data-theme='light'])
+    .view-assistant.focused
+    #ai-context-label.script-context,
+:root:not([data-theme='light'])
+    .view-assistant.focused
+    #ai-prompt-prefix.script-context {
     background-color: var(--script-context-focused-bg);
     color: var(--script-context-focused-text);
 }
 
 /* AI Context Label & Prompt Prefix - Script Context - Light Theme */
-:root[data-theme="light"] #ai-context-label.script-context,
-:root[data-theme="light"] #ai-prompt-prefix.script-context {
+:root[data-theme='light'] #ai-context-label.script-context,
+:root[data-theme='light'] #ai-prompt-prefix.script-context {
     background-color: var(--script-context-bg);
     color: var(--script-context-text);
 }
 
-:root[data-theme="light"] .view-assistant.focused #ai-context-label.script-context,
-:root[data-theme="light"] .view-assistant.focused #ai-prompt-prefix.script-context {
+:root[data-theme='light']
+    .view-assistant.focused
+    #ai-context-label.script-context,
+:root[data-theme='light']
+    .view-assistant.focused
+    #ai-prompt-prefix.script-context {
     background-color: var(--script-context-focused-bg);
     color: var(--script-context-focused-text);
 }
@@ -1272,7 +1307,7 @@ kbd+kbd {
 }
 
 /* Light theme cursor - dark color */
-:root[data-theme="light"] #script-editor .ace_cursor {
+:root[data-theme='light'] #script-editor .ace_cursor {
     color: #1a1a1a !important;
     background-color: #1a1a1a !important;
 }
@@ -1284,89 +1319,88 @@ kbd+kbd {
 }
 
 /* Light theme syntax adjustments - ensure good contrast */
-:root[data-theme="light"] #script-editor .ace_keyword {
+:root[data-theme='light'] #script-editor .ace_keyword {
     color: #b000b0 !important;
 }
 
-:root[data-theme="light"] #script-editor .ace_storage {
+:root[data-theme='light'] #script-editor .ace_storage {
     color: #007777 !important;
 }
 
-:root[data-theme="light"] #script-editor .ace_string {
+:root[data-theme='light'] #script-editor .ace_string {
     color: #c000c0 !important;
 }
 
-:root[data-theme="light"] #script-editor .ace_comment {
+:root[data-theme='light'] #script-editor .ace_comment {
     color: #666666 !important;
 }
 
-:root[data-theme="light"] #script-editor .ace_constant.ace_numeric {
+:root[data-theme='light'] #script-editor .ace_constant.ace_numeric {
     color: #cc6600 !important;
 }
 
-:root[data-theme="light"] #script-editor .ace_support.ace_builtin {
+:root[data-theme='light'] #script-editor .ace_support.ace_builtin {
     color: #0052cc !important;
 }
 
-:root[data-theme="light"] #script-editor .ace_keyword.ace_operator {
+:root[data-theme='light'] #script-editor .ace_keyword.ace_operator {
     color: #333333 !important;
 }
 
-:root[data-theme="light"] #script-editor .ace_entity.ace_name.ace_function,
-:root[data-theme="light"] #script-editor .ace_support.ace_function {
+:root[data-theme='light'] #script-editor .ace_entity.ace_name.ace_function,
+:root[data-theme='light'] #script-editor .ace_support.ace_function {
     color: #a0a000 !important;
 }
 
-:root[data-theme="light"] #script-editor .ace_entity.ace_name.ace_class,
-:root[data-theme="light"] #script-editor .ace_support.ace_class {
+:root[data-theme='light'] #script-editor .ace_entity.ace_name.ace_class,
+:root[data-theme='light'] #script-editor .ace_support.ace_class {
     color: #009000 !important;
 }
 
-:root[data-theme="light"] #script-editor .ace_variable {
+:root[data-theme='light'] #script-editor .ace_variable {
     color: #006666 !important;
 }
 
-:root[data-theme="light"] #script-editor .ace_meta.ace_tag,
-:root[data-theme="light"] #script-editor .ace_entity.ace_name.ace_tag {
+:root[data-theme='light'] #script-editor .ace_meta.ace_tag,
+:root[data-theme='light'] #script-editor .ace_entity.ace_name.ace_tag {
     color: #6600cc !important;
 }
 
-:root[data-theme="light"] #script-editor .ace_constant.ace_language {
+:root[data-theme='light'] #script-editor .ace_constant.ace_language {
     color: #cc0066 !important;
 }
 
-:root[data-theme="light"] #script-editor .ace_variable.ace_parameter {
+:root[data-theme='light'] #script-editor .ace_variable.ace_parameter {
     color: #996600 !important;
 }
 
-:root[data-theme="light"] #script-editor .ace_variable.ace_language {
+:root[data-theme='light'] #script-editor .ace_variable.ace_language {
     color: #b000b0 !important;
 }
 
-:root[data-theme="light"] #script-editor .ace_bracket {
+:root[data-theme='light'] #script-editor .ace_bracket {
     border-color: #009000 !important;
     background-color: rgba(0, 144, 0, 0.08) !important;
 }
 
 /* Official Pyodide Console Styles */
 
-@supports (--css:variables) {
-
+@supports (--css: variables) {
     .cmd,
     .cmd div,
     .cmd span,
     .terminal,
-    .terminal-output>:not(.raw) a,
-    .terminal-output>:not(.raw) div,
-    .terminal-output>:not(.raw) span {
+    .terminal-output > :not(.raw) a,
+    .terminal-output > :not(.raw) div,
+    .terminal-output > :not(.raw) span {
         font-size: calc(var(--size, 1) * (12px / var(--pixel-density, 1)));
         font-family: var(--font-mono) !important;
         color: var(--text-primary) !important;
     }
 }
 
-.terminal .terminal-output>:not(.raw) .terminal-error,
-.terminal .terminal-output>:not(.raw) .terminal-error * {
+.terminal .terminal-output > :not(.raw) .terminal-error,
+.terminal .terminal-output > :not(.raw) .terminal-error * {
     color: var(--accent-red) !important;
 }
 
@@ -1703,7 +1737,10 @@ kbd+kbd {
     margin-bottom: 15px;
     font-family: var(--font-mono);
     font-size: calc(var(--size, 1) * (12px / var(--pixel-density, 1)));
-    line-height: calc(var(--size) * (16px / var(--pixel-density, 1)) + 1px / var(--pixel-density, 1));
+    line-height: calc(
+        var(--size) * (16px / var(--pixel-density, 1)) + 1px /
+            var(--pixel-density, 1)
+    );
     color: var(--text-tertiary);
 }
 
@@ -1832,7 +1869,6 @@ kbd+kbd {
 }
 
 @keyframes error-blink {
-
     0%,
     100% {
         background-color: rgba(255, 165, 0, 0.2);
@@ -1850,7 +1886,6 @@ kbd+kbd {
 }
 
 @keyframes button-error-blink {
-
     0%,
     100% {
         background-color: transparent;
@@ -1900,7 +1935,6 @@ kbd+kbd {
 }
 
 @keyframes typing-bounce {
-
     0%,
     60%,
     100% {
@@ -2473,7 +2507,6 @@ kbd+kbd {
     width: 100%;
     height: 100%;
     background-color: rgb(0 0 0 / 34%);
-    ;
     backdrop-filter: blur(4px);
 }
 
@@ -2587,7 +2620,6 @@ kbd+kbd {
 }
 
 @keyframes pulse-indicator {
-
     0%,
     100% {
         opacity: 1;
@@ -2606,7 +2638,7 @@ kbd+kbd {
     height: calc(100vh - 50px);
     background-color: var(--bg-secondary);
     border-left: 3px solid var(--border-primary);
-    transition: right 0.3s cubic-bezier(0.4, 0.0, 0.2, 1);
+    transition: right 0.3s cubic-bezier(0.4, 0, 0.2, 1);
     z-index: 9999;
     display: flex;
     flex-direction: column;
@@ -2705,7 +2737,11 @@ kbd+kbd {
 }
 
 .volume-icon.material-symbols-rounded {
-    font-variation-settings: 'FILL' 1, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+    font-variation-settings:
+        'FILL' 1,
+        'wght' 400,
+        'GRAD' 0,
+        'opsz' 24;
 }
 
 .volume-slider-settings {
@@ -2779,7 +2815,9 @@ kbd+kbd {
 
 .memory-bar {
     height: 100%;
-    transition: width 0.3s ease, background-color 0.3s ease;
+    transition:
+        width 0.3s ease,
+        background-color 0.3s ease;
     background-color: var(--accent-green);
 }
 
@@ -2820,7 +2858,9 @@ kbd+kbd {
     justify-content: center;
     color: var(--accent-blue);
     opacity: 0.7;
-    transition: opacity 0.2s ease, transform 0.2s ease;
+    transition:
+        opacity 0.2s ease,
+        transform 0.2s ease;
     vertical-align: middle;
 }
 
@@ -2911,7 +2951,9 @@ kbd+kbd {
     align-items: center;
     justify-content: center;
     color: var(--text-secondary);
-    transition: color 0.2s ease, transform 0.2s ease;
+    transition:
+        color 0.2s ease,
+        transform 0.2s ease;
     border-radius: 4px;
 }
 
@@ -3400,20 +3442,20 @@ kbd+kbd {
 }
 
 /* Dark theme colors */
-:root:not([data-theme="light"]) .editor-layer-item:hover:not(.selected) {
+:root:not([data-theme='light']) .editor-layer-item:hover:not(.selected) {
     background-color: rgba(255, 255, 255, 0.05);
 }
 
-:root:not([data-theme="light"]) .editor-layer-item.selected {
+:root:not([data-theme='light']) .editor-layer-item.selected {
     background-color: rgba(255, 255, 255, 0.1);
 }
 
 /* Light theme colors */
-:root[data-theme="light"] .editor-layer-item:hover:not(.selected) {
+:root[data-theme='light'] .editor-layer-item:hover:not(.selected) {
     background-color: rgba(255, 255, 255, 1);
 }
 
-:root[data-theme="light"] .editor-layer-item.selected {
+:root[data-theme='light'] .editor-layer-item.selected {
     background-color: rgba(0, 0, 0, 0.075);
 }
 
@@ -3523,12 +3565,12 @@ kbd+kbd {
 }
 
 /* Light theme adjustments */
-:root[data-theme="light"] .editor-feature-tag-button.enabled {
+:root[data-theme='light'] .editor-feature-tag-button.enabled {
     background: rgba(0, 0, 0, 0.08);
     color: var(--text-primary);
 }
 
-:root[data-theme="light"] .editor-feature-tag-button.enabled:hover {
+:root[data-theme='light'] .editor-feature-tag-button.enabled:hover {
     background: rgba(0, 0, 0, 0.12);
 }
 

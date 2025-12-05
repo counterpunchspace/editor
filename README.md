@@ -73,7 +73,7 @@ print(f"Glyphs: {len(font.glyphs)}")
 # Modify and save
 for glyph in font.glyphs:
     glyph.width += 100
-    
+
 font.save('/output.glyphs')
 ```
 
@@ -109,7 +109,7 @@ result = await js.compileFontFromPython('fontc /input.glyphs -o /output.ttf')
 ## Keyboard Shortcuts
 
 - `cmd+shift+e` - Editor view
-- `cmd+shift+p` - Preview view  
+- `cmd+shift+p` - Preview view
 - `cmd+shift+f` - Files view
 - `cmd+shift+s` - Scripts view
 - `cmd+shift+k` - Console view

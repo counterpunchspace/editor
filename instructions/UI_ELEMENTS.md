@@ -14,7 +14,7 @@ Use the `.info-icon-btn` class for help/information buttons throughout the app.
 
 ```html
 <button class="info-icon-btn" id="my-info-btn" title="More information">
-    <span class="material-symbols-outlined">help</span>
+  <span class="material-symbols-outlined">help</span>
 </button>
 ```
 
@@ -30,10 +30,14 @@ Use the `.info-icon-btn` class for help/information buttons throughout the app.
 
 ```html
 <label class="settings-item-label">
-    Feature Name
-    <button class="info-icon-btn" id="feature-info-btn" title="Feature information">
-        <span class="material-symbols-outlined">help</span>
-    </button>
+  Feature Name
+  <button
+    class="info-icon-btn"
+    id="feature-info-btn"
+    title="Feature information"
+  >
+    <span class="material-symbols-outlined">help</span>
+  </button>
 </label>
 ```
 
@@ -45,26 +49,26 @@ Use the `.info-popup-*` classes for help dialogs and informational overlays.
 
 ```html
 <div class="info-popup-overlay" id="my-popup" style="display: none;">
-    <div class="info-popup">
-        <div class="info-popup-header">
-            <h3>Popup Title</h3>
-            <button class="info-popup-close" id="my-popup-close">
-                <span class="material-symbols-outlined">close</span>
-            </button>
-        </div>
-        <div class="info-popup-content">
-            <!-- Your content here -->
-            <p>Explanation text...</p>
-            
-            <h4>Section Title</h4>
-            <ul>
-                <li>Point one</li>
-                <li>Point two</li>
-            </ul>
-            
-            <p class="info-highlight">💡 Important highlighted information</p>
-        </div>
+  <div class="info-popup">
+    <div class="info-popup-header">
+      <h3>Popup Title</h3>
+      <button class="info-popup-close" id="my-popup-close">
+        <span class="material-symbols-outlined">close</span>
+      </button>
     </div>
+    <div class="info-popup-content">
+      <!-- Your content here -->
+      <p>Explanation text...</p>
+
+      <h4>Section Title</h4>
+      <ul>
+        <li>Point one</li>
+        <li>Point two</li>
+      </ul>
+
+      <p class="info-highlight">💡 Important highlighted information</p>
+    </div>
+  </div>
 </div>
 ```
 
@@ -98,35 +102,35 @@ Use the `.info-popup-*` classes for help dialogs and informational overlays.
 Standard pattern for popup interaction:
 
 ```javascript
-const infoBtn = document.getElementById('my-info-btn');
-const popup = document.getElementById('my-popup');
-const closeBtn = document.getElementById('my-popup-close');
+const infoBtn = document.getElementById("my-info-btn");
+const popup = document.getElementById("my-popup");
+const closeBtn = document.getElementById("my-popup-close");
 
 // Open popup
-infoBtn.addEventListener('click', (e) => {
-    e.preventDefault();
-    popup.style.display = 'flex';
+infoBtn.addEventListener("click", (e) => {
+  e.preventDefault();
+  popup.style.display = "flex";
 });
 
 // Close popup - close button
-closeBtn.addEventListener('click', () => {
-    popup.style.display = 'none';
+closeBtn.addEventListener("click", () => {
+  popup.style.display = "none";
 });
 
 // Close popup - click outside
-popup.addEventListener('click', (e) => {
-    if (e.target === popup) {
-        popup.style.display = 'none';
-    }
+popup.addEventListener("click", (e) => {
+  if (e.target === popup) {
+    popup.style.display = "none";
+  }
 });
 
 // Close popup - Escape key (with priority handling)
-document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && popup.style.display === 'flex') {
-        e.preventDefault();  // IMPORTANT: Prevents other Escape handlers from running
-        e.stopPropagation();  // IMPORTANT: Stops event propagation
-        popup.style.display = 'none';
-    }
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && popup.style.display === "flex") {
+    e.preventDefault(); // IMPORTANT: Prevents other Escape handlers from running
+    e.stopPropagation(); // IMPORTANT: Stops event propagation
+    popup.style.display = "none";
+  }
 });
 ```
 
@@ -153,10 +157,12 @@ document.addEventListener('keydown', (e) => {
 ### Escape Key Priority
 
 When multiple overlays are open (e.g., popup + settings panel), pressing Escape will:
+
 1. Close the popup first (highest priority)
 2. Require another Escape press to close the settings panel
 
 This is achieved by:
+
 - Popup handlers calling `e.preventDefault()` and `e.stopPropagation()`
 - Settings panel handler checking `e.defaultPrevented` before closing
 
