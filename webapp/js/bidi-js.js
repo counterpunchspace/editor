@@ -2,12 +2,12 @@
     typeof exports === 'object' && typeof module !== 'undefined'
         ? (module.exports = factory())
         : typeof define === 'function' && define.amd
-          ? define(factory)
-          : ((global =
+            ? define(factory)
+            : ((global =
                 typeof globalThis !== 'undefined'
                     ? globalThis
                     : global || self),
-            (global.bidi_js = factory()));
+                (global.bidi_js = factory()));
 })(this, function () {
     'use strict';
 
@@ -139,7 +139,7 @@
                 var prevPair;
                 encodedString.split(',').forEach(function visit(entry) {
                     if (entry.indexOf('+') !== -1) {
-                        for (var i = +entry; i--; ) {
+                        for (var i = +entry; i--;) {
                             visit(prevPair);
                         }
                     } else {
@@ -283,8 +283,8 @@
                                     baseDirection === 'rtl'
                                         ? 1
                                         : baseDirection === 'ltr'
-                                          ? 0
-                                          : determineAutoEmbedLevel(i$1, false)
+                                            ? 0
+                                            : determineAutoEmbedLevel(i$1, false)
                             })
                         );
                     }
@@ -773,7 +773,7 @@
                                         var sj$4 = si$4 - 1;
                                         sj$4 >= 0 &&
                                         charTypes[seqIndices$1[sj$4]] &
-                                            (TYPE_ET | BN_LIKE_TYPES);
+                                        (TYPE_ET | BN_LIKE_TYPES);
                                         sj$4--
                                     ) {
                                         changeCharType(
@@ -785,7 +785,7 @@
                                         si$4++;
                                         si$4 < seqIndices$1.length &&
                                         charTypes[seqIndices$1[si$4]] &
-                                            (TYPE_ET | BN_LIKE_TYPES | TYPE_EN);
+                                        (TYPE_ET | BN_LIKE_TYPES | TYPE_EN);
                                         si$4++
                                     ) {
                                         if (
@@ -824,7 +824,7 @@
                                         var sj$5 = si$5 - 1;
                                         sj$5 >= 0 &&
                                         charTypes[seqIndices$1[sj$5]] &
-                                            BN_LIKE_TYPES;
+                                        BN_LIKE_TYPES;
                                         sj$5--
                                     ) {
                                         changeCharType(
@@ -836,7 +836,7 @@
                                         var sj$6 = si$5 + 1;
                                         sj$6 < seqIndices$1.length &&
                                         charTypes[seqIndices$1[sj$6]] &
-                                            BN_LIKE_TYPES;
+                                        BN_LIKE_TYPES;
                                         sj$6++
                                     ) {
                                         changeCharType(
@@ -929,13 +929,13 @@
                                                     openerStack[stackIdx].char;
                                                 if (
                                                     stackChar ===
-                                                        oppositeBracket ||
+                                                    oppositeBracket ||
                                                     stackChar ===
-                                                        closingToOpeningBracket(
-                                                            getCanonicalBracket(
-                                                                char
-                                                            )
-                                                        ) ||
+                                                    closingToOpeningBracket(
+                                                        getCanonicalBracket(
+                                                            char
+                                                        )
+                                                    ) ||
                                                     openingToClosingBracket(
                                                         getCanonicalBracket(
                                                             stackChar
@@ -986,7 +986,7 @@
                                         foundStrongType = true;
                                         var lr =
                                             charTypes[i$15] &
-                                            R_TYPES_FOR_N_STEPS
+                                                R_TYPES_FOR_N_STEPS
                                                 ? TYPE_R
                                                 : TYPE_L;
                                         if (lr === embedDirection) {
@@ -1015,7 +1015,7 @@
                                         ) {
                                             var lr$1 =
                                                 charTypes[i$16] &
-                                                R_TYPES_FOR_N_STEPS
+                                                    R_TYPES_FOR_N_STEPS
                                                     ? TYPE_R
                                                     : TYPE_L;
                                             if (lr$1 !== embedDirection) {
@@ -1030,7 +1030,7 @@
                                 if (useStrongType) {
                                     charTypes[seqIndices$1[openSeqIdx]] =
                                         charTypes[seqIndices$1[closeSeqIdx]] =
-                                            useStrongType;
+                                        useStrongType;
                                     // * Any number of characters that had original bidirectional character type NSM prior to the application
                                     // of W1 that immediately follow a paired bracket which changed to L or R under N0 should change to match
                                     // the type of their preceding bracket.
@@ -1043,14 +1043,14 @@
                                             if (
                                                 !(
                                                     charTypes[
-                                                        seqIndices$1[si$10]
+                                                    seqIndices$1[si$10]
                                                     ] & BN_LIKE_TYPES
                                                 )
                                             ) {
                                                 if (
                                                     getBidiCharType(
                                                         string[
-                                                            seqIndices$1[si$10]
+                                                        seqIndices$1[si$10]
                                                         ]
                                                     ) & TYPE_NSM
                                                 ) {
@@ -1071,14 +1071,14 @@
                                             if (
                                                 !(
                                                     charTypes[
-                                                        seqIndices$1[si$11]
+                                                    seqIndices$1[si$11]
                                                     ] & BN_LIKE_TYPES
                                                 )
                                             ) {
                                                 if (
                                                     getBidiCharType(
                                                         string[
-                                                            seqIndices$1[si$11]
+                                                        seqIndices$1[si$11]
                                                         ]
                                                     ) & TYPE_NSM
                                                 ) {
@@ -1117,7 +1117,7 @@
                                         } else {
                                             prevType$2 =
                                                 charTypes[seqIndices$1[si2]] &
-                                                R_TYPES_FOR_N_STEPS
+                                                    R_TYPES_FOR_N_STEPS
                                                     ? TYPE_R
                                                     : TYPE_L;
                                             break;
@@ -1138,7 +1138,7 @@
                                         } else {
                                             nextType$1 =
                                                 charTypes[seqIndices$1[si2$1]] &
-                                                R_TYPES_FOR_N_STEPS
+                                                    R_TYPES_FOR_N_STEPS
                                                     ? TYPE_R
                                                     : TYPE_L;
                                             break;
@@ -1451,7 +1451,7 @@
                     var end = ref[1];
 
                     var slice = indices.slice(start, end + 1);
-                    for (var i = slice.length; i--; ) {
+                    for (var i = slice.length; i--;) {
                         indices[end - i] = slice[i];
                     }
                 });

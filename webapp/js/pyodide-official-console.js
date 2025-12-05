@@ -223,7 +223,7 @@ async function initPyodideConsole() {
                         if (
                             !scrollableElement ||
                             scrollableElement.scrollHeight <=
-                                scrollableElement.clientHeight
+                            scrollableElement.clientHeight
                         ) {
                             scrollableElement =
                                 consoleContainer.querySelector(
@@ -233,7 +233,7 @@ async function initPyodideConsole() {
                         if (
                             !scrollableElement ||
                             scrollableElement.scrollHeight <=
-                                scrollableElement.clientHeight
+                            scrollableElement.clientHeight
                         ) {
                             scrollableElement =
                                 consoleContainer.querySelector('.terminal');

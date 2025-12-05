@@ -217,12 +217,12 @@ class FontCompilation {
         if (typeof SharedArrayBuffer === 'undefined') {
             console.error(
                 '❌ SharedArrayBuffer is not available. fontc WASM requires it.\n' +
-                    'This should be enabled by the coi-serviceworker.js.\n' +
-                    'If you see this error:\n' +
-                    '  1. Try a hard refresh (Ctrl+Shift+R or Cmd+Shift+R)\n' +
-                    '  2. Check browser console for service worker errors\n' +
-                    '  3. Make sure coi-serviceworker.js is loaded in the HTML\n\n' +
-                    'For local development, use: cd webapp && python3 serve-with-cors.py'
+                'This should be enabled by the coi-serviceworker.js.\n' +
+                'If you see this error:\n' +
+                '  1. Try a hard refresh (Ctrl+Shift+R or Cmd+Shift+R)\n' +
+                '  2. Check browser console for service worker errors\n' +
+                '  3. Make sure coi-serviceworker.js is loaded in the HTML\n\n' +
+                'For local development, use: cd webapp && python3 serve-with-cors.py'
             );
             if (window.term) {
                 window.term.echo('');

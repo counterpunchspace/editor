@@ -298,10 +298,10 @@ json.dumps({"objects": obj_count, "fonts": open_fonts})
             const statusIcon = info.overLimit
                 ? '💀'
                 : info.percentUsedRaw >= 90
-                  ? '🔴'
-                  : info.percentUsedRaw >= 80
-                    ? '🟡'
-                    : '🟢';
+                    ? '🔴'
+                    : info.percentUsedRaw >= 80
+                        ? '🟡'
+                        : '🟢';
 
             // Format usage display
             const usageDisplay = info.overLimit
@@ -310,24 +310,22 @@ json.dumps({"objects": obj_count, "fonts": open_fonts})
 
             return `
                 <div style="font-weight: bold; margin-bottom: 8px;">Memory Monitor ${statusIcon}</div>
-                ${
-                    info.overLimit
-                        ? `
+                ${info.overLimit
+                    ? `
                 <div style="margin-bottom: 8px; padding: 6px; background: rgba(255,0,0,0.2); border: 1px solid #f00; border-radius: 3px; font-size: 9px; line-height: 1.4;">
                     ⚠️ <strong>CRITICAL:</strong> Memory usage exceeds browser limit!<br>
                     Restart recommended.
                 </div>
                 `
-                        : ''
+                    : ''
                 }
                 <div style="display: grid; grid-template-columns: auto 1fr; gap: 4px 8px;">
                     <div>Used:</div><div style="text-align: right;">${info.usedMB} MB</div>
                     <div>Total:</div><div style="text-align: right;">${info.totalMB} MB</div>
                     <div>Limit:</div><div style="text-align: right;">${info.limitMB} MB</div>
                     <div>Usage:</div><div style="text-align: right; font-weight: bold;">${usageDisplay}</div>
-                    ${
-                        info.pyodideObjects
-                            ? `
+                    ${info.pyodideObjects
+                    ? `
                     <div style="grid-column: 1/-1; margin-top: 8px; padding-top: 8px; border-top: 1px solid currentColor; opacity: 0.7;">
                         Python Objects: ${info.pyodideObjects}
                     </div>
@@ -335,8 +333,8 @@ json.dumps({"objects": obj_count, "fonts": open_fonts})
                         Open Fonts: ${info.openFonts}
                     </div>
                     `
-                            : ''
-                    }
+                    : ''
+                }
                 </div>
                 <div style="margin-top: 12px; padding-top: 8px; border-top: 1px solid currentColor;">
                     <button onclick="window.memoryMonitor.forceGarbageCollection()" 

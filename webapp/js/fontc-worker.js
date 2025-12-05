@@ -17,8 +17,8 @@ async function initializeWasm() {
         if (typeof SharedArrayBuffer === 'undefined') {
             throw new Error(
                 'SharedArrayBuffer is not available. Make sure the page is served with proper CORS headers:\n' +
-                    'Cross-Origin-Embedder-Policy: require-corp\n' +
-                    'Cross-Origin-Opener-Policy: same-origin'
+                'Cross-Origin-Embedder-Policy: require-corp\n' +
+                'Cross-Origin-Opener-Policy: same-origin'
             );
         }
 

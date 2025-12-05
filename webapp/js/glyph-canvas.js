@@ -402,7 +402,7 @@ class GlyphCanvas {
                 if (
                     this.hoveredGlyphIndex >= 0 &&
                     this.hoveredGlyphIndex !==
-                        this.textRunEditor.selectedGlyphIndex
+                    this.textRunEditor.selectedGlyphIndex
                 ) {
                     this.textRunEditor.selectGlyphByIndex(
                         this.hoveredGlyphIndex
@@ -508,7 +508,7 @@ class GlyphCanvas {
                     const existingIndex = this.selectedPoints.findIndex(
                         (p) =>
                             p.contourIndex ===
-                                this.hoveredPointIndex.contourIndex &&
+                            this.hoveredPointIndex.contourIndex &&
                             p.nodeIndex === this.hoveredPointIndex.nodeIndex
                     );
                     if (existingIndex >= 0) {
@@ -524,7 +524,7 @@ class GlyphCanvas {
                     const isInSelection = this.selectedPoints.some(
                         (p) =>
                             p.contourIndex ===
-                                this.hoveredPointIndex.contourIndex &&
+                            this.hoveredPointIndex.contourIndex &&
                             p.nodeIndex === this.hoveredPointIndex.nodeIndex
                     );
 
@@ -951,19 +951,19 @@ class GlyphCanvas {
                         .transform || [1, 0, 0, 1, 0, 0];
                     const combinedTransform = [
                         parentTransform[0] * nestedTransform[0] +
-                            parentTransform[2] * nestedTransform[1],
+                        parentTransform[2] * nestedTransform[1],
                         parentTransform[1] * nestedTransform[0] +
-                            parentTransform[3] * nestedTransform[1],
+                        parentTransform[3] * nestedTransform[1],
                         parentTransform[0] * nestedTransform[2] +
-                            parentTransform[2] * nestedTransform[3],
+                        parentTransform[2] * nestedTransform[3],
                         parentTransform[1] * nestedTransform[2] +
-                            parentTransform[3] * nestedTransform[3],
+                        parentTransform[3] * nestedTransform[3],
                         parentTransform[0] * nestedTransform[4] +
-                            parentTransform[2] * nestedTransform[5] +
-                            parentTransform[4],
+                        parentTransform[2] * nestedTransform[5] +
+                        parentTransform[4],
                         parentTransform[1] * nestedTransform[4] +
-                            parentTransform[3] * nestedTransform[5] +
-                            parentTransform[5]
+                        parentTransform[3] * nestedTransform[5] +
+                        parentTransform[5]
                     ];
 
                     if (
@@ -2459,7 +2459,7 @@ json.dumps(result)
             !this.isGlyphEditMode ||
             this.textRunEditor.selectedGlyphIndex < 0 ||
             this.textRunEditor.selectedGlyphIndex >=
-                this.textRunEditor.shapedGlyphs.length
+            this.textRunEditor.shapedGlyphs.length
         ) {
             glyphNameElement.style.display = 'none';
             return;
@@ -2507,7 +2507,7 @@ json.dumps(result)
                 ) {
                     const currentComponent =
                         currentState.layerData.shapes[
-                            currentState.componentIndex
+                        currentState.componentIndex
                         ];
                     if (currentComponent && currentComponent.Component) {
                         trail.push(currentComponent.Component.reference);
@@ -2698,7 +2698,7 @@ json.dumps(result)
         if (
             this.textRunEditor.selectedGlyphIndex >= 0 &&
             this.textRunEditor.selectedGlyphIndex <
-                this.textRunEditor.shapedGlyphs.length
+            this.textRunEditor.shapedGlyphs.length
         ) {
             // Display layers section (await to ensure data is loaded)
             await this.displayLayersList();
@@ -3165,7 +3165,7 @@ json.dumps(result)
         if (
             this.textRunEditor.selectedGlyphIndex < 0 ||
             this.textRunEditor.selectedGlyphIndex >=
-                this.textRunEditor.shapedGlyphs.length
+            this.textRunEditor.shapedGlyphs.length
         ) {
             return;
         }
@@ -3177,7 +3177,7 @@ json.dumps(result)
 
         const glyph =
             this.textRunEditor.shapedGlyphs[
-                this.textRunEditor.selectedGlyphIndex
+            this.textRunEditor.selectedGlyphIndex
             ];
         const xOffset = glyph.dx || 0;
         const yOffset = glyph.dy || 0;
@@ -3578,8 +3578,8 @@ json.dumps(result)
                     this.ctx.fillStyle = isSelected
                         ? colors.CONTROL_POINT_SELECTED
                         : isHovered
-                          ? colors.CONTROL_POINT_HOVERED
-                          : colors.CONTROL_POINT_NORMAL;
+                            ? colors.CONTROL_POINT_HOVERED
+                            : colors.CONTROL_POINT_NORMAL;
                     this.ctx.fill();
                     this.ctx.strokeStyle = colors.CONTROL_POINT_STROKE;
                     this.ctx.lineWidth = 1 * invScale;
@@ -3592,8 +3592,8 @@ json.dumps(result)
                     this.ctx.fillStyle = isSelected
                         ? colors.NODE_SELECTED
                         : isHovered
-                          ? colors.NODE_HOVERED
-                          : colors.NODE_NORMAL;
+                            ? colors.NODE_HOVERED
+                            : colors.NODE_NORMAL;
                     this.ctx.fillRect(
                         x - pointSize,
                         y - pointSize,
@@ -3721,16 +3721,16 @@ json.dumps(result)
                             this.ctx.fillStyle = isSelected
                                 ? colors.COMPONENT_FILL_SELECTED
                                 : isHovered
-                                  ? colors.COMPONENT_FILL_HOVERED
-                                  : colors.COMPONENT_FILL_NORMAL;
+                                    ? colors.COMPONENT_FILL_HOVERED
+                                    : colors.COMPONENT_FILL_NORMAL;
                             this.ctx.fill();
 
                             // Stroke the outline
                             this.ctx.strokeStyle = isSelected
                                 ? colors.COMPONENT_SELECTED
                                 : isHovered
-                                  ? colors.COMPONENT_HOVERED
-                                  : colors.COMPONENT_NORMAL;
+                                    ? colors.COMPONENT_HOVERED
+                                    : colors.COMPONENT_NORMAL;
                             this.ctx.lineWidth = 1 * invScale;
                             this.ctx.stroke();
                         }
@@ -3758,8 +3758,8 @@ json.dumps(result)
             this.ctx.strokeStyle = isSelected
                 ? colors.COMPONENT_SELECTED
                 : isHovered
-                  ? colors.COMPONENT_HOVERED
-                  : colors.COMPONENT_NORMAL;
+                    ? colors.COMPONENT_HOVERED
+                    : colors.COMPONENT_NORMAL;
             this.ctx.lineWidth = 2 * invScale;
             this.ctx.beginPath();
             this.ctx.moveTo(-markerSize, 0);
@@ -3844,8 +3844,8 @@ json.dumps(result)
                 this.ctx.fillStyle = isSelected
                     ? colors.ANCHOR_SELECTED
                     : isHovered
-                      ? colors.ANCHOR_HOVERED
-                      : colors.ANCHOR_NORMAL;
+                        ? colors.ANCHOR_HOVERED
+                        : colors.ANCHOR_NORMAL;
                 this.ctx.fillRect(
                     -anchorSize,
                     -anchorSize,
@@ -4477,7 +4477,7 @@ function setupFontLoadingListener() {
                 const arrayBuffer = e.detail.fontBytes.buffer.slice(
                     e.detail.fontBytes.byteOffset,
                     e.detail.fontBytes.byteOffset +
-                        e.detail.fontBytes.byteLength
+                    e.detail.fontBytes.byteLength
                 );
                 window.glyphCanvas.setFont(arrayBuffer);
                 console.log('   ✅ Editing font loaded into canvas');
