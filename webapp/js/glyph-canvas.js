@@ -2650,14 +2650,14 @@ json.dumps(result)
     async updatePropertiesUI() {
         if (!this.propertiesSection) return;
 
-        // Clear existing content
-        this.propertiesSection.innerHTML = '';
-
         // Update editor title bar with glyph name
         this.updateEditorTitleBar();
 
         // Don't show properties if not in glyph edit mode
         if (!this.isGlyphEditMode) {
+            requestAnimationFrame(() => {
+                this.propertiesSection.innerHTML = '';
+            });
             return;
         }
 
@@ -2666,14 +2666,30 @@ json.dumps(result)
             this.textRunEditor.selectedGlyphIndex <
             this.textRunEditor.shapedGlyphs.length
         ) {
-            // Display layers section (await to ensure data is loaded)
+            // Build content off-screen first, then swap in one operation
+            const tempContainer = document.createElement('div');
+            const oldPropertiesSection = this.propertiesSection;
+            this.propertiesSection = tempContainer;
+
             await this.displayLayersList();
+
+            requestAnimationFrame(() => {
+                oldPropertiesSection.innerHTML = '';
+                while (tempContainer.firstChild) {
+                    oldPropertiesSection.appendChild(tempContainer.firstChild);
+                }
+            });
+
+            this.propertiesSection = oldPropertiesSection;
         } else {
             // No glyph selected
-            const emptyMessage = document.createElement('div');
-            emptyMessage.className = 'editor-empty-message';
-            emptyMessage.textContent = 'No glyph selected';
-            this.propertiesSection.appendChild(emptyMessage);
+            requestAnimationFrame(() => {
+                this.propertiesSection.innerHTML = '';
+                const emptyMessage = document.createElement('div');
+                emptyMessage.className = 'editor-empty-message';
+                emptyMessage.textContent = 'No glyph selected';
+                this.propertiesSection.appendChild(emptyMessage);
+            });
         }
     }
 

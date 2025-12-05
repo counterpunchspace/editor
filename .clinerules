@@ -16,6 +16,7 @@ This is a WebAssembly-based font editor using Rust (fontc/babelfont) compiled to
 - Add JSDoc comments for complex functions
 - Use prettier for code formatting
 - When adding properties to the global `window` object, ensure they are properly typed in `js/index.d.ts`
+- To prevent DOM flickering when updating content: build new content in a temporary off-screen container first, then use `requestAnimationFrame` to clear and swap in the new content in a single paint cycle
 
 ### Rust
 - Follow standard Rust conventions
