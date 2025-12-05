@@ -2930,8 +2930,14 @@ json.dumps(result)
         const scaleY = (rect.height - margin * 2) / bounds.height;
         const targetScale = Math.min(scaleX, scaleY);
 
-        // Clamp scale to reasonable limits (max 150% zoom to avoid over-zooming small glyphs)
-        const clampedScale = Math.max(0.01, Math.min(1.5, targetScale));
+        // Clamp scale to reasonable limits (max zoom from settings to avoid over-zooming small glyphs)
+        const clampedScale = Math.max(
+            0.01,
+            Math.min(
+                APP_SETTINGS.OUTLINE_EDITOR.MAX_ZOOM_FOR_CMD_ZERO,
+                targetScale
+            )
+        );
 
         // Calculate pan to center the glyph both horizontally and vertically
         const targetPanX = rect.width / 2 - fontSpaceCenterX * clampedScale;

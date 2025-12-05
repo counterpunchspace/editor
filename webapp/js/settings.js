@@ -45,6 +45,7 @@ const APP_SETTINGS = {
 
         // Canvas margins
         CANVAS_MARGIN: 50, // px - margin around glyphs when framing or panning
+        MAX_ZOOM_FOR_CMD_ZERO: 1.5, // maximum zoom level (150%) when framing glyph with Cmd+0
 
         // Debug/development
         SHOW_BOUNDING_BOX: false, // Show calculated bounding box in editing mode
