@@ -1,3 +1,7 @@
+*.md
+*.json
+*.html
+*.css
 # Ignore compiled wasm and python wheels
 wasm-dist/
 wheels/

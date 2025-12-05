@@ -2,7 +2,10 @@
 // Direct .babelfont JSON → TTF compilation (no file system)
 // Consolidated worker supporting multiple message protocols
 
-import init, { compile_babelfont, version } from '../wasm-dist/babelfont_fontc_web.js';
+import init, {
+    compile_babelfont,
+    version
+} from '../wasm-dist/babelfont_fontc_web.js';
 
 let initialized = false;
 
@@ -12,15 +15,19 @@ async function initializeWasm() {
     try {
         // Check if SharedArrayBuffer is available
         if (typeof SharedArrayBuffer === 'undefined') {
-            throw new Error('SharedArrayBuffer is not available. Make sure the page is served with proper CORS headers:\n' +
-                'Cross-Origin-Embedder-Policy: require-corp\n' +
-                'Cross-Origin-Opener-Policy: same-origin');
+            throw new Error(
+                'SharedArrayBuffer is not available. Make sure the page is served with proper CORS headers:\n' +
+                    'Cross-Origin-Embedder-Policy: require-corp\n' +
+                    'Cross-Origin-Opener-Policy: same-origin'
+            );
         }
 
         console.log('[Fontc Worker] Loading babelfont-fontc WASM...');
         await init();
 
-        console.log('[Fontc Worker] Skipping thread pool due to browser limitations...');
+        console.log(
+            '[Fontc Worker] Skipping thread pool due to browser limitations...'
+        );
         // NOTE: initThreadPool causes Memory cloning errors in some browsers (Brave, etc.)
         // Skip it - fontc will run single-threaded but still works
         // await initThreadPool(1);
@@ -72,7 +79,9 @@ self.onmessage = async (event) => {
             const ttfBytes = compile_babelfont(data.data.babelfontJson);
             const endTime = performance.now();
 
-            console.log(`[Fontc Worker] Compiled in ${(endTime - startTime).toFixed(0)}ms`);
+            console.log(
+                `[Fontc Worker] Compiled in ${(endTime - startTime).toFixed(0)}ms`
+            );
 
             self.postMessage({
                 type: 'compiled',
@@ -111,7 +120,9 @@ self.onmessage = async (event) => {
     const { id, babelfontJson, filename, options } = data;
 
     try {
-        console.log(`[Fontc Worker] Compiling ${filename} from .babelfont JSON...`);
+        console.log(
+            `[Fontc Worker] Compiling ${filename} from .babelfont JSON...`
+        );
         console.log(`[Fontc Worker] JSON size: ${babelfontJson.length} bytes`);
         if (options) {
             console.log(`[Fontc Worker] Options:`, options);

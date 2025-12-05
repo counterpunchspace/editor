@@ -38,12 +38,16 @@ class SaveButton {
             afterSave: (fontId, filename, duration) => {
                 const callbackStart = performance.now();
                 const fname = filename.split('/').pop();
-                console.log(`🟢 afterSave callback: ${fname} (Python reported: ${duration.toFixed(2)}s)`);
+                console.log(
+                    `🟢 afterSave callback: ${fname} (Python reported: ${duration.toFixed(2)}s)`
+                );
 
                 // Hide dirty indicator immediately (font was just saved, so it's clean)
                 // No need to check via Python - we know it's clean!
                 if (window.fontDropdown && window.fontDropdown.dirtyIndicator) {
-                    window.fontDropdown.dirtyIndicator.classList.remove('visible');
+                    window.fontDropdown.dirtyIndicator.classList.remove(
+                        'visible'
+                    );
                 }
 
                 // Play done sound
@@ -56,7 +60,9 @@ class SaveButton {
                 this.showSuccess();
 
                 const callbackDuration = performance.now() - callbackStart;
-                console.log(`⏱️ afterSave callback completed in ${callbackDuration.toFixed(0)}ms`);
+                console.log(
+                    `⏱️ afterSave callback completed in ${callbackDuration.toFixed(0)}ms`
+                );
             },
 
             onError: (fontId, filename, error) => {
@@ -66,7 +72,9 @@ class SaveButton {
             }
         };
 
-        console.log('Save callbacks registered (Python will call via js module)');
+        console.log(
+            'Save callbacks registered (Python will call via js module)'
+        );
     }
 
     /**
@@ -89,7 +97,9 @@ class SaveButton {
             const trackingReady = await window.pyodide.runPythonAsync(`
 IsTrackingReady()
             `);
-            console.log(`⏱️ Tracking check: ${(performance.now() - trackingCheckStart).toFixed(0)}ms`);
+            console.log(
+                `⏱️ Tracking check: ${(performance.now() - trackingCheckStart).toFixed(0)}ms`
+            );
 
             if (!trackingReady) {
                 console.log('Waiting for dirty tracking to initialize...');
@@ -116,7 +126,9 @@ else:
     None
             `);
             const pythonSaveDuration = performance.now() - pythonSaveStart;
-            console.log(`⏱️ Python save returned: ${pythonSaveDuration.toFixed(0)}ms`);
+            console.log(
+                `⏱️ Python save returned: ${pythonSaveDuration.toFixed(0)}ms`
+            );
 
             if (!result) {
                 throw new Error('No font open or save failed');
@@ -125,8 +137,9 @@ else:
             // Success - callbacks have already handled UI updates
             // Note: isSaving is set to false by afterSave callback
             const totalDuration = performance.now() - saveStartTime;
-            console.log(`⏱️ Total save duration: ${totalDuration.toFixed(0)}ms`);
-
+            console.log(
+                `⏱️ Total save duration: ${totalDuration.toFixed(0)}ms`
+            );
         } catch (error) {
             console.error('Error saving font:', error);
             // Only show error if callbacks haven't already handled it
@@ -143,7 +156,8 @@ else:
      */
     updateButtonState() {
         const dropdown = document.getElementById('open-fonts-dropdown');
-        const hasFontOpen = dropdown &&
+        const hasFontOpen =
+            dropdown &&
             dropdown.options.length > 0 &&
             dropdown.value !== '' &&
             dropdown.options[0].textContent !== 'No fonts open';

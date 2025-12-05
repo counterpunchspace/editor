@@ -84,9 +84,11 @@ SetCurrentFont("${fontId}")
                 await this.updateDirtyIndicator();
 
                 // Dispatch fontLoaded event
-                window.dispatchEvent(new CustomEvent('fontLoaded', {
-                    detail: { fontId }
-                }));
+                window.dispatchEvent(
+                    new CustomEvent('fontLoaded', {
+                        detail: { fontId }
+                    })
+                );
             } else {
                 console.error(`Failed to set current font to ID: ${fontId}`);
             }
@@ -104,9 +106,13 @@ SetCurrentFont("${fontId}")
             // Check if current font is dirty for file saving
             // Use _originalRunPythonAsync to bypass the execution wrapper
             // and prevent infinite loop with afterPythonExecution()
-            const runPython = window.pyodide._originalRunPythonAsync || window.pyodide.runPythonAsync;
+            const runPython =
+                window.pyodide._originalRunPythonAsync ||
+                window.pyodide.runPythonAsync;
 
-            const isDirtyJson = await runPython.call(window.pyodide, `
+            const isDirtyJson = await runPython.call(
+                window.pyodide,
+                `
 import json
 try:
     from context import DIRTY_FILE_SAVING
@@ -115,7 +121,8 @@ try:
 except Exception as e:
     result = {"dirty": False, "error": str(e)}
 json.dumps(result)
-            `);
+            `
+            );
 
             // Check if we got valid JSON
             if (!isDirtyJson || isDirtyJson === 'undefined') {

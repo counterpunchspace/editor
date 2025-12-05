@@ -5,6 +5,9 @@ declare global {
         // From our dependencies
         opentype: any; // OpenType.js
         pyodide: any; // Pyodide
+        bidi_js: any; // bidi-js
+        createHarfBuzz: any; // HarfBuzz.js
+        hbjs: any; // HarfBuzz.js
 
         // From ai-assistant.js
         aiAssistant: AIAssistant;
@@ -46,6 +49,9 @@ declare global {
             json: any,
             outputFile: string
         ) => Promise<Uint8Array>;
+
+        // From font-manager.js
+        fontManager: FontManager;
 
         // From font-dropdown.js
         fontDropdownManager: FontDropdownManager;

@@ -18,7 +18,8 @@
         constructor() {
             this.settingsBtn = document.getElementById('settings-btn');
             this.settingsPanel = document.getElementById('settings-panel');
-            this.settingsCloseBtn = document.getElementById('settings-close-btn');
+            this.settingsCloseBtn =
+                document.getElementById('settings-close-btn');
             this.themeOptions = document.querySelectorAll('.theme-option');
             this.mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
 
@@ -36,19 +37,23 @@
                 e.stopPropagation();
                 this.toggleSettings();
             });
-            this.settingsCloseBtn?.addEventListener('click', () => this.closeSettings());
+            this.settingsCloseBtn?.addEventListener('click', () =>
+                this.closeSettings()
+            );
 
             // Click anywhere outside to close
             document.addEventListener('click', (e) => {
-                if (this.settingsPanel?.classList.contains('open') &&
+                if (
+                    this.settingsPanel?.classList.contains('open') &&
                     !this.settingsPanel.contains(e.target) &&
-                    e.target !== this.settingsBtn) {
+                    e.target !== this.settingsBtn
+                ) {
                     this.closeSettings();
                 }
             });
 
             // Theme option clicks
-            this.themeOptions.forEach(option => {
+            this.themeOptions.forEach((option) => {
                 option.addEventListener('click', () => {
                     const theme = option.dataset.theme;
                     this.setTheme(theme);
@@ -57,7 +62,8 @@
 
             // Listen for OS theme changes (only when in auto mode)
             this.mediaQuery.addEventListener('change', (e) => {
-                const currentPreference = localStorage.getItem(THEME_KEY) || THEMES.AUTO;
+                const currentPreference =
+                    localStorage.getItem(THEME_KEY) || THEMES.AUTO;
                 if (currentPreference === THEMES.AUTO) {
                     this.applyTheme(e.matches ? THEMES.DARK : THEMES.LIGHT);
                 }
@@ -73,13 +79,18 @@
 
             // ESC to close settings (only if no popups are open and event not already handled)
             document.addEventListener('keydown', (e) => {
-                if (e.key === 'Escape' && this.settingsPanel?.classList.contains('open')) {
+                if (
+                    e.key === 'Escape' &&
+                    this.settingsPanel?.classList.contains('open')
+                ) {
                     // Don't close if event was already handled by a popup
                     if (e.defaultPrevented) {
                         return;
                     }
                     // Check if any popup is currently open
-                    const openPopups = document.querySelectorAll('.info-popup-overlay[style*="display: flex"], .modal.active, .matplotlib-modal.active');
+                    const openPopups = document.querySelectorAll(
+                        '.info-popup-overlay[style*="display: flex"], .modal.active, .matplotlib-modal.active'
+                    );
                     if (openPopups.length === 0) {
                         e.preventDefault();
                         this.closeSettings();
@@ -107,7 +118,9 @@
 
             if (preference === THEMES.AUTO) {
                 // Use OS preference
-                actualTheme = this.mediaQuery.matches ? THEMES.DARK : THEMES.LIGHT;
+                actualTheme = this.mediaQuery.matches
+                    ? THEMES.DARK
+                    : THEMES.LIGHT;
             } else {
                 actualTheme = preference;
             }
@@ -148,7 +161,7 @@
         }
 
         updateActiveButton(preference) {
-            this.themeOptions.forEach(option => {
+            this.themeOptions.forEach((option) => {
                 if (option.dataset.theme === preference) {
                     option.classList.add('active');
                 } else {
@@ -184,7 +197,9 @@
     // Fullscreen toggle functionality
     function initFullscreenToggle() {
         const fullscreenBtn = document.getElementById('fullscreen-btn');
-        const fullscreenIcon = fullscreenBtn?.querySelector('.material-symbols-outlined');
+        const fullscreenIcon = fullscreenBtn?.querySelector(
+            '.material-symbols-outlined'
+        );
 
         if (!fullscreenBtn) return;
 
@@ -218,5 +233,4 @@
         // Initial icon update
         updateIcon();
     }
-
 })();

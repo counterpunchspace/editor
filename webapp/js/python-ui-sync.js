@@ -30,7 +30,9 @@ function afterPythonExecution() {
 
     // Skip dirty checks if we're loading a font or if dropdown manager not ready
     if (isLoadingFont || !window.fontDropdownManager) {
-        console.log('⏭️ Skipping dirty checks (loading font or dropdown not ready)');
+        console.log(
+            '⏭️ Skipping dirty checks (loading font or dropdown not ready)'
+        );
         return;
     }
 

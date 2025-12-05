@@ -12,18 +12,24 @@
         async clearServiceWorkers() {
             if ('serviceWorker' in navigator) {
                 try {
-                    const registrations = await navigator.serviceWorker.getRegistrations();
+                    const registrations =
+                        await navigator.serviceWorker.getRegistrations();
 
                     if (registrations.length === 0) {
                         console.log('No service workers to clear');
                         return { success: true, count: 0 };
                     }
 
-                    console.log(`Found ${registrations.length} service worker(s)`);
+                    console.log(
+                        `Found ${registrations.length} service worker(s)`
+                    );
 
                     for (const registration of registrations) {
                         await registration.unregister();
-                        console.log('✅ Unregistered service worker:', registration.scope);
+                        console.log(
+                            '✅ Unregistered service worker:',
+                            registration.scope
+                        );
                     }
 
                     return {
@@ -56,7 +62,10 @@
                         return { success: true, count: 0 };
                     }
 
-                    console.log(`Found ${cacheNames.length} cache(s):`, cacheNames);
+                    console.log(
+                        `Found ${cacheNames.length} cache(s):`,
+                        cacheNames
+                    );
 
                     for (const cacheName of cacheNames) {
                         await caches.delete(cacheName);
@@ -180,8 +189,12 @@
                 serviceWorkerSupported: 'serviceWorker' in navigator,
                 cacheApiSupported: 'caches' in window,
                 indexedDBSupported: 'indexedDB' in window,
-                crossOriginIsolated: typeof crossOriginIsolated !== 'undefined' ? crossOriginIsolated : false,
-                sharedArrayBufferSupported: typeof SharedArrayBuffer !== 'undefined'
+                crossOriginIsolated:
+                    typeof crossOriginIsolated !== 'undefined'
+                        ? crossOriginIsolated
+                        : false,
+                sharedArrayBufferSupported:
+                    typeof SharedArrayBuffer !== 'undefined'
             };
 
             console.table(stats);
@@ -196,7 +209,8 @@
     window.cacheStats = () => window.cacheManager.getCacheStats();
 
     // No automatic clearing - keep it simple
-    console.log(`%c� Cache Info Available %c
+    console.log(
+        `%c� Cache Info Available %c
   
 To check cache support:
   cacheStats()
@@ -205,11 +219,15 @@ Manual cache access:
   window.cacheManager.clearServiceWorkers()
   window.cacheManager.clearCaches()
   window.cacheManager.clearIndexedDB()
-`, 'color: #0ff; font-weight: bold;', 'color: #999;');
+`,
+        'color: #0ff; font-weight: bold;',
+        'color: #999;'
+    );
 
     // Track memory across reloads
     function trackMemoryAcrossReloads() {
-        const reloadCount = parseInt(sessionStorage.getItem('reloadCount') || '0') + 1;
+        const reloadCount =
+            parseInt(sessionStorage.getItem('reloadCount') || '0') + 1;
         sessionStorage.setItem('reloadCount', reloadCount.toString());
 
         if (performance.memory) {
@@ -221,38 +239,63 @@ Manual cache access:
                 timestamp: Date.now()
             };
 
-            const lastMemory = JSON.parse(sessionStorage.getItem('lastMemory') || 'null');
+            const lastMemory = JSON.parse(
+                sessionStorage.getItem('lastMemory') || 'null'
+            );
             sessionStorage.setItem('lastMemory', JSON.stringify(currentMemory));
 
             if (lastMemory) {
                 const usedMB = (currentMemory.used / 1048576).toFixed(2);
                 const lastUsedMB = (lastMemory.used / 1048576).toFixed(2);
-                const delta = ((currentMemory.used - lastMemory.used) / 1048576).toFixed(2);
-                const deltaPercent = (((currentMemory.used - lastMemory.used) / lastMemory.used) * 100).toFixed(1);
+                const delta = (
+                    (currentMemory.used - lastMemory.used) /
+                    1048576
+                ).toFixed(2);
+                const deltaPercent = (
+                    ((currentMemory.used - lastMemory.used) / lastMemory.used) *
+                    100
+                ).toFixed(1);
 
-                console.log(`%c📊 Memory Tracking (Reload #${reloadCount})`, 'color: #ff0; font-weight: bold;');
+                console.log(
+                    `%c📊 Memory Tracking (Reload #${reloadCount})`,
+                    'color: #ff0; font-weight: bold;'
+                );
                 console.log(`   Current: ${usedMB} MB`);
                 console.log(`   Previous: ${lastUsedMB} MB`);
 
                 if (delta > 0) {
-                    console.log(`   %cΔ +${delta} MB (+${deltaPercent}%) 📈 INCREASE`, 'color: #f00; font-weight: bold;');
+                    console.log(
+                        `   %cΔ +${delta} MB (+${deltaPercent}%) 📈 INCREASE`,
+                        'color: #f00; font-weight: bold;'
+                    );
                 } else {
-                    console.log(`   %cΔ ${delta} MB (${deltaPercent}%) 📉 DECREASE`, 'color: #0f0; font-weight: bold;');
+                    console.log(
+                        `   %cΔ ${delta} MB (${deltaPercent}%) 📉 DECREASE`,
+                        'color: #0f0; font-weight: bold;'
+                    );
                 }
 
                 // Warn if memory keeps growing
                 if (reloadCount > 2 && delta > 10) {
-                    console.warn(`%c⚠️ MEMORY LEAK DETECTED: Memory grew by ${delta}MB after reload!`, 'color: #f00; font-size: 14px; font-weight: bold;');
+                    console.warn(
+                        `%c⚠️ MEMORY LEAK DETECTED: Memory grew by ${delta}MB after reload!`,
+                        'color: #f00; font-size: 14px; font-weight: bold;'
+                    );
                     console.warn('Possible causes:');
                     console.warn('  1. Service worker maintaining state');
                     console.warn('  2. Browser not fully garbage collecting');
                     console.warn('  3. IndexedDB or LocalStorage growth');
                     console.warn('');
-                    console.warn('Try: Close all tabs and restart browser completely');
+                    console.warn(
+                        'Try: Close all tabs and restart browser completely'
+                    );
                 }
             } else {
                 const usedMB = (currentMemory.used / 1048576).toFixed(2);
-                console.log(`%c📊 Memory Tracking (First Load)`, 'color: #0ff; font-weight: bold;');
+                console.log(
+                    `%c📊 Memory Tracking (First Load)`,
+                    'color: #0ff; font-weight: bold;'
+                );
                 console.log(`   Initial: ${usedMB} MB`);
             }
         }
@@ -263,14 +306,17 @@ Manual cache access:
         if ('serviceWorker' in navigator) {
             try {
                 // Get the COI service worker
-                const registrations = await navigator.serviceWorker.getRegistrations();
+                const registrations =
+                    await navigator.serviceWorker.getRegistrations();
 
                 for (const registration of registrations) {
                     // Send deregister message to the service worker
                     // This triggers the worker's built-in cleanup
                     if (registration.active) {
                         registration.active.postMessage({ type: 'deregister' });
-                        console.log('📨 Sent deregister message to service worker');
+                        console.log(
+                            '📨 Sent deregister message to service worker'
+                        );
                     }
 
                     // Force unregister
@@ -279,7 +325,7 @@ Manual cache access:
                 }
 
                 // Wait a moment for cleanup
-                await new Promise(resolve => setTimeout(resolve, 100));
+                await new Promise((resolve) => setTimeout(resolve, 100));
 
                 return { success: true, reset: true };
             } catch (error) {
@@ -297,7 +343,9 @@ Manual cache access:
         trackMemoryAcrossReloads();
 
         // Check reload count
-        const reloadCount = parseInt(sessionStorage.getItem('reloadCount') || '0');
+        const reloadCount = parseInt(
+            sessionStorage.getItem('reloadCount') || '0'
+        );
 
         try {
             // FORCE reset the service worker completely
@@ -308,9 +356,13 @@ Manual cache access:
             const cacheResult = await window.cacheManager.clearCaches();
 
             if (cacheResult.count > 0) {
-                console.log(`✅ Cleared ${cacheResult.count} cache(s) on page load`);
+                console.log(
+                    `✅ Cleared ${cacheResult.count} cache(s) on page load`
+                );
             } else {
-                console.log('✅ Service worker reset, no additional caches to clear');
+                console.log(
+                    '✅ Service worker reset, no additional caches to clear'
+                );
             }
 
             // Important: The COI service worker will re-register itself
@@ -320,15 +372,32 @@ Manual cache access:
             // Show workaround if memory keeps growing
             if (reloadCount > 3) {
                 console.log('');
-                console.log('%c💡 Memory Still Growing? Try These:', 'color: #ff0; font-weight: bold;');
-                console.log('%c1. Run: openCleanTab() then close this tab', 'color: #ff0;');
-                console.log('%c2. Close ALL tabs and reopen in new tab', 'color: #ff0;');
-                console.log('%c3. Close browser completely and restart', 'color: #ff0;');
+                console.log(
+                    '%c💡 Memory Still Growing? Try These:',
+                    'color: #ff0; font-weight: bold;'
+                );
+                console.log(
+                    '%c1. Run: openCleanTab() then close this tab',
+                    'color: #ff0;'
+                );
+                console.log(
+                    '%c2. Close ALL tabs and reopen in new tab',
+                    'color: #ff0;'
+                );
+                console.log(
+                    '%c3. Close browser completely and restart',
+                    'color: #ff0;'
+                );
                 console.log('');
-                console.log('%c⚠️  Service worker memory persists across reloads in same tab', 'color: #f80; font-style: italic;');
-                console.log('%c   This is a browser limitation, not a bug in the app', 'color: #f80; font-style: italic;');
+                console.log(
+                    '%c⚠️  Service worker memory persists across reloads in same tab',
+                    'color: #f80; font-style: italic;'
+                );
+                console.log(
+                    '%c   This is a browser limitation, not a bug in the app',
+                    'color: #f80; font-style: italic;'
+                );
             }
-
         } catch (error) {
             console.warn('⚠️ Failed to auto-clear caches:', error);
         }
@@ -343,7 +412,8 @@ Manual cache access:
     }
 
     // Log helpful info
-    console.log(`
+    console.log(
+        `
 %c💡 Cache & Memory Management %c
 
 Cache commands:
@@ -368,6 +438,10 @@ Manual access:
    • Memory growth tracked across reloads
    
 %c⚠️  If memory still grows, try: hardReset()
-`, 'color: #0ff; font-weight: bold; font-size: 14px;', 'color: #999;', 'color: #0f0; font-style: italic;', 'color: #ff0; font-style: italic;');
-
+`,
+        'color: #0ff; font-weight: bold; font-size: 14px;',
+        'color: #999;',
+        'color: #0f0; font-style: italic;',
+        'color: #ff0; font-style: italic;'
+    );
 })();

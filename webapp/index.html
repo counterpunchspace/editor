@@ -1,584 +1,972 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <meta name="theme-color" content="#000000" />
+        <meta
+            name="description"
+            content="Modern font editor for creating and editing fonts"
+        />
+        <meta name="apple-mobile-web-app-capable" content="yes" />
+        <meta name="apple-mobile-web-app-status-bar-style" content="black" />
+        <meta name="apple-mobile-web-app-title" content="contxt" />
+        <title>contxt</title>
+        <!-- COI Service Worker for GitHub Pages (adds COOP/COEP headers) -->
+        <script src="coi-serviceworker.js"></script>
+        <!-- PWA Manifest -->
+        <link rel="manifest" href="manifest.json" />
+        <!-- Apple Touch Icons -->
+        <link
+            rel="apple-touch-icon"
+            sizes="192x192"
+            href="assets/icons/icon-192x192.png"
+        />
+        <link
+            rel="apple-touch-icon"
+            sizes="512x512"
+            href="assets/icons/icon-512x512.png"
+        />
+        <link rel="preconnect" href="https://fonts.googleapis.com" />
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+        <!-- IBM Plex Sans - Latin, Greek, Cyrillic (Regular + Bold for loading animation) -->
+        <link
+            href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;700&display=swap"
+            rel="stylesheet"
+        />
+        <!-- IBM Plex Sans Arabic - Regular + Bold -->
+        <link
+            href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;700&display=swap"
+            rel="stylesheet"
+        />
+        <!-- IBM Plex Sans Devanagari - Regular + Bold -->
+        <link
+            href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Devanagari:wght@400;700&display=swap"
+            rel="stylesheet"
+        />
+        <!-- IBM Plex Sans Hebrew - Regular + Bold -->
+        <link
+            href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Hebrew:wght@400;700&display=swap"
+            rel="stylesheet"
+        />
+        <!-- IBM Plex Sans Thai - Regular + Bold -->
+        <link
+            href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Thai:wght@400;700&display=swap"
+            rel="stylesheet"
+        />
+        <!-- IBM Plex Sans KR (Korean) - Regular + Bold -->
+        <link
+            href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+KR:wght@400;700&display=swap"
+            rel="stylesheet"
+        />
+        <!-- IBM Plex Sans JP (Japanese) - Regular + Bold -->
+        <link
+            href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+JP:wght@400;700&display=swap"
+            rel="stylesheet"
+        />
+        <!-- IBM Plex Mono and Sans - All weights for UI -->
+        <link
+            href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital,wght@0,100;0,200;0,300;0,400;0,500;0,600;0,700;1,100;1,200;1,300;1,400;1,500;1,600;1,700&family=IBM+Plex+Sans:ital,wght@0,100;0,200;0,300;0,400;0,500;0,600;0,700;1,100;1,200;1,300;1,400;1,500;1,600;1,700&display=swap"
+            rel="stylesheet"
+        />
+        <link
+            rel="stylesheet"
+            href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200"
+        />
+        <link
+            rel="stylesheet"
+            href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200"
+        />
+        <link rel="stylesheet" href="css/style.css" id="local-css" />
+        <script src="https://cdn.jsdelivr.net/pyodide/v0.28.3/full/pyodide.js"></script>
+        <script src="https://cdn.jsdelivr.net/npm/jquery"></script>
+        <script src="https://cdn.jsdelivr.net/npm/jquery.terminal@2.35.2/js/jquery.terminal.min.js"></script>
+        <script src="https://cdn.jsdelivr.net/npm/jquery.terminal@2.35.2/js/unix_formatting.min.js"></script>
+        <link
+            href="https://cdn.jsdelivr.net/npm/jquery.terminal@2.35.2/css/jquery.terminal.min.css"
+            rel="stylesheet"
+        />
 
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="theme-color" content="#000000">
-    <meta name="description" content="Modern font editor for creating and editing fonts">
-    <meta name="apple-mobile-web-app-capable" content="yes">
-    <meta name="apple-mobile-web-app-status-bar-style" content="black">
-    <meta name="apple-mobile-web-app-title" content="contxt">
-    <title>contxt</title>
-    <!-- COI Service Worker for GitHub Pages (adds COOP/COEP headers) -->
-    <script src="coi-serviceworker.js"></script>
-    <!-- PWA Manifest -->
-    <link rel="manifest" href="manifest.json">
-    <!-- Apple Touch Icons -->
-    <link rel="apple-touch-icon" sizes="192x192" href="assets/icons/icon-192x192.png">
-    <link rel="apple-touch-icon" sizes="512x512" href="assets/icons/icon-512x512.png">
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <!-- IBM Plex Sans - Latin, Greek, Cyrillic (Regular + Bold for loading animation) -->
-    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;700&display=swap" rel="stylesheet">
-    <!-- IBM Plex Sans Arabic - Regular + Bold -->
-    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;700&display=swap"
-        rel="stylesheet">
-    <!-- IBM Plex Sans Devanagari - Regular + Bold -->
-    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Devanagari:wght@400;700&display=swap"
-        rel="stylesheet">
-    <!-- IBM Plex Sans Hebrew - Regular + Bold -->
-    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Hebrew:wght@400;700&display=swap"
-        rel="stylesheet">
-    <!-- IBM Plex Sans Thai - Regular + Bold -->
-    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Thai:wght@400;700&display=swap" rel="stylesheet">
-    <!-- IBM Plex Sans KR (Korean) - Regular + Bold -->
-    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+KR:wght@400;700&display=swap" rel="stylesheet">
-    <!-- IBM Plex Sans JP (Japanese) - Regular + Bold -->
-    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+JP:wght@400;700&display=swap" rel="stylesheet">
-    <!-- IBM Plex Mono and Sans - All weights for UI -->
-    <link
-        href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital,wght@0,100;0,200;0,300;0,400;0,500;0,600;0,700;1,100;1,200;1,300;1,400;1,500;1,600;1,700&family=IBM+Plex+Sans:ital,wght@0,100;0,200;0,300;0,400;0,500;0,600;0,700;1,100;1,200;1,300;1,400;1,500;1,600;1,700&display=swap"
-        rel="stylesheet">
-    <link rel="stylesheet"
-        href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" />
-    <link rel="stylesheet"
-        href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" />
-    <link rel="stylesheet" href="css/style.css" id="local-css">
-    <script src="https://cdn.jsdelivr.net/pyodide/v0.28.3/full/pyodide.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/jquery"></script>
-    <script src="https://cdn.jsdelivr.net/npm/jquery.terminal@2.35.2/js/jquery.terminal.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/jquery.terminal@2.35.2/js/unix_formatting.min.js"></script>
-    <link href="https://cdn.jsdelivr.net/npm/jquery.terminal@2.35.2/css/jquery.terminal.min.css" rel="stylesheet">
+        <!-- OpenType.js for font parsing and glyph path extraction -->
+        <script src="https://cdn.jsdelivr.net/npm/opentype.js@1.3.4/dist/opentype.min.js"></script>
 
-    <!-- OpenType.js for font parsing and glyph path extraction -->
-    <script src="https://cdn.jsdelivr.net/npm/opentype.js@1.3.4/dist/opentype.min.js"></script>
+        <!-- HarfBuzz.js for text shaping (v0.4.13) -->
+        <script src="https://cdn.jsdelivr.net/npm/harfbuzzjs@0.4.13/hb.js"></script>
+        <script src="https://cdn.jsdelivr.net/npm/harfbuzzjs@0.4.13/hbjs.js"></script>
 
-    <!-- HarfBuzz.js for text shaping (v0.4.13) -->
-    <script src="https://cdn.jsdelivr.net/npm/harfbuzzjs@0.4.13/hb.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/harfbuzzjs@0.4.13/hbjs.js"></script>
+        <!-- Unicode Bidirectional Algorithm -->
+        <script src="js/bidi-js.js"></script>
 
-    <!-- Unicode Bidirectional Algorithm -->
-    <script src="js/bidi-js.js"></script>
+        <!-- Ace Editor for Python -->
+        <script src="https://cdn.jsdelivr.net/npm/ace-builds@1.32.2/src-min-noconflict/ace.js"></script>
+        <script src="https://cdn.jsdelivr.net/npm/ace-builds@1.32.2/src-min-noconflict/mode-python.js"></script>
+        <script src="https://cdn.jsdelivr.net/npm/ace-builds@1.32.2/src-min-noconflict/theme-monokai.js"></script>
 
-    <!-- Ace Editor for Python -->
-    <script src="https://cdn.jsdelivr.net/npm/ace-builds@1.32.2/src-min-noconflict/ace.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/ace-builds@1.32.2/src-min-noconflict/mode-python.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/ace-builds@1.32.2/src-min-noconflict/theme-monokai.js"></script>
+        <!-- Diff libraries -->
+        <script src="https://cdn.jsdelivr.net/npm/diff@5.1.0/dist/diff.min.js"></script>
+        <link
+            rel="stylesheet"
+            href="https://cdn.jsdelivr.net/npm/diff2html@3.4.47/bundles/css/diff2html.min.css"
+        />
+        <script src="https://cdn.jsdelivr.net/npm/diff2html@3.4.47/bundles/js/diff2html-ui.min.js"></script>
 
-    <!-- Diff libraries -->
-    <script src="https://cdn.jsdelivr.net/npm/diff@5.1.0/dist/diff.min.js"></script>
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/diff2html@3.4.47/bundles/css/diff2html.min.css">
-    <script src="https://cdn.jsdelivr.net/npm/diff2html@3.4.47/bundles/js/diff2html-ui.min.js"></script>
+        <!-- Markdown parser -->
+        <script src="https://cdn.jsdelivr.net/npm/marked@11.1.1/marked.min.js"></script>
 
-    <!-- Markdown parser -->
-    <script src="https://cdn.jsdelivr.net/npm/marked@11.1.1/marked.min.js"></script>
+        <!-- Loading animation -->
+        <script src="js/loading-animation.js"></script>
 
-    <!-- Loading animation -->
-    <script src="js/loading-animation.js"></script>
+        <!-- Tab Lifecycle Management (loads early to protect tab) -->
+        <script src="js/tab-lifecycle.js"></script>
 
-    <!-- Tab Lifecycle Management (loads early to protect tab) -->
-    <script src="js/tab-lifecycle.js"></script>
-
-    <!-- Cache busting for local development only -->
-    <script>
-        (function () {
-            const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
-            if (isLocal) {
-                const version = Date.now();
-                // Update CSS
-                const css = document.getElementById('local-css');
-                if (css) css.href = 'css/style.css?v=' + version;
-            }
-        })();
-    </script>
-</head>
-
-<body>
-    <!-- Toolbar -->
-    <div class="toolbar">
-        <div class="toolbar-left">
-            <h1 class="app-name">contxt <span style="opacity: 0.4;">Technical Prototype</span></h1>
-        </div>
-        <div class="toolbar-center">
-        </div>
-        <div class="toolbar-right">
-            <button id="compile-font-btn" class="toolbar-button" title="Compile font to TTF (Cmd+B)"
-                disabled>Compile</button>
-            <button id="save-font-btn" class="toolbar-button" title="Save font (Cmd+S)" disabled>Save</button>
-            <div class="font-dropdown-container">
-                <span id="file-dirty-indicator" class="file-dirty-indicator" title="File has unsaved changes">●</span>
-                <select id="open-fonts-dropdown" class="fonts-dropdown">
-                    <option value="">No fonts open</option>
-                </select>
-            </div>
-            <button id="fullscreen-btn" class="settings-button" title="Toggle fullscreen">
-                <span class="material-symbols-outlined">fullscreen</span>
-            </button>
-            <button id="settings-btn" class="settings-button" title="Settings">
-                <span class="material-symbols-outlined">settings</span>
-                <span class="settings-memory-indicator" id="settings-memory-indicator"></span>
-            </button>
-        </div>
-    </div>
-
-    <!-- Loading overlay -->
-    <div id="loading-overlay" class="loading-overlay">
-        <div class="loading-content">
-            <h1 class="loading-logo">con<br>txt</h1>
-        </div>
-        <div id="loading-status" class="loading-status"></div>
-    </div>
-
-    <div class="container">
-        <!-- Top row with two views -->
-        <div class="top-row">
-            <div class="view view-fontinfo" id="view-fontinfo">
-                <div class="view-title-bar">
-                    <div class="view-title-left">
-                        <span class="view-title-name">Font Info</span>
-                        <span class="view-title-shortcut"><span
-                                class="material-symbols-outlined">keyboard_command_key</span><span
-                                class="material-symbols-outlined">arrow_upward</span>I</span>
-                    </div>
-                </div>
-                <div class="view-content">
-                    <div id="browser-compat"
-                        style="margin-top: 20px; padding: 10px; border: 1px solid #0ff; border-radius: 5px; display: none;">
-                        <strong>⚠️ Browser Compatibility Notice</strong>
-                        <p style="margin: 5px 0;">For best results, open this app in Chrome, Firefox, or Safari.</p>
-                        <p style="margin: 5px 0;">SharedArrayBuffer support required for fontc WASM threading.</p>
-                    </div>
-                </div>
-            </div>
-            <div class="divider vertical-divider" id="vertical-divider-1"></div>
-            <div class="view view-editor" id="view-editor">
-                <div class="view-title-bar">
-                    <div class="view-title-left">
-                        <span class="view-title-name">Editor</span>
-                        <span class="view-title-shortcut"><span
-                                class="material-symbols-outlined">keyboard_command_key</span><span
-                                class="material-symbols-outlined">arrow_upward</span>E</span>
-                    </div>
-                </div>
-                <div class="view-content">
-                </div>
-            </div>
-        </div>
-
-        <!-- Horizontal divider -->
-        <div class="divider horizontal-divider" id="horizontal-divider"></div>
-
-        <!-- Bottom row with four views -->
-        <div class="bottom-row">
-            <div class="view view-files" id="view-files">
-                <div class="view-title-bar">
-                    <div class="view-title-left">
-                        <span class="view-title-name">Files</span>
-                    </div>
-                </div>
-                <div class="view-content">
-                    <div id="file-browser">
-                        <div id="file-tree"></div>
-                    </div>
-                </div>
-            </div>
-            <div class="divider vertical-divider" id="vertical-divider-2"></div>
-            <div class="view view-assistant" id="view-assistant">
-                <div class="view-title-bar">
-                    <div class="view-title-left">
-                        <span class="view-title-name">Assistant</span>
-                        <span class="view-title-shortcut"><span
-                                class="material-symbols-outlined">keyboard_command_key</span><span
-                                class="material-symbols-outlined">arrow_upward</span>A</span>
-                        <button id="ai-info-btn" class="ai-info-button" title="Assistant info and settings">
-                            <span class="material-symbols-outlined">help</span>
-                        </button>
-                    </div>
-                    <div class="ai-context-toggle">
-                        <button id="ai-context-script-btn" class="ai-context-btn script-context"
-                            title="Script context: The assistant will work on the code in the script editor (Alt+S)">Script
-                            <span class="ai-button-shortcut"><span
-                                    class="material-symbols-outlined">keyboard_option_key</span>S</span></button>
-                        <button id="ai-context-font-btn" class="ai-context-btn font-context active"
-                            title="Font context: The assistant will work on the font object (Alt+F)">Font
-                            <span class="ai-button-shortcut"><span
-                                    class="material-symbols-outlined">keyboard_option_key</span>F</span></button>
-                    </div>
-                    <button id="ai-auto-run-btn" class="view-title-button auto-run"
-                        title="Automatically run assistant-generated code (Alt+R)">Auto-Run <span
-                            class="ai-button-shortcut"><span
-                                class="material-symbols-outlined">keyboard_option_key</span>R</span></button>
-                </div>
-                <div class="view-content">
-                    <div id="ai-chat-container">
-                        <div id="ai-messages"></div>
-                        <div id="ai-api-key-warning" class="ai-api-key-warning" style="display: none;">
-                            ⚠️ <strong>API Key Missing:</strong> Click the <span class="material-symbols-outlined"
-                                style="font-size: 14px; vertical-align: middle;">info</span> button to enter your
-                            Anthropic API key.
-                        </div>
-                        <div id="ai-input-container">
-                            <div id="ai-prompt-label">I’m your assistant. How may I help?
-                            </div>
-                            <div id="ai-context-label-line"><span id="ai-context-label" class="font-context">Font
-                                    Context</span></div>
-                            <div id="ai-prompt-wrapper">
-                                <div id="ai-prompt-prefix" class="font-context">>>> </div>
-                                <textarea id="ai-prompt" placeholder="" data-1p-ignore></textarea>
-                            </div>
-                            <div id="ai-button-container">
-                                <button id="ai-send-btn">Send with <span
-                                        class="material-symbols-outlined">keyboard_command_key</span><span
-                                        class="material-symbols-outlined">keyboard_return</span></button>
-                                <span id="ai-auto-run-indicator" style="display: none;">Script will auto-run</span>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-            <div class="divider vertical-divider" id="vertical-divider-3"></div>
-            <div class="view view-scripts" id="view-scripts">
-                <div class="view-title-bar">
-                    <div class="view-title-left">
-                        <span class="view-title-name">Scripts</span>
-                        <span class="view-title-shortcut"><span
-                                class="material-symbols-outlined">keyboard_command_key</span><span
-                                class="material-symbols-outlined">arrow_upward</span>S</span>
-                    </div>
-                    <button id="run-script-btn" class="view-title-button" title="Run script (Cmd+Alt+R)">Run <span
-                            style="opacity: 0.5;"><span
-                                class="material-symbols-outlined">keyboard_command_key</span><span
-                                class="material-symbols-outlined">keyboard_option_key</span>R</span></button>
-                </div>
-                <div id="script-editor"></div>
-            </div>
-            <div class="divider vertical-divider" id="vertical-divider-4"></div>
-            <div class="view view-console" id="view-console">
-                <div class="view-title-bar">
-                    <div class="view-title-left">
-                        <span class="view-title-name">Konsole</span>
-                        <span class="view-title-shortcut"><span
-                                class="material-symbols-outlined">keyboard_command_key</span><span
-                                class="material-symbols-outlined">arrow_upward</span>K</span>
-                    </div>
-                    <button id="clear-console-btn" class="view-title-button"
-                        title="Clear console globally (Cmd+K)">Clear <span class="console-clear-shortcut"><span
-                                class="material-symbols-outlined">keyboard_command_key</span>K</span></button>
-                </div>
-                <div id="console-container">
-                    <div id="loading"></div>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <!-- Local scripts loaded with cache-busting for development -->
-    <script>
-        (function () {
-            const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
-            const version = isLocal ? '?v=' + Date.now() : '';
-
-            const scripts = [
-                'js/settings.js',
-                'js/theme-switcher.js',
-                'js/sound-preloader.js',
-                'js/memory-monitor.js',
-                'js/python-ui-sync.js',
-                'js/python-execution-wrapper.js',
-                'js/resizer.js',
-                'js/view-settings.js',
-                'js/keyboard-navigation.js',
-                'js/matplotlib-handler.js',
-                'js/pyodide-official-console.js',
-                'js/fonteditor.js',
-                'js/font-dropdown.js',
-                'js/save-button.js',
-                'js/font-manager.js',
-                'js/compile-button.js',
-                'js/auto-compile-manager.js',
-                'js/file-browser.js',
-                'js/script-editor.js',
-                'js/ai-assistant.js',
-                'js/glyph-canvas.js'
-            ];
-
-            scripts.forEach(src => {
-                document.write('<script src="' + src + version + '"><\/script>');
-            });
-
-            // Module script
-            document.write('<script type="module" src="js/font-compilation.js' + version + '"><\/script>');
-        })();
-    </script>
-
-    <!-- Diff Review Modal -->
-    <div id="diff-review-modal" class="diff-modal">
-        <div class="diff-modal-content">
-            <div class="diff-modal-header">
-                <h2>Review Code Changes</h2>
-                <button class="diff-modal-close" id="diff-modal-close-btn">✕</button>
-            </div>
-            <div class="diff-modal-body">
-                <div id="diff-container"></div>
-                <div id="diff-explanation" class="diff-explanation"></div>
-            </div>
-            <div class="diff-modal-footer">
-                <button class="diff-modal-button diff-cancel-btn" id="diff-cancel-btn">Cancel</button>
-                <button class="diff-modal-button diff-accept-btn" id="diff-accept-btn">Open in Script Editor <span
-                        class="ai-button-shortcut"><span
-                            class="material-symbols-outlined">keyboard_command_key</span><span
-                            class="material-symbols-outlined">keyboard_return</span></span></button>
-            </div>
-        </div>
-    </div>
-
-    <!-- Browser compatibility check -->
-    <script>
-        // Detect if we're in a limited browser context
-        setTimeout(() => {
-            const isVSCode = navigator.userAgent.includes('Code') || navigator.userAgent.includes('Electron');
-            const hasSAB = typeof SharedArrayBuffer !== 'undefined';
-            const isIsolated = typeof crossOriginIsolated !== 'undefined' ? crossOriginIsolated : false;
-
-            // Log diagnostic info
-            console.log('[COI Check] SharedArrayBuffer:', hasSAB);
-            console.log('[COI Check] crossOriginIsolated:', isIsolated);
-            console.log('[COI Check] Service Worker:', navigator.serviceWorker?.controller ? 'Active' : 'Not active');
-
-            if (isVSCode || !hasSAB || !isIsolated) {
-                const notice = document.getElementById('browser-compat');
-                if (notice) {
-                    notice.style.display = 'block';
-                    if (isVSCode) {
-                        notice.innerHTML = '<strong>⚠️ VS Code Simple Browser Detected</strong>' +
-                            '<p style="margin: 5px 0;">For fontc WASM compilation, please open this URL in a regular browser:</p>' +
-                            '<p style="margin: 5px 0;"><code>http://localhost:8000</code></p>' +
-                            '<p style="margin: 5px 0;">Recommended: Chrome, Firefox, or Safari</p>';
-                    } else if (!isIsolated) {
-                        notice.innerHTML = '<strong>⚠️ Cross-Origin Isolation Required</strong>' +
-                            '<p style="margin: 5px 0;">Waiting for service worker to activate...</p>' +
-                            '<p style="margin: 5px 0;">If this message persists after reload, check server headers.</p>';
-                    }
+        <!-- Cache busting for local development only -->
+        <script>
+            (function () {
+                const isLocal =
+                    window.location.hostname === 'localhost' ||
+                    window.location.hostname === '127.0.0.1';
+                if (isLocal) {
+                    const version = Date.now();
+                    // Update CSS
+                    const css = document.getElementById('local-css');
+                    if (css) css.href = 'css/style.css?v=' + version;
                 }
-            }
-        }, 500);
-    </script>
+            })();
+        </script>
+    </head>
 
-    <!-- AI Assistant Info Popup -->
-    <div class="info-popup-overlay" id="ai-info-modal" style="display: none;">
-        <div class="info-popup">
-            <div class="info-popup-header">
-                <h3>AI Assistant</h3>
-                <button class="info-popup-close" id="ai-info-modal-close-btn">
-                    <span class="material-symbols-outlined">close</span>
+    <body>
+        <!-- Toolbar -->
+        <div class="toolbar">
+            <div class="toolbar-left">
+                <h1 class="app-name">
+                    contxt <span style="opacity: 0.4">Technical Prototype</span>
+                </h1>
+            </div>
+            <div class="toolbar-center"></div>
+            <div class="toolbar-right">
+                <button
+                    id="compile-font-btn"
+                    class="toolbar-button"
+                    title="Compile font to TTF (Cmd+B)"
+                    disabled
+                >
+                    Compile
+                </button>
+                <button
+                    id="save-font-btn"
+                    class="toolbar-button"
+                    title="Save font (Cmd+S)"
+                    disabled
+                >
+                    Save
+                </button>
+                <div class="font-dropdown-container">
+                    <span
+                        id="file-dirty-indicator"
+                        class="file-dirty-indicator"
+                        title="File has unsaved changes"
+                        >●</span
+                    >
+                    <select id="open-fonts-dropdown" class="fonts-dropdown">
+                        <option value="">No fonts open</option>
+                    </select>
+                </div>
+                <button
+                    id="fullscreen-btn"
+                    class="settings-button"
+                    title="Toggle fullscreen"
+                >
+                    <span class="material-symbols-outlined">fullscreen</span>
+                </button>
+                <button
+                    id="settings-btn"
+                    class="settings-button"
+                    title="Settings"
+                >
+                    <span class="material-symbols-outlined">settings</span>
+                    <span
+                        class="settings-memory-indicator"
+                        id="settings-memory-indicator"
+                    ></span>
                 </button>
             </div>
-            <div class="info-popup-content">
-                <div class="ai-info-section">
-                    <h4>API Key</h4>
-                    <p>Enter your Anthropic API key to use the assistant:</p>
-                    <input type="password" id="ai-api-key-modal" placeholder="Anthropic API Key"
-                        class="ai-api-key-modal-input" />
-                    <p class="ai-info-note">Your API key is stored locally in your browser and never sent anywhere
-                        except to Anthropic's API.</p>
-                </div>
-                <div class="ai-info-section">
-                    <h4>About</h4>
-                    <p>Describe what you want to do with your font in your natural language. The assistant will generate
-                        Python code using the <strong>context</strong> library and run it.</p>
-                    <ul>
-                        <li>🎯 <strong>Context matters:</strong> Work either on the font directly (Font Context), or on
-                            a user-made
-                            script in the script editor (Script Context)</li>
-                        <li>🔄 <strong>Auto-retry:</strong> If code fails, the assistant will fix and retry</li>
-                        <li>🔑 <strong>Privacy:</strong> Your font data never leaves the browser. The assistant simply
-                            generates Python code which is run locally like a user-made script.</li>
-                        <li>👁️ <strong>Transparent:</strong> Click "Show Code" to see what was generated</li>
-                        <li>👁️ <strong>Auto-Run:</strong> Decide whether to run the generated code right away or wait
-                            and review before running</li>
-                        <li>⚠️ <strong>Warning:</strong> The assistant makes mistakes both in handling your data as well
-                            as in generating code. Use at your own risk.</li>
-                    </ul>
-                    <p class="ai-examples"><em>Examples: </em><span class="ai-example-text">"List all glyph names",
-                            "Make glyphs 10% wider", "Add 50 units to left sidebearings"</span></p>
-                </div>
-            </div>
         </div>
-    </div>
 
-    <!-- Matplotlib Plot Modal -->
-    <div id="matplotlib-modal" class="matplotlib-modal">
-        <div class="matplotlib-modal-content">
-            <div class="matplotlib-modal-header">
-                <h3>Plot</h3>
-                <button class="matplotlib-modal-close" id="matplotlib-modal-close-btn">&times;</button>
+        <!-- Loading overlay -->
+        <div id="loading-overlay" class="loading-overlay">
+            <div class="loading-content">
+                <h1 class="loading-logo">con<br />txt</h1>
             </div>
-            <div class="matplotlib-modal-body" id="matplotlib-modal-body">
-                <!-- Plot canvas will be inserted here -->
-            </div>
+            <div id="loading-status" class="loading-status"></div>
         </div>
-    </div>
 
-    <!-- Settings Panel -->
-    <div id="settings-panel" class="settings-panel">
-        <div class="settings-panel-content">
-            <div class="settings-section">
-                <div class="settings-item">
-                    <label class="settings-item-label">Theme</label>
-                    <div class="theme-switcher">
-                        <button class="theme-option" data-theme="light">
-                            <span class="material-symbols-rounded">light_mode</span>
-                            Light
-                        </button>
-                        <button class="theme-option active" data-theme="dark">
-                            <span class="material-symbols-rounded">dark_mode</span>
-                            Dark
-                        </button>
-                        <button class="theme-option" data-theme="auto">
-                            <span class="material-symbols-rounded">brightness_auto</span>
-                            Auto
-                        </button>
-                    </div>
-                    <div class="settings-item-description">Choose between light, dark, or automatic theme based on your
-                        system preferences</div>
-                </div>
-                <div class="settings-item">
-                    <label class="settings-item-label" for="volume-slider">Volume</label>
-                    <div class="volume-control-settings">
-                        <span class="material-symbols-rounded volume-icon">volume_mute</span>
-                        <input type="range" id="volume-slider" class="volume-slider-settings" min="0" max="100"
-                            value="50">
-                        <span class="material-symbols-rounded volume-icon">volume_up</span>
-                        <span class="volume-value">50%</span>
-                    </div>
-                    <div class="settings-item-description">Adjust the volume for audio feedback</div>
-                </div>
-                <div class="settings-item">
-                    <label class="settings-item-label">
-                        Memory
-                        <button class="info-icon-btn" id="memory-info-btn" title="Memory usage information">
-                            <span class="material-symbols-outlined">help</span>
-                        </button>
-                    </label>
-                    <div class="memory-display-settings">
-                        <div class="memory-bar-container">
-                            <div class="memory-bar" id="settings-memory-bar"></div>
+        <div class="container">
+            <!-- Top row with two views -->
+            <div class="top-row">
+                <div class="view view-fontinfo" id="view-fontinfo">
+                    <div class="view-title-bar">
+                        <div class="view-title-left">
+                            <span class="view-title-name">Font Info</span>
+                            <span class="view-title-shortcut"
+                                ><span class="material-symbols-outlined"
+                                    >keyboard_command_key</span
+                                ><span class="material-symbols-outlined"
+                                    >arrow_upward</span
+                                >I</span
+                            >
                         </div>
-                        <div class="memory-percentage" id="settings-memory-percentage">---%</div>
                     </div>
-                    <div class="memory-details" id="settings-memory-details">Loading...</div>
-                    <div class="settings-item-description">Close all editor browser tabs at 90% to prevent crashes.
-                        Remember to save your data.</div>
+                    <div class="view-content">
+                        <div
+                            id="browser-compat"
+                            style="
+                                margin-top: 20px;
+                                padding: 10px;
+                                border: 1px solid #0ff;
+                                border-radius: 5px;
+                                display: none;
+                            "
+                        >
+                            <strong>⚠️ Browser Compatibility Notice</strong>
+                            <p style="margin: 5px 0">
+                                For best results, open this app in Chrome,
+                                Firefox, or Safari.
+                            </p>
+                            <p style="margin: 5px 0">
+                                SharedArrayBuffer support required for fontc
+                                WASM threading.
+                            </p>
+                        </div>
+                    </div>
                 </div>
+                <div
+                    class="divider vertical-divider"
+                    id="vertical-divider-1"
+                ></div>
+                <div class="view view-editor" id="view-editor">
+                    <div class="view-title-bar">
+                        <div class="view-title-left">
+                            <span class="view-title-name">Editor</span>
+                            <span class="view-title-shortcut"
+                                ><span class="material-symbols-outlined"
+                                    >keyboard_command_key</span
+                                ><span class="material-symbols-outlined"
+                                    >arrow_upward</span
+                                >E</span
+                            >
+                        </div>
+                    </div>
+                    <div class="view-content"></div>
+                </div>
+            </div>
 
-                <!-- Memory Info Popup -->
-                <div class="info-popup-overlay" id="memory-info-popup" style="display: none;">
-                    <div class="info-popup">
-                        <div class="info-popup-header">
-                            <h3>Memory Usage</h3>
-                            <button class="info-popup-close" id="memory-info-close">
-                                <span class="material-symbols-outlined">close</span>
+            <!-- Horizontal divider -->
+            <div
+                class="divider horizontal-divider"
+                id="horizontal-divider"
+            ></div>
+
+            <!-- Bottom row with four views -->
+            <div class="bottom-row">
+                <div class="view view-files" id="view-files">
+                    <div class="view-title-bar">
+                        <div class="view-title-left">
+                            <span class="view-title-name">Files</span>
+                        </div>
+                    </div>
+                    <div class="view-content">
+                        <div id="file-browser">
+                            <div id="file-tree"></div>
+                        </div>
+                    </div>
+                </div>
+                <div
+                    class="divider vertical-divider"
+                    id="vertical-divider-2"
+                ></div>
+                <div class="view view-assistant" id="view-assistant">
+                    <div class="view-title-bar">
+                        <div class="view-title-left">
+                            <span class="view-title-name">Assistant</span>
+                            <span class="view-title-shortcut"
+                                ><span class="material-symbols-outlined"
+                                    >keyboard_command_key</span
+                                ><span class="material-symbols-outlined"
+                                    >arrow_upward</span
+                                >A</span
+                            >
+                            <button
+                                id="ai-info-btn"
+                                class="ai-info-button"
+                                title="Assistant info and settings"
+                            >
+                                <span class="material-symbols-outlined"
+                                    >help</span
+                                >
                             </button>
                         </div>
-                        <div class="info-popup-content">
-                            <p>This shows how much browser memory the font editor is using.</p>
+                        <div class="ai-context-toggle">
+                            <button
+                                id="ai-context-script-btn"
+                                class="ai-context-btn script-context"
+                                title="Script context: The assistant will work on the code in the script editor (Alt+S)"
+                            >
+                                Script
+                                <span class="ai-button-shortcut"
+                                    ><span class="material-symbols-outlined"
+                                        >keyboard_option_key</span
+                                    >S</span
+                                >
+                            </button>
+                            <button
+                                id="ai-context-font-btn"
+                                class="ai-context-btn font-context active"
+                                title="Font context: The assistant will work on the font object (Alt+F)"
+                            >
+                                Font
+                                <span class="ai-button-shortcut"
+                                    ><span class="material-symbols-outlined"
+                                        >keyboard_option_key</span
+                                    >F</span
+                                >
+                            </button>
+                        </div>
+                        <button
+                            id="ai-auto-run-btn"
+                            class="view-title-button auto-run"
+                            title="Automatically run assistant-generated code (Alt+R)"
+                        >
+                            Auto-Run
+                            <span class="ai-button-shortcut"
+                                ><span class="material-symbols-outlined"
+                                    >keyboard_option_key</span
+                                >R</span
+                            >
+                        </button>
+                    </div>
+                    <div class="view-content">
+                        <div id="ai-chat-container">
+                            <div id="ai-messages"></div>
+                            <div
+                                id="ai-api-key-warning"
+                                class="ai-api-key-warning"
+                                style="display: none"
+                            >
+                                ⚠️ <strong>API Key Missing:</strong> Click the
+                                <span
+                                    class="material-symbols-outlined"
+                                    style="
+                                        font-size: 14px;
+                                        vertical-align: middle;
+                                    "
+                                    >info</span
+                                >
+                                button to enter your Anthropic API key.
+                            </div>
+                            <div id="ai-input-container">
+                                <div id="ai-prompt-label">
+                                    I’m your assistant. How may I help?
+                                </div>
+                                <div id="ai-context-label-line">
+                                    <span
+                                        id="ai-context-label"
+                                        class="font-context"
+                                        >Font Context</span
+                                    >
+                                </div>
+                                <div id="ai-prompt-wrapper">
+                                    <div
+                                        id="ai-prompt-prefix"
+                                        class="font-context"
+                                    >
+                                        >>>
+                                    </div>
+                                    <textarea
+                                        id="ai-prompt"
+                                        placeholder=""
+                                        data-1p-ignore
+                                    ></textarea>
+                                </div>
+                                <div id="ai-button-container">
+                                    <button id="ai-send-btn">
+                                        Send with
+                                        <span class="material-symbols-outlined"
+                                            >keyboard_command_key</span
+                                        ><span class="material-symbols-outlined"
+                                            >keyboard_return</span
+                                        >
+                                    </button>
+                                    <span
+                                        id="ai-auto-run-indicator"
+                                        style="display: none"
+                                        >Script will auto-run</span
+                                    >
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div
+                    class="divider vertical-divider"
+                    id="vertical-divider-3"
+                ></div>
+                <div class="view view-scripts" id="view-scripts">
+                    <div class="view-title-bar">
+                        <div class="view-title-left">
+                            <span class="view-title-name">Scripts</span>
+                            <span class="view-title-shortcut"
+                                ><span class="material-symbols-outlined"
+                                    >keyboard_command_key</span
+                                ><span class="material-symbols-outlined"
+                                    >arrow_upward</span
+                                >S</span
+                            >
+                        </div>
+                        <button
+                            id="run-script-btn"
+                            class="view-title-button"
+                            title="Run script (Cmd+Alt+R)"
+                        >
+                            Run
+                            <span style="opacity: 0.5"
+                                ><span class="material-symbols-outlined"
+                                    >keyboard_command_key</span
+                                ><span class="material-symbols-outlined"
+                                    >keyboard_option_key</span
+                                >R</span
+                            >
+                        </button>
+                    </div>
+                    <div id="script-editor"></div>
+                </div>
+                <div
+                    class="divider vertical-divider"
+                    id="vertical-divider-4"
+                ></div>
+                <div class="view view-console" id="view-console">
+                    <div class="view-title-bar">
+                        <div class="view-title-left">
+                            <span class="view-title-name">Konsole</span>
+                            <span class="view-title-shortcut"
+                                ><span class="material-symbols-outlined"
+                                    >keyboard_command_key</span
+                                ><span class="material-symbols-outlined"
+                                    >arrow_upward</span
+                                >K</span
+                            >
+                        </div>
+                        <button
+                            id="clear-console-btn"
+                            class="view-title-button"
+                            title="Clear console globally (Cmd+K)"
+                        >
+                            Clear
+                            <span class="console-clear-shortcut"
+                                ><span class="material-symbols-outlined"
+                                    >keyboard_command_key</span
+                                >K</span
+                            >
+                        </button>
+                    </div>
+                    <div id="console-container">
+                        <div id="loading"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
 
-                            <h4>Understanding Memory Usage</h4>
-                            <ul>
-                                <li><strong>Used Memory:</strong> Current memory allocated by the app</li>
-                                <li><strong>Memory Limit:</strong> Maximum memory allowed by your browser</li>
-                                <li><strong>Percentage:</strong> How close you are to the limit</li>
-                            </ul>
+        <!-- Local scripts loaded with cache-busting for development -->
+        <script>
+            (function () {
+                const isLocal =
+                    window.location.hostname === 'localhost' ||
+                    window.location.hostname === '127.0.0.1';
+                const version = isLocal ? '?v=' + Date.now() : '';
 
-                            <h4>⚠️ Important: Shared Memory</h4>
-                            <p>A significant portion of memory is <strong>shared across all browser tabs</strong>
-                                running this app. This includes:</p>
-                            <ul>
-                                <li>Python runtime (Pyodide)</li>
-                                <li>Core libraries and modules</li>
-                                <li>Compiled WebAssembly code</li>
-                            </ul>
+                const scripts = [
+                    'js/settings.js',
+                    'js/theme-switcher.js',
+                    'js/sound-preloader.js',
+                    'js/memory-monitor.js',
+                    'js/python-ui-sync.js',
+                    'js/python-execution-wrapper.js',
+                    'js/resizer.js',
+                    'js/view-settings.js',
+                    'js/keyboard-navigation.js',
+                    'js/matplotlib-handler.js',
+                    'js/pyodide-official-console.js',
+                    'js/fonteditor.js',
+                    'js/font-dropdown.js',
+                    'js/save-button.js',
+                    'js/font-manager.js',
+                    'js/compile-button.js',
+                    'js/auto-compile-manager.js',
+                    'js/file-browser.js',
+                    'js/script-editor.js',
+                    'js/ai-assistant.js',
+                    'js/glyph-canvas/features.js',
+                    'js/glyph-canvas/textrun.js',
+                    'js/glyph-canvas/viewport.js',
+                    'js/glyph-canvas/variations.js',
+                    'js/glyph-canvas.js'
+                ];
 
-                            <p class="info-highlight">💡 To fully free memory, you must <strong>close ALL tabs</strong>
-                                with this app, then reopen in a fresh tab.</p>
+                scripts.forEach((src) => {
+                    document.write(
+                        '<script src="' + src + version + '"><\/script>'
+                    );
+                });
 
-                            <h4>When to Worry</h4>
-                            <ul>
-                                <li><span style="color: var(--accent-green);">🟢 Below 70%:</span> Safe, normal
-                                    operation</li>
-                                <li><span style="color: var(--accent-yellow);">🟡 70-90%:</span> Warning, consider
-                                    saving and restarting</li>
-                                <li><span style="color: var(--accent-red);">🔴 Above 90%:</span> Critical, close all
-                                    tabs and restart</li>
-                            </ul>
+                // Module script
+                document.write(
+                    '<script type="module" src="js/font-compilation.js' +
+                        version +
+                        '"><\/script>'
+                );
+            })();
+        </script>
+
+        <!-- Diff Review Modal -->
+        <div id="diff-review-modal" class="diff-modal">
+            <div class="diff-modal-content">
+                <div class="diff-modal-header">
+                    <h2>Review Code Changes</h2>
+                    <button class="diff-modal-close" id="diff-modal-close-btn">
+                        ✕
+                    </button>
+                </div>
+                <div class="diff-modal-body">
+                    <div id="diff-container"></div>
+                    <div id="diff-explanation" class="diff-explanation"></div>
+                </div>
+                <div class="diff-modal-footer">
+                    <button
+                        class="diff-modal-button diff-cancel-btn"
+                        id="diff-cancel-btn"
+                    >
+                        Cancel
+                    </button>
+                    <button
+                        class="diff-modal-button diff-accept-btn"
+                        id="diff-accept-btn"
+                    >
+                        Open in Script Editor
+                        <span class="ai-button-shortcut"
+                            ><span class="material-symbols-outlined"
+                                >keyboard_command_key</span
+                            ><span class="material-symbols-outlined"
+                                >keyboard_return</span
+                            ></span
+                        >
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Browser compatibility check -->
+        <script>
+            // Detect if we're in a limited browser context
+            setTimeout(() => {
+                const isVSCode =
+                    navigator.userAgent.includes('Code') ||
+                    navigator.userAgent.includes('Electron');
+                const hasSAB = typeof SharedArrayBuffer !== 'undefined';
+                const isIsolated =
+                    typeof crossOriginIsolated !== 'undefined'
+                        ? crossOriginIsolated
+                        : false;
+
+                // Log diagnostic info
+                console.log('[COI Check] SharedArrayBuffer:', hasSAB);
+                console.log('[COI Check] crossOriginIsolated:', isIsolated);
+                console.log(
+                    '[COI Check] Service Worker:',
+                    navigator.serviceWorker?.controller
+                        ? 'Active'
+                        : 'Not active'
+                );
+
+                if (isVSCode || !hasSAB || !isIsolated) {
+                    const notice = document.getElementById('browser-compat');
+                    if (notice) {
+                        notice.style.display = 'block';
+                        if (isVSCode) {
+                            notice.innerHTML =
+                                '<strong>⚠️ VS Code Simple Browser Detected</strong>' +
+                                '<p style="margin: 5px 0;">For fontc WASM compilation, please open this URL in a regular browser:</p>' +
+                                '<p style="margin: 5px 0;"><code>http://localhost:8000</code></p>' +
+                                '<p style="margin: 5px 0;">Recommended: Chrome, Firefox, or Safari</p>';
+                        } else if (!isIsolated) {
+                            notice.innerHTML =
+                                '<strong>⚠️ Cross-Origin Isolation Required</strong>' +
+                                '<p style="margin: 5px 0;">Waiting for service worker to activate...</p>' +
+                                '<p style="margin: 5px 0;">If this message persists after reload, check server headers.</p>';
+                        }
+                    }
+                }
+            }, 500);
+        </script>
+
+        <!-- AI Assistant Info Popup -->
+        <div
+            class="info-popup-overlay"
+            id="ai-info-modal"
+            style="display: none"
+        >
+            <div class="info-popup">
+                <div class="info-popup-header">
+                    <h3>AI Assistant</h3>
+                    <button
+                        class="info-popup-close"
+                        id="ai-info-modal-close-btn"
+                    >
+                        <span class="material-symbols-outlined">close</span>
+                    </button>
+                </div>
+                <div class="info-popup-content">
+                    <div class="ai-info-section">
+                        <h4>API Key</h4>
+                        <p>
+                            Enter your Anthropic API key to use the assistant:
+                        </p>
+                        <input
+                            type="password"
+                            id="ai-api-key-modal"
+                            placeholder="Anthropic API Key"
+                            class="ai-api-key-modal-input"
+                        />
+                        <p class="ai-info-note">
+                            Your API key is stored locally in your browser and
+                            never sent anywhere except to Anthropic's API.
+                        </p>
+                    </div>
+                    <div class="ai-info-section">
+                        <h4>About</h4>
+                        <p>
+                            Describe what you want to do with your font in your
+                            natural language. The assistant will generate Python
+                            code using the <strong>context</strong> library and
+                            run it.
+                        </p>
+                        <ul>
+                            <li>
+                                🎯 <strong>Context matters:</strong> Work either
+                                on the font directly (Font Context), or on a
+                                user-made script in the script editor (Script
+                                Context)
+                            </li>
+                            <li>
+                                🔄 <strong>Auto-retry:</strong> If code fails,
+                                the assistant will fix and retry
+                            </li>
+                            <li>
+                                🔑 <strong>Privacy:</strong> Your font data
+                                never leaves the browser. The assistant simply
+                                generates Python code which is run locally like
+                                a user-made script.
+                            </li>
+                            <li>
+                                👁️ <strong>Transparent:</strong> Click "Show
+                                Code" to see what was generated
+                            </li>
+                            <li>
+                                👁️ <strong>Auto-Run:</strong> Decide whether to
+                                run the generated code right away or wait and
+                                review before running
+                            </li>
+                            <li>
+                                ⚠️ <strong>Warning:</strong> The assistant makes
+                                mistakes both in handling your data as well as
+                                in generating code. Use at your own risk.
+                            </li>
+                        </ul>
+                        <p class="ai-examples">
+                            <em>Examples: </em
+                            ><span class="ai-example-text"
+                                >"List all glyph names", "Make glyphs 10%
+                                wider", "Add 50 units to left
+                                sidebearings"</span
+                            >
+                        </p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Matplotlib Plot Modal -->
+        <div id="matplotlib-modal" class="matplotlib-modal">
+            <div class="matplotlib-modal-content">
+                <div class="matplotlib-modal-header">
+                    <h3>Plot</h3>
+                    <button
+                        class="matplotlib-modal-close"
+                        id="matplotlib-modal-close-btn"
+                    >
+                        &times;
+                    </button>
+                </div>
+                <div class="matplotlib-modal-body" id="matplotlib-modal-body">
+                    <!-- Plot canvas will be inserted here -->
+                </div>
+            </div>
+        </div>
+
+        <!-- Settings Panel -->
+        <div id="settings-panel" class="settings-panel">
+            <div class="settings-panel-content">
+                <div class="settings-section">
+                    <div class="settings-item">
+                        <label class="settings-item-label">Theme</label>
+                        <div class="theme-switcher">
+                            <button class="theme-option" data-theme="light">
+                                <span class="material-symbols-rounded"
+                                    >light_mode</span
+                                >
+                                Light
+                            </button>
+                            <button
+                                class="theme-option active"
+                                data-theme="dark"
+                            >
+                                <span class="material-symbols-rounded"
+                                    >dark_mode</span
+                                >
+                                Dark
+                            </button>
+                            <button class="theme-option" data-theme="auto">
+                                <span class="material-symbols-rounded"
+                                    >brightness_auto</span
+                                >
+                                Auto
+                            </button>
+                        </div>
+                        <div class="settings-item-description">
+                            Choose between light, dark, or automatic theme based
+                            on your system preferences
+                        </div>
+                    </div>
+                    <div class="settings-item">
+                        <label class="settings-item-label" for="volume-slider"
+                            >Volume</label
+                        >
+                        <div class="volume-control-settings">
+                            <span class="material-symbols-rounded volume-icon"
+                                >volume_mute</span
+                            >
+                            <input
+                                type="range"
+                                id="volume-slider"
+                                class="volume-slider-settings"
+                                min="0"
+                                max="100"
+                                value="50"
+                            />
+                            <span class="material-symbols-rounded volume-icon"
+                                >volume_up</span
+                            >
+                            <span class="volume-value">50%</span>
+                        </div>
+                        <div class="settings-item-description">
+                            Adjust the volume for audio feedback
+                        </div>
+                    </div>
+                    <div class="settings-item">
+                        <label class="settings-item-label">
+                            Memory
+                            <button
+                                class="info-icon-btn"
+                                id="memory-info-btn"
+                                title="Memory usage information"
+                            >
+                                <span class="material-symbols-outlined"
+                                    >help</span
+                                >
+                            </button>
+                        </label>
+                        <div class="memory-display-settings">
+                            <div class="memory-bar-container">
+                                <div
+                                    class="memory-bar"
+                                    id="settings-memory-bar"
+                                ></div>
+                            </div>
+                            <div
+                                class="memory-percentage"
+                                id="settings-memory-percentage"
+                            >
+                                ---%
+                            </div>
+                        </div>
+                        <div
+                            class="memory-details"
+                            id="settings-memory-details"
+                        >
+                            Loading...
+                        </div>
+                        <div class="settings-item-description">
+                            Close all editor browser tabs at 90% to prevent
+                            crashes. Remember to save your data.
+                        </div>
+                    </div>
+
+                    <!-- Memory Info Popup -->
+                    <div
+                        class="info-popup-overlay"
+                        id="memory-info-popup"
+                        style="display: none"
+                    >
+                        <div class="info-popup">
+                            <div class="info-popup-header">
+                                <h3>Memory Usage</h3>
+                                <button
+                                    class="info-popup-close"
+                                    id="memory-info-close"
+                                >
+                                    <span class="material-symbols-outlined"
+                                        >close</span
+                                    >
+                                </button>
+                            </div>
+                            <div class="info-popup-content">
+                                <p>
+                                    This shows how much browser memory the font
+                                    editor is using.
+                                </p>
+
+                                <h4>Understanding Memory Usage</h4>
+                                <ul>
+                                    <li>
+                                        <strong>Used Memory:</strong> Current
+                                        memory allocated by the app
+                                    </li>
+                                    <li>
+                                        <strong>Memory Limit:</strong> Maximum
+                                        memory allowed by your browser
+                                    </li>
+                                    <li>
+                                        <strong>Percentage:</strong> How close
+                                        you are to the limit
+                                    </li>
+                                </ul>
+
+                                <h4>⚠️ Important: Shared Memory</h4>
+                                <p>
+                                    A significant portion of memory is
+                                    <strong
+                                        >shared across all browser tabs</strong
+                                    >
+                                    running this app. This includes:
+                                </p>
+                                <ul>
+                                    <li>Python runtime (Pyodide)</li>
+                                    <li>Core libraries and modules</li>
+                                    <li>Compiled WebAssembly code</li>
+                                </ul>
+
+                                <p class="info-highlight">
+                                    💡 To fully free memory, you must
+                                    <strong>close ALL tabs</strong> with this
+                                    app, then reopen in a fresh tab.
+                                </p>
+
+                                <h4>When to Worry</h4>
+                                <ul>
+                                    <li>
+                                        <span style="color: var(--accent-green)"
+                                            >🟢 Below 70%:</span
+                                        >
+                                        Safe, normal operation
+                                    </li>
+                                    <li>
+                                        <span
+                                            style="color: var(--accent-yellow)"
+                                            >🟡 70-90%:</span
+                                        >
+                                        Warning, consider saving and restarting
+                                    </li>
+                                    <li>
+                                        <span style="color: var(--accent-red)"
+                                            >🔴 Above 90%:</span
+                                        >
+                                        Critical, close all tabs and restart
+                                    </li>
+                                </ul>
+                            </div>
                         </div>
                     </div>
                 </div>
             </div>
         </div>
-    </div>
 
-    <!-- PWA Service Worker Registration -->
-    <script>
-        // PWA Install Prompt Handler
-        let deferredPrompt;
+        <!-- PWA Service Worker Registration -->
+        <script>
+            // PWA Install Prompt Handler
+            let deferredPrompt;
 
-        window.addEventListener('beforeinstallprompt', (e) => {
-            // Prevent Chrome's default install prompt
-            e.preventDefault();
-            // Store the event for later use
-            deferredPrompt = e;
-            console.log('[PWA] Install prompt available');
+            window.addEventListener('beforeinstallprompt', (e) => {
+                // Prevent Chrome's default install prompt
+                e.preventDefault();
+                // Store the event for later use
+                deferredPrompt = e;
+                console.log('[PWA] Install prompt available');
 
-            // You can show your own custom install button here
-            // Example: showInstallButton();
-        });
-
-        // Function to trigger install (call this from a button click)
-        window.installPWA = async () => {
-            if (!deferredPrompt) {
-                console.log('[PWA] Install prompt not available');
-                return;
-            }
-
-            // Show the install prompt
-            deferredPrompt.prompt();
-
-            // Wait for the user's response
-            const { outcome } = await deferredPrompt.userChoice;
-            console.log(`[PWA] User response: ${outcome}`);
-
-            // Clear the prompt
-            deferredPrompt = null;
-        };
-
-        // Listen for app installation
-        window.addEventListener('appinstalled', (e) => {
-            console.log('[PWA] App installed successfully');
-            deferredPrompt = null;
-        });
-
-        // Service Worker Registration
-        if ('serviceWorker' in navigator) {
-            window.addEventListener('load', () => {
-                // Check service worker status
-                if (navigator.serviceWorker.controller) {
-                    console.log('[PWA] Service worker active - offline mode available');
-
-                    // Listen for service worker updates
-                    navigator.serviceWorker.addEventListener('message', (event) => {
-                        if (event.data && event.data.type === 'OFFLINE_READY') {
-                            console.log('[PWA] ✅ App fully cached and ready for offline use');
-                        }
-                    });
-                } else {
-                    console.log('[PWA] Service worker registering...');
-                }
+                // You can show your own custom install button here
+                // Example: showInstallButton();
             });
-        }
-    </script>
 
-</body>
+            // Function to trigger install (call this from a button click)
+            window.installPWA = async () => {
+                if (!deferredPrompt) {
+                    console.log('[PWA] Install prompt not available');
+                    return;
+                }
 
+                // Show the install prompt
+                deferredPrompt.prompt();
+
+                // Wait for the user's response
+                const { outcome } = await deferredPrompt.userChoice;
+                console.log(`[PWA] User response: ${outcome}`);
+
+                // Clear the prompt
+                deferredPrompt = null;
+            };
+
+            // Listen for app installation
+            window.addEventListener('appinstalled', (e) => {
+                console.log('[PWA] App installed successfully');
+                deferredPrompt = null;
+            });
+
+            // Service Worker Registration
+            if ('serviceWorker' in navigator) {
+                window.addEventListener('load', () => {
+                    // Check service worker status
+                    if (navigator.serviceWorker.controller) {
+                        console.log(
+                            '[PWA] Service worker active - offline mode available'
+                        );
+
+                        // Listen for service worker updates
+                        navigator.serviceWorker.addEventListener(
+                            'message',
+                            (event) => {
+                                if (
+                                    event.data &&
+                                    event.data.type === 'OFFLINE_READY'
+                                ) {
+                                    console.log(
+                                        '[PWA] ✅ App fully cached and ready for offline use'
+                                    );
+                                }
+                            }
+                        );
+                    } else {
+                        console.log('[PWA] Service worker registering...');
+                    }
+                });
+            }
+        </script>
+    </body>
 </html>

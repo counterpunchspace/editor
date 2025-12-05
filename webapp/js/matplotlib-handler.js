@@ -1,7 +1,7 @@
 /**
  * Matplotlib Plot Handler
  * Intercepts matplotlib plots and displays them in a centered modal overlay
- * 
+ *
  * This prevents matplotlib canvases from breaking the page layout by appearing
  * inline in the console. Instead, plots are shown in a modal that can be easily
  * closed with ESC, clicking the X button, or clicking outside the plot.
@@ -22,9 +22,15 @@
     function initMatplotlibModal() {
         matplotlibModal = document.getElementById('matplotlib-modal');
         matplotlibModalBody = document.getElementById('matplotlib-modal-body');
-        matplotlibModalCloseBtn = document.getElementById('matplotlib-modal-close-btn');
+        matplotlibModalCloseBtn = document.getElementById(
+            'matplotlib-modal-close-btn'
+        );
 
-        if (!matplotlibModal || !matplotlibModalBody || !matplotlibModalCloseBtn) {
+        if (
+            !matplotlibModal ||
+            !matplotlibModalBody ||
+            !matplotlibModalCloseBtn
+        ) {
             console.warn('Matplotlib modal elements not found in DOM');
             return;
         }
@@ -41,7 +47,10 @@
 
         // Close on Escape key
         document.addEventListener('keydown', function (event) {
-            if (event.key === 'Escape' && matplotlibModal.classList.contains('active')) {
+            if (
+                event.key === 'Escape' &&
+                matplotlibModal.classList.contains('active')
+            ) {
                 event.preventDefault();
                 event.stopPropagation();
                 closePlotModal();
@@ -68,7 +77,10 @@
                 mutation.addedNodes.forEach(function (node) {
                     // Check for matplotlib-figure custom elements (some backends)
                     if (node.nodeName === 'MATPLOTLIB-FIGURE') {
-                        console.log('📊 Detected matplotlib-figure element:', node);
+                        console.log(
+                            '📊 Detected matplotlib-figure element:',
+                            node
+                        );
                         handleMatplotlibFigure(node);
                     }
                     // Check for regular canvas elements
@@ -76,19 +88,29 @@
                         handleNewCanvas(node);
                     }
                     // Check for DIVs added directly to body (WebAgg backend pattern)
-                    else if (node.nodeName === 'DIV' && node.parentNode === document.body) {
+                    else if (
+                        node.nodeName === 'DIV' &&
+                        node.parentNode === document.body
+                    ) {
                         // WebAgg creates a div with no id/class containing the plot
                         if (!node.id && !node.className) {
-                            console.log('📊 Detected potential WebAgg plot div:', node);
+                            console.log(
+                                '📊 Detected potential WebAgg plot div:',
+                                node
+                            );
                             handlePotentialWebAggDiv(node);
                         }
                     }
                     // Check for divs or other containers with matplotlib content
                     else if (node.querySelectorAll) {
                         // Check for matplotlib-figure elements in subtrees
-                        const matplotlibFigures = node.querySelectorAll('matplotlib-figure');
+                        const matplotlibFigures =
+                            node.querySelectorAll('matplotlib-figure');
                         if (matplotlibFigures.length > 0) {
-                            console.log('📊 Found matplotlib-figure elements in subtree:', matplotlibFigures);
+                            console.log(
+                                '📊 Found matplotlib-figure elements in subtree:',
+                                matplotlibFigures
+                            );
                         }
                         matplotlibFigures.forEach(handleMatplotlibFigure);
 
@@ -141,7 +163,11 @@
         // Check if this div contains a canvas (WebAgg pattern)
         const canvases = div.querySelectorAll('canvas');
         if (canvases.length > 0) {
-            console.log('📊 Confirmed WebAgg plot div with canvas:', div, canvases);
+            console.log(
+                '📊 Confirmed WebAgg plot div with canvas:',
+                div,
+                canvases
+            );
             processedCanvases.add(div);
 
             // Small delay to ensure the plot is fully rendered
@@ -154,7 +180,10 @@
         // Also check if it has typical matplotlib structure (buttons, canvas, etc.)
         if (div.children.length >= 2) {
             // WebAgg creates a div with multiple children (toolbar, canvas, etc.)
-            console.log('📊 Potential WebAgg plot div with multiple children:', div);
+            console.log(
+                '📊 Potential WebAgg plot div with multiple children:',
+                div
+            );
             processedCanvases.add(div);
 
             setTimeout(() => {
@@ -193,17 +222,26 @@
         // WebAgg backend creates canvas elements with specific characteristics
         // Check if canvas has matplotlib-related attributes or parent
         const parent = canvas.parentElement;
-        const hasMatplotlibClass = canvas.className && canvas.className.includes('mpl');
-        const parentHasMatplotlibClass = parent && parent.className && parent.className.includes('mpl');
+        const hasMatplotlibClass =
+            canvas.className && canvas.className.includes('mpl');
+        const parentHasMatplotlibClass =
+            parent && parent.className && parent.className.includes('mpl');
         const isInTerminal = canvas.closest('.terminal');
 
         // If it's in the terminal and looks like a plot, it's probably matplotlib
         if (isInTerminal && canvas.width >= 100 && canvas.height >= 100) {
-            console.log('📊 Detected matplotlib WebAgg canvas in terminal:', canvas);
+            console.log(
+                '📊 Detected matplotlib WebAgg canvas in terminal:',
+                canvas
+            );
             processedCanvases.add(canvas);
 
             // Check if it has a parent container we should move instead
-            if (parent && parent !== document.body && !parent.closest('.terminal-output')) {
+            if (
+                parent &&
+                parent !== document.body &&
+                !parent.closest('.terminal-output')
+            ) {
                 // Move the parent container
                 setTimeout(() => {
                     showPlotInModal(parent);
@@ -225,7 +263,12 @@
             }
 
             // Check a small sample of pixels to see if anything is drawn
-            const imageData = ctx.getImageData(0, 0, Math.min(canvas.width, 10), Math.min(canvas.height, 10));
+            const imageData = ctx.getImageData(
+                0,
+                0,
+                Math.min(canvas.width, 10),
+                Math.min(canvas.height, 10)
+            );
             const hasContent = imageData.data.some((value, index) => {
                 // Check alpha channel (every 4th byte)
                 if (index % 4 === 3) {
@@ -235,7 +278,10 @@
             });
 
             if (hasContent) {
-                console.log('📊 Detected matplotlib canvas with content:', canvas);
+                console.log(
+                    '📊 Detected matplotlib canvas with content:',
+                    canvas
+                );
                 processedCanvases.add(canvas);
                 setTimeout(() => {
                     showPlotInModal(canvas);
@@ -295,7 +341,8 @@
 
     // Global function to manually show a plot
     window.showMatplotlibPlot = function (element) {
-        if (element && element.nodeType === 1) {  // Element node
+        if (element && element.nodeType === 1) {
+            // Element node
             processedCanvases.add(element);
             showPlotInModal(element);
         } else {
@@ -312,5 +359,4 @@
     } else {
         initMatplotlibModal();
     }
-
 })();

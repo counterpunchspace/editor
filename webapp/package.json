@@ -1,0 +1,16 @@
+{
+    "name": "context",
+    "version": "1.0.0",
+    "type": "commonjs",
+    "main": "coi-serviceworker.js",
+    "scripts": {
+        "test": "jest --verbose tests/",
+        "format": "prettier --write ."
+    },
+    "devDependencies": {
+        "jest": "^30.2.0",
+        "jest-canvas-mock": "^2.5.2",
+        "jest-environment-jsdom": "^30.2.0",
+        "prettier": "^3.7.4"
+    }
+}

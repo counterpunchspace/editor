@@ -8,19 +8,19 @@
 (function () {
     // Animation configuration
     const CONFIG = {
-        gridSpacing: 40,        // Space between grid points
-        fontSize: 18,           // Base font size
-        sizeVariation: 0.5,     // Size variation (30%)
+        gridSpacing: 40, // Space between grid points
+        fontSize: 18, // Base font size
+        sizeVariation: 0.5, // Size variation (30%)
         initialFlickerDelay: 20, // Delay between initial flickers (ms)
-        flickerChance: 0.002,   // Chance per frame for a star to flicker again
+        flickerChance: 0.002, // Chance per frame for a star to flicker again
         disappearChance: 0.0015, // Chance per frame for a star to disappear
-        reappearChance: 0.003,  // Chance per frame for a disappeared star to reappear
-        readyNormalTime: 0,     // Time READY label stays normal before blinking (ms)
-        readyBlinkTime: 1000,   // Time for READY label to blink (ms)
-        starsFadeTime: 1000,    // Time for stars to fade out (ms)
+        reappearChance: 0.003, // Chance per frame for a disappeared star to reappear
+        readyNormalTime: 0, // Time READY label stays normal before blinking (ms)
+        readyBlinkTime: 1000, // Time for READY label to blink (ms)
+        starsFadeTime: 1000, // Time for stars to fade out (ms)
         pauseBeforeFinalFade: 300, // Pause after stars disappear before final fade (ms)
-        finalFadeTime: 1500,    // Time for final fade out (ms)
-        minDistanceFromCenter: 300, // Minimum distance from center for stars
+        finalFadeTime: 1500, // Time for final fade out (ms)
+        minDistanceFromCenter: 300 // Minimum distance from center for stars
     };
 
     // Script-specific character sets for different writing systems
@@ -28,7 +28,8 @@
     const SCRIPTS = {
         latin: {
             fontFamily: 'IBM Plex Sans',
-            chars: 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789ÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÐÑÒÓÔÕÖØÙÚÛÜÝÞßàáâãäåæçèéêëìíîïðñòóôõöøùúûüýþÿ' +
+            chars:
+                'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789ÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÐÑÒÓÔÕÖØÙÚÛÜÝÞßàáâãäåæçèéêëìíîïðñòóôõöøùúûüýþÿ' +
                 'ΑΒΓΔΕΖΗΘΙΚΛΜΝΞΟΠΡΣΤΥΦΧΨΩαβγδεζηθικλμνξοπρστυφχψω' + // Greek
                 'АБВГДЕЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯабвгдежзийклмнопрстуфхцчшщъыьэюя' // Cyrillic
         },
@@ -59,7 +60,9 @@
     };
 
     // Combine all characters from all scripts
-    const ALL_CHARACTERS = Object.values(SCRIPTS).map(s => s.chars).join('');
+    const ALL_CHARACTERS = Object.values(SCRIPTS)
+        .map((s) => s.chars)
+        .join('');
 
     // Create a lookup table for quick font family retrieval by character
     const CHAR_TO_FONT = {};
@@ -80,13 +83,17 @@
             this.y = y;
 
             // Random character from all scripts
-            this.char = ALL_CHARACTERS.charAt(Math.floor(Math.random() * ALL_CHARACTERS.length));
+            this.char = ALL_CHARACTERS.charAt(
+                Math.floor(Math.random() * ALL_CHARACTERS.length)
+            );
 
             // Get the appropriate font family for this character
             this.fontFamily = CHAR_TO_FONT[this.char] || 'IBM Plex Sans';
 
             // Size variation
-            this.size = CONFIG.fontSize * (1 + (Math.random() - 0.5) * CONFIG.sizeVariation);
+            this.size =
+                CONFIG.fontSize *
+                (1 + (Math.random() - 0.5) * CONFIG.sizeVariation);
 
             // Initial state
             this.opacity = 0;
@@ -116,15 +123,27 @@
         cyclicReappear() {
             this.isCyclicallyDisappeared = false;
             this.targetOpacity = 0.4; // Darker gray
-        } flicker() {
+        }
+        flicker() {
             // Flicker to bright white, then fade back to darker gray
-            this.targetOpacity = 1.0;  // Bright white
+            this.targetOpacity = 1.0; // Bright white
         }
 
-        update(currentTime, isFadingOut, fadeProgress, isFadingFinal, isPausing) {
+        update(
+            currentTime,
+            isFadingOut,
+            fadeProgress,
+            isFadingFinal,
+            isPausing
+        ) {
             if (isFadingOut || isFadingFinal || isPausing) {
                 // Individual disappearance - only for stars that have appeared and haven't disappeared yet
-                if (this.hasAppeared && !this.hasDisappeared && this.disappearTime !== null && currentTime >= this.disappearTime) {
+                if (
+                    this.hasAppeared &&
+                    !this.hasDisappeared &&
+                    this.disappearTime !== null &&
+                    currentTime >= this.disappearTime
+                ) {
                     this.opacity = 0;
                     this.targetOpacity = 0;
                     this.hasDisappeared = true;
@@ -132,7 +151,7 @@
             } else if (currentTime >= this.appearTime && !this.hasAppeared) {
                 // Initial appearance
                 this.hasAppeared = true;
-                this.targetOpacity = 0.4;  // Darker gray
+                this.targetOpacity = 0.4; // Darker gray
                 this.opacity = 0.4;
             } else if (this.hasAppeared && !this.hasDisappeared) {
                 // Handle cyclic disappearance
@@ -152,7 +171,7 @@
 
                     // If we're close to full brightness after a flicker, start fading back to darker gray
                     if (this.opacity > 0.9 && this.targetOpacity > 0.9) {
-                        this.targetOpacity = 0.4;  // Fade back to darker gray
+                        this.targetOpacity = 0.4; // Fade back to darker gray
                     }
                 }
             }
@@ -166,7 +185,9 @@
                 ctx.font = `${fontWeight} ${this.size}px '${this.fontFamily}'`;
 
                 // Get color based on theme attribute
-                const isLightTheme = document.documentElement.getAttribute('data-theme') === 'light';
+                const isLightTheme =
+                    document.documentElement.getAttribute('data-theme') ===
+                    'light';
                 const r = isLightTheme ? 26 : 255;
                 const g = isLightTheme ? 26 : 255;
                 const b = isLightTheme ? 26 : 255;
@@ -289,7 +310,9 @@
         }
 
         animate(currentTime) {
-            this.animationId = requestAnimationFrame((time) => this.animate(time));
+            this.animationId = requestAnimationFrame((time) =>
+                this.animate(time)
+            );
 
             const elapsedTime = currentTime - this.startTime;
 
@@ -298,8 +321,12 @@
 
             if (this.isFadingFinal) {
                 // Final fade of everything
-                const timeSinceFinalFade = currentTime - this.finalFadeStartTime;
-                fadeProgress = Math.min(1, timeSinceFinalFade / CONFIG.finalFadeTime);
+                const timeSinceFinalFade =
+                    currentTime - this.finalFadeStartTime;
+                fadeProgress = Math.min(
+                    1,
+                    timeSinceFinalFade / CONFIG.finalFadeTime
+                );
 
                 // Apply fade to canvas
                 const easedProgress = cubicBezierEase(fadeProgress);
@@ -325,8 +352,12 @@
                 fadeProgress = 1;
             } else if (this.isFadingStars) {
                 // Stars disappearing
-                const timeSinceStarsFade = currentTime - this.starsFadeStartTime;
-                fadeProgress = Math.min(1, timeSinceStarsFade / CONFIG.starsFadeTime);
+                const timeSinceStarsFade =
+                    currentTime - this.starsFadeStartTime;
+                fadeProgress = Math.min(
+                    1,
+                    timeSinceStarsFade / CONFIG.starsFadeTime
+                );
 
                 if (fadeProgress >= 1) {
                     // Stars fully disappeared, start pause
@@ -355,7 +386,9 @@
                     this.starsFadeStartTime = currentTime;
 
                     // Assign random disappear times to all appeared stars
-                    const appearedStars = this.stars.filter(star => star.hasAppeared);
+                    const appearedStars = this.stars.filter(
+                        (star) => star.hasAppeared
+                    );
 
                     // Shuffle appeared stars for random disappearance order
                     const shuffled = [...appearedStars];
@@ -365,7 +398,8 @@
                     }
 
                     // Assign disappear times spread across the fade duration
-                    const disappearInterval = CONFIG.starsFadeTime / shuffled.length;
+                    const disappearInterval =
+                        CONFIG.starsFadeTime / shuffled.length;
                     shuffled.forEach((star, index) => {
                         star.disappear(currentTime + index * disappearInterval);
                     });
@@ -387,8 +421,14 @@
             }
 
             // Random flickering for stars that have already appeared
-            if (!this.isReadyNormal && !this.isBlinkingReady && !this.isFadingStars && !this.isPausingBeforeFinalFade && !this.isFadingFinal) {
-                this.stars.forEach(star => {
+            if (
+                !this.isReadyNormal &&
+                !this.isBlinkingReady &&
+                !this.isFadingStars &&
+                !this.isPausingBeforeFinalFade &&
+                !this.isFadingFinal
+            ) {
+                this.stars.forEach((star) => {
                     if (star.hasAppeared && !star.isCyclicallyDisappeared) {
                         // Random flicker
                         if (Math.random() < CONFIG.flickerChance) {
@@ -398,7 +438,10 @@
                         if (Math.random() < CONFIG.disappearChance) {
                             star.cyclicDisappear();
                         }
-                    } else if (star.hasAppeared && star.isCyclicallyDisappeared) {
+                    } else if (
+                        star.hasAppeared &&
+                        star.isCyclicallyDisappeared
+                    ) {
                         // Random cyclic reappearance
                         if (Math.random() < CONFIG.reappearChance) {
                             star.cyclicReappear();
@@ -411,8 +454,14 @@
             this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
 
             // Update and draw stars
-            this.stars.forEach(star => {
-                star.update(currentTime, this.isFadingStars, fadeProgress, this.isFadingFinal, this.isPausingBeforeFinalFade);
+            this.stars.forEach((star) => {
+                star.update(
+                    currentTime,
+                    this.isFadingStars,
+                    fadeProgress,
+                    this.isFadingFinal,
+                    this.isPausingBeforeFinalFade
+                );
                 star.draw(this.ctx);
             });
         }
@@ -423,7 +472,11 @@
 
             // Call callback after normal + blink + star fade + pause complete, before final fade
             if (onComplete) {
-                const totalTimeBeforeFinalFade = CONFIG.readyNormalTime + CONFIG.readyBlinkTime + CONFIG.starsFadeTime + CONFIG.pauseBeforeFinalFade;
+                const totalTimeBeforeFinalFade =
+                    CONFIG.readyNormalTime +
+                    CONFIG.readyBlinkTime +
+                    CONFIG.starsFadeTime +
+                    CONFIG.pauseBeforeFinalFade;
                 setTimeout(() => {
                     onComplete();
                 }, totalTimeBeforeFinalFade);
@@ -456,8 +509,10 @@
 
     // Export for potential external control
     window.WarpSpeedAnimation = {
-        requestStop: (onComplete) => { if (animation) animation.requestStop(onComplete); },
-        instance: () => animation,
+        requestStop: (onComplete) => {
+            if (animation) animation.requestStop(onComplete);
+        },
+        instance: () => animation
     };
 
     // Utility function to update loading status

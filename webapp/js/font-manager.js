@@ -6,8 +6,8 @@
 class FontManager {
     constructor() {
         this.babelfontJson = null;
-        this.babelfontData = null;  // Parsed babelfont object
-        this.typingFont = null;  // Uint8Array of compiled typing font
+        this.babelfontData = null; // Parsed babelfont object
+        this.typingFont = null; // Uint8Array of compiled typing font
         this.editingFont = null; // Uint8Array of compiled editing font
         this.currentText = '';
         this.selectedFeatures = [];
@@ -18,7 +18,7 @@ class FontManager {
     /**
      * Initialize the font manager when a font is loaded
      * Compiles the typing font immediately
-     * 
+     *
      * @param {string} babelfontJson - The .babelfont JSON string
      */
     async loadFont(babelfontJson) {
@@ -61,7 +61,9 @@ class FontManager {
             this.typingFont = new Uint8Array(result.result);
             const duration = (performance.now() - startTime).toFixed(2);
 
-            console.log(`✅ Typing font compiled in ${duration}ms (${this.typingFont.length} bytes)`);
+            console.log(
+                `✅ Typing font compiled in ${duration}ms (${this.typingFont.length} bytes)`
+            );
 
             // Save to file system for review
             this.saveTypingFontToFileSystem();
@@ -73,7 +75,7 @@ class FontManager {
 
     /**
      * Get glyph names for the given text using the typing font
-     * 
+     *
      * @param {string} text - Text to get glyph names for
      * @returns {Promise<Array<string>>} - Array of glyph names
      */
@@ -89,7 +91,7 @@ class FontManager {
     /**
      * Compile the editing font for display in canvas
      * For now, compiles the full font (subsetting will be added later)
-     * 
+     *
      * @param {string} text - Text being edited (for future subsetting)
      * @param {Array<string>} features - Selected OpenType features (for future subsetting)
      */
@@ -121,18 +123,22 @@ class FontManager {
             this.editingFont = new Uint8Array(result.result);
             const duration = (performance.now() - startTime).toFixed(2);
 
-            console.log(`✅ Editing font compiled in ${duration}ms (${this.editingFont.length} bytes)`);
+            console.log(
+                `✅ Editing font compiled in ${duration}ms (${this.editingFont.length} bytes)`
+            );
 
             // Save to file system for review
             this.saveEditingFontToFileSystem();
 
             // Dispatch event to notify canvas that new font is ready
-            window.dispatchEvent(new CustomEvent('editingFontCompiled', {
-                detail: {
-                    fontBytes: this.editingFont,
-                    duration: duration
-                }
-            }));
+            window.dispatchEvent(
+                new CustomEvent('editingFontCompiled', {
+                    detail: {
+                        fontBytes: this.editingFont,
+                        duration: duration
+                    }
+                })
+            );
 
             return this.editingFont;
         } catch (error) {
@@ -166,7 +172,11 @@ babelfont_json = orjson.dumps(font_dict).decode('utf-8')
 babelfont_json
         `);
 
-        if (!pythonResult || pythonResult === 'None' || pythonResult === 'undefined') {
+        if (
+            !pythonResult ||
+            pythonResult === 'None' ||
+            pythonResult === 'undefined'
+        ) {
             throw new Error('Failed to get font JSON from Python');
         }
 
@@ -176,14 +186,16 @@ babelfont_json
     /**
      * Recompile editing font after font data changes
      * This reloads the font JSON from Python before compiling
-     * 
+     *
      * @param {string} babelfontJson - Optional pre-fetched JSON to avoid redundant Python call
      */
     async recompileEditingFont(babelfontJson = null) {
         try {
             // Only fetch from Python if not provided
             if (!babelfontJson) {
-                console.log('🔄 Reloading font data from Python for recompilation...');
+                console.log(
+                    '🔄 Reloading font data from Python for recompilation...'
+                );
                 babelfontJson = await this.fetchFontJsonFromPython();
             } else {
                 console.log('🔄 Using provided font data for recompilation...');
@@ -195,7 +207,10 @@ babelfont_json
             console.log(`✅ Font data ready (${babelfontJson.length} bytes)`);
 
             // Now compile with updated data
-            return await this.compileEditingFont(this.currentText, this.selectedFeatures);
+            return await this.compileEditingFont(
+                this.currentText,
+                this.selectedFeatures
+            );
         } catch (error) {
             console.error('Error reloading font data:', error);
             throw error;
@@ -223,8 +238,13 @@ babelfont_json
         }
 
         try {
-            window.pyodide.FS.writeFile('/_debug_typing_font.ttf', this.typingFont);
-            console.log(`💾 Saved typing font to /_debug_typing_font.ttf (${this.typingFont.length} bytes)`);
+            window.pyodide.FS.writeFile(
+                '/_debug_typing_font.ttf',
+                this.typingFont
+            );
+            console.log(
+                `💾 Saved typing font to /_debug_typing_font.ttf (${this.typingFont.length} bytes)`
+            );
 
             // Refresh file browser
             if (window.refreshFileSystem) {
@@ -248,8 +268,13 @@ babelfont_json
         }
 
         try {
-            window.pyodide.FS.writeFile('/_debug_editing_font.ttf', this.editingFont);
-            console.log(`💾 Saved editing font to /_debug_editing_font.ttf (${this.editingFont.length} bytes)`);
+            window.pyodide.FS.writeFile(
+                '/_debug_editing_font.ttf',
+                this.editingFont
+            );
+            console.log(
+                `💾 Saved editing font to /_debug_editing_font.ttf (${this.editingFont.length} bytes)`
+            );
 
             // Refresh file browser
             if (window.refreshFileSystem) {
@@ -300,7 +325,10 @@ babelfont_json
                 this.glyphOrderCache = glyphOrder;
                 return glyphOrder;
             } catch (error) {
-                console.error('Failed to extract glyph order from typing font:', error);
+                console.error(
+                    'Failed to extract glyph order from typing font:',
+                    error
+                );
             }
         }
 
@@ -341,12 +369,21 @@ window.addEventListener('fontLoaded', async (event) => {
             console.log('⏳ Waiting for font compilation system...');
             // Wait up to 30 seconds for initialization
             let attempts = 0;
-            while (attempts < 300 && (!window.fontCompilation || !window.fontCompilation.isInitialized)) {
-                await new Promise(resolve => setTimeout(resolve, 100));
+            while (
+                attempts < 300 &&
+                (!window.fontCompilation ||
+                    !window.fontCompilation.isInitialized)
+            ) {
+                await new Promise((resolve) => setTimeout(resolve, 100));
                 attempts++;
             }
-            if (!window.fontCompilation || !window.fontCompilation.isInitialized) {
-                console.error('❌ Font compilation system not ready after 30 seconds');
+            if (
+                !window.fontCompilation ||
+                !window.fontCompilation.isInitialized
+            ) {
+                console.error(
+                    '❌ Font compilation system not ready after 30 seconds'
+                );
                 return;
             }
             console.log('✅ Font compilation system ready');
@@ -356,7 +393,9 @@ window.addEventListener('fontLoaded', async (event) => {
         console.log('📞 Fetching font from Python...');
         const pythonResult = await fontManager.fetchFontJsonFromPython();
 
-        console.log(`📦 Received font JSON from Python (${pythonResult.length} bytes)`);
+        console.log(
+            `📦 Received font JSON from Python (${pythonResult.length} bytes)`
+        );
 
         // Load font into font manager
         await fontManager.loadFont(pythonResult);

@@ -2,55 +2,68 @@
 // Loads and initializes Python packages for font editing
 
 async function initFontEditor() {
-    "use strict";
+    'use strict';
 
     try {
         // Ensure pyodide is available
         if (!window.pyodide) {
-            console.error("Pyodide not available. Make sure it's loaded first.");
+            console.error(
+                "Pyodide not available. Make sure it's loaded first."
+            );
             return false;
         }
 
         // Check if SharedArrayBuffer is available (needed for WASM threading)
         if (typeof SharedArrayBuffer === 'undefined') {
             // Check if we already tried reloading
-            const alreadyReloaded = window.sessionStorage.getItem("coiReloadedBySelf") === "true";
+            const alreadyReloaded =
+                window.sessionStorage.getItem('coiReloadedBySelf') === 'true';
 
             // Detect iOS (including all browsers on iOS which use WebKit)
-            const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
-                (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1) ||
+            const isIOS =
+                /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+                (navigator.platform === 'MacIntel' &&
+                    navigator.maxTouchPoints > 1) ||
                 /iPad|iPhone|iPod/.test(navigator.platform);
 
             if (isIOS) {
-                console.warn('[COI] iOS detected - SharedArrayBuffer not supported on iOS (all browsers). Some features may be limited.');
+                console.warn(
+                    '[COI] iOS detected - SharedArrayBuffer not supported on iOS (all browsers). Some features may be limited.'
+                );
                 // Don't reload on iOS, just continue without SAB
             } else if (!alreadyReloaded) {
-                console.log('[COI] SharedArrayBuffer not available - reloading to enable service worker headers...');
+                console.log(
+                    '[COI] SharedArrayBuffer not available - reloading to enable service worker headers...'
+                );
                 if (window.updateLoadingStatus) {
-                    window.updateLoadingStatus("Enabling cross-origin isolation...");
+                    window.updateLoadingStatus(
+                        'Enabling cross-origin isolation...'
+                    );
                 }
                 // Wait a moment for status to show, then reload
                 setTimeout(() => {
-                    window.sessionStorage.setItem("coiReloadedBySelf", "true");
+                    window.sessionStorage.setItem('coiReloadedBySelf', 'true');
                     window.location.reload();
                 }, 500);
                 return false;
             } else {
-                console.error('[COI] SharedArrayBuffer still unavailable after reload. Browser may not support it.');
+                console.error(
+                    '[COI] SharedArrayBuffer still unavailable after reload. Browser may not support it.'
+                );
                 // Already reloaded once, don't try again (prevents infinite loop)
             }
         }
 
-        console.log("Initializing FontEditor...");
+        console.log('Initializing FontEditor...');
         if (window.updateLoadingStatus) {
-            window.updateLoadingStatus("Initializing Python environment...");
+            window.updateLoadingStatus('Initializing Python environment...');
         }
 
         // First load micropip package
-        await window.pyodide.loadPackage("micropip");
-        console.log("micropip loaded successfully");
+        await window.pyodide.loadPackage('micropip');
+        console.log('micropip loaded successfully');
         if (window.updateLoadingStatus) {
-            window.updateLoadingStatus("Loading package manager...");
+            window.updateLoadingStatus('Loading package manager...');
         }
 
         // Fetch the list of wheel files from the manifest
@@ -68,7 +81,9 @@ async function initFontEditor() {
         for (const wheelFile of wheelFiles) {
             console.log(`Installing wheel: ${wheelFile}`);
             if (window.updateLoadingStatus) {
-                window.updateLoadingStatus(`Installing ${wheelFile.split('-')[0]}...`);
+                window.updateLoadingStatus(
+                    `Installing ${wheelFile.split('-')[0]}...`
+                );
             }
             const wheelUrl = `./wheels/${wheelFile}`;
             await window.pyodide.runPythonAsync(`
@@ -78,7 +93,7 @@ async function initFontEditor() {
 
         // Import context and make it available
         if (window.updateLoadingStatus) {
-            window.updateLoadingStatus("Importing context module...");
+            window.updateLoadingStatus('Importing context module...');
         }
         await window.pyodide.runPython(`
             import context
@@ -89,16 +104,16 @@ async function initFontEditor() {
 
         // Load the fonteditor Python module
         if (window.updateLoadingStatus) {
-            window.updateLoadingStatus("Loading font editor...");
+            window.updateLoadingStatus('Loading font editor...');
         }
         const fonteditorModule = await fetch('./py/fonteditor.py');
         const fonteditorCode = await fonteditorModule.text();
         await window.pyodide.runPython(fonteditorCode);
-        console.log("fonteditor.py module loaded");
+        console.log('fonteditor.py module loaded');
 
         // Install context package from local wheels
         if (window.updateLoadingStatus) {
-            window.updateLoadingStatus("Installing visualization libraries...");
+            window.updateLoadingStatus('Installing visualization libraries...');
         }
         await window.pyodide.runPythonAsync(`
             await micropip.install('matplotlib')
@@ -106,10 +121,9 @@ async function initFontEditor() {
             await micropip.install('pandas')
         `);
 
-
-        console.log("FontEditor initialized successfully");
+        console.log('FontEditor initialized successfully');
         if (window.updateLoadingStatus) {
-            window.updateLoadingStatus("READY", true);
+            window.updateLoadingStatus('READY', true);
         }
 
         // Restore the last active view right away, before animation ends
@@ -142,7 +156,9 @@ async function initFontEditor() {
                 // Fallback timeout in case animation callback doesn't fire (e.g., particles stuck)
                 setTimeout(() => {
                     if (!callbackFired) {
-                        console.warn("Animation drain timeout, forcing overlay hide");
+                        console.warn(
+                            'Animation drain timeout, forcing overlay hide'
+                        );
                         callbackFired = true;
                         hideLoadingOverlay();
                     }
@@ -154,11 +170,12 @@ async function initFontEditor() {
         }, 1000); // Wait 1 second after "Ready" appears
 
         return true;
-
     } catch (error) {
-        console.error("Error initializing FontEditor:", error);
+        console.error('Error initializing FontEditor:', error);
         if (window.term) {
-            window.term.error("Failed to initialize FontEditor: " + error.message);
+            window.term.error(
+                'Failed to initialize FontEditor: ' + error.message
+            );
         }
 
         // Hide loading overlay even on error
@@ -177,7 +194,9 @@ document.addEventListener('DOMContentLoaded', () => {
     setTimeout(() => {
         const loadingOverlay = document.getElementById('loading-overlay');
         if (loadingOverlay && !loadingOverlay.classList.contains('hidden')) {
-            console.error("Loading timeout - forcing overlay hide after 30 seconds");
+            console.error(
+                'Loading timeout - forcing overlay hide after 30 seconds'
+            );
             loadingOverlay.classList.add('hidden');
         }
     }, 30000);

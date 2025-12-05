@@ -6,7 +6,9 @@
     // Get view settings from the global VIEW_SETTINGS object
     function getViewSettings() {
         if (!window.VIEW_SETTINGS) {
-            console.error('VIEW_SETTINGS not loaded! Make sure view-settings.js is loaded before keyboard-navigation.js');
+            console.error(
+                'VIEW_SETTINGS not loaded! Make sure view-settings.js is loaded before keyboard-navigation.js'
+            );
             return null;
         }
         return window.VIEW_SETTINGS;
@@ -35,7 +37,10 @@
 
         // Enable transitions if configured
         if (settings.animation && settings.animation.enabled) {
-            enableTransitions(settings.animation.duration, settings.animation.easing);
+            enableTransitions(
+                settings.animation.duration,
+                settings.animation.easing
+            );
         }
 
         // Determine if view is in top or bottom row
@@ -43,9 +48,21 @@
         const isBottomRow = view.closest('.bottom-row') !== null;
 
         if (isTopRow) {
-            resizeTopRowView(viewId, view, resizeConfig, containerWidth, containerHeight);
+            resizeTopRowView(
+                viewId,
+                view,
+                resizeConfig,
+                containerWidth,
+                containerHeight
+            );
         } else if (isBottomRow) {
-            resizeBottomRowView(viewId, view, resizeConfig, containerWidth, containerHeight);
+            resizeBottomRowView(
+                viewId,
+                view,
+                resizeConfig,
+                containerWidth,
+                containerHeight
+            );
         }
 
         // Disable transitions after animation completes
@@ -72,24 +89,34 @@
         const transition = `flex ${duration}ms ${easing}`;
 
         // Apply to all views and rows
-        document.querySelectorAll('.view, .top-row, .bottom-row').forEach(element => {
-            element.style.transition = transition;
-        });
+        document
+            .querySelectorAll('.view, .top-row, .bottom-row')
+            .forEach((element) => {
+                element.style.transition = transition;
+            });
     }
 
     /**
      * Disable CSS transitions
      */
     function disableTransitions() {
-        document.querySelectorAll('.view, .top-row, .bottom-row').forEach(element => {
-            element.style.transition = '';
-        });
+        document
+            .querySelectorAll('.view, .top-row, .bottom-row')
+            .forEach((element) => {
+                element.style.transition = '';
+            });
     }
 
     /**
      * Resize a view in the top row
      */
-    function resizeTopRowView(viewId, view, resizeConfig, containerWidth, containerHeight) {
+    function resizeTopRowView(
+        viewId,
+        view,
+        resizeConfig,
+        containerWidth,
+        containerHeight
+    ) {
         const topRow = view.closest('.top-row');
         const views = Array.from(topRow.querySelectorAll('.view'));
         const viewIndex = views.indexOf(view);
@@ -115,7 +142,8 @@
             const otherView = views[1 - viewIndex]; // Get the other view in top row
             const otherTargetWidth = containerWidth - targetViewWidth;
 
-            if (otherTargetWidth >= 100) { // Ensure minimum width for other view
+            if (otherTargetWidth >= 100) {
+                // Ensure minimum width for other view
                 const totalWidth = targetViewWidth + otherTargetWidth;
                 const viewFlex = targetViewWidth / totalWidth;
                 const otherFlex = otherTargetWidth / totalWidth;
@@ -130,7 +158,8 @@
             const bottomRow = document.querySelector('.bottom-row');
             const bottomTargetHeight = availableHeight - targetViewHeight;
 
-            if (bottomTargetHeight >= 100) { // Ensure minimum height for bottom row
+            if (bottomTargetHeight >= 100) {
+                // Ensure minimum height for bottom row
                 const topFlex = targetViewHeight / availableHeight;
                 const bottomFlex = bottomTargetHeight / availableHeight;
 
@@ -143,7 +172,13 @@
     /**
      * Resize a view in the bottom row
      */
-    function resizeBottomRowView(viewId, view, resizeConfig, containerWidth, containerHeight) {
+    function resizeBottomRowView(
+        viewId,
+        view,
+        resizeConfig,
+        containerWidth,
+        containerHeight
+    ) {
         const bottomRow = view.closest('.bottom-row');
         const topRow = document.querySelector('.top-row');
         const views = Array.from(bottomRow.querySelectorAll('.view'));
@@ -169,7 +204,8 @@
         if (shouldResizeHeight) {
             const topTargetHeight = availableHeight - targetBottomHeight;
 
-            if (topTargetHeight >= 100) { // Ensure minimum height for top row
+            if (topTargetHeight >= 100) {
+                // Ensure minimum height for top row
                 const topFlex = topTargetHeight / availableHeight;
                 const bottomFlex = targetBottomHeight / availableHeight;
 
@@ -184,7 +220,8 @@
             const otherViewsCount = views.length - 1;
             const remainingWidthPerView = remainingWidth / otherViewsCount;
 
-            if (remainingWidthPerView >= 100) { // Ensure minimum width for other views
+            if (remainingWidthPerView >= 100) {
+                // Ensure minimum width for other views
                 const widths = {};
 
                 // Distribute width to all views
@@ -199,13 +236,18 @@
                 });
 
                 // Calculate total width for flex calculation
-                const totalWidth = Object.values(widths).reduce((sum, w) => sum + w, 0);
+                const totalWidth = Object.values(widths).reduce(
+                    (sum, w) => sum + w,
+                    0
+                );
 
                 // Apply flex values to ALL views in the bottom row
                 views.forEach((v, i) => {
                     const flexValue = widths[i] / totalWidth;
                     v.style.flex = `${flexValue} 1 0%`;
-                    console.log(`View ${i} (${v.id}): flex = ${flexValue.toFixed(3)}, width = ${widths[i].toFixed(0)}px`);
+                    console.log(
+                        `View ${i} (${v.id}): flex = ${flexValue.toFixed(3)}, width = ${widths[i].toFixed(0)}px`
+                    );
                 });
             }
         }
@@ -216,7 +258,9 @@
      */
     function blurConsole() {
         // Find and blur the actual hidden input element that jQuery Terminal uses
-        const terminalInput = document.querySelector('.cmd textarea, .cmd input, #console-container .terminal');
+        const terminalInput = document.querySelector(
+            '.cmd textarea, .cmd input, #console-container .terminal'
+        );
         if (terminalInput) {
             // Use blur on the actual input element
             terminalInput.blur();
@@ -224,7 +268,10 @@
 
         // Also try to blur any focused element within the console container
         const consoleContainer = document.getElementById('console-container');
-        if (consoleContainer && consoleContainer.contains(document.activeElement)) {
+        if (
+            consoleContainer &&
+            consoleContainer.contains(document.activeElement)
+        ) {
             document.activeElement.blur();
         }
     }
@@ -246,7 +293,8 @@
                     aceEditor.blur();
                 }
                 // Also blur the textarea used by Ace
-                const aceTextarea = scriptEditorElement.querySelector('textarea');
+                const aceTextarea =
+                    scriptEditorElement.querySelector('textarea');
                 if (aceTextarea) {
                     aceTextarea.blur();
                 }
@@ -310,7 +358,7 @@
         console.log('focusView called with:', viewId);
 
         // Remove focus from all views
-        document.querySelectorAll('.view').forEach(view => {
+        document.querySelectorAll('.view').forEach((view) => {
             view.classList.remove('focused');
         });
 
@@ -324,7 +372,8 @@
             localStorage.setItem('last_active_view', viewId);
 
             // Determine if we're focusing a top view (editor or fontinfo)
-            const isTopView = viewId === 'view-editor' || viewId === 'view-fontinfo';
+            const isTopView =
+                viewId === 'view-editor' || viewId === 'view-fontinfo';
 
             // If focusing a top view, blur all bottom view editors
             if (isTopView) {
@@ -339,7 +388,8 @@
             // If activating scripts, focus the script editor after blurring console
             if (viewId === 'view-scripts') {
                 setTimeout(() => {
-                    const scriptEditor = document.getElementById('script-editor');
+                    const scriptEditor =
+                        document.getElementById('script-editor');
                     if (scriptEditor) {
                         scriptEditor.focus();
                         scriptEditor.click();
@@ -373,7 +423,9 @@
                     }
 
                     // Always try to focus the input element directly as well
-                    const cmdInput = document.querySelector('#console-container .cmd textarea');
+                    const cmdInput = document.querySelector(
+                        '#console-container .cmd textarea'
+                    );
                     if (cmdInput) {
                         cmdInput.focus();
                     }
@@ -391,7 +443,9 @@
                     }
 
                     // Scroll the view-content to bottom
-                    const viewContent = document.querySelector('#view-assistant .view-content');
+                    const viewContent = document.querySelector(
+                        '#view-assistant .view-content'
+                    );
                     if (viewContent) {
                         viewContent.scrollTop = viewContent.scrollHeight;
                     }
@@ -408,7 +462,9 @@
             }
 
             // Trigger any view-specific focus handlers
-            const event = new CustomEvent('viewFocused', { detail: { viewId } });
+            const event = new CustomEvent('viewFocused', {
+                detail: { viewId }
+            });
             window.dispatchEvent(event);
         }
 
@@ -479,7 +535,7 @@
         document.addEventListener('keydown', handleKeyDown, true);
 
         // Add click listeners to all views
-        document.querySelectorAll('.view').forEach(view => {
+        document.querySelectorAll('.view').forEach((view) => {
             view.addEventListener('click', handleViewClick);
         });
 

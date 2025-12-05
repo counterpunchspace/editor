@@ -23,19 +23,26 @@
         }
 
         // Load saved script from localStorage
-        const savedScript = localStorage.getItem('python_script') || '# Write your Python script here...\n';
+        const savedScript =
+            localStorage.getItem('python_script') ||
+            '# Write your Python script here...\n';
 
         // Create Ace editor
         editor = ace.edit('script-editor');
 
         // Set theme based on current theme preference
         const getInitialTheme = () => {
-            const savedTheme = localStorage.getItem('preferred-theme') || 'auto';
+            const savedTheme =
+                localStorage.getItem('preferred-theme') || 'auto';
             if (savedTheme === 'auto') {
-                const isDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+                const isDark = window.matchMedia(
+                    '(prefers-color-scheme: dark)'
+                ).matches;
                 return isDark ? 'ace/theme/monokai' : 'ace/theme/chrome';
             }
-            return savedTheme === 'light' ? 'ace/theme/chrome' : 'ace/theme/monokai';
+            return savedTheme === 'light'
+                ? 'ace/theme/chrome'
+                : 'ace/theme/monokai';
         };
 
         editor.setTheme(getInitialTheme());
@@ -124,27 +131,30 @@
         // Add passthrough commands for global view shortcuts
         // Read shortcuts from VIEW_SETTINGS to avoid redundancy
         if (window.VIEW_SETTINGS && window.VIEW_SETTINGS.shortcuts) {
-            Object.entries(window.VIEW_SETTINGS.shortcuts).forEach(([viewId, config]) => {
-                const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
-                const modifierKey = isMac ? 'Command' : 'Ctrl';
-                const shiftKey = config.modifiers.shift ? 'Shift-' : '';
-                const key = config.key.toUpperCase();
+            Object.entries(window.VIEW_SETTINGS.shortcuts).forEach(
+                ([viewId, config]) => {
+                    const isMac =
+                        navigator.platform.toUpperCase().indexOf('MAC') >= 0;
+                    const modifierKey = isMac ? 'Command' : 'Ctrl';
+                    const shiftKey = config.modifiers.shift ? 'Shift-' : '';
+                    const key = config.key.toUpperCase();
 
-                editor.commands.addCommand({
-                    name: `global_${viewId}`,
-                    bindKey: {
-                        win: `Ctrl-${shiftKey}${key}`,
-                        mac: `${modifierKey}-${shiftKey}${key}`
-                    },
-                    exec: function () {
-                        // Do nothing - let the global handler deal with it
-                        // The global handler will intercept this in capture phase
-                        return false;
-                    },
-                    readOnly: true,
-                    passEvent: true // This tells Ace to pass the event through
-                });
-            });
+                    editor.commands.addCommand({
+                        name: `global_${viewId}`,
+                        bindKey: {
+                            win: `Ctrl-${shiftKey}${key}`,
+                            mac: `${modifierKey}-${shiftKey}${key}`
+                        },
+                        exec: function () {
+                            // Do nothing - let the global handler deal with it
+                            // The global handler will intercept this in capture phase
+                            return false;
+                        },
+                        readOnly: true,
+                        passEvent: true // This tells Ace to pass the event through
+                    });
+                }
+            );
         }
 
         // Run button click handler
@@ -174,32 +184,36 @@
         let isPreventingCursorJump = false;
 
         // Intercept ALL mouse events on the container when not focused
-        container.addEventListener('mousedown', (e) => {
-            if (!isScriptViewFocused) {
-                // Save cursor position before any click
-                savedCursorPosition = editor.getCursorPosition();
-                isPreventingCursorJump = true;
+        container.addEventListener(
+            'mousedown',
+            (e) => {
+                if (!isScriptViewFocused) {
+                    // Save cursor position before any click
+                    savedCursorPosition = editor.getCursorPosition();
+                    isPreventingCursorJump = true;
 
-                // Prevent the event from reaching the editor
-                e.stopPropagation();
-                e.preventDefault();
+                    // Prevent the event from reaching the editor
+                    e.stopPropagation();
+                    e.preventDefault();
 
-                // Manually trigger focus on the view
-                const scriptView = document.getElementById('view-scripts');
-                if (scriptView) {
-                    scriptView.click();
-                }
-
-                // Restore cursor after focus
-                setTimeout(() => {
-                    if (savedCursorPosition) {
-                        editor.moveCursorToPosition(savedCursorPosition);
-                        editor.clearSelection();
+                    // Manually trigger focus on the view
+                    const scriptView = document.getElementById('view-scripts');
+                    if (scriptView) {
+                        scriptView.click();
                     }
-                    isPreventingCursorJump = false;
-                }, 50);
-            }
-        }, true); // Use capture phase to intercept before Ace
+
+                    // Restore cursor after focus
+                    setTimeout(() => {
+                        if (savedCursorPosition) {
+                            editor.moveCursorToPosition(savedCursorPosition);
+                            editor.clearSelection();
+                        }
+                        isPreventingCursorJump = false;
+                    }, 50);
+                }
+            },
+            true
+        ); // Use capture phase to intercept before Ace
 
         // Listen for view focus events
         window.addEventListener('viewFocused', (event) => {
@@ -267,7 +281,6 @@
             if (window.playSound) {
                 window.playSound('done');
             }
-
         } catch (error) {
             console.error('Script execution error:', error);
 
@@ -289,7 +302,10 @@
                     console.error('Failed to display error in terminal:', e);
                 }
             } else {
-                console.error('Script error (terminal not available):', error.message);
+                console.error(
+                    'Script error (terminal not available):',
+                    error.message
+                );
             }
 
             // Notify the AI assistant about the error
@@ -299,7 +315,8 @@
         } finally {
             // Re-enable the run button
             runButton.disabled = false;
-            runButton.innerHTML = 'Run <span style="opacity: 0.5;"><span class="material-symbols-outlined">keyboard_command_key</span><span class="material-symbols-outlined">keyboard_option_key</span>R</span>';
+            runButton.innerHTML =
+                'Run <span style="opacity: 0.5;"><span class="material-symbols-outlined">keyboard_command_key</span><span class="material-symbols-outlined">keyboard_option_key</span>R</span>';
         }
     }
 

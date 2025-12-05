@@ -12,8 +12,8 @@
             this.settingsDetailsElement = null;
             this.settingsIndicator = null;
             this.updateInterval = null;
-            this.warningThreshold = 0.70; // 70% - show warning indicator
-            this.criticalThreshold = 0.90; // 90% of limit
+            this.warningThreshold = 0.7; // 70% - show warning indicator
+            this.criticalThreshold = 0.9; // 90% of limit
             this.isVisible = false;
         }
 
@@ -48,10 +48,18 @@
             document.body.appendChild(this.monitorElement);
 
             // Get settings panel elements
-            this.settingsBarElement = document.getElementById('settings-memory-bar');
-            this.settingsPercentageElement = document.getElementById('settings-memory-percentage');
-            this.settingsDetailsElement = document.getElementById('settings-memory-details');
-            this.settingsIndicator = document.getElementById('settings-memory-indicator');
+            this.settingsBarElement = document.getElementById(
+                'settings-memory-bar'
+            );
+            this.settingsPercentageElement = document.getElementById(
+                'settings-memory-percentage'
+            );
+            this.settingsDetailsElement = document.getElementById(
+                'settings-memory-details'
+            );
+            this.settingsIndicator = document.getElementById(
+                'settings-memory-indicator'
+            );
 
             // Setup memory info popup
             this.setupInfoPopup();
@@ -67,7 +75,9 @@
 
         toggleVisibility() {
             this.isVisible = !this.isVisible;
-            this.monitorElement.style.display = this.isVisible ? 'block' : 'none';
+            this.monitorElement.style.display = this.isVisible
+                ? 'block'
+                : 'none';
 
             if (this.isVisible) {
                 this.updateMemoryDisplay();
@@ -123,7 +133,8 @@
                     this.settingsBarElement.style.width = '0%';
                 }
                 if (this.settingsDetailsElement) {
-                    this.settingsDetailsElement.textContent = 'Memory monitoring not supported in this browser';
+                    this.settingsDetailsElement.textContent =
+                        'Memory monitoring not supported in this browser';
                 }
                 return;
             }
@@ -212,12 +223,21 @@
             // Chrome/Edge specific
             if (performance.memory) {
                 info.supported = true;
-                info.usedMB = (performance.memory.usedJSHeapSize / 1048576).toFixed(2);
-                info.totalMB = (performance.memory.totalJSHeapSize / 1048576).toFixed(2);
-                info.limitMB = (performance.memory.jsHeapSizeLimit / 1048576).toFixed(2);
+                info.usedMB = (
+                    performance.memory.usedJSHeapSize / 1048576
+                ).toFixed(2);
+                info.totalMB = (
+                    performance.memory.totalJSHeapSize / 1048576
+                ).toFixed(2);
+                info.limitMB = (
+                    performance.memory.jsHeapSizeLimit / 1048576
+                ).toFixed(2);
 
                 // Calculate raw percentage
-                const rawPercent = (performance.memory.usedJSHeapSize / performance.memory.jsHeapSizeLimit) * 100;
+                const rawPercent =
+                    (performance.memory.usedJSHeapSize /
+                        performance.memory.jsHeapSizeLimit) *
+                    100;
                 info.percentUsedRaw = rawPercent;
 
                 // Check if over limit
@@ -231,8 +251,12 @@
             if (window.pyodide) {
                 try {
                     // Use _originalRunPython to avoid triggering afterPythonExecution hooks
-                    const runPython = window.pyodide._originalRunPython || window.pyodide.runPython;
-                    const result = runPython.call(window.pyodide, `
+                    const runPython =
+                        window.pyodide._originalRunPython ||
+                        window.pyodide.runPython;
+                    const result = runPython.call(
+                        window.pyodide,
+                        `
 import gc
 import json
 # Don't collect here - only when Force GC button is pressed
@@ -246,7 +270,8 @@ except:
     pass
 
 json.dumps({"objects": obj_count, "fonts": open_fonts})
-                    `);
+                    `
+                    );
                     const data = JSON.parse(result);
                     info.pyodideObjects = data.objects.toLocaleString();
                     info.openFonts = data.fonts;
@@ -270,9 +295,13 @@ json.dumps({"objects": obj_count, "fonts": open_fonts})
             }
 
             // Determine status based on raw percentage (uncapped)
-            const statusIcon = info.overLimit ? '💀' :
-                info.percentUsedRaw >= 90 ? '🔴' :
-                    info.percentUsedRaw >= 80 ? '🟡' : '🟢';
+            const statusIcon = info.overLimit
+                ? '💀'
+                : info.percentUsedRaw >= 90
+                  ? '🔴'
+                  : info.percentUsedRaw >= 80
+                    ? '🟡'
+                    : '🟢';
 
             // Format usage display
             const usageDisplay = info.overLimit
@@ -281,25 +310,33 @@ json.dumps({"objects": obj_count, "fonts": open_fonts})
 
             return `
                 <div style="font-weight: bold; margin-bottom: 8px;">Memory Monitor ${statusIcon}</div>
-                ${info.overLimit ? `
+                ${
+                    info.overLimit
+                        ? `
                 <div style="margin-bottom: 8px; padding: 6px; background: rgba(255,0,0,0.2); border: 1px solid #f00; border-radius: 3px; font-size: 9px; line-height: 1.4;">
                     ⚠️ <strong>CRITICAL:</strong> Memory usage exceeds browser limit!<br>
                     Restart recommended.
                 </div>
-                ` : ''}
+                `
+                        : ''
+                }
                 <div style="display: grid; grid-template-columns: auto 1fr; gap: 4px 8px;">
                     <div>Used:</div><div style="text-align: right;">${info.usedMB} MB</div>
                     <div>Total:</div><div style="text-align: right;">${info.totalMB} MB</div>
                     <div>Limit:</div><div style="text-align: right;">${info.limitMB} MB</div>
                     <div>Usage:</div><div style="text-align: right; font-weight: bold;">${usageDisplay}</div>
-                    ${info.pyodideObjects ? `
+                    ${
+                        info.pyodideObjects
+                            ? `
                     <div style="grid-column: 1/-1; margin-top: 8px; padding-top: 8px; border-top: 1px solid currentColor; opacity: 0.7;">
                         Python Objects: ${info.pyodideObjects}
                     </div>
                     <div style="grid-column: 1/-1; opacity: 0.7;">
                         Open Fonts: ${info.openFonts}
                     </div>
-                    ` : ''}
+                    `
+                            : ''
+                    }
                 </div>
                 <div style="margin-top: 12px; padding-top: 8px; border-top: 1px solid currentColor;">
                     <button onclick="window.memoryMonitor.forceGarbageCollection()" 
@@ -326,13 +363,18 @@ json.dumps({"objects": obj_count, "fonts": open_fonts})
             if (window.pyodide) {
                 try {
                     // Use _originalRunPython to avoid triggering afterPythonExecution hooks
-                    const runPython = window.pyodide._originalRunPython || window.pyodide.runPython;
-                    const result = runPython.call(window.pyodide, `
+                    const runPython =
+                        window.pyodide._originalRunPython ||
+                        window.pyodide.runPython;
+                    const result = runPython.call(
+                        window.pyodide,
+                        `
 import gc
 collected = gc.collect()
 print(f"Python GC collected {collected} objects")
 collected
-                    `);
+                    `
+                    );
                     console.log(`Python GC: Collected ${result} objects`);
                 } catch (e) {
                     console.error('Python GC failed:', e);

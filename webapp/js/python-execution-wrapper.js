@@ -15,8 +15,12 @@
         console.log('🔧 Installing Python execution wrapper...');
 
         // Store the original functions
-        const _originalRunPythonAsync = window.pyodide.runPythonAsync.bind(window.pyodide);
-        const _originalRunPython = window.pyodide.runPython.bind(window.pyodide);
+        const _originalRunPythonAsync = window.pyodide.runPythonAsync.bind(
+            window.pyodide
+        );
+        const _originalRunPython = window.pyodide.runPython.bind(
+            window.pyodide
+        );
 
         // Expose original functions so they can be called directly when needed
         // (e.g., for internal checks that shouldn't trigger UI updates)
@@ -101,7 +105,9 @@
                 _term = newTerm;
 
                 if (newTerm && newTerm.get_command) {
-                    console.log('🔧 Terminal assigned, wrapping interpreter...');
+                    console.log(
+                        '🔧 Terminal assigned, wrapping interpreter...'
+                    );
 
                     // Get the current interpreter
                     const originalInterpreter = newTerm.get_command();
@@ -112,7 +118,9 @@
                             executionCounter++;
                             const execId = executionCounter;
 
-                            console.group(`🐍 Python Console Command #${execId}`);
+                            console.group(
+                                `🐍 Python Console Command #${execId}`
+                            );
                             console.log(command);
                             console.groupEnd();
                         }

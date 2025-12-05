@@ -18,7 +18,7 @@
     let currentVolume = savedVolume !== null ? parseInt(savedVolume) : 40;
 
     // Preload each sound file
-    soundFiles.forEach(soundPath => {
+    soundFiles.forEach((soundPath) => {
         const audio = new Audio();
         audio.preload = 'auto';
         audio.src = soundPath;
@@ -48,7 +48,11 @@
             // Clone the audio to allow overlapping plays
             const clone = sound.cloneNode();
             clone.volume = currentVolume / 100; // Convert 0-100 to 0-1
-            clone.play().catch(e => console.warn(`Could not play sound ${soundName}:`, e));
+            clone
+                .play()
+                .catch((e) =>
+                    console.warn(`Could not play sound ${soundName}:`, e)
+                );
         } else {
             console.warn(`Sound not found: ${soundName}`);
         }

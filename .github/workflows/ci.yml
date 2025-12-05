@@ -1,0 +1,31 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - '**'
+  pull_request:
+    branches:
+      - '**'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies in webapp
+        run: npm install --prefix webapp
+
+      - name: Run tests in webapp
+        run: npm test --prefix webapp
+
+      - name: Check code formatting with Prettier
+        run: cd webapp && npx prettier -c .

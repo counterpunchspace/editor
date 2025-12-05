@@ -42,7 +42,9 @@ class AIAssistant {
         this.messagesContainer = document.getElementById('ai-messages');
         this.autoRunButton = document.getElementById('ai-auto-run-btn');
         this.contextFontButton = document.getElementById('ai-context-font-btn');
-        this.contextScriptButton = document.getElementById('ai-context-script-btn');
+        this.contextScriptButton = document.getElementById(
+            'ai-context-script-btn'
+        );
         this.isAssistantViewFocused = false;
 
         // Restore saved context or default to 'font'
@@ -177,7 +179,8 @@ class AIAssistant {
 
         // Listen for view focus events
         window.addEventListener('viewFocused', (event) => {
-            this.isAssistantViewFocused = event.detail.viewId === 'view-assistant';
+            this.isAssistantViewFocused =
+                event.detail.viewId === 'view-assistant';
             this.updateAutoRunButton(); // Update button appearance based on focus
             this.updateContextButtons(); // Update context button appearance based on focus
             this.updateContextLabel(); // Update context label appearance based on focus
@@ -193,21 +196,31 @@ class AIAssistant {
             const code = event.code;
 
             // Check if Cmd+Alt+R
-            if (cmdKey && event.altKey && code === 'KeyR' && this.isAssistantViewFocused) {
+            if (
+                cmdKey &&
+                event.altKey &&
+                code === 'KeyR' &&
+                this.isAssistantViewFocused
+            ) {
                 event.preventDefault();
 
                 if (this.context === 'script') {
                     // In script context: trigger Review Changes button
-                    const reviewButtons = document.querySelectorAll('.ai-review-changes-btn');
+                    const reviewButtons = document.querySelectorAll(
+                        '.ai-review-changes-btn'
+                    );
                     if (reviewButtons.length > 0) {
-                        const lastButton = reviewButtons[reviewButtons.length - 1];
+                        const lastButton =
+                            reviewButtons[reviewButtons.length - 1];
                         if (!lastButton.disabled) {
                             lastButton.click();
                         }
                     }
                 } else {
                     // In font context: trigger Run in Console button
-                    const runButtons = document.querySelectorAll('.ai-run-in-console-btn');
+                    const runButtons = document.querySelectorAll(
+                        '.ai-run-in-console-btn'
+                    );
                     if (runButtons.length > 0) {
                         const lastButton = runButtons[runButtons.length - 1];
                         if (!lastButton.disabled) {
@@ -218,11 +231,19 @@ class AIAssistant {
             }
 
             // Check if Cmd+Alt+O to open last visible code in script editor
-            if (cmdKey && event.altKey && !event.shiftKey && code === 'KeyO' && this.isAssistantViewFocused) {
+            if (
+                cmdKey &&
+                event.altKey &&
+                !event.shiftKey &&
+                code === 'KeyO' &&
+                this.isAssistantViewFocused
+            ) {
                 event.preventDefault();
 
                 // Find all visible open in editor buttons
-                const openButtons = document.querySelectorAll('.ai-open-in-editor-btn');
+                const openButtons = document.querySelectorAll(
+                    '.ai-open-in-editor-btn'
+                );
 
                 if (openButtons.length > 0) {
                     // Get the last button and trigger it
@@ -234,19 +255,37 @@ class AIAssistant {
             }
 
             // Check if Alt+R to toggle auto-run (or show error notification in script context)
-            if (!cmdKey && event.altKey && !event.shiftKey && code === 'KeyR' && this.isAssistantViewFocused) {
+            if (
+                !cmdKey &&
+                event.altKey &&
+                !event.shiftKey &&
+                code === 'KeyR' &&
+                this.isAssistantViewFocused
+            ) {
                 event.preventDefault();
                 this.toggleAutoRun();
             }
 
             // Check if Alt+F to switch to font context
-            if (!cmdKey && event.altKey && !event.shiftKey && code === 'KeyF' && this.isAssistantViewFocused) {
+            if (
+                !cmdKey &&
+                event.altKey &&
+                !event.shiftKey &&
+                code === 'KeyF' &&
+                this.isAssistantViewFocused
+            ) {
                 event.preventDefault();
                 this.setContext('font');
             }
 
             // Check if Alt+S to switch to script context
-            if (!cmdKey && event.altKey && !event.shiftKey && code === 'KeyS' && this.isAssistantViewFocused) {
+            if (
+                !cmdKey &&
+                event.altKey &&
+                !event.shiftKey &&
+                code === 'KeyS' &&
+                this.isAssistantViewFocused
+            ) {
                 event.preventDefault();
                 this.setContext('script');
             }
@@ -372,10 +411,16 @@ class AIAssistant {
         if (!this.contextFontButton || !this.contextScriptButton) return;
 
         // Font button - toggle active state and context class
-        this.contextFontButton.classList.toggle('active', this.context === 'font');
+        this.contextFontButton.classList.toggle(
+            'active',
+            this.context === 'font'
+        );
 
         // Script button - toggle active state and context class
-        this.contextScriptButton.classList.toggle('active', this.context === 'script');
+        this.contextScriptButton.classList.toggle(
+            'active',
+            this.context === 'script'
+        );
     }
 
     toggleAutoRun() {
@@ -407,7 +452,8 @@ class AIAssistant {
             // Style differently when context is script (but keep enabled for click handler)
             if (this.context === 'script') {
                 this.autoRunButton.disabled = false; // Keep enabled so click event fires
-                this.autoRunButton.innerHTML = 'Auto-Run <span class="ai-button-shortcut"><span class="material-symbols-outlined">keyboard_option_key</span>R</span>';
+                this.autoRunButton.innerHTML =
+                    'Auto-Run <span class="ai-button-shortcut"><span class="material-symbols-outlined">keyboard_option_key</span>R</span>';
                 this.autoRunButton.classList.remove('active');
                 this.autoRunButton.classList.add('disabled-in-script');
             } else {
@@ -416,7 +462,9 @@ class AIAssistant {
                 this.autoRunButton.classList.toggle('active', this.autoRun);
 
                 // Update keyboard shortcut color based on active state
-                const shortcutSpan = this.autoRunButton.querySelector('.ai-button-shortcut');
+                const shortcutSpan = this.autoRunButton.querySelector(
+                    '.ai-button-shortcut'
+                );
                 if (shortcutSpan) {
                     if (this.autoRun) {
                         shortcutSpan.style.opacity = '0.6';
@@ -447,16 +495,20 @@ class AIAssistant {
 
     updateButtonShortcuts() {
         // Remove shortcuts from ALL buttons first
-        const allRunButtons = document.querySelectorAll('.ai-run-in-console-btn');
-        allRunButtons.forEach(btn => {
+        const allRunButtons = document.querySelectorAll(
+            '.ai-run-in-console-btn'
+        );
+        allRunButtons.forEach((btn) => {
             const text = btn.textContent || btn.innerText;
             if (text.includes('Run in Console')) {
                 btn.innerHTML = 'Run in Console';
             }
         });
 
-        const allOpenButtons = document.querySelectorAll('.ai-open-in-editor-btn');
-        allOpenButtons.forEach(btn => {
+        const allOpenButtons = document.querySelectorAll(
+            '.ai-open-in-editor-btn'
+        );
+        allOpenButtons.forEach((btn) => {
             const text = btn.textContent || btn.innerText;
             if (text.includes('Open in Script Editor Without Review')) {
                 btn.innerHTML = 'Open in Script Editor Without Review';
@@ -465,8 +517,10 @@ class AIAssistant {
             }
         });
 
-        const allReviewButtons = document.querySelectorAll('.ai-review-changes-btn');
-        allReviewButtons.forEach(btn => {
+        const allReviewButtons = document.querySelectorAll(
+            '.ai-review-changes-btn'
+        );
+        allReviewButtons.forEach((btn) => {
             const text = btn.textContent || btn.innerText;
             if (text.includes('Review Changes')) {
                 btn.innerHTML = 'Review Changes';
@@ -483,13 +537,17 @@ class AIAssistant {
         // Check for Run in Console button (font context)
         const runButton = lastMessage.querySelector('.ai-run-in-console-btn');
         if (runButton) {
-            runButton.innerHTML = 'Run in Console <span class="ai-button-shortcut"><span class="material-symbols-outlined">keyboard_command_key</span><span class="material-symbols-outlined">keyboard_option_key</span>R</span>';
+            runButton.innerHTML =
+                'Run in Console <span class="ai-button-shortcut"><span class="material-symbols-outlined">keyboard_command_key</span><span class="material-symbols-outlined">keyboard_option_key</span>R</span>';
         }
 
         // Check for Review Changes button (script context)
-        const reviewButton = lastMessage.querySelector('.ai-review-changes-btn');
+        const reviewButton = lastMessage.querySelector(
+            '.ai-review-changes-btn'
+        );
         if (reviewButton) {
-            reviewButton.innerHTML = 'Review Changes <span class="ai-button-shortcut"><span class="material-symbols-outlined">keyboard_command_key</span><span class="material-symbols-outlined">keyboard_option_key</span>R</span>';
+            reviewButton.innerHTML =
+                'Review Changes <span class="ai-button-shortcut"><span class="material-symbols-outlined">keyboard_command_key</span><span class="material-symbols-outlined">keyboard_option_key</span>R</span>';
         }
 
         // Check for Open in Script Editor button
@@ -497,14 +555,20 @@ class AIAssistant {
         if (openButton) {
             const text = openButton.textContent || openButton.innerText;
             if (text.includes('Open in Script Editor Without Review')) {
-                openButton.innerHTML = 'Open in Script Editor Without Review <span class="ai-button-shortcut"><span class="material-symbols-outlined">keyboard_command_key</span><span class="material-symbols-outlined">keyboard_option_key</span>O</span>';
+                openButton.innerHTML =
+                    'Open in Script Editor Without Review <span class="ai-button-shortcut"><span class="material-symbols-outlined">keyboard_command_key</span><span class="material-symbols-outlined">keyboard_option_key</span>O</span>';
             } else {
-                openButton.innerHTML = 'Open in Script Editor <span class="ai-button-shortcut"><span class="material-symbols-outlined">keyboard_command_key</span><span class="material-symbols-outlined">keyboard_option_key</span>O</span>';
+                openButton.innerHTML =
+                    'Open in Script Editor <span class="ai-button-shortcut"><span class="material-symbols-outlined">keyboard_command_key</span><span class="material-symbols-outlined">keyboard_option_key</span>O</span>';
             }
         }
-    } addMessage(role, content, isCode = false, isCollapsible = false) {
+    }
+    addMessage(role, content, isCode = false, isCollapsible = false) {
         // Show messages container on first message
-        if (this.messagesContainer.style.display === 'none' || !this.messagesContainer.style.display) {
+        if (
+            this.messagesContainer.style.display === 'none' ||
+            !this.messagesContainer.style.display
+        ) {
             this.messagesContainer.style.display = 'block';
         }
 
@@ -512,12 +576,18 @@ class AIAssistant {
         messageDiv.className = `ai-message ai-message-${role}`;
 
         const timestamp = new Date().toLocaleTimeString();
-        const roleLabel = role === 'user' ? '😀 You' : role === 'output' ? '🤖 Output' : '🤖 AI';
+        const roleLabel =
+            role === 'user'
+                ? '😀 You'
+                : role === 'output'
+                  ? '🤖 Output'
+                  : '🤖 AI';
 
         // Add context tag with appropriate color
-        const contextTag = this.context === 'script'
-            ? '<span class="ai-context-tag ai-context-tag-script">Script</span>'
-            : '<span class="ai-context-tag ai-context-tag-font">Font</span>';
+        const contextTag =
+            this.context === 'script'
+                ? '<span class="ai-context-tag ai-context-tag-script">Script</span>'
+                : '<span class="ai-context-tag ai-context-tag-font">Font</span>';
 
         const header = `<div class="ai-message-header"><span>${roleLabel} - ${timestamp}</span>${contextTag}</div>`;
 
@@ -525,8 +595,14 @@ class AIAssistant {
         if (isCode) {
             if (isCollapsible) {
                 // Collapsible code block
-                const codeId = 'code-' + Date.now() + Math.random().toString(36).substr(2, 9);
-                const btnId = 'btn-' + Date.now() + Math.random().toString(36).substr(2, 9);
+                const codeId =
+                    'code-' +
+                    Date.now() +
+                    Math.random().toString(36).substr(2, 9);
+                const btnId =
+                    'btn-' +
+                    Date.now() +
+                    Math.random().toString(36).substr(2, 9);
                 body = `
                     <div class="ai-code-collapsible">
                         <button class="ai-code-toggle" id="${btnId}" onclick="
@@ -566,8 +642,11 @@ class AIAssistant {
 
     addReuseButtonsToOldMessages() {
         // Find all user messages that are not error tracebacks
-        const allUserMessages = this.messagesContainer.querySelectorAll('.ai-message-user');
-        const userMessages = Array.from(allUserMessages).filter(msg => !msg.hasAttribute('data-error-traceback'));
+        const allUserMessages =
+            this.messagesContainer.querySelectorAll('.ai-message-user');
+        const userMessages = Array.from(allUserMessages).filter(
+            (msg) => !msg.hasAttribute('data-error-traceback')
+        );
 
         if (userMessages.length === 0) return;
 
@@ -583,8 +662,20 @@ class AIAssistant {
             if (!prompt) continue;
 
             // Create buttons container with both reuse and copy buttons
-            const reuseId = 'reuse-' + Date.now() + '-' + i + '-' + Math.random().toString(36).substr(2, 9);
-            const copyId = 'copy-' + Date.now() + '-' + i + '-' + Math.random().toString(36).substr(2, 9);
+            const reuseId =
+                'reuse-' +
+                Date.now() +
+                '-' +
+                i +
+                '-' +
+                Math.random().toString(36).substr(2, 9);
+            const copyId =
+                'copy-' +
+                Date.now() +
+                '-' +
+                i +
+                '-' +
+                Math.random().toString(36).substr(2, 9);
             const buttonDiv = document.createElement('div');
             buttonDiv.className = 'ai-reuse-prompt-container';
             buttonDiv.innerHTML = `
@@ -654,12 +745,15 @@ class AIAssistant {
     scrollToBottom() {
         // Scroll the messages container
         if (this.messagesContainer) {
-            this.messagesContainer.scrollTop = this.messagesContainer.scrollHeight;
+            this.messagesContainer.scrollTop =
+                this.messagesContainer.scrollHeight;
         }
 
         // Scroll the view-content container
         setTimeout(() => {
-            const viewContent = document.querySelector('#view-assistant .view-content');
+            const viewContent = document.querySelector(
+                '#view-assistant .view-content'
+            );
             if (viewContent) {
                 viewContent.scrollTop = viewContent.scrollHeight;
             }
@@ -668,7 +762,10 @@ class AIAssistant {
 
     addOutputWithCode(output, code, markdownText = '', showRunButton = false) {
         // Show messages container on first message
-        if (this.messagesContainer.style.display === 'none' || !this.messagesContainer.style.display) {
+        if (
+            this.messagesContainer.style.display === 'none' ||
+            !this.messagesContainer.style.display
+        ) {
             this.messagesContainer.style.display = 'block';
         }
 
@@ -678,15 +775,20 @@ class AIAssistant {
         const timestamp = new Date().toLocaleTimeString();
 
         // Generate unique IDs
-        const codeId = 'code-' + Date.now() + Math.random().toString(36).substr(2, 9);
-        const btnId = 'btn-' + Date.now() + Math.random().toString(36).substr(2, 9);
-        const runBtnId = 'run-' + Date.now() + Math.random().toString(36).substr(2, 9);
-        const openBtnId = 'open-' + Date.now() + Math.random().toString(36).substr(2, 9);
+        const codeId =
+            'code-' + Date.now() + Math.random().toString(36).substr(2, 9);
+        const btnId =
+            'btn-' + Date.now() + Math.random().toString(36).substr(2, 9);
+        const runBtnId =
+            'run-' + Date.now() + Math.random().toString(36).substr(2, 9);
+        const openBtnId =
+            'open-' + Date.now() + Math.random().toString(36).substr(2, 9);
 
         // Add context tag with appropriate color
-        const contextTag = this.context === 'script'
-            ? '<span class="ai-context-tag ai-context-tag-script">Script</span>'
-            : '<span class="ai-context-tag ai-context-tag-font">Font</span>';
+        const contextTag =
+            this.context === 'script'
+                ? '<span class="ai-context-tag ai-context-tag-script">Script</span>'
+                : '<span class="ai-context-tag ai-context-tag-font">Font</span>';
 
         const header = `
             <div class="ai-message-header">
@@ -710,7 +812,10 @@ class AIAssistant {
         let buttonContainerHtml = '';
         if (this.context === 'script') {
             // Script context: show both Review Changes and Open in Script Editor buttons
-            const directOpenBtnId = 'direct-open-' + Date.now() + Math.random().toString(36).substr(2, 9);
+            const directOpenBtnId =
+                'direct-open-' +
+                Date.now() +
+                Math.random().toString(36).substr(2, 9);
             buttonContainerHtml = `
                 <div class="ai-button-group">
                     <button class="ai-review-changes-btn" id="${openBtnId}">Review Changes</button>
@@ -726,12 +831,16 @@ class AIAssistant {
         }
 
         // Show markdown explanation if present
-        const markdownHtml = markdownText && markdownText.trim() ?
-            `<div class="ai-markdown-explanation">${this.formatMarkdown(markdownText)}</div>` : '';
+        const markdownHtml =
+            markdownText && markdownText.trim()
+                ? `<div class="ai-markdown-explanation">${this.formatMarkdown(markdownText)}</div>`
+                : '';
 
         // Show Python output if present
-        const outputHtml = output && output.trim() ?
-            `<div class="ai-python-output">${this.escapeHtml(output)}</div>` : '';
+        const outputHtml =
+            output && output.trim()
+                ? `<div class="ai-python-output">${this.escapeHtml(output)}</div>`
+                : '';
 
         const body = `
             <div class="ai-output-with-code">
@@ -765,7 +874,9 @@ class AIAssistant {
 
         // Handle direct open button in script context
         if (this.context === 'script') {
-            const directOpenBtnId = messageDiv.querySelector('.ai-button-group .ai-open-in-editor-btn')?.id;
+            const directOpenBtnId = messageDiv.querySelector(
+                '.ai-button-group .ai-open-in-editor-btn'
+            )?.id;
             const directOpenBtn = document.getElementById(directOpenBtnId);
             if (directOpenBtn) {
                 directOpenBtn.addEventListener('click', (event) => {
@@ -819,10 +930,14 @@ class AIAssistant {
 
         if (!window.term) {
             // Console not yet initialized - execute without terminal output
-            console.warn('Console terminal not available, executing Python code directly');
+            console.warn(
+                'Console terminal not available, executing Python code directly'
+            );
             try {
                 await window.pyodide.runPythonAsync(code);
-                console.log('✅ Code executed successfully (console terminal not available for output)');
+                console.log(
+                    '✅ Code executed successfully (console terminal not available for output)'
+                );
 
                 // Play done sound
                 if (window.playSound) {
@@ -869,7 +984,9 @@ class AIAssistant {
                 scriptView.click(); // This will trigger the focus
             }
         } else {
-            console.error('Script editor not available (window.scriptEditor is not defined)');
+            console.error(
+                'Script editor not available (window.scriptEditor is not defined)'
+            );
         }
     }
 
@@ -883,12 +1000,19 @@ class AIAssistant {
         this.pendingCode = newCode;
 
         // Generate unified diff using jsdiff
-        const diff = Diff.createPatch('script.py', oldCode, newCode, 'Current', 'Proposed');
+        const diff = Diff.createPatch(
+            'script.py',
+            oldCode,
+            newCode,
+            'Current',
+            'Proposed'
+        );
 
         // Get modal elements
         const modal = document.getElementById('diff-review-modal');
         const diffContainer = document.getElementById('diff-container');
-        const explanationContainer = document.getElementById('diff-explanation');
+        const explanationContainer =
+            document.getElementById('diff-explanation');
         const closeBtn = document.getElementById('diff-modal-close-btn');
         const cancelBtn = document.getElementById('diff-cancel-btn');
         const acceptBtn = document.getElementById('diff-accept-btn');
@@ -899,7 +1023,7 @@ class AIAssistant {
             matching: 'lines',
             outputFormat: 'side-by-side',
             renderNothingWhenEmpty: false,
-            synchronisedScroll: true,
+            synchronisedScroll: true
         };
 
         const diff2htmlUi = new Diff2HtmlUI(diffContainer, diff, configuration);
@@ -1006,10 +1130,15 @@ class AIAssistant {
         }
 
         // Check if the last message is already an error fix message
-        const allMessages = this.messagesContainer.querySelectorAll('.ai-message');
-        const lastMessage = allMessages.length > 0 ? allMessages[allMessages.length - 1] : null;
+        const allMessages =
+            this.messagesContainer.querySelectorAll('.ai-message');
+        const lastMessage =
+            allMessages.length > 0 ? allMessages[allMessages.length - 1] : null;
 
-        if (lastMessage && lastMessage.classList.contains('ai-message-error-fix')) {
+        if (
+            lastMessage &&
+            lastMessage.classList.contains('ai-message-error-fix')
+        ) {
             // Update the existing message with new traceback and make it blink again
             this.currentErrorTraceback = errorTraceback;
 
@@ -1041,7 +1170,10 @@ class AIAssistant {
         // Delay showing the message by 1.5 seconds + estimated sound duration (attention.wav ~1 second)
         setTimeout(() => {
             // Show messages container
-            if (this.messagesContainer.style.display === 'none' || !this.messagesContainer.style.display) {
+            if (
+                this.messagesContainer.style.display === 'none' ||
+                !this.messagesContainer.style.display
+            ) {
                 this.messagesContainer.style.display = 'block';
             }
 
@@ -1049,7 +1181,8 @@ class AIAssistant {
             messageDiv.className = 'ai-message ai-message-error-fix';
 
             const timestamp = new Date().toLocaleTimeString();
-            const fixBtnId = 'fix-' + Date.now() + Math.random().toString(36).substr(2, 9);
+            const fixBtnId =
+                'fix-' + Date.now() + Math.random().toString(36).substr(2, 9);
 
             const header = `<div class="ai-message-header">⚠️ Script Error - ${timestamp}</div>`;
 
@@ -1064,7 +1197,8 @@ class AIAssistant {
 
             messageDiv.innerHTML = header + body;
             this.messagesContainer.appendChild(messageDiv);
-            this.messagesContainer.scrollTop = this.messagesContainer.scrollHeight;
+            this.messagesContainer.scrollTop =
+                this.messagesContainer.scrollHeight;
 
             // Clear the flag now that the message is actually shown
             this.isShowingErrorFix = false;
@@ -1123,7 +1257,10 @@ class AIAssistant {
                         try {
                             await this.executeWithRetry(prompt, 0);
                         } catch (error) {
-                            this.addMessage('error', `Failed after ${this.maxRetries} attempts: ${error.message}`);
+                            this.addMessage(
+                                'error',
+                                `Failed after ${this.maxRetries} attempts: ${error.message}`
+                            );
                         } finally {
                             // Hide typing indicator
                             this.hideTypingIndicator();
@@ -1141,19 +1278,24 @@ class AIAssistant {
 
     addErrorTracebackMessage(errorTraceback) {
         // Show messages container
-        if (this.messagesContainer.style.display === 'none' || !this.messagesContainer.style.display) {
+        if (
+            this.messagesContainer.style.display === 'none' ||
+            !this.messagesContainer.style.display
+        ) {
             this.messagesContainer.style.display = 'block';
         }
 
         const messageDiv = document.createElement('div');
-        messageDiv.className = 'ai-message ai-message-user ai-message-error-traceback';
+        messageDiv.className =
+            'ai-message ai-message-user ai-message-error-traceback';
 
         const timestamp = new Date().toLocaleTimeString();
 
         // Add context tag
-        const contextTag = this.context === 'script'
-            ? '<span class="ai-context-tag ai-context-tag-script">Script</span>'
-            : '<span class="ai-context-tag ai-context-tag-font">Font</span>';
+        const contextTag =
+            this.context === 'script'
+                ? '<span class="ai-context-tag ai-context-tag-script">Script</span>'
+                : '<span class="ai-context-tag ai-context-tag-font">Font</span>';
 
         const header = `<div class="ai-message-header"><span>😀 You - ${timestamp}</span>${contextTag}</div>`;
 
@@ -1211,7 +1353,11 @@ ${errorTraceback}
     }
 
     clearConversation() {
-        if (confirm('Clear conversation history? This will start a fresh conversation.')) {
+        if (
+            confirm(
+                'Clear conversation history? This will start a fresh conversation.'
+            )
+        ) {
             this.conversationHistory = [];
             this.messagesContainer.innerHTML = '';
             this.messagesContainer.style.display = 'none'; // Hide when cleared
@@ -1258,7 +1404,10 @@ ${errorTraceback}
         try {
             await this.executeWithRetry(prompt, 0);
         } catch (error) {
-            this.addMessage('error', `Failed after ${this.maxRetries} attempts: ${error.message}`);
+            this.addMessage(
+                'error',
+                `Failed after ${this.maxRetries} attempts: ${error.message}`
+            );
         } finally {
             // Hide typing indicator
             this.hideTypingIndicator();
@@ -1270,14 +1419,24 @@ ${errorTraceback}
         }
     }
 
-    async executeWithRetry(originalPrompt, attemptNumber, previousError = null) {
+    async executeWithRetry(
+        originalPrompt,
+        attemptNumber,
+        previousError = null
+    ) {
         if (attemptNumber >= this.maxRetries) {
-            throw new Error(`Maximum retry attempts (${this.maxRetries}) reached`);
+            throw new Error(
+                `Maximum retry attempts (${this.maxRetries}) reached`
+            );
         }
 
         try {
             // Get Python code and markdown from Claude
-            const { pythonCode, markdownText } = await this.callClaude(originalPrompt, previousError, attemptNumber);
+            const { pythonCode, markdownText } = await this.callClaude(
+                originalPrompt,
+                previousError,
+                attemptNumber
+            );
 
             // In script context, never auto-run - only show code with "Open in Script Editor" button
             if (this.context === 'script') {
@@ -1311,7 +1470,6 @@ ${errorTraceback}
 
             // Add reuse buttons to previous user messages now that we have a response
             this.addReuseButtonsToOldMessages();
-
         } catch (error) {
             console.error(`Attempt ${attemptNumber + 1} failed:`, error);
 
@@ -1319,9 +1477,20 @@ ${errorTraceback}
             this.addMessage('error', `Execution error: ${error.message}`);
 
             // Only retry in font mode with auto-run (never retry in script context since we don't execute)
-            if (this.context !== 'script' && this.autoRun && attemptNumber < this.maxRetries - 1) {
-                this.addMessage('system', `Retrying (attempt ${attemptNumber + 2}/${this.maxRetries})...`);
-                await this.executeWithRetry(originalPrompt, attemptNumber + 1, error.message);
+            if (
+                this.context !== 'script' &&
+                this.autoRun &&
+                attemptNumber < this.maxRetries - 1
+            ) {
+                this.addMessage(
+                    'system',
+                    `Retrying (attempt ${attemptNumber + 2}/${this.maxRetries})...`
+                );
+                await this.executeWithRetry(
+                    originalPrompt,
+                    attemptNumber + 1,
+                    error.message
+                );
             } else {
                 throw error;
             }
@@ -1338,7 +1507,10 @@ context.generate_all_docs()
                 `);
                 console.log('Context API documentation cached');
             } catch (error) {
-                console.warn('Could not generate context API docs, using fallback:', error);
+                console.warn(
+                    'Could not generate context API docs, using fallback:',
+                    error
+                );
                 this.cachedApiDocs = `API documentation not available. Use standard context attributes:
 - font.glyphs, font.names, font.masters, etc.
 - glyph.name, glyph.width, glyph.layers
@@ -1351,8 +1523,9 @@ context.generate_all_docs()
         const apiDocs = this.cachedApiDocs;
 
         // Build context-specific instructions
-        const contextInstructions = this.context === 'script'
-            ? `CONTEXT: SCRIPT EDITING MODE
+        const contextInstructions =
+            this.context === 'script'
+                ? `CONTEXT: SCRIPT EDITING MODE
 You are helping to improve and modify Python scripts that will be run inside the font editor using the context-py library. The user has an existing script open in their editor that they want to enhance or modify or fix, or the script may also be empty still.
 
 PRIMARY FOCUS:
@@ -1372,9 +1545,7 @@ CRITICAL RULES FOR SCRIPT MODE:
 5. The context-py API documentation below is provided for reference when writing scripts
 6. Only refactor code when explicitly requested by the user. When fixing errors, only change the parts that are necessary to fix the error
 `
-
-
-            : `CONTEXT: FONT EDITING MODE
+                : `CONTEXT: FONT EDITING MODE
 You are working directly on the user's currently open font. Generate Python code that will be executed immediately on the active font using the context-py library.
 
 CRITICAL RULES FOR FONT MODE:
@@ -1424,7 +1595,9 @@ Oct. 23rd 2025:
 - Layer.anchor_objects changed to Layer.anchors
 
 EXAMPLE OPERATIONS:
-${this.context === 'font' ? `# Make all glyphs 10% wider (FONT MODE)
+${
+    this.context === 'font'
+        ? `# Make all glyphs 10% wider (FONT MODE)
 font = CurrentFont()
 for glyph in font.glyphs:
     for layer in glyph.layers:
@@ -1438,7 +1611,8 @@ print(f"Made {len(font.glyphs)} glyphs 10% wider")
 font = CurrentFont()
 print(f"Font has {len(font.glyphs)} glyphs:")
 for glyph in font.glyphs:
-    print(f"  - {glyph.name}")` : `# Example script for batch processing (SCRIPT MODE)
+    print(f"  - {glyph.name}")`
+        : `# Example script for batch processing (SCRIPT MODE)
 import context
 
 def process_font(font_path):
@@ -1448,7 +1622,8 @@ def process_font(font_path):
     # Your modifications here
     return font
 
-# This is a script that can be saved and reused`}
+# This is a script that can be saved and reused`
+}
 
 Generate Python code for: ${userPrompt}`;
 
@@ -1460,7 +1635,11 @@ Generate Python code for: ${userPrompt}`;
 
         // In script context, include the current script editor content
         let fullPrompt = userPrompt;
-        if (this.context === 'script' && window.scriptEditor && window.scriptEditor.editor) {
+        if (
+            this.context === 'script' &&
+            window.scriptEditor &&
+            window.scriptEditor.editor
+        ) {
             const currentScript = window.scriptEditor.editor.getValue();
             if (currentScript && currentScript.trim()) {
                 fullPrompt = `Current script in editor:\n\`\`\`python\n${currentScript}\n\`\`\`\n\nUser request: ${userPrompt}`;
@@ -1505,7 +1684,9 @@ Generate Python code for: ${userPrompt}`;
 
         if (!response.ok) {
             const errorData = await response.json();
-            throw new Error(`API error: ${errorData.error?.message || response.statusText}`);
+            throw new Error(
+                `API error: ${errorData.error?.message || response.statusText}`
+            );
         }
 
         const data = await response.json();
@@ -1536,7 +1717,10 @@ Generate Python code for: ${userPrompt}`;
         pythonCode = pythonCode.trim();
 
         // Remove code blocks from markdown text, leaving only the explanations
-        markdownText = markdownText.replace(/```python\s*\n[\s\S]*?```/g, '').replace(/```\s*\n[\s\S]*?```/g, '').trim();
+        markdownText = markdownText
+            .replace(/```python\s*\n[\s\S]*?```/g, '')
+            .replace(/```\s*\n[\s\S]*?```/g, '')
+            .trim();
 
         // Add to conversation history (only if not a retry)
         if (!previousError || attemptNumber === 0) {
@@ -1658,14 +1842,21 @@ if '_original_stdout' in dir():
 
         // Update cursor position
         const updateCursor = () => {
-            if (!this.promptInput || this.promptInput.disabled || document.activeElement !== this.promptInput) {
+            if (
+                !this.promptInput ||
+                this.promptInput.disabled ||
+                document.activeElement !== this.promptInput
+            ) {
                 cursor.style.display = 'none';
                 return;
             }
             cursor.style.display = 'block';
 
             const textarea = this.promptInput;
-            const textBeforeCursor = textarea.value.substring(0, textarea.selectionStart);
+            const textBeforeCursor = textarea.value.substring(
+                0,
+                textarea.selectionStart
+            );
             const lines = textBeforeCursor.split('\n');
             const currentLine = lines.length - 1;
             const currentLineText = lines[currentLine];
@@ -1687,7 +1878,11 @@ if '_original_stdout' in dir():
             const marginLeft = parseFloat(style.marginLeft) || 0;
 
             // Calculate position
-            const left = prefixWidth + paddingLeft + marginLeft + (currentLineText.length * charWidth);
+            const left =
+                prefixWidth +
+                paddingLeft +
+                marginLeft +
+                currentLineText.length * charWidth;
             const top = currentLine * lineHeight;
 
             // Check if cursor position changed
@@ -1712,7 +1907,11 @@ if '_original_stdout' in dir():
 
         // Continuously monitor cursor position for instant updates
         const monitorCursor = () => {
-            if (this.promptInput && !this.promptInput.disabled && document.activeElement === this.promptInput) {
+            if (
+                this.promptInput &&
+                !this.promptInput.disabled &&
+                document.activeElement === this.promptInput
+            ) {
                 const currentPos = this.promptInput.selectionStart;
                 if (currentPos !== lastSelectionStart) {
                     updateCursor();
@@ -1731,7 +1930,16 @@ if '_original_stdout' in dir():
         this.promptInput.addEventListener('keyup', updateCursor);
         this.promptInput.addEventListener('keydown', (e) => {
             // For arrow keys and navigation, schedule update after event processes
-            const navKeys = ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End', 'PageUp', 'PageDown'];
+            const navKeys = [
+                'ArrowLeft',
+                'ArrowRight',
+                'ArrowUp',
+                'ArrowDown',
+                'Home',
+                'End',
+                'PageUp',
+                'PageDown'
+            ];
             if (navKeys.includes(e.key)) {
                 requestAnimationFrame(updateCursor);
             }
@@ -1758,7 +1966,9 @@ if '_original_stdout' in dir():
      */
     autoResizeTextarea() {
         const textarea = this.promptInput;
-        const viewContent = document.querySelector('#view-assistant .view-content');
+        const viewContent = document.querySelector(
+            '#view-assistant .view-content'
+        );
 
         // Reset height to auto to get the correct scrollHeight
         textarea.style.height = 'auto';
@@ -1772,7 +1982,10 @@ if '_original_stdout' in dir():
         const maxHeight = lineHeight * 10;
 
         // Set new height based on content, with min of 3 lines and max of 10 lines
-        const newHeight = Math.max(minHeight, Math.min(textarea.scrollHeight, maxHeight));
+        const newHeight = Math.max(
+            minHeight,
+            Math.min(textarea.scrollHeight, maxHeight)
+        );
         textarea.style.height = newHeight + 'px';
 
         // Update custom cursor position after resize

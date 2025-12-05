@@ -16,19 +16,41 @@ function getFileIcon(filename, isDir) {
 
     const ext = filename.split('.').pop().toLowerCase();
     switch (ext) {
-        case 'py': return '🐍';
-        case 'txt': return '📄';
-        case 'json': return '🔧';
-        case 'md': return '📝';
-        case 'html': return '🌐';
-        case 'css': return '🎨';
-        case 'js': return '⚡';
-        case 'png': case 'jpg': case 'jpeg': case 'gif': return '🖼️';
-        case 'pdf': return '📕';
-        case 'zip': return '🗜️';
-        case 'ttf': case 'otf': case 'woff': case 'woff2': return '🔤';
-        case 'babelfont': case 'glyphs': case 'ufo': case 'designspace': return '✏️';
-        default: return '📄';
+        case 'py':
+            return '🐍';
+        case 'txt':
+            return '📄';
+        case 'json':
+            return '🔧';
+        case 'md':
+            return '📝';
+        case 'html':
+            return '🌐';
+        case 'css':
+            return '🎨';
+        case 'js':
+            return '⚡';
+        case 'png':
+        case 'jpg':
+        case 'jpeg':
+        case 'gif':
+            return '🖼️';
+        case 'pdf':
+            return '📕';
+        case 'zip':
+            return '🗜️';
+        case 'ttf':
+        case 'otf':
+        case 'woff':
+        case 'woff2':
+            return '🔤';
+        case 'babelfont':
+        case 'glyphs':
+        case 'ufo':
+        case 'designspace':
+            return '✏️';
+        default:
+            return '📄';
     }
 }
 
@@ -104,7 +126,9 @@ json.dumps(result)
         }
 
         const trackingEnd = performance.now();
-        const trackingDuration = ((trackingEnd - trackingStart) / 1000).toFixed(2);
+        const trackingDuration = ((trackingEnd - trackingStart) / 1000).toFixed(
+            2
+        );
         console.log(`✅ Dirty tracking ready (${trackingDuration}s)`);
 
         // Update the font dropdown and dirty indicator
@@ -123,23 +147,25 @@ json.dumps(result)
         window._trackingInitPromise = Promise.resolve();
 
         // Dispatch fontLoaded event
-        window.dispatchEvent(new CustomEvent('fontLoaded', {
-            detail: { fontId: data.font_id, path }
-        }));
+        window.dispatchEvent(
+            new CustomEvent('fontLoaded', {
+                detail: { fontId: data.font_id, path }
+            })
+        );
 
         // Play done sound
         if (window.playSound) {
             window.playSound('done');
         }
     } catch (error) {
-        console.error("Error opening font:", error);
+        console.error('Error opening font:', error);
         alert(`Error opening font: ${error.message}`);
     }
 }
 
 async function scanDirectory(path = '/') {
     if (!window.pyodide) {
-        console.error("Pyodide not available");
+        console.error('Pyodide not available');
         return {};
     }
 
@@ -179,7 +205,7 @@ json.dumps(scan_directory('${path}'))
 
         return JSON.parse(result);
     } catch (error) {
-        console.error("Error scanning directory:", error);
+        console.error('Error scanning directory:', error);
         return {};
     }
 }
@@ -207,7 +233,7 @@ os.makedirs(path, exist_ok=True)
 
         await refreshFileSystem();
     } catch (error) {
-        console.error("Error creating folder:", error);
+        console.error('Error creating folder:', error);
         alert(`Error creating folder: ${error.message}`);
     }
 }
@@ -238,9 +264,9 @@ async function downloadFile(filePath, fileName) {
 }
 
 async function deleteItem(itemPath, itemName, isDir) {
-    const confirmMsg = isDir ?
-        `Delete folder "${itemName}" and all its contents?` :
-        `Delete file "${itemName}"?`;
+    const confirmMsg = isDir
+        ? `Delete folder "${itemName}" and all its contents?`
+        : `Delete file "${itemName}"?`;
 
     if (!confirm(confirmMsg)) return;
 
@@ -260,7 +286,7 @@ else:
 
         await refreshFileSystem();
     } catch (error) {
-        console.error("Error deleting item:", error);
+        console.error('Error deleting item:', error);
         alert(`Error deleting item: ${error.message}`);
     }
 }
@@ -299,7 +325,6 @@ if parent_dir:
             if (pathParts.length > 1) {
                 folderCount = Math.max(folderCount, pathParts.length - 1);
             }
-
         } catch (error) {
             console.error(`Error uploading ${file.name}:`, error);
         }
@@ -310,11 +335,14 @@ if parent_dir:
         const duration = ((endTime - startTime) / 1000).toFixed(2);
 
         if (folderCount > 0) {
-            await window.pyodide.runPythonAsync(`print("Uploaded ${uploadedCount} file(s) with folder structure preserved in ${duration} seconds")`);
+            await window.pyodide.runPythonAsync(
+                `print("Uploaded ${uploadedCount} file(s) with folder structure preserved in ${duration} seconds")`
+            );
         } else {
-            await window.pyodide.runPythonAsync(`print("Uploaded ${uploadedCount} file(s) in ${duration} seconds")`);
+            await window.pyodide.runPythonAsync(
+                `print("Uploaded ${uploadedCount} file(s) in ${duration} seconds")`
+            );
         }
-
 
         await refreshFileSystem();
 
@@ -323,7 +351,8 @@ if parent_dir:
             window.playSound('done');
         }
     }
-} async function buildFileTree(rootPath = '/') {
+}
+async function buildFileTree(rootPath = '/') {
     const items = await scanDirectory(rootPath);
     let html = '';
 
@@ -348,7 +377,8 @@ if parent_dir:
            onchange="handleFileUpload(event)">`;
 
     if (rootPath !== '/') {
-        const parentPath = rootPath.substring(0, rootPath.lastIndexOf('/')) || '/';
+        const parentPath =
+            rootPath.substring(0, rootPath.lastIndexOf('/')) || '/';
         html += `<div class="file-item directory" onclick="navigateToPath('${parentPath}')">
             📁 .. (parent directory)
         </div>`;
@@ -364,24 +394,26 @@ if parent_dir:
     for (const [name, data] of sortedItems) {
         const icon = getFileIcon(name, data.is_dir);
         const fileClass = getFileClass(name, data.is_dir);
-        const sizeText = data.is_dir ? '' : `<span class="file-size">${formatFileSize(data.size)}</span>`;
+        const sizeText = data.is_dir
+            ? ''
+            : `<span class="file-size">${formatFileSize(data.size)}</span>`;
 
-        const clickHandler = data.is_dir ?
-            `navigateToPath('${data.path}')` :
-            `selectFile('${data.path}')`;
+        const clickHandler = data.is_dir
+            ? `navigateToPath('${data.path}')`
+            : `selectFile('${data.path}')`;
 
         // Add download button for files
-        const downloadBtn = !data.is_dir ?
-            `<button class="download-btn" onclick="event.stopPropagation(); downloadFile('${data.path}', '${name}')" title="Download">💾</button>` :
-            '';
+        const downloadBtn = !data.is_dir
+            ? `<button class="download-btn" onclick="event.stopPropagation(); downloadFile('${data.path}', '${name}')" title="Download">💾</button>`
+            : '';
 
         const deleteBtn = `<button class="delete-btn" onclick="event.stopPropagation(); deleteItem('${data.path}', '${name}', ${data.is_dir})" title="Delete">🗑️</button>`;
 
         // Add "Open" button for supported font formats
         const isSupported = isSupportedFontFormat(name, data.is_dir);
-        const openBtn = isSupported ?
-            `<button class="open-font-btn" onclick="event.stopPropagation(); openFont('${data.path}')" title="Open font">📂 Open</button>` :
-            '';
+        const openBtn = isSupported
+            ? `<button class="open-font-btn" onclick="event.stopPropagation(); openFont('${data.path}')" title="Open font">📂 Open</button>`
+            : '';
 
         html += `<div class="file-item ${fileClass}" onclick="${clickHandler}">
             <span class="file-name">${icon} ${name}</span>${sizeText}${openBtn}${downloadBtn}${deleteBtn}
@@ -417,7 +449,7 @@ async function navigateToPath(path) {
         // Setup drag & drop on the file tree
         setupDragAndDrop();
     } catch (error) {
-        console.error("Error navigating to path:", error);
+        console.error('Error navigating to path:', error);
         document.getElementById('file-tree').innerHTML = `
             <div style="color: #ff3300;">Error loading directory: ${error.message}</div>
         `;
@@ -452,13 +484,13 @@ function setupDragAndDrop() {
 }
 
 function selectFile(filePath) {
-    console.log("Selected file:", filePath);
+    console.log('Selected file:', filePath);
     // TODO: Add file selection handling (e.g., show content, download, etc.)
 }
 
 async function refreshFileSystem() {
     const currentPath = fileSystemCache.currentPath || '/';
-    console.log("Refreshing file system...");
+    console.log('Refreshing file system...');
 
     // Clear cache
     fileSystemCache = { currentPath };
@@ -466,7 +498,7 @@ async function refreshFileSystem() {
     // Reload current directory
     await navigateToPath(currentPath);
 
-    console.log("File system refreshed");
+    console.log('File system refreshed');
 }
 
 // Initialize file browser when Pyodide is ready
@@ -477,7 +509,7 @@ async function initFileBrowser() {
             return;
         }
 
-        console.log("Initializing file browser...");
+        console.log('Initializing file browser...');
 
         // Create /user folder if it doesn't exist
         await window.pyodide.runPython(`
@@ -488,9 +520,9 @@ if not os.path.exists('/user'):
 
         // Navigate to /user folder
         await navigateToPath('/user');
-        console.log("File browser initialized");
+        console.log('File browser initialized');
     } catch (error) {
-        console.error("Error initializing file browser:", error);
+        console.error('Error initializing file browser:', error);
     }
 }
 
@@ -508,4 +540,5 @@ window.createFolder = createFolder;
 window.deleteItem = deleteItem;
 window.uploadFiles = uploadFiles;
 window.handleFileUpload = handleFileUpload;
-window.openFont = openFont; window.downloadFile = downloadFile;
+window.openFont = openFont;
+window.downloadFile = downloadFile;

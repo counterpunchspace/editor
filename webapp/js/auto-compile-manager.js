@@ -5,7 +5,8 @@
 (function () {
     'use strict';
 
-    const AUTO_COMPILE_DELAY = window.APP_SETTINGS?.COMPILE_DEBOUNCE_DELAY || 500; // Use setting or fallback to 500ms
+    const AUTO_COMPILE_DELAY =
+        window.APP_SETTINGS?.COMPILE_DEBOUNCE_DELAY || 500; // Use setting or fallback to 500ms
     let compileTimeout = null;
     let isEnabled = true;
     let isChecking = false; // Prevent recursive checks
@@ -48,9 +49,13 @@
             // Check if current font is dirty for compilation
             // Use _originalRunPythonAsync to bypass the execution wrapper
             // and prevent infinite loop
-            const runPython = window.pyodide._originalRunPythonAsync || window.pyodide.runPythonAsync;
+            const runPython =
+                window.pyodide._originalRunPythonAsync ||
+                window.pyodide.runPythonAsync;
 
-            const isDirtyJson = await runPython.call(window.pyodide, `
+            const isDirtyJson = await runPython.call(
+                window.pyodide,
+                `
 import json
 import orjson
 try:
@@ -79,12 +84,16 @@ except Exception as e:
     import traceback
     result = {"dirty": False, "error": str(e), "traceback": traceback.format_exc()}
 json.dumps(result)
-            `);
+            `
+            );
 
             const result = JSON.parse(isDirtyJson);
 
             if (result.error) {
-                console.error('❌ Error checking DIRTY_COMPILE status:', result.error);
+                console.error(
+                    '❌ Error checking DIRTY_COMPILE status:',
+                    result.error
+                );
                 if (result.traceback) {
                     console.error('Traceback:', result.traceback);
                 }
@@ -96,10 +105,11 @@ json.dumps(result)
             }
 
             if (result.dirty) {
-
                 // Show message in terminal if available
                 if (window.term) {
-                    window.term.echo('[[;cyan;]🔄 Auto-recompiling editing font after data change...]');
+                    window.term.echo(
+                        '[[;cyan;]🔄 Auto-recompiling editing font after data change...]'
+                    );
                 }
 
                 // Trigger recompilation of editing font via font manager
@@ -109,12 +119,15 @@ json.dumps(result)
 
                     // Mark font as clean for compilation after successful compile
                     // Use recursive=True to mark all children clean too
-                    await runPython.call(window.pyodide, `
+                    await runPython.call(
+                        window.pyodide,
+                        `
 from context import DIRTY_COMPILE
 current_font = CurrentFont()
 if current_font:
     current_font.mark_clean(DIRTY_COMPILE, recursive=True)
-                    `);
+                    `
+                    );
                 } else {
                     console.warn('Font manager not ready for auto-compilation');
                 }
@@ -156,10 +169,14 @@ if current_font:
             return;
         }
 
-        const runPython = window.pyodide._originalRunPythonAsync || window.pyodide.runPythonAsync;
+        const runPython =
+            window.pyodide._originalRunPythonAsync ||
+            window.pyodide.runPythonAsync;
 
         try {
-            const isDirtyJson = await runPython.call(window.pyodide, `
+            const isDirtyJson = await runPython.call(
+                window.pyodide,
+                `
 import json
 from context import DIRTY_COMPILE
 current_font = CurrentFont()
@@ -177,7 +194,8 @@ else:
         "font_name": font_name
     }
 json.dumps(result)
-            `);
+            `
+            );
 
             const result = JSON.parse(isDirtyJson);
             if (result.error) {
@@ -208,7 +226,7 @@ json.dumps(result)
         scheduleCompilation,
         testDirtyCheck,
         forceTrigger,
-        getStatus: () => ({ isEnabled, hasPendingCompile: !!compileTimeout }),
+        getStatus: () => ({ isEnabled, hasPendingCompile: !!compileTimeout })
     };
 
     console.log('✅ Auto-compile manager initialized');

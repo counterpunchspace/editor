@@ -6,7 +6,7 @@ function sleep(s) {
 }
 
 async function initPyodideConsole() {
-    "use strict";
+    'use strict';
 
     let term;
     let pyodide;
@@ -24,7 +24,7 @@ async function initPyodideConsole() {
                 let result = prompt();
                 echo(result);
                 return result;
-            },
+            }
         });
 
         // Make pyodide globally available
@@ -32,12 +32,15 @@ async function initPyodideConsole() {
         globalThis.pyodide = pyodide;
 
         // Import console components
-        let { repr_shorten, BANNER, PyodideConsole } = pyodide.pyimport("pyodide.console");
+        let { repr_shorten, BANNER, PyodideConsole } =
+            pyodide.pyimport('pyodide.console');
 
-        BANNER = `Welcome to the Pyodide ${pyodide.version} terminal emulator 🐍\n` + BANNER;
+        BANNER =
+            `Welcome to the Pyodide ${pyodide.version} terminal emulator 🐍\n` +
+            BANNER;
         pyconsole = PyodideConsole(pyodide.globals);
 
-        namespace = pyodide.globals.get("dict")();
+        namespace = pyodide.globals.get('dict')();
         await_fut = pyodide.runPython(
             `
       import builtins
@@ -51,20 +54,20 @@ async function initPyodideConsole() {
 
       await_fut
       `,
-            { globals: namespace },
+            { globals: namespace }
         );
         namespace.destroy();
 
         const echo = (msg, ...opts) =>
             term.echo(
                 msg
-                    .replaceAll("]]", "&rsqb;&rsqb;")
-                    .replaceAll("[[", "&lsqb;&lsqb;"),
-                ...opts,
+                    .replaceAll(']]', '&rsqb;&rsqb;')
+                    .replaceAll('[[', '&lsqb;&lsqb;'),
+                ...opts
             );
 
-        const ps1 = ">>> ";
-        const ps2 = "... ";
+        const ps1 = '>>> ';
+        const ps2 = '... ';
 
         async function lock() {
             let resolve;
@@ -90,17 +93,17 @@ async function initPyodideConsole() {
             const unlock = await lock();
             term.pause();
             // multiline should be split (useful when pasting)
-            for (const c of command.split("\n")) {
-                const escaped = c.replaceAll(/\u00a0/g, " ");
+            for (const c of command.split('\n')) {
+                const escaped = c.replaceAll(/\u00a0/g, ' ');
                 const fut = pyconsole.push(escaped);
-                term.set_prompt(fut.syntax_check === "incomplete" ? ps2 : ps1);
+                term.set_prompt(fut.syntax_check === 'incomplete' ? ps2 : ps1);
                 switch (fut.syntax_check) {
-                    case "syntax-error":
+                    case 'syntax-error':
                         term.error(fut.formatted_error.trimEnd());
                         continue;
-                    case "incomplete":
+                    case 'incomplete':
                         continue;
-                    case "complete":
+                    case 'complete':
                         break;
                     default:
                         throw new Error(`Unexpected type ${fut.syntax_check}`);
@@ -116,8 +119,8 @@ async function initPyodideConsole() {
                     if (value !== undefined) {
                         echo(
                             repr_shorten.callKwargs(value, {
-                                separator: "\n<long output truncated>\n",
-                            }),
+                                separator: '\n<long output truncated>\n'
+                            })
                         );
                     }
                     if (value instanceof pyodide.ffi.PyProxy) {
@@ -134,7 +137,7 @@ async function initPyodideConsole() {
                 } catch (e) {
                     // Log error to browser console
                     console.error('❌ Console command failed:', e.message || e);
-                    if (e.constructor.name === "PythonError") {
+                    if (e.constructor.name === 'PythonError') {
                         const message = fut.formatted_error || e.message;
                         term.error(message.trimEnd());
                     } else {
@@ -156,7 +159,7 @@ async function initPyodideConsole() {
         }
 
         // Initialize terminal in the console container
-        term = $("#console-container").terminal(interpreter, {
+        term = $('#console-container').terminal(interpreter, {
             greetings: BANNER,
             prompt: ps1,
             completionEscape: false,
@@ -164,33 +167,33 @@ async function initPyodideConsole() {
                 callback(pyconsole.complete(command).toJs()[0]);
             },
             keymap: {
-                "CTRL+C": async function (event, original) {
+                'CTRL+C': async function (event, original) {
                     pyconsole.buffer.clear();
                     term.enter();
-                    echo("KeyboardInterrupt");
-                    term.set_command("");
+                    echo('KeyboardInterrupt');
+                    term.set_command('');
                     term.set_prompt(ps1);
                 },
-                "CTRL+K": function (event, original) {
+                'CTRL+K': function (event, original) {
                     // Clear the terminal output
                     term.clear();
                     return false;
                 },
-                "META+K": function (event, original) {
+                'META+K': function (event, original) {
                     // Clear the terminal output (for macOS cmd+k)
                     term.clear();
                     return false;
                 },
-                TAB: (event, original) => {
+                'TAB': (event, original) => {
                     const command = term.before_cursor();
                     // Disable completion for whitespaces.
-                    if (command.trim() === "") {
-                        term.insert("\t");
+                    if (command.trim() === '') {
+                        term.insert('\t');
                         return false;
                     }
                     return original(event);
-                },
-            },
+                }
+            }
         });
 
         window.term = term;
@@ -198,38 +201,66 @@ async function initPyodideConsole() {
         // Add custom wheel event handler to reduce scrolling speed
         // Wait a bit for terminal to fully initialize
         setTimeout(() => {
-            const consoleContainer = document.getElementById('console-container');
+            const consoleContainer =
+                document.getElementById('console-container');
 
             console.log('Setting up wheel handler for console-container');
 
             if (consoleContainer) {
-                consoleContainer.addEventListener('wheel', function (e) {
-                    e.preventDefault();
-                    e.stopPropagation();
+                consoleContainer.addEventListener(
+                    'wheel',
+                    function (e) {
+                        e.preventDefault();
+                        e.stopPropagation();
 
-                    console.log('Wheel event captured, deltaY:', e.deltaY);
+                        console.log('Wheel event captured, deltaY:', e.deltaY);
 
-                    // Find the actual scrollable element - could be terminal-scroller or terminal-output
-                    let scrollableElement = consoleContainer.querySelector('.terminal-scroller');
-                    if (!scrollableElement || scrollableElement.scrollHeight <= scrollableElement.clientHeight) {
-                        scrollableElement = consoleContainer.querySelector('.terminal-output');
-                    }
-                    if (!scrollableElement || scrollableElement.scrollHeight <= scrollableElement.clientHeight) {
-                        scrollableElement = consoleContainer.querySelector('.terminal');
-                    }
+                        // Find the actual scrollable element - could be terminal-scroller or terminal-output
+                        let scrollableElement =
+                            consoleContainer.querySelector(
+                                '.terminal-scroller'
+                            );
+                        if (
+                            !scrollableElement ||
+                            scrollableElement.scrollHeight <=
+                                scrollableElement.clientHeight
+                        ) {
+                            scrollableElement =
+                                consoleContainer.querySelector(
+                                    '.terminal-output'
+                                );
+                        }
+                        if (
+                            !scrollableElement ||
+                            scrollableElement.scrollHeight <=
+                                scrollableElement.clientHeight
+                        ) {
+                            scrollableElement =
+                                consoleContainer.querySelector('.terminal');
+                        }
 
-                    if (!scrollableElement) {
-                        console.log('No scrollable element found');
-                        return;
-                    }
+                        if (!scrollableElement) {
+                            console.log('No scrollable element found');
+                            return;
+                        }
 
-                    console.log('Scrolling element:', scrollableElement.className, 'current scrollTop:', scrollableElement.scrollTop);
+                        console.log(
+                            'Scrolling element:',
+                            scrollableElement.className,
+                            'current scrollTop:',
+                            scrollableElement.scrollTop
+                        );
 
-                    // Reduce scroll speed by dividing deltaY by 20
-                    const scrollAmount = e.deltaY / 2;
-                    scrollableElement.scrollTop += scrollAmount;
-                    console.log('Scrolled to:', scrollableElement.scrollTop);
-                }, { passive: false, capture: true });
+                        // Reduce scroll speed by dividing deltaY by 20
+                        const scrollAmount = e.deltaY / 2;
+                        scrollableElement.scrollTop += scrollAmount;
+                        console.log(
+                            'Scrolled to:',
+                            scrollableElement.scrollTop
+                        );
+                    },
+                    { passive: false, capture: true }
+                );
             }
         }, 500);
 
@@ -240,7 +271,11 @@ async function initPyodideConsole() {
             } else {
                 // Fallback if preloader not loaded yet
                 const errorSound = new Audio('assets/sounds/error.wav');
-                errorSound.play().catch(e => console.warn('Could not play error sound:', e));
+                errorSound
+                    .play()
+                    .catch((e) =>
+                        console.warn('Could not play error sound:', e)
+                    );
             }
         };
 
@@ -296,7 +331,9 @@ async function initPyodideConsole() {
                 /^FontEditor/i
             ];
 
-            return systemPatterns.some(pattern => pattern.test(message.trim()));
+            return systemPatterns.some((pattern) =>
+                pattern.test(message.trim())
+            );
         }
 
         // Set global stdout/stderr callbacks for pyodide.runPython() calls
@@ -310,7 +347,7 @@ async function initPyodideConsole() {
 
                 // Only show user print() output in the Python console
                 if (s && !s.endsWith('\n')) {
-                    echo(s);  // Default behavior adds newline
+                    echo(s); // Default behavior adds newline
                 } else {
                     echo(s, { newline: false });
                 }
@@ -328,16 +365,16 @@ async function initPyodideConsole() {
         });
 
         pyodide._api.on_fatal = async (e) => {
-            if (e.name === "Exit") {
+            if (e.name === 'Exit') {
                 term.error(e);
-                term.error("Pyodide exited and can no longer be used.");
+                term.error('Pyodide exited and can no longer be used.');
             } else {
                 term.error(
-                    "Pyodide has suffered a fatal error. Please report this to the Pyodide maintainers.",
+                    'Pyodide has suffered a fatal error. Please report this to the Pyodide maintainers.'
                 );
-                term.error("The cause of the fatal error was:");
+                term.error('The cause of the fatal error was:');
                 term.error(e);
-                term.error("Look in the browser console for more details.");
+                term.error('Look in the browser console for more details.');
             }
             await term.ready;
             term.pause();
@@ -350,21 +387,23 @@ async function initPyodideConsole() {
         pyodide.runPython = (...args) => {
             try {
                 const result = pyodide_py(...args);
-                if (result && typeof result.then !== "undefined") {
-                    return result.then((r) => {
-                        if (r && r.toJs) {
-                            r = r.toJs();
-                        }
-                        return r;
-                    }).catch((e) => {
-                        // Handle Python exceptions and display in console
-                        if (e.constructor.name === "PythonError") {
-                            term.error(e.message);
-                        } else {
-                            term.error(e.toString());
-                        }
-                        throw e; // Re-throw for caller to handle if needed
-                    });
+                if (result && typeof result.then !== 'undefined') {
+                    return result
+                        .then((r) => {
+                            if (r && r.toJs) {
+                                r = r.toJs();
+                            }
+                            return r;
+                        })
+                        .catch((e) => {
+                            // Handle Python exceptions and display in console
+                            if (e.constructor.name === 'PythonError') {
+                                term.error(e.message);
+                            } else {
+                                term.error(e.toString());
+                            }
+                            throw e; // Re-throw for caller to handle if needed
+                        });
                 } else {
                     if (result && result.toJs) {
                         return result.toJs();
@@ -373,7 +412,7 @@ async function initPyodideConsole() {
                 }
             } catch (e) {
                 // Handle synchronous Python exceptions
-                if (e.constructor.name === "PythonError") {
+                if (e.constructor.name === 'PythonError') {
                     term.error(e.message);
                 } else {
                     term.error(e.toString());
@@ -383,15 +422,15 @@ async function initPyodideConsole() {
         };
 
         // Set up directory mounting if supported
-        if ("showDirectoryPicker" in window) {
-
+        if ('showDirectoryPicker' in window) {
             async function mountDirectory() {
                 const opts = {
-                    mode: "readwrite",
+                    mode: 'readwrite'
                 };
-                const { get, set } = await import("https://cdn.skypack.dev/idb-keyval");
-                const pyodideDirectory = "/home/pyodide";
-                const directoryKey = "pyodide-directory-handle";
+                const { get, set } =
+                    await import('https://cdn.skypack.dev/idb-keyval');
+                const pyodideDirectory = '/home/pyodide';
+                const directoryKey = 'pyodide-directory-handle';
                 let directoryHandle = await get(directoryKey);
                 if (!directoryHandle) {
                     directoryHandle = await showDirectoryPicker(opts);
@@ -399,8 +438,10 @@ async function initPyodideConsole() {
                 }
                 const permissionStatus =
                     await directoryHandle.requestPermission(opts);
-                if (permissionStatus !== "granted") {
-                    throw new Error("readwrite access to directory not granted");
+                if (permissionStatus !== 'granted') {
+                    throw new Error(
+                        'readwrite access to directory not granted'
+                    );
                 }
                 await pyodide.mountNativeFS(pyodideDirectory, directoryHandle);
             }
@@ -412,9 +453,8 @@ async function initPyodideConsole() {
 
         // Focus on terminal
         term.focus();
-
     } catch (error) {
-        console.error("Error initializing Pyodide console:", error);
+        console.error('Error initializing Pyodide console:', error);
         document.getElementById('loading').innerHTML = `
       <div style="color: red; padding: 20px;">
         Error loading Python console: ${error.message}

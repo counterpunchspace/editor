@@ -18,12 +18,16 @@ class ResizableViews {
         const verticalDividers = document.querySelectorAll('.vertical-divider');
         const horizontalDivider = document.querySelector('.horizontal-divider');
 
-        verticalDividers.forEach(divider => {
-            divider.addEventListener('mousedown', (e) => this.startResize(e, 'vertical'));
+        verticalDividers.forEach((divider) => {
+            divider.addEventListener('mousedown', (e) =>
+                this.startResize(e, 'vertical')
+            );
         });
 
         if (horizontalDivider) {
-            horizontalDivider.addEventListener('mousedown', (e) => this.startResize(e, 'horizontal'));
+            horizontalDivider.addEventListener('mousedown', (e) =>
+                this.startResize(e, 'horizontal')
+            );
         }
 
         // Global mouse events
@@ -84,7 +88,9 @@ class ResizableViews {
                             view.style.flex = layout.vertical.bottom[index];
                         }
                     });
-                    console.log(`Applied ${bottomViews?.length} bottom view layouts`);
+                    console.log(
+                        `Applied ${bottomViews?.length} bottom view layouts`
+                    );
                 }
             }
 
@@ -112,13 +118,13 @@ class ResizableViews {
 
             // Save top row views
             const topViews = topRow?.querySelectorAll('.view');
-            topViews?.forEach(view => {
+            topViews?.forEach((view) => {
                 layout.vertical.top.push(view.style.flex || '1');
             });
 
             // Save bottom row views
             const bottomViews = bottomRow?.querySelectorAll('.view');
-            bottomViews?.forEach(view => {
+            bottomViews?.forEach((view) => {
                 layout.vertical.bottom.push(view.style.flex || '1');
             });
 
@@ -147,7 +153,8 @@ class ResizableViews {
         }
 
         // Change cursor for the entire document
-        document.body.style.cursor = direction === 'vertical' ? 'col-resize' : 'row-resize';
+        document.body.style.cursor =
+            direction === 'vertical' ? 'col-resize' : 'row-resize';
         document.body.style.userSelect = 'none';
     }
 
@@ -186,7 +193,9 @@ class ResizableViews {
         const deltaX = e.clientX - this.startX;
         const container = this.currentDivider.parentElement;
         const views = Array.from(container.querySelectorAll('.view'));
-        const dividers = Array.from(container.querySelectorAll('.vertical-divider'));
+        const dividers = Array.from(
+            container.querySelectorAll('.vertical-divider')
+        );
 
         // Find which divider is being dragged
         const dividerIndex = dividers.indexOf(this.currentDivider);
@@ -214,7 +223,10 @@ class ResizableViews {
 
             // Check minimums
             const minLeftTotalWidth = minWidth * leftViews.length;
-            if (newLeftTotalWidth >= minLeftTotalWidth && newRightWidth >= minWidth) {
+            if (
+                newLeftTotalWidth >= minLeftTotalWidth &&
+                newRightWidth >= minWidth
+            ) {
                 // Scale left views proportionally
                 const leftScale = newLeftTotalWidth / leftTotalWidth;
 
@@ -259,7 +271,10 @@ class ResizableViews {
 
             // Check minimums
             const minRightTotalWidth = minWidth * rightViews.length;
-            if (newLeftWidth >= minWidth && newRightTotalWidth >= minRightTotalWidth) {
+            if (
+                newLeftWidth >= minWidth &&
+                newRightTotalWidth >= minRightTotalWidth
+            ) {
                 // Scale right views proportionally
                 const rightScale = newRightTotalWidth / rightTotalWidth;
 
@@ -295,7 +310,8 @@ class ResizableViews {
         const topRow = document.querySelector('.top-row');
         const bottomRow = document.querySelector('.bottom-row');
 
-        const containerHeight = document.querySelector('.container').offsetHeight;
+        const containerHeight =
+            document.querySelector('.container').offsetHeight;
         const dividerHeight = 4; // Fixed divider height
         const availableHeight = containerHeight - dividerHeight;
 

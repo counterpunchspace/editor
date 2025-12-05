@@ -51,7 +51,10 @@
 
             // Wait for ready
             await new Promise((resolve, reject) => {
-                const timeout = setTimeout(() => reject(new Error('Worker init timeout')), 10000);
+                const timeout = setTimeout(
+                    () => reject(new Error('Worker init timeout')),
+                    10000
+                );
                 const checkReady = () => {
                     if (workerReady) {
                         clearTimeout(timeout);
@@ -91,7 +94,8 @@
     // Enable/disable compile button based on font availability
     function updateCompileButtonState() {
         const dropdown = document.getElementById('open-fonts-dropdown');
-        const hasFontOpen = dropdown &&
+        const hasFontOpen =
+            dropdown &&
             dropdown.options.length > 0 &&
             dropdown.value !== '' &&
             dropdown.options[0].textContent !== 'No fonts open';
@@ -113,7 +117,9 @@
             console.log('Initializing worker...');
             const initialized = await initWorker();
             if (!initialized) {
-                alert('Failed to initialize font compiler. Check console for errors.');
+                alert(
+                    'Failed to initialize font compiler. Check console for errors.'
+                );
                 return;
             }
         }
@@ -161,7 +167,9 @@ babelfont_json = orjson.dumps(font_dict).decode('utf-8')
             const fontPath = pythonResult[1];
             const sourceDir = pythonResult[2];
             const exportTime = performance.now() - startTime;
-            console.log(`✅ Exported to JSON in ${exportTime.toFixed(0)}ms (${babelfontJson.length} bytes)`);
+            console.log(
+                `✅ Exported to JSON in ${exportTime.toFixed(0)}ms (${babelfontJson.length} bytes)`
+            );
 
             // Compile using the Web Worker
             const compileStart = performance.now();
@@ -172,12 +180,24 @@ babelfont_json = orjson.dumps(font_dict).decode('utf-8')
             }
 
             const { ttfBytes, duration } = result;
-            console.log(`✅ Compiled in ${duration.toFixed(0)}ms (${ttfBytes.length} bytes)`);
+            console.log(
+                `✅ Compiled in ${duration.toFixed(0)}ms (${ttfBytes.length} bytes)`
+            );
 
             // Determine output filename
-            const basename = fontPath.replace(/\.(glyphs|designspace|ufo|babelfont|context)$/, '').split('/').pop() || 'font';
+            const basename =
+                fontPath
+                    .replace(
+                        /\.(glyphs|designspace|ufo|babelfont|context)$/,
+                        ''
+                    )
+                    .split('/')
+                    .pop() || 'font';
             const outputFilename = `${basename}.ttf`;
-            const outputPath = sourceDir === '.' ? outputFilename : `${sourceDir}/${outputFilename}`;
+            const outputPath =
+                sourceDir === '.'
+                    ? outputFilename
+                    : `${sourceDir}/${outputFilename}`;
 
             // Save directly to Pyodide's virtual filesystem using FS API (much faster than JSON roundtrip)
             window.pyodide.FS.writeFile(outputPath, ttfBytes);
@@ -192,20 +212,27 @@ babelfont_json = orjson.dumps(font_dict).decode('utf-8')
 
             // Show success message
             if (window.term) {
-                window.term.echo(`[[;lime;]✅ Compiled successfully in ${totalTime.toFixed(0)}ms]`);
-                window.term.echo(`[[;lime;]💾 Saved: ${outputPath} (${ttfBytes.length} bytes)]`);
-                window.term.echo(`[[;gray;]   Export: ${exportTime.toFixed(0)}ms | Compile: ${duration.toFixed(0)}ms]`);
+                window.term.echo(
+                    `[[;lime;]✅ Compiled successfully in ${totalTime.toFixed(0)}ms]`
+                );
+                window.term.echo(
+                    `[[;lime;]💾 Saved: ${outputPath} (${ttfBytes.length} bytes)]`
+                );
+                window.term.echo(
+                    `[[;gray;]   Export: ${exportTime.toFixed(0)}ms | Compile: ${duration.toFixed(0)}ms]`
+                );
                 window.term.echo('');
             }
 
             // Dispatch event for canvas to load the compiled font
-            window.dispatchEvent(new CustomEvent('fontCompiled', {
-                detail: { ttfBytes, outputPath, duration: totalTime }
-            }));
+            window.dispatchEvent(
+                new CustomEvent('fontCompiled', {
+                    detail: { ttfBytes, outputPath, duration: totalTime }
+                })
+            );
 
             // Reset button text
             compileBtn.textContent = originalText;
-
         } catch (error) {
             console.error('❌ Compilation failed:', error);
 
@@ -215,7 +242,6 @@ babelfont_json = orjson.dumps(font_dict).decode('utf-8')
             }
 
             alert(`Compilation failed: ${error.message}`);
-
         } finally {
             isCompiling = false;
             updateCompileButtonState();

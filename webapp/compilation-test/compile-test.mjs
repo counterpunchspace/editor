@@ -8,7 +8,11 @@ import { dirname, join } from 'path';
 import opentype from 'opentype.js';
 import hbInit from 'harfbuzzjs';
 import init, { compile_babelfont } from '../wasm-dist/babelfont_fontc_web.js';
-import { COMPILATION_TARGETS, getGlyphNamesForString, shapeTextWithFont } from '../js/font-compilation.js';
+import {
+    COMPILATION_TARGETS,
+    getGlyphNamesForString,
+    shapeTextWithFont
+} from '../js/font-compilation.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -25,7 +29,10 @@ async function testCompilation() {
     mkdirSync(outputDir, { recursive: true });
 
     // Load WASM module with explicit path
-    const wasmPath = join(__dirname, '../wasm-dist/babelfont_fontc_web_bg.wasm');
+    const wasmPath = join(
+        __dirname,
+        '../wasm-dist/babelfont_fontc_web_bg.wasm'
+    );
     const wasmBytes = readFileSync(wasmPath);
     await init(wasmBytes);
 
@@ -54,8 +61,9 @@ async function testCompilation() {
         'meem-ar.init'
     ];
 
-    const allNamesMatch = expectedGlyphNames.every(name => glyphNames.includes(name)) &&
-        glyphNames.every(name => expectedGlyphNames.includes(name)) &&
+    const allNamesMatch =
+        expectedGlyphNames.every((name) => glyphNames.includes(name)) &&
+        glyphNames.every((name) => expectedGlyphNames.includes(name)) &&
         glyphNames.length === expectedGlyphNames.length;
 
     if (allNamesMatch) {
@@ -99,7 +107,9 @@ async function testCompilation() {
             const outputPath = join(outputDir, `ReemKufi-${targetName}.ttf`);
             writeFileSync(outputPath, ttfBytes);
 
-            console.log(`✓ ${targetName.padEnd(15)} ${duration.padStart(8)}ms  ${ttfBytes.length.toLocaleString().padStart(10)} bytes`);
+            console.log(
+                `✓ ${targetName.padEnd(15)} ${duration.padStart(8)}ms  ${ttfBytes.length.toLocaleString().padStart(10)} bytes`
+            );
         } catch (error) {
             const endTime = performance.now();
             const duration = (endTime - startTime).toFixed(2);
@@ -111,7 +121,9 @@ async function testCompilation() {
                 error: error.message
             });
 
-            console.log(`✗ ${targetName.padEnd(15)} ${duration.padStart(8)}ms  ERROR: ${error.message}`);
+            console.log(
+                `✗ ${targetName.padEnd(15)} ${duration.padStart(8)}ms  ERROR: ${error.message}`
+            );
         }
     }
 
@@ -121,35 +133,50 @@ async function testCompilation() {
 
         try {
             // Use shapeTextWithFont from font-compilation.js
-            const editingGlyphNames = await shapeTextWithFont(editingFontBytes, testString);
+            const editingGlyphNames = await shapeTextWithFont(
+                editingFontBytes,
+                testString
+            );
 
             // Compare with original glyph names
             const editingGlyphArray = editingGlyphNames.sort();
             const glyphNamesSorted = [...glyphNames].sort();
 
-            console.log(`  Editing font shaped glyphs: [${editingGlyphArray.join(', ')}]`);
-            console.log(`  Expected from typing font:  [${glyphNamesSorted.join(', ')}]`);
+            console.log(
+                `  Editing font shaped glyphs: [${editingGlyphArray.join(', ')}]`
+            );
+            console.log(
+                `  Expected from typing font:  [${glyphNamesSorted.join(', ')}]`
+            );
 
-            const shapingMatches = glyphNames.every(name => editingGlyphNames.includes(name)) &&
-                editingGlyphNames.every(name => glyphNames.includes(name)) &&
+            const shapingMatches =
+                glyphNames.every((name) => editingGlyphNames.includes(name)) &&
+                editingGlyphNames.every((name) => glyphNames.includes(name)) &&
                 editingGlyphNames.length === glyphNames.length;
 
             if (shapingMatches) {
                 console.log('✓ Editing font shapes identically to typing font');
             } else {
-                console.error('✗ Editing font shaping DOES NOT match typing font');
-                console.error('   The fonts produced different shaped glyph sets.');
+                console.error(
+                    '✗ Editing font shaping DOES NOT match typing font'
+                );
+                console.error(
+                    '   The fonts produced different shaped glyph sets.'
+                );
                 process.exit(1);
             }
         } catch (error) {
-            console.error('✗ Failed to validate editing font shaping:', error.message);
+            console.error(
+                '✗ Failed to validate editing font shaping:',
+                error.message
+            );
             process.exit(1);
         }
     }
 
     // Summary
     console.log('\nSummary:');
-    const successful = results.filter(r => r.success).length;
+    const successful = results.filter((r) => r.success).length;
     const total = results.length;
     console.log(`${successful}/${total} targets compiled successfully`);
 
@@ -158,7 +185,7 @@ async function testCompilation() {
     }
 }
 
-testCompilation().catch(err => {
+testCompilation().catch((err) => {
     console.error('Test failed:', err);
     process.exit(1);
 });

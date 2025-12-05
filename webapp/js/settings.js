@@ -7,33 +7,33 @@ const APP_SETTINGS = {
 
     // Font Manager settings
     FONT_MANAGER: {
-        SAVE_DEBUG_FONTS: false, // Set to true to save typing/editing fonts to file system for inspection
+        SAVE_DEBUG_FONTS: false // Set to true to save typing/editing fonts to file system for inspection
     },
 
     // Outline editor display settings
     OUTLINE_EDITOR: {
         // Zoom thresholds
-        MIN_ZOOM_FOR_HANDLES: 0.2,        // 20% - below this, don't draw nodes/anchors/component markers
-        MIN_ZOOM_FOR_ANCHOR_LABELS: 0.7,   // 50% - below this, don't draw anchor names
-        MIN_ZOOM_FOR_GRID: 7.0,            // 500% - above this, show 1-unit grid
+        MIN_ZOOM_FOR_HANDLES: 0.2, // 20% - below this, don't draw nodes/anchors/component markers
+        MIN_ZOOM_FOR_ANCHOR_LABELS: 0.7, // 50% - below this, don't draw anchor names
+        MIN_ZOOM_FOR_GRID: 7.0, // 500% - above this, show 1-unit grid
 
         // Node (point) sizes
-        NODE_SIZE_AT_MIN_ZOOM: 2,          // px - node size at min zoom
-        NODE_SIZE_AT_MAX_ZOOM: 6,          // px - node size at max zoom
-        NODE_SIZE_INTERPOLATION_MIN: 0.2,  // zoom level where min size starts
-        NODE_SIZE_INTERPOLATION_MAX: 3.0,  // zoom level where max size is reached
+        NODE_SIZE_AT_MIN_ZOOM: 2, // px - node size at min zoom
+        NODE_SIZE_AT_MAX_ZOOM: 6, // px - node size at max zoom
+        NODE_SIZE_INTERPOLATION_MIN: 0.2, // zoom level where min size starts
+        NODE_SIZE_INTERPOLATION_MAX: 3.0, // zoom level where max size is reached
 
         // Anchor sizes
-        ANCHOR_SIZE_AT_MIN_ZOOM: 3,        // px - anchor size at min zoom
-        ANCHOR_SIZE_AT_MAX_ZOOM: 8,        // px - anchor size at max zoom
+        ANCHOR_SIZE_AT_MIN_ZOOM: 3, // px - anchor size at min zoom
+        ANCHOR_SIZE_AT_MAX_ZOOM: 8, // px - anchor size at max zoom
         ANCHOR_SIZE_INTERPOLATION_MIN: 0.2, // zoom level where min size starts
         ANCHOR_SIZE_INTERPOLATION_MAX: 3.0, // zoom level where max size is reached
 
         // Component marker size
-        COMPONENT_MARKER_SIZE: 10,         // px - size of component origin marker
+        COMPONENT_MARKER_SIZE: 10, // px - size of component origin marker
 
         // Stroke widths
-        OUTLINE_STROKE_WIDTH: 1,           // px - width of glyph outline paths
+        OUTLINE_STROKE_WIDTH: 1, // px - width of glyph outline paths
 
         // Colors - Light Theme
         COLORS_LIGHT: {
@@ -46,9 +46,9 @@ const APP_SETTINGS = {
             GLYPH_SELECTED: '#00ff00',
 
             // Glyphs when outline editor is active
-            GLYPH_ACTIVE_IN_EDITOR: '#000000',           // The glyph being edited
+            GLYPH_ACTIVE_IN_EDITOR: '#000000', // The glyph being edited
             GLYPH_INACTIVE_IN_EDITOR: 'rgba(0, 0, 0, 0.2)', // Other glyphs (dimmed)
-            GLYPH_HOVERED_IN_EDITOR: 'rgba(0, 0, 0, 0.4)',  // Hovered inactive glyph (darker)
+            GLYPH_HOVERED_IN_EDITOR: 'rgba(0, 0, 0, 0.4)', // Hovered inactive glyph (darker)
             GLYPH_BACKGROUND_IN_EDITOR: 'rgba(0, 0, 0, 0.05)', // HB-rendered background of active glyph
 
             // Nodes (on-curve points)
@@ -76,7 +76,7 @@ const APP_SETTINGS = {
             COMPONENT_STROKE: '#000000',
             COMPONENT_FILL_NORMAL: 'rgba(0, 153, 204, 0.15)',
             COMPONENT_FILL_HOVERED: 'rgba(204, 102, 204, 0.2)',
-            COMPONENT_FILL_SELECTED: 'rgba(204, 0, 204, 0.25)',
+            COMPONENT_FILL_SELECTED: 'rgba(204, 0, 204, 0.25)'
         },
 
         // Colors - Dark Theme
@@ -90,9 +90,9 @@ const APP_SETTINGS = {
             GLYPH_SELECTED: '#00ff00',
 
             // Glyphs when outline editor is active
-            GLYPH_ACTIVE_IN_EDITOR: '#ffffff',                 // The glyph being edited
+            GLYPH_ACTIVE_IN_EDITOR: '#ffffff', // The glyph being edited
             GLYPH_INACTIVE_IN_EDITOR: 'rgba(255, 255, 255, 0.2)', // Other glyphs (dimmed)
-            GLYPH_HOVERED_IN_EDITOR: 'rgba(255, 255, 255, 0.4)',  // Hovered inactive glyph (darker)
+            GLYPH_HOVERED_IN_EDITOR: 'rgba(255, 255, 255, 0.4)', // Hovered inactive glyph (darker)
             GLYPH_BACKGROUND_IN_EDITOR: 'rgba(255, 255, 255, 0.05)', // HB-rendered background of active glyph
 
             // Nodes (on-curve points)
@@ -120,9 +120,9 @@ const APP_SETTINGS = {
             COMPONENT_STROKE: '#ffffff',
             COMPONENT_FILL_NORMAL: 'rgba(0, 255, 255, 0.15)',
             COMPONENT_FILL_HOVERED: 'rgba(255, 136, 255, 0.2)',
-            COMPONENT_FILL_SELECTED: 'rgba(255, 0, 255, 0.3)',
-        },
-    },
+            COMPONENT_FILL_SELECTED: 'rgba(255, 0, 255, 0.3)'
+        }
+    }
 
     // Add other settings here as needed
 };
@@ -131,7 +131,10 @@ const APP_SETTINGS = {
 window.APP_SETTINGS = APP_SETTINGS;
 
 // Validate settings are loaded
-if (typeof window.APP_SETTINGS === 'undefined' || !window.APP_SETTINGS.OUTLINE_EDITOR) {
+if (
+    typeof window.APP_SETTINGS === 'undefined' ||
+    !window.APP_SETTINGS.OUTLINE_EDITOR
+) {
     console.error('APP_SETTINGS failed to load properly!');
 } else {
     console.log('APP_SETTINGS loaded successfully:', window.APP_SETTINGS);
