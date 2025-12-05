@@ -223,7 +223,12 @@ class TextRunEditor {
         } else {
             console.log(`Deselected glyph`);
         }
-        this.call('glyphselected', this.selectedGlyphIndex, previousIndex, fromKeyboard);
+        this.call(
+            'glyphselected',
+            this.selectedGlyphIndex,
+            previousIndex,
+            fromKeyboard
+        );
     }
 
     getGlyphIndexAtCursorPosition() {

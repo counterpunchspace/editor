@@ -335,101 +335,117 @@ class GlyphCanvas {
                 this.exitComponentEditing(true); // Skip UI updates
             }
         });
-        this.textRunEditor.on('glyphselected', async (ix, previousIndex, fromKeyboard = false) => {
-            const wasInEditMode = this.isGlyphEditMode;
+        this.textRunEditor.on(
+            'glyphselected',
+            async (ix, previousIndex, fromKeyboard = false) => {
+                const wasInEditMode = this.isGlyphEditMode;
 
-            // Increment sequence counter to track this selection
-            this.glyphSelectionSequence++;
-            const currentSequence = this.glyphSelectionSequence;
+                // Increment sequence counter to track this selection
+                this.glyphSelectionSequence++;
+                const currentSequence = this.glyphSelectionSequence;
 
-            // Save the previous glyph's vertical bounds BEFORE clearing layer data
-            if (
-                wasInEditMode &&
-                previousIndex >= 0 &&
-                previousIndex !== ix &&
-                this.layerData
-            ) {
-                try {
-                    const prevBounds = this.calculateGlyphBoundingBox();
-                    if (
-                        prevBounds &&
-                        previousIndex < this.textRunEditor.shapedGlyphs.length
-                    ) {
-                        const prevPos =
-                            this.textRunEditor._getGlyphPosition(previousIndex);
-                        const fontSpaceMinY = prevPos.yOffset + prevBounds.minY;
-                        const fontSpaceMaxY = prevPos.yOffset + prevBounds.maxY;
+                // Save the previous glyph's vertical bounds BEFORE clearing layer data
+                if (
+                    wasInEditMode &&
+                    previousIndex >= 0 &&
+                    previousIndex !== ix &&
+                    this.layerData
+                ) {
+                    try {
+                        const prevBounds = this.calculateGlyphBoundingBox();
+                        if (
+                            prevBounds &&
+                            previousIndex <
+                                this.textRunEditor.shapedGlyphs.length
+                        ) {
+                            const prevPos =
+                                this.textRunEditor._getGlyphPosition(
+                                    previousIndex
+                                );
+                            const fontSpaceMinY =
+                                prevPos.yOffset + prevBounds.minY;
+                            const fontSpaceMaxY =
+                                prevPos.yOffset + prevBounds.maxY;
 
-                        // Update accumulated vertical bounds with previous glyph
-                        if (!this.accumulatedVerticalBounds) {
-                            this.accumulatedVerticalBounds = {
-                                minY: fontSpaceMinY,
-                                maxY: fontSpaceMaxY
-                            };
-                        } else {
-                            this.accumulatedVerticalBounds.minY = Math.min(
-                                this.accumulatedVerticalBounds.minY,
-                                fontSpaceMinY
-                            );
-                            this.accumulatedVerticalBounds.maxY = Math.max(
-                                this.accumulatedVerticalBounds.maxY,
-                                fontSpaceMaxY
+                            // Update accumulated vertical bounds with previous glyph
+                            if (!this.accumulatedVerticalBounds) {
+                                this.accumulatedVerticalBounds = {
+                                    minY: fontSpaceMinY,
+                                    maxY: fontSpaceMaxY
+                                };
+                            } else {
+                                this.accumulatedVerticalBounds.minY = Math.min(
+                                    this.accumulatedVerticalBounds.minY,
+                                    fontSpaceMinY
+                                );
+                                this.accumulatedVerticalBounds.maxY = Math.max(
+                                    this.accumulatedVerticalBounds.maxY,
+                                    fontSpaceMaxY
+                                );
+                            }
+                            console.log(
+                                'Saved previous glyph vertical bounds:',
+                                {
+                                    fontSpaceMinY,
+                                    fontSpaceMaxY
+                                }
                             );
                         }
-                        console.log('Saved previous glyph vertical bounds:', {
-                            fontSpaceMinY,
-                            fontSpaceMaxY
-                        });
+                    } catch (error) {
+                        console.warn(
+                            'Could not save previous glyph bounds:',
+                            error
+                        );
                     }
-                } catch (error) {
-                    console.warn(
-                        'Could not save previous glyph bounds:',
-                        error
+                }
+
+                // Clear layer data immediately to prevent rendering stale outlines
+                this.layerData = null;
+
+                if (ix != -1) {
+                    this.isGlyphEditMode = true;
+                }
+                // Update breadcrumb (will hide it since componentStack is now empty)
+                this.updateComponentBreadcrumb();
+
+                // Fetch glyph data and update UI before rendering
+                await this.updatePropertiesUI();
+
+                // Check if this selection is still current (not superseded by a newer one)
+                if (currentSequence !== this.glyphSelectionSequence) {
+                    console.log(
+                        'Glyph selection superseded, skipping render/pan for sequence',
+                        currentSequence
                     );
+                    return;
+                }
+
+                // Now render with the loaded data
+                this.render();
+
+                // Pan to glyph only if navigating via keyboard (not mouse double-click)
+                if (
+                    fromKeyboard &&
+                    wasInEditMode &&
+                    ix >= 0 &&
+                    previousIndex !== ix
+                ) {
+                    // Layer data should be loaded now after updatePropertiesUI completes
+                    this.panToGlyph(ix);
+                }
+
+                // Perform mouse hit detection for objects at current mouse position
+                if (
+                    this.isGlyphEditMode &&
+                    this.selectedLayerId &&
+                    this.layerData
+                ) {
+                    this.updateHoveredComponent();
+                    this.updateHoveredAnchor();
+                    this.updateHoveredPoint();
                 }
             }
-
-            // Clear layer data immediately to prevent rendering stale outlines
-            this.layerData = null;
-
-            if (ix != -1) {
-                this.isGlyphEditMode = true;
-            }
-            // Update breadcrumb (will hide it since componentStack is now empty)
-            this.updateComponentBreadcrumb();
-
-            // Fetch glyph data and update UI before rendering
-            await this.updatePropertiesUI();
-
-            // Check if this selection is still current (not superseded by a newer one)
-            if (currentSequence !== this.glyphSelectionSequence) {
-                console.log(
-                    'Glyph selection superseded, skipping render/pan for sequence',
-                    currentSequence
-                );
-                return;
-            }
-
-            // Now render with the loaded data
-            this.render();
-
-            // Pan to glyph only if navigating via keyboard (not mouse double-click)
-            if (fromKeyboard && wasInEditMode && ix >= 0 && previousIndex !== ix) {
-                // Layer data should be loaded now after updatePropertiesUI completes
-                this.panToGlyph(ix);
-            }
-
-            // Perform mouse hit detection for objects at current mouse position
-            if (
-                this.isGlyphEditMode &&
-                this.selectedLayerId &&
-                this.layerData
-            ) {
-                this.updateHoveredComponent();
-                this.updateHoveredAnchor();
-                this.updateHoveredPoint();
-            }
-        });
+        );
     }
 
     onMouseDown(e) {
