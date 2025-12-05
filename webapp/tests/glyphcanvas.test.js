@@ -53,3 +53,90 @@ describe('GlyphCanvas onMouseMove', () => {
         expect(canvas.layerData.shapes[1].nodes[0][1]).toBe(5);
     });
 });
+
+describe('GlyphCanvas hit testing', () => {
+    let canvas;
+
+    beforeEach(() => {
+        document.body.innerHTML = '<div id="test-container"></div>';
+        canvas = new GlyphCanvas('test-container');
+        canvas.selectedGlyphIndex = 0;
+        canvas.shapedGlyphs = [{ ax: 1000, dx: 0, dy: 0, g: 0 }];
+        canvas.layerData = {
+            shapes: [
+                { Component: { transform: [1, 0, 0, 1, 100, 100] } },
+                { nodes: [[200, 200, 'l']] }
+            ],
+            anchors: [{ x: 300, y: 300 }]
+        };
+        canvas.viewportManager = new ViewportManager(1, 0, 0);
+    });
+
+    test('should correctly identify hovered component', () => {
+        canvas.mouseX = 100;
+        canvas.mouseY = -100;
+        canvas.updateHoveredComponent();
+        expect(canvas.hoveredComponentIndex).toBe(0);
+    });
+
+    test('should correctly identify hovered anchor', () => {
+        canvas.mouseX = 300;
+        canvas.mouseY = -300;
+        canvas.updateHoveredAnchor();
+        expect(canvas.hoveredAnchorIndex).toBe(0);
+    });
+
+    test('should correctly identify hovered point', () => {
+        canvas.mouseX = 200;
+        canvas.mouseY = -200;
+        canvas.updateHoveredPoint();
+        expect(canvas.hoveredPointIndex).toEqual({
+            contourIndex: 1,
+            nodeIndex: 0
+        });
+    });
+});
+
+describe('GlyphCanvas animation setup', () => {
+    let canvas;
+
+    beforeEach(() => {
+        document.body.innerHTML = '<div id="test-container"></div>';
+        canvas = new GlyphCanvas('test-container');
+        canvas.variationSettings = { wght: 400 };
+        // Mock the animateVariation method to prevent it from running
+        canvas.animateVariation = jest.fn();
+    });
+
+    test('setVariation should set up animation correctly', () => {
+        canvas.setVariation('wght', 700);
+        expect(canvas.isAnimating).toBe(true);
+        expect(canvas.animationStartValues).toEqual({ wght: 400 });
+        expect(canvas.animationTargetValues).toEqual({ wght: 700 });
+        expect(canvas.animationCurrentFrame).toBe(0);
+        expect(canvas.animateVariation).toHaveBeenCalled();
+    });
+});
+
+describe('GlyphCanvas mirrored functions', () => {
+    let canvas;
+
+    beforeEach(() => {
+        document.body.innerHTML = '<div id="test-container"></div>';
+        canvas = new GlyphCanvas('test-container');
+        canvas.shapedGlyphs = [
+            { cl: 0, g: 0 },
+            { cl: 1, g: 1 },
+            { cl: 1, g: 2 },
+            { cl: 2, g: 3 }
+        ];
+    });
+
+    test('findFirstGlyphAtClusterPosition should return the correct index', () => {
+        expect(canvas.findFirstGlyphAtClusterPosition(1)).toBe(1);
+    });
+
+    test('findLastGlyphAtClusterPosition should return the correct index', () => {
+        expect(canvas.findLastGlyphAtClusterPosition(1)).toBe(2);
+    });
+});
