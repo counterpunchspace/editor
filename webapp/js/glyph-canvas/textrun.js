@@ -204,6 +204,9 @@ class TextRunEditor {
 
         this.call('exitcomponentediting'); // Ensure any component editing is exited
 
+        // Store the previous index to pass to the event handler
+        const previousIndex = this.selectedGlyphIndex;
+
         if (glyphIndex >= 0 && glyphIndex < this.shapedGlyphs.length) {
             this.selectedGlyphIndex = glyphIndex;
 
@@ -219,7 +222,7 @@ class TextRunEditor {
         } else {
             console.log(`Deselected glyph`);
         }
-        this.call('glyphselected', this.selectedGlyphIndex);
+        this.call('glyphselected', this.selectedGlyphIndex, previousIndex);
     }
 
     getGlyphIndexAtCursorPosition() {
