@@ -473,183 +473,16 @@ class GlyphCanvas {
     }
 
     onMouseMove(e) {
-        // Handle component dragging in outline editor (takes priority)
-        if (this.isDraggingComponent && this.selectedComponents.length > 0 && this.layerData) {
-            const rect = this.canvas.getBoundingClientRect();
-            const mouseX = e.clientX - rect.left;
-            const mouseY = e.clientY - rect.top;
-
-            const { glyphX, glyphY } =
-                this.viewportManager.getGlyphLocalCoordinates(
-                    mouseX,
-                    mouseY,
-                    this.shapedGlyphs,
-                    this.selectedGlyphIndex
-                );
-
-            const deltaX = Math.round(glyphX) - Math.round(this.lastGlyphX || glyphX);
-            const deltaY = Math.round(glyphY) - Math.round(this.lastGlyphY || glyphY);
-
-            this.lastGlyphX = glyphX;
-            this.lastGlyphY = glyphY;
-
-            // Update all selected components' transforms
-            for (const compIndex of this.selectedComponents) {
-                const shape = this.layerData.shapes[compIndex];
-                if (shape && shape.Component) {
-                    if (!shape.Component.transform) {
-                        // Initialize transform if it doesn't exist
-                        shape.Component.transform = [1, 0, 0, 1, 0, 0];
-                    }
-
-                    // Update translation part of transform (always array format)
-                    if (Array.isArray(shape.Component.transform)) {
-                        shape.Component.transform[4] += deltaX;
-                        shape.Component.transform[5] += deltaY;
-                    }
-                }
+        // Handle component, anchor, or point dragging in outline editor
+        if (
+            (this.isDraggingComponent && this.selectedComponents.length > 0) ||
+            (this.isDraggingAnchor && this.selectedAnchors.length > 0) ||
+            (this.isDraggingPoint && this.selectedPoints.length > 0)
+        ) {
+            if (this.layerData) {
+                this._handleDrag(e);
             }
-
-            // Also update any selected points (mixed selection)
-            for (const point of this.selectedPoints) {
-                const { contourIndex, nodeIndex } = point;
-                if (this.layerData.shapes[contourIndex] && this.layerData.shapes[contourIndex].nodes[nodeIndex]) {
-                    this.layerData.shapes[contourIndex].nodes[nodeIndex][0] += deltaX;
-                    this.layerData.shapes[contourIndex].nodes[nodeIndex][1] += deltaY;
-                }
-            }
-
-            // Also update any selected anchors (mixed selection)
-            for (const anchorIndex of this.selectedAnchors) {
-                const anchor = this.layerData.anchors[anchorIndex];
-                if (anchor) {
-                    anchor.x += deltaX;
-                    anchor.y += deltaY;
-                }
-            }
-
-            this.saveLayerData();
-            this.render();
-            return;
-        }
-
-        // Handle anchor dragging in outline editor
-        if (this.isDraggingAnchor && this.selectedAnchors.length > 0 && this.layerData) {
-            const rect = this.canvas.getBoundingClientRect();
-            const mouseX = e.clientX - rect.left;
-            const mouseY = e.clientY - rect.top;
-
-            // Transform to glyph space
-            const { glyphX, glyphY } =
-                this.viewportManager.getGlyphLocalCoordinates(
-                    mouseX,
-                    mouseY,
-                    this.shapedGlyphs,
-                    this.selectedGlyphIndex
-                );
-
-            // Calculate delta from last position
-            const deltaX = Math.round(glyphX) - Math.round(this.lastGlyphX || glyphX);
-            const deltaY = Math.round(glyphY) - Math.round(this.lastGlyphY || glyphY);
-
-            this.lastGlyphX = glyphX;
-            this.lastGlyphY = glyphY;
-
-            // Update all selected anchors
-            for (const anchorIndex of this.selectedAnchors) {
-                const anchor = this.layerData.anchors[anchorIndex];
-                if (anchor) {
-                    anchor.x += deltaX;
-                    anchor.y += deltaY;
-                }
-            }
-
-            // Also update any selected points (mixed selection)
-            for (const point of this.selectedPoints) {
-                const { contourIndex, nodeIndex } = point;
-                if (this.layerData.shapes[contourIndex] && this.layerData.shapes[contourIndex].nodes[nodeIndex]) {
-                    this.layerData.shapes[contourIndex].nodes[nodeIndex][0] += deltaX;
-                    this.layerData.shapes[contourIndex].nodes[nodeIndex][1] += deltaY;
-                }
-            }
-
-            // Also update any selected components (mixed selection)
-            for (const compIndex of this.selectedComponents) {
-                const shape = this.layerData.shapes[compIndex];
-                if (shape && shape.Component && shape.Component.transform) {
-                    if (!Array.isArray(shape.Component.transform)) {
-                        shape.Component.transform = [1, 0, 0, 1, 0, 0];
-                    }
-                    shape.Component.transform[4] += deltaX;
-                    shape.Component.transform[5] += deltaY;
-                }
-            }
-
-            // Save to Python immediately (non-blocking)
-            this.saveLayerData();
-
-            this.render();
-            return; // Don't do canvas panning while dragging anchor
-        }
-
-        // Handle point dragging in outline editor (takes priority over canvas panning)
-        if (this.isDraggingPoint && this.selectedPoints.length > 0 && this.layerData) {
-            const rect = this.canvas.getBoundingClientRect();
-            const mouseX = e.clientX - rect.left;
-            const mouseY = e.clientY - rect.top;
-
-            // Transform to glyph space
-            const { glyphX, glyphY } =
-                this.viewportManager.getGlyphLocalCoordinates(
-                    mouseX,
-                    mouseY,
-                    this.shapedGlyphs,
-                    this.selectedGlyphIndex
-                );
-
-            // Calculate delta from last position
-            const deltaX = Math.round(glyphX) - Math.round(this.lastGlyphX || glyphX);
-            const deltaY = Math.round(glyphY) - Math.round(this.lastGlyphY || glyphY);
-
-            this.lastGlyphX = glyphX;
-            this.lastGlyphY = glyphY;
-
-            // Update all selected points
-            for (const point of this.selectedPoints) {
-                const { contourIndex, nodeIndex } = point;
-                if (this.layerData.shapes[contourIndex] && this.layerData.shapes[contourIndex].nodes[nodeIndex]) {
-                    this.layerData.shapes[contourIndex].nodes[nodeIndex][0] += deltaX;
-                    this.layerData.shapes[contourIndex].nodes[nodeIndex][1] += deltaY;
-                }
-            }
-
-            // Also update any selected anchors (mixed selection)
-            for (const anchorIndex of this.selectedAnchors) {
-                const anchor = this.layerData.anchors[anchorIndex];
-                if (anchor) {
-                    anchor.x += deltaX;
-                    anchor.y += deltaY;
-                }
-            }
-
-            // Also update any selected components (mixed selection)
-            for (const compIndex of this.selectedComponents) {
-                const shape = this.layerData.shapes[compIndex];
-                if (shape && shape.Component && shape.Component.transform) {
-                    if (!Array.isArray(shape.Component.transform)) {
-                        shape.Component.transform = [1, 0, 0, 1, 0, 0];
-                    }
-                    shape.Component.transform[4] += deltaX;
-                    shape.Component.transform[5] += deltaY;
-                }
-            }
-
-            // Save to Python immediately (non-blocking)
-            // This lets the auto-compile system detect changes
-            this.saveLayerData();
-
-            this.render();
-            return; // Don't do canvas panning while dragging point
+            return; // Don't do canvas panning while dragging
         }
 
         // Canvas panning (only when not dragging a point)
@@ -664,6 +497,76 @@ class GlyphCanvas {
         this.lastMouseY = e.clientY;
 
         this.render();
+    }
+
+    _handleDrag(e) {
+        const rect = this.canvas.getBoundingClientRect();
+        const mouseX = e.clientX - rect.left;
+        const mouseY = e.clientY - rect.top;
+
+        // Transform to glyph space
+        const { glyphX, glyphY } =
+            this.viewportManager.getGlyphLocalCoordinates(
+                mouseX,
+                mouseY,
+                this.shapedGlyphs,
+                this.selectedGlyphIndex
+            );
+
+        // Calculate delta from last position
+        const deltaX = Math.round(glyphX) - Math.round(this.lastGlyphX || glyphX);
+        const deltaY = Math.round(glyphY) - Math.round(this.lastGlyphY || glyphY);
+
+        this.lastGlyphX = glyphX;
+        this.lastGlyphY = glyphY;
+
+        // Update all selected items
+        this._updateDraggedComponents(deltaX, deltaY);
+        this._updateDraggedPoints(deltaX, deltaY);
+        this._updateDraggedAnchors(deltaX, deltaY);
+
+        // Save to Python immediately (non-blocking)
+        this.saveLayerData();
+
+        this.render();
+    }
+
+    _updateDraggedPoints(deltaX, deltaY) {
+        for (const point of this.selectedPoints) {
+            const { contourIndex, nodeIndex } = point;
+            if (this.layerData.shapes[contourIndex] && this.layerData.shapes[contourIndex].nodes[nodeIndex]) {
+                this.layerData.shapes[contourIndex].nodes[nodeIndex][0] += deltaX;
+                this.layerData.shapes[contourIndex].nodes[nodeIndex][1] += deltaY;
+            }
+        }
+    }
+
+    _updateDraggedAnchors(deltaX, deltaY) {
+        for (const anchorIndex of this.selectedAnchors) {
+            const anchor = this.layerData.anchors[anchorIndex];
+            if (anchor) {
+                anchor.x += deltaX;
+                anchor.y += deltaY;
+            }
+        }
+    }
+
+    _updateDraggedComponents(deltaX, deltaY) {
+        for (const compIndex of this.selectedComponents) {
+            const shape = this.layerData.shapes[compIndex];
+            if (shape && shape.Component) {
+                if (!shape.Component.transform) {
+                    // Initialize transform if it doesn't exist
+                    shape.Component.transform = [1, 0, 0, 1, 0, 0];
+                }
+
+                // Update translation part of transform (always array format)
+                if (Array.isArray(shape.Component.transform)) {
+                    shape.Component.transform[4] += deltaX;
+                    shape.Component.transform[5] += deltaY;
+                }
+            }
+        }
     }
 
     onMouseUp(e) {
