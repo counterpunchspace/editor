@@ -985,21 +985,9 @@ class GlyphCanvas {
                     path.closePath();
 
                     this.ctx.save();
-                    if (this.componentStack.length === 0) {
-                        const viewTransform =
-                            this.viewportManager.getTransformMatrix();
-                        this.ctx.setTransform(
-                            viewTransform.a,
-                            viewTransform.b,
-                            viewTransform.c,
-                            viewTransform.d,
-                            viewTransform.e,
-                            viewTransform.f
-                        );
-                        this.ctx.translate(xPosition + xOffset, yOffset);
-                    } else {
-                        this.ctx.setTransform(1, 0, 0, 1, 0, 0);
-                    }
+                    // Always use identity transform since glyphX/glyphY are already
+                    // in glyph-local space (xPosition has been subtracted)
+                    this.ctx.setTransform(1, 0, 0, 1, 0, 0);
 
                     this.ctx.transform(
                         transform[0],
@@ -1018,11 +1006,8 @@ class GlyphCanvas {
                         parentTransform[5]
                     );
 
-                    const testX =
-                        this.componentStack.length === 0 ? mouseX : glyphX;
-                    const testY =
-                        this.componentStack.length === 0 ? mouseY : glyphY;
-                    const isInPath = this.ctx.isPointInPath(path, testX, testY);
+                    // Always use glyphX/glyphY which are in glyph-local space
+                    const isInPath = this.ctx.isPointInPath(path, glyphX, glyphY);
 
                     this.ctx.restore();
                     if (isInPath) return true;
@@ -2647,16 +2632,8 @@ json.dumps(result)
             this.textRunEditor.shapedGlyphs,
             this.textRunEditor.selectedGlyphIndex
         );
-        // Adjust for selected glyph position
-        let xPosition = 0;
-        for (let i = 0; i < this.textRunEditor.selectedGlyphIndex; i++) {
-            xPosition += this.textRunEditor.shapedGlyphs[i].ax || 0;
-        }
-        const glyph = this.textRunEditor.selectedGlyph;
-        const xOffset = glyph.dx || 0;
-        const yOffset = glyph.dy || 0;
-        glyphX -= xPosition + xOffset;
-        glyphY -= yOffset;
+        // Note: getGlyphLocalCoordinates already subtracts xPosition + xOffset
+        // so glyphX and glyphY are already in glyph-local space
 
         // Apply inverse component transform if editing a component
         if (this.componentStack.length > 0) {
