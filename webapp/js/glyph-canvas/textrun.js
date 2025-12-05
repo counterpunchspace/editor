@@ -204,7 +204,6 @@ class TextRunEditor {
 
         if (glyphIndex >= 0 && glyphIndex < this.shapedGlyphs.length) {
             this.selectedGlyphIndex = glyphIndex;
-            this.isGlyphEditMode = true;
 
             // Set logical cursor position to the start of this glyph's cluster
             const glyph = this.shapedGlyphs[glyphIndex];
@@ -216,8 +215,6 @@ class TextRunEditor {
                 `Entered glyph edit mode - selected glyph at index ${this.selectedGlyphIndex}, cluster position ${clusterPos}`
             );
         } else {
-            this.selectedGlyphIndex = -1;
-            this.isGlyphEditMode = false;
             console.log(`Deselected glyph`);
         }
         this.call('glyphselected', this.selectedGlyphIndex);

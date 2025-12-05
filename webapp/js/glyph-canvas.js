@@ -330,6 +330,9 @@ class GlyphCanvas {
             }
         });
         this.textRunEditor.on('glyphselected', async (ix) => {
+            if (ix != -1) {
+                this.isGlyphEditMode = true;
+            }
             // Update breadcrumb (will hide it since componentStack is now empty)
             this.updateComponentBreadcrumb();
 
