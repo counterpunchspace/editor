@@ -15,6 +15,7 @@ class GlyphCanvas {
         this.ctx = null;
 
         this.axesManager = new AxesManager();
+        this.featuresManager = new FeaturesManager();
         // Transformation state
         this.initialScale = 0.2; // Zoomed out to see glyphs better
         this.viewportManager = null; // Loaded in init() when we have a client rect
@@ -26,8 +27,6 @@ class GlyphCanvas {
         this.currentFont = null;
         this.fontBlob = null;
         this.opentypeFont = null; // For glyph path extraction
-        this.featureSettings = {}; // Store OpenType feature on/off states
-        this.defaultFeatureSettings = {}; // Store default states for reset
         this.sourceGlyphNames = {}; // Map of GID to glyph names from source font
 
         // Bidirectional text support
@@ -266,6 +265,9 @@ class GlyphCanvas {
         // Sidebar click handlers to restore canvas focus in editor mode
         this.setupSidebarFocusHandlers();
         this.setupAxesManagerEventHandlers();
+        this.featuresManager.on('change', () => {
+            this.shapeText();
+        });
     }
 
     setupSidebarFocusHandlers() {
@@ -1263,6 +1265,7 @@ class GlyphCanvas {
             if (window.opentype) {
                 this.opentypeFont = opentype.parse(fontArrayBuffer);
                 this.axesManager.opentypeFont = this.opentypeFont;
+                this.featuresManager.opentypeFont = this.opentypeFont;
                 console.log(
                     'Font parsed with opentype.js:',
                     this.opentypeFont.names.fontFamily.en
@@ -1298,9 +1301,10 @@ class GlyphCanvas {
 
                 // Update axes UI (will restore slider positions from variationSettings)
                 this.axesManager.updateAxesUI();
+                console.log('Updated axes UI after font load');
 
                 // Update features UI (async, then shape text)
-                this.updateFeaturesUI().then(() => {
+                this.featuresManager.updateFeaturesUI().then(() => {
                     // Shape text with new font after features are initialized
                     this.shapeText();
                 });
@@ -2930,208 +2934,6 @@ json.dumps(result)
         }
     }
 
-    async getDiscretionaryFeatures() {
-        // Get discretionary features from the compiled font
-        if (!this.opentypeFont || !this.opentypeFont.tables.gsub) {
-            return [];
-        }
-
-        const gsub = this.opentypeFont.tables.gsub;
-        if (!gsub.features) return [];
-
-        // Get feature info from Python
-        let featureInfo = null;
-        try {
-            const pyResult = await window.pyodide.runPythonAsync(
-                `GetOpentypeFeatureInfo()`
-            );
-            featureInfo = pyResult.toJs();
-        } catch (error) {
-            console.error('Error getting feature info from Python:', error);
-            return [];
-        }
-
-        const defaultOnFeatures = new Set(featureInfo.get('default_on'));
-        const defaultOffFeatures = new Set(featureInfo.get('default_off'));
-        const allDiscretionary = new Set([
-            ...defaultOnFeatures,
-            ...defaultOffFeatures
-        ]);
-        const descriptions = featureInfo.get('descriptions');
-
-        // Get features present in the font (deduplicate using Set)
-        const fontFeatures = [...new Set(gsub.features.map((f) => f.tag))];
-        const discretionaryInFont = fontFeatures.filter((tag) =>
-            allDiscretionary.has(tag)
-        );
-
-        // Build feature list with metadata
-        return discretionaryInFont.map((tag) => ({
-            tag: tag,
-            defaultOn: defaultOnFeatures.has(tag),
-            description: descriptions.get(tag) || tag
-        }));
-    }
-
-    async updateFeaturesUI() {
-        if (!this.featuresSection) return;
-
-        // Clear existing features
-        this.featuresSection.innerHTML = '';
-
-        const features = await this.getDiscretionaryFeatures();
-
-        if (features.length === 0) {
-            return; // No discretionary features
-        }
-
-        // Add section header with reset button
-        const headerRow = document.createElement('div');
-        headerRow.className = 'editor-section-header';
-        headerRow.style.display = 'flex';
-        headerRow.style.justifyContent = 'space-between';
-        headerRow.style.alignItems = 'center';
-        headerRow.style.marginBottom = '8px';
-
-        const title = document.createElement('div');
-        title.className = 'editor-section-title';
-        title.textContent = 'OpenType Features';
-        title.style.margin = '0';
-
-        const resetButton = document.createElement('button');
-        resetButton.className = 'feature-reset-button';
-        resetButton.textContent = 'Reset';
-        resetButton.style.fontSize = '11px';
-        resetButton.style.padding = '2px 8px';
-        resetButton.style.cursor = 'pointer';
-        resetButton.style.opacity = '0.5';
-        resetButton.style.pointerEvents = 'none';
-        resetButton.disabled = true;
-
-        resetButton.addEventListener('click', () => {
-            this.resetFeaturesToDefaults();
-        });
-
-        headerRow.appendChild(title);
-        headerRow.appendChild(resetButton);
-        this.featuresSection.appendChild(headerRow);
-
-        // Store reset button reference
-        this.featureResetButton = resetButton;
-
-        // Initialize default states and current states
-        features.forEach((feature) => {
-            this.defaultFeatureSettings[feature.tag] = feature.defaultOn;
-            if (this.featureSettings[feature.tag] === undefined) {
-                this.featureSettings[feature.tag] = feature.defaultOn;
-            }
-        });
-
-        // Create button for each feature (no separate scrollable container)
-        features.forEach((feature) => {
-            const featureRow = document.createElement('div');
-            featureRow.className = 'editor-feature-row';
-            featureRow.style.display = 'flex';
-            featureRow.style.alignItems = 'center';
-            featureRow.style.gap = '8px';
-            featureRow.style.fontSize = '12px';
-            featureRow.style.padding = '2px 0';
-
-            const tagButton = document.createElement('button');
-            tagButton.className = 'editor-feature-tag-button';
-            tagButton.setAttribute('data-feature-tag', feature.tag);
-            tagButton.textContent = feature.tag;
-
-            // Set initial state
-            const isEnabled = this.featureSettings[feature.tag];
-            tagButton.classList.toggle('enabled', isEnabled);
-
-            tagButton.addEventListener('click', () => {
-                this.featureSettings[feature.tag] =
-                    !this.featureSettings[feature.tag];
-                tagButton.classList.toggle(
-                    'enabled',
-                    this.featureSettings[feature.tag]
-                );
-                this.updateFeatureResetButton();
-                this.shapeText(); // Re-shape text with new features
-            });
-
-            const descSpan = document.createElement('span');
-            descSpan.className = 'editor-feature-description';
-            descSpan.style.opacity = '0.7';
-            descSpan.style.fontSize = '11px';
-            descSpan.style.flex = '1';
-            // Extract just the feature name (before the dash)
-            const shortDesc = feature.description.split(' - ')[0];
-            descSpan.textContent = shortDesc;
-
-            featureRow.appendChild(tagButton);
-            featureRow.appendChild(descSpan);
-            this.featuresSection.appendChild(featureRow);
-        });
-
-        this.updateFeatureResetButton();
-
-        console.log(`Created ${features.length} feature buttons`);
-    }
-
-    updateFeatureResetButton() {
-        if (!this.featureResetButton) return;
-
-        // Check if any feature is not in default state
-        const isNonDefault = Object.keys(this.featureSettings).some((tag) => {
-            return (
-                this.featureSettings[tag] !== this.defaultFeatureSettings[tag]
-            );
-        });
-
-        if (isNonDefault) {
-            this.featureResetButton.style.opacity = '1';
-            this.featureResetButton.style.pointerEvents = 'auto';
-            this.featureResetButton.disabled = false;
-        } else {
-            this.featureResetButton.style.opacity = '0.5';
-            this.featureResetButton.style.pointerEvents = 'none';
-            this.featureResetButton.disabled = true;
-        }
-    }
-
-    resetFeaturesToDefaults() {
-        // Reset all features to their default states
-        Object.keys(this.defaultFeatureSettings).forEach((tag) => {
-            this.featureSettings[tag] = this.defaultFeatureSettings[tag];
-        });
-
-        // Update buttons
-        if (this.featuresSection) {
-            const buttons = this.featuresSection.querySelectorAll(
-                'button[data-feature-tag]'
-            );
-            buttons.forEach((button) => {
-                const tag = button.getAttribute('data-feature-tag');
-                const isEnabled = this.defaultFeatureSettings[tag];
-                button.classList.toggle('enabled', isEnabled);
-            });
-        }
-
-        this.updateFeatureResetButton();
-        this.shapeText(); // Re-shape text with default features
-    }
-
-    getHarfBuzzFeatures() {
-        // Build HarfBuzz feature string from feature settings
-        // Format: "liga=1,dlig=0,kern=1" or undefined if no features
-        const featureParts = [];
-
-        for (const [tag, enabled] of Object.entries(this.featureSettings)) {
-            featureParts.push(`${tag}=${enabled ? 1 : 0}`);
-        }
-
-        // Return undefined if no features (allows HarfBuzz to use defaults)
-        return featureParts.length > 0 ? featureParts.join(',') : undefined;
-    }
-
     onTextChange() {
         // Debounce font recompilation when text changes
         if (this.textChangeDebounceTimer) {
@@ -3208,7 +3010,7 @@ json.dumps(result)
         buffer.guessSegmentProperties();
 
         // Shape the text with features
-        const features = this.getHarfBuzzFeatures();
+        const features = this.featuresManager.getHarfBuzzFeatures();
         if (features) {
             this.hb.shape(this.hbFont, buffer, features);
         } else {
@@ -3266,7 +3068,7 @@ json.dumps(result)
         );
 
         // Shape each run with HarfBuzz in its logical direction
-        const features = this.getHarfBuzzFeatures();
+        const features = this.featuresManager.getHarfBuzzFeatures();
         const shapedRuns = [];
         for (const run of runs) {
             const buffer = this.hb.createBuffer();
@@ -5984,12 +5786,8 @@ function initCanvas() {
         rightSidebar.appendChild(axesSection);
 
         // Create OpenType features container (initially empty)
-        const featuresSection = document.createElement('div');
-        featuresSection.id = 'glyph-features-section';
-        featuresSection.style.display = 'flex';
-        featuresSection.style.flexDirection = 'column';
-        featuresSection.style.gap = '2px';
-        featuresSection.style.marginTop = '10px';
+        const featuresSection =
+            window.glyphCanvas.featuresManager.createFeaturesSection();
         rightSidebar.appendChild(featuresSection);
 
         // Store reference to sidebars for later updates
@@ -5997,7 +5795,6 @@ function initCanvas() {
         window.glyphCanvas.propertiesSection = propertiesSection;
         window.glyphCanvas.rightSidebar = rightSidebar;
         window.glyphCanvas.axesSection = axesSection;
-        window.glyphCanvas.featuresSection = featuresSection;
 
         // Observe when the editor view gains/loses focus (via 'focused' class)
         const editorView = document.querySelector('#view-editor');
