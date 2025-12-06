@@ -1159,6 +1159,23 @@
                         console.log('[PWA] Service worker registering...');
                     }
                 });
+
+                // Check for service worker updates periodically
+                navigator.serviceWorker.ready.then((registration) => {
+                    // Periodic update check every 10 minutes
+                    setInterval(
+                        () => {
+                            console.log('[PWA] Checking for updates...');
+                            registration.update().catch((error) => {
+                                console.warn(
+                                    '[PWA] Update check failed:',
+                                    error
+                                );
+                            });
+                        },
+                        10 * 60 * 1000
+                    ); // 10 minutes
+                });
             }
         </script>
     </body>
