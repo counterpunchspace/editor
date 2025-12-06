@@ -9,6 +9,7 @@ class TextRunEditor {
     constructor(featuresManager, axesManager) {
         this.featuresManager = featuresManager;
         this.axesManager = axesManager;
+        // Default text buffer - will be overridden by font's display_string if available
         this.textBuffer =
             localStorage.getItem('glyphCanvasTextBuffer') || 'Hamburgevons';
         this.shapedGlyphs = [];
@@ -1177,6 +1178,8 @@ class TextRunEditor {
     }
 
     async setFont(fontData) {
+        console.log('🔵 TextRunEditor.setFont() called, current textBuffer:', this.textBuffer);
+        
         // Store font blob
         this.fontBlob = fontData;
 
@@ -1185,7 +1188,62 @@ class TextRunEditor {
         this.hbFont = this.hb.createFont(this.hbFace);
 
         console.log('Font loaded into HarfBuzz');
+
+        // Load display string from font if available
+        await this.loadTextBufferFromFont();
+        
+        console.log('🔵 TextRunEditor.setFont() completed, textBuffer is now:', this.textBuffer);
     }
+    // Load text buffer from font.format_specific via Python
+    async loadTextBufferFromFont() {
+        // Check if loading from font is enabled
+        if (!window.APP_SETTINGS?.TEXT_DISPLAY?.LOAD_FROM_FONT) {
+            console.log('ℹ️ Loading display string from font is disabled');
+            return;
+        }
+
+        if (!window.pyodide) {
+            console.log('⚠️ Pyodide not ready, cannot load display string from font');
+            return; // Python not ready yet
+        }
+
+        try {
+            const appId = window.APP_SETTINGS?.APP_ID;
+            const key = `${appId}.display_string`;
+            
+            console.log('🔍 Looking for display string with key:', key);
+
+            const result = await window.pyodide.runPythonAsync(`
+font = CurrentFont()
+result = None
+if font and "${key}" in font.format_specific:
+    result = font.format_specific["${key}"]
+result
+`);
+
+            // If we got a display string from the font, use it (prioritize over localStorage)
+            if (result !== null && result !== undefined && result !== '') {
+                console.log('✅ Loaded display string from font:', result);
+                this.textBuffer = result;
+                // Update localStorage to match
+                try {
+                    localStorage.setItem('glyphCanvasTextBuffer', this.textBuffer);
+                } catch (e) {
+                    console.warn('Failed to save text buffer to localStorage:', e);
+                }
+                // Don't call shapeText() here - let the caller handle it after setFont completes
+                // Don't save back to font - we just loaded it from there!
+            } else {
+                console.log('ℹ️ No display string in font, using current text buffer:', this.textBuffer);
+                // Font doesn't have a display string, so save the current one (from localStorage or default)
+                // This ensures new fonts get the display string saved
+                await this.saveTextBufferToFont();
+            }
+        } catch (e) {
+            console.warn('❌ Failed to load text buffer from font object:', e);
+        }
+    }
+
     // Helper to save text buffer and trigger recompilation
     saveTextBuffer() {
         try {
@@ -1225,6 +1283,7 @@ font = CurrentFont()
 if font:
     # Save the display string
     font.format_specific["${key}"] = """${escapedText}"""
+    print("✅ Saved display string to font:", font.format_specific["${key}"])
 `);
         } catch (e) {
             console.warn('Failed to save text buffer to font object:', e);

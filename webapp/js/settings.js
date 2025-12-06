@@ -13,6 +13,11 @@ const APP_SETTINGS = {
         SAVE_DEBUG_FONTS: false // Set to true to save typing/editing fonts to file system for inspection
     },
 
+    // Text display settings
+    TEXT_DISPLAY: {
+        LOAD_FROM_FONT: true // Set to true to load display string from font.format_specific on font open
+    },
+
     // Outline editor display settings
     OUTLINE_EDITOR: {
         // Zoom thresholds
