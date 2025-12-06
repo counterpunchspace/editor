@@ -223,7 +223,7 @@
                     await document.exitFullscreen();
                 }
             } catch (err) {
-                console.error('Error toggling fullscreen:', err);
+                console.error('[Theme]', 'Error toggling fullscreen:', err);
             }
         });
 

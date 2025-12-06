@@ -45,7 +45,11 @@ class FeaturesManager {
             );
             featureInfo = pyResult.toJs();
         } catch (error) {
-            console.error('Error getting feature info from Python:', error);
+            console.error(
+                '[Features]',
+                'Error getting feature info from Python:',
+                error
+            );
             return [];
         }
 
@@ -73,15 +77,18 @@ class FeaturesManager {
 
     async updateFeaturesUI() {
         if (!this.featuresSection) {
-            console.warn('Features section not created yet');
+            console.warn('[Features]', 'Features section not created yet');
             return;
         }
 
         const features = await this.getDiscretionaryFeatures();
-        console.log('Updating features');
+        console.log('[Features]', 'Updating features');
 
         if (features.length === 0) {
-            console.log('No discretionary features found in font');
+            console.log(
+                '[Features]',
+                'No discretionary features found in font'
+            );
             requestAnimationFrame(() => {
                 this.featuresSection.innerHTML = '';
             });
@@ -187,7 +194,7 @@ class FeaturesManager {
 
         this.updateFeatureResetButton();
 
-        console.log(`Created ${features.length} feature buttons`);
+        console.log('[Features]', `Created ${features.length} feature buttons`);
     }
 
     updateFeatureResetButton() {

@@ -78,7 +78,7 @@ async function openFont(path) {
 
     try {
         const startTime = performance.now();
-        console.log(`Opening font: ${path}`);
+        console.log('[FileBrowser]', `Opening font: ${path}`);
 
         // Call Python's OpenFont function (loads font quickly)
         const fontData = await window.pyodide.runPythonAsync(`
@@ -103,10 +103,13 @@ json.dumps({"font_name": font_name, "font_id": font_id, "load_time": duration})
         const endTime = performance.now();
         const duration = ((endTime - startTime) / 1000).toFixed(2);
 
-        console.log(`Successfully opened font: ${path} (${duration}s)`);
+        console.log(
+            '[FileBrowser]',
+            `Successfully opened font: ${path} (${duration}s)`
+        );
 
         // Initialize dirty tracking synchronously (blocks UI, but simpler)
-        console.log('⏳ Initializing dirty tracking...');
+        console.log('[FileBrowser]', '⏳ Initializing dirty tracking...');
         const trackingStart = performance.now();
 
         try {
@@ -119,17 +122,27 @@ json.dumps(result)
             const result = JSON.parse(resultJson);
 
             if (result.error) {
-                console.error(`Error initializing tracking: ${result.error}`);
+                console.error(
+                    '[FileBrowser]',
+                    `Error initializing tracking: ${result.error}`
+                );
             }
         } catch (error) {
-            console.error('Error initializing tracking:', error);
+            console.error(
+                '[FileBrowser]',
+                'Error initializing tracking:',
+                error
+            );
         }
 
         const trackingEnd = performance.now();
         const trackingDuration = ((trackingEnd - trackingStart) / 1000).toFixed(
             2
         );
-        console.log(`✅ Dirty tracking ready (${trackingDuration}s)`);
+        console.log(
+            '[FileBrowser]',
+            `✅ Dirty tracking ready (${trackingDuration}s)`
+        );
 
         // Update the font dropdown and dirty indicator
         if (window.fontDropdownManager) {
@@ -158,14 +171,14 @@ json.dumps(result)
             window.playSound('done');
         }
     } catch (error) {
-        console.error('Error opening font:', error);
+        console.error('[FileBrowser]', 'Error opening font:', error);
         alert(`Error opening font: ${error.message}`);
     }
 }
 
 async function scanDirectory(path = '/') {
     if (!window.pyodide) {
-        console.error('Pyodide not available');
+        console.error('[FileBrowser]', 'Pyodide not available');
         return {};
     }
 
@@ -205,7 +218,7 @@ json.dumps(scan_directory('${path}'))
 
         return JSON.parse(result);
     } catch (error) {
-        console.error('Error scanning directory:', error);
+        console.error('[FileBrowser]', 'Error scanning directory:', error);
         return {};
     }
 }
@@ -229,11 +242,14 @@ path = '${currentPath}/${folderName}'
 os.makedirs(path, exist_ok=True)
         `);
 
-        console.log(`Created folder: ${currentPath}/${folderName}`);
+        console.log(
+            '[FileBrowser]',
+            `Created folder: ${currentPath}/${folderName}`
+        );
 
         await refreshFileSystem();
     } catch (error) {
-        console.error('Error creating folder:', error);
+        console.error('[FileBrowser]', 'Error creating folder:', error);
         alert(`Error creating folder: ${error.message}`);
     }
 }
@@ -252,13 +268,13 @@ async function downloadFile(filePath, fileName) {
         a.click();
         URL.revokeObjectURL(url);
 
-        console.log(`Downloaded: ${fileName}`);
+        console.log('[FileBrowser]', `Downloaded: ${fileName}`);
 
         if (window.term) {
             window.term.echo(`[[;lime;]📥 Downloaded: ${fileName}]`);
         }
     } catch (error) {
-        console.error('Error downloading file:', error);
+        console.error('[FileBrowser]', 'Error downloading file:', error);
         alert(`Error downloading file: ${error.message}`);
     }
 }
@@ -282,11 +298,11 @@ else:
     os.remove(path)
         `);
 
-        console.log(`Deleted: ${itemPath}`);
+        console.log('[FileBrowser]', `Deleted: ${itemPath}`);
 
         await refreshFileSystem();
     } catch (error) {
-        console.error('Error deleting item:', error);
+        console.error('[FileBrowser]', 'Error deleting item:', error);
         alert(`Error deleting item: ${error.message}`);
     }
 }
@@ -326,7 +342,11 @@ if parent_dir:
                 folderCount = Math.max(folderCount, pathParts.length - 1);
             }
         } catch (error) {
-            console.error(`Error uploading ${file.name}:`, error);
+            console.error(
+                '[FileBrowser]',
+                `Error uploading ${file.name}:`,
+                error
+            );
         }
     }
 
@@ -449,7 +469,7 @@ async function navigateToPath(path) {
         // Setup drag & drop on the file tree
         setupDragAndDrop();
     } catch (error) {
-        console.error('Error navigating to path:', error);
+        console.error('[FileBrowser]', 'Error navigating to path:', error);
         document.getElementById('file-tree').innerHTML = `
             <div style="color: #ff3300;">Error loading directory: ${error.message}</div>
         `;
@@ -484,13 +504,13 @@ function setupDragAndDrop() {
 }
 
 function selectFile(filePath) {
-    console.log('Selected file:', filePath);
+    console.log('[FileBrowser]', 'Selected file:', filePath);
     // TODO: Add file selection handling (e.g., show content, download, etc.)
 }
 
 async function refreshFileSystem() {
     const currentPath = fileSystemCache.currentPath || '/';
-    console.log('Refreshing file system...');
+    console.log('[FileBrowser]', 'Refreshing file system...');
 
     // Clear cache
     fileSystemCache = { currentPath };
@@ -498,7 +518,7 @@ async function refreshFileSystem() {
     // Reload current directory
     await navigateToPath(currentPath);
 
-    console.log('File system refreshed');
+    console.log('[FileBrowser]', 'File system refreshed');
 }
 
 // Initialize file browser when Pyodide is ready
@@ -509,7 +529,7 @@ async function initFileBrowser() {
             return;
         }
 
-        console.log('Initializing file browser...');
+        console.log('[FileBrowser]', 'Initializing file browser...');
 
         // Create /user folder if it doesn't exist
         await window.pyodide.runPython(`
@@ -520,9 +540,13 @@ if not os.path.exists('/user'):
 
         // Navigate to /user folder
         await navigateToPath('/user');
-        console.log('File browser initialized');
+        console.log('[FileBrowser]', 'File browser initialized');
     } catch (error) {
-        console.error('Error initializing file browser:', error);
+        console.error(
+            '[FileBrowser]',
+            'Error initializing file browser:',
+            error
+        );
     }
 }
 

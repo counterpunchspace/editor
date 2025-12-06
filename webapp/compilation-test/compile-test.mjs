@@ -22,7 +22,7 @@ global.hbInit = hbInit;
 global.compile_babelfont = compile_babelfont;
 
 async function testCompilation() {
-    console.log('Initializing WASM...');
+    console.log('[CompileTest]', 'Initializing WASM...');
 
     // Create output directory for compiled fonts
     const outputDir = join(__dirname, 'output');
@@ -40,13 +40,16 @@ async function testCompilation() {
     const fontPath = join(__dirname, '../examples/ReemKufi.babelfont');
     const babelfontJson = readFileSync(fontPath, 'utf-8');
 
-    console.log(`Loaded ReemKufi.babelfont (${babelfontJson.length} bytes)\n`);
+    console.log(
+        '[CompileTest]',
+        `Loaded ReemKufi.babelfont (${babelfontJson.length} bytes)\n`
+    );
 
     // Test string and get glyph names
     const testString = 'مَرْحَباً';
-    console.log(`Getting glyph names for: "${testString}"`);
+    console.log('[CompileTest]', `Getting glyph names for: "${testString}"`);
     const glyphNames = await getGlyphNamesForString(babelfontJson, testString);
-    console.log(`Glyph names: [${glyphNames.join(', ')}]`);
+    console.log('[CompileTest]', `Glyph names: [${glyphNames.join(', ')}]`);
 
     // Verify expected glyph names
     const expectedGlyphNames = [
@@ -67,11 +70,20 @@ async function testCompilation() {
         glyphNames.length === expectedGlyphNames.length;
 
     if (allNamesMatch) {
-        console.log('✓ Glyph names match expected list\n');
+        console.log('[CompileTest]', '✓ Glyph names match expected list\n');
     } else {
-        console.error('✗ Glyph names do NOT match expected list');
-        console.error(`  Expected: [${expectedGlyphNames.join(', ')}]`);
-        console.error(`  Got:      [${glyphNames.join(', ')}]\n`);
+        console.error(
+            '[CompileTest]',
+            '✗ Glyph names do NOT match expected list'
+        );
+        console.error(
+            '[CompileTest]',
+            `  Expected: [${expectedGlyphNames.join(', ')}]`
+        );
+        console.error(
+            '[CompileTest]',
+            `  Got:      [${glyphNames.join(', ')}]\n`
+        );
         process.exit(1);
     }
 
@@ -129,7 +141,7 @@ async function testCompilation() {
 
     // Validate that editing font can shape text correctly
     if (editingFontBytes) {
-        console.log('\n🧪 Validating editing font shaping...');
+        console.log('[CompileTest]', '\n🧪 Validating editing font shaping...');
 
         try {
             // Use shapeTextWithFont from font-compilation.js
@@ -155,7 +167,10 @@ async function testCompilation() {
                 editingGlyphNames.length === glyphNames.length;
 
             if (shapingMatches) {
-                console.log('✓ Editing font shapes identically to typing font');
+                console.log(
+                    '[CompileTest]',
+                    '✓ Editing font shapes identically to typing font'
+                );
             } else {
                 console.error(
                     '✗ Editing font shaping DOES NOT match typing font'
@@ -175,10 +190,13 @@ async function testCompilation() {
     }
 
     // Summary
-    console.log('\nSummary:');
+    console.log('[CompileTest]', '\nSummary:');
     const successful = results.filter((r) => r.success).length;
     const total = results.length;
-    console.log(`${successful}/${total} targets compiled successfully`);
+    console.log(
+        '[CompileTest]',
+        `${successful}/${total} targets compiled successfully`
+    );
 
     if (successful < total) {
         process.exit(1);
@@ -186,6 +204,6 @@ async function testCompilation() {
 }
 
 testCompilation().catch((err) => {
-    console.error('Test failed:', err);
+    console.error('[CompileTest]', 'Test failed:', err);
     process.exit(1);
 });

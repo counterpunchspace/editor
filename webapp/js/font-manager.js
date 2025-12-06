@@ -22,7 +22,7 @@ class FontManager {
      * @param {string} babelfontJson - The .babelfont JSON string
      */
     async loadFont(babelfontJson) {
-        console.log('🔧 FontManager: Loading font...');
+        console.log('[FontManager]', '🔧 FontManager: Loading font...');
         this.babelfontJson = babelfontJson;
         this.babelfontData = JSON.parse(babelfontJson);
         this.typingFont = null;
@@ -32,7 +32,10 @@ class FontManager {
         // Compile typing font immediately
         await this.compileTypingFont();
 
-        console.log('✅ FontManager: Font loaded and typing font compiled');
+        console.log(
+            '[FontManager]',
+            '✅ FontManager: Font loaded and typing font compiled'
+        );
     }
 
     /**
@@ -48,7 +51,7 @@ class FontManager {
             throw new Error('Font compilation system not initialized');
         }
 
-        console.log('🔨 Compiling typing font...');
+        console.log('[FontManager]', '🔨 Compiling typing font...');
         const startTime = performance.now();
 
         try {
@@ -62,13 +65,18 @@ class FontManager {
             const duration = (performance.now() - startTime).toFixed(2);
 
             console.log(
+                '[FontManager]',
                 `✅ Typing font compiled in ${duration}ms (${this.typingFont.length} bytes)`
             );
 
             // Save to file system for review
             this.saveTypingFontToFileSystem();
         } catch (error) {
-            console.error('❌ Failed to compile typing font:', error);
+            console.error(
+                '[FontManager]',
+                '❌ Failed to compile typing font:',
+                error
+            );
             throw error;
         }
     }
@@ -108,7 +116,7 @@ class FontManager {
         this.currentText = text;
         this.selectedFeatures = features;
 
-        console.log('🔨 Compiling editing font...');
+        console.log('[FontManager]', '🔨 Compiling editing font...');
         const startTime = performance.now();
 
         try {
@@ -124,6 +132,7 @@ class FontManager {
             const duration = (performance.now() - startTime).toFixed(2);
 
             console.log(
+                '[FontManager]',
                 `✅ Editing font compiled in ${duration}ms (${this.editingFont.length} bytes)`
             );
 
@@ -142,7 +151,11 @@ class FontManager {
 
             return this.editingFont;
         } catch (error) {
-            console.error('❌ Failed to compile editing font:', error);
+            console.error(
+                '[FontManager]',
+                '❌ Failed to compile editing font:',
+                error
+            );
             throw error;
         }
     }
@@ -194,17 +207,24 @@ babelfont_json
             // Only fetch from Python if not provided
             if (!babelfontJson) {
                 console.log(
+                    '[FontManager]',
                     '🔄 Reloading font data from Python for recompilation...'
                 );
                 babelfontJson = await this.fetchFontJsonFromPython();
             } else {
-                console.log('🔄 Using provided font data for recompilation...');
+                console.log(
+                    '[FontManager]',
+                    '🔄 Using provided font data for recompilation...'
+                );
             }
 
             // Update cached font data
             this.babelfontJson = babelfontJson;
             this.babelfontData = JSON.parse(babelfontJson);
-            console.log(`✅ Font data ready (${babelfontJson.length} bytes)`);
+            console.log(
+                '[FontManager]',
+                `✅ Font data ready (${babelfontJson.length} bytes)`
+            );
 
             // Now compile with updated data
             return await this.compileEditingFont(
@@ -212,7 +232,7 @@ babelfont_json
                 this.selectedFeatures
             );
         } catch (error) {
-            console.error('Error reloading font data:', error);
+            console.error('[FontManager]', 'Error reloading font data:', error);
             throw error;
         }
     }
@@ -243,6 +263,7 @@ babelfont_json
                 this.typingFont
             );
             console.log(
+                '[FontManager]',
                 `💾 Saved typing font to /_debug_typing_font.ttf (${this.typingFont.length} bytes)`
             );
 
@@ -251,7 +272,11 @@ babelfont_json
                 window.refreshFileSystem();
             }
         } catch (error) {
-            console.error('Failed to save typing font:', error);
+            console.error(
+                '[FontManager]',
+                'Failed to save typing font:',
+                error
+            );
         }
     }
 
@@ -273,6 +298,7 @@ babelfont_json
                 this.editingFont
             );
             console.log(
+                '[FontManager]',
                 `💾 Saved editing font to /_debug_editing_font.ttf (${this.editingFont.length} bytes)`
             );
 
@@ -281,7 +307,11 @@ babelfont_json
                 window.refreshFileSystem();
             }
         } catch (error) {
-            console.error('Failed to save editing font:', error);
+            console.error(
+                '[FontManager]',
+                'Failed to save editing font:',
+                error
+            );
         }
     }
 
@@ -326,13 +356,17 @@ babelfont_json
                 return glyphOrder;
             } catch (error) {
                 console.error(
+                    '[FontManager]',
                     'Failed to extract glyph order from typing font:',
                     error
                 );
             }
         }
 
-        console.warn('No glyph order available - font not loaded');
+        console.warn(
+            '[FontManager]',
+            'No glyph order available - font not loaded'
+        );
         return [];
     }
 
@@ -362,11 +396,17 @@ window.fontManager = fontManager;
 // Listen for font loaded events and initialize font manager
 window.addEventListener('fontLoaded', async (event) => {
     try {
-        console.log('🎯 FontManager: Received fontLoaded event');
+        console.log(
+            '[FontManager]',
+            '🎯 FontManager: Received fontLoaded event'
+        );
 
         // Wait for font compilation system to be ready
         if (!window.fontCompilation || !window.fontCompilation.isInitialized) {
-            console.log('⏳ Waiting for font compilation system...');
+            console.log(
+                '[FontManager]',
+                '⏳ Waiting for font compilation system...'
+            );
             // Wait up to 30 seconds for initialization
             let attempts = 0;
             while (
@@ -382,18 +422,20 @@ window.addEventListener('fontLoaded', async (event) => {
                 !window.fontCompilation.isInitialized
             ) {
                 console.error(
+                    '[FontManager]',
                     '❌ Font compilation system not ready after 30 seconds'
                 );
                 return;
             }
-            console.log('✅ Font compilation system ready');
+            console.log('[FontManager]', '✅ Font compilation system ready');
         }
 
         // Get the babelfont JSON from Python
-        console.log('📞 Fetching font from Python...');
+        console.log('[FontManager]', '📞 Fetching font from Python...');
         const pythonResult = await fontManager.fetchFontJsonFromPython();
 
         console.log(
+            '[FontManager]',
             `📦 Received font JSON from Python (${pythonResult.length} bytes)`
         );
 
@@ -403,8 +445,12 @@ window.addEventListener('fontLoaded', async (event) => {
         // Compile initial editing font
         await fontManager.compileEditingFont();
     } catch (error) {
-        console.error('Failed to initialize font manager:', error);
+        console.error(
+            '[FontManager]',
+            'Failed to initialize font manager:',
+            error
+        );
     }
 });
 
-console.log('✅ Font Manager module loaded');
+console.log('[FontManager]', '✅ Font Manager module loaded');

@@ -8,6 +8,7 @@ async function initFontEditor() {
         // Ensure pyodide is available
         if (!window.pyodide) {
             console.error(
+                '[FontEditor]',
                 "Pyodide not available. Make sure it's loaded first."
             );
             return false;
@@ -28,11 +29,13 @@ async function initFontEditor() {
 
             if (isIOS) {
                 console.warn(
+                    '[FontEditor]',
                     '[COI] iOS detected - SharedArrayBuffer not supported on iOS (all browsers). Some features may be limited.'
                 );
                 // Don't reload on iOS, just continue without SAB
             } else if (!alreadyReloaded) {
                 console.log(
+                    '[FontEditor]',
                     '[COI] SharedArrayBuffer not available - reloading to enable service worker headers...'
                 );
                 if (window.updateLoadingStatus) {
@@ -48,20 +51,21 @@ async function initFontEditor() {
                 return false;
             } else {
                 console.error(
+                    '[FontEditor]',
                     '[COI] SharedArrayBuffer still unavailable after reload. Browser may not support it.'
                 );
                 // Already reloaded once, don't try again (prevents infinite loop)
             }
         }
 
-        console.log('Initializing FontEditor...');
+        console.log('[FontEditor]', 'Initializing FontEditor...');
         if (window.updateLoadingStatus) {
             window.updateLoadingStatus('Initializing Python environment...');
         }
 
         // First load micropip package
         await window.pyodide.loadPackage('micropip');
-        console.log('micropip loaded successfully');
+        console.log('[FontEditor]', 'micropip loaded successfully');
         if (window.updateLoadingStatus) {
             window.updateLoadingStatus('Loading package manager...');
         }
@@ -70,7 +74,7 @@ async function initFontEditor() {
         const manifestResponse = await fetch('./wheels/wheels.json');
         const manifest = await manifestResponse.json();
         const wheelFiles = manifest.wheels;
-        console.log('Found wheel files:', wheelFiles);
+        console.log('[FontEditor]', 'Found wheel files:', wheelFiles);
 
         // Install context package from local wheels
         await window.pyodide.runPythonAsync(`
@@ -79,7 +83,7 @@ async function initFontEditor() {
 
         // Install each wheel file
         for (const wheelFile of wheelFiles) {
-            console.log(`Installing wheel: ${wheelFile}`);
+            console.log('[FontEditor]', `Installing wheel: ${wheelFile}`);
             if (window.updateLoadingStatus) {
                 window.updateLoadingStatus(
                     `Installing ${wheelFile.split('-')[0]}...`
@@ -109,7 +113,7 @@ async function initFontEditor() {
         const fonteditorModule = await fetch('./py/fonteditor.py');
         const fonteditorCode = await fonteditorModule.text();
         await window.pyodide.runPython(fonteditorCode);
-        console.log('fonteditor.py module loaded');
+        console.log('[FontEditor]', 'fonteditor.py module loaded');
 
         // Install context package from local wheels
         if (window.updateLoadingStatus) {
@@ -121,14 +125,18 @@ async function initFontEditor() {
             await micropip.install('pandas')
         `);
 
-        console.log('FontEditor initialized successfully');
+        console.log('[FontEditor]', 'FontEditor initialized successfully');
 
         // Load example fonts into /user folder
         if (window.loadExampleFonts) {
             try {
                 await window.loadExampleFonts();
             } catch (error) {
-                console.error('Failed to load example fonts:', error);
+                console.error(
+                    '[FontEditor]',
+                    'Failed to load example fonts:',
+                    error
+                );
                 // Continue anyway - this is not critical
             }
         }
@@ -168,6 +176,7 @@ async function initFontEditor() {
                 setTimeout(() => {
                     if (!callbackFired) {
                         console.warn(
+                            '[FontEditor]',
                             'Animation drain timeout, forcing overlay hide'
                         );
                         callbackFired = true;
@@ -182,7 +191,7 @@ async function initFontEditor() {
 
         return true;
     } catch (error) {
-        console.error('Error initializing FontEditor:', error);
+        console.error('[FontEditor]', 'Error initializing FontEditor:', error);
         if (window.term) {
             window.term.error(
                 'Failed to initialize FontEditor: ' + error.message
@@ -206,6 +215,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const loadingOverlay = document.getElementById('loading-overlay');
         if (loadingOverlay && !loadingOverlay.classList.contains('hidden')) {
             console.error(
+                '[FontEditor]',
                 'Loading timeout - forcing overlay hide after 30 seconds'
             );
             loadingOverlay.classList.add('hidden');

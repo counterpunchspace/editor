@@ -18,9 +18,9 @@ class FontDropdownManager {
         });
     }
 
-    async updateDropdown() {
+    async populateDropdown() {
         if (!window.pyodide) {
-            console.warn('Pyodide not yet loaded');
+            console.warn('[FontDropdown]', 'Pyodide not yet loaded');
             return;
         }
 
@@ -62,13 +62,17 @@ json.dumps(fonts_list)
                 });
             }
         } catch (error) {
-            console.error('Error updating font dropdown:', error);
+            console.error(
+                '[FontDropdown]',
+                'Error updating font dropdown:',
+                error
+            );
         }
     }
 
     async setCurrentFont(fontId) {
         if (!window.pyodide) {
-            console.warn('Pyodide not yet loaded');
+            console.warn('[FontDropdown]', 'Pyodide not yet loaded');
             return;
         }
 
@@ -79,7 +83,10 @@ SetCurrentFont("${fontId}")
             `);
 
             if (success) {
-                console.log(`Set current font to ID: ${fontId}`);
+                console.log(
+                    '[FontDropdown]',
+                    `Set current font to ID: ${fontId}`
+                );
                 // Update dirty indicator for newly selected font
                 await this.updateDirtyIndicator();
 
@@ -90,10 +97,17 @@ SetCurrentFont("${fontId}")
                     })
                 );
             } else {
-                console.error(`Failed to set current font to ID: ${fontId}`);
+                console.error(
+                    '[FontDropdown]',
+                    `Failed to set current font to ID: ${fontId}`
+                );
             }
         } catch (error) {
-            console.error('Error setting current font:', error);
+            console.error(
+                '[FontDropdown]',
+                'Error setting current font:',
+                error
+            );
         }
     }
 
@@ -126,7 +140,10 @@ json.dumps(result)
 
             // Check if we got valid JSON
             if (!isDirtyJson || isDirtyJson === 'undefined') {
-                console.warn('No valid response from dirty check');
+                console.warn(
+                    '[FontDropdown]',
+                    'No valid response from dirty check'
+                );
                 this.dirtyIndicator.classList.remove('visible');
                 return;
             }
@@ -142,10 +159,18 @@ json.dumps(result)
             }
 
             if (result.error) {
-                console.warn('Error checking dirty status:', result.error);
+                console.warn(
+                    '[FontDropdown]',
+                    'Error checking dirty status:',
+                    result.error
+                );
             }
         } catch (error) {
-            console.error('Error updating dirty indicator:', error);
+            console.error(
+                '[FontDropdown]',
+                'Error updating dirty indicator:',
+                error
+            );
             // Hide indicator on error to avoid confusion
             this.dirtyIndicator.classList.remove('visible');
         }

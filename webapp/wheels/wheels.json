@@ -1,5 +1,3 @@
 {
-  "wheels": [
-    "contextfonteditor-1.0.4.dev81+g515b27f-py3-none-any.whl"
-  ]
+    "wheels": ["contextfonteditor-1.0.4.dev81+g515b27f-py3-none-any.whl"]
 }

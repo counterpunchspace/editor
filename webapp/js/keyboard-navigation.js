@@ -7,6 +7,8 @@
     function getViewSettings() {
         if (!window.VIEW_SETTINGS) {
             console.error(
+                '[KeyboardNav]',
+                '[KeyboardNav]',
                 'VIEW_SETTINGS not loaded! Make sure view-settings.js is loaded before keyboard-navigation.js'
             );
             return null;
@@ -24,7 +26,11 @@
         const resizeConfig = settings.resize[viewId];
 
         if (!resizeConfig) {
-            console.warn('No resize configuration for view:', viewId);
+            console.warn(
+                '[KeyboardNav]',
+                'No resize configuration for view:',
+                viewId
+            );
             return;
         }
 
@@ -246,6 +252,7 @@
                     const flexValue = widths[i] / totalWidth;
                     v.style.flex = `${flexValue} 1 0%`;
                     console.log(
+                        '[KeyboardNav]',
                         `View ${i} (${v.id}): flex = ${flexValue.toFixed(3)}, width = ${widths[i].toFixed(0)}px`
                     );
                 });
@@ -299,7 +306,7 @@
                     aceTextarea.blur();
                 }
             } catch (e) {
-                console.warn('Could not blur Ace editor:', e);
+                console.warn('[KeyboardNav]', 'Could not blur Ace editor:', e);
             }
         }
 
@@ -350,12 +357,15 @@
     function focusView(viewId) {
         // Prevent recursive calls
         if (isFocusing) {
-            console.warn('focusView already in progress, skipping');
+            console.warn(
+                '[KeyboardNav]',
+                'focusView already in progress, skipping'
+            );
             return;
         }
         isFocusing = true;
 
-        console.log('focusView called with:', viewId);
+        console.log('[KeyboardNav]', 'focusView called with:', viewId);
 
         // Remove focus from all views
         document.querySelectorAll('.view').forEach((view) => {
@@ -539,7 +549,7 @@
             view.addEventListener('click', handleViewClick);
         });
 
-        console.log('Keyboard navigation initialized');
+        console.log('[KeyboardNav]', 'Keyboard navigation initialized');
     }
 
     // Initialize when DOM is ready

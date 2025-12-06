@@ -169,7 +169,10 @@ class AxesManager {
             }
         });
 
-        console.log(`Created ${axes.length} variable axis sliders`);
+        console.log(
+            '[Variations]',
+            `Created ${axes.length} variable axis sliders`
+        );
 
         // Global mouseup handler to exit preview mode if slider was active
         // This catches cases where mouse is released outside the slider element

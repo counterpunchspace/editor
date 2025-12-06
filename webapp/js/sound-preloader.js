@@ -30,7 +30,7 @@
         // Load the audio
         audio.load();
 
-        console.log(`Preloaded sound: ${key}`);
+        console.log('[SoundPreloader]', `Preloaded sound: ${key}`);
     });
 
     /**
@@ -51,10 +51,14 @@
             clone
                 .play()
                 .catch((e) =>
-                    console.warn(`Could not play sound ${soundName}:`, e)
+                    console.warn(
+                        '[SoundPreloader]',
+                        `Could not play sound ${soundName}:`,
+                        e
+                    )
                 );
         } else {
-            console.warn(`Sound not found: ${soundName}`);
+            console.warn('[SoundPreloader]', `Sound not found: ${soundName}`);
         }
     };
 
@@ -123,5 +127,5 @@
         }
     });
 
-    console.log('Sound preloader initialized');
+    console.log('[SoundPreloader]', 'Sound preloader initialized');
 })();

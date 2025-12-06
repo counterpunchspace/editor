@@ -168,7 +168,11 @@ if (
     typeof window.APP_SETTINGS === 'undefined' ||
     !window.APP_SETTINGS.OUTLINE_EDITOR
 ) {
-    console.error('APP_SETTINGS failed to load properly!');
+    console.error('[Settings]', 'APP_SETTINGS failed to load properly!');
 } else {
-    console.log('APP_SETTINGS loaded successfully:', window.APP_SETTINGS);
+    console.log(
+        '[Settings]',
+        'APP_SETTINGS loaded successfully:',
+        window.APP_SETTINGS
+    );
 }

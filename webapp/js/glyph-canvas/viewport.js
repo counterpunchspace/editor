@@ -275,7 +275,11 @@ class ViewportManager {
             margin = APP_SETTINGS.OUTLINE_EDITOR.CANVAS_MARGIN;
         }
 
-        console.log('ViewportManager.panToGlyph: calculated bounds', bounds);
+        console.log(
+            '[Viewport]',
+            'ViewportManager.panToGlyph: calculated bounds',
+            bounds
+        );
 
         // Calculate the full bounding box in font space
         const fontSpaceMinX =
@@ -310,12 +314,16 @@ class ViewportManager {
                 this.accumulatedVerticalBounds.maxY) /
             2;
 
-        console.log('ViewportManager.panToGlyph: accumulated vertical bounds', {
-            minY: this.accumulatedVerticalBounds.minY,
-            maxY: this.accumulatedVerticalBounds.maxY,
-            height: accumulatedHeight,
-            centerY: accumulatedCenterY
-        });
+        console.log(
+            '[Viewport]',
+            'ViewportManager.panToGlyph: accumulated vertical bounds',
+            {
+                minY: this.accumulatedVerticalBounds.minY,
+                maxY: this.accumulatedVerticalBounds.maxY,
+                height: accumulatedHeight,
+                centerY: accumulatedCenterY
+            }
+        );
 
         const currentScale = this.scale;
         const availableWidth = canvasRect.width - margin * 2;
@@ -362,6 +370,7 @@ class ViewportManager {
                 canvasRect.height / 2 - -accumulatedCenterY * targetScale;
 
             console.log(
+                '[Viewport]',
                 'ViewportManager.panToGlyph: centering vertically on accumulated bounds',
                 {
                     accumulatedCenterY,
@@ -392,12 +401,16 @@ class ViewportManager {
             }
             // If glyph is within margins horizontally, don't change targetPanX (keep adjusted pan)
 
-            console.log('ViewportManager.panToGlyph: panning to', {
-                targetScale,
-                targetPanX,
-                targetPanY,
-                scaleChanged: targetScale !== currentScale
-            });
+            console.log(
+                '[Viewport]',
+                'ViewportManager.panToGlyph: panning to',
+                {
+                    targetScale,
+                    targetPanX,
+                    targetPanY,
+                    scaleChanged: targetScale !== currentScale
+                }
+            );
 
             // Animate to target (zoom and pan together if scale changed, otherwise just pan)
             if (targetScale !== currentScale) {
@@ -412,6 +425,7 @@ class ViewportManager {
             }
         } else {
             console.log(
+                '[Viewport]',
                 'ViewportManager.panToGlyph: glyph fits comfortably, no viewport adjustment needed'
             );
         }
@@ -477,7 +491,7 @@ class ViewportManager {
             this.detectedDevice = null;
         }, this.deviceLockDuration);
 
-        console.log('handleWheel:', {
+        console.log('[Viewport]', 'handleWheel:', {
             deltaX: e.deltaX,
             deltaY: e.deltaY,
             deltaMode: e.deltaMode,
@@ -518,7 +532,7 @@ class ViewportManager {
             const zoomDelta = -normalizedDeltaY * zoomSpeed;
             const zoomFactor = Math.exp(zoomDelta);
 
-            console.log('zoom:', {
+            console.log('[Viewport]', 'zoom:', {
                 rawDeltaY: e.deltaY,
                 normalizedDeltaY,
                 zoomSpeed,

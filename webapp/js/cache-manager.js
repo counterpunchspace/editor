@@ -6,7 +6,7 @@
 
     class CacheManager {
         constructor() {
-            console.log('Cache Manager loaded');
+            console.log('[CacheManager]', 'Cache Manager loaded');
         }
 
         async clearServiceWorkers() {
@@ -16,17 +16,22 @@
                         await navigator.serviceWorker.getRegistrations();
 
                     if (registrations.length === 0) {
-                        console.log('No service workers to clear');
+                        console.log(
+                            '[CacheManager]',
+                            'No service workers to clear'
+                        );
                         return { success: true, count: 0 };
                     }
 
                     console.log(
+                        '[CacheManager]',
                         `Found ${registrations.length} service worker(s)`
                     );
 
                     for (const registration of registrations) {
                         await registration.unregister();
                         console.log(
+                            '[CacheManager]',
                             '✅ Unregistered service worker:',
                             registration.scope
                         );
@@ -38,7 +43,11 @@
                         message: `Cleared ${registrations.length} service worker(s)`
                     };
                 } catch (error) {
-                    console.error('Failed to clear service workers:', error);
+                    console.error(
+                        '[CacheManager]',
+                        'Failed to clear service workers:',
+                        error
+                    );
                     return {
                         success: false,
                         error: error.message
@@ -58,18 +67,23 @@
                     const cacheNames = await caches.keys();
 
                     if (cacheNames.length === 0) {
-                        console.log('No caches to clear');
+                        console.log('[CacheManager]', 'No caches to clear');
                         return { success: true, count: 0 };
                     }
 
                     console.log(
+                        '[CacheManager]',
                         `Found ${cacheNames.length} cache(s):`,
                         cacheNames
                     );
 
                     for (const cacheName of cacheNames) {
                         await caches.delete(cacheName);
-                        console.log('✅ Deleted cache:', cacheName);
+                        console.log(
+                            '[CacheManager]',
+                            '✅ Deleted cache:',
+                            cacheName
+                        );
                     }
 
                     return {
@@ -78,7 +92,11 @@
                         message: `Cleared ${cacheNames.length} cache(s)`
                     };
                 } catch (error) {
-                    console.error('Failed to clear caches:', error);
+                    console.error(
+                        '[CacheManager]',
+                        'Failed to clear caches:',
+                        error
+                    );
                     return {
                         success: false,
                         error: error.message
@@ -103,7 +121,10 @@
                     const request = indexedDB.deleteDatabase(dbName);
 
                     request.onsuccess = () => {
-                        console.log(`✅ Deleted IndexedDB: ${dbName}`);
+                        console.log(
+                            '[CacheManager]',
+                            `✅ Deleted IndexedDB: ${dbName}`
+                        );
                         cleared++;
                         if (cleared + failed === databases.length) {
                             resolve({
@@ -115,7 +136,10 @@
                     };
 
                     request.onerror = () => {
-                        console.log(`⚠️ Could not delete IndexedDB: ${dbName}`);
+                        console.log(
+                            '[CacheManager]',
+                            `⚠️ Could not delete IndexedDB: ${dbName}`
+                        );
                         failed++;
                         if (cleared + failed === databases.length) {
                             resolve({
@@ -127,7 +151,10 @@
                     };
 
                     request.onblocked = () => {
-                        console.log(`⚠️ IndexedDB deletion blocked: ${dbName}`);
+                        console.log(
+                            '[CacheManager]',
+                            `⚠️ IndexedDB deletion blocked: ${dbName}`
+                        );
                         failed++;
                         if (cleared + failed === databases.length) {
                             resolve({
@@ -142,7 +169,7 @@
         }
 
         async clearAll() {
-            console.log('🗑️ Clearing all caches...');
+            console.log('[CacheManager]', '🗑️ Clearing all caches...');
 
             const results = {
                 serviceWorkers: await this.clearServiceWorkers(),
@@ -150,7 +177,7 @@
                 indexedDB: await this.clearIndexedDB()
             };
 
-            console.log('Cache clearing results:', results);
+            console.log('[CacheManager]', 'Cache clearing results:', results);
 
             // Show summary
             const messages = [];
@@ -165,21 +192,28 @@
             }
 
             if (messages.length === 0) {
-                console.log('✅ No caches found to clear');
+                console.log('[CacheManager]', '✅ No caches found to clear');
             } else {
-                console.log('✅ Cache clearing complete:', messages.join(', '));
+                console.log(
+                    '[CacheManager]',
+                    '✅ Cache clearing complete:',
+                    messages.join(', ')
+                );
             }
 
             return results;
         }
 
         async clearAndReload() {
-            console.log('🔄 Clearing all caches and reloading...');
+            console.log(
+                '[CacheManager]',
+                '🔄 Clearing all caches and reloading...'
+            );
             await this.clearAll();
 
             // Wait a moment for cleanup to complete
             setTimeout(() => {
-                console.log('🔄 Reloading page...');
+                console.log('[CacheManager]', '🔄 Reloading page...');
                 window.location.reload(true); // Force reload from server
             }, 500);
         }
@@ -197,6 +231,7 @@
                     typeof SharedArrayBuffer !== 'undefined'
             };
 
+            console.log('[CacheManager]', 'Storage Statistics:');
             console.table(stats);
             return stats;
         }
@@ -210,6 +245,7 @@
 
     // No automatic clearing - keep it simple
     console.log(
+        '[CacheManager]',
         `%c� Cache Info Available %c
   
 To check cache support:
@@ -257,19 +293,22 @@ Manual cache access:
                 ).toFixed(1);
 
                 console.log(
+                    '[CacheManager]',
                     `%c📊 Memory Tracking (Reload #${reloadCount})`,
                     'color: #ff0; font-weight: bold;'
                 );
-                console.log(`   Current: ${usedMB} MB`);
-                console.log(`   Previous: ${lastUsedMB} MB`);
+                console.log('[CacheManager]', `   Current: ${usedMB} MB`);
+                console.log('[CacheManager]', `   Previous: ${lastUsedMB} MB`);
 
                 if (delta > 0) {
                     console.log(
+                        '[CacheManager]',
                         `   %cΔ +${delta} MB (+${deltaPercent}%) 📈 INCREASE`,
                         'color: #f00; font-weight: bold;'
                     );
                 } else {
                     console.log(
+                        '[CacheManager]',
                         `   %cΔ ${delta} MB (${deltaPercent}%) 📉 DECREASE`,
                         'color: #0f0; font-weight: bold;'
                     );
@@ -278,25 +317,37 @@ Manual cache access:
                 // Warn if memory keeps growing
                 if (reloadCount > 2 && delta > 10) {
                     console.warn(
+                        '[CacheManager]',
                         `%c⚠️ MEMORY LEAK DETECTED: Memory grew by ${delta}MB after reload!`,
                         'color: #f00; font-size: 14px; font-weight: bold;'
                     );
-                    console.warn('Possible causes:');
-                    console.warn('  1. Service worker maintaining state');
-                    console.warn('  2. Browser not fully garbage collecting');
-                    console.warn('  3. IndexedDB or LocalStorage growth');
-                    console.warn('');
+                    console.warn('[CacheManager]', 'Possible causes:');
                     console.warn(
+                        '[CacheManager]',
+                        '  1. Service worker maintaining state'
+                    );
+                    console.warn(
+                        '[CacheManager]',
+                        '  2. Browser not fully garbage collecting'
+                    );
+                    console.warn(
+                        '[CacheManager]',
+                        '  3. IndexedDB or LocalStorage growth'
+                    );
+                    console.warn('[CacheManager]', '');
+                    console.warn(
+                        '[CacheManager]',
                         'Try: Close all tabs and restart browser completely'
                     );
                 }
             } else {
                 const usedMB = (currentMemory.used / 1048576).toFixed(2);
                 console.log(
+                    '[CacheManager]',
                     `%c📊 Memory Tracking (First Load)`,
                     'color: #0ff; font-weight: bold;'
                 );
-                console.log(`   Initial: ${usedMB} MB`);
+                console.log('[CacheManager]', `   Initial: ${usedMB} MB`);
             }
         }
     }
@@ -315,13 +366,17 @@ Manual cache access:
                     if (registration.active) {
                         registration.active.postMessage({ type: 'deregister' });
                         console.log(
+                            '[CacheManager]',
                             '📨 Sent deregister message to service worker'
                         );
                     }
 
                     // Force unregister
                     await registration.unregister();
-                    console.log('✅ Force unregistered service worker');
+                    console.log(
+                        '[CacheManager]',
+                        '✅ Force unregistered service worker'
+                    );
                 }
 
                 // Wait a moment for cleanup
@@ -329,7 +384,11 @@ Manual cache access:
 
                 return { success: true, reset: true };
             } catch (error) {
-                console.warn('⚠️ Failed to reset service worker:', error);
+                console.warn(
+                    '[CacheManager]',
+                    '⚠️ Failed to reset service worker:',
+                    error
+                );
                 return { success: false, error: error.message };
             }
         }
@@ -337,7 +396,10 @@ Manual cache access:
     }
 
     async function autoClearOnLoad() {
-        console.log('🧹 Auto-clearing service worker caches on page load...');
+        console.log(
+            '[CacheManager]',
+            '🧹 Auto-clearing service worker caches on page load...'
+        );
 
         // Track memory first
         trackMemoryAcrossReloads();
@@ -357,49 +419,64 @@ Manual cache access:
 
             if (cacheResult.count > 0) {
                 console.log(
+                    '[CacheManager]',
                     `✅ Cleared ${cacheResult.count} cache(s) on page load`
                 );
             } else {
                 console.log(
+                    '[CacheManager]',
                     '✅ Service worker reset, no additional caches to clear'
                 );
             }
 
             // Important: The COI service worker will re-register itself
             // This is intentional - we want a FRESH instance each time
-            console.log('🔄 Service worker will re-register with clean state');
+            console.log(
+                '[CacheManager]',
+                '🔄 Service worker will re-register with clean state'
+            );
 
             // Show workaround if memory keeps growing
             if (reloadCount > 3) {
-                console.log('');
+                console.log('[CacheManager]', '');
                 console.log(
+                    '[CacheManager]',
                     '%c💡 Memory Still Growing? Try These:',
                     'color: #ff0; font-weight: bold;'
                 );
                 console.log(
+                    '[CacheManager]',
                     '%c1. Run: openCleanTab() then close this tab',
                     'color: #ff0;'
                 );
                 console.log(
+                    '[CacheManager]',
                     '%c2. Close ALL tabs and reopen in new tab',
                     'color: #ff0;'
                 );
                 console.log(
+                    '[CacheManager]',
                     '%c3. Close browser completely and restart',
                     'color: #ff0;'
                 );
-                console.log('');
+                console.log('[CacheManager]', '');
                 console.log(
+                    '[CacheManager]',
                     '%c⚠️  Service worker memory persists across reloads in same tab',
                     'color: #f80; font-style: italic;'
                 );
                 console.log(
+                    '[CacheManager]',
                     '%c   This is a browser limitation, not a bug in the app',
                     'color: #f80; font-style: italic;'
                 );
             }
         } catch (error) {
-            console.warn('⚠️ Failed to auto-clear caches:', error);
+            console.warn(
+                '[CacheManager]',
+                '⚠️ Failed to auto-clear caches:',
+                error
+            );
         }
     }
 
@@ -413,6 +490,7 @@ Manual cache access:
 
     // Log helpful info
     console.log(
+        '[CacheManager]',
         `
 %c💡 Cache & Memory Management %c
 

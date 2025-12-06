@@ -21,7 +21,7 @@
             this.createMonitorElement();
             this.startMonitoring();
             this.setupCleanupHandlers();
-            console.log('✅ Memory monitor initialized');
+            console.log('[MemoryMonitor]', '✅ Memory monitor initialized');
         }
 
         createMonitorElement() {
@@ -90,7 +90,10 @@
             const closeBtn = document.getElementById('memory-info-close');
 
             if (!infoBtn || !popup || !closeBtn) {
-                console.warn('Memory info popup elements not found');
+                console.warn(
+                    '[MemoryMonitor]',
+                    'Memory info popup elements not found'
+                );
                 return;
             }
 
@@ -357,7 +360,7 @@ json.dumps({"objects": obj_count, "fonts": open_fonts})
         }
 
         async forceGarbageCollection() {
-            console.log('🗑️ Forcing garbage collection...');
+            console.log('[MemoryMonitor]', '🗑️ Forcing garbage collection...');
 
             // Python GC
             if (window.pyodide) {
@@ -375,9 +378,12 @@ print(f"Python GC collected {collected} objects")
 collected
                     `
                     );
-                    console.log(`Python GC: Collected ${result} objects`);
+                    console.log(
+                        '[MemoryMonitor]',
+                        `Python GC: Collected ${result} objects`
+                    );
                 } catch (e) {
-                    console.error('Python GC failed:', e);
+                    console.error('[MemoryMonitor]', 'Python GC failed:', e);
                 }
             }
 
@@ -385,10 +391,16 @@ collected
             if (window.gc) {
                 // Available in Chrome with --expose-gc flag
                 window.gc();
-                console.log('JavaScript GC triggered (--expose-gc)');
+                console.log(
+                    '[MemoryMonitor]',
+                    'JavaScript GC triggered (--expose-gc)'
+                );
             } else {
                 // Create memory pressure to encourage GC
-                console.log('JavaScript GC: Creating memory pressure...');
+                console.log(
+                    '[MemoryMonitor]',
+                    'JavaScript GC: Creating memory pressure...'
+                );
                 const temp = new Array(1000000).fill(0);
                 temp.length = 0;
             }
@@ -396,7 +408,10 @@ collected
             // Update display after a moment
             setTimeout(() => {
                 this.updateMemoryDisplay();
-                console.log('✅ Garbage collection completed');
+                console.log(
+                    '[MemoryMonitor]',
+                    '✅ Garbage collection completed'
+                );
             }, 500);
         }
 
@@ -426,11 +441,14 @@ collected
     // Initialize when DOM is ready
     function initMemoryMonitor() {
         if (document.querySelector('.toolbar-right')) {
-            console.log('🧠 Initializing memory monitor...');
+            console.log('[MemoryMonitor]', '🧠 Initializing memory monitor...');
             window.memoryMonitor = new MemoryMonitor();
             window.memoryMonitor.init();
         } else {
-            console.warn('⚠️ Toolbar not ready, retrying in 500ms...');
+            console.warn(
+                '[MemoryMonitor]',
+                '⚠️ Toolbar not ready, retrying in 500ms...'
+            );
             setTimeout(initMemoryMonitor, 500);
         }
     }

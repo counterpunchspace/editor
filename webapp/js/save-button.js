@@ -32,13 +32,17 @@ class SaveButton {
         // Create JavaScript functions that Python can call via js._fontSaveCallbacks
         window._fontSaveCallbacks = {
             beforeSave: (fontId, filename) => {
-                console.log(`🔵 beforeSave callback: ${filename}`);
+                console.log(
+                    '[SaveButton]',
+                    `🔵 beforeSave callback: ${filename}`
+                );
             },
 
             afterSave: (fontId, filename, duration) => {
                 const callbackStart = performance.now();
                 const fname = filename.split('/').pop();
                 console.log(
+                    '[SaveButton]',
                     `🟢 afterSave callback: ${fname} (Python reported: ${duration.toFixed(2)}s)`
                 );
 
@@ -61,18 +65,20 @@ class SaveButton {
 
                 const callbackDuration = performance.now() - callbackStart;
                 console.log(
+                    '[SaveButton]',
                     `⏱️ afterSave callback completed in ${callbackDuration.toFixed(0)}ms`
                 );
             },
 
             onError: (fontId, filename, error) => {
-                console.error(`❌ Save failed: ${error}`);
+                console.error('[SaveButton]', `❌ Save failed: ${error}`);
                 this.isSaving = false;
                 this.showError();
             }
         };
 
         console.log(
+            '[SaveButton]',
             'Save callbacks registered (Python will call via js module)'
         );
     }
@@ -86,7 +92,7 @@ class SaveButton {
         }
 
         const saveStartTime = performance.now();
-        console.log('🔵 Save button clicked');
+        console.log('[SaveButton]', '🔵 Save button clicked');
 
         this.isSaving = true;
         this.button.prop('disabled', true).text('Saving...');
@@ -98,24 +104,31 @@ class SaveButton {
 IsTrackingReady()
             `);
             console.log(
+                '[SaveButton]',
                 `⏱️ Tracking check: ${(performance.now() - trackingCheckStart).toFixed(0)}ms`
             );
 
             if (!trackingReady) {
-                console.log('Waiting for dirty tracking to initialize...');
+                console.log(
+                    '[SaveButton]',
+                    'Waiting for dirty tracking to initialize...'
+                );
                 this.button.text('Preparing...');
 
                 // Wait for tracking init promise if available
                 if (window._trackingInitPromise) {
                     await window._trackingInitPromise;
-                    console.log('Tracking ready, proceeding with save');
+                    console.log(
+                        '[SaveButton]',
+                        'Tracking ready, proceeding with save'
+                    );
                     this.button.text('Saving...');
                 }
             }
 
             // Simply call font.save() - callbacks will handle everything else
             const pythonSaveStart = performance.now();
-            console.log('🔵 Calling Python font.save()...');
+            console.log('[SaveButton]', '🔵 Calling Python font.save()...');
             const result = await window.pyodide.runPythonAsync(`
 # Get font and call save - this triggers all registered callbacks
 font = CurrentFont()
@@ -127,6 +140,7 @@ else:
             `);
             const pythonSaveDuration = performance.now() - pythonSaveStart;
             console.log(
+                '[SaveButton]',
                 `⏱️ Python save returned: ${pythonSaveDuration.toFixed(0)}ms`
             );
 
@@ -138,10 +152,11 @@ else:
             // Note: isSaving is set to false by afterSave callback
             const totalDuration = performance.now() - saveStartTime;
             console.log(
+                '[SaveButton]',
                 `⏱️ Total save duration: ${totalDuration.toFixed(0)}ms`
             );
         } catch (error) {
-            console.error('Error saving font:', error);
+            console.error('[SaveButton]', 'Error saving font:', error);
             // Only show error if callbacks haven't already handled it
             // (callbacks might have been called even if we got an error here)
             if (this.isSaving) {

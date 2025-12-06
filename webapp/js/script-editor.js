@@ -10,7 +10,7 @@
     async function init() {
         // Wait for Ace to be loaded
         if (!window.ace) {
-            console.error('Ace Editor not loaded');
+            console.error('[ScriptEditor]', 'Ace Editor not loaded');
             return;
         }
 
@@ -18,7 +18,7 @@
         runButton = document.getElementById('run-script-btn');
 
         if (!container || !runButton) {
-            console.error('Script editor elements not found');
+            console.error('[ScriptEditor]', 'Script editor elements not found');
             return;
         }
 
@@ -233,7 +233,10 @@
             }
         });
 
-        console.log('Script editor initialized with Ace Editor');
+        console.log(
+            '[ScriptEditor]',
+            'Script editor initialized with Ace Editor'
+        );
     }
 
     /**
@@ -241,7 +244,7 @@
      */
     async function runScript() {
         if (!editor) {
-            console.error('Script editor not initialized');
+            console.error('[ScriptEditor]', 'Script editor not initialized');
             return;
         }
 
@@ -274,7 +277,7 @@
             } else {
                 // Fallback: just execute the code
                 await window.pyodide.runPythonAsync(code);
-                console.log('Script executed successfully');
+                console.log('[ScriptEditor]', 'Script executed successfully');
             }
 
             // Play done sound
@@ -282,7 +285,7 @@
                 window.playSound('done');
             }
         } catch (error) {
-            console.error('Script execution error:', error);
+            console.error('[ScriptEditor]', 'Script execution error:', error);
 
             // Store the full traceback for the AI assistant
             const fullTraceback = error.message;
@@ -299,10 +302,15 @@
                     }
                     window.term.error(error.message);
                 } catch (e) {
-                    console.error('Failed to display error in terminal:', e);
+                    console.error(
+                        '[ScriptEditor]',
+                        'Failed to display error in terminal:',
+                        e
+                    );
                 }
             } else {
                 console.error(
+                    '[ScriptEditor]',
                     'Script error (terminal not available):',
                     error.message
                 );

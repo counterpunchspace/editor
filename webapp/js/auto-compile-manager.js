@@ -91,11 +91,16 @@ json.dumps(result)
 
             if (result.error) {
                 console.error(
+                    '[AutoCompile]',
                     '❌ Error checking DIRTY_COMPILE status:',
                     result.error
                 );
                 if (result.traceback) {
-                    console.error('Traceback:', result.traceback);
+                    console.error(
+                        '[AutoCompile]',
+                        'Traceback:',
+                        result.traceback
+                    );
                 }
                 return;
             }
@@ -129,11 +134,18 @@ if current_font:
                     `
                     );
                 } else {
-                    console.warn('Font manager not ready for auto-compilation');
+                    console.warn(
+                        '[AutoCompile]',
+                        'Font manager not ready for auto-compilation'
+                    );
                 }
             }
         } catch (error) {
-            console.error('❌ Error in auto-compilation:', error);
+            console.error(
+                '[AutoCompile]',
+                '❌ Error in auto-compilation:',
+                error
+            );
         } finally {
             isChecking = false;
         }
@@ -155,17 +167,20 @@ if current_font:
             clearTimeout(compileTimeout);
             compileTimeout = null;
         }
-        console.log(`Auto-compilation ${enabled ? 'enabled' : 'disabled'}`);
+        console.log(
+            '[AutoCompile]',
+            `Auto-compilation ${enabled ? 'enabled' : 'disabled'}`
+        );
     }
 
     /**
      * Manual test function to check dirty state without waiting.
      */
     async function testDirtyCheck() {
-        console.log('🧪 Manual dirty check test...');
+        console.log('[AutoCompile]', '🧪 Manual dirty check test...');
 
         if (!window.pyodide) {
-            console.error('❌ Pyodide not loaded');
+            console.error('[AutoCompile]', '❌ Pyodide not loaded');
             return;
         }
 
@@ -199,14 +214,18 @@ json.dumps(result)
 
             const result = JSON.parse(isDirtyJson);
             if (result.error) {
-                console.warn('⚠️', result.error);
+                console.warn('[AutoCompile]', '⚠️', result.error);
             } else {
-                console.log('Font:', result.font_name);
-                console.log('DIRTY_COMPILE:', result.dirty);
+                console.log('[AutoCompile]', 'Font:', result.font_name);
+                console.log('[AutoCompile]', 'DIRTY_COMPILE:', result.dirty);
             }
             return result;
         } catch (error) {
-            console.error('❌ Error checking dirty state:', error);
+            console.error(
+                '[AutoCompile]',
+                '❌ Error checking dirty state:',
+                error
+            );
             return null;
         }
     }
@@ -215,7 +234,10 @@ json.dumps(result)
      * Force trigger a compilation check immediately (for testing).
      */
     async function forceTrigger() {
-        console.log('🧪 Force triggering auto-compile check...');
+        console.log(
+            '[AutoCompile]',
+            '🧪 Force triggering auto-compile check...'
+        );
         await triggerCompilation();
     }
 
@@ -229,5 +251,5 @@ json.dumps(result)
         getStatus: () => ({ isEnabled, hasPendingCompile: !!compileTimeout })
     };
 
-    console.log('✅ Auto-compile manager initialized');
+    console.log('[AutoCompile]', '✅ Auto-compile manager initialized');
 })();

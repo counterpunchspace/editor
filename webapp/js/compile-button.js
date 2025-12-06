@@ -15,7 +15,7 @@
     async function initWorker() {
         if (worker) return workerReady;
 
-        console.log('🔧 Initializing fontc worker...');
+        console.log('[CompileButton]', '🔧 Initializing fontc worker...');
 
         try {
             worker = new Worker('js/fontc-worker.js', { type: 'module' });
@@ -25,7 +25,11 @@
 
                 if (type === 'ready') {
                     workerReady = true;
-                    console.log('✅ Fontc worker ready:', version);
+                    console.log(
+                        '[CompileButton]',
+                        '✅ Fontc worker ready:',
+                        version
+                    );
                 } else if (type === 'compiled') {
                     const resolve = pendingCompilations.get(id);
                     if (resolve) {
@@ -42,7 +46,7 @@
             };
 
             worker.onerror = (e) => {
-                console.error('❌ Worker error:', e);
+                console.error('[CompileButton]', '❌ Worker error:', e);
                 workerReady = false;
             };
 
@@ -68,7 +72,11 @@
 
             return true;
         } catch (error) {
-            console.error('❌ Failed to initialize worker:', error);
+            console.error(
+                '[CompileButton]',
+                '❌ Failed to initialize worker:',
+                error
+            );
             return false;
         }
     }
@@ -114,7 +122,7 @@
 
         // Initialize worker if needed
         if (!workerReady) {
-            console.log('Initializing worker...');
+            console.log('[CompileButton]', 'Initializing worker...');
             const initialized = await initWorker();
             if (!initialized) {
                 alert(
@@ -132,7 +140,7 @@
             const originalText = compileBtn.textContent;
             compileBtn.textContent = 'Compiling...';
 
-            console.log('🔨 Starting font compilation...');
+            console.log('[CompileButton]', '🔨 Starting font compilation...');
             if (window.term) {
                 window.term.echo('');
                 window.term.echo('[[;cyan;]🔨 Compiling font to TTF...]');
@@ -168,6 +176,7 @@ babelfont_json = orjson.dumps(font_dict).decode('utf-8')
             const sourceDir = pythonResult[2];
             const exportTime = performance.now() - startTime;
             console.log(
+                '[CompileButton]',
                 `✅ Exported to JSON in ${exportTime.toFixed(0)}ms (${babelfontJson.length} bytes)`
             );
 
@@ -181,6 +190,7 @@ babelfont_json = orjson.dumps(font_dict).decode('utf-8')
 
             const { ttfBytes, duration } = result;
             console.log(
+                '[CompileButton]',
                 `✅ Compiled in ${duration.toFixed(0)}ms (${ttfBytes.length} bytes)`
             );
 
@@ -201,7 +211,7 @@ babelfont_json = orjson.dumps(font_dict).decode('utf-8')
 
             // Save directly to Pyodide's virtual filesystem using FS API (much faster than JSON roundtrip)
             window.pyodide.FS.writeFile(outputPath, ttfBytes);
-            console.log(`💾 Saved to: ${outputPath}`);
+            console.log('[CompileButton]', `💾 Saved to: ${outputPath}`);
 
             const totalTime = performance.now() - startTime;
 
@@ -234,7 +244,7 @@ babelfont_json = orjson.dumps(font_dict).decode('utf-8')
             // Reset button text
             compileBtn.textContent = originalText;
         } catch (error) {
-            console.error('❌ Compilation failed:', error);
+            console.error('[CompileButton]', '❌ Compilation failed:', error);
 
             if (window.term) {
                 window.term.error(`❌ Compilation failed: ${error.message}`);
@@ -281,5 +291,5 @@ babelfont_json = orjson.dumps(font_dict).decode('utf-8')
         updateState: updateCompileButtonState
     };
 
-    console.log('✅ Compile button initialized');
+    console.log('[CompileButton]', '✅ Compile button initialized');
 })();

@@ -196,8 +196,12 @@ class FontCompilation {
     async initialize() {
         if (this.isInitialized) return true;
 
-        console.log('🔧 Initializing babelfont-fontc WASM worker...');
         console.log(
+            '[FontCompilation]',
+            '🔧 Initializing babelfont-fontc WASM worker...'
+        );
+        console.log(
+            '[FontCompilation]',
             '🚀 Using direct .babelfont JSON → TTF pipeline (no file system)'
         );
 
@@ -206,6 +210,7 @@ class FontCompilation {
             const registration = await navigator.serviceWorker.ready;
             if (registration.active && !navigator.serviceWorker.controller) {
                 console.log(
+                    '[FontCompilation]',
                     '⏳ Service worker registered but not controlling page yet. Waiting...'
                 );
                 // Wait a bit for controller to be set
@@ -216,6 +221,7 @@ class FontCompilation {
         // Check if SharedArrayBuffer is available
         if (typeof SharedArrayBuffer === 'undefined') {
             console.error(
+                '[FontCompilation]',
                 '❌ SharedArrayBuffer is not available. fontc WASM requires it.\n' +
                     'This should be enabled by the coi-serviceworker.js.\n' +
                     'If you see this error:\n' +
@@ -257,7 +263,7 @@ class FontCompilation {
                 }, 30000); // 30 second timeout
 
                 const checkReady = (e) => {
-                    console.log('Worker message:', e.data);
+                    console.log('[FontCompilation]', 'Worker message:', e.data);
                     if (e.data.ready) {
                         clearTimeout(timeout);
                         this.worker.removeEventListener('message', checkReady);
@@ -272,16 +278,26 @@ class FontCompilation {
                 this.worker.addEventListener('message', checkReady);
 
                 // Send an empty message to trigger worker auto-initialization
-                console.log('Sending initialization trigger to worker...');
+                console.log(
+                    '[FontCompilation]',
+                    'Sending initialization trigger to worker...'
+                );
                 this.worker.postMessage({});
             });
 
             this.isInitialized = ready;
-            console.log('✅ babelfont-fontc WASM worker initialized');
-            console.log('✅ Ready for direct Python → Rust compilation');
+            console.log(
+                '[FontCompilation]',
+                '✅ babelfont-fontc WASM worker initialized'
+            );
+            console.log(
+                '[FontCompilation]',
+                '✅ Ready for direct Python → Rust compilation'
+            );
             return true;
         } catch (error) {
             console.error(
+                '[FontCompilation]',
                 '❌ Failed to initialize babelfont-fontc WASM:',
                 error.message
             );
@@ -334,7 +350,7 @@ class FontCompilation {
     }
 
     handleWorkerError(e) {
-        console.error('Worker error:', e);
+        console.error('[FontCompilation]', 'Worker error:', e);
         if (window.term) {
             window.term.error(`Worker error: ${e.message}`);
         }
@@ -385,9 +401,13 @@ class FontCompilation {
         }
 
         console.log(
+            '[FontCompilation]',
             `🔨 Compiling ${filename} from .babelfont JSON (target: ${typeof target === 'string' ? target : 'custom'})...`
         );
-        console.log(`📊 JSON size: ${babelfontJson.length} bytes`);
+        console.log(
+            '[FontCompilation]',
+            `📊 JSON size: ${babelfontJson.length} bytes`
+        );
 
         const id = this.compilationId++;
 
@@ -421,7 +441,10 @@ class FontCompilation {
             throw new Error('Pyodide not available');
         }
 
-        console.log(`🐍 Exporting ${fontVariableName} to .babelfont JSON...`);
+        console.log(
+            '[FontCompilation]',
+            `🐍 Exporting ${fontVariableName} to .babelfont JSON...`
+        );
 
         try {
             // Call Python to export JSON (in memory, no file writes!)
@@ -439,8 +462,11 @@ font_dict = font_obj.to_dict()
 json.dumps(font_dict)
             `);
 
-            console.log(`✅ Exported to JSON (${babelfontJson.length} bytes)`);
-            console.log('🚀 Compiling with Rust/WASM...');
+            console.log(
+                '[FontCompilation]',
+                `✅ Exported to JSON (${babelfontJson.length} bytes)`
+            );
+            console.log('[FontCompilation]', '🚀 Compiling with Rust/WASM...');
 
             // Compile from JSON
             const result = await this.compileFromJson(
@@ -448,7 +474,10 @@ json.dumps(font_dict)
                 outputFilename || `${fontVariableName}.babelfont`
             );
 
-            console.log(`✅ Compiled in ${result.time_taken}ms`);
+            console.log(
+                '[FontCompilation]',
+                `✅ Compiled in ${result.time_taken}ms`
+            );
 
             // Trigger download
             this.downloadFont(result.font, result.filename);
@@ -460,7 +489,7 @@ json.dumps(font_dict)
                 time_taken: result.time_taken
             };
         } catch (error) {
-            console.error('❌ Compilation failed:', error);
+            console.error('[FontCompilation]', '❌ Compilation failed:', error);
             throw error;
         }
     }
@@ -480,7 +509,10 @@ json.dumps(font_dict)
         a.click();
         URL.revokeObjectURL(url);
 
-        console.log(`📥 Downloaded: ${filename} (${fontData.length} bytes)`);
+        console.log(
+            '[FontCompilation]',
+            `📥 Downloaded: ${filename} (${fontData.length} bytes)`
+        );
     }
 
     // LEGACY METHOD - kept for backwards compatibility
@@ -494,7 +526,7 @@ json.dumps(font_dict)
 
         try {
             // Read font from file and convert to JSON
-            console.log(`📖 Loading ${inputPath}...`);
+            console.log('[FontCompilation]', `📖 Loading ${inputPath}...`);
 
             const babelfontJson = await window.pyodide.runPythonAsync(`
 import json
@@ -508,7 +540,7 @@ font_dict = font.to_dict()
 json.dumps(font_dict)
             `);
 
-            console.log(`✅ Loaded and exported to JSON`);
+            console.log('[FontCompilation]', `✅ Loaded and exported to JSON`);
 
             // Compile using new direct method
             const filename = inputPath.split('/').pop();
@@ -534,6 +566,7 @@ print(f"Compiled font saved to: {output_path}")
             `);
 
             console.log(
+                '[FontCompilation]',
                 `✅ Compiled in ${result.time_taken}ms: ${outputFilename}`
             );
 
@@ -548,7 +581,11 @@ print(f"Compiled font saved to: {output_path}")
                 time_taken: result.time_taken
             };
         } catch (error) {
-            console.error('fontc compilation error:', error);
+            console.error(
+                '[FontCompilation]',
+                'fontc compilation error:',
+                error
+            );
 
             return {
                 success: false,

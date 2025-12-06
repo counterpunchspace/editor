@@ -7,12 +7,15 @@
     // Wait for Pyodide to be loaded
     function initPythonWrapper() {
         if (!window.pyodide) {
-            console.log('Waiting for Pyodide...');
+            console.log('[PythonExec]', 'Waiting for Pyodide...');
             setTimeout(initPythonWrapper, 500);
             return;
         }
 
-        console.log('🔧 Installing Python execution wrapper...');
+        console.log(
+            '[PythonExec]',
+            '🔧 Installing Python execution wrapper...'
+        );
 
         // Store the original functions
         const _originalRunPythonAsync = window.pyodide.runPythonAsync.bind(
@@ -42,16 +45,23 @@
 
             // Log to browser console only (NOT terminal to avoid infinite loop)
             console.group(`🐍 Python Execution (Async) #${execId}`);
-            console.log(code);
+            console.log('[PythonExec]', code);
             console.groupEnd();
 
             // Execute the original function
             try {
                 const result = await _originalRunPythonAsync(code, options);
-                console.log(`✅ Execution #${execId} completed successfully`);
+                console.log(
+                    '[PythonExec]',
+                    `✅ Execution #${execId} completed successfully`
+                );
                 return result;
             } catch (error) {
-                console.error(`❌ Execution #${execId} failed:`, error.message);
+                console.error(
+                    '[PythonExec]',
+                    `❌ Execution #${execId} failed:`,
+                    error.message
+                );
                 throw error;
             } finally {
                 // Call after-execution hook (always, even on error)
@@ -73,16 +83,23 @@
 
             // Log to browser console only (NOT terminal to avoid infinite loop)
             console.group(`🐍 Python Execution (Sync) #${execId}`);
-            console.log(code);
+            console.log('[PythonExec]', code);
             console.groupEnd();
 
             // Execute the original function
             try {
                 const result = _originalRunPython(code, options);
-                console.log(`✅ Execution #${execId} completed successfully`);
+                console.log(
+                    '[PythonExec]',
+                    `✅ Execution #${execId} completed successfully`
+                );
                 return result;
             } catch (error) {
-                console.error(`❌ Execution #${execId} failed:`, error.message);
+                console.error(
+                    '[PythonExec]',
+                    `❌ Execution #${execId} failed:`,
+                    error.message
+                );
                 throw error;
             } finally {
                 // Call after-execution hook (always, even on error)
@@ -92,7 +109,10 @@
             }
         };
 
-        console.log('✅ Python execution wrapper installed successfully');
+        console.log(
+            '[PythonExec]',
+            '✅ Python execution wrapper installed successfully'
+        );
 
         // For console commands, intercept when window.term is set
         // Use a property descriptor to hook into the assignment
@@ -106,6 +126,7 @@
 
                 if (newTerm && newTerm.get_command) {
                     console.log(
+                        '[PythonExec]',
                         '🔧 Terminal assigned, wrapping interpreter...'
                     );
 
@@ -121,7 +142,7 @@
                             console.group(
                                 `🐍 Python Console Command #${execId}`
                             );
-                            console.log(command);
+                            console.log('[PythonExec]', command);
                             console.groupEnd();
                         }
 
@@ -132,7 +153,10 @@
                     // Replace the interpreter
                     newTerm.set_interpreter(wrappedInterpreter);
 
-                    console.log('✅ Terminal interpreter wrapped successfully');
+                    console.log(
+                        '[PythonExec]',
+                        '✅ Terminal interpreter wrapped successfully'
+                    );
                 }
             },
             configurable: true

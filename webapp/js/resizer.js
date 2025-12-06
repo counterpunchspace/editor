@@ -1,8 +1,8 @@
-console.log('resizer.js loaded');
+console.log('[Resizer]', 'resizer.js loaded');
 
 class ResizableViews {
     constructor() {
-        console.log('ResizableViews constructor called');
+        console.log('[Resizer]', 'ResizableViews constructor called');
         this.isResizing = false;
         this.currentDivider = null;
         this.startX = 0;
@@ -49,12 +49,12 @@ class ResizableViews {
         try {
             const saved = localStorage.getItem('viewLayout');
             if (!saved) {
-                console.log('No saved view layout found');
+                console.log('[Resizer]', 'No saved view layout found');
                 return;
             }
 
             const layout = JSON.parse(saved);
-            console.log('Loading view layout:', layout);
+            console.log('[Resizer]', 'Loading view layout:', layout);
 
             // Apply horizontal layout
             if (layout.horizontal) {
@@ -63,7 +63,7 @@ class ResizableViews {
                 if (topRow && bottomRow) {
                     topRow.style.flex = layout.horizontal.top;
                     bottomRow.style.flex = layout.horizontal.bottom;
-                    console.log('Applied horizontal layout');
+                    console.log('[Resizer]', 'Applied horizontal layout');
                 }
             }
 
@@ -77,7 +77,10 @@ class ResizableViews {
                             view.style.flex = layout.vertical.top[index];
                         }
                     });
-                    console.log(`Applied ${topViews?.length} top view layouts`);
+                    console.log(
+                        '[Resizer]',
+                        `Applied ${topViews?.length} top view layouts`
+                    );
                 }
 
                 if (layout.vertical.bottom) {
@@ -89,14 +92,18 @@ class ResizableViews {
                         }
                     });
                     console.log(
+                        '[Resizer]',
                         `Applied ${bottomViews?.length} bottom view layouts`
                     );
                 }
             }
 
-            console.log('✅ View layout restored from localStorage');
+            console.log(
+                '[Resizer]',
+                '✅ View layout restored from localStorage'
+            );
         } catch (e) {
-            console.warn('Failed to load view layout:', e);
+            console.warn('[Resizer]', 'Failed to load view layout:', e);
         }
     }
 
@@ -130,7 +137,7 @@ class ResizableViews {
 
             localStorage.setItem('viewLayout', JSON.stringify(layout));
         } catch (e) {
-            console.warn('Failed to save view layout:', e);
+            console.warn('[Resizer]', 'Failed to save view layout:', e);
         }
     }
 
@@ -355,9 +362,9 @@ class ResizableViews {
 
 // Initialize the resizable views when the DOM is loaded
 function initResizableViews() {
-    console.log('Initializing ResizableViews...');
+    console.log('[Resizer]', 'Initializing ResizableViews...');
     window.resizableViews = new ResizableViews();
-    console.log('ResizableViews initialized');
+    console.log('[Resizer]', 'ResizableViews initialized');
 }
 
 // Check if DOM is already loaded (in case script loads late)

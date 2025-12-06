@@ -730,7 +730,11 @@ class AIAssistant {
                                 window.playSound('click');
                             }
                         } catch (err) {
-                            console.error('Failed to copy text:', err);
+                            console.error(
+                                '[AIAssistant]',
+                                'Failed to copy text:',
+                                err
+                            );
                             copyBtn.innerHTML = '✗ Failed';
                             setTimeout(() => {
                                 copyBtn.innerHTML = '📋 Copy prompt';
@@ -902,7 +906,11 @@ class AIAssistant {
                             runBtn.disabled = false;
                         }, 2000);
                     } catch (error) {
-                        console.error('Error running code in console:', error);
+                        console.error(
+                            '[AIAssistant]',
+                            'Error running code in console:',
+                            error
+                        );
                         runBtn.innerHTML = '✗ Error';
                         setTimeout(() => {
                             runBtn.innerHTML = 'Run in Console';
@@ -931,11 +939,13 @@ class AIAssistant {
         if (!window.term) {
             // Console not yet initialized - execute without terminal output
             console.warn(
+                '[AIAssistant]',
                 'Console terminal not available, executing Python code directly'
             );
             try {
                 await window.pyodide.runPythonAsync(code);
                 console.log(
+                    '[AIAssistant]',
                     '✅ Code executed successfully (console terminal not available for output)'
                 );
 
@@ -945,7 +955,11 @@ class AIAssistant {
                 }
                 return; // Success
             } catch (error) {
-                console.error('Python execution error:', error);
+                console.error(
+                    '[AIAssistant]',
+                    'Python execution error:',
+                    error
+                );
                 throw error;
             }
         }
@@ -985,6 +999,7 @@ class AIAssistant {
             }
         } else {
             console.error(
+                '[AIAssistant]',
                 'Script editor not available (window.scriptEditor is not defined)'
             );
         }
@@ -1110,14 +1125,18 @@ class AIAssistant {
             try {
                 return marked.parse(text);
             } catch (error) {
-                console.error('Markdown parsing error:', error);
+                console.error(
+                    '[AIAssistant]',
+                    'Markdown parsing error:',
+                    error
+                );
                 // Fallback to escaped text if parsing fails
                 return this.escapeHtml(text).replace(/\n/g, '<br>');
             }
         }
 
         // Fallback if marked.js is not loaded
-        console.warn('marked.js not loaded, using fallback');
+        console.warn('[AIAssistant]', 'marked.js not loaded, using fallback');
         return this.escapeHtml(text).replace(/\n/g, '<br>');
     }
 
@@ -1361,7 +1380,7 @@ ${errorTraceback}
             this.conversationHistory = [];
             this.messagesContainer.innerHTML = '';
             this.messagesContainer.style.display = 'none'; // Hide when cleared
-            console.log('Conversation history cleared');
+            console.log('[AIAssistant]', 'Conversation history cleared');
         }
     }
 
@@ -1471,7 +1490,11 @@ ${errorTraceback}
             // Add reuse buttons to previous user messages now that we have a response
             this.addReuseButtonsToOldMessages();
         } catch (error) {
-            console.error(`Attempt ${attemptNumber + 1} failed:`, error);
+            console.error(
+                '[AIAssistant]',
+                `Attempt ${attemptNumber + 1} failed:`,
+                error
+            );
 
             // Add error message
             this.addMessage('error', `Execution error: ${error.message}`);
@@ -1505,7 +1528,10 @@ ${errorTraceback}
 import context
 context.generate_all_docs()
                 `);
-                console.log('Context API documentation cached');
+                console.log(
+                    '[AIAssistant]',
+                    'Context API documentation cached'
+                );
             } catch (error) {
                 console.warn(
                     'Could not generate context API docs, using fallback:',
@@ -1677,9 +1703,9 @@ Generate Python code for: ${userPrompt}`;
 
         // Log the full prompt to console for debugging
         console.group('👽 AI Prompt Sent to Claude');
-        console.log('System Prompt:', systemPrompt);
-        console.log('Messages:', messages);
-        console.log('Model:', model);
+        console.log('[AIAssistant]', 'System Prompt:', systemPrompt);
+        console.log('[AIAssistant]', 'Messages:', messages);
+        console.log('[AIAssistant]', 'Model:', model);
         console.groupEnd();
 
         if (!response.ok) {
@@ -2008,7 +2034,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const initAI = () => {
         if (window.pyodide) {
             window.aiAssistant = new AIAssistant();
-            console.log('AI Assistant initialized');
+            console.log('[AIAssistant]', 'AI Assistant initialized');
         } else {
             setTimeout(initAI, 500);
         }

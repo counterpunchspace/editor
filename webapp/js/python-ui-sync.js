@@ -13,7 +13,10 @@ let dirtyCheckTimeout = null;
  * while Python code is modifying font data.
  */
 function beforePythonExecution() {
-    console.log('🔒 UI updates paused (Python execution starting)');
+    console.log(
+        '[PythonUISync]',
+        '🔒 UI updates paused (Python execution starting)'
+    );
     // TODO: Pause outline editor canvas redraws
     // TODO: Disable dirty glyph tracking
 }
@@ -23,7 +26,10 @@ function beforePythonExecution() {
  * Use this to resume UI updates and check for dirty glyphs that need redrawing.
  */
 function afterPythonExecution() {
-    console.log('🔓 UI updates resumed (Python execution finished)');
+    console.log(
+        '[PythonUISync]',
+        '🔓 UI updates resumed (Python execution finished)'
+    );
     // TODO: Resume outline editor canvas redraws
     // TODO: Check for dirty glyphs and redraw if current glyph was modified
     // TODO: Call get_and_clear_dirty_glyphs() and update UI accordingly
@@ -31,6 +37,7 @@ function afterPythonExecution() {
     // Skip dirty checks if we're loading a font or if dropdown manager not ready
     if (isLoadingFont || !window.fontDropdownManager) {
         console.log(
+            '[PythonUISync]',
             '⏭️ Skipping dirty checks (loading font or dropdown not ready)'
         );
         return;

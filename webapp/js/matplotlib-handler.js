@@ -31,7 +31,10 @@
             !matplotlibModalBody ||
             !matplotlibModalCloseBtn
         ) {
-            console.warn('Matplotlib modal elements not found in DOM');
+            console.warn(
+                '[MatplotlibHandler]',
+                'Matplotlib modal elements not found in DOM'
+            );
             return;
         }
 
@@ -60,7 +63,10 @@
         // Set up MutationObserver to watch for matplotlib canvases
         setupCanvasObserver();
 
-        console.log('Matplotlib plot handler initialized');
+        console.log(
+            '[MatplotlibHandler]',
+            'Matplotlib plot handler initialized'
+        );
     }
 
     function setupCanvasObserver() {
@@ -78,6 +84,7 @@
                     // Check for matplotlib-figure custom elements (some backends)
                     if (node.nodeName === 'MATPLOTLIB-FIGURE') {
                         console.log(
+                            '[MatplotlibHandler]',
                             '📊 Detected matplotlib-figure element:',
                             node
                         );
@@ -95,6 +102,7 @@
                         // WebAgg creates a div with no id/class containing the plot
                         if (!node.id && !node.className) {
                             console.log(
+                                '[MatplotlibHandler]',
                                 '📊 Detected potential WebAgg plot div:',
                                 node
                             );
@@ -108,6 +116,7 @@
                             node.querySelectorAll('matplotlib-figure');
                         if (matplotlibFigures.length > 0) {
                             console.log(
+                                '[MatplotlibHandler]',
                                 '📊 Found matplotlib-figure elements in subtree:',
                                 matplotlibFigures
                             );
@@ -140,7 +149,11 @@
             return;
         }
 
-        console.log('Processing matplotlib-figure element:', figureElement);
+        console.log(
+            '[MatplotlibHandler]',
+            'Processing matplotlib-figure element:',
+            figureElement
+        );
         processedCanvases.add(figureElement);
 
         // Small delay to ensure the figure is fully rendered
@@ -164,6 +177,7 @@
         const canvases = div.querySelectorAll('canvas');
         if (canvases.length > 0) {
             console.log(
+                '[MatplotlibHandler]',
                 '📊 Confirmed WebAgg plot div with canvas:',
                 div,
                 canvases
@@ -181,6 +195,7 @@
         if (div.children.length >= 2) {
             // WebAgg creates a div with multiple children (toolbar, canvas, etc.)
             console.log(
+                '[MatplotlibHandler]',
                 '📊 Potential WebAgg plot div with multiple children:',
                 div
             );
@@ -231,6 +246,7 @@
         // If it's in the terminal and looks like a plot, it's probably matplotlib
         if (isInTerminal && canvas.width >= 100 && canvas.height >= 100) {
             console.log(
+                '[MatplotlibHandler]',
                 '📊 Detected matplotlib WebAgg canvas in terminal:',
                 canvas
             );
@@ -279,6 +295,7 @@
 
             if (hasContent) {
                 console.log(
+                    '[MatplotlibHandler]',
                     '📊 Detected matplotlib canvas with content:',
                     canvas
                 );
@@ -290,7 +307,7 @@
             }
         } catch (e) {
             // If we can't read the canvas (e.g., CORS), assume it's not a plot
-            console.warn('Could not analyze canvas:', e);
+            console.warn('[MatplotlibHandler]', 'Could not analyze canvas:', e);
             return false;
         }
 
@@ -299,7 +316,10 @@
 
     function showPlotInModal(element) {
         if (!matplotlibModalBody || !matplotlibModal) {
-            console.warn('Modal not initialized, cannot show plot');
+            console.warn(
+                '[MatplotlibHandler]',
+                'Modal not initialized, cannot show plot'
+            );
             return;
         }
 
@@ -318,7 +338,7 @@
         // Show the modal
         matplotlibModal.classList.add('active');
 
-        console.log('Plot displayed in modal overlay');
+        console.log('[MatplotlibHandler]', 'Plot displayed in modal overlay');
     }
 
     function closePlotModal() {
@@ -336,7 +356,7 @@
             }
         }, 300);
 
-        console.log('Plot modal closed');
+        console.log('[MatplotlibHandler]', 'Plot modal closed');
     }
 
     // Global function to manually show a plot
@@ -346,7 +366,10 @@
             processedCanvases.add(element);
             showPlotInModal(element);
         } else {
-            console.error('showMatplotlibPlot requires a DOM element');
+            console.error(
+                '[MatplotlibHandler]',
+                'showMatplotlibPlot requires a DOM element'
+            );
         }
     };
 

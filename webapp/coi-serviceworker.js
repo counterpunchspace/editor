@@ -124,7 +124,7 @@ function isCDNResource(url) {
 if (typeof window === 'undefined') {
     // Install event - cache essential assets
     self.addEventListener('install', (event) => {
-        console.log('[SW] Installing...');
+        console.log('[ServiceWorker]', '[SW] Installing...');
         event.waitUntil(
             // Cache local assets first (critical)
             caches
@@ -173,7 +173,7 @@ if (typeof window === 'undefined') {
                     });
                 })
                 .then(() => {
-                    console.log('[SW] ✅ App shell cached');
+                    console.log('[ServiceWorker]', '[SW] ✅ App shell cached');
                     // Cache CDN resources (non-blocking)
                     return caches.open(CDN_CACHE_NAME).then((cache) => {
                         console.log(
@@ -225,7 +225,11 @@ if (typeof window === 'undefined') {
                     return self.skipWaiting();
                 })
                 .catch((error) => {
-                    console.error('[SW] ❌ Cache failed:', error);
+                    console.error(
+                        '[ServiceWorker]',
+                        '[SW] ❌ Cache failed:',
+                        error
+                    );
                     // Still skip waiting even if caching partially failed
                     return self.skipWaiting();
                 })
@@ -369,7 +373,11 @@ if (typeof window === 'undefined') {
                         return modifiedResponse;
                     })
                     .catch((error) => {
-                        console.log('[SW] Fetch failed, using cache:', error);
+                        console.log(
+                            '[ServiceWorker]',
+                            '[SW] Fetch failed, using cache:',
+                            error
+                        );
                         // If fetch fails and we have cached version, return it with COI headers
                         if (cachedResponse) {
                             const newHeaders = new Headers(

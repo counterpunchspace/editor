@@ -6,12 +6,15 @@
  */
 async function loadExampleFonts() {
     if (!window.pyodide) {
-        console.error('Pyodide not available for loading examples');
+        console.error(
+            '[ExampleLoader]',
+            'Pyodide not available for loading examples'
+        );
         return;
     }
 
     try {
-        console.log('📦 Loading example fonts...');
+        console.log('[ExampleLoader]', '📦 Loading example fonts...');
 
         // Fetch the manifest
         const manifestResponse = await fetch(
@@ -19,13 +22,17 @@ async function loadExampleFonts() {
         );
         if (!manifestResponse.ok) {
             console.warn(
+                '[ExampleLoader]',
                 'No examples manifest found, skipping example loading'
             );
             return;
         }
 
         const manifest = await manifestResponse.json();
-        console.log(`Found ${manifest.examples.length} example(s) in manifest`);
+        console.log(
+            '[ExampleLoader]',
+            `Found ${manifest.examples.length} example(s) in manifest`
+        );
 
         // Ensure /user directory exists
         await window.pyodide.runPython(`
@@ -40,13 +47,17 @@ if not os.path.exists('/user'):
         for (const example of manifest.examples) {
             try {
                 console.log(
+                    '[ExampleLoader]',
                     `  Loading: ${example.source} → ${example.destination}`
                 );
 
                 // Fetch the example file
                 const fileResponse = await fetch(`./${example.source}`);
                 if (!fileResponse.ok) {
-                    console.warn(`  ⚠️ Failed to fetch ${example.source}`);
+                    console.warn(
+                        '[ExampleLoader]',
+                        `  ⚠️ Failed to fetch ${example.source}`
+                    );
                     continue;
                 }
 
@@ -61,16 +72,22 @@ if not os.path.exists('/user'):
                 );
 
                 console.log(
+                    '[ExampleLoader]',
                     `  ✅ Copied to ${example.destination} (${fileBytes.length} bytes)`
                 );
 
                 loadedCount++;
             } catch (error) {
-                console.error(`  ❌ Error loading ${example.source}:`, error);
+                console.error(
+                    '[ExampleLoader]',
+                    `  ❌ Error loading ${example.source}:`,
+                    error
+                );
             }
         }
 
         console.log(
+            '[ExampleLoader]',
             `✅ Loaded ${loadedCount}/${manifest.examples.length} example fonts`
         );
 
@@ -79,11 +96,11 @@ if not os.path.exists('/user'):
             window.refreshFileSystem();
         }
     } catch (error) {
-        console.error('Error loading example fonts:', error);
+        console.error('[ExampleLoader]', 'Error loading example fonts:', error);
     }
 }
 
 // Export the function
 window.loadExampleFonts = loadExampleFonts;
 
-console.log('✅ Example Loader module loaded');
+console.log('[ExampleLoader]', '✅ Example Loader module loaded');

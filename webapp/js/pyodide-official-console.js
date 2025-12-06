@@ -86,7 +86,7 @@ async function initPyodideConsole() {
             // Log command to browser console
             if (command && command.trim()) {
                 console.group('🐍 Python Console Command');
-                console.log(command);
+                console.log('[PyodideConsole]', command);
                 console.groupEnd();
             }
 
@@ -128,7 +128,10 @@ async function initPyodideConsole() {
                     }
 
                     // Log completion to browser console
-                    console.log('✅ Console command completed successfully');
+                    console.log(
+                        '[PyodideConsole]',
+                        '✅ Console command completed successfully'
+                    );
 
                     // Play done sound after successful execution
                     if (window.playSound) {
@@ -136,7 +139,11 @@ async function initPyodideConsole() {
                     }
                 } catch (e) {
                     // Log error to browser console
-                    console.error('❌ Console command failed:', e.message || e);
+                    console.error(
+                        '[PyodideConsole]',
+                        '❌ Console command failed:',
+                        e.message || e
+                    );
                     if (e.constructor.name === 'PythonError') {
                         const message = fut.formatted_error || e.message;
                         term.error(message.trimEnd());
@@ -204,7 +211,10 @@ async function initPyodideConsole() {
             const consoleContainer =
                 document.getElementById('console-container');
 
-            console.log('Setting up wheel handler for console-container');
+            console.log(
+                '[PyodideConsole]',
+                'Setting up wheel handler for console-container'
+            );
 
             if (consoleContainer) {
                 consoleContainer.addEventListener(
@@ -213,7 +223,11 @@ async function initPyodideConsole() {
                         e.preventDefault();
                         e.stopPropagation();
 
-                        console.log('Wheel event captured, deltaY:', e.deltaY);
+                        console.log(
+                            '[PyodideConsole]',
+                            'Wheel event captured, deltaY:',
+                            e.deltaY
+                        );
 
                         // Find the actual scrollable element - could be terminal-scroller or terminal-output
                         let scrollableElement =
@@ -240,11 +254,15 @@ async function initPyodideConsole() {
                         }
 
                         if (!scrollableElement) {
-                            console.log('No scrollable element found');
+                            console.log(
+                                '[PyodideConsole]',
+                                'No scrollable element found'
+                            );
                             return;
                         }
 
                         console.log(
+                            '[PyodideConsole]',
                             'Scrolling element:',
                             scrollableElement.className,
                             'current scrollTop:',
@@ -255,6 +273,7 @@ async function initPyodideConsole() {
                         const scrollAmount = e.deltaY / 2;
                         scrollableElement.scrollTop += scrollAmount;
                         console.log(
+                            '[PyodideConsole]',
                             'Scrolled to:',
                             scrollableElement.scrollTop
                         );
@@ -274,7 +293,11 @@ async function initPyodideConsole() {
                 errorSound
                     .play()
                     .catch((e) =>
-                        console.warn('Could not play error sound:', e)
+                        console.warn(
+                            '[PyodideConsole]',
+                            'Could not play error sound:',
+                            e
+                        )
                     );
             }
         };
@@ -282,7 +305,11 @@ async function initPyodideConsole() {
         pyconsole.stdout_callback = (s) => {
             // Filter system messages from interactive console too
             if (isSystemMessage(s)) {
-                console.log('[Pyodide Interactive]:', s.trim());
+                console.log(
+                    '[PyodideConsole]',
+                    '[Pyodide Interactive]:',
+                    s.trim()
+                );
                 return;
             }
             echo(s, { newline: false });
@@ -290,7 +317,11 @@ async function initPyodideConsole() {
         pyconsole.stderr_callback = (s) => {
             // Filter stderr system messages from interactive console
             if (isSystemMessage(s)) {
-                console.warn('[Pyodide Interactive]:', s.trim());
+                console.warn(
+                    '[PyodideConsole]',
+                    '[Pyodide Interactive]:',
+                    s.trim()
+                );
                 return;
             }
             term.error(s.trimEnd());
@@ -341,7 +372,11 @@ async function initPyodideConsole() {
             batched: (s) => {
                 // Filter out system messages - send them to browser console instead
                 if (isSystemMessage(s)) {
-                    console.log('[Pyodide System]:', s.trim());
+                    console.log(
+                        '[PyodideConsole]',
+                        '[Pyodide System]:',
+                        s.trim()
+                    );
                     return;
                 }
 
@@ -357,7 +392,11 @@ async function initPyodideConsole() {
             batched: (s) => {
                 // Filter stderr system messages too
                 if (isSystemMessage(s)) {
-                    console.warn('[Pyodide System]:', s.trim());
+                    console.warn(
+                        '[PyodideConsole]',
+                        '[Pyodide System]:',
+                        s.trim()
+                    );
                     return;
                 }
                 term.error(s.trimEnd());
@@ -454,7 +493,11 @@ async function initPyodideConsole() {
         // Focus on terminal
         term.focus();
     } catch (error) {
-        console.error('Error initializing Pyodide console:', error);
+        console.error(
+            '[PyodideConsole]',
+            'Error initializing Pyodide console:',
+            error
+        );
         document.getElementById('loading').innerHTML = `
       <div style="color: red; padding: 20px;">
         Error loading Python console: ${error.message}
@@ -481,7 +524,7 @@ window.clearConsole = function () {
         }
     }
 
-    console.warn('Console terminal not yet initialized');
+    console.warn('[PyodideConsole]', 'Console terminal not yet initialized');
     return false;
 };
 

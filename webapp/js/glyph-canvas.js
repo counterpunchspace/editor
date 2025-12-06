@@ -5,7 +5,10 @@ class GlyphCanvas {
     constructor(containerId) {
         this.container = document.getElementById(containerId);
         if (!this.container) {
-            console.error(`Container ${containerId} not found`);
+            console.error(
+                '[GlyphCanvas]',
+                `Container ${containerId} not found`
+            );
             return;
         }
 
@@ -166,6 +169,7 @@ class GlyphCanvas {
         // Keyboard events for cursor and text input
         this.canvas.addEventListener('keydown', (e) => {
             console.log(
+                '[GlyphCanvas]',
                 'keydown:',
                 e.key,
                 e.code,
@@ -189,6 +193,7 @@ class GlyphCanvas {
         });
         this.canvas.addEventListener('keyup', (e) => {
             console.log(
+                '[GlyphCanvas]',
                 'keyup:',
                 e.key,
                 e.code,
@@ -204,7 +209,7 @@ class GlyphCanvas {
 
             // Track Cmd key release
             if (e.key === 'Meta') {
-                console.log('  -> Releasing Cmd key');
+                console.log('[GlyphCanvas]', '  -> Releasing Cmd key');
                 this.cmdKeyPressed = false;
                 // Stop panning if it was active
                 if (this.isDraggingCanvas) {
@@ -213,7 +218,10 @@ class GlyphCanvas {
                 // Exit preview mode when Cmd is released if we're in preview mode
                 // This handles the case where Space keyup doesn't fire due to browser/OS issues
                 if (this.isPreviewMode && this.isGlyphEditMode) {
-                    console.log('  -> Exiting preview mode on Cmd release');
+                    console.log(
+                        '[GlyphCanvas]',
+                        '  -> Exiting preview mode on Cmd release'
+                    );
                     this.isPreviewMode = false;
                     this.spaceKeyPressed = false; // Also reset Space state since keyup might not fire
                     // Schedule the state update and render in the next frame to batch everything
@@ -221,6 +229,7 @@ class GlyphCanvas {
                     if (this.spaceKeyPressed) {
                         this.isPreviewMode = true;
                         console.log(
+                            '[GlyphCanvas]',
                             '  -> Re-entering preview mode due to Space key still pressed'
                         );
                     }
@@ -231,7 +240,7 @@ class GlyphCanvas {
 
             // Track Space key release
             if (e.code === 'Space') {
-                console.log('  -> Releasing Space key');
+                console.log('[GlyphCanvas]', '  -> Releasing Space key');
                 this.spaceKeyPressed = false;
             }
 
@@ -495,6 +504,7 @@ class GlyphCanvas {
                                     );
                             }
                             console.log(
+                                '[GlyphCanvas]',
                                 'Saved previous glyph vertical bounds:',
                                 {
                                     fontSpaceMinY,
@@ -504,6 +514,7 @@ class GlyphCanvas {
                         }
                     } catch (error) {
                         console.warn(
+                            '[GlyphCanvas]',
                             'Could not save previous glyph bounds:',
                             error
                         );
@@ -525,6 +536,7 @@ class GlyphCanvas {
                 // Check if this selection is still current (not superseded by a newer one)
                 if (currentSequence !== this.glyphSelectionSequence) {
                     console.log(
+                        '[GlyphCanvas]',
                         'Glyph selection superseded, skipping render/pan for sequence',
                         currentSequence
                     );
@@ -574,6 +586,7 @@ class GlyphCanvas {
         // Check for double-click
         if (e.detail === 2) {
             console.log(
+                '[GlyphCanvas]',
                 'Double-click detected. isGlyphEditMode:',
                 this.isGlyphEditMode,
                 'selectedLayerId:',
@@ -590,6 +603,7 @@ class GlyphCanvas {
                 // Double-click on component - enter component editing (without selecting it)
                 if (this.hoveredComponentIndex !== null) {
                     console.log(
+                        '[GlyphCanvas]',
                         'Entering component editing for index:',
                         this.hoveredComponentIndex
                     );
@@ -789,6 +803,7 @@ class GlyphCanvas {
         // Start canvas panning when Cmd key is pressed
         if (this.cmdKeyPressed) {
             console.log(
+                '[GlyphCanvas]',
                 'Starting canvas panning, cmdKeyPressed:',
                 this.cmdKeyPressed
             );
@@ -798,6 +813,7 @@ class GlyphCanvas {
             this.canvas.style.cursor = 'grabbing';
         } else {
             console.log(
+                '[GlyphCanvas]',
                 'Not starting panning, cmdKeyPressed:',
                 this.cmdKeyPressed
             );
@@ -1402,7 +1418,10 @@ class GlyphCanvas {
         this.saveLayerData();
         this.render();
 
-        console.log(`Toggled point smooth: ${type} -> ${newType}`);
+        console.log(
+            '[GlyphCanvas]',
+            `Toggled point smooth: ${type} -> ${newType}`
+        );
     }
 
     onResize() {
@@ -1412,7 +1431,7 @@ class GlyphCanvas {
 
     setFont(fontArrayBuffer) {
         if (!fontArrayBuffer) {
-            console.error('No font data provided');
+            console.error('[GlyphCanvas]', 'No font data provided');
             return;
         }
 
@@ -1429,6 +1448,7 @@ class GlyphCanvas {
                 this.featuresManager.opentypeFont = this.opentypeFont;
                 this.textRunEditor.opentypeFont = this.opentypeFont;
                 console.log(
+                    '[GlyphCanvas]',
                     'Font parsed with opentype.js:',
                     this.opentypeFont.names.fontFamily.en
                 );
@@ -1445,7 +1465,10 @@ class GlyphCanvas {
 
                     // Update axes UI (will restore slider positions from variationSettings)
                     this.axesManager.updateAxesUI();
-                    console.log('Updated axes UI after font load');
+                    console.log(
+                        '[GlyphCanvas]',
+                        'Updated axes UI after font load'
+                    );
 
                     // Update features UI (async, then shape text)
                     this.featuresManager.updateFeaturesUI().then(() => {
@@ -1454,7 +1477,7 @@ class GlyphCanvas {
                     });
                 });
         } catch (error) {
-            console.error('Error setting font:', error);
+            console.error('[GlyphCanvas]', 'Error setting font:', error);
         }
     }
 
@@ -1465,11 +1488,13 @@ class GlyphCanvas {
 
         if (glyphIndex >= 0) {
             console.log(
+                '[GlyphCanvas]',
                 `Entering glyph edit mode at cursor position ${this.textRunEditor.cursorPosition}, glyph index ${glyphIndex}`
             );
             await this.textRunEditor.selectGlyphByIndex(glyphIndex);
         } else {
             console.log(
+                '[GlyphCanvas]',
                 `No glyph found at cursor position ${this.textRunEditor.cursorPosition}`
             );
         }
@@ -1483,6 +1508,7 @@ class GlyphCanvas {
 
         const glyph = this.textRunEditor.shapedGlyphs[savedGlyphIndex];
         console.log(
+            '[GlyphCanvas]',
             '[v2024-12-01-FIX] exitGlyphEditMode CALLED - selectedGlyphIndex:',
             this.textRunEditor.selectedGlyphIndex,
             'shapedGlyphs.length:',
@@ -1502,6 +1528,7 @@ class GlyphCanvas {
             const isRTL = this.textRunEditor.isPositionRTL(clusterStart);
 
             console.log(
+                '[GlyphCanvas]',
                 'Exit glyph edit mode [v2024-12-01-FIX] - glyphInfo:',
                 glyphInfo,
                 'clusterStart:',
@@ -1515,6 +1542,7 @@ class GlyphCanvas {
                 // (which is the space before the character, where we entered from)
                 this.textRunEditor.cursorPosition = glyphInfo.logicalPosition;
                 console.log(
+                    '[GlyphCanvas]',
                     'Typed character - set cursor position at logical position:',
                     this.textRunEditor.cursorPosition
                 );
@@ -1522,6 +1550,7 @@ class GlyphCanvas {
                 // For shaped glyphs, position cursor at the cluster start
                 this.textRunEditor.cursorPosition = clusterStart;
                 console.log(
+                    '[GlyphCanvas]',
                     'Shaped glyph - set cursor position at cluster start:',
                     this.textRunEditor.cursorPosition
                 );
@@ -1540,7 +1569,10 @@ class GlyphCanvas {
         this.isDraggingPoint = false;
         this.layerDataDirty = false;
 
-        console.log(`Exited glyph edit mode - returned to text edit mode`);
+        console.log(
+            '[GlyphCanvas]',
+            `Exited glyph edit mode - returned to text edit mode`
+        );
         this.updatePropertiesUI();
         this.render();
     }
@@ -1632,7 +1664,11 @@ json.dumps(result)
 
             return JSON.parse(dataJson);
         } catch (error) {
-            console.error('Error fetching glyph data from Python:', error);
+            console.error(
+                '[GlyphCanvas]',
+                'Error fetching glyph data from Python:',
+                error
+            );
             return null;
         }
     }
@@ -1778,6 +1814,7 @@ json.dumps(result)
                 }
                 this.updateLayerSelection();
                 console.log(
+                    '[GlyphCanvas]',
                     `Auto-selected layer: ${layer.name || 'Default'} (${layer.id})`
                 );
                 return;
@@ -1791,7 +1828,7 @@ json.dumps(result)
             this.selectedPointIndex = null;
             this.hoveredPointIndex = null;
             this.updateLayerSelection();
-            console.log('No matching layer - deselected');
+            console.log('[GlyphCanvas]', 'No matching layer - deselected');
         }
     }
 
@@ -1802,9 +1839,16 @@ json.dumps(result)
         this.previousVariationSettings = null;
 
         this.selectedLayerId = layer.id;
-        console.log(`Selected layer: ${layer.name} (ID: ${layer.id})`);
-        console.log('Layer data:', layer);
-        console.log('Available masters:', this.fontData.masters);
+        console.log(
+            '[GlyphCanvas]',
+            `Selected layer: ${layer.name} (ID: ${layer.id})`
+        );
+        console.log('[GlyphCanvas]', 'Layer data:', layer);
+        console.log(
+            '[GlyphCanvas]',
+            'Available masters:',
+            this.fontData.masters
+        );
 
         // Fetch layer data now, whether editing component or not
         // This ensures new outlines load before animation starts
@@ -1820,15 +1864,25 @@ json.dumps(result)
             (m) => m.id === layer._master
         );
         if (!master || !master.location) {
-            console.warn('No master location found for layer', {
-                layer_master: layer._master,
-                available_master_ids: this.fontData.masters.map((m) => m.id),
-                master_found: master
-            });
+            console.warn(
+                '[GlyphCanvas]',
+                'No master location found for layer',
+                {
+                    layer_master: layer._master,
+                    available_master_ids: this.fontData.masters.map(
+                        (m) => m.id
+                    ),
+                    master_found: master
+                }
+            );
             return;
         }
 
-        console.log(`Setting axis values to master location:`, master.location);
+        console.log(
+            '[GlyphCanvas]',
+            `Setting axis values to master location:`,
+            master.location
+        );
 
         // Set up animation to all axes at once
         const newSettings = {};
@@ -1922,7 +1976,10 @@ json.dumps(result)
     async fetchLayerData() {
         // If we're editing a component, refresh the component's layer data for the new layer
         if (this.componentStack.length > 0) {
-            console.log('Refreshing component layer data for new layer');
+            console.log(
+                '[GlyphCanvas]',
+                'Refreshing component layer data for new layer'
+            );
             await this.refreshComponentStack();
             return;
         }
@@ -1944,6 +2001,7 @@ json.dumps(result)
             if (window.fontManager && window.fontManager.babelfontData) {
                 glyphName = window.fontManager.getGlyphName(glyphId);
                 console.log(
+                    '[GlyphCanvas]',
                     `🔍 Fetching layer data for glyph: "${glyphName}" (GID ${glyphId}), layer: ${this.selectedLayerId}`
                 );
             } else if (
@@ -1956,6 +2014,7 @@ json.dumps(result)
                     glyphName = glyph.name;
                 }
                 console.log(
+                    '[GlyphCanvas]',
                     `🔍 Fetching layer data for glyph: "${glyphName}" (GID ${glyphId}, production name), layer: ${this.selectedLayerId}`
                 );
             }
@@ -2082,10 +2141,14 @@ json.dumps(result)
                 parseComponentNodes(this.layerData.shapes);
             }
 
-            console.log('Fetched layer data:', this.layerData);
+            console.log('[GlyphCanvas]', 'Fetched layer data:', this.layerData);
             this.render();
         } catch (error) {
-            console.error('Error fetching layer data from Python:', error);
+            console.error(
+                '[GlyphCanvas]',
+                'Error fetching layer data from Python:',
+                error
+            );
             this.layerData = null;
         }
     }
@@ -2159,6 +2222,7 @@ json.dumps(result)
             return JSON.parse(dataJson);
         } catch (error) {
             console.error(
+                '[GlyphCanvas]',
                 'Error fetching component layer data from Python:',
                 error
             );
@@ -2264,9 +2328,13 @@ except Exception as e:
     traceback.print_exc()
 `);
 
-            console.log('Layer data saved successfully');
+            console.log('[GlyphCanvas]', 'Layer data saved successfully');
         } catch (error) {
-            console.error('Error saving layer data to Python:', error);
+            console.error(
+                '[GlyphCanvas]',
+                'Error saving layer data to Python:',
+                error
+            );
         }
     }
 
@@ -2279,7 +2347,7 @@ except Exception as e:
 
         const componentShape = this.layerData.shapes[componentIndex];
         if (!componentShape.Component || !componentShape.Component.reference) {
-            console.log('Component has no reference');
+            console.log('[GlyphCanvas]', 'Component has no reference');
             return;
         }
 
@@ -2289,13 +2357,18 @@ except Exception as e:
         );
         if (!componentLayerData) {
             console.error(
+                '[GlyphCanvas]',
                 'Failed to fetch component layer data for:',
                 componentShape.Component.reference
             );
             return;
         }
 
-        console.log('Fetched component layer data:', componentLayerData);
+        console.log(
+            '[GlyphCanvas]',
+            'Fetched component layer data:',
+            componentLayerData
+        );
 
         // Recursively parse nodes in component layer data (including nested components)
         const parseComponentNodes = (shapes) => {
@@ -2318,6 +2391,7 @@ except Exception as e:
 
                     shape.nodes = nodesArray;
                     console.log(
+                        '[GlyphCanvas]',
                         'Parsed shape nodes:',
                         nodesArray.length,
                         'nodes'
@@ -2340,6 +2414,7 @@ except Exception as e:
         }
 
         console.log(
+            '[GlyphCanvas]',
             'About to set layerData to component data. Current shapes:',
             this.layerData?.shapes?.length,
             '-> New shapes:',
@@ -2401,6 +2476,7 @@ except Exception as e:
         });
 
         console.log(
+            '[GlyphCanvas]',
             `Pushed to stack. Stack depth: ${this.componentStack.length}, storing glyphName: ${currentGlyphName}`
         );
 
@@ -2409,6 +2485,7 @@ except Exception as e:
         this.layerData = componentLayerData;
 
         console.log(
+            '[GlyphCanvas]',
             'Set layerData to component. this.layerData.shapes.length:',
             this.layerData?.shapes?.length
         );
@@ -2422,6 +2499,7 @@ except Exception as e:
         this.hoveredComponentIndex = null;
 
         console.log(
+            '[GlyphCanvas]',
             `Entered component editing: ${componentShape.Component.reference}, stack depth: ${this.componentStack.length}`
         );
 
@@ -2446,6 +2524,7 @@ except Exception as e:
         }
 
         console.log(
+            '[GlyphCanvas]',
             'Refreshing component stack for new layer, stack depth:',
             this.componentStack.length
         );
@@ -2541,6 +2620,7 @@ json.dumps(result)
 
             this.layerData = JSON.parse(dataJson);
             console.log(
+                '[GlyphCanvas]',
                 'Fetched root layer data with',
                 this.layerData?.shapes?.length || 0,
                 'shapes'
@@ -2550,6 +2630,7 @@ json.dumps(result)
             for (const componentIndex of componentPath) {
                 if (!this.layerData || !this.layerData.shapes[componentIndex]) {
                     console.error(
+                        '[GlyphCanvas]',
                         'Failed to refresh component stack - component not found at index',
                         componentIndex
                     );
@@ -2560,6 +2641,7 @@ json.dumps(result)
             }
 
             console.log(
+                '[GlyphCanvas]',
                 'Component stack refreshed, new depth:',
                 this.componentStack.length
             );
@@ -2569,7 +2651,11 @@ json.dumps(result)
             await this.updatePropertiesUI();
             this.render();
         } catch (error) {
-            console.error('Error refreshing component stack:', error);
+            console.error(
+                '[GlyphCanvas]',
+                'Error refreshing component stack:',
+                error
+            );
         }
     }
 
@@ -2593,6 +2679,7 @@ json.dumps(result)
         this.hoveredComponentIndex = null;
 
         console.log(
+            '[GlyphCanvas]',
             `Exited component editing, stack depth: ${this.componentStack.length}`
         );
 
@@ -2861,6 +2948,7 @@ json.dumps(result)
                 glyphY = (a * localY - b * localX) / det;
             }
             console.log(
+                '[GlyphCanvas]',
                 `transformMouseToComponentSpace: before inverse=(${glyphXBeforeInverse}, ${glyphYBeforeInverse}), after inverse=(${glyphX}, ${glyphY}), accumulated transform=[${compTransform}]`
             );
         }
@@ -2874,6 +2962,7 @@ json.dumps(result)
         // Returns null if no glyph is selected or no layer data is available
 
         console.log(
+            '[GlyphCanvas]',
             'calculateGlyphBoundingBox: isGlyphEditMode=',
             this.isGlyphEditMode,
             'layerData=',
@@ -2885,6 +2974,7 @@ json.dumps(result)
         }
 
         console.log(
+            '[GlyphCanvas]',
             'calculateGlyphBoundingBox: layerData.shapes=',
             this.layerData.shapes,
             'layerData.width=',
@@ -2976,6 +3066,7 @@ json.dumps(result)
             const height = 10;
 
             console.log(
+                '[GlyphCanvas]',
                 'calculateGlyphBoundingBox: No points found, creating bbox for empty glyph. width=',
                 glyphWidth
             );
@@ -2990,12 +3081,16 @@ json.dumps(result)
             };
         }
 
-        console.log('calculateGlyphBoundingBox: Found points, bbox=', {
-            minX,
-            minY,
-            maxX,
-            maxY
-        });
+        console.log(
+            '[GlyphCanvas]',
+            'calculateGlyphBoundingBox: Found points, bbox=',
+            {
+                minX,
+                minY,
+                maxX,
+                maxY
+            }
+        );
 
         return {
             minX,
@@ -3050,6 +3145,7 @@ json.dumps(result)
             glyphIndex >= this.textRunEditor.shapedGlyphs.length
         ) {
             console.log(
+                '[GlyphCanvas]',
                 'panToGlyph: early return - not in edit mode or invalid index',
                 {
                     isGlyphEditMode: this.isGlyphEditMode,
@@ -3062,13 +3158,16 @@ json.dumps(result)
 
         // Check if we have layer data (needed for bbox calculation)
         if (!this.selectedLayerId || !this.layerData) {
-            console.log('panToGlyph: no layer data yet, skipping pan');
+            console.log(
+                '[GlyphCanvas]',
+                'panToGlyph: no layer data yet, skipping pan'
+            );
             return;
         }
 
         const bounds = this.calculateGlyphBoundingBox();
         if (!bounds) {
-            console.log('panToGlyph: no bounds calculated');
+            console.log('[GlyphCanvas]', 'panToGlyph: no bounds calculated');
             return;
         }
 
@@ -3140,11 +3239,15 @@ json.dumps(result)
 
         this.textChangeDebounceTimer = setTimeout(() => {
             if (window.fontManager && window.fontManager.isReady()) {
-                console.log('🔄 Text changed, recompiling editing font...');
+                console.log(
+                    '[GlyphCanvas]',
+                    '🔄 Text changed, recompiling editing font...'
+                );
                 window.fontManager
                     .compileEditingFont(this.textRunEditor.textBuffer)
                     .catch((error) => {
                         console.error(
+                            '[GlyphCanvas]',
                             'Failed to recompile editing font:',
                             error
                         );
@@ -3633,7 +3736,10 @@ json.dumps(result)
             typeof APP_SETTINGS === 'undefined' ||
             !APP_SETTINGS.OUTLINE_EDITOR
         ) {
-            console.error('APP_SETTINGS not available in drawOutlineEditor!');
+            console.error(
+                '[GlyphCanvas]',
+                'APP_SETTINGS not available in drawOutlineEditor!'
+            );
             return;
         }
 
@@ -3673,6 +3779,7 @@ json.dumps(result)
         if (this.componentStack.length > 0) {
             const transform = this.getAccumulatedTransform();
             console.log(
+                '[GlyphCanvas]',
                 `drawOutlineEditor: componentStack.length=${this.componentStack.length}, accumulated transform=[${transform}]`
             );
             this.ctx.transform(
@@ -3734,7 +3841,11 @@ json.dumps(result)
                         this.ctx.stroke(path);
                     }
                 } catch (error) {
-                    console.error('Failed to draw parent glyph:', error);
+                    console.error(
+                        '[GlyphCanvas]',
+                        'Failed to draw parent glyph:',
+                        error
+                    );
                 }
             }
 
@@ -3793,6 +3904,7 @@ json.dumps(result)
 
         // Draw each shape (contour or component)
         console.log(
+            '[GlyphCanvas]',
             'Drawing shapes. Component stack depth:',
             this.componentStack.length,
             'layerData.shapes.length:',
@@ -3803,6 +3915,7 @@ json.dumps(result)
         if (this.layerData.shapes && Array.isArray(this.layerData.shapes)) {
             this.layerData.shapes.forEach((shape, contourIndex) => {
                 console.log(
+                    '[GlyphCanvas]',
                     'Drawing shape',
                     contourIndex,
                     ':',
@@ -4120,6 +4233,7 @@ json.dumps(result)
                 }
 
                 console.log(
+                    '[GlyphCanvas]',
                     `Component ${index}: reference="${shape.Component.reference}", has layerData=${!!shape.Component.layerData}, shapes=${shape.Component.layerData?.shapes?.length || 0}`
                 );
 
@@ -4636,6 +4750,7 @@ json.dumps(result)
 
     onKeyUp(e) {
         console.log(
+            '[GlyphCanvas]',
             'onKeyUp called:',
             e.code,
             'isGlyphEditMode:',
@@ -4645,11 +4760,15 @@ json.dumps(result)
         );
         // Handle space bar release to exit preview mode
         if (e.code === 'Space' && this.isGlyphEditMode && this.isPreviewMode) {
-            console.log('  -> Exiting preview mode from Space release');
+            console.log(
+                '[GlyphCanvas]',
+                '  -> Exiting preview mode from Space release'
+            );
             this.isPreviewMode = false;
             this.render();
         } else if (e.code === 'Space') {
             console.log(
+                '[GlyphCanvas]',
                 '  -> Space released but not exiting preview:',
                 'isGlyphEditMode:',
                 this.isGlyphEditMode,
@@ -4854,9 +4973,10 @@ json.dumps(result)
         const range = this.textRunEditor.getSelectionRange();
         const invScale = 1 / this.viewportManager.scale;
 
-        console.log('=== Drawing Selection ===');
-        console.log('Selection range:', range);
+        console.log('[GlyphCanvas]', '=== Drawing Selection ===');
+        console.log('[GlyphCanvas]', 'Selection range:', range);
         console.log(
+            '[GlyphCanvas]',
             'Text:',
             `"${this.textRunEditor.textBuffer.slice(range.start, range.end)}"`
         );
@@ -4875,6 +4995,7 @@ json.dumps(result)
             }
 
             console.log(
+                '[GlyphCanvas]',
                 `Drawing selection for cluster [${clusterStart}-${clusterEnd}), RTL=${cluster.isRTL}, x=${cluster.x.toFixed(0)}, width=${cluster.width.toFixed(0)}`
             );
 
@@ -4883,7 +5004,10 @@ json.dumps(result)
             const selStart = Math.max(range.start, clusterStart);
             const selEnd = Math.min(range.end, clusterEnd);
 
-            console.log(`  Selection overlap: [${selStart}-${selEnd})`);
+            console.log(
+                '[GlyphCanvas]',
+                `  Selection overlap: [${selStart}-${selEnd})`
+            );
 
             // Check if we're selecting the entire cluster or just part of it
             const isFullySelected =
@@ -4898,6 +5022,7 @@ json.dumps(result)
                 highlightX = cluster.x;
                 highlightWidth = cluster.width;
                 console.log(
+                    '[GlyphCanvas]',
                     `  Full cluster selected: x=${highlightX.toFixed(0)}, width=${highlightWidth.toFixed(0)}`
                 );
             } else if (cluster.isRTL) {
@@ -4918,6 +5043,7 @@ json.dumps(result)
                     highlightX = Math.min(startX, endX);
                     highlightWidth = Math.abs(startX - endX);
                     console.log(
+                        '[GlyphCanvas]',
                         `  RTL partial (multi-char): progress ${startProgress.toFixed(2)}-${endProgress.toFixed(2)}, x=${highlightX.toFixed(0)}, width=${highlightWidth.toFixed(0)}`
                     );
                 } else {
@@ -4925,6 +5051,7 @@ json.dumps(result)
                     highlightX = cluster.x;
                     highlightWidth = cluster.width;
                     console.log(
+                        '[GlyphCanvas]',
                         `  RTL partial (single-char): x=${highlightX.toFixed(0)}, width=${highlightWidth.toFixed(0)}`
                     );
                 }
@@ -4942,6 +5069,7 @@ json.dumps(result)
                     highlightWidth =
                         cluster.width * (endProgress - startProgress);
                     console.log(
+                        '[GlyphCanvas]',
                         `  LTR partial (multi-char): progress ${startProgress.toFixed(2)}-${endProgress.toFixed(2)}, x=${highlightX.toFixed(0)}, width=${highlightWidth.toFixed(0)}`
                     );
                 } else {
@@ -4949,6 +5077,7 @@ json.dumps(result)
                     highlightX = cluster.x;
                     highlightWidth = cluster.width;
                     console.log(
+                        '[GlyphCanvas]',
                         `  LTR partial (single-char): x=${highlightX.toFixed(0)}, width=${highlightWidth.toFixed(0)}`
                     );
                 }
@@ -4958,7 +5087,7 @@ json.dumps(result)
             this.ctx.fillRect(highlightX, -300, highlightWidth, 1300);
         }
 
-        console.log('========================');
+        console.log('[GlyphCanvas]', '========================');
     }
 
     isCursorVisible() {
@@ -5038,6 +5167,7 @@ json.dumps(result)
         const invScale = 1 / this.viewportManager.scale;
 
         console.log(
+            '[GlyphCanvas]',
             `Drawing cursor at x=${this.textRunEditor.cursorX.toFixed(
                 0
             )} for logical position ${this.textRunEditor.cursorPosition}`
@@ -5179,7 +5309,7 @@ function initCanvas() {
         // Set up editor shortcuts modal
         setupEditorShortcutsModal();
 
-        console.log('Glyph canvas initialized');
+        console.log('[GlyphCanvas]', 'Glyph canvas initialized');
     } else {
         setTimeout(initCanvas, 100);
     }
@@ -5195,26 +5325,40 @@ if (typeof document !== 'undefined' && document.addEventListener) {
 
 // Set up listener for compiled fonts
 function setupFontLoadingListener() {
-    console.log('🔧 Setting up font loading listeners...');
+    console.log('[GlyphCanvas]', '🔧 Setting up font loading listeners...');
 
     // Listen for editing font compiled by font manager (primary)
     window.addEventListener(
         'editingFontCompiled',
         async (/** @type {any} */ e) => {
-            console.log('✅ Editing font compiled event received');
-            console.log('   Event detail:', e.detail);
-            console.log('   Canvas exists:', !!window.glyphCanvas);
+            console.log(
+                '[GlyphCanvas]',
+                '✅ Editing font compiled event received'
+            );
+            console.log('[GlyphCanvas]', '   Event detail:', e.detail);
+            console.log(
+                '[GlyphCanvas]',
+                '   Canvas exists:',
+                !!window.glyphCanvas
+            );
             if (window.glyphCanvas && e.detail && e.detail.fontBytes) {
-                console.log('   Loading editing font into canvas...');
+                console.log(
+                    '[GlyphCanvas]',
+                    '   Loading editing font into canvas...'
+                );
                 const arrayBuffer = e.detail.fontBytes.buffer.slice(
                     e.detail.fontBytes.byteOffset,
                     e.detail.fontBytes.byteOffset +
                         e.detail.fontBytes.byteLength
                 );
                 window.glyphCanvas.setFont(arrayBuffer);
-                console.log('   ✅ Editing font loaded into canvas');
+                console.log(
+                    '[GlyphCanvas]',
+                    '   ✅ Editing font loaded into canvas'
+                );
             } else {
                 console.warn(
+                    '[GlyphCanvas]',
                     '   ⚠️ Cannot load font - missing canvas or fontBytes'
                 );
             }
@@ -5223,7 +5367,7 @@ function setupFontLoadingListener() {
 
     // Legacy: Custom event when font is compiled via compile button
     window.addEventListener('fontCompiled', async (/** @type {any} */ e) => {
-        console.log('Font compiled event received (legacy)');
+        console.log('[GlyphCanvas]', 'Font compiled event received (legacy)');
         if (window.glyphCanvas && e.detail && e.detail.ttfBytes) {
             const arrayBuffer = e.detail.ttfBytes.buffer.slice(
                 e.detail.ttfBytes.byteOffset,
@@ -5235,7 +5379,7 @@ function setupFontLoadingListener() {
 
     // Also check for fonts loaded from file system
     window.addEventListener('fontLoaded', async (e) => {
-        console.log('Font loaded event received');
+        console.log('[GlyphCanvas]', 'Font loaded event received');
         if (window.glyphCanvas && window.pyodide) {
             try {
                 // Try to find a compiled TTF in the file system
@@ -5259,7 +5403,7 @@ else:
                 `);
 
                 if (result) {
-                    console.log('Found TTF file:', result);
+                    console.log('[GlyphCanvas]', 'Found TTF file:', result);
                     const fontBytes = window.pyodide.FS.readFile(result);
                     const arrayBuffer = fontBytes.buffer.slice(
                         fontBytes.byteOffset,
@@ -5268,7 +5412,11 @@ else:
                     window.glyphCanvas.setFont(arrayBuffer);
                 }
             } catch (error) {
-                console.error('Error loading font from file system:', error);
+                console.error(
+                    '[GlyphCanvas]',
+                    'Error loading font from file system:',
+                    error
+                );
             }
         }
     });
