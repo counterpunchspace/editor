@@ -176,7 +176,7 @@
                         title="New version available - click to reload"
                     >
                         <span class="material-symbols-rounded"
-                            >system_update</span
+                            >autorenew</span
                         >
                     </button>
                 </h1>
@@ -1152,6 +1152,25 @@
                                             window.location.reload();
                                         };
                                     }
+                                }
+                            }
+                        );
+
+                        // Listen for controller change (new SW taking control)
+                        navigator.serviceWorker.addEventListener(
+                            'controllerchange',
+                            () => {
+                                console.log(
+                                    '[PWA] 🔄 New service worker activated'
+                                );
+                                // Show update button
+                                const updateBtn =
+                                    document.getElementById('update-app-btn');
+                                if (updateBtn) {
+                                    updateBtn.style.display = 'inline-flex';
+                                    updateBtn.onclick = () => {
+                                        window.location.reload();
+                                    };
                                 }
                             }
                         );

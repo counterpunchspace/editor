@@ -225,17 +225,6 @@ if (typeof window === 'undefined') {
                     });
                     return self.skipWaiting();
                 })
-                .then(() => {
-                    // Notify clients that a new version is available
-                    self.clients.matchAll().then((clients) => {
-                        clients.forEach((client) => {
-                            client.postMessage({
-                                type: 'SW_UPDATED',
-                                cacheName: CACHE_NAME
-                            });
-                        });
-                    });
-                })
                 .catch((error) => {
                     console.error(
                         '[ServiceWorker]',
@@ -269,6 +258,18 @@ if (typeof window === 'undefined') {
                     );
                 })
                 .then(() => self.clients.claim())
+                .then(() => {
+                    // Notify all clients that a new version is available
+                    console.log('[SW] 🔄 Notifying clients of update');
+                    return self.clients.matchAll().then((clients) => {
+                        clients.forEach((client) => {
+                            client.postMessage({
+                                type: 'SW_UPDATED',
+                                cacheName: CACHE_NAME
+                            });
+                        });
+                    });
+                })
         );
     });
 
