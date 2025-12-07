@@ -200,7 +200,8 @@ class LayerDataNormalizer {
 
         glyphCanvas.layerData = normalized;
         console.log('[LayerDataNormalizer]', 'Layer data applied to canvas');
-        glyphCanvas.render();
+        // Don't render here - let the calling code control when to render
+        // This prevents intermediate renders that can cause flicker
     }
 
     /**

@@ -452,10 +452,11 @@ class GlyphCanvas {
                     ...this.axesManager.variationSettings
                 };
                 this.selectedLayerId = null; // Deselect layer
-                this.updateLayerSelection(); // Update UI
+                this.updateLayerSelection(); // Update UI (doesn't render)
             }
             
             // Real-time interpolation during slider movement
+            // This will call render() after applying the interpolated layer
             if (this.isGlyphEditMode && this.isInterpolating && this.currentGlyphName) {
                 this.interpolateCurrentGlyph();
             }
@@ -2219,6 +2220,9 @@ json.dumps(result)
             console.log('[GlyphCanvas]', 'Calling LayerDataNormalizer.applyInterpolatedLayer...');
             LayerDataNormalizer.applyInterpolatedLayer(this, interpolatedLayer, location);
             
+            // Render with the new interpolated data
+            this.render();
+            
             console.log(
                 '[GlyphCanvas]',
                 `✅ Applied interpolated layer for "${this.currentGlyphName}"`
@@ -3572,11 +3576,12 @@ json.dumps(result)
             const isSelected =
                 glyphIndex === this.textRunEditor.selectedGlyphIndex;
 
-            // Check if we should skip HarfBuzz rendering for selected glyph with layer data
-            // Skip when: selected glyph has layer data (from Python OR interpolated) and not in preview mode
+            // Check if we should skip HarfBuzz rendering for selected glyph
+            // ALWAYS skip HarfBuzz for selected glyph in edit mode (not preview)
+            // to prevent black fallback flicker during interpolation
             const skipHarfBuzz =
                 isSelected &&
-                this.layerData &&
+                this.isGlyphEditMode &&
                 !this.isPreviewMode;
 
             if (!skipHarfBuzz) {
