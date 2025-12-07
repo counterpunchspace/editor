@@ -450,9 +450,9 @@ class GlyphCanvas {
         this.axesManager.on('animationInProgress', () => {
             this.textRunEditor.shapeText();
             
-            // During animation, also interpolate glyph if in edit mode
-            if (this.isGlyphEditMode && this.currentGlyphName) {
-                this.isInterpolating = true;
+            // Only interpolate during animation if we're already interpolating (slider being dragged)
+            // Don't interpolate during layer selection animations
+            if (this.isInterpolating && this.isGlyphEditMode && this.currentGlyphName) {
                 this.interpolateCurrentGlyph();
             }
         });
@@ -1933,6 +1933,13 @@ json.dumps(result)
         this.previousVariationSettings = null;
 
         this.selectedLayerId = layer.id;
+        
+        // Immediately clear interpolated flag on existing data
+        // to prevent rendering with monochrome colors
+        if (this.layerData) {
+            this.layerData.isInterpolated = false;
+        }
+        
         console.log(
             '[GlyphCanvas]',
             `Selected layer: ${layer.name} (ID: ${layer.id})`
