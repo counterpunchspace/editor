@@ -2224,6 +2224,12 @@ json.dumps(result)
                 `✅ Applied interpolated layer for "${this.currentGlyphName}"`
             );
         } catch (error) {
+            // Silently ignore cancellation errors
+            if (error.message && error.message.includes('cancelled')) {
+                console.log('[GlyphCanvas]', '🚫 Interpolation cancelled (newer request pending)');
+                return;
+            }
+            
             console.warn(
                 '[GlyphCanvas]',
                 `⚠️ Interpolation failed for "${this.currentGlyphName}":`,

@@ -33,6 +33,7 @@ class FontInterpolationManager {
         this.worker = null;
         this.pendingRequests = new Map();
         this.requestId = 0;
+        this.currentGlyphRequest = null; // Track current glyph being interpolated
     }
 
     /**
@@ -47,6 +48,7 @@ class FontInterpolationManager {
 
     /**
      * Interpolate a glyph at a specific location in design space
+     * Cancels any pending interpolation for the same glyph
      * 
      * @param {string} glyphName - Name of the glyph to interpolate
      * @param {Object} location - Axis locations, e.g., { wght: 550, wdth: 100 }
@@ -65,7 +67,21 @@ class FontInterpolationManager {
             );
         }
 
+        // Cancel previous request for this glyph if it exists
+        if (this.currentGlyphRequest && this.currentGlyphRequest.glyphName === glyphName) {
+            const oldId = this.currentGlyphRequest.id;
+            const oldRequest = this.pendingRequests.get(oldId);
+            if (oldRequest) {
+                // Reject the old request as cancelled
+                oldRequest.reject(new Error('Interpolation cancelled - newer request pending'));
+                this.pendingRequests.delete(oldId);
+            }
+        }
+
         const id = this.requestId++;
+        
+        // Track this as the current request for this glyph
+        this.currentGlyphRequest = { id, glyphName };
 
         return new Promise((resolve, reject) => {
             // Store the promise callbacks
