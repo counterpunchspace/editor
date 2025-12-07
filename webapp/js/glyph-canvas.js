@@ -295,30 +295,52 @@ class GlyphCanvas {
 
                 e.preventDefault();
 
+                console.log('[GlyphCanvas]', 'Escape pressed. Previous state:', {
+                    layerId: this.previousSelectedLayerId,
+                    settings: this.previousVariationSettings,
+                    componentStackDepth: this.componentStack.length
+                });
+
                 // Priority 1: If we have a saved previous state from slider interaction, restore it first
                 // (This takes precedence over exiting component editing)
+                // However, if the previous layer is the same as the current layer, skip restoration
                 if (
                     this.previousSelectedLayerId !== null &&
                     this.previousVariationSettings !== null
                 ) {
-                    // Restore previous layer selection and axis values
-                    this.selectedLayerId = this.previousSelectedLayerId;
+                    // Check if we're already on the previous layer
+                    if (this.previousSelectedLayerId === this.selectedLayerId) {
+                        console.log('[GlyphCanvas]', 'Already on previous layer, clearing state and continuing to exit');
+                        this.previousSelectedLayerId = null;
+                        this.previousVariationSettings = null;
+                        // Don't return - fall through to exit component or edit mode
+                    } else {
+                        console.log('[GlyphCanvas]', 'Restoring previous layer state');
+                        // Restore previous layer selection and axis values
+                        this.selectedLayerId = this.previousSelectedLayerId;
 
-                    // Restore axis values with animation
-                    this.axesManager._setupAnimation({
-                        ...this.previousVariationSettings
-                    });
+                        // Fetch layer data for the restored layer
+                        this.fetchLayerData().then(() => {
+                            // Update layer selection UI
+                            this.updateLayerSelection();
+                            
+                            // Render with restored layer data
+                            this.render();
+                        });
 
-                    // Update layer selection UI
-                    this.updateLayerSelection();
+                        // Restore axis values with animation
+                        this.axesManager._setupAnimation({
+                            ...this.previousVariationSettings
+                        });
 
-                    // Clear previous state
-                    this.previousSelectedLayerId = null;
-                    this.previousVariationSettings = null;
+                        // Clear previous state
+                        this.previousSelectedLayerId = null;
+                        this.previousVariationSettings = null;
 
-                    // Return focus to canvas
-                    this.canvas.focus();
-                    return;
+                        // Return focus to canvas
+                        this.canvas.focus();
+                        return;
+                    }
                 }
 
                 // Priority 2: Check if we're in component editing mode
@@ -410,8 +432,17 @@ class GlyphCanvas {
                 // Now clear interpolating flag
                 this.isInterpolating = false;
                 
-                // If we landed on an exact layer, fetch fresh data to replace interpolated data
+                // If we landed on an exact layer, update the saved state to this new layer
+                // so Escape will return here, not to the original layer
                 if (this.selectedLayerId) {
+                    this.previousSelectedLayerId = this.selectedLayerId;
+                    this.previousVariationSettings = {
+                        ...this.axesManager.variationSettings
+                    };
+                    console.log('[GlyphCanvas]', 'Updated previous state to new layer:', {
+                        layerId: this.previousSelectedLayerId,
+                        settings: this.previousVariationSettings
+                    });
                     await this.fetchLayerData();
                 } else if (this.layerData && this.layerData.isInterpolated) {
                     // No exact layer match - keep interpolated data
@@ -432,8 +463,17 @@ class GlyphCanvas {
                 // Now clear interpolating flag
                 this.isInterpolating = false;
                 
-                // If we landed on an exact layer, fetch fresh data to replace interpolated data
+                // If we landed on an exact layer, update the saved state to this new layer
+                // so Escape will return here, not to the original layer
                 if (this.selectedLayerId) {
+                    this.previousSelectedLayerId = this.selectedLayerId;
+                    this.previousVariationSettings = {
+                        ...this.axesManager.variationSettings
+                    };
+                    console.log('[GlyphCanvas]', 'Updated previous state to new layer:', {
+                        layerId: this.previousSelectedLayerId,
+                        settings: this.previousVariationSettings
+                    });
                     await this.fetchLayerData();
                 }
                 
@@ -482,7 +522,7 @@ class GlyphCanvas {
                 setTimeout(() => this.canvas.focus(), 0);
             }
         });
-        this.axesManager.on('sliderChange', (axisTag, value) => {
+        this.axesManager.on('onSliderChange', (axisTag, value) => {
             // Save current state before manual adjustment (only once per manual session)
             if (
                 this.selectedLayerId !== null &&
@@ -492,6 +532,10 @@ class GlyphCanvas {
                 this.previousVariationSettings = {
                     ...this.axesManager.variationSettings
                 };
+                console.log('[GlyphCanvas]', 'Saved previous state for Escape:', {
+                    layerId: this.previousSelectedLayerId,
+                    settings: this.previousVariationSettings
+                });
                 this.selectedLayerId = null; // Deselect layer
                 // Don't update layer selection UI during interpolation to avoid triggering render
                 if (!this.isInterpolating) {
@@ -1869,10 +1913,17 @@ json.dumps(result)
                 // Found a matching layer - select it
                 this.selectedLayerId = layer.id;
 
-                // Clear previous state since we're now on a layer location
-                // This prevents Escape from trying to restore, allowing it to exit components instead
-                this.previousSelectedLayerId = null;
-                this.previousVariationSettings = null;
+                // Don't clear previous state during slider use - allow Escape to restore
+                // Only clear when explicitly selecting a layer or on initial load
+                // We can detect slider use by checking if previousSelectedLayerId is set
+                if (this.previousSelectedLayerId === null) {
+                    // Not during slider use - this is a direct layer selection or initial load
+                    // Clear previous state to allow Escape to exit components instead
+                    this.previousVariationSettings = null;
+                    console.log('[GlyphCanvas]', 'Cleared previous state (not during slider use)');
+                } else {
+                    console.log('[GlyphCanvas]', 'Keeping previous state (during slider use)');
+                }
 
                 // Only fetch layer data if we're not currently interpolating
                 // During interpolation, the next interpolateCurrentGlyph() call will handle the data
@@ -1923,6 +1974,12 @@ json.dumps(result)
             this.hoveredPointIndex = null;
             this.updateLayerSelection();
             console.log('[GlyphCanvas]', 'No matching layer - deselected');
+        }
+
+        // If we're in glyph edit mode and not on a layer, interpolate at current position
+        if (this.isGlyphEditMode && this.selectedLayerId === null && this.currentGlyphName) {
+            console.log('[GlyphCanvas]', 'Interpolating at current position after entering edit mode');
+            await this.interpolateCurrentGlyph();
         }
     }
 
