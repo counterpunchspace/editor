@@ -380,22 +380,11 @@ class GlyphCanvas {
     setupAxesManagerEventHandlers() {
         this.axesManager.on('sliderMouseDown', () => {
             if (this.isGlyphEditMode) {
-                const wasPreviewMode = this.isPreviewMode;
                 // Remember if preview was already on (from keyboard toggle)
-                this.previewModeBeforeSlider = wasPreviewMode;
+                this.previewModeBeforeSlider = this.isPreviewMode;
                 
-                // Enter preview mode if not already in it
-                if (!wasPreviewMode) {
-                    this.isPreviewMode = true;
-                }
-                
-                // Set interpolating flag
+                // Set interpolating flag (don't change preview mode)
                 this.isInterpolating = true;
-                
-                // Only render if we're changing preview mode state
-                if (!wasPreviewMode) {
-                    this.render();
-                }
             }
         });
         this.axesManager.on('sliderMouseUp', async () => {
@@ -3596,8 +3585,8 @@ json.dumps(result)
                 glyphIndex === this.textRunEditor.selectedGlyphIndex;
 
             // Check if we should skip HarfBuzz rendering for selected glyph
-            // Skip HarfBuzz for selected glyph in edit mode (not preview)
-            // to prevent black fallback flicker during interpolation
+            // Skip HarfBuzz only in edit mode when NOT in preview mode
+            // In preview mode, always use HarfBuzz (shows final rendered font)
             const skipHarfBuzz =
                 isSelected &&
                 this.isGlyphEditMode &&
@@ -3854,7 +3843,7 @@ json.dumps(result)
         }
 
         // Draw outline editor when a layer is selected (skip in preview mode)
-        // During interpolation, layerData exists without selectedLayerId
+        // During interpolation without preview mode, layerData exists without selectedLayerId
         if (!this.layerData || this.isPreviewMode) {
             return;
         }
