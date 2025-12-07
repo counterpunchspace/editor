@@ -26,8 +26,8 @@ const APP_SETTINGS = {
         MIN_ZOOM_FOR_GRID: 7.0, // 500% - above this, show 1-unit grid
 
         // Node (point) sizes
-        NODE_SIZE_AT_MIN_ZOOM: 2, // px - node size at min zoom
-        NODE_SIZE_AT_MAX_ZOOM: 6, // px - node size at max zoom
+        NODE_SIZE_AT_MIN_ZOOM: 3, // px - node size at min zoom
+        NODE_SIZE_AT_MAX_ZOOM: 7, // px - node size at max zoom
         NODE_SIZE_INTERPOLATION_MIN: 0.2, // zoom level where min size starts
         NODE_SIZE_INTERPOLATION_MAX: 3.0, // zoom level where max size is reached
 

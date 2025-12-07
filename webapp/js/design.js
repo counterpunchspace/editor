@@ -86,3 +86,39 @@ function adjustColorHueAndLightness(colorString, hueDegrees, lightnessPercent) {
     // Return as rgba string
     return `rgba(${Math.round(r2 * 255)}, ${Math.round(g2 * 255)}, ${Math.round(b2 * 255)}, ${a})`;
 }
+
+/**
+ * Desaturates a color to grayscale
+ * @param {string} colorString - Color in rgba(), rgb(), or hex format
+ * @returns {string} Desaturated color in rgba() format
+ */
+function desaturateColor(colorString) {
+    let r, g, b, a;
+
+    // Parse the color string
+    const rgbaMatch = colorString.match(
+        /rgba?\((\d+),\s*(\d+),\s*(\d+)(?:,\s*([\d.]+))?\)/
+    );
+    const hexMatch = colorString.match(/^#([0-9a-fA-F]{6})$/);
+
+    if (rgbaMatch) {
+        r = parseInt(rgbaMatch[1]);
+        g = parseInt(rgbaMatch[2]);
+        b = parseInt(rgbaMatch[3]);
+        a = rgbaMatch[4] !== undefined ? parseFloat(rgbaMatch[4]) : 1;
+    } else if (hexMatch) {
+        const hex = hexMatch[1];
+        r = parseInt(hex.substr(0, 2), 16);
+        g = parseInt(hex.substr(2, 2), 16);
+        b = parseInt(hex.substr(4, 2), 16);
+        a = 1;
+    } else {
+        return colorString; // Can't parse, return original
+    }
+
+    // Convert to grayscale using luminance formula
+    const gray = Math.round(0.299 * r + 0.587 * g + 0.114 * b);
+
+    // Return as rgba string
+    return `rgba(${gray}, ${gray}, ${gray}, ${a})`;
+}

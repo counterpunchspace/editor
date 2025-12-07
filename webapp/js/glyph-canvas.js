@@ -385,6 +385,13 @@ class GlyphCanvas {
                 
                 // Set interpolating flag (don't change preview mode)
                 this.isInterpolating = true;
+                
+                // If not in preview mode, mark current layer data as interpolated and render
+                // to show monochrome visual feedback immediately
+                if (!this.isPreviewMode && this.layerData) {
+                    this.layerData.isInterpolated = true;
+                    this.render();
+                }
             }
         });
         this.axesManager.on('sliderMouseUp', async () => {
@@ -403,19 +410,19 @@ class GlyphCanvas {
                 // Now clear interpolating flag
                 this.isInterpolating = false;
                 
-                // If no exact layer match and data is marked as interpolated, restore from Python
-                // But if we have valid interpolated data already, keep it
-                if (this.selectedLayerId === null && this.layerData && this.layerData.isInterpolated) {
-                    // Only restore if shapes are empty/missing, otherwise keep interpolated data
+                // If we landed on an exact layer, fetch fresh data to replace interpolated data
+                if (this.selectedLayerId) {
+                    await this.fetchLayerData();
+                } else if (this.layerData && this.layerData.isInterpolated) {
+                    // No exact layer match - keep interpolated data
+                    // Only restore if shapes are empty/missing
                     if (!this.layerData.shapes || this.layerData.shapes.length === 0) {
                         await LayerDataNormalizer.restoreExactLayer(this);
                     }
                 }
                 
-                // Only render if we're changing preview mode state
-                if (shouldExitPreview) {
-                    this.render();
-                }
+                // Always render to update colors after clearing isInterpolating flag
+                this.render();
             } else if (this.isGlyphEditMode) {
                 this.isPreviewMode = false;
                 
@@ -425,8 +432,12 @@ class GlyphCanvas {
                 // Now clear interpolating flag
                 this.isInterpolating = false;
                 
+                // If we landed on an exact layer, fetch fresh data to replace interpolated data
+                if (this.selectedLayerId) {
+                    await this.fetchLayerData();
+                }
+                
                 // If no exact layer match, keep showing interpolated data
-                // Don't restore - we want to keep the interpolated outlines visible
                 
                 this.render();
                 // Restore focus to canvas
@@ -1881,6 +1892,16 @@ json.dumps(result)
                             this.render();
                         }
                     }
+                } else {
+                    // During interpolation (sliderMouseUp), we still need to render
+                    // to update colors after isInterpolated flag is cleared
+                    // Clear the isInterpolated flag since we're on an exact layer now
+                    if (this.layerData) {
+                        this.layerData.isInterpolated = false;
+                    }
+                    if (this.isGlyphEditMode) {
+                        this.render();
+                    }
                 }
                 this.updateLayerSelection();
                 console.log(
@@ -2176,6 +2197,10 @@ json.dumps(result)
 `);
 
             this.layerData = JSON.parse(dataJson);
+            // Clear isInterpolated flag since we're loading actual layer data
+            if (this.layerData) {
+                this.layerData.isInterpolated = false;
+            }
             this.currentGlyphName = glyphName; // Store for interpolation
 
             // Recursively parse component layer data nodes strings into arrays
@@ -2362,7 +2387,18 @@ json.dumps(result)
 
     async saveLayerData() {
         // Save layer data back to Python using from_dict()
-        if (!window.pyodide || !this.selectedLayerId || !this.layerData) {
+        if (!window.pyodide || !this.layerData) {
+            return;
+        }
+        
+        // Don't save interpolated data - it's not editable and has no layer ID
+        if (this.layerData.isInterpolated) {
+            console.warn('[GlyphCanvas]', 'Cannot save interpolated layer data - not on an exact layer location');
+            return;
+        }
+        
+        if (!this.selectedLayerId) {
+            console.warn('[GlyphCanvas]', 'No layer selected - cannot save');
             return;
         }
 
@@ -2613,6 +2649,10 @@ except Exception as e:
         // Set the component as the current editing context
         this.editingComponentIndex = componentIndex;
         this.layerData = componentLayerData;
+        // Clear isInterpolated flag since we're loading actual layer data
+        if (this.layerData) {
+            this.layerData.isInterpolated = false;
+        }
 
         console.log(
             '[GlyphCanvas]',
@@ -2749,6 +2789,10 @@ json.dumps(result)
 `);
 
             this.layerData = JSON.parse(dataJson);
+            // Clear isInterpolated flag since we're loading actual layer data
+            if (this.layerData) {
+                this.layerData.isInterpolated = false;
+            }
             console.log(
                 '[GlyphCanvas]',
                 'Fetched root layer data with',
@@ -2801,6 +2845,10 @@ json.dumps(result)
         // Restore previous state
         this.editingComponentIndex = previousState.componentIndex;
         this.layerData = previousState.layerData;
+        // Clear isInterpolated flag since we're restoring actual layer data
+        if (this.layerData) {
+            this.layerData.isInterpolated = false;
+        }
         this.selectedPoints = previousState.selectedPoints || [];
         this.selectedAnchors = previousState.selectedAnchors || [];
         this.selectedComponents = previousState.selectedComponents || [];
@@ -4051,6 +4099,9 @@ json.dumps(result)
 
         // Only draw shapes if they exist (empty glyphs like space won't have shapes)
         if (this.layerData.shapes && Array.isArray(this.layerData.shapes)) {
+            // Check if layer data is interpolated (for visual feedback)
+            const isInterpolated = this.layerData && this.layerData.isInterpolated;
+            
             this.layerData.shapes.forEach((shape, contourIndex) => {
                 console.log(
                     '[GlyphCanvas]',
@@ -4181,15 +4232,17 @@ json.dumps(result)
                             this.ctx.lineTo(baseX - perpX, baseY - perpY);
                             this.ctx.closePath();
 
-                            this.ctx.fillStyle = isDarkTheme
+                            let fillColor = isDarkTheme
                                 ? 'rgba(0, 255, 255, 0.8)'
                                 : 'rgba(0, 150, 150, 0.8)';
+                            
+                            // Apply monochrome for interpolated data
+                            if (isInterpolated) {
+                                fillColor = desaturateColor(fillColor);
+                            }
+                            
+                            this.ctx.fillStyle = fillColor;
                             this.ctx.fill();
-                            this.ctx.strokeStyle = isDarkTheme
-                                ? 'rgba(0, 255, 255, 1)'
-                                : 'rgba(0, 100, 100, 1)';
-                            this.ctx.lineWidth = 1 * invScale;
-                            this.ctx.stroke();
                         }
                     }
 
@@ -4319,48 +4372,60 @@ json.dumps(result)
                             : APP_SETTINGS.OUTLINE_EDITOR.COLORS_LIGHT;
                         this.ctx.beginPath();
                         this.ctx.arc(x, y, pointSize, 0, Math.PI * 2);
-                        this.ctx.fillStyle = isSelected
+                        let fillColor = isSelected
                             ? colors.CONTROL_POINT_SELECTED
                             : isHovered
                               ? colors.CONTROL_POINT_HOVERED
                               : colors.CONTROL_POINT_NORMAL;
+                        
+                        // Apply monochrome for interpolated data
+                        if (isInterpolated) {
+                            fillColor = desaturateColor(fillColor);
+                        }
+                        
+                        this.ctx.fillStyle = fillColor;
                         this.ctx.fill();
-                        this.ctx.strokeStyle = colors.CONTROL_POINT_STROKE;
-                        this.ctx.lineWidth = 1 * invScale;
-                        this.ctx.stroke();
+                        // Stroke permanently removed
                     } else {
                         // On-curve point - draw as square
                         const colors = isDarkTheme
                             ? APP_SETTINGS.OUTLINE_EDITOR.COLORS_DARK
                             : APP_SETTINGS.OUTLINE_EDITOR.COLORS_LIGHT;
-                        this.ctx.fillStyle = isSelected
+                        let fillColor = isSelected
                             ? colors.NODE_SELECTED
                             : isHovered
                               ? colors.NODE_HOVERED
                               : colors.NODE_NORMAL;
+                        
+                        // Apply monochrome for interpolated data
+                        if (isInterpolated) {
+                            fillColor = desaturateColor(fillColor);
+                        }
+                        
+                        this.ctx.fillStyle = fillColor;
                         this.ctx.fillRect(
                             x - pointSize,
                             y - pointSize,
                             pointSize * 2,
                             pointSize * 2
                         );
-                        this.ctx.strokeStyle = colors.NODE_STROKE;
-                        this.ctx.lineWidth = 1 * invScale;
-                        this.ctx.strokeRect(
-                            x - pointSize,
-                            y - pointSize,
-                            pointSize * 2,
-                            pointSize * 2
-                        );
+                        // Stroke permanently removed
                     }
 
                     // Draw smooth indicator for smooth nodes
                     if (type === 'cs' || type === 'os' || type === 'ls') {
-                        this.ctx.beginPath();
-                        this.ctx.arc(x, y, pointSize * 0.4, 0, Math.PI * 2);
-                        this.ctx.fillStyle = isDarkTheme
+                        let smoothColor = isDarkTheme
                             ? '#ffffff'
                             : '#000000';
+                        
+                        // Apply monochrome for interpolated data
+                        if (isInterpolated) {
+                            smoothColor = desaturateColor(smoothColor);
+                        }
+                        
+                        this.ctx.beginPath();
+                        this.ctx.arc(x, y, pointSize * 0.4, 0, Math.PI * 2);
+                        this.ctx.fillStyle = smoothColor;
                         this.ctx.fill();
                     }
                 });
@@ -4715,25 +4780,25 @@ json.dumps(result)
                 const colors = isDarkTheme
                     ? APP_SETTINGS.OUTLINE_EDITOR.COLORS_DARK
                     : APP_SETTINGS.OUTLINE_EDITOR.COLORS_LIGHT;
-                this.ctx.fillStyle = isSelected
+                let fillColor = isSelected
                     ? colors.ANCHOR_SELECTED
                     : isHovered
                       ? colors.ANCHOR_HOVERED
                       : colors.ANCHOR_NORMAL;
+                
+                // Apply monochrome for interpolated data
+                if (isInterpolated) {
+                    fillColor = desaturateColor(fillColor);
+                }
+                
+                this.ctx.fillStyle = fillColor;
                 this.ctx.fillRect(
                     -anchorSize,
                     -anchorSize,
                     anchorSize * 2,
                     anchorSize * 2
                 );
-                this.ctx.strokeStyle = colors.ANCHOR_STROKE;
-                this.ctx.lineWidth = 1 * invScale;
-                this.ctx.strokeRect(
-                    -anchorSize,
-                    -anchorSize,
-                    anchorSize * 2,
-                    anchorSize * 2
-                );
+                // Stroke permanently removed
 
                 this.ctx.restore();
 
