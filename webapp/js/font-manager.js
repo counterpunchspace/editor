@@ -610,6 +610,81 @@ else:
     getFormatSpecific(key) {
         return this.babelfontData?.format_specific?.[key];
     }
+
+    async fetchGlyphData(glyphName) {
+        // Fetch glyph and font data from Python
+        if (!window.pyodide) {
+            return null;
+        }
+        try {
+            // Fetch glyph and font data from Python
+            const dataJson = await window.pyodide.runPythonAsync(`
+import json
+
+result = None
+try:
+    current_font = CurrentFont()
+    if current_font and hasattr(current_font, 'glyphs'):
+        glyph = current_font.glyphs.get('${glyphName}')
+        if glyph:
+            # Get master IDs for filtering
+            master_ids = set(m.id for m in current_font.masters)
+            
+            # Get foreground layers (filter out background layers and non-master layers)
+            layers_data = []
+            for layer in glyph.layers:
+                if not layer.is_background:
+                    # For master layers, _master is None and the layer.id IS the master ID
+                    # For alternate/intermediate layers, _master points to the parent master
+                    master_id = layer._master if layer._master else layer.id
+                    
+                    # Only include layers whose master ID exists in the masters list
+                    if master_id in master_ids:
+                        layer_info = {
+                            'id': layer.id,
+                            'name': layer.name or 'Default',
+                            '_master': master_id,
+                            'location': layer.location
+                        }
+                        layers_data.append(layer_info)
+            
+            # Get masters data with userspace locations
+            masters_data = []
+            for master in current_font.masters:
+                # Convert design space location to user space
+                userspace_location = current_font.map_backward(master.location)
+                masters_data.append({
+                    'id': master.id,
+                    'name': master.name,
+                    'location': userspace_location
+                })
+            
+            # Get axes order (list of axis tags in definition order)
+            axes_order = [axis.tag for axis in current_font.axes]
+            
+            result = {
+                'glyphName': glyph.name,
+                'layers': layers_data,
+                'masters': masters_data,
+                'axesOrder': axes_order
+            }
+except Exception as e:
+    print(f"Error fetching glyph data: {e}")
+    result = None
+
+json.dumps(result)
+`);
+
+            return JSON.parse(dataJson);
+        } catch (error) {
+            console.error(
+                '[GlyphCanvas]',
+                'Error fetching glyph data from Python:',
+                error
+            );
+            return null;
+        }
+    }
 }
 
 // Create global instance
