@@ -122,3 +122,8 @@ function desaturateColor(colorString) {
     // Return as rgba string
     return `rgba(${gray}, ${gray}, ${gray}, ${a})`;
 }
+
+// Export for module use (Node.js/Jest)
+if (typeof module !== 'undefined' && module.exports) {
+    module.exports = { adjustColorHueAndLightness, desaturateColor };
+}
