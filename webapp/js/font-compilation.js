@@ -228,7 +228,7 @@ class FontCompilation {
                     '  1. Try a hard refresh (Ctrl+Shift+R or Cmd+Shift+R)\n' +
                     '  2. Check browser console for service worker errors\n' +
                     '  3. Make sure coi-serviceworker.js is loaded in the HTML\n\n' +
-                    'For local development, use: cd webapp && python3 serve-with-cors.py'
+                    'For local development, use: cd webapp && npm run dev'
             );
             if (window.term) {
                 window.term.echo('');

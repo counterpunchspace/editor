@@ -1,12 +1,11 @@
 // Auto-Compile Manager
 // Automatically recompiles the font when data changes (using DIRTY_COMPILE flag)
 // and there's been 1 second of inactivity to avoid race conditions
-
+const { APP_SETTINGS } = require('./settings.js');
 (function () {
     'use strict';
 
-    const AUTO_COMPILE_DELAY =
-        window.APP_SETTINGS?.COMPILE_DEBOUNCE_DELAY || 500; // Use setting or fallback to 500ms
+    const AUTO_COMPILE_DELAY = APP_SETTINGS?.COMPILE_DEBOUNCE_DELAY || 500; // Use setting or fallback to 500ms
     let compileTimeout = null;
     let isEnabled = true;
     let isChecking = false; // Prevent recursive checks

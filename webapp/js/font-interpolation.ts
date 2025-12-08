@@ -29,6 +29,13 @@
  */
 
 class FontInterpolationManager {
+    worker: Worker | null;
+    pendingRequests: Map<
+        number,
+        { resolve: Function; reject: Function; glyphName: string }
+    >;
+    requestId: number;
+    currentGlyphRequest: { id: number; glyphName: string } | null;
     constructor() {
         this.worker = null;
         this.pendingRequests = new Map();
@@ -41,7 +48,7 @@ class FontInterpolationManager {
      *
      * @param {Worker} worker - The fontc worker instance
      */
-    setWorker(worker) {
+    setWorker(worker: Worker) {
         this.worker = worker;
         console.log(
             '[FontInterpolation]',
@@ -63,7 +70,10 @@ class FontInterpolationManager {
      * console.log(layer.width); // 600
      * console.log(layer.shapes); // Array of Path and Component objects
      */
-    async interpolateGlyph(glyphName, location) {
+    async interpolateGlyph(
+        glyphName: string,
+        location: Record<string, number>
+    ): Promise<any> {
         if (!this.worker) {
             throw new Error(
                 'Worker not initialized. Make sure fontCompilation is initialized first.'
@@ -96,7 +106,7 @@ class FontInterpolationManager {
             this.pendingRequests.set(id, { resolve, reject, glyphName });
 
             // Send interpolation request to worker
-            this.worker.postMessage({
+            this.worker!.postMessage({
                 type: 'interpolate',
                 id,
                 glyphName,
@@ -109,7 +119,7 @@ class FontInterpolationManager {
      * Handle message from worker
      * @private
      */
-    handleWorkerMessage(e) {
+    handleWorkerMessage(e: MessageEvent) {
         const data = e.data;
 
         console.log(
@@ -175,20 +185,28 @@ class FontInterpolationManager {
      * const layers = await interpolateGlyphs(['A', 'B', 'C'], { wght: 550 });
      * layers.get('A').width; // 600
      */
-    async interpolateGlyphs(glyphNames, location) {
-        const promises = glyphNames.map(async (glyphName) => {
-            try {
-                const layer = await this.interpolateGlyph(glyphName, location);
-                return [glyphName, layer];
-            } catch (error) {
-                console.warn(
-                    '[FontInterpolation]',
-                    `⚠️ Failed to interpolate '${glyphName}':`,
-                    error
-                );
-                return [glyphName, null];
+    async interpolateGlyphs(
+        glyphNames: string[],
+        location: Record<string, number>
+    ): Promise<Map<string, any>> {
+        const promises = glyphNames.map(
+            async (glyphName): Promise<[string, any]> => {
+                try {
+                    const layer = await this.interpolateGlyph(
+                        glyphName,
+                        location
+                    );
+                    return [glyphName, layer];
+                } catch (error) {
+                    console.warn(
+                        '[FontInterpolation]',
+                        `⚠️ Failed to interpolate '${glyphName}':`,
+                        error
+                    );
+                    return [glyphName, null];
+                }
             }
-        });
+        );
 
         const results = await Promise.all(promises);
         return new Map(results.filter(([_, layer]) => layer !== null));
@@ -205,10 +223,10 @@ class FontInterpolationManager {
 
         console.log('[FontInterpolation]', '🗑️ Clearing font cache...');
 
-        return new Promise((resolve, reject) => {
-            const messageHandler = (e) => {
+        return new Promise<void>((resolve, reject) => {
+            const messageHandler = (e: MessageEvent) => {
                 if (e.data.type === 'clearCache') {
-                    this.worker.removeEventListener('message', messageHandler);
+                    this.worker!.removeEventListener('message', messageHandler);
                     if (e.data.error) {
                         reject(new Error(e.data.error));
                     } else {
@@ -217,8 +235,8 @@ class FontInterpolationManager {
                 }
             };
 
-            this.worker.addEventListener('message', messageHandler);
-            this.worker.postMessage({ type: 'clearCache' });
+            this.worker!.addEventListener('message', messageHandler);
+            this.worker!.postMessage({ type: 'clearCache' });
         });
     }
 }
@@ -228,7 +246,7 @@ const fontInterpolation = new FontInterpolationManager();
 
 // Make available globally
 if (typeof window !== 'undefined') {
-    window.fontInterpolation = fontInterpolation;
+    window['fontInterpolation'] = fontInterpolation;
 }
 
 export default fontInterpolation;

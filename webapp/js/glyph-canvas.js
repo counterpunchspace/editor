@@ -1,6 +1,12 @@
 // Glyph Canvas Editor
 // Handles canvas-based glyph editing with pan/zoom and text rendering
 
+let AxesManager = require('./glyph-canvas/variations.js').AxesManager;
+let FeaturesManager = require('./glyph-canvas/features').FeaturesManager;
+let TextRunEditor = require('./glyph-canvas/textrun.js').TextRunEditor;
+let ViewportManager = require('./glyph-canvas/viewport.js').ViewportManager;
+let GlyphCanvasRenderer =
+    require('./glyph-canvas/renderer').GlyphCanvasRenderer;
 class GlyphCanvas {
     constructor(containerId) {
         this.container = document.getElementById(containerId);

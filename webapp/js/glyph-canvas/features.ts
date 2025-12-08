@@ -1,17 +1,25 @@
 class FeaturesManager {
+    featureSettings: Record<string, boolean>;
+    defaultFeatureSettings: Record<string, boolean>;
+    opentypeFont: any;
+    featuresSection: HTMLElement | null;
+    featureResetButton: HTMLButtonElement | null;
+    callbacks: Record<string, Function>;
+
     constructor() {
         this.featureSettings = {}; // Store OpenType feature on/off states
         this.defaultFeatureSettings = {}; // Store default states for reset
         this.opentypeFont = null; // To be set to the compiled font
         this.featuresSection = null;
+        this.featureResetButton = null;
         this.callbacks = {}; // Optional callbacks for interaction with GlyphCanvas
     }
 
-    on(event, callback) {
+    on(event: string, callback: Function) {
         this.callbacks[event] = callback;
     }
 
-    call(event, ...args) {
+    call(event: string, ...args: any[]) {
         if (this.callbacks[event]) {
             this.callbacks[event](...args);
         }
@@ -62,7 +70,7 @@ class FeaturesManager {
         const descriptions = featureInfo.get('descriptions');
 
         // Get features present in the font (deduplicate using Set)
-        const fontFeatures = [...new Set(gsub.features.map((f) => f.tag))];
+        const fontFeatures = [...new Set(gsub.features.map((f: any) => f.tag))];
         const discretionaryInFont = fontFeatures.filter((tag) =>
             allDiscretionary.has(tag)
         );
@@ -90,7 +98,7 @@ class FeaturesManager {
                 'No discretionary features found in font'
             );
             requestAnimationFrame(() => {
-                this.featuresSection.innerHTML = '';
+                this.featuresSection!.innerHTML = '';
             });
             return; // No discretionary features
         }
@@ -133,7 +141,7 @@ class FeaturesManager {
         this.featureResetButton = resetButton;
 
         // Initialize default states and current states
-        features.forEach((feature) => {
+        features.forEach((feature: any) => {
             this.defaultFeatureSettings[feature.tag] = feature.defaultOn;
             if (this.featureSettings[feature.tag] === undefined) {
                 this.featureSettings[feature.tag] = feature.defaultOn;
@@ -141,7 +149,7 @@ class FeaturesManager {
         });
 
         // Create button for each feature (no separate scrollable container)
-        features.forEach((feature) => {
+        features.forEach((feature: any) => {
             const featureRow = document.createElement('div');
             featureRow.className = 'editor-feature-row';
             featureRow.style.display = 'flex';
@@ -186,9 +194,9 @@ class FeaturesManager {
 
         // Swap content in one frame to prevent flicker
         requestAnimationFrame(() => {
-            this.featuresSection.innerHTML = '';
+            this.featuresSection!.innerHTML = '';
             while (tempContainer.firstChild) {
-                this.featuresSection.appendChild(tempContainer.firstChild);
+                this.featuresSection!.appendChild(tempContainer.firstChild);
             }
         });
 
@@ -231,7 +239,7 @@ class FeaturesManager {
             );
             buttons.forEach((button) => {
                 const tag = button.getAttribute('data-feature-tag');
-                const isEnabled = this.defaultFeatureSettings[tag];
+                const isEnabled = this.defaultFeatureSettings[tag!];
                 button.classList.toggle('enabled', isEnabled);
             });
         }

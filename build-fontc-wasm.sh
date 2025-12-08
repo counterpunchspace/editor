@@ -98,11 +98,7 @@ if [ $? -eq 0 ]; then
     echo "Files created:"
     ls -lh "$WEBAPP_DIR/wasm-dist/"
     echo ""
-    echo "⚠️  IMPORTANT: You need to serve this app with proper CORS headers:"
-    echo "   Cross-Origin-Embedder-Policy: require-corp"
-    echo "   Cross-Origin-Opener-Policy: same-origin"
-    echo ""
-    echo "Use the provided server: cd webapp && python3 serve-with-cors.py"
+    echo "Use the provided server: cd webapp && npm install && npm run dev"
     
     exit 0
 else

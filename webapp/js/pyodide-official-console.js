@@ -1,6 +1,8 @@
 // Official Pyodide Console integration
 // Based on https://github.com/pyodide/pyodide/blob/main/src/templates/console.html
 
+const { get, set } = import('idb-keyval');
+
 function sleep(s) {
     return new Promise((resolve) => setTimeout(resolve, s));
 }
@@ -466,8 +468,6 @@ async function initPyodideConsole() {
                 const opts = {
                     mode: 'readwrite'
                 };
-                const { get, set } =
-                    await import('https://cdn.skypack.dev/idb-keyval');
                 const pyodideDirectory = '/home/pyodide';
                 const directoryKey = 'pyodide-directory-handle';
                 let directoryHandle = await get(directoryKey);

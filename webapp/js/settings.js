@@ -159,20 +159,4 @@ const APP_SETTINGS = {
 
     // Add other settings here as needed
 };
-
-// Make settings globally available
-window.APP_SETTINGS = APP_SETTINGS;
-
-// Validate settings are loaded
-if (
-    typeof window.APP_SETTINGS === 'undefined' ||
-    !window.APP_SETTINGS.OUTLINE_EDITOR
-) {
-    console.error('[Settings]', 'APP_SETTINGS failed to load properly!');
-} else {
-    console.log(
-        '[Settings]',
-        'APP_SETTINGS loaded successfully:',
-        window.APP_SETTINGS
-    );
-}
+export default APP_SETTINGS;
