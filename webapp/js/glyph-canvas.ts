@@ -1729,17 +1729,15 @@ class GlyphCanvas {
             };
 
             // Parse with opentype.js for glyph path extraction
-            if (window.opentype) {
-                this.opentypeFont = window.opentype.parse(fontArrayBuffer);
-                this.axesManager!.opentypeFont = this.opentypeFont;
-                this.featuresManager!.opentypeFont = this.opentypeFont;
-                this.textRunEditor!.opentypeFont = this.opentypeFont;
-                console.log(
-                    '[GlyphCanvas]',
-                    'Font parsed with opentype.js:',
-                    this.opentypeFont!.names.fontFamily.en
-                );
-            }
+            this.opentypeFont = opentype.parse(fontArrayBuffer);
+            this.axesManager!.opentypeFont = this.opentypeFont;
+            this.featuresManager!.opentypeFont = this.opentypeFont;
+            this.textRunEditor!.opentypeFont = this.opentypeFont;
+            console.log(
+                '[GlyphCanvas]',
+                'Font parsed with opentype.js:',
+                this.opentypeFont!.names.fontFamily.en
+            );
 
             // Create HarfBuzz blob, face, and font if HarfBuzz is loaded
             this.textRunEditor!.setFont(new Uint8Array(fontArrayBuffer)).then(

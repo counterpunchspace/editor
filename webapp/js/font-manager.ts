@@ -6,6 +6,7 @@
 import { ParsedNode } from './basictypes';
 import APP_SETTINGS from './settings';
 import { fontCompilation } from './font-compilation';
+import * as opentype from 'opentype.js';
 class FontManager {
     babelfontJson: string | null;
     babelfontData: any;
@@ -353,7 +354,7 @@ babelfont_json
         // Extract from compiled typing font using opentype.js
         if (this.typingFont) {
             try {
-                const font = window.opentype.parse(this.typingFont.buffer);
+                const font = opentype.parse(this.typingFont.buffer);
                 const glyphOrder = [];
                 for (let i = 0; i < font.numGlyphs; i++) {
                     const glyph = font.glyphs.get(i);
