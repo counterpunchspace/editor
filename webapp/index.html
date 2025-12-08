@@ -509,30 +509,7 @@
             </div>
         </div>
 
-        <!-- Local scripts loaded with cache-busting for development -->
-        <script>
-            (function () {
-                const isLocal =
-                    window.location.hostname === 'localhost' ||
-                    window.location.hostname === '127.0.0.1';
-                const version = isLocal ? '?v=' + Date.now() : '';
-
-                const scripts = ['js/bootstrap.js'];
-
-                scripts.forEach((src) => {
-                    document.write(
-                        '<script src="' + src + version + '"><\/script>'
-                    );
-                });
-
-                // Module script
-                document.write(
-                    '<script type="module" src="js/font-compilation.js' +
-                        version +
-                        '"><\/script>'
-                );
-            })();
-        </script>
+        <script src="js/bootstrap.js"></script>
 
         <!-- Diff Review Modal -->
         <div id="diff-review-modal" class="diff-modal">

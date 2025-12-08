@@ -7,6 +7,7 @@ import './cache-manager.js';
 import './compile-button.js';
 import './example-loader.js';
 import './file-browser.js';
+import './font-compilation';
 import './font-dropdown.js';
 import './font-manager';
 import './fonteditor.js';
