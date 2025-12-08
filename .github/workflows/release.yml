@@ -14,21 +14,31 @@ permissions:
 jobs:
   release:
     runs-on: ubuntu-latest
+    needs: []
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Fetch all history to get the commit for the tag
+
+      - name: Get commit SHA for tag
+        id: commit
+        run: |
+          COMMIT_SHA=$(git rev-list -n 1 ${{ github.ref }})
+          echo "COMMIT_SHA=$COMMIT_SHA" >> $GITHUB_OUTPUT
+          echo "Commit SHA for tag: $COMMIT_SHA"
+
+      - name: Wait for CI to complete
+        uses: lewagon/wait-on-check-action@v1.3.4
+        with:
+          ref: ${{ steps.commit.outputs.COMMIT_SHA }}
+          check-name: 'build'
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          wait-interval: 10
 
       - name: Extract version tag
         id: version
         run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
-
-      - name: Update service worker version
-        run: |
-          VERSION="${{ steps.version.outputs.VERSION }}"
-          echo "Updating service worker to version $VERSION"
-          sed -i "s/const VERSION = '[^']*'/const VERSION = '$VERSION'/" webapp/coi-serviceworker.js
-          echo "Updated version:"
-          grep "const VERSION = " webapp/coi-serviceworker.js
 
       - name: Extract release notes from CHANGELOG
         id: changelog

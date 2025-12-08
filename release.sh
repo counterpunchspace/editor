@@ -54,9 +54,20 @@ fi
 
 echo "✅ Version updated in $SERVICE_WORKER_FILE"
 
-# Extract changelog section between first and second # headlines
+# Check if CHANGELOG already has this version (from previous failed attempt)
+CHANGELOG_ALREADY_UPDATED=false
+if grep -q "^# $VERSION_TAG" "$CHANGELOG_FILE"; then
+    echo "Note: CHANGELOG already contains '# $VERSION_TAG' - will reuse existing release notes"
+    CHANGELOG_ALREADY_UPDATED=true
+    # Extract from the existing version section (not "# Unreleased")
+    awk "/^# $VERSION_TAG/ {flag=1; next} /^# / {flag=0} flag {print}" "$CHANGELOG_FILE" > "$RELEASE_NOTES_FILE"
+else
+    # Extract from "# Unreleased" section (first time release)
+    awk '/^# / {if (++count == 2) exit} count == 1 && !/^# / {print}' "$CHANGELOG_FILE" > "$RELEASE_NOTES_FILE"
+fi
+
+# Extract changelog section
 echo "Extracting release notes from $CHANGELOG_FILE..."
-awk '/^# / {if (++count == 2) exit} count == 1 && !/^# / {print}' "$CHANGELOG_FILE" > "$RELEASE_NOTES_FILE"
 
 # Trim leading/trailing whitespace
 if [[ "$OSTYPE" == "darwin"* ]]; then
@@ -75,8 +86,39 @@ cat "$RELEASE_NOTES_FILE"
 echo "----------------------------------------"
 echo ""
 
-# Check for uncommitted changes (other than the version update we just made)
-if ! git diff --quiet --exit-code -- . ':!webapp/coi-serviceworker.js'; then
+# Update CHANGELOG.md - replace "# Unreleased" with version tag
+echo "Updating CHANGELOG.md..."
+if [ "$CHANGELOG_ALREADY_UPDATED" = true ]; then
+    echo "  CHANGELOG already has '# $VERSION_TAG' - skipping update"
+    CHANGELOG_UPDATED=false
+elif grep -q "^# Unreleased" "$CHANGELOG_FILE"; then
+    echo "  Replacing '# Unreleased' with '# $VERSION_TAG'"
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        # macOS
+        sed -i '' "s/^# Unreleased/# $VERSION_TAG/" "$CHANGELOG_FILE"
+    else
+        # Linux
+        sed -i "s/^# Unreleased/# $VERSION_TAG/" "$CHANGELOG_FILE"
+    fi
+    
+    # Add new "# Unreleased" section at the top
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        # macOS
+        sed -i '' '1s/^/# Unreleased\n\n/' "$CHANGELOG_FILE"
+    else
+        # Linux
+        sed -i '1s/^/# Unreleased\n\n/' "$CHANGELOG_FILE"
+    fi
+    echo "✅ CHANGELOG.md updated"
+    CHANGELOG_UPDATED=true
+else
+    echo "  Warning: '# Unreleased' not found - CHANGELOG may be in invalid format"
+    CHANGELOG_UPDATED=false
+fi
+echo ""
+
+# Check for uncommitted changes (other than the version update and changelog we just made)
+if ! git diff --quiet --exit-code -- . ':!webapp/coi-serviceworker.js' ':!CHANGELOG.md'; then
     echo "Warning: You have uncommitted changes besides the version update."
     read -p "Do you want to continue and commit everything? (y/n) " -n 1 -r
     echo
@@ -84,6 +126,10 @@ if ! git diff --quiet --exit-code -- . ':!webapp/coi-serviceworker.js'; then
         echo "Release cancelled."
         # Revert version change
         git checkout -- "$SERVICE_WORKER_FILE"
+        # Revert changelog only if we updated it
+        if [ "$CHANGELOG_UPDATED" = true ]; then
+            git checkout -- "$CHANGELOG_FILE"
+        fi
         rm -f "$RELEASE_NOTES_FILE"
         exit 1
     fi
@@ -91,18 +137,40 @@ fi
 
 # Check if tag already exists
 if git rev-parse "$VERSION_TAG" >/dev/null 2>&1; then
-    echo "Error: Tag $VERSION_TAG already exists"
-    # Revert version change
-    git checkout -- "$SERVICE_WORKER_FILE"
-    rm -f "$RELEASE_NOTES_FILE"
-    exit 1
+    echo "Warning: Tag $VERSION_TAG already exists"
+    read -p "Do you want to delete and recreate it? (y/n) " -n 1 -r
+    echo
+    if [[ $REPLY =~ ^[Yy]$ ]]; then
+        echo "Deleting local tag..."
+        git tag -d "$VERSION_TAG"
+        echo "Deleting remote tag..."
+        git push origin ":refs/tags/$VERSION_TAG" 2>/dev/null || echo "Remote tag already deleted or doesn't exist"
+        echo "✅ Tag deleted, will recreate"
+    else
+        echo "Release cancelled."
+        # Revert version change
+        git checkout -- "$SERVICE_WORKER_FILE"
+        # Revert changelog only if we updated it
+        if [ "$CHANGELOG_UPDATED" = true ]; then
+            git checkout -- "$CHANGELOG_FILE"
+        fi
+        rm -f "$RELEASE_NOTES_FILE"
+        exit 1
+    fi
 fi
 
 # Commit the version change
 echo ""
 echo "Committing version update..."
 git add "$SERVICE_WORKER_FILE"
-git commit -m "Release $VERSION_TAG"
+
+# Only add CHANGELOG if we updated it (not already updated from previous attempt)
+if [ "$CHANGELOG_UPDATED" = true ]; then
+    git add "$CHANGELOG_FILE"
+    git commit -m "Release $VERSION_TAG"
+else
+    git commit -m "Release $VERSION_TAG (CHANGELOG already updated)"
+fi
 
 # Create and push tag
 echo "Creating tag $VERSION_TAG..."
@@ -116,6 +184,7 @@ git push origin "$VERSION_TAG"
 echo ""
 echo "✅ Release $VERSION_TAG complete!"
 echo "🚀 GitHub Actions will now:"
+echo "   - Wait for CI checks to pass"
 echo "   - Create a GitHub Release with changelog"
 echo "   - Deploy to GitHub Pages"
 echo "   - Users will see update notification within 10 minutes"
