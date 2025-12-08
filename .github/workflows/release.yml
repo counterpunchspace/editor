@@ -43,8 +43,8 @@ jobs:
       - name: Extract release notes from CHANGELOG
         id: changelog
         run: |
-          # Extract content between first and second # headlines
-          awk '/^# / {if (++count == 2) exit} count == 1 && !/^# / {print}' CHANGELOG.md > release-notes.md
+          # Extract content between second and third # headlines (skipping "# Unreleased")
+          awk '/^# / {if (++count == 3) exit} count == 2 && !/^# / {print}' CHANGELOG.md > release-notes.md
 
           # Show extracted content
           echo "Release notes:"
