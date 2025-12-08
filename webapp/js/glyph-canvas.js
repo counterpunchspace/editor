@@ -5663,48 +5663,11 @@ function setupFontLoadingListener() {
     });
 
     // Also check for fonts loaded from file system
-    window.addEventListener('fontLoaded', async (e) => {
-        console.log('[GlyphCanvas]', 'Font loaded event received');
-        if (window.glyphCanvas && window.pyodide) {
-            try {
-                // Try to find a compiled TTF in the file system
-                const result = await window.pyodide.runPythonAsync(`
-import os
-import glob
-
-# Look for TTF files in the current directory and subdirectories
-ttf_files = []
-for root, dirs, files in os.walk('.'):
-    for file in files:
-        if file.endswith('.ttf'):
-            ttf_files.append(os.path.join(root, file))
-
-# Use the most recently modified TTF
-if ttf_files:
-    ttf_files.sort(key=lambda x: os.path.getmtime(x), reverse=True)
-    ttf_files[0]
-else:
-    None
-                `);
-
-                if (result) {
-                    console.log('[GlyphCanvas]', 'Found TTF file:', result);
-                    const fontBytes = window.pyodide.FS.readFile(result);
-                    const arrayBuffer = fontBytes.buffer.slice(
-                        fontBytes.byteOffset,
-                        fontBytes.byteOffset + fontBytes.byteLength
-                    );
-                    window.glyphCanvas.setFont(arrayBuffer);
-                }
-            } catch (error) {
-                console.error(
-                    '[GlyphCanvas]',
-                    'Error loading font from file system:',
-                    error
-                );
-            }
-        }
-    });
+    window.addEventListener('fontLoaded', async (e) =>
+        window.fontManager
+            .onFontLoaded(e)
+            .then((arrayBuffer) => window.glyphCanvas.setFont(arrayBuffer))
+    );
 }
 
 // Set up editor keyboard shortcuts info modal

@@ -552,6 +552,54 @@ json.dumps(result)
         );
         return layerData;
     }
+
+    /**
+     *
+     * @param {Event} e
+     * @returns {Promise<ArrayBuffer | null>}
+     */
+    async onFontLoaded(e) {
+        console.log('[FontManager]', 'Font loaded event received');
+        if (window.glyphCanvas && window.pyodide) {
+            try {
+                // Try to find a compiled TTF in the file system
+                const result = await window.pyodide.runPythonAsync(`
+import os
+import glob
+
+# Look for TTF files in the current directory and subdirectories
+ttf_files = []
+for root, dirs, files in os.walk('.'):
+    for file in files:
+        if file.endswith('.ttf'):
+            ttf_files.append(os.path.join(root, file))
+
+# Use the most recently modified TTF
+if ttf_files:
+    ttf_files.sort(key=lambda x: os.path.getmtime(x), reverse=True)
+    ttf_files[0]
+else:
+    None
+                `);
+
+                if (result) {
+                    console.log('[FontManager]', 'Found TTF file:', result);
+                    const fontBytes = window.pyodide.FS.readFile(result);
+                    const arrayBuffer = fontBytes.buffer.slice(
+                        fontBytes.byteOffset,
+                        fontBytes.byteOffset + fontBytes.byteLength
+                    );
+                    return arrayBuffer;
+                }
+            } catch (error) {
+                console.error(
+                    '[FontManager]',
+                    'Error loading font from file system:',
+                    error
+                );
+            }
+        }
+    }
 }
 
 // Create global instance
