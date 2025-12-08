@@ -387,6 +387,91 @@ babelfont_json
     isReady() {
         return this.typingFont !== null && this.editingFont !== null;
     }
+
+    /**
+     *  Fetch layer data for a specific component glyph
+     *
+     * @param {string} componentGlyphName
+     * @param {string} selectedLayerId
+     * @returns any
+     */
+
+    async fetchComponentLayerData(componentGlyphName, selectedLayerId) {
+        // Fetch layer data for a specific component glyph, including nested components
+        if (!window.pyodide || !selectedLayerId) {
+            return null;
+        }
+
+        try {
+            const dataJson = await window.pyodide.runPythonAsync(`
+import json
+
+def fetch_component_recursive(glyph_name, layer_id, visited=None):
+    """Recursively fetch component data including nested components"""
+    if visited is None:
+        visited = set()
+    
+    if glyph_name in visited:
+        print(f"Warning: Circular component reference detected for {glyph_name}")
+        return None
+    
+    visited.add(glyph_name)
+    
+    current_font = CurrentFont()
+    if not current_font or not hasattr(current_font, 'glyphs'):
+        return None
+    
+    glyph = current_font.glyphs.get(glyph_name)
+    if not glyph:
+        return None
+    
+    # Find the layer by ID
+    layer = None
+    for l in glyph.layers:
+        if l.id == layer_id:
+            layer = l
+            break
+    
+    if not layer:
+        return None
+    
+    # Serialize the layer
+    result = layer.to_dict()
+    
+    # Recursively fetch nested component data
+    if result and 'shapes' in result:
+        for shape in result['shapes']:
+            if 'Component' in shape and 'reference' in shape['Component']:
+                ref_name = shape['Component']['reference']
+                # Fetch nested component data
+                nested_data = fetch_component_recursive(ref_name, layer_id, visited.copy())
+                if nested_data:
+                    shape['Component']['layerData'] = nested_data
+    
+    return result
+
+result = None
+try:
+    result = fetch_component_recursive('${componentGlyphName}', '${selectedLayerId}')
+except Exception as e:
+    print(f"Error fetching component layer data: {e}")
+    import traceback
+    traceback.print_exc()
+    result = None
+
+json.dumps(result)
+`);
+
+            return JSON.parse(dataJson);
+        } catch (error) {
+            console.error(
+                '[GlyphCanvas]',
+                'Error fetching component layer data from Python:',
+                error
+            );
+            return null;
+        }
+    }
 }
 
 // Create global instance
