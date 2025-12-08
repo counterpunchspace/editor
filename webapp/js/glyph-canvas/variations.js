@@ -1,4 +1,4 @@
-class AxesManager {
+export class AxesManager {
     constructor() {
         this.variationSettings = {}; // Current variation settings
         this.axesSection = null; // Container for axes UI

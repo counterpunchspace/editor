@@ -1,7 +1,20 @@
 // webapp/js/glyph-canvas/viewport.js
 
-class ViewportManager {
-    constructor(initialScale, panX = 0, panY = 0) {
+import { Point, Rect, RectWithWidthHeight } from '../basictypes';
+import APP_SETTINGS from '../settings';
+import { ShapedGlyph } from './textrun';
+
+export class ViewportManager {
+    scale: number;
+    panX: number;
+    panY: number;
+    accumulatedVerticalBounds: { minY: number; maxY: number } | null;
+    lastWheelTime: number;
+    wheelTimeout: NodeJS.Timeout | null;
+    detectedDevice: string | null;
+    deviceLockDuration: number;
+
+    constructor(initialScale: number, panX: number = 0, panY: number = 0) {
         this.scale = initialScale;
         this.panX = panX;
         this.panY = panY;
@@ -28,11 +41,9 @@ class ViewportManager {
 
     /**
      * Transforms canvas-space coordinates to font-space coordinates.
-     * @param {number} canvasX - The x-coordinate in canvas space.
-     * @param {number} canvasY - The y-coordinate in canvas space.
-     * @returns {{x: number, y: number}} The coordinates in font space.
+     * @returns {Point} The coordinates in font space.
      */
-    getFontSpaceCoordinates(canvasX, canvasY) {
+    getFontSpaceCoordinates(canvasX: number, canvasY: number): Point {
         const transform = this.getTransformMatrix();
         const det = transform.a * transform.d - transform.b * transform.c;
 
@@ -57,10 +68,10 @@ class ViewportManager {
      * @returns {{glyphX: number, glyphY: number}} The coordinates in the glyph's local space.
      */
     getGlyphLocalCoordinates(
-        canvasX,
-        canvasY,
-        shapedGlyphs,
-        selectedGlyphIndex
+        canvasX: number,
+        canvasY: number,
+        shapedGlyphs: ShapedGlyph[] | null,
+        selectedGlyphIndex: number
     ) {
         let { x: glyphX, y: glyphY } = this.getFontSpaceCoordinates(
             canvasX,
@@ -97,7 +108,7 @@ class ViewportManager {
      * @param {number} mouseY - The canvas y-coordinate to zoom towards.
      * @returns {boolean} - True if zoom happened, false otherwise.
      */
-    zoom(zoomFactor, mouseX, mouseY) {
+    zoom(zoomFactor: number, mouseX: number, mouseY: number) {
         const newScale = this.scale * zoomFactor;
 
         // Limit zoom range
@@ -116,12 +127,17 @@ class ViewportManager {
      * @param {number} dx - The change in x.
      * @param {number} dy - The change in y.
      */
-    pan(dx, dy) {
+    pan(dx: number, dy: number) {
         this.panX += dx;
         this.panY += dy;
     }
 
-    animateZoomAndPan(targetScale, targetPanX, targetPanY, renderCallback) {
+    animateZoomAndPan(
+        targetScale: number,
+        targetPanX: number,
+        targetPanY: number,
+        renderCallback: Function
+    ) {
         // Animate zoom and pan together
         const startScale = this.scale;
         const startPanX = this.panX;
@@ -158,7 +174,11 @@ class ViewportManager {
         animate();
     }
 
-    animatePan(targetPanX, targetPanY, renderCallback) {
+    animatePan(
+        targetPanX: number,
+        targetPanY: number,
+        renderCallback: Function
+    ) {
         // Set up animation state
         const startPanX = this.panX;
         const startPanY = this.panY;
@@ -201,11 +221,11 @@ class ViewportManager {
      * @param {number} margin - Canvas margin in pixels (defaults to CANVAS_MARGIN setting)
      */
     frameGlyph(
-        bounds,
-        glyphPosition,
-        canvasRect,
-        renderCallback,
-        margin = null
+        bounds: RectWithWidthHeight,
+        glyphPosition: { xPosition: number; xOffset: number; yOffset: number },
+        canvasRect: DOMRect,
+        renderCallback: Function,
+        margin: number | null = null
     ) {
         // Use setting if no margin specified
         if (margin === null) {
@@ -264,11 +284,11 @@ class ViewportManager {
      * @param {number} margin - Canvas margin in pixels (defaults to CANVAS_MARGIN setting)
      */
     panToGlyph(
-        bounds,
-        glyphPosition,
-        canvasRect,
-        renderCallback,
-        margin = null
+        bounds: RectWithWidthHeight,
+        glyphPosition: { xPosition: number; xOffset: number; yOffset: number },
+        canvasRect: DOMRect,
+        renderCallback: Function,
+        margin: number | null = null
     ) {
         // Use setting if no margin specified
         if (margin === null) {
@@ -441,7 +461,7 @@ class ViewportManager {
      * @param {Function} renderCallback - Callback to render after change
      * @returns {boolean} - True if viewport changed, false otherwise
      */
-    handleWheel(e, canvasRect, renderCallback) {
+    handleWheel(e: WheelEvent, canvasRect: DOMRect, renderCallback: Function) {
         // Reset accumulated vertical bounds on manual interaction
         this.accumulatedVerticalBounds = null;
 
@@ -604,8 +624,4 @@ class ViewportManager {
 
         return panApplied;
     }
-}
-
-if (typeof module !== 'undefined' && module.exports) {
-    module.exports = { ViewportManager };
 }

@@ -1,4 +1,4 @@
-class FeaturesManager {
+export class FeaturesManager {
     featureSettings: Record<string, boolean>;
     defaultFeatureSettings: Record<string, boolean>;
     opentypeFont: any;

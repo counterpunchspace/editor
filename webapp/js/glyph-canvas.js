@@ -3,8 +3,8 @@
 
 let AxesManager = require('./glyph-canvas/variations.js').AxesManager;
 let FeaturesManager = require('./glyph-canvas/features').FeaturesManager;
-let TextRunEditor = require('./glyph-canvas/textrun.js').TextRunEditor;
-let ViewportManager = require('./glyph-canvas/viewport.js').ViewportManager;
+let TextRunEditor = require('./glyph-canvas/textrun').TextRunEditor;
+let ViewportManager = require('./glyph-canvas/viewport').ViewportManager;
 let GlyphCanvasRenderer =
     require('./glyph-canvas/renderer').GlyphCanvasRenderer;
 class GlyphCanvas {

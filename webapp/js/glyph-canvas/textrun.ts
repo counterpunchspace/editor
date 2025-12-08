@@ -5,8 +5,43 @@
 // - cursor movement
 // - selection handling
 
-class TextRunEditor {
-    constructor(featuresManager, axesManager) {
+import type { FeaturesManager } from './features';
+import type { AxesManager } from './variations';
+
+export interface ShapedGlyph {
+    dx: number;
+    dy: number;
+    ax: number;
+    ay: number;
+    cl: number; // Cluster
+    g: number; // Glyph ID
+}
+
+export class TextRunEditor {
+    featuresManager: FeaturesManager;
+    axesManager: AxesManager;
+    textBuffer: string;
+    shapedGlyphs: ShapedGlyph[];
+    hb: any;
+    hbFont: any;
+    hbFace: any;
+    hbBlob: any;
+    opentypeFont: any;
+    bidi: any;
+    bidiRuns: any[];
+    selectedGlyphIndex: number;
+    cursorPosition: number;
+    cursorVisible: boolean;
+    cursorBlinkInterval: any;
+    cursorX: number;
+    clusterMap: any[];
+    embeddingLevels: any;
+    callbacks: Record<string, Function>;
+    selectionStart: number | null;
+    selectionEnd: number | null;
+    fontBlob: ArrayBuffer | null;
+
+    constructor(featuresManager: FeaturesManager, axesManager: AxesManager) {
         this.featuresManager = featuresManager;
         this.axesManager = axesManager;
         // Default text buffer - will be overridden by font's display_string if available
@@ -18,6 +53,7 @@ class TextRunEditor {
         this.hbFont = null;
         this.hbFace = null;
         this.hbBlob = null;
+        this.fontBlob = null;
 
         this.opentypeFont = null; // OpenType.js font instance
 
@@ -43,11 +79,11 @@ class TextRunEditor {
         this.callbacks = {}; // For notifying GlyphCanvas of updates
     }
 
-    on(event, callback) {
+    on(event: string, callback: Function) {
         this.callbacks[event] = callback;
     }
 
-    call(event, ...args) {
+    call(event: string, ...args: any[]) {
         if (this.callbacks[event]) {
             this.callbacks[event](...args);
         }
@@ -74,7 +110,7 @@ class TextRunEditor {
             // Wait for createHarfBuzz to be available
             if (typeof window.createHarfBuzz === 'undefined') {
                 console.log('[TextRun]', 'Waiting for HarfBuzz to load...');
-                await new Promise((resolve, reject) => {
+                await new Promise<void>((resolve, reject) => {
                     let attempts = 0;
                     const check = () => {
                         if (typeof window.createHarfBuzz !== 'undefined') {
@@ -109,7 +145,7 @@ class TextRunEditor {
         }
     }
 
-    async _navigateGlyphLogical(direction) {
+    async _navigateGlyphLogical(direction: number) {
         if (
             this.selectedGlyphIndex < 0 ||
             this.selectedGlyphIndex >= this.shapedGlyphs.length
@@ -160,7 +196,10 @@ class TextRunEditor {
         await this._navigateGlyphLogical(-1);
     }
 
-    _findGlyphAtClusterPosition(clusterPos, searchFromEnd = false) {
+    _findGlyphAtClusterPosition(
+        clusterPos: number,
+        searchFromEnd = false
+    ): number {
         if (!this.shapedGlyphs || this.shapedGlyphs.length === 0) {
             return -1;
         }
@@ -179,15 +218,15 @@ class TextRunEditor {
         return -1;
     }
 
-    findFirstGlyphAtClusterPosition(clusterPos) {
+    findFirstGlyphAtClusterPosition(clusterPos: number): number {
         return this._findGlyphAtClusterPosition(clusterPos, false);
     }
 
-    findLastGlyphAtClusterPosition(clusterPos) {
+    findLastGlyphAtClusterPosition(clusterPos: number): number {
         return this._findGlyphAtClusterPosition(clusterPos, true);
     }
 
-    setTextBuffer(text) {
+    setTextBuffer(text: string) {
         this.textBuffer = text || '';
 
         // Save to localStorage
@@ -210,7 +249,7 @@ class TextRunEditor {
         this.shapeText();
     }
 
-    async selectGlyphByIndex(glyphIndex, fromKeyboard = false) {
+    async selectGlyphByIndex(glyphIndex: number, fromKeyboard = false) {
         // Select a glyph by its index in the shaped glyphs array
 
         this.call('exitcomponentediting'); // Ensure any component editing is exited
@@ -284,7 +323,7 @@ class TextRunEditor {
         return glyphIndex;
     }
 
-    getGlyphIndexAtClick(glyphX, glyphY) {
+    getGlyphIndexAtClick(glyphX: number, glyphY: number) {
         if (!this.clusterMap || this.clusterMap.length === 0) {
             return 0;
         }
@@ -409,7 +448,7 @@ class TextRunEditor {
         }
     }
 
-    isPositionRTL(pos) {
+    isPositionRTL(pos: number) {
         // Check if a logical position is in an RTL context
         if (!this.embeddingLevels || !this.embeddingLevels.levels) {
             return false;
@@ -423,7 +462,7 @@ class TextRunEditor {
         return this.embeddingLevels.levels[pos] % 2 === 1;
     }
 
-    isGlyphFromTypedCharacter(glyphIndex) {
+    isGlyphFromTypedCharacter(glyphIndex: number) {
         // Determine if a glyph corresponds to a typed character or is a result of shaping
         // Returns: { isTyped: boolean, logicalPosition: number }
 
@@ -501,7 +540,7 @@ class TextRunEditor {
         return { isTyped, logicalPosition };
     }
 
-    getRunAtPosition(pos) {
+    getRunAtPosition(pos: number) {
         // Find which BiDi run contains this logical position
         if (!this.bidiRuns || this.bidiRuns.length === 0) {
             return null;
@@ -587,8 +626,8 @@ class TextRunEditor {
             return { start: this.cursorPosition, end: this.cursorPosition };
         }
         return {
-            start: Math.min(this.selectionStart, this.selectionEnd),
-            end: Math.max(this.selectionStart, this.selectionEnd)
+            start: Math.min(this.selectionStart!, this.selectionEnd!),
+            end: Math.max(this.selectionStart!, this.selectionEnd!)
         };
     }
 
@@ -749,7 +788,7 @@ class TextRunEditor {
         }
     }
 
-    insertText(text) {
+    insertText(text: string) {
         // If there's a selection, delete it first
         if (this.hasSelection()) {
             const range = this.getSelectionRange();
@@ -869,7 +908,7 @@ class TextRunEditor {
         this.call('cursormoved');
     }
 
-    findClusterAt(logicalPos) {
+    findClusterAt(logicalPos: number) {
         // Find the cluster (glyph + its character range) at a logical position
         if (!this.clusterMap || this.clusterMap.length === 0) {
             return null;
@@ -903,7 +942,7 @@ class TextRunEditor {
         );
 
         // First pass: collect all unique cluster values to determine proper boundaries
-        const clusterValues = new Set();
+        const clusterValues = new Set<number>();
         for (const glyph of this.shapedGlyphs) {
             clusterValues.add(glyph.cl || 0);
         }
@@ -1136,7 +1175,7 @@ class TextRunEditor {
         }
     }
 
-    handleKeyDown(e) {
+    handleKeyDown(e: KeyboardEvent) {
         // Cmd+A / Ctrl+A - Select All
         if ((e.metaKey || e.ctrlKey) && e.key === 'a') {
             e.preventDefault();
@@ -1230,7 +1269,7 @@ class TextRunEditor {
         }
     }
 
-    async setFont(fontData) {
+    async setFont(fontData: ArrayBuffer) {
         console.log(
             '[TextRun]',
             '🔵 TextRunEditor.setFont() called, current textBuffer:',
@@ -1571,7 +1610,7 @@ class TextRunEditor {
             this.shapedGlyphs.length
         );
     }
-    _getGlyphPosition(glyphIndex) {
+    _getGlyphPosition(glyphIndex: number) {
         let xPosition = 0;
         for (let i = 0; i < glyphIndex; i++) {
             xPosition += this.shapedGlyphs[i].ax || 0;
@@ -1590,8 +1629,4 @@ class TextRunEditor {
             return this.shapedGlyphs[this.selectedGlyphIndex];
         }
     }
-}
-
-if (typeof module !== 'undefined' && module.exports) {
-    module.exports = { TextRunEditor };
 }

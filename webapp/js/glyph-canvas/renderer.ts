@@ -31,9 +31,6 @@ class GlyphCanvasRenderer {
     render() {
         if (!this.ctx || !this.canvas) return;
 
-        const rect = this.canvas.getBoundingClientRect();
-        const dpr = window.devicePixelRatio || 1;
-
         // Clear canvas
         this.ctx.save();
         this.ctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -176,7 +173,6 @@ class GlyphCanvasRenderer {
                 const xOffset = glyph.dx || 0;
                 const yOffset = glyph.dy || 0;
                 const xAdvance = glyph.ax || 0;
-                const yAdvance = glyph.ay || 0;
 
                 const x = xPosition + xOffset;
                 const y = yOffset;
