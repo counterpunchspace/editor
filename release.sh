@@ -168,6 +168,8 @@ git add "$SERVICE_WORKER_FILE"
 if [ "$CHANGELOG_UPDATED" = true ]; then
     git add "$CHANGELOG_FILE"
     git commit -m "Release $VERSION_TAG"
+elif git diff --cached --quiet; then
+    echo "  No changes to commit (files already up to date)"
 else
     git commit -m "Release $VERSION_TAG (CHANGELOG already updated)"
 fi
@@ -179,7 +181,7 @@ git tag "$VERSION_TAG"
 echo ""
 echo "Pushing to GitHub..."
 git push origin main
-git push origin "$VERSION_TAG"
+git push origin "$VERSION_TAG" --force
 
 echo ""
 echo "✅ Release $VERSION_TAG complete!"
