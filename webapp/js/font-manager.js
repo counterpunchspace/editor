@@ -600,6 +600,16 @@ else:
             }
         }
     }
+
+    /**
+     * Looks for a font-level format_specific key in the current font
+     *
+     * @param {string} key
+     * @returns {any}
+     */
+    getFormatSpecific(key) {
+        return this.babelfontData?.format_specific?.[key];
+    }
 }
 
 // Create global instance

@@ -1284,14 +1284,7 @@ class TextRunEditor {
                 key
             );
 
-            const result = await window.pyodide.runPythonAsync(`
-font = CurrentFont()
-result = None
-if font and "${key}" in font.format_specific:
-    result = font.format_specific["${key}"]
-result
-`);
-
+            const result = window.fontManager.getFormatSpecific(key);
             // If we got a display string from the font, use it (prioritize over localStorage)
             if (result !== null && result !== undefined && result !== '') {
                 console.log(
