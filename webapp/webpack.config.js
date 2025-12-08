@@ -2,38 +2,12 @@ const path = require('path');
 const HtmlWebpackPlugin = require('html-webpack-plugin');
 const CopyWebpackPlugin = require('copy-webpack-plugin');
 
-const entryPoints = {
-    'ai-assistant': './js/ai-assistant.js',
-    'auto-compile-manager': './js/auto-compile-manager.js',
-    'cache-manager': './js/cache-manager.js',
-    'compile-button': './js/compile-button.js',
-    'example-loader': './js/example-loader.js',
-    'file-browser': './js/file-browser.js',
-    'font-compilation': './js/font-compilation.ts',
-    'font-dropdown': './js/font-dropdown.js',
-    'font-manager': './js/font-manager.ts',
-    'fontc-worker': './js/fontc-worker.ts',
-    'fonteditor': './js/fonteditor.js',
-    'glyph-canvas': './js/glyph-canvas.ts',
-    'keyboard-navigation': './js/keyboard-navigation.js',
-    'loading-animation': './js/loading-animation.js',
-    'matplotlib-handler': './js/matplotlib-handler.js',
-    'memory-monitor': './js/memory-monitor.js',
-    'pyodide-official-console': './js/pyodide-official-console.js',
-    'python-execution-wrapper': './js/python-execution-wrapper.js',
-    'python-ui-sync': './js/python-ui-sync.js',
-    'resizer': './js/resizer.js',
-    'save-button': './js/save-button.js',
-    'script-editor': './js/script-editor.js',
-    'sound-preloader': './js/sound-preloader.js',
-    'tab-lifecycle': './js/tab-lifecycle.js',
-    'theme-switcher': './js/theme-switcher.js',
-    'view-settings': './js/view-settings.js'
-};
-
 module.exports = {
     mode: 'development',
-    entry: entryPoints,
+    entry: {
+        'bootstrap': './js/bootstrap.ts',
+        'fontc-worker': './js/fontc-worker.ts'
+    },
     output: {
         path: path.resolve(__dirname, 'build'),
         filename: 'js/[name].js',

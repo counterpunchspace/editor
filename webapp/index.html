@@ -523,29 +523,7 @@
                     window.location.hostname === '127.0.0.1';
                 const version = isLocal ? '?v=' + Date.now() : '';
 
-                const scripts = [
-                    'js/theme-switcher.js',
-                    'js/sound-preloader.js',
-                    'js/memory-monitor.js',
-                    'js/python-ui-sync.js',
-                    'js/python-execution-wrapper.js',
-                    'js/resizer.js',
-                    'js/view-settings.js',
-                    'js/keyboard-navigation.js',
-                    'js/matplotlib-handler.js',
-                    'js/pyodide-official-console.js',
-                    'js/example-loader.js',
-                    'js/fonteditor.js',
-                    'js/font-dropdown.js',
-                    'js/save-button.js',
-                    'js/font-manager.js',
-                    'js/compile-button.js',
-                    'js/auto-compile-manager.js',
-                    'js/file-browser.js',
-                    'js/script-editor.js',
-                    'js/ai-assistant.js',
-                    'js/glyph-canvas.js'
-                ];
+                const scripts = ['js/bootstrap.js'];
 
                 scripts.forEach((src) => {
                     document.write(
@@ -556,11 +534,6 @@
                 // Module script
                 document.write(
                     '<script type="module" src="js/font-compilation.js' +
-                        version +
-                        '"><\/script>'
-                );
-                document.write(
-                    '<script type="module" src="js/font-interpolation.js' +
                         version +
                         '"><\/script>'
                 );
