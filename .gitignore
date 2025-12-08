@@ -38,6 +38,7 @@ yarn-error.log*
 # Temporary files
 *.tmp
 .cache/
+release-notes.md
 
 build/
 target/
