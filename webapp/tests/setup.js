@@ -58,9 +58,15 @@ if (typeof window.pyodide === 'undefined') {
 }
 if (typeof window.fontManager === 'undefined') {
     window.fontManager = {
-        getGlyphName: () => 'mockGlyphName'
+        getGlyphName: () => 'mockGlyphName',
+        setFormatSpecific: () => {}
     };
 }
+// Also set on global in case window.fontManager is redefined
+global.fontManager = {
+    getGlyphName: () => 'mockGlyphName',
+    setFormatSpecific: () => {}
+};
 if (typeof APP_SETTINGS === 'undefined') {
     global.APP_SETTINGS = {
         OUTLINE_EDITOR: {

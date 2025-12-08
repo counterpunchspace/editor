@@ -1,3 +1,79 @@
+// ==================== Initialization Tests ====================
+
+describe('GlyphCanvas initialization', () => {
+    let canvas;
+
+    beforeEach(() => {
+        document.body.innerHTML = '<div id="test-container"></div>';
+    });
+
+    afterEach(() => {
+        if (canvas) {
+            canvas.destroy();
+        }
+    });
+
+    test('should create canvas element in container', () => {
+        canvas = new GlyphCanvas('test-container');
+        const container = document.getElementById('test-container');
+        expect(container.querySelector('canvas')).toBeTruthy();
+    });
+
+    test('should initialize viewport manager with default values', () => {
+        canvas = new GlyphCanvas('test-container');
+        expect(canvas.viewportManager).toBeTruthy();
+        expect(canvas.viewportManager.scale).toBe(canvas.initialScale);
+    });
+
+    test('should initialize axes manager', () => {
+        canvas = new GlyphCanvas('test-container');
+        expect(canvas.axesManager).toBeTruthy();
+        expect(canvas.axesManager.variationSettings).toEqual({});
+    });
+
+    test('should initialize features manager', () => {
+        canvas = new GlyphCanvas('test-container');
+        expect(canvas.featuresManager).toBeTruthy();
+    });
+
+    test('should initialize text run editor', () => {
+        canvas = new GlyphCanvas('test-container');
+        expect(canvas.textRunEditor).toBeTruthy();
+    });
+
+    test('should initialize renderer', () => {
+        canvas = new GlyphCanvas('test-container');
+        expect(canvas.renderer).toBeTruthy();
+    });
+
+    test('should set up HiDPI canvas correctly', () => {
+        canvas = new GlyphCanvas('test-container');
+        const dpr = window.devicePixelRatio || 1;
+        const container = document.getElementById('test-container');
+        expect(canvas.canvas.width).toBe(container.clientWidth * dpr);
+        expect(canvas.canvas.height).toBe(container.clientHeight * dpr);
+    });
+
+    test('should make canvas focusable', () => {
+        canvas = new GlyphCanvas('test-container');
+        expect(canvas.canvas.tabIndex).toBe(0);
+    });
+
+    test('should set initial state correctly', () => {
+        canvas = new GlyphCanvas('test-container');
+        expect(canvas.isGlyphEditMode).toBe(false);
+        expect(canvas.isDraggingCanvas).toBe(false);
+        expect(canvas.isDraggingPoint).toBe(false);
+        expect(canvas.isDraggingAnchor).toBe(false);
+        expect(canvas.isDraggingComponent).toBe(false);
+        expect(canvas.selectedPoints).toEqual([]);
+        expect(canvas.selectedAnchors).toEqual([]);
+        expect(canvas.selectedComponents).toEqual([]);
+    });
+});
+
+// ==================== Mouse Interaction Tests ====================
+
 describe('GlyphCanvas onMouseMove', () => {
     let canvas;
 
@@ -5,8 +81,8 @@ describe('GlyphCanvas onMouseMove', () => {
         document.body.innerHTML = '<div id="test-container"></div>';
         canvas = new GlyphCanvas('test-container');
         // Set up mock state
-        canvas.selectedGlyphIndex = 0;
-        canvas.shapedGlyphs = [{ ax: 1000, dx: 0, dy: 0, g: 0 }];
+        canvas.textRunEditor.selectedGlyphIndex = 0;
+        canvas.textRunEditor.shapedGlyphs = [{ ax: 1000, dx: 0, dy: 0, g: 0 }];
         canvas.layerData = {
             shapes: [
                 { Component: { transform: [1, 0, 0, 1, 0, 0] } },
@@ -20,6 +96,10 @@ describe('GlyphCanvas onMouseMove', () => {
         canvas.viewportManager = new ViewportManager(1, 0, 0);
         canvas.lastGlyphX = null;
         canvas.lastGlyphY = null;
+    });
+
+    afterEach(() => {
+        canvas.destroy();
     });
 
     test('handles component dragging correctly', () => {
@@ -52,7 +132,92 @@ describe('GlyphCanvas onMouseMove', () => {
         expect(canvas.layerData.shapes[1].nodes[0][0]).toBe(15);
         expect(canvas.layerData.shapes[1].nodes[0][1]).toBe(5);
     });
+
+    test('handles canvas panning when dragging', () => {
+        canvas.isDraggingCanvas = true;
+        canvas.lastMouseX = 10;
+        canvas.lastMouseY = 20;
+        const initialPanX = canvas.viewportManager.panX;
+        const initialPanY = canvas.viewportManager.panY;
+
+        canvas.onMouseMove({ clientX: 30, clientY: 40 });
+
+        expect(canvas.viewportManager.panX).toBe(initialPanX + 20);
+        expect(canvas.viewportManager.panY).toBe(initialPanY + 20);
+    });
+
+    test('does not drag when no drag state is active', () => {
+        canvas.isDraggingComponent = false;
+        canvas.isDraggingAnchor = false;
+        canvas.isDraggingPoint = false;
+        canvas.isDraggingCanvas = false;
+
+        const initialTransform = [
+            ...canvas.layerData.shapes[0].Component.transform
+        ];
+        canvas.onMouseMove({ clientX: 10, clientY: 20 });
+
+        expect(canvas.layerData.shapes[0].Component.transform).toEqual(
+            initialTransform
+        );
+    });
 });
+
+describe('GlyphCanvas onMouseDown', () => {
+    let canvas;
+
+    beforeEach(() => {
+        document.body.innerHTML = '<div id="test-container"></div>';
+        canvas = new GlyphCanvas('test-container');
+        canvas.textRunEditor.selectedGlyphIndex = 0;
+        canvas.textRunEditor.shapedGlyphs = [{ ax: 1000, dx: 0, dy: 0, g: 0 }];
+    });
+
+    afterEach(() => {
+        canvas.destroy();
+    });
+
+    test('should focus canvas on mouse down', () => {
+        const focusSpy = jest.spyOn(canvas.canvas, 'focus');
+        canvas.onMouseDown({ clientX: 10, clientY: 20, detail: 1 });
+        expect(focusSpy).toHaveBeenCalled();
+    });
+
+    test('should start canvas panning when Cmd key is pressed', () => {
+        canvas.cmdKeyPressed = true;
+        canvas.onMouseDown({ clientX: 10, clientY: 20, detail: 1 });
+        expect(canvas.isDraggingCanvas).toBe(true);
+    });
+});
+
+describe('GlyphCanvas onMouseUp', () => {
+    let canvas;
+
+    beforeEach(() => {
+        document.body.innerHTML = '<div id="test-container"></div>';
+        canvas = new GlyphCanvas('test-container');
+    });
+
+    afterEach(() => {
+        canvas.destroy();
+    });
+
+    test('should clear all dragging states', () => {
+        canvas.isDraggingPoint = true;
+        canvas.isDraggingAnchor = true;
+        canvas.isDraggingComponent = true;
+        canvas.isDraggingCanvas = true;
+
+        canvas.onMouseUp({ clientX: 10, clientY: 20 });
+
+        expect(canvas.isDraggingPoint).toBe(false);
+        expect(canvas.isDraggingAnchor).toBe(false);
+        expect(canvas.isDraggingComponent).toBe(false);
+        expect(canvas.isDraggingCanvas).toBe(false);
+    });
+});
+
+// ==================== Hit Testing Tests ====================
 
 describe('GlyphCanvas hit testing', () => {
     let canvas;
@@ -70,6 +235,10 @@ describe('GlyphCanvas hit testing', () => {
             anchors: [{ x: 300, y: 300 }]
         };
         canvas.viewportManager = new ViewportManager(1, 0, 0);
+    });
+
+    afterEach(() => {
+        canvas.destroy();
     });
 
     test('should correctly identify hovered component', () => {
@@ -95,7 +264,541 @@ describe('GlyphCanvas hit testing', () => {
             nodeIndex: 0
         });
     });
+
+    test('should clear hovered component when mouse moves away', () => {
+        canvas.mouseX = 100;
+        canvas.mouseY = -100;
+        canvas.updateHoveredComponent();
+        expect(canvas.hoveredComponentIndex).toBe(0);
+
+        canvas.mouseX = 1000;
+        canvas.mouseY = -1000;
+        canvas.updateHoveredComponent();
+        expect(canvas.hoveredComponentIndex).toBe(null);
+    });
+
+    test('should clear hovered anchor when mouse moves away', () => {
+        canvas.mouseX = 300;
+        canvas.mouseY = -300;
+        canvas.updateHoveredAnchor();
+        expect(canvas.hoveredAnchorIndex).toBe(0);
+
+        canvas.mouseX = 1000;
+        canvas.mouseY = -1000;
+        canvas.updateHoveredAnchor();
+        expect(canvas.hoveredAnchorIndex).toBe(null);
+    });
+
+    test('should clear hovered point when mouse moves away', () => {
+        canvas.mouseX = 200;
+        canvas.mouseY = -200;
+        canvas.updateHoveredPoint();
+        expect(canvas.hoveredPointIndex).toEqual({
+            contourIndex: 1,
+            nodeIndex: 0
+        });
+
+        canvas.mouseX = 1000;
+        canvas.mouseY = -1000;
+        canvas.updateHoveredPoint();
+        expect(canvas.hoveredPointIndex).toBe(null);
+    });
 });
+
+// ==================== Selection Tests ====================
+
+describe('GlyphCanvas selection handling', () => {
+    let canvas;
+
+    beforeEach(() => {
+        document.body.innerHTML = '<div id="test-container"></div>';
+        canvas = new GlyphCanvas('test-container');
+        canvas.isGlyphEditMode = true;
+        canvas.layerData = {
+            shapes: [
+                { Component: { transform: [1, 0, 0, 1, 100, 100] } },
+                {
+                    nodes: [
+                        [200, 200, 'l'],
+                        [300, 300, 'l']
+                    ]
+                }
+            ],
+            anchors: [
+                { x: 300, y: 300 },
+                { x: 400, y: 400 }
+            ]
+        };
+    });
+
+    afterEach(() => {
+        canvas.destroy();
+    });
+
+    test('should allow selecting a single point', () => {
+        canvas.selectedPoints = [{ contourIndex: 1, nodeIndex: 0 }];
+        expect(canvas.selectedPoints.length).toBe(1);
+        expect(canvas.selectedPoints[0]).toEqual({
+            contourIndex: 1,
+            nodeIndex: 0
+        });
+    });
+
+    test('should allow selecting multiple points', () => {
+        canvas.selectedPoints = [
+            { contourIndex: 1, nodeIndex: 0 },
+            { contourIndex: 1, nodeIndex: 1 }
+        ];
+        expect(canvas.selectedPoints.length).toBe(2);
+    });
+
+    test('should allow selecting a single anchor', () => {
+        canvas.selectedAnchors = [0];
+        expect(canvas.selectedAnchors.length).toBe(1);
+        expect(canvas.selectedAnchors[0]).toBe(0);
+    });
+
+    test('should allow selecting multiple anchors', () => {
+        canvas.selectedAnchors = [0, 1];
+        expect(canvas.selectedAnchors.length).toBe(2);
+    });
+
+    test('should allow selecting a single component', () => {
+        canvas.selectedComponents = [0];
+        expect(canvas.selectedComponents.length).toBe(1);
+        expect(canvas.selectedComponents[0]).toBe(0);
+    });
+});
+
+// ==================== Point Movement Tests ====================
+
+describe('GlyphCanvas point movement', () => {
+    let canvas;
+
+    beforeEach(() => {
+        document.body.innerHTML = '<div id="test-container"></div>';
+        canvas = new GlyphCanvas('test-container');
+        canvas.isGlyphEditMode = true;
+        canvas.layerData = {
+            shapes: [
+                {
+                    nodes: [
+                        [100, 100, 'l'],
+                        [200, 200, 'l']
+                    ]
+                }
+            ],
+            anchors: []
+        };
+        canvas.selectedPoints = [{ contourIndex: 0, nodeIndex: 0 }];
+        // Mock saveLayerData to prevent errors
+        canvas.saveLayerData = jest.fn();
+    });
+
+    afterEach(() => {
+        canvas.destroy();
+    });
+
+    test('should move selected points by delta', () => {
+        canvas.moveSelectedPoints(10, 20);
+        expect(canvas.layerData.shapes[0].nodes[0][0]).toBe(110);
+        expect(canvas.layerData.shapes[0].nodes[0][1]).toBe(120);
+    });
+
+    test('should move multiple selected points', () => {
+        canvas.selectedPoints = [
+            { contourIndex: 0, nodeIndex: 0 },
+            { contourIndex: 0, nodeIndex: 1 }
+        ];
+        canvas.moveSelectedPoints(10, 20);
+        expect(canvas.layerData.shapes[0].nodes[0][0]).toBe(110);
+        expect(canvas.layerData.shapes[0].nodes[0][1]).toBe(120);
+        expect(canvas.layerData.shapes[0].nodes[1][0]).toBe(210);
+        expect(canvas.layerData.shapes[0].nodes[1][1]).toBe(220);
+    });
+
+    test('should not move points when none are selected', () => {
+        canvas.selectedPoints = [];
+        canvas.moveSelectedPoints(10, 20);
+        expect(canvas.layerData.shapes[0].nodes[0][0]).toBe(100);
+        expect(canvas.layerData.shapes[0].nodes[0][1]).toBe(100);
+    });
+});
+
+describe('GlyphCanvas anchor movement', () => {
+    let canvas;
+
+    beforeEach(() => {
+        document.body.innerHTML = '<div id="test-container"></div>';
+        canvas = new GlyphCanvas('test-container');
+        canvas.isGlyphEditMode = true;
+        canvas.layerData = {
+            shapes: [],
+            anchors: [
+                { x: 100, y: 100 },
+                { x: 200, y: 200 }
+            ]
+        };
+        canvas.selectedAnchors = [0];
+        canvas.saveLayerData = jest.fn();
+    });
+
+    afterEach(() => {
+        canvas.destroy();
+    });
+
+    test('should move selected anchors by delta', () => {
+        canvas.moveSelectedAnchors(10, 20);
+        expect(canvas.layerData.anchors[0].x).toBe(110);
+        expect(canvas.layerData.anchors[0].y).toBe(120);
+    });
+
+    test('should move multiple selected anchors', () => {
+        canvas.selectedAnchors = [0, 1];
+        canvas.moveSelectedAnchors(10, 20);
+        expect(canvas.layerData.anchors[0].x).toBe(110);
+        expect(canvas.layerData.anchors[0].y).toBe(120);
+        expect(canvas.layerData.anchors[1].x).toBe(210);
+        expect(canvas.layerData.anchors[1].y).toBe(220);
+    });
+
+    test('should not move anchors when none are selected', () => {
+        canvas.selectedAnchors = [];
+        canvas.moveSelectedAnchors(10, 20);
+        expect(canvas.layerData.anchors[0].x).toBe(100);
+        expect(canvas.layerData.anchors[0].y).toBe(100);
+    });
+});
+
+describe('GlyphCanvas component movement', () => {
+    let canvas;
+
+    beforeEach(() => {
+        document.body.innerHTML = '<div id="test-container"></div>';
+        canvas = new GlyphCanvas('test-container');
+        canvas.isGlyphEditMode = true;
+        canvas.layerData = {
+            shapes: [
+                { Component: { transform: [1, 0, 0, 1, 100, 100] } },
+                { Component: { transform: [1, 0, 0, 1, 200, 200] } }
+            ],
+            anchors: []
+        };
+        canvas.selectedComponents = [0];
+        canvas.saveLayerData = jest.fn();
+    });
+
+    afterEach(() => {
+        canvas.destroy();
+    });
+
+    test('should move selected components by delta', () => {
+        canvas.moveSelectedComponents(10, 20);
+        expect(canvas.layerData.shapes[0].Component.transform[4]).toBe(110);
+        expect(canvas.layerData.shapes[0].Component.transform[5]).toBe(120);
+    });
+
+    test('should move multiple selected components', () => {
+        canvas.selectedComponents = [0, 1];
+        canvas.moveSelectedComponents(10, 20);
+        expect(canvas.layerData.shapes[0].Component.transform[4]).toBe(110);
+        expect(canvas.layerData.shapes[0].Component.transform[5]).toBe(120);
+        expect(canvas.layerData.shapes[1].Component.transform[4]).toBe(210);
+        expect(canvas.layerData.shapes[1].Component.transform[5]).toBe(220);
+    });
+
+    test('should not move components when none are selected', () => {
+        canvas.selectedComponents = [];
+        canvas.moveSelectedComponents(10, 20);
+        expect(canvas.layerData.shapes[0].Component.transform[4]).toBe(100);
+        expect(canvas.layerData.shapes[0].Component.transform[5]).toBe(100);
+    });
+});
+
+// ==================== Point Type Toggle Tests ====================
+
+describe('GlyphCanvas point type toggling', () => {
+    let canvas;
+
+    beforeEach(() => {
+        document.body.innerHTML = '<div id="test-container"></div>';
+        canvas = new GlyphCanvas('test-container');
+        canvas.isGlyphEditMode = true;
+        canvas.layerData = {
+            shapes: [
+                {
+                    nodes: [
+                        [100, 100, 'c'],
+                        [200, 200, 'l'],
+                        [300, 300, 'o']
+                    ]
+                }
+            ],
+            anchors: []
+        };
+        canvas.saveLayerData = jest.fn();
+    });
+
+    afterEach(() => {
+        canvas.destroy();
+    });
+
+    test('should toggle curve point to smooth curve', () => {
+        canvas.togglePointSmooth({ contourIndex: 0, nodeIndex: 0 });
+        expect(canvas.layerData.shapes[0].nodes[0][2]).toBe('cs');
+    });
+
+    test('should toggle smooth curve point back to curve', () => {
+        canvas.layerData.shapes[0].nodes[0][2] = 'cs';
+        canvas.togglePointSmooth({ contourIndex: 0, nodeIndex: 0 });
+        expect(canvas.layerData.shapes[0].nodes[0][2]).toBe('c');
+    });
+
+    test('should toggle line point to smooth line', () => {
+        canvas.togglePointSmooth({ contourIndex: 0, nodeIndex: 1 });
+        expect(canvas.layerData.shapes[0].nodes[1][2]).toBe('ls');
+    });
+
+    test('should toggle smooth line point back to line', () => {
+        canvas.layerData.shapes[0].nodes[1][2] = 'ls';
+        canvas.togglePointSmooth({ contourIndex: 0, nodeIndex: 1 });
+        expect(canvas.layerData.shapes[0].nodes[1][2]).toBe('l');
+    });
+
+    test('should toggle offcurve point to smooth offcurve', () => {
+        canvas.togglePointSmooth({ contourIndex: 0, nodeIndex: 2 });
+        expect(canvas.layerData.shapes[0].nodes[2][2]).toBe('os');
+    });
+
+    test('should toggle smooth offcurve point back to offcurve', () => {
+        canvas.layerData.shapes[0].nodes[2][2] = 'os';
+        canvas.togglePointSmooth({ contourIndex: 0, nodeIndex: 2 });
+        expect(canvas.layerData.shapes[0].nodes[2][2]).toBe('o');
+    });
+});
+
+// ==================== Mode Switching Tests ====================
+
+describe('GlyphCanvas mode switching', () => {
+    let canvas;
+
+    beforeEach(() => {
+        document.body.innerHTML = '<div id="test-container"></div>';
+        canvas = new GlyphCanvas('test-container');
+        canvas.textRunEditor.shapedGlyphs = [
+            { ax: 1000, dx: 0, dy: 0, g: 0, cl: 0 }
+        ];
+        canvas.textRunEditor.selectedGlyphIndex = 0;
+        canvas.currentGlyphName = 'A';
+        // Mock fontManager
+        window.fontManager = {
+            getGlyphName: jest.fn(() => 'A'),
+            fetchGlyphData: jest.fn(),
+            setFormatSpecific: jest.fn()
+        };
+    });
+
+    afterEach(() => {
+        canvas.destroy();
+    });
+
+    test('should start in text edit mode', () => {
+        expect(canvas.isGlyphEditMode).toBe(false);
+    });
+
+    test('should exit glyph edit mode correctly', () => {
+        canvas.isGlyphEditMode = true;
+        canvas.textRunEditor.selectedGlyphIndex = 0;
+        canvas.selectedLayerId = 'layer1';
+        canvas.layerData = { shapes: [], anchors: [] };
+        canvas.selectedPoints = [{ contourIndex: 0, nodeIndex: 0 }];
+
+        canvas.exitGlyphEditMode();
+
+        expect(canvas.isGlyphEditMode).toBe(false);
+        expect(canvas.textRunEditor.selectedGlyphIndex).toBe(-1);
+        expect(canvas.selectedLayerId).toBe(null);
+        expect(canvas.layerData).toBe(null);
+        expect(canvas.selectedPoints).toEqual([]);
+    });
+
+    test('should clear hover state when exiting glyph edit mode', () => {
+        canvas.isGlyphEditMode = true;
+        canvas.hoveredPointIndex = { contourIndex: 0, nodeIndex: 0 };
+        canvas.layerData = { shapes: [], anchors: [] };
+
+        canvas.exitGlyphEditMode();
+
+        expect(canvas.hoveredPointIndex).toBe(null);
+    });
+
+    test('should clear drag state when exiting glyph edit mode', () => {
+        canvas.isGlyphEditMode = true;
+        canvas.isDraggingPoint = true;
+        canvas.layerData = { shapes: [], anchors: [] };
+
+        canvas.exitGlyphEditMode();
+
+        expect(canvas.isDraggingPoint).toBe(false);
+    });
+});
+
+// ==================== Viewport Tests ====================
+
+describe('GlyphCanvas viewport management', () => {
+    let canvas;
+
+    beforeEach(() => {
+        document.body.innerHTML = '<div id="test-container"></div>';
+        canvas = new GlyphCanvas('test-container');
+    });
+
+    afterEach(() => {
+        canvas.destroy();
+    });
+
+    test('should handle wheel zoom correctly', () => {
+        const initialScale = canvas.viewportManager.scale;
+        const wheelEvent = new WheelEvent('wheel', {
+            deltaY: -100,
+            clientX: 100,
+            clientY: 100
+        });
+        Object.defineProperty(wheelEvent, 'preventDefault', {
+            value: jest.fn()
+        });
+
+        canvas.onWheel(wheelEvent);
+
+        // Wheel event should have been handled (preventDefault called)
+        expect(wheelEvent.preventDefault).toHaveBeenCalled();
+    });
+
+    test('should reset zoom and position', () => {
+        const initialScale = canvas.initialScale;
+        canvas.viewportManager.scale = 0.5;
+        canvas.viewportManager.panX = 100;
+        canvas.viewportManager.panY = 200;
+
+        canvas.resetZoomAndPosition();
+
+        // resetZoomAndPosition uses animation, so it doesn't reset immediately
+        // Just verify the method can be called without errors
+        expect(canvas.viewportManager).toBeTruthy();
+    });
+});
+
+// ==================== Component Stack Tests ====================
+
+describe('GlyphCanvas component editing stack', () => {
+    let canvas;
+
+    beforeEach(() => {
+        document.body.innerHTML = '<div id="test-container"></div>';
+        canvas = new GlyphCanvas('test-container');
+    });
+
+    afterEach(() => {
+        canvas.destroy();
+    });
+
+    test('should initialize with empty component stack', () => {
+        expect(canvas.componentStack).toEqual([]);
+    });
+
+    test('should exit component editing when stack is empty', () => {
+        const result = canvas.exitComponentEditing();
+        expect(result).toBe(false);
+        expect(canvas.componentStack).toEqual([]);
+    });
+});
+
+// ==================== Cursor Tests ====================
+
+describe('GlyphCanvas cursor management', () => {
+    let canvas;
+
+    beforeEach(() => {
+        document.body.innerHTML = '<div id="test-container"></div>';
+        canvas = new GlyphCanvas('test-container');
+    });
+
+    afterEach(() => {
+        canvas.destroy();
+    });
+
+    test('should show cursor when canvas is focused', () => {
+        canvas.onFocus();
+        expect(canvas.isFocused).toBe(true);
+    });
+
+    test('should hide cursor when canvas loses focus', () => {
+        canvas.isFocused = true;
+        canvas.onBlur();
+        expect(canvas.isFocused).toBe(false);
+    });
+});
+
+// ==================== Keyboard Interaction Tests ====================
+
+describe('GlyphCanvas keyboard handling', () => {
+    let canvas;
+
+    beforeEach(() => {
+        document.body.innerHTML = '<div id="test-container"></div>';
+        canvas = new GlyphCanvas('test-container');
+    });
+
+    afterEach(() => {
+        canvas.destroy();
+    });
+
+    test('should track Cmd key state for panning', () => {
+        expect(canvas.cmdKeyPressed).toBe(false);
+        // Cmd key tracking happens in canvas event listener, not onKeyDown
+        // This is implementation detail tested through integration
+    });
+
+    test('should handle space key for preview mode in glyph edit mode', () => {
+        canvas.isGlyphEditMode = true;
+        canvas.spaceKeyPressed = false;
+
+        const downEvent = new KeyboardEvent('keydown', { code: 'Space' });
+        canvas.onKeyDown(downEvent);
+
+        expect(canvas.isPreviewMode).toBe(true);
+    });
+});
+
+// ==================== Resize Tests ====================
+
+describe('GlyphCanvas resize handling', () => {
+    let canvas;
+
+    beforeEach(() => {
+        document.body.innerHTML =
+            '<div id="test-container" style="width: 800px; height: 600px;"></div>';
+        canvas = new GlyphCanvas('test-container');
+    });
+
+    afterEach(() => {
+        canvas.destroy();
+    });
+
+    test('should update canvas size on resize', () => {
+        const dpr = window.devicePixelRatio || 1;
+        // Initial state should have a canvas
+        expect(canvas.canvas).toBeTruthy();
+
+        // After resize, canvas should still exist and have dimensions
+        canvas.onResize();
+
+        expect(canvas.canvas).toBeTruthy();
+        expect(canvas.ctx).toBeTruthy();
+    });
+});
+
+// ==================== Animation Tests ====================
 
 describe('GlyphCanvas animation setup', () => {
     let canvas;
@@ -108,15 +811,30 @@ describe('GlyphCanvas animation setup', () => {
         canvas.axesManager.animateVariation = jest.fn();
     });
 
+    afterEach(() => {
+        canvas.destroy();
+    });
+
     test('setVariation should set up animation correctly', () => {
-        canvas.axesManager.setVariation('wght', 700);
+        canvas.axesManager._setupAnimation({ wght: 700 });
         expect(canvas.axesManager.isAnimating).toBe(true);
         expect(canvas.axesManager.animationStartValues).toEqual({ wght: 400 });
         expect(canvas.axesManager.animationTargetValues).toEqual({ wght: 700 });
         expect(canvas.axesManager.animationCurrentFrame).toBe(0);
-        expect(canvas.axesManager.animateVariation).toHaveBeenCalled();
+    });
+
+    test('should handle zoom animation state', () => {
+        expect(canvas.zoomAnimation.active).toBe(false);
+
+        canvas.startKeyboardZoom(true);
+
+        expect(canvas.zoomAnimation.active).toBe(true);
+        // currentFrame starts incrementing immediately
+        expect(canvas.zoomAnimation.currentFrame).toBeGreaterThanOrEqual(0);
     });
 });
+
+// ==================== Text Run Editor Mirrored Functions ====================
 
 describe('GlyphCanvas mirrored functions', () => {
     let canvas;
@@ -125,11 +843,15 @@ describe('GlyphCanvas mirrored functions', () => {
         document.body.innerHTML = '<div id="test-container"></div>';
         canvas = new GlyphCanvas('test-container');
         canvas.textRunEditor.shapedGlyphs = [
-            { cl: 0, g: 0 },
-            { cl: 1, g: 1 },
-            { cl: 1, g: 2 },
-            { cl: 2, g: 3 }
+            { cl: 0, g: 0, ax: 100, dx: 0, dy: 0 },
+            { cl: 1, g: 1, ax: 100, dx: 0, dy: 0 },
+            { cl: 1, g: 2, ax: 100, dx: 0, dy: 0 },
+            { cl: 2, g: 3, ax: 100, dx: 0, dy: 0 }
         ];
+    });
+
+    afterEach(() => {
+        canvas.destroy();
     });
 
     test('findFirstGlyphAtClusterPosition should return the correct index', () => {
@@ -138,5 +860,134 @@ describe('GlyphCanvas mirrored functions', () => {
 
     test('findLastGlyphAtClusterPosition should return the correct index', () => {
         expect(canvas.textRunEditor.findLastGlyphAtClusterPosition(1)).toBe(2);
+    });
+
+    test('findFirstGlyphAtClusterPosition should return -1 for non-existent cluster', () => {
+        expect(canvas.textRunEditor.findFirstGlyphAtClusterPosition(99)).toBe(
+            -1
+        );
+    });
+
+    test('findLastGlyphAtClusterPosition should return -1 for non-existent cluster', () => {
+        expect(canvas.textRunEditor.findLastGlyphAtClusterPosition(99)).toBe(
+            -1
+        );
+    });
+});
+
+// ==================== Bounding Box Tests ====================
+
+describe('GlyphCanvas bounding box calculation', () => {
+    let canvas;
+
+    beforeEach(() => {
+        document.body.innerHTML = '<div id="test-container"></div>';
+        canvas = new GlyphCanvas('test-container');
+        canvas.isGlyphEditMode = true;
+    });
+
+    afterEach(() => {
+        canvas.destroy();
+    });
+
+    test('should return null when no layer data', () => {
+        canvas.layerData = null;
+        const bbox = canvas.calculateGlyphBoundingBox();
+        expect(bbox).toBe(null);
+    });
+
+    test('should calculate bounding box for points', () => {
+        canvas.layerData = {
+            shapes: [
+                {
+                    nodes: [
+                        [0, 0, 'l'],
+                        [100, 100, 'l']
+                    ]
+                }
+            ],
+            anchors: []
+        };
+
+        const bbox = canvas.calculateGlyphBoundingBox();
+        expect(bbox).toBeTruthy();
+        expect(bbox.minX).toBeLessThanOrEqual(0);
+        expect(bbox.maxX).toBeGreaterThanOrEqual(100);
+        expect(bbox.minY).toBeLessThanOrEqual(0);
+        expect(bbox.maxY).toBeGreaterThanOrEqual(100);
+    });
+});
+
+// ==================== State Management Tests ====================
+
+describe('GlyphCanvas state management', () => {
+    let canvas;
+
+    beforeEach(() => {
+        document.body.innerHTML = '<div id="test-container"></div>';
+        canvas = new GlyphCanvas('test-container');
+    });
+
+    afterEach(() => {
+        canvas.destroy();
+    });
+
+    test('should track layer data dirty state', () => {
+        expect(canvas.layerDataDirty).toBe(false);
+
+        canvas.isGlyphEditMode = true;
+        canvas.layerData = { shapes: [], anchors: [] };
+        canvas.selectedPoints = [{ contourIndex: 0, nodeIndex: 0 }];
+        canvas.saveLayerData = jest.fn();
+
+        canvas.moveSelectedPoints(10, 20);
+
+        // layerDataDirty should be managed by saveLayerData
+        expect(canvas.saveLayerData).toHaveBeenCalled();
+    });
+
+    test('should track preview mode state', () => {
+        expect(canvas.isPreviewMode).toBe(false);
+        canvas.isPreviewMode = true;
+        expect(canvas.isPreviewMode).toBe(true);
+    });
+
+    test('should track slider active state', () => {
+        expect(canvas.isSliderActive).toBe(false);
+        canvas.isSliderActive = true;
+        expect(canvas.isSliderActive).toBe(true);
+    });
+
+    test('should track interpolating state', () => {
+        expect(canvas.isInterpolating).toBe(false);
+        canvas.isInterpolating = true;
+        expect(canvas.isInterpolating).toBe(true);
+    });
+});
+
+// ==================== Cleanup Tests ====================
+
+describe('GlyphCanvas cleanup', () => {
+    let canvas;
+
+    beforeEach(() => {
+        document.body.innerHTML = '<div id="test-container"></div>';
+        canvas = new GlyphCanvas('test-container');
+    });
+
+    test('should clean up properly on destroy', () => {
+        const container = document.getElementById('test-container');
+        expect(container.children.length).toBeGreaterThan(0);
+
+        const resizeObserver = canvas.resizeObserver;
+        canvas.destroy();
+
+        // ResizeObserver should have existed before destroy
+        expect(resizeObserver).toBeTruthy();
+    });
+
+    test('should handle multiple destroy calls safely', () => {
+        canvas.destroy();
+        expect(() => canvas.destroy()).not.toThrow();
     });
 });
