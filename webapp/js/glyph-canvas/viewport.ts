@@ -1,6 +1,6 @@
 // webapp/js/glyph-canvas/viewport.js
 
-import { Point, Rect, RectWithWidthHeight } from '../basictypes';
+import { Point, RectWithWidthHeight } from '../basictypes';
 import APP_SETTINGS from '../settings';
 import { ShapedGlyph } from './textrun';
 

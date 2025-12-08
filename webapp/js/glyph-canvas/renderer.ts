@@ -1,14 +1,15 @@
 import { adjustColorHueAndLightness, desaturateColor } from '../design';
 import APP_SETTINGS from '../settings.js';
 
-// import type { GlyphCanvas } from './glyph-canvas.js';
+import type { ViewportManager } from './viewport';
+import type { TextRunEditor } from './textrun';
 
 class GlyphCanvasRenderer {
     canvas: HTMLCanvasElement;
     ctx: CanvasRenderingContext2D;
     glyphCanvas: any;
-    viewportManager: any;
-    textRunEditor: any;
+    viewportManager: ViewportManager;
+    textRunEditor: TextRunEditor;
     /**
      *
      * @param {HTMLCanvasElement} canvas
@@ -19,8 +20,8 @@ class GlyphCanvasRenderer {
     constructor(
         canvas: HTMLCanvasElement,
         glyphCanvas: any,
-        viewportManager: any,
-        textRunEditor: any
+        viewportManager: ViewportManager,
+        textRunEditor: TextRunEditor
     ) {
         this.canvas = canvas;
         this.ctx = canvas.getContext('2d')!;

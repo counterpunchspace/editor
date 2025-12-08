@@ -28,7 +28,7 @@
  * const layers = await fontInterpolation.interpolateGlyphs(['A', 'B', 'C'], { wght: 550 });
  */
 
-class FontInterpolationManager {
+export class FontInterpolationManager {
     worker: Worker | null;
     pendingRequests: Map<
         number,
@@ -240,13 +240,3 @@ class FontInterpolationManager {
         });
     }
 }
-
-// Create singleton instance
-const fontInterpolation = new FontInterpolationManager();
-
-// Make available globally
-if (typeof window !== 'undefined') {
-    window['fontInterpolation'] = fontInterpolation;
-}
-
-export default fontInterpolation;

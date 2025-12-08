@@ -1,12 +1,20 @@
 // Glyph Canvas Editor
 // Handles canvas-based glyph editing with pan/zoom and text rendering
 
-let AxesManager = require('./glyph-canvas/variations.js').AxesManager;
+let AxesManager = require('./glyph-canvas/variations').AxesManager;
 let FeaturesManager = require('./glyph-canvas/features').FeaturesManager;
 let TextRunEditor = require('./glyph-canvas/textrun').TextRunEditor;
 let ViewportManager = require('./glyph-canvas/viewport').ViewportManager;
 let GlyphCanvasRenderer =
     require('./glyph-canvas/renderer').GlyphCanvasRenderer;
+let LayerDataNormalizer =
+    require('./layer-data-normalizer').LayerDataNormalizer;
+let FontInterpolationManager =
+    require('./font-interpolation').FontInterpolationManager;
+
+// Create singleton instance
+const fontInterpolation = new FontInterpolationManager();
+
 class GlyphCanvas {
     constructor(containerId) {
         this.container = document.getElementById(containerId);
@@ -2281,10 +2289,9 @@ class GlyphCanvas {
 
     async interpolateCurrentGlyph(force = false) {
         // Interpolate the current glyph at current variation settings
-        if (!this.currentGlyphName || !window.fontInterpolation) {
+        if (!this.currentGlyphName) {
             console.log('[GlyphCanvas]', 'Skipping interpolation:', {
-                hasGlyphName: !!this.currentGlyphName,
-                hasFontInterpolation: !!window.fontInterpolation
+                hasGlyphName: !!this.currentGlyphName
             });
             return;
         }
@@ -2308,11 +2315,10 @@ class GlyphCanvas {
                 JSON.stringify(location)
             );
 
-            const interpolatedLayer =
-                await window.fontInterpolation.interpolateGlyph(
-                    this.currentGlyphName,
-                    location
-                );
+            const interpolatedLayer = await fontInterpolation.interpolateGlyph(
+                this.currentGlyphName,
+                location
+            );
 
             console.log(
                 '[GlyphCanvas]',

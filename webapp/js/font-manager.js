@@ -3,6 +3,7 @@
 // 1. "typing" font: Compiled once when font opens, kept in memory permanently for glyph name extraction
 // 2. "editing" font: Recompiled on demand with subset of glyphs for display in canvas
 
+import APP_SETTINGS from '../settings.js';
 class FontManager {
     constructor() {
         this.babelfontJson = null;
@@ -249,7 +250,7 @@ babelfont_json
      * Save typing font to file system
      */
     saveTypingFontToFileSystem() {
-        if (!window.APP_SETTINGS?.FONT_MANAGER?.SAVE_DEBUG_FONTS) {
+        if (!APP_SETTINGS.FONT_MANAGER?.SAVE_DEBUG_FONTS) {
             return; // Feature disabled in settings
         }
 
@@ -284,7 +285,7 @@ babelfont_json
      * Save editing font to file system
      */
     saveEditingFontToFileSystem() {
-        if (!window.APP_SETTINGS?.FONT_MANAGER?.SAVE_DEBUG_FONTS) {
+        if (!APP_SETTINGS.FONT_MANAGER?.SAVE_DEBUG_FONTS) {
             return; // Feature disabled in settings
         }
 

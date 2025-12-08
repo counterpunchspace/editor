@@ -13,6 +13,8 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+import { DesignspaceLocation, ParsedNode } from './basictypes';
+
 /**
  * Layer Data Normalizer
  *
@@ -23,7 +25,7 @@
  * can be displayed using the same rendering code.
  */
 
-class LayerDataNormalizer {
+export class LayerDataNormalizer {
     /**
      * Normalize layer data from any source
      *
@@ -31,7 +33,7 @@ class LayerDataNormalizer {
      * @param {string} source - 'python' or 'interpolated'
      * @returns {Object} Normalized layer data with isInterpolated flag
      */
-    static normalize(layerData, source = 'python') {
+    static normalize(layerData: any, source = 'python') {
         if (!layerData) {
             return null;
         }
@@ -65,7 +67,7 @@ class LayerDataNormalizer {
      * @param {boolean} isInterpolated - Whether this is interpolated data
      * @returns {Array} Normalized shapes array
      */
-    static normalizeShapes(shapes, isInterpolated) {
+    static normalizeShapes(shapes: any[], isInterpolated: boolean): any[] {
         return shapes.map((shape) => {
             if (shape.Path) {
                 return {
@@ -113,7 +115,7 @@ class LayerDataNormalizer {
      * @param {string|Array} nodes - Nodes as string or already-parsed array
      * @returns {Array} Array of [x, y, type] triplets
      */
-    static parseNodes(nodes) {
+    static parseNodes(nodes: string | any[]): ParsedNode[] {
         // If already an array, return as-is
         if (Array.isArray(nodes)) {
             return nodes;
@@ -125,7 +127,7 @@ class LayerDataNormalizer {
             if (!nodesStr) return [];
 
             const tokens = nodesStr.split(/\s+/);
-            const nodesArray = [];
+            const nodesArray: ParsedNode[] = [];
 
             for (let i = 0; i + 2 < tokens.length; i += 3) {
                 nodesArray.push([
@@ -147,7 +149,7 @@ class LayerDataNormalizer {
      * @param {Array} anchors - Array of anchor objects
      * @returns {Array} Normalized anchors array
      */
-    static normalizeAnchors(anchors) {
+    static normalizeAnchors(anchors: any[]): any[] {
         return anchors.map((anchor) => ({
             name: anchor.name || '',
             x: anchor.x || 0,
@@ -162,7 +164,7 @@ class LayerDataNormalizer {
      * @param {Object} normalizedData - Normalized layer data
      * @returns {boolean} True if this is an exact layer
      */
-    static isExactLayer(normalizedData) {
+    static isExactLayer(normalizedData: any) {
         return normalizedData && !normalizedData.isInterpolated;
     }
 
@@ -173,7 +175,11 @@ class LayerDataNormalizer {
      * @param {Object} interpolatedLayer - Layer data from babelfont-rs interpolate_glyph
      * @param {Object} location - The designspace location used for interpolation
      */
-    static applyInterpolatedLayer(glyphCanvas, interpolatedLayer, location) {
+    static applyInterpolatedLayer(
+        glyphCanvas: any,
+        interpolatedLayer: any,
+        location: DesignspaceLocation
+    ) {
         console.log(
             '[LayerDataNormalizer]',
             '📍 Location:',
@@ -204,7 +210,7 @@ class LayerDataNormalizer {
         }
 
         // Parse component nodes recursively
-        const parseComponentNodes = (shapes) => {
+        const parseComponentNodes = (shapes: any[]) => {
             if (!shapes) return;
 
             shapes.forEach((shape) => {
@@ -239,13 +245,8 @@ class LayerDataNormalizer {
      *
      * @param {GlyphCanvas} glyphCanvas - The glyph canvas instance
      */
-    static async restoreExactLayer(glyphCanvas) {
+    static async restoreExactLayer(glyphCanvas: any) {
         // Fetch layer data from Python
         await glyphCanvas.fetchLayerData();
     }
-}
-
-// Export for use in other modules
-if (typeof module !== 'undefined' && module.exports) {
-    module.exports = LayerDataNormalizer;
 }
