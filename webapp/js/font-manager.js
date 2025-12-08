@@ -685,6 +685,154 @@ json.dumps(result)
             return null;
         }
     }
+
+    async fetchLayerData(glyphName, layerId) {
+        const dataJson = await window.pyodide.runPythonAsync(`
+import json
+
+# Get current font once at the top level
+current_font = CurrentFont()
+if not current_font or not hasattr(current_font, 'glyphs'):
+    result = None
+else:
+    def fetch_component_recursive(font, glyph_name, layer_id, visited=None):
+        """Recursively fetch component data including nested components"""
+        if visited is None:
+            visited = set()
+        
+        if glyph_name in visited:
+            print(f"Warning: Circular component reference detected for {glyph_name}")
+            return None
+        
+        visited.add(glyph_name)
+        
+        if not font or not hasattr(font, 'glyphs'):
+            return None
+        
+        glyph = font.glyphs.get(glyph_name)
+        if not glyph:
+            return None
+        
+        # Find the layer by ID
+        layer = None
+        for l in glyph.layers:
+            if l.id == layer_id:
+                layer = l
+                break
+        
+        if not layer:
+            return None
+        
+        # Serialize the layer
+        result = layer.to_dict()
+        
+        # Recursively fetch nested component data
+        if result and 'shapes' in result:
+            for shape in result['shapes']:
+                if 'Component' in shape and 'reference' in shape['Component']:
+                    ref_name = shape['Component']['reference']
+                    # Fetch nested component data
+                    nested_data = fetch_component_recursive(font, ref_name, layer_id, visited.copy())
+                    if nested_data:
+                        shape['Component']['layerData'] = nested_data
+        
+        return result
+
+    result = None
+    try:
+        glyph = current_font.glyphs.get('${glyphName}')
+        if glyph:
+            # Find the layer by ID
+            layer = None
+            for l in glyph.layers:
+                if l.id == '${layerId}':
+                    layer = l
+                    break
+            
+            if layer:
+                # Use to_dict() to serialize the layer
+                result = layer.to_dict()
+                
+                # Recursively fetch component layer data
+                if result and 'shapes' in result:
+                    for shape in result['shapes']:
+                        if 'Component' in shape and 'reference' in shape['Component']:
+                            ref_name = shape['Component']['reference']
+                            nested_data = fetch_component_recursive(current_font, ref_name, '${layerId}')
+                            if nested_data:
+                                shape['Component']['layerData'] = nested_data
+    except Exception as e:
+        print(f"Error fetching layer data: {e}")
+        import traceback
+        traceback.print_exc()
+        result = None
+
+json.dumps(result)
+`);
+
+        return JSON.parse(dataJson);
+    }
+
+    async saveLayerData(glyphName, layerId, layerData) {
+        // Convert nodes array back to string format for Python
+        const layerDataCopy = JSON.parse(JSON.stringify(layerData));
+        if (layerDataCopy.shapes) {
+            layerDataCopy.shapes.forEach((shape) => {
+                if (shape.nodes && Array.isArray(shape.nodes)) {
+                    // Convert array back to string: [[x, y, type], ...] -> "x y type x y type ..."
+                    const nodesString = shape.nodes
+                        .map((node) => `${node[0]} ${node[1]} ${node[2]}`)
+                        .join(' ');
+                    // Store in Path.nodes format
+                    if (!shape.Path) {
+                        shape.Path = {};
+                    }
+                    shape.Path.nodes = nodesString;
+                    shape.Path.closed = true; // Assume closed for now
+                    delete shape.nodes; // Remove the parsed array
+                }
+            });
+        }
+        const layerDataJson = JSON.stringify(layerDataCopy);
+
+        await window.pyodide.runPythonAsync(`
+import json
+
+try:
+    current_font = CurrentFont()
+    if current_font and hasattr(current_font, 'glyphs'):
+        glyph = current_font.glyphs.get('${glyphName}')
+        if glyph:
+            # Find the layer by ID
+            layer = None
+            for l in glyph.layers:
+                if l.id == '${layerId}':
+                    layer = l
+                    break
+            
+            if layer:
+                # Parse the JSON data
+                layer_dict = json.loads('''${layerDataJson}''')
+                
+                # Update the layer's _data dictionary directly
+                # from_dict() is a classmethod that creates a NEW object,
+                # so we need to update the existing layer's internal data
+                layer._data.update(layer_dict)
+                
+                # Mark layer and parent glyph as dirty to trigger recompilation
+                if hasattr(layer, 'mark_dirty'):
+                    layer.mark_dirty()
+                
+                # Also mark glyph dirty
+                if glyph and hasattr(glyph, 'mark_dirty'):
+                    glyph.mark_dirty()
+                
+except Exception as e:
+    print(f"Error saving layer data: {e}")
+    import traceback
+    traceback.print_exc()
+`);
+    }
 }
 
 // Create global instance
