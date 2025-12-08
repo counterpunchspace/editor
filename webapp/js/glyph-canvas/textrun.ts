@@ -5,6 +5,7 @@
 // - cursor movement
 // - selection handling
 
+import { Font } from 'opentype.js';
 import type { FeaturesManager } from './features';
 import type { AxesManager } from './variations';
 
@@ -28,7 +29,7 @@ export class TextRunEditor {
     hbFont: any;
     hbFace: any;
     hbBlob: any;
-    opentypeFont: any;
+    opentypeFont: Font | null;
     bidi: any;
     bidiRuns: any[];
     selectedGlyphIndex: number;
@@ -41,7 +42,7 @@ export class TextRunEditor {
     callbacks: Record<string, Function>;
     selectionStart: number | null;
     selectionEnd: number | null;
-    fontBlob: ArrayBuffer | null;
+    fontBlob: Uint8Array | null;
 
     constructor(featuresManager: FeaturesManager, axesManager: AxesManager) {
         this.featuresManager = featuresManager;
@@ -1260,7 +1261,7 @@ export class TextRunEditor {
         }
     }
 
-    async setFont(fontData: ArrayBuffer) {
+    async setFont(fontData: Uint8Array) {
         console.log(
             '[TextRun]',
             '🔵 TextRunEditor.setFont() called, current textBuffer:',

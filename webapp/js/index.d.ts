@@ -7,6 +7,7 @@ declare global {
         pyodide: any; // Pyodide
         createHarfBuzz: any; // HarfBuzz.js
         hbjs: any; // HarfBuzz.js
+        hbInit: () => Promise<void>; // HarfBuzz.js
 
         // From ai-assistant.js
         aiAssistant: AIAssistant;

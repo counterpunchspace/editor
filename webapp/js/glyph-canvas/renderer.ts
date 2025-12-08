@@ -4,7 +4,7 @@ import APP_SETTINGS from '../settings';
 import type { ViewportManager } from './viewport';
 import type { TextRunEditor } from './textrun';
 
-class GlyphCanvasRenderer {
+export class GlyphCanvasRenderer {
     canvas: HTMLCanvasElement;
     ctx: CanvasRenderingContext2D;
     glyphCanvas: any;

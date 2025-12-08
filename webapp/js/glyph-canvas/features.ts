@@ -1,7 +1,9 @@
+import { Font } from 'opentype.js';
+
 export class FeaturesManager {
     featureSettings: Record<string, boolean>;
     defaultFeatureSettings: Record<string, boolean>;
-    opentypeFont: any;
+    opentypeFont: Font | null;
     featuresSection: HTMLElement | null;
     featureResetButton: HTMLButtonElement | null;
     callbacks: Record<string, Function>;

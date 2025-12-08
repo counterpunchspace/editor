@@ -17,9 +17,19 @@
 // Direct .babelfont JSON → TTF compilation (zero file system)
 // Based on: DIRECT_PYTHON_RUST_INTEGRATION.md
 
+import opentype from 'opentype.js';
+interface CompilationOptions {
+    skip_kerning: boolean;
+    skip_features: boolean;
+    skip_metrics: boolean;
+    skip_outlines: boolean;
+    dont_use_production_names: boolean;
+    subset_glyphs?: Array<string>;
+}
+
 // Compilation target definitions
 // All targets use production glyph names by default
-const COMPILATION_TARGETS = {
+const COMPILATION_TARGETS: Record<string, CompilationOptions> = {
     // Default target for user-initiated compilations (Compile button)
     user: {
         skip_kerning: false,
@@ -59,69 +69,6 @@ const COMPILATION_TARGETS = {
 };
 
 /**
- * Get glyph names for an input string by compiling a typing font
- * This uses the 'typing' compilation target (no outlines), HarfBuzz for shaping,
- * and opentype.js to map glyph IDs to names.
- *
- * @param {string|object} babelfontJson - Font JSON (string or parsed object)
- * @param {string} inputString - Text to get glyphs for
- * @returns {Promise<Array<string>>} - Array of glyph names
- */
-async function getGlyphNamesForString(babelfontJson, inputString) {
-    // Ensure we have a JSON string
-    const jsonString =
-        typeof babelfontJson === 'string'
-            ? babelfontJson
-            : JSON.stringify(babelfontJson);
-
-    // Compile font with typing target (no outlines, minimal size)
-    let fontBuffer;
-
-    // Check if we're in a browser environment with the worker
-    if (
-        typeof fontCompilation !== 'undefined' &&
-        fontCompilation.isInitialized
-    ) {
-        // Use web worker approach in browser
-        const result = await fontCompilation.compileFromJson(
-            jsonString,
-            'typing-temp.ttf',
-            'typing'
-        );
-        fontBuffer = new Uint8Array(result.result);
-    } else if (
-        typeof window !== 'undefined' &&
-        typeof document !== 'undefined'
-    ) {
-        // Browser environment but worker not initialized - initialize it
-        const fontCompilationInstance = new FontCompilation();
-        await fontCompilationInstance.initialize();
-        const result = await fontCompilationInstance.compileFromJson(
-            jsonString,
-            'typing-temp.ttf',
-            'typing'
-        );
-        fontBuffer = new Uint8Array(result.result);
-    } else {
-        // Node.js environment - use direct WASM compilation
-        // Assumes compile_babelfont is available (imported in Node.js context)
-        if (typeof compile_babelfont === 'undefined') {
-            throw new Error(
-                'compile_babelfont not available. Make sure WASM module is imported.'
-            );
-        }
-        const ttfBytes = compile_babelfont(
-            jsonString,
-            COMPILATION_TARGETS.typing
-        );
-        fontBuffer = new Uint8Array(ttfBytes);
-    }
-
-    // Use shapeTextWithFont to get glyph names from the compiled font
-    return await shapeTextWithFont(fontBuffer, inputString);
-}
-
-/**
  * Shape text with a compiled font buffer and return glyph names
  * This is a lower-level function that works with font bytes directly
  *
@@ -129,19 +76,22 @@ async function getGlyphNamesForString(babelfontJson, inputString) {
  * @param {string} inputString - Text to shape
  * @returns {Promise<Array<string>>} - Array of glyph names
  */
-async function shapeTextWithFont(fontBytes, inputString) {
+async function shapeTextWithFont(
+    fontBytes: Uint8Array,
+    inputString: string
+): Promise<Array<string>> {
     // Parse the compiled font with opentype.js
     const fontBuffer = new Uint8Array(fontBytes);
     const opentypeFont = opentype.parse(fontBuffer.buffer);
 
     // Initialize HarfBuzz
     let hbModule;
-    if (typeof createHarfBuzz !== 'undefined') {
+    if (typeof window.createHarfBuzz !== 'undefined') {
         // Browser environment - use createHarfBuzz
-        hbModule = await createHarfBuzz();
-    } else if (typeof hbInit !== 'undefined') {
+        hbModule = await window.createHarfBuzz();
+    } else if (typeof window.hbInit !== 'undefined') {
         // Node.js environment - use hbInit Promise
-        hbModule = await hbInit;
+        hbModule = await window.hbInit;
     } else {
         throw new Error(
             'HarfBuzz not available. Make sure harfbuzzjs is loaded.'
@@ -165,7 +115,7 @@ async function shapeTextWithFont(fontBytes, inputString) {
     const shapedGlyphs = buffer.json();
 
     // Map glyph IDs to glyph names using opentype.js
-    const glyphNames = new Set();
+    const glyphNames: Set<string> = new Set();
     for (const shapedGlyph of shapedGlyphs) {
         const glyphId = shapedGlyph.g;
         if (opentypeFont && opentypeFont.glyphs.get(glyphId)) {
@@ -186,6 +136,18 @@ async function shapeTextWithFont(fontBytes, inputString) {
 }
 
 class FontCompilation {
+    worker: Worker | null;
+    isInitialized: boolean;
+    pendingCompilations: Map<
+        number,
+        {
+            resolve: (value: any) => void;
+            reject: (reason?: any) => void;
+            filename: string;
+        }
+    >;
+    compilationId: number;
+
     constructor() {
         this.worker = null;
         this.isInitialized = false;
@@ -253,7 +215,7 @@ class FontCompilation {
             this.worker.onerror = (e) => this.handleWorkerError(e);
 
             // Wait for worker to be ready
-            const ready = await new Promise((resolve, reject) => {
+            const ready = await new Promise<boolean>((resolve, reject) => {
                 const timeout = setTimeout(() => {
                     reject(
                         new Error(
@@ -262,27 +224,27 @@ class FontCompilation {
                     );
                 }, 30000); // 30 second timeout
 
-                const checkReady = (e) => {
+                const checkReady = (e: MessageEvent) => {
                     console.log('[FontCompilation]', 'Worker message:', e.data);
                     if (e.data.ready) {
                         clearTimeout(timeout);
-                        this.worker.removeEventListener('message', checkReady);
+                        this.worker!.removeEventListener('message', checkReady);
                         resolve(true);
                     } else if (e.data.error) {
                         clearTimeout(timeout);
-                        this.worker.removeEventListener('message', checkReady);
+                        this.worker!.removeEventListener('message', checkReady);
                         reject(new Error(e.data.error));
                     }
                 };
 
-                this.worker.addEventListener('message', checkReady);
+                this.worker!!.addEventListener('message', checkReady);
 
                 // Send an empty message to trigger worker auto-initialization
                 console.log(
                     '[FontCompilation]',
                     'Sending initialization trigger to worker...'
                 );
-                this.worker.postMessage({});
+                this.worker!.postMessage({});
             });
 
             this.isInitialized = ready;
@@ -305,7 +267,7 @@ class FontCompilation {
             }
 
             return true;
-        } catch (error) {
+        } catch (error: any) {
             console.error(
                 '[FontCompilation]',
                 '❌ Failed to initialize babelfont-fontc WASM:',
@@ -343,7 +305,7 @@ class FontCompilation {
         }
     }
 
-    handleWorkerMessage(e) {
+    handleWorkerMessage(e: MessageEvent) {
         // Forward interpolation messages to the interpolation manager
         if (e.data.type === 'interpolate' && window.fontInterpolation) {
             window.fontInterpolation.handleWorkerMessage(e);
@@ -355,7 +317,7 @@ class FontCompilation {
 
         if (id !== undefined && this.pendingCompilations.has(id)) {
             const { resolve, reject, filename } =
-                this.pendingCompilations.get(id);
+                this.pendingCompilations.get(id)!;
             this.pendingCompilations.delete(id);
 
             if (error) {
@@ -366,7 +328,7 @@ class FontCompilation {
         }
     }
 
-    handleWorkerError(e) {
+    handleWorkerError(e: ErrorEvent) {
         console.error('[FontCompilation]', 'Worker error:', e);
         if (window.term) {
             window.term.error(`Worker error: ${e.message}`);
@@ -385,11 +347,11 @@ class FontCompilation {
      * @returns {Promise<Object>} - { font: Uint8Array, filename: string, timeTaken: number }
      */
     async compileFromJson(
-        babelfontJson,
-        filename = 'font.babelfont',
-        target = 'user',
-        subsetGlyphs = null
-    ) {
+        babelfontJson: string,
+        filename: string = 'font.babelfont',
+        target: string | CompilationOptions = 'user',
+        subsetGlyphs?: Array<string>
+    ): Promise<{ font: Uint8Array; filename: string; time_taken: number }> {
         if (!this.isInitialized) {
             const initialized = await this.initialize();
             if (!initialized) {
@@ -400,7 +362,7 @@ class FontCompilation {
         }
 
         // Resolve compilation options
-        let options;
+        let options: CompilationOptions;
         if (typeof target === 'string') {
             options = { ...COMPILATION_TARGETS[target] };
             if (!options) {
@@ -432,12 +394,11 @@ class FontCompilation {
             this.pendingCompilations.set(id, { resolve, reject, filename });
 
             // Send JSON string directly to worker
-            // No file system involved!
-            this.worker.postMessage({
+            this.worker!.postMessage({
                 id,
-                babelfontJson, // Just a string - fast transfer!
+                babelfontJson,
                 filename,
-                options // NEW: Pass compilation options
+                options
             });
         });
     }
@@ -517,8 +478,10 @@ json.dumps(font_dict)
      * @param {Uint8Array} fontData - Compiled font bytes
      * @param {string} filename - Output filename
      */
-    downloadFont(fontData, filename) {
-        const blob = new Blob([fontData], { type: 'font/ttf' });
+    downloadFont(fontData: Uint8Array, filename: string) {
+        const blob = new Blob([fontData.buffer as ArrayBuffer], {
+            type: 'font/ttf'
+        });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
@@ -530,113 +493,6 @@ json.dumps(font_dict)
             '[FontCompilation]',
             `📥 Downloaded: ${filename} (${fontData.length} bytes)`
         );
-    }
-
-    // LEGACY METHOD - kept for backwards compatibility
-    // This now uses the new direct JSON path internally
-    async compile(inputPath, outputPath = null) {
-        if (!window.pyodide) {
-            throw new Error(
-                'Pyodide not available - cannot read file from virtual filesystem'
-            );
-        }
-
-        try {
-            // Read font from file and convert to JSON
-            console.log('[FontCompilation]', `📖 Loading ${inputPath}...`);
-
-            const babelfontJson = await window.pyodide.runPythonAsync(`
-import json
-from contextfonteditor import Font
-
-# Load font from file
-font = Font('${inputPath}')
-
-# Export to .babelfont JSON
-font_dict = font.to_dict()
-json.dumps(font_dict)
-            `);
-
-            console.log('[FontCompilation]', `✅ Loaded and exported to JSON`);
-
-            // Compile using new direct method
-            const filename = inputPath.split('/').pop();
-            const result = await this.compileFromJson(babelfontJson, filename);
-
-            // Save the compiled TTF to the virtual filesystem
-            const outputFilename =
-                outputPath ||
-                filename.replace(
-                    /\.(glyphs|designspace|ufo|babelfont)$/,
-                    '.ttf'
-                );
-
-            await window.pyodide.runPython(`
-import os
-output_path = '${outputFilename}'
-output_data = bytes(${JSON.stringify(Array.from(result.font))})
-
-with open(output_path, 'wb') as f:
-    f.write(output_data)
-
-print(f"Compiled font saved to: {output_path}")
-            `);
-
-            console.log(
-                '[FontCompilation]',
-                `✅ Compiled in ${result.time_taken}ms: ${outputFilename}`
-            );
-
-            // Refresh file browser
-            if (window.refreshFileSystem) {
-                window.refreshFileSystem();
-            }
-
-            return {
-                success: true,
-                outputPath: outputFilename,
-                time_taken: result.time_taken
-            };
-        } catch (error) {
-            console.error(
-                '[FontCompilation]',
-                'fontc compilation error:',
-                error
-            );
-
-            return {
-                success: false,
-                error: error.message
-            };
-        }
-    }
-
-    // Expose a simple compile function for Python os.system() compatibility
-    async compileFromPython(command) {
-        // Parse fontc-style command
-        // e.g., "fontc input.designspace -o output.ttf"
-        const parts = command.trim().split(/\s+/);
-
-        if (parts[0] !== 'fontc' && parts[0] !== 'fontmake') {
-            throw new Error(`Unknown compiler: ${parts[0]}`);
-        }
-
-        let inputPath = null;
-        let outputPath = null;
-
-        for (let i = 1; i < parts.length; i++) {
-            if (parts[i] === '-o' || parts[i] === '--output') {
-                outputPath = parts[++i];
-            } else if (!parts[i].startsWith('-')) {
-                inputPath = parts[i];
-            }
-        }
-
-        if (!inputPath) {
-            throw new Error('No input file specified');
-        }
-
-        return await this.compile(inputPath, outputPath);
     }
 }
 
@@ -667,18 +523,6 @@ if (typeof document !== 'undefined') {
 // Export for global access (browser only)
 if (typeof window !== 'undefined') {
     window.fontCompilation = fontCompilation;
-    window.compileFontFromPython = (cmd) =>
-        fontCompilation.compileFromPython(cmd);
-
-    // NEW: Direct compilation methods exposed globally
-    window.compileFontDirect = (fontVarName, outputFile) =>
-        fontCompilation.compileFromPythonFont(fontVarName, outputFile);
-    window.compileFontFromJson = (json, filename) =>
-        fontCompilation.compileFromJson(json, filename);
-
-    // Export compilation targets and utilities for external use
-    window.COMPILATION_TARGETS = COMPILATION_TARGETS;
-    window.getGlyphNamesForString = getGlyphNamesForString;
 }
 
 // Node.js module export for testing
@@ -686,7 +530,6 @@ if (typeof module !== 'undefined' && module.exports) {
     module.exports = {
         FontCompilation,
         COMPILATION_TARGETS,
-        getGlyphNamesForString,
         shapeTextWithFont
     };
 }

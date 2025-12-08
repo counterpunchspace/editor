@@ -17,27 +17,7 @@ if (typeof window.ResizeObserver === 'undefined') {
         disconnect() {}
     };
 }
-// Add a dummy opentype.js and other dependencies if they are not loaded
-if (typeof window.opentype === 'undefined') {
-    window.opentype = {
-        parse: () => ({
-            names: { fontFamily: { en: 'mock' } },
-            tables: { fvar: { axes: [] } },
-            glyphs: {
-                get: () => ({
-                    name: 'mockGlyph',
-                    getBoundingBox: () => ({ y1: 0 })
-                })
-            }
-        })
-    };
-}
-if (typeof window.bidi_js === 'undefined') {
-    window.bidi_js = () => ({
-        getEmbeddingLevels: (text) => ({ levels: Array(text.length).fill(0) }),
-        getReorderedIndices: (text) => [...Array(text.length).keys()]
-    });
-}
+
 // Mock for HarfBuzz
 if (typeof createHarfBuzz === 'undefined') {
     global.createHarfBuzz = async () => ({});

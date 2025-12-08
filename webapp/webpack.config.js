@@ -9,7 +9,7 @@ const entryPoints = {
     'compile-button': './js/compile-button.js',
     'example-loader': './js/example-loader.js',
     'file-browser': './js/file-browser.js',
-    'font-compilation': './js/font-compilation.js',
+    'font-compilation': './js/font-compilation.ts',
     'font-dropdown': './js/font-dropdown.js',
     'font-manager': './js/font-manager.ts',
     'fontc-worker': './js/fontc-worker.ts',

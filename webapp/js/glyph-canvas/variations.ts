@@ -1,3 +1,4 @@
+import { Font } from 'opentype.js';
 import Babelfont from '../babelfont';
 
 export class AxesManager {
@@ -9,7 +10,7 @@ export class AxesManager {
     animationStartValues: Record<string, number>;
     animationTargetValues: Record<string, number>;
     animationCurrentFrame: number;
-    opentypeFont: any;
+    opentypeFont: Font | null;
     callbacks: Record<string, Function>;
     isSliderActive: boolean;
 
