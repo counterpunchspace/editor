@@ -8,6 +8,8 @@
 import type { FeaturesManager } from './features';
 import type { AxesManager } from './variations';
 
+import bidiFactory from 'bidi-js';
+
 export interface ShapedGlyph {
     dx: number;
     dy: number;
@@ -58,7 +60,7 @@ export class TextRunEditor {
         this.opentypeFont = null; // OpenType.js font instance
 
         // Bidirectional text support
-        this.bidi = null; // Will be initialized with UnicodeBidi instance
+        this.bidi = bidiFactory();
         this.bidiRuns = []; // Store bidirectional runs for rendering
 
         // Selected glyph (glyph after cursor in logical order)
@@ -90,17 +92,6 @@ export class TextRunEditor {
     }
 
     init() {
-        // Initialize BiDi support
-        if (typeof window.bidi_js !== 'undefined') {
-            this.bidi = window.bidi_js(); // It's a factory function
-            console.log('[TextRun]', 'bidi-js support initialized', this.bidi);
-        } else {
-            console.warn(
-                '[TextRun]',
-                'bidi-js not loaded - bidirectional text may not render correctly'
-            );
-        }
-
         // Load HarfBuzz
         this.loadHarfBuzz();
     }

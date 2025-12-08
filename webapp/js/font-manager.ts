@@ -3,8 +3,18 @@
 // 1. "typing" font: Compiled once when font opens, kept in memory permanently for glyph name extraction
 // 2. "editing" font: Recompiled on demand with subset of glyphs for display in canvas
 
-import APP_SETTINGS from '../settings.js';
+import { ParsedNode } from './basictypes';
+import APP_SETTINGS from './settings';
 class FontManager {
+    babelfontJson: string | null;
+    babelfontData: any;
+    typingFont: Uint8Array | null;
+    editingFont: Uint8Array | null;
+    currentText: string;
+    selectedFeatures: string[];
+    isCompiling: boolean;
+    glyphOrderCache: string[] | null;
+
     constructor() {
         this.babelfontJson = null;
         this.babelfontData = null; // Parsed babelfont object
@@ -22,7 +32,7 @@ class FontManager {
      *
      * @param {string} babelfontJson - The .babelfont JSON string
      */
-    async loadFont(babelfontJson) {
+    async loadFont(babelfontJson: string) {
         console.log('[FontManager]', '🔧 FontManager: Loading font...');
         this.babelfontJson = babelfontJson;
         this.babelfontData = JSON.parse(babelfontJson);
@@ -88,7 +98,7 @@ class FontManager {
      * @param {string} text - Text to get glyph names for
      * @returns {Promise<Array<string>>} - Array of glyph names
      */
-    async getGlyphNamesForText(text) {
+    async getGlyphNamesForText(text: string): Promise<string[]> {
         if (!this.typingFont) {
             throw new Error('Typing font not compiled yet');
         }
@@ -104,7 +114,7 @@ class FontManager {
      * @param {string} text - Text being edited (for future subsetting)
      * @param {Array<string>} features - Selected OpenType features (for future subsetting)
      */
-    async compileEditingFont(text = '', features = []) {
+    async compileEditingFont(text: string = '', features: string[] = []) {
         if (!this.babelfontJson) {
             throw new Error('No font loaded');
         }
@@ -203,7 +213,7 @@ babelfont_json
      *
      * @param {string} babelfontJson - Optional pre-fetched JSON to avoid redundant Python call
      */
-    async recompileEditingFont(babelfontJson = null) {
+    async recompileEditingFont(babelfontJson: string = '') {
         try {
             // Only fetch from Python if not provided
             if (!babelfontJson) {
@@ -221,10 +231,10 @@ babelfont_json
 
             // Update cached font data
             this.babelfontJson = babelfontJson;
-            this.babelfontData = JSON.parse(babelfontJson);
+            this.babelfontData = JSON.parse(babelfontJson!);
             console.log(
                 '[FontManager]',
-                `✅ Font data ready (${babelfontJson.length} bytes)`
+                `✅ Font data ready (${babelfontJson!.length} bytes)`
             );
 
             // Now compile with updated data
@@ -374,7 +384,7 @@ babelfont_json
     /**
      * Get glyph name by GID from source font
      */
-    getGlyphName(gid) {
+    getGlyphName(gid: number): string {
         const glyphOrder = this.getGlyphOrder();
         if (gid >= 0 && gid < glyphOrder.length) {
             return glyphOrder[gid];
@@ -397,7 +407,10 @@ babelfont_json
      * @returns any
      */
 
-    async fetchComponentLayerData(componentGlyphName, selectedLayerId) {
+    async fetchComponentLayerData(
+        componentGlyphName: string,
+        selectedLayerId: string
+    ): Promise<any> {
         // Fetch layer data for a specific component glyph, including nested components
         if (!window.pyodide || !selectedLayerId) {
             return null;
@@ -474,11 +487,10 @@ json.dumps(result)
         }
     }
 
-    async fetchRootLayerData(glyphName, layerId) {
+    async fetchRootLayerData(glyphName: string, layerId: string): Promise<any> {
         // Fetch full root layer data including shapes
         if (!window.pyodide || !layerId) {
-            this.layerData = null;
-            return;
+            return null;
         }
 
         const dataJson = await window.pyodide.runPythonAsync(`
@@ -557,9 +569,8 @@ json.dumps(result)
     /**
      *
      * @param {Event} e
-     * @returns {Promise<ArrayBuffer | null>}
      */
-    async onFontLoaded(e) {
+    async onFontLoaded(e: Event) {
         console.log('[FontManager]', 'Font loaded event received');
         if (window.glyphCanvas && window.pyodide) {
             try {
@@ -608,7 +619,7 @@ else:
      * @param {string} key
      * @returns {any}
      */
-    getFormatSpecific(key) {
+    getFormatSpecific(key: string): any {
         return this.babelfontData?.format_specific?.[key];
     }
 
@@ -618,7 +629,7 @@ else:
      * @param {string} key
      * @param {any} value
      */
-    setFormatSpecific(key, value) {
+    setFormatSpecific(key: string, value: any) {
         if (this.babelfontData) {
             if (!this.babelfontData.format_specific) {
                 this.babelfontData.format_specific = {};
@@ -627,7 +638,7 @@ else:
         }
     }
 
-    async fetchGlyphData(glyphName) {
+    async fetchGlyphData(glyphName: string): Promise<any> {
         // Fetch glyph and font data from Python
         if (!window.pyodide) {
             return null;
@@ -702,7 +713,7 @@ json.dumps(result)
         }
     }
 
-    async fetchLayerData(glyphName, layerId) {
+    async fetchLayerData(glyphName: string, layerId: string): Promise<any> {
         const dataJson = await window.pyodide.runPythonAsync(`
 import json
 
@@ -789,15 +800,18 @@ json.dumps(result)
         return JSON.parse(dataJson);
     }
 
-    async saveLayerData(glyphName, layerId, layerData) {
+    async saveLayerData(glyphName: string, layerId: string, layerData: any) {
         // Convert nodes array back to string format for Python
         const layerDataCopy = JSON.parse(JSON.stringify(layerData));
         if (layerDataCopy.shapes) {
-            layerDataCopy.shapes.forEach((shape) => {
+            layerDataCopy.shapes.forEach((shape: any) => {
                 if (shape.nodes && Array.isArray(shape.nodes)) {
                     // Convert array back to string: [[x, y, type], ...] -> "x y type x y type ..."
                     const nodesString = shape.nodes
-                        .map((node) => `${node[0]} ${node[1]} ${node[2]}`)
+                        .map(
+                            (node: ParsedNode) =>
+                                `${node[0]} ${node[1]} ${node[2]}`
+                        )
                         .join(' ');
                     // Store in Path.nodes format
                     if (!shape.Path) {

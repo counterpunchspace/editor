@@ -1,5 +1,5 @@
 import { adjustColorHueAndLightness, desaturateColor } from '../design';
-import APP_SETTINGS from '../settings.js';
+import APP_SETTINGS from '../settings';
 
 import type { ViewportManager } from './viewport';
 import type { TextRunEditor } from './textrun';

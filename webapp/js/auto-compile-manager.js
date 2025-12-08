@@ -1,7 +1,7 @@
 // Auto-Compile Manager
 // Automatically recompiles the font when data changes (using DIRTY_COMPILE flag)
 // and there's been 1 second of inactivity to avoid race conditions
-const { APP_SETTINGS } = require('./settings.js');
+const { APP_SETTINGS } = require('./settings');
 (function () {
     'use strict';
 

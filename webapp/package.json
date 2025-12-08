@@ -33,6 +33,7 @@
         "*.{js,json,css,md,html,ts}": "prettier --write"
     },
     "dependencies": {
+        "bidi-js": "^1.0.3",
         "idb-keyval": "^6.2.2",
         "memfs": "^4.51.1"
     }

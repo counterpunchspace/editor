@@ -5,7 +5,6 @@ declare global {
         // From our dependencies
         opentype: any; // OpenType.js
         pyodide: any; // Pyodide
-        bidi_js: any; // bidi-js
         createHarfBuzz: any; // HarfBuzz.js
         hbjs: any; // HarfBuzz.js
 
@@ -53,6 +52,9 @@ declare global {
             fontBytes: Uint8Array,
             text: string
         ) => Promise<string[]>;
+
+        // From file-browser.js
+        refreshFileSystem: () => Promise<void>;
 
         // From font-manager.js
         fontManager: FontManager;
