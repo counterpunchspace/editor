@@ -9,6 +9,7 @@ import { GlyphCanvasRenderer } from './glyph-canvas/renderer';
 import { LayerDataNormalizer } from './layer-data-normalizer';
 import { FontInterpolationManager } from './font-interpolation';
 import * as opentype from 'opentype.js';
+import fontManager from './font-manager';
 
 // Create singleton instance
 const fontInterpolation = new FontInterpolationManager();
@@ -1865,7 +1866,7 @@ class GlyphCanvas {
 
     async displayLayersList(): Promise<void> {
         // Fetch and display layers list
-        this.fontData = await window.fontManager.fetchGlyphData(
+        this.fontData = await fontManager.fetchGlyphData(
             this.getCurrentGlyphName()
         );
 
@@ -2279,7 +2280,7 @@ class GlyphCanvas {
                 `🔍 Fetching layer data for glyph: "${glyphName}" (GID ${glyphId}, production name), layer: ${this.selectedLayerId}`
             );
 
-            this.layerData = await window.fontManager.fetchLayerData(
+            this.layerData = await fontManager.fetchLayerData(
                 glyphName,
                 this.selectedLayerId
             );
@@ -2424,8 +2425,8 @@ class GlyphCanvas {
         let glyphName = `GID ${glyphId}`;
 
         // Get glyph name from font manager (source font) instead of compiled font
-        if (window.fontManager && window.fontManager.babelfontData) {
-            glyphName = window.fontManager.getGlyphName(glyphId);
+        if (fontManager && fontManager.babelfontData) {
+            glyphName = fontManager.getGlyphName(glyphId);
         } else if (this.opentypeFont && this.opentypeFont.glyphs.get(glyphId)) {
             // Fallback to compiled font name (will be production name like glyph00001)
             const glyph = this.opentypeFont.glyphs.get(glyphId);
@@ -2472,7 +2473,7 @@ class GlyphCanvas {
                 glyphName = this.getCurrentGlyphName();
             }
 
-            await window.fontManager.saveLayerData(
+            await fontManager.saveLayerData(
                 glyphName,
                 this.selectedLayerId,
                 this.layerData
@@ -2494,7 +2495,11 @@ class GlyphCanvas {
     ): Promise<void> {
         // Enter editing mode for a component
         // skipUIUpdate: if true, skip UI updates (useful when rebuilding component stack)
-        if (!this.layerData || !this.layerData.shapes[componentIndex]) {
+        if (
+            !this.layerData ||
+            !this.layerData.shapes[componentIndex] ||
+            !this.selectedLayerId
+        ) {
             return;
         }
 
@@ -2505,11 +2510,10 @@ class GlyphCanvas {
         }
 
         // Fetch the component's layer data
-        const componentLayerData =
-            await window.fontManager.fetchComponentLayerData(
-                componentShape.Component.reference,
-                this.selectedLayerId
-            );
+        const componentLayerData = await fontManager.fetchComponentLayerData(
+            componentShape.Component.reference,
+            this.selectedLayerId
+        );
         if (!componentLayerData) {
             console.error(
                 '[GlyphCanvas]',
@@ -2681,7 +2685,7 @@ class GlyphCanvas {
         // Refresh all component layer data in the stack for the current layer
         // This is called when switching layers while editing a nested component
 
-        if (this.componentStack.length === 0) {
+        if (this.componentStack.length === 0 || !this.selectedLayerId) {
             return;
         }
 
@@ -2707,7 +2711,7 @@ class GlyphCanvas {
 
         // Fetch root layer data (bypassing the component check since stack is now empty)
         try {
-            this.layerData = await window.fontManager.fetchRootLayerData(
+            this.layerData = await fontManager.fetchRootLayerData(
                 glyphName,
                 this.selectedLayerId
             );
@@ -3345,12 +3349,12 @@ class GlyphCanvas {
         }
 
         this.textChangeDebounceTimer = setTimeout(() => {
-            if (window.fontManager && window.fontManager.isReady()) {
+            if (fontManager && fontManager.isReady()) {
                 console.log(
                     '[GlyphCanvas]',
                     '🔄 Text changed, recompiling editing font...'
                 );
-                window.fontManager
+                fontManager
                     .compileEditingFont(this.textRunEditor!.textBuffer)
                     .catch((error: any) => {
                         console.error(
@@ -3825,12 +3829,12 @@ function initCanvas() {
         leftSidebar.appendChild(propertiesSection);
 
         // Create variable axes container (initially empty)
-        const axesSection = window.glyphCanvas.axesManager.createAxesSection();
+        const axesSection = window.glyphCanvas.axesManager!.createAxesSection();
         rightSidebar.appendChild(axesSection);
 
         // Create OpenType features container (initially empty)
         const featuresSection =
-            window.glyphCanvas.featuresManager.createFeaturesSection();
+            window.glyphCanvas.featuresManager!.createFeaturesSection();
         rightSidebar.appendChild(featuresSection);
 
         // Store reference to sidebars for later updates
@@ -3938,11 +3942,11 @@ function setupFontLoadingListener() {
 
     // Also check for fonts loaded from file system
     window.addEventListener('fontLoaded', async (e: any) =>
-        window.fontManager
-            .onFontLoaded(e)
-            .then((arrayBuffer: ArrayBuffer) =>
-                window.glyphCanvas.setFont(arrayBuffer)
-            )
+        fontManager.onFontLoaded(e).then((arrayBuffer: ArrayBuffer | null) => {
+            if (arrayBuffer) {
+                window.glyphCanvas.setFont(arrayBuffer);
+            }
+        })
     );
 }
 

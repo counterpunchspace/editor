@@ -17,7 +17,8 @@
 // Direct .babelfont JSON → TTF compilation (zero file system)
 // Based on: DIRECT_PYTHON_RUST_INTEGRATION.md
 
-import opentype from 'opentype.js';
+import * as opentype from 'opentype.js';
+
 interface CompilationOptions {
     skip_kerning: boolean;
     skip_features: boolean;
@@ -344,14 +345,14 @@ class FontCompilation {
      * @param {string} filename - Optional filename for output (default: 'font.ttf')
      * @param {string|object} target - Compilation target name ('user', 'glyph_overview', 'typing', 'editing') or custom options object
      * @param {Array<string>} subsetGlyphs - Optional array of glyph names to include (for 'editing' target)
-     * @returns {Promise<Object>} - { font: Uint8Array, filename: string, timeTaken: number }
+     * @returns {Promise<Object>} - { result: Uint8Array, filename: string, timeTaken: number }
      */
     async compileFromJson(
         babelfontJson: string,
         filename: string = 'font.babelfont',
         target: string | CompilationOptions = 'user',
         subsetGlyphs?: Array<string>
-    ): Promise<{ font: Uint8Array; filename: string; time_taken: number }> {
+    ): Promise<{ result: Uint8Array; filename: string; time_taken: number }> {
         if (!this.isInitialized) {
             const initialized = await this.initialize();
             if (!initialized) {
@@ -458,12 +459,12 @@ json.dumps(font_dict)
             );
 
             // Trigger download
-            this.downloadFont(result.font, result.filename);
+            this.downloadFont(result.result, result.filename);
 
             return {
                 success: true,
                 filename: result.filename,
-                bytes: result.font.length,
+                bytes: result.result.length,
                 time_taken: result.time_taken
             };
         } catch (error) {
@@ -519,17 +520,5 @@ if (typeof document !== 'undefined') {
         }
     });
 }
-
-// Export for global access (browser only)
-if (typeof window !== 'undefined') {
-    window.fontCompilation = fontCompilation;
-}
-
-// Node.js module export for testing
-if (typeof module !== 'undefined' && module.exports) {
-    module.exports = {
-        FontCompilation,
-        COMPILATION_TARGETS,
-        shapeTextWithFont
-    };
-}
+export type { CompilationOptions, FontCompilation };
+export { fontCompilation, COMPILATION_TARGETS, shapeTextWithFont };

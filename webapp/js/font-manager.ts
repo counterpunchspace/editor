@@ -5,6 +5,7 @@
 
 import { ParsedNode } from './basictypes';
 import APP_SETTINGS from './settings';
+import { fontCompilation } from './font-compilation';
 class FontManager {
     babelfontJson: string | null;
     babelfontData: any;
@@ -58,7 +59,7 @@ class FontManager {
             throw new Error('No font loaded');
         }
 
-        if (!window.fontCompilation || !window.fontCompilation.isInitialized) {
+        if (!fontCompilation || !fontCompilation.isInitialized) {
             throw new Error('Font compilation system not initialized');
         }
 
@@ -66,7 +67,7 @@ class FontManager {
         const startTime = performance.now();
 
         try {
-            const result = await window.fontCompilation.compileFromJson(
+            const result = await fontCompilation.compileFromJson(
                 this.babelfontJson,
                 'typing-font.ttf',
                 'typing'
@@ -119,7 +120,7 @@ class FontManager {
             throw new Error('No font loaded');
         }
 
-        if (!window.fontCompilation || !window.fontCompilation.isInitialized) {
+        if (!fontCompilation || !fontCompilation.isInitialized) {
             throw new Error('Font compilation system not initialized');
         }
 
@@ -133,7 +134,7 @@ class FontManager {
         try {
             // TODO: In the future, extract glyph names from text and compile subset
             // For now, compile full font with editing target
-            const result = await window.fontCompilation.compileFromJson(
+            const result = await fontCompilation.compileFromJson(
                 this.babelfontJson,
                 'editing-font.ttf',
                 'editing'
@@ -570,7 +571,7 @@ json.dumps(result)
      *
      * @param {Event} e
      */
-    async onFontLoaded(e: Event) {
+    async onFontLoaded(e: Event): Promise<ArrayBuffer | null> {
         console.log('[FontManager]', 'Font loaded event received');
         if (window.glyphCanvas && window.pyodide) {
             try {
@@ -602,6 +603,11 @@ else:
                         fontBytes.byteOffset + fontBytes.byteLength
                     );
                     return arrayBuffer;
+                } else {
+                    console.warn(
+                        '[FontManager]',
+                        'No TTF files found in file system'
+                    );
                 }
             } catch (error) {
                 console.error(
@@ -611,6 +617,7 @@ else:
                 );
             }
         }
+        return null;
     }
 
     /**
@@ -865,9 +872,9 @@ except Exception as e:
     }
 }
 
-// Create global instance
+// Create singleton instance
 const fontManager = new FontManager();
-window.fontManager = fontManager;
+export default fontManager;
 
 // Listen for font loaded events and initialize font manager
 window.addEventListener('fontLoaded', async (event) => {
@@ -878,7 +885,7 @@ window.addEventListener('fontLoaded', async (event) => {
         );
 
         // Wait for font compilation system to be ready
-        if (!window.fontCompilation || !window.fontCompilation.isInitialized) {
+        if (!fontCompilation || !fontCompilation.isInitialized) {
             console.log(
                 '[FontManager]',
                 '⏳ Waiting for font compilation system...'
@@ -887,16 +894,12 @@ window.addEventListener('fontLoaded', async (event) => {
             let attempts = 0;
             while (
                 attempts < 300 &&
-                (!window.fontCompilation ||
-                    !window.fontCompilation.isInitialized)
+                (!fontCompilation || !fontCompilation.isInitialized)
             ) {
                 await new Promise((resolve) => setTimeout(resolve, 100));
                 attempts++;
             }
-            if (
-                !window.fontCompilation ||
-                !window.fontCompilation.isInitialized
-            ) {
+            if (!fontCompilation || !fontCompilation.isInitialized) {
                 console.error(
                     '[FontManager]',
                     '❌ Font compilation system not ready after 30 seconds'

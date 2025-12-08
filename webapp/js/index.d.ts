@@ -1,3 +1,14 @@
+import TabLifecycleManager from './tab-lifecycle.js';
+import ThemeSwitcher from './theme-switcher.js';
+import AIAssistant from './ai-assistant.js';
+import CacheManager from './cache-manager.js';
+import type { FontCompilation } from './font-compilation.js';
+import FontManager from './font-manager.js';
+import FontDropdownManager from './font-dropdown.js';
+import { GlyphCanvas } from './glyph-canvas.js';
+import MemoryMonitor from './memory-monitor.js';
+import ResizableViews from './resizer.js';
+import SaveButton from './save-button.js';
 declare global {
     // Any property augmentation we make to the Window interface
     // should be declared here.
@@ -58,7 +69,7 @@ declare global {
         refreshFileSystem: () => Promise<void>;
 
         // From font-manager.js
-        fontManager: FontManager;
+        fontManager: typeof FontManager;
 
         // From font-dropdown.js
         fontDropdownManager: FontDropdownManager;
@@ -73,7 +84,7 @@ declare global {
         focusView: (viewId: string) => void;
 
         // From loading-animation.js
-        updateLoadingStatus: (status: string, isReady: boolean = false) => void;
+        updateLoadingStatus: (status: string, isReady: boolean) => void;
         WarpSpeedAnimation: {
             requestStop: (onCompleteHook: () => void) => void;
             instance: () => any; // WarpSpeedAnimation instance
