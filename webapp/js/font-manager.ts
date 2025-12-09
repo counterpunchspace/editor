@@ -619,6 +619,7 @@ class FontManager {
         );
         // Mark font as dirty
         this.currentFont!.dirty = true;
+        window.autoCompileManager.checkAndSchedule();
         await this.updateDirtyIndicator();
     }
 }
