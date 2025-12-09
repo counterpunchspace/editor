@@ -4,7 +4,7 @@ import './tab-lifecycle.js';
 import './ai-assistant.js';
 import './auto-compile-manager.js';
 import './cache-manager.js';
-import './compile-button.js';
+import './compile-button.ts';
 import './example-loader.js';
 import './file-browser';
 import './font-compilation';

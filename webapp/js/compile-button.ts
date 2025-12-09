@@ -1,12 +1,16 @@
 // Compile Button Handler
 // Compiles the current font to TTF using the babelfont-fontc WASM module
 
+import fontManager from './font-manager';
+
 (function () {
     'use strict';
 
-    const compileBtn = document.getElementById('compile-font-btn');
+    const compileBtn = document.getElementById(
+        'compile-font-btn'
+    ) as HTMLButtonElement | null;
     let isCompiling = false;
-    let worker = null;
+    let worker: Worker | null = null;
     let workerReady = false;
     let compilationId = 0;
     let pendingCompilations = new Map();
@@ -54,7 +58,7 @@
             worker.postMessage({ type: 'init' });
 
             // Wait for ready
-            await new Promise((resolve, reject) => {
+            await new Promise<void>((resolve, reject) => {
                 const timeout = setTimeout(
                     () => reject(new Error('Worker init timeout')),
                     10000
@@ -82,7 +86,7 @@
     }
 
     // Compile using the worker
-    async function compileWithWorker(babelfontJson) {
+    async function compileWithWorker(babelfontJson: string) {
         if (!workerReady) {
             throw new Error('Worker not ready');
         }
@@ -91,7 +95,7 @@
 
         return new Promise((resolve) => {
             pendingCompilations.set(id, resolve);
-            worker.postMessage({
+            worker!.postMessage({
                 type: 'compile',
                 id: id,
                 data: { babelfontJson }
@@ -101,24 +105,21 @@
 
     // Enable/disable compile button based on font availability
     function updateCompileButtonState() {
-        const dropdown = document.getElementById('open-fonts-dropdown');
+        const dropdown = document.getElementById(
+            'open-fonts-dropdown'
+        ) as HTMLSelectElement | null;
         const hasFontOpen =
             dropdown &&
             dropdown.options.length > 0 &&
             dropdown.value !== '' &&
             dropdown.options[0].textContent !== 'No fonts open';
 
-        compileBtn.disabled = !hasFontOpen || isCompiling;
+        compileBtn!.disabled = !hasFontOpen || isCompiling;
     }
 
     // Compile the current font
     async function compileFont() {
         if (isCompiling) return;
-
-        if (!window.pyodide) {
-            alert('Python environment not ready yet');
-            return;
-        }
 
         // Initialize worker if needed
         if (!workerReady) {
@@ -137,8 +138,9 @@
             updateCompileButtonState();
 
             // Update button text to show progress
-            const originalText = compileBtn.textContent;
-            compileBtn.textContent = 'Compiling...';
+            const originalText = compileBtn!.textContent;
+            compileBtn!.textContent = 'Compiling...';
+            const startTime = performance.now();
 
             console.log('[CompileButton]', '🔨 Starting font compilation...');
             if (window.term) {
@@ -146,43 +148,16 @@
                 window.term.echo('[[;cyan;]🔨 Compiling font to TTF...]');
             }
 
-            // Get the font JSON from Python
-            const startTime = performance.now();
-            const pythonResult = await window.pyodide.runPythonAsync(`
-import orjson
-import os
-
-# Get current font using CurrentFont()
-font = CurrentFont()
-if not font:
-    raise ValueError("No font is currently open")
-
-# Get the font's file path for naming the output
-font_path = font.path if hasattr(font, 'path') and font.path else 'font.context'
-
-# Get directory of source file
-source_dir = os.path.dirname(font_path) if font_path else '.'
-
-# Export to .babelfont JSON format using orjson (handles datetime objects)
-font_dict = font.to_dict()
-babelfont_json = orjson.dumps(font_dict).decode('utf-8')
-
-# Return JSON, path, and directory
-(babelfont_json, font_path, source_dir)
-            `);
-
-            const babelfontJson = pythonResult[0];
-            const fontPath = pythonResult[1];
-            const sourceDir = pythonResult[2];
-            const exportTime = performance.now() - startTime;
-            console.log(
-                '[CompileButton]',
-                `✅ Exported to JSON in ${exportTime.toFixed(0)}ms (${babelfontJson.length} bytes)`
-            );
+            // Get the font JSON from font manager
+            let font = fontManager.currentFont;
+            if (!font) {
+                throw new Error('No font loaded');
+            }
+            const babelfontJson = font.babelfontJson;
+            const fontPath = font.path;
 
             // Compile using the Web Worker
-            const compileStart = performance.now();
-            const result = await compileWithWorker(babelfontJson);
+            const result: any = await compileWithWorker(babelfontJson);
 
             if (result.error) {
                 throw new Error(result.error);
@@ -204,10 +179,7 @@ babelfont_json = orjson.dumps(font_dict).decode('utf-8')
                     .split('/')
                     .pop() || 'font';
             const outputFilename = `${basename}.ttf`;
-            const outputPath =
-                sourceDir === '.'
-                    ? outputFilename
-                    : `${sourceDir}/${outputFilename}`;
+            const outputPath = outputFilename;
 
             // Save directly to Pyodide's virtual filesystem using FS API (much faster than JSON roundtrip)
             window.pyodide.FS.writeFile(outputPath, ttfBytes);
@@ -229,7 +201,7 @@ babelfont_json = orjson.dumps(font_dict).decode('utf-8')
                     `[[;lime;]💾 Saved: ${outputPath} (${ttfBytes.length} bytes)]`
                 );
                 window.term.echo(
-                    `[[;gray;]   Export: ${exportTime.toFixed(0)}ms | Compile: ${duration.toFixed(0)}ms]`
+                    `[[;gray;]  Compile: ${duration.toFixed(0)}ms]`
                 );
                 window.term.echo('');
             }
@@ -242,8 +214,8 @@ babelfont_json = orjson.dumps(font_dict).decode('utf-8')
             );
 
             // Reset button text
-            compileBtn.textContent = originalText;
-        } catch (error) {
+            compileBtn!.textContent = originalText;
+        } catch (error: any) {
             console.error('[CompileButton]', '❌ Compilation failed:', error);
 
             if (window.term) {
@@ -267,7 +239,7 @@ babelfont_json = orjson.dumps(font_dict).decode('utf-8')
     document.addEventListener('keydown', (e) => {
         if ((e.metaKey || e.ctrlKey) && e.key === 'b') {
             e.preventDefault();
-            if (!compileBtn.disabled) {
+            if (!compileBtn!.disabled) {
                 compileFont();
             }
         }
