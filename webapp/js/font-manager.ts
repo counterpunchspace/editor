@@ -39,7 +39,8 @@ class OpenedFont {
         this.babelfontJson = babelfontJson;
         this.babelfontData = JSON.parse(babelfontJson);
         this.path = path;
-        this.name = this.babelfontData?.name || 'Untitled Font';
+        this.name =
+            this.babelfontData?.names.family_name.dflt || 'Untitled Font';
         this.dirty = false;
     }
 }
