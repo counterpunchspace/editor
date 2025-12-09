@@ -573,29 +573,26 @@ class FontManager {
         layerId: string,
         layerData: PythonBabelfont.Layer
     ) {
-        // Convert nodes array back to string format for Python
-        const layerDataCopy: PythonBabelfont.Layer = JSON.parse(
-            JSON.stringify(layerData)
-        );
-        if (layerDataCopy.shapes) {
-            layerDataCopy.shapes.forEach((shape) => {
-                if ('nodes' in shape && Array.isArray(shape.nodes)) {
-                    // Convert array back to string: [{x, y, type}, ...] -> "x y type x y type ..."
-                    const nodesString = shape.nodes
-                        .map((node) => `${node.x} ${node.y} ${node.type}`)
-                        .join(' ');
-                    // Store in Path.nodes format
-                    // We're changing what Typescript thinks the type of shape is, so de-type it.
-                    let reworkedShape: any = shape as unknown as any;
-                    if (!reworkedShape.Path) {
-                        reworkedShape.Path = {};
-                    }
-                    reworkedShape.Path.nodes = nodesString;
-                    reworkedShape.Path.closed = true; // Assume closed for now
-                    delete reworkedShape.nodes; // Remove the parsed array
-                }
-            });
-        }
+        // Convert nodes array back to string format
+        let newShapes = layerData.shapes?.map((shape) => {
+            if ('nodes' in shape && Array.isArray(shape.nodes)) {
+                // Convert array back to string: [{x, y, type}, ...] -> "x y type x y type ..."
+                const nodesString = shape.nodes
+                    .map((node) => `${node.x} ${node.y} ${node.type}`)
+                    .join(' ');
+                let reworkedShape = {
+                    Path: { nodes: nodesString, closed: true }
+                };
+                return reworkedShape;
+            } else {
+                return JSON.parse(JSON.stringify(shape));
+            }
+        });
+        let layerDataCopy: PythonBabelfont.Layer = {
+            ...layerData,
+            shapes: newShapes
+        };
+
         let glyph = this.getGlyph(glyphName);
         if (!glyph) {
             console.error(
@@ -614,7 +611,12 @@ class FontManager {
             );
             return;
         }
-        glyph.layers[layerIndex] = layerDataCopy;
+        glyph.layers[layerIndex] = JSON.parse(JSON.stringify(layerDataCopy));
+        console.log(glyph.layers[layerIndex]);
+        // Update the babelfontJson string
+        this.currentFont!.babelfontJson = JSON.stringify(
+            this.currentFont!.babelfontData
+        );
         // Mark font as dirty
         this.currentFont!.dirty = true;
         await this.updateDirtyIndicator();

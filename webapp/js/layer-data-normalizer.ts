@@ -136,8 +136,17 @@ export class LayerDataNormalizer {
                 nodesArray.push({
                     x: parseFloat(tokens[i]), // x
                     y: parseFloat(tokens[i + 1]), // y
-                    type: tokens[i + 2] as PythonBabelfont.NodeType // type (m, l, o, c, q, ms, ls, etc.)
+                    type: tokens[i + 2] as PythonBabelfont.NodeType, // type (m, l, o, c, q, ms, ls, etc.)
+                    next: null,
+                    prev: null
                 });
+            }
+            // Create circular double linked list connections
+            for (let i = 0; i < nodesArray.length; i++) {
+                let nextIx = (i + 1) % nodesArray.length;
+                let prevIx = (i - 1 + nodesArray.length) % nodesArray.length;
+                nodesArray[i].next = nodesArray[nextIx];
+                nodesArray[i].prev = nodesArray[prevIx];
             }
 
             return nodesArray;

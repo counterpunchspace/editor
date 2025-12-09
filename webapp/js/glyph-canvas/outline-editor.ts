@@ -574,16 +574,74 @@ export class OutlineEditor {
 
     _updateDraggedPoints(deltaX: number, deltaY: number): void {
         if (!this.layerData) return;
-        for (const point of this.selectedPoints) {
-            const { contourIndex, nodeIndex } = point;
-            let thisContour = this.layerData.shapes[contourIndex];
+        let selectedNodes = new Set(
+            this.selectedPoints.flatMap(({ contourIndex, nodeIndex }) => {
+                let contour = this.layerData!.shapes[contourIndex];
+                if (contour && 'nodes' in contour) {
+                    return [contour.nodes[nodeIndex]];
+                }
+                return [];
+            })
+        );
+        // If any node is a curve/cs, *remove* its handles as we will move them together
+        for (const node of selectedNodes) {
+            if (node.type === 'c' || node.type === 'cs') {
+                if (node.prev && node.prev.type == 'o')
+                    selectedNodes.delete(node.prev);
+                if (node.next && node.next.type == 'o')
+                    selectedNodes.delete(node.next);
+            }
+        }
+
+        for (const node of selectedNodes) {
+            node.x += deltaX;
+            node.y += deltaY;
+            if (node.type === 'c' || node.type === 'cs') {
+                // Move handles together with curve point
+                if (node.prev && node.prev.type == 'o') {
+                    node.prev.x += deltaX;
+                    node.prev.y += deltaY;
+                }
+                if (node.next && node.next.type == 'o') {
+                    node.next.x += deltaX;
+                    node.next.y += deltaY;
+                }
+            }
+        }
+
+        // If we are dragging a single offcurve and it belongs to a smooth curve, the other
+        // handle needs to be moved symmetrically - that is, it should keep the same angle and distance
+        // from the curve point.
+        if (selectedNodes.size === 1 && [...selectedNodes][0].type === 'o') {
+            const offcurve = [...selectedNodes][0];
+            let curvePoint: PythonBabelfont.Node | null = null;
+            let otherHandle: PythonBabelfont.Node | null = null;
+
+            // Find the associated curve point and the other handle
             if (
-                thisContour &&
-                'nodes' in thisContour &&
-                thisContour.nodes[nodeIndex]
+                offcurve.next &&
+                (offcurve.next.type === 'c' || offcurve.next.type === 'cs')
             ) {
-                thisContour.nodes[nodeIndex].x += deltaX;
-                thisContour.nodes[nodeIndex].y += deltaY;
+                curvePoint = offcurve.next;
+                if (curvePoint.next && curvePoint.next !== offcurve) {
+                    otherHandle = curvePoint.next;
+                }
+            } else if (
+                offcurve.prev &&
+                (offcurve.prev.type === 'c' || offcurve.prev.type === 'cs')
+            ) {
+                curvePoint = offcurve.prev;
+                if (curvePoint.prev && curvePoint.prev !== offcurve) {
+                    otherHandle = curvePoint.prev;
+                }
+            }
+
+            // If we found a smooth curve point and the other handle, move it symmetrically
+            if (curvePoint && otherHandle) {
+                const dx = offcurve.x - curvePoint.x;
+                const dy = offcurve.y - curvePoint.y;
+                otherHandle.x = curvePoint.x - dx;
+                otherHandle.y = curvePoint.y - dy;
             }
         }
     }
