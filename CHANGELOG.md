@@ -1,5 +1,7 @@
 # Unreleased
 
+- **Add items here** for the next release (Replace this comment)
+
 # v0.1a
 
 - **Version Management**: Automatic PWA cache versioning with update notifications
