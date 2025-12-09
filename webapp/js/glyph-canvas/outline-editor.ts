@@ -1069,7 +1069,10 @@ export class OutlineEditor {
             this.layerData.isInterpolated
         );
         // Make a deep copy of the target layer data so it doesn't get overwritten during animation
-        this.targetLayerData = JSON.parse(JSON.stringify(this.layerData));
+        this.targetLayerData = JSON.parse(
+            JSON.stringify(LayerDataNormalizer.stripCycles(this.layerData))
+        );
+        LayerDataNormalizer.relinkCycles(this.layerData);
         console.log(
             'After copy - targetLayerData.isInterpolated:',
             this.targetLayerData!.isInterpolated

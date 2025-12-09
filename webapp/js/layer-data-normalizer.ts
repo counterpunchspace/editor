@@ -259,4 +259,32 @@ export class LayerDataNormalizer {
         // Fetch layer data from Python
         await outlineEditor.fetchLayerData();
     }
+
+    static stripCycles(
+        layerData: PythonBabelfont.Layer
+    ): PythonBabelfont.Layer {
+        for (const shape of layerData.shapes) {
+            if ('nodes' in shape) {
+                for (let node of shape.nodes) {
+                    node.next = null;
+                    node.prev = null;
+                }
+            }
+        }
+        return layerData;
+    }
+
+    static relinkCycles(layerData: PythonBabelfont.Layer) {
+        for (const shape of layerData.shapes) {
+            if ('nodes' in shape) {
+                const nodes = shape.nodes;
+                for (let i = 0; i < nodes.length; i++) {
+                    let nextIx = (i + 1) % nodes.length;
+                    let prevIx = (i - 1 + nodes.length) % nodes.length;
+                    nodes[i].next = nodes[nextIx];
+                    nodes[i].prev = nodes[prevIx];
+                }
+            }
+        }
+    }
 }
