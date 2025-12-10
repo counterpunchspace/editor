@@ -85,7 +85,7 @@ const APP_SETTINGS = {
             GLYPH_BACKGROUND_IN_EDITOR: 'rgba(0, 0, 0, 0.05)', // HB-rendered background of active glyph
 
             // Nodes (on-curve points)
-            NODE_NORMAL: '#00d500ff',
+            NODE_NORMAL: '#00d500',
             NODE_HOVERED: '#ff8800',
             NODE_SELECTED: '#ff0000',
             NODE_STROKE: '#000000',
