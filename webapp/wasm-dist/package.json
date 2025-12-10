@@ -1,15 +1,15 @@
 {
-    "name": "babelfont-fontc-web",
-    "type": "module",
-    "version": "0.1.0",
-    "files": [
-        "babelfont_fontc_web_bg.wasm",
-        "babelfont_fontc_web.js",
-        "babelfont_fontc_web.d.ts"
-    ],
-    "main": "babelfont_fontc_web.js",
-    "types": "babelfont_fontc_web.d.ts",
-    "sideEffects": [
-        "./snippets/*"
-    ]
+  "name": "babelfont-fontc-web",
+  "type": "module",
+  "version": "0.1.0",
+  "files": [
+    "babelfont_fontc_web_bg.wasm",
+    "babelfont_fontc_web.js",
+    "babelfont_fontc_web.d.ts"
+  ],
+  "main": "babelfont_fontc_web.js",
+  "types": "babelfont_fontc_web.d.ts",
+  "sideEffects": [
+    "./snippets/*"
+  ]
 }

@@ -33,18 +33,15 @@ export class LayerDataNormalizer {
      * Normalize layer data from any source
      *
      * @param {Object} layerData - Layer data from either Python or babelfont-rs
-     * @param {string} source - 'python' or 'interpolated'
+     * @param {boolean} isInterpolated - Whether this is interpolated data (optional, defaults to false)
      * @returns {Object} Normalized layer data with isInterpolated flag
      */
-    static normalize(layerData: any, source = 'python') {
+    static normalize(layerData: any, isInterpolated: boolean = false) {
         if (!layerData) {
             return null;
         }
 
-        const isInterpolated = source === 'interpolated';
-
-        // Both sources already have similar structure from babelfont format
-        // Main difference: babelfont-rs uses serialized nodes string, Python has already parsed them
+        // Both Python and Rust now return identical structure with nested component layerData
         const normalized = {
             width: layerData.width || 0,
             shapes: this.normalizeShapes(
@@ -95,10 +92,11 @@ export class LayerDataNormalizer {
                         ],
                         format_specific: shape.Component.format_specific || {},
                         // Recursively normalize nested component layer data
+                        // Component layerData comes with the same isInterpolated flag as parent
                         layerData: shape.Component.layerData
                             ? this.normalize(
                                   shape.Component.layerData,
-                                  isInterpolated ? 'interpolated' : 'python'
+                                  isInterpolated
                               )
                             : null
                     },
@@ -197,7 +195,7 @@ export class LayerDataNormalizer {
             interpolatedLayer
         );
 
-        const normalized = this.normalize(interpolatedLayer, 'interpolated');
+        const normalized = this.normalize(interpolatedLayer, true);
 
         console.log('[LayerDataNormalizer]', 'Normalized layer:', normalized);
         console.log(

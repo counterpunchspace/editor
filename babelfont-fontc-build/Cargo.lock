@@ -140,6 +140,7 @@ dependencies = [
  "console_error_panic_hook",
  "fontdrasil 0.4.0 (git+https://github.com/googlefonts/fontc?branch=paths-all-optional)",
  "js-sys",
+ "kurbo",
  "serde_json",
  "tempfile",
  "wasm-bindgen",
