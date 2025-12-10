@@ -150,11 +150,11 @@
             // Wait for Ace editor to be initialized
             setTimeout(() => {
                 const scriptEditor = window.scriptEditor;
-                if (scriptEditor) {
+                if (scriptEditor && scriptEditor.editor) {
                     if (theme === THEMES.LIGHT) {
-                        scriptEditor.setTheme('ace/theme/chrome');
+                        scriptEditor.editor.setTheme('ace/theme/chrome');
                     } else {
-                        scriptEditor.setTheme('ace/theme/monokai');
+                        scriptEditor.editor.setTheme('ace/theme/monokai');
                     }
                 }
             }, 100);
