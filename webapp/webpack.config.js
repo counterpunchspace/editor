@@ -45,15 +45,24 @@ module.exports = {
         extensions: ['.tsx', '.ts', '.js']
     },
     devServer: {
-        static: {
-            directory: path.join(__dirname, 'build')
-        },
+        static: [
+            {
+                directory: path.join(__dirname, 'build')
+            },
+            {
+                directory: __dirname,
+                publicPath: '/'
+            }
+        ],
         port: 8000,
         server: 'https',
         headers: {
             'Cross-Origin-Embedder-Policy': 'require-corp',
             'Cross-Origin-Opener-Policy': 'same-origin',
             'Cross-Origin-Resource-Policy': 'cross-origin'
+        },
+        devMiddleware: {
+            writeToDisk: true
         }
     }
 };

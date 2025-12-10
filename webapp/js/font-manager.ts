@@ -74,6 +74,7 @@ class FontManager {
             'open-fonts-dropdown'
         ) as HTMLSelectElement;
         this.dirtyIndicator = document.getElementById('file-dirty-indicator');
+        this.setupEventListeners();
     }
 
     setupEventListeners() {

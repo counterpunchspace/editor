@@ -13,7 +13,23 @@
         <meta name="apple-mobile-web-app-title" content="contxt" />
         <title>contxt</title>
         <!-- COI Service Worker for GitHub Pages (adds COOP/COEP headers) -->
-        <script src="coi-serviceworker.js"></script>
+        <!-- Only load in production - webpack dev server provides headers directly -->
+        <script>
+            // Check if running in webpack dev server (has HMR)
+            const isDevelopment = window.location.port === '8000' || 
+                                 window.location.hostname === 'localhost' && 
+                                 typeof window.webpackHotUpdate !== 'undefined';
+            
+            if (!isDevelopment) {
+                // Production: Load service worker for COOP/COEP headers
+                const script = document.createElement('script');
+                script.src = 'coi-serviceworker.js';
+                document.head.appendChild(script);
+                console.log('[Init] Loading service worker (production mode)');
+            } else {
+                console.log('[Init] Skipping service worker (development mode - webpack provides headers)');
+            }
+        </script>
         <!-- PWA Manifest -->
         <link rel="manifest" href="manifest.json" />
         <!-- Apple Touch Icons -->

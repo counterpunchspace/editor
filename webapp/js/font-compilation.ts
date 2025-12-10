@@ -171,14 +171,23 @@ class FontCompilation {
 
         // Wait for service worker to be active (needed for SharedArrayBuffer on GitHub Pages)
         if ('serviceWorker' in navigator) {
-            const registration = await navigator.serviceWorker.ready;
-            if (registration.active && !navigator.serviceWorker.controller) {
-                console.log(
-                    '[FontCompilation]',
-                    '⏳ Service worker registered but not controlling page yet. Waiting...'
-                );
-                // Wait a bit for controller to be set
-                await new Promise((resolve) => setTimeout(resolve, 500));
+            try {
+                const registration = await Promise.race([
+                    navigator.serviceWorker.ready,
+                    new Promise((_, reject) => 
+                        setTimeout(() => reject(new Error('Service worker timeout')), 3000)
+                    )
+                ]) as ServiceWorkerRegistration;
+                if (registration.active && !navigator.serviceWorker.controller) {
+                    console.log(
+                        '[FontCompilation]',
+                        '⏳ Service worker registered but not controlling page yet. Waiting...'
+                    );
+                    // Wait a bit for controller to be set
+                    await new Promise((resolve) => setTimeout(resolve, 500));
+                }
+            } catch (e) {
+                console.warn('[FontCompilation] Service worker not ready, continuing anyway:', e);
             }
         }
 
@@ -506,20 +515,37 @@ async function initFontCompilation() {
     await fontCompilation.initialize();
 }
 
-// Auto-initialize - wait longer to ensure service worker is active
+// Auto-initialize - wait for service worker to be active
 // Only run in browser environment
 if (typeof document !== 'undefined') {
-    document.addEventListener('DOMContentLoaded', () => {
-        // Wait for service worker to be ready before initializing
+    document.addEventListener('DOMContentLoaded', async () => {
+        console.log('[FontCompilation] DOMContentLoaded - starting initialization');
+        // Wait for service worker to be ready before initializing (with timeout)
         if ('serviceWorker' in navigator) {
-            navigator.serviceWorker.ready.then(() => {
-                // Give it a bit more time to ensure controller is set
-                setTimeout(initFontCompilation, 2000);
-            });
-        } else {
-            setTimeout(initFontCompilation, 2000);
+            console.log('[FontCompilation] Waiting for service worker...');
+            try {
+                await Promise.race([
+                    navigator.serviceWorker.ready,
+                    new Promise((_, reject) => 
+                        setTimeout(() => reject(new Error('Service worker timeout')), 3000)
+                    )
+                ]);
+                console.log('[FontCompilation] Service worker ready');
+                // Give it a brief moment to ensure controller is set
+                await new Promise(resolve => setTimeout(resolve, 500));
+            } catch (e) {
+                console.warn('[FontCompilation] Service worker not ready, continuing anyway:', e);
+            }
         }
+        console.log('[FontCompilation] Calling initFontCompilation...');
+        await initFontCompilation();
+        console.log('[FontCompilation] Initialization complete');
     });
 }
+
+// Expose for manual initialization if needed
+(window as any).initFontCompilation = initFontCompilation;
+(window as any).fontCompilation = fontCompilation;
+
 export type { CompilationOptions, FontCompilation };
 export { fontCompilation, COMPILATION_TARGETS, shapeTextWithFont };
