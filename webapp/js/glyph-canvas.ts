@@ -435,29 +435,42 @@ class GlyphCanvas {
                     this.outlineEditor.active = true;
                 }
                 // Update breadcrumb (will hide it since component stack is now empty)
-                this.doUIUpdate();
-
-                // Check if this selection is still current (not superseded by a newer one)
-                if (currentSequence !== this.glyphSelectionSequence) {
-                    console.log(
-                        'Glyph selection superseded, skipping render/pan for sequence',
-                        currentSequence
-                    );
-                    return;
-                }
-
-                // Now render with the loaded data
-                this.render();
-
-                // Pan to glyph only if navigating via keyboard (not mouse double-click)
+                // Need to await doUIUpdate if we want to pan to glyph afterward
                 if (
                     fromKeyboard &&
                     wasInEditMode &&
                     ix >= 0 &&
                     previousIndex !== ix
                 ) {
-                    // Layer data should be loaded now after updatePropertiesUI completes
+                    // Need to wait for layer data to be loaded before panning
+                    await this.doUIUpdateAsync();
+
+                    // Check if this selection is still current (not superseded by a newer one)
+                    if (currentSequence !== this.glyphSelectionSequence) {
+                        console.log(
+                            'Glyph selection superseded, skipping render/pan for sequence',
+                            currentSequence
+                        );
+                        return;
+                    }
+
+                    // Layer data should be loaded now, safe to pan
                     this.panToGlyph(ix);
+                } else {
+                    // Not panning, just do regular UI update
+                    this.doUIUpdate();
+
+                    // Check if this selection is still current (not superseded by a newer one)
+                    if (currentSequence !== this.glyphSelectionSequence) {
+                        console.log(
+                            'Glyph selection superseded, skipping render/pan for sequence',
+                            currentSequence
+                        );
+                        return;
+                    }
+
+                    // Now render with the loaded data
+                    this.render();
                 }
 
                 this.outlineEditor.onGlyphSelected();
@@ -920,6 +933,14 @@ class GlyphCanvas {
     doUIUpdate(): void {
         this.updateComponentBreadcrumb();
         this.updatePropertiesUI();
+        this.render();
+        this.outlineEditor.performHitDetection(null);
+    }
+
+    async doUIUpdateAsync(): Promise<void> {
+        // Async version that waits for layer data to be loaded
+        this.updateComponentBreadcrumb();
+        await this.updatePropertiesUI();
         this.render();
         this.outlineEditor.performHitDetection(null);
     }

@@ -1,6 +1,7 @@
 # Unreleased
 
 - **Nested Components**: Refactored to pre-populate component `layerData` recursively for simpler, unified data structure. Bounding box calculations include nested components.
+- **Auto-Zoom**: Restored auto-zoom functionality when navigating between glyphs in edit mode via keyboard (Cmd+Left/Right arrows)
 
 # v0.1a
 
