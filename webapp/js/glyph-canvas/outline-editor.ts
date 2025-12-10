@@ -815,9 +815,14 @@ export class OutlineEditor {
         glyphY: number
     ): boolean {
         const transform =
-            'Component' in shape
+            'Component' in shape && shape.Component.transform
                 ? shape.Component.transform
                 : [1, 0, 0, 1, 0, 0];
+
+        // Ensure transform is always an array with 6 elements
+        const transformArray: Transform = (Array.isArray(transform) && transform.length >= 6
+            ? transform
+            : [1, 0, 0, 1, 0, 0]) as Transform;
 
         const checkShapesRecursive = (
             shapes: PythonBabelfont.Shape[],
@@ -827,20 +832,23 @@ export class OutlineEditor {
                 if ('Component' in componentShape) {
                     const nestedTransform = componentShape.Component
                         .transform || [1, 0, 0, 1, 0, 0];
+                    const nestedTransformArray: Transform = (Array.isArray(nestedTransform) && nestedTransform.length >= 6
+                        ? nestedTransform
+                        : [1, 0, 0, 1, 0, 0]) as Transform;
                     const combinedTransform: Transform = [
-                        parentTransform[0] * nestedTransform[0] +
-                            parentTransform[2] * nestedTransform[1],
-                        parentTransform[1] * nestedTransform[0] +
-                            parentTransform[3] * nestedTransform[1],
-                        parentTransform[0] * nestedTransform[2] +
-                            parentTransform[2] * nestedTransform[3],
-                        parentTransform[1] * nestedTransform[2] +
-                            parentTransform[3] * nestedTransform[3],
-                        parentTransform[0] * nestedTransform[4] +
-                            parentTransform[2] * nestedTransform[5] +
+                        parentTransform[0] * nestedTransformArray[0] +
+                            parentTransform[2] * nestedTransformArray[1],
+                        parentTransform[1] * nestedTransformArray[0] +
+                            parentTransform[3] * nestedTransformArray[1],
+                        parentTransform[0] * nestedTransformArray[2] +
+                            parentTransform[2] * nestedTransformArray[3],
+                        parentTransform[1] * nestedTransformArray[2] +
+                            parentTransform[3] * nestedTransformArray[3],
+                        parentTransform[0] * nestedTransformArray[4] +
+                            parentTransform[2] * nestedTransformArray[5] +
                             parentTransform[4],
-                        parentTransform[1] * nestedTransform[4] +
-                            parentTransform[3] * nestedTransform[5] +
+                        parentTransform[1] * nestedTransformArray[4] +
+                            parentTransform[3] * nestedTransformArray[5] +
                             parentTransform[5]
                     ];
 
@@ -863,7 +871,7 @@ export class OutlineEditor {
                 ) {
                     const isInPath = this.glyphCanvas.isPointInComponent(
                         componentShape,
-                        transform,
+                        transformArray,
                         parentTransform,
                         glyphX,
                         glyphY
