@@ -525,11 +525,25 @@ export class GlyphCanvasRenderer {
             this.ctx.restore(); // Restore to component-transformed state
         }
 
-        // Draw 1-unit grid at high zoom levels
+        // Draw 1-unit grid at high zoom levels with fade-in
         if (
             this.viewportManager.scale >=
-            APP_SETTINGS.OUTLINE_EDITOR.MIN_ZOOM_FOR_GRID
+            APP_SETTINGS.OUTLINE_EDITOR.MIN_ZOOM_FOR_GRID_FADE_START
         ) {
+            // Calculate grid opacity based on zoom level
+            let gridOpacity = 1.0;
+            const fadeStart =
+                APP_SETTINGS.OUTLINE_EDITOR.MIN_ZOOM_FOR_GRID_FADE_START;
+            const fadeEnd = APP_SETTINGS.OUTLINE_EDITOR.MIN_ZOOM_FOR_GRID;
+
+            if (this.viewportManager.scale < fadeEnd) {
+                // Interpolate opacity between 0 and 1 as zoom goes from fadeStart to fadeEnd
+                gridOpacity =
+                    (this.viewportManager.scale - fadeStart) /
+                    (fadeEnd - fadeStart);
+                gridOpacity = Math.max(0, Math.min(1, gridOpacity)); // Clamp to [0, 1]
+            }
+
             // Get glyph bounds from layer data (if available)
             let minX = -100,
                 maxX = 700,
@@ -566,7 +580,23 @@ export class GlyphCanvasRenderer {
             const colors = isDarkTheme
                 ? APP_SETTINGS.OUTLINE_EDITOR.COLORS_DARK
                 : APP_SETTINGS.OUTLINE_EDITOR.COLORS_LIGHT;
-            this.ctx.strokeStyle = colors.GRID;
+
+            // Apply opacity to grid color
+            const gridColor = colors.GRID;
+            const rgbaMatch = gridColor.match(
+                /rgba?\((\d+),\s*(\d+),\s*(\d+)(?:,\s*([\d.]+))?\)/
+            );
+            if (rgbaMatch) {
+                const r = rgbaMatch[1];
+                const g = rgbaMatch[2];
+                const b = rgbaMatch[3];
+                const baseAlpha = rgbaMatch[4] ? parseFloat(rgbaMatch[4]) : 1;
+                this.ctx.strokeStyle = `rgba(${r}, ${g}, ${b}, ${baseAlpha * gridOpacity})`;
+            } else {
+                this.ctx.strokeStyle = gridColor;
+                this.ctx.globalAlpha = gridOpacity;
+            }
+
             this.ctx.lineWidth = 1 * invScale;
             this.ctx.beginPath();
             for (let x = Math.floor(minX); x <= Math.ceil(maxX); x++) {
@@ -580,6 +610,11 @@ export class GlyphCanvasRenderer {
                 this.ctx.lineTo(maxX, y);
             }
             this.ctx.stroke();
+
+            // Reset global alpha if it was used
+            if (!rgbaMatch) {
+                this.ctx.globalAlpha = 1.0;
+            }
         }
 
         // Draw each shape (contour or component)

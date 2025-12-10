@@ -23,7 +23,8 @@ const APP_SETTINGS = {
         // Zoom thresholds
         MIN_ZOOM_FOR_HANDLES: 0.2, // 20% - below this, don't draw nodes/anchors/component markers
         MIN_ZOOM_FOR_ANCHOR_LABELS: 0.7, // 50% - below this, don't draw anchor names
-        MIN_ZOOM_FOR_GRID: 7.0, // 500% - above this, show 1-unit grid
+        MIN_ZOOM_FOR_GRID_FADE_START: 5.0, // grid starts fading in at this zoom
+        MIN_ZOOM_FOR_GRID: 9.0, // grid is fully visible at this zoom
 
         // Node (point) sizes
         NODE_SIZE_AT_MIN_ZOOM: 3, // px - node size at min zoom
