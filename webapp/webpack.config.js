@@ -16,7 +16,8 @@ module.exports = {
     plugins: [
         new HtmlWebpackPlugin({
             template: './index.html',
-            inject: false
+            inject: 'body',
+            chunks: ['bootstrap']
         }),
         new CopyWebpackPlugin({
             patterns: [
