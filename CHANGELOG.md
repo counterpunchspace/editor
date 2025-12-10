@@ -2,6 +2,7 @@
 
 - **Nested Components**: Refactored to pre-populate component `layerData` recursively for simpler, unified data structure. Bounding box calculations include nested components.
 - **Auto-Zoom**: Restored auto-zoom functionality when navigating between glyphs in edit mode via keyboard (Cmd+Left/Right arrows)
+- **Layer Switching**: Fixed font recompilation not triggering after switching layers via keyboard (Cmd+Up/Down). Now properly calls `autoSelectMatchingLayer()` after animation completes.
 
 # v0.1a
 

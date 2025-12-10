@@ -321,6 +321,11 @@ class GlyphCanvas {
             if (this.outlineEditor.isLayerSwitchAnimating) {
                 this.outlineEditor.restoreTargetLayerDataAfterAnimating();
                 this.outlineEditor.isLayerSwitchAnimating = false;
+                
+                // Auto-select the matching layer to ensure proper layer state
+                // and trigger fetchLayerData which will save changes and recompile font
+                await this.outlineEditor.autoSelectMatchingLayer();
+                
                 this.textRunEditor!.shapeText();
                 return;
             }
