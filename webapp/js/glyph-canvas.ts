@@ -322,11 +322,11 @@ class GlyphCanvas {
             if (this.outlineEditor.isLayerSwitchAnimating) {
                 this.outlineEditor.restoreTargetLayerDataAfterAnimating();
                 this.outlineEditor.isLayerSwitchAnimating = false;
-                
+
                 // Auto-select the matching layer to ensure proper layer state
                 // and trigger fetchLayerData which will save changes and recompile font
                 await this.outlineEditor.autoSelectMatchingLayer();
-                
+
                 this.textRunEditor!.shapeText();
                 return;
             }
@@ -835,7 +835,10 @@ class GlyphCanvas {
         // Store glyph name for interpolation (needed even when not on a layer)
         // But only if we're NOT in component editing mode - when editing a component,
         // currentGlyphName should stay set to the component reference
-        if (this.fontData.glyphName && this.outlineEditor.componentStack.length === 0) {
+        if (
+            this.fontData.glyphName &&
+            this.outlineEditor.componentStack.length === 0
+        ) {
             this.outlineEditor.currentGlyphName = this.fontData.glyphName;
             console.log(
                 '[GlyphCanvas]',

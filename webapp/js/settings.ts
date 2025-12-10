@@ -172,24 +172,27 @@ const PRODUCTION_OVERRIDES = {
 const isProduction = () => {
     const hostname = window.location.hostname;
     const port = window.location.port;
-    
+
     // Development indicators
-    const isDevelopment = 
-        hostname === 'localhost' || 
+    const isDevelopment =
+        hostname === 'localhost' ||
         hostname === '127.0.0.1' ||
         port === '8000' || // webpack dev server
         port === '5500'; // live server
-    
+
     return !isDevelopment;
 };
 
 // Apply production overrides if in production mode
 if (isProduction()) {
     console.log('[Settings] Running in production mode - applying overrides');
-    
+
     // Deep merge production overrides into APP_SETTINGS
     if (PRODUCTION_OVERRIDES.OUTLINE_EDITOR) {
-        Object.assign(APP_SETTINGS.OUTLINE_EDITOR, PRODUCTION_OVERRIDES.OUTLINE_EDITOR);
+        Object.assign(
+            APP_SETTINGS.OUTLINE_EDITOR,
+            PRODUCTION_OVERRIDES.OUTLINE_EDITOR
+        );
     }
 } else {
     console.log('[Settings] Running in development mode');

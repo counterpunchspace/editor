@@ -668,9 +668,7 @@ export class GlyphCanvasRenderer {
                         shape.Component.layerData.shapes
                     ) {
                         // Recursively render all shapes in the component (including nested components)
-                        const renderComponentShapes = (
-                            shapes: any[]
-                        ) => {
+                        const renderComponentShapes = (shapes: any[]) => {
                             shapes.forEach((componentShape) => {
                                 // Handle nested components
                                 if ('Component' in componentShape) {

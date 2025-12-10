@@ -611,15 +611,15 @@ class FontManager {
 
         // Convert nodes array back to string format and strip internal properties
         let newShapes = layerData.shapes?.map(cleanShapeForSaving);
-        
+
         // Deep copy anchors and guides to avoid circular references
-        const cleanAnchors = layerData.anchors?.map(anchor => ({
+        const cleanAnchors = layerData.anchors?.map((anchor) => ({
             name: anchor.name,
             x: anchor.x,
             y: anchor.y
         }));
-        
-        const cleanGuides = layerData.guides?.map(guide => ({
+
+        const cleanGuides = layerData.guides?.map((guide) => ({
             pos: {
                 x: guide.pos.x,
                 y: guide.pos.y,
@@ -628,7 +628,7 @@ class FontManager {
             name: guide.name,
             ...(guide.color && { color: guide.color })
         }));
-        
+
         // Create a clean copy of the layer data with only serializable properties
         // Don't save isInterpolated flag - it's runtime state only
         let layerDataCopy: PythonBabelfont.Layer = {
@@ -644,11 +644,17 @@ class FontManager {
             ...(cleanAnchors && { anchors: cleanAnchors }),
             ...(cleanGuides && { guides: cleanGuides }),
             ...(layerData.color && { color: layerData.color }),
-            ...(layerData.layerIndex !== undefined && { layerIndex: layerData.layerIndex }),
-            ...(layerData.is_background !== undefined && { is_background: layerData.is_background }),
+            ...(layerData.layerIndex !== undefined && {
+                layerIndex: layerData.layerIndex
+            }),
+            ...(layerData.is_background !== undefined && {
+                is_background: layerData.is_background
+            }),
             ...(layerData.background && { background: layerData.background }),
             ...(layerData.location && { location: { ...layerData.location } }),
-            ...(layerData.format_specific && { format_specific: layerData.format_specific })
+            ...(layerData.format_specific && {
+                format_specific: layerData.format_specific
+            })
         };
 
         let glyph = this.getGlyph(glyphName);
@@ -672,18 +678,22 @@ class FontManager {
         // Directly assign the cleaned layer data (no need for JSON.parse/stringify)
         glyph.layers[layerIndex] = layerDataCopy;
         console.log(glyph.layers[layerIndex]);
-        
+
         // Update the babelfontJson string
         // We need to parse the JSON, update the specific layer, and stringify again
         // to avoid circular references from other layers that were rendered
         try {
             const fontData = JSON.parse(this.currentFont!.babelfontJson);
             // Find the glyph in the parsed data
-            const glyphInJson = fontData.glyphs.find((g: any) => 
-                g.name === glyphName || (glyphName.startsWith('GID ') && g.name === undefined)
+            const glyphInJson = fontData.glyphs.find(
+                (g: any) =>
+                    g.name === glyphName ||
+                    (glyphName.startsWith('GID ') && g.name === undefined)
             );
             if (glyphInJson && glyphInJson.layers) {
-                const layerIndexInJson = glyphInJson.layers.findIndex((l: any) => l.id === layerId);
+                const layerIndexInJson = glyphInJson.layers.findIndex(
+                    (l: any) => l.id === layerId
+                );
                 if (layerIndexInJson !== -1) {
                     glyphInJson.layers[layerIndexInJson] = layerDataCopy;
                 }
@@ -692,10 +702,13 @@ class FontManager {
             // Also update the babelfontData reference
             this.currentFont!.babelfontData = fontData;
         } catch (error) {
-            console.error('[FontManager] Error updating babelfont JSON:', error);
+            console.error(
+                '[FontManager] Error updating babelfont JSON:',
+                error
+            );
             return;
         }
-        
+
         // Mark font as dirty
         this.currentFont!.dirty = true;
         window.autoCompileManager.checkAndSchedule();

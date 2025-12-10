@@ -172,10 +172,17 @@ class FontCompilation {
         // Wait for service worker to be active (needed for SharedArrayBuffer on GitHub Pages)
         if ('serviceWorker' in navigator) {
             // Check if a service worker is actually registered
-            const registrations = await navigator.serviceWorker.getRegistrations();
-            if (registrations.length > 0 || navigator.serviceWorker.controller) {
+            const registrations =
+                await navigator.serviceWorker.getRegistrations();
+            if (
+                registrations.length > 0 ||
+                navigator.serviceWorker.controller
+            ) {
                 const registration = await navigator.serviceWorker.ready;
-                if (registration.active && !navigator.serviceWorker.controller) {
+                if (
+                    registration.active &&
+                    !navigator.serviceWorker.controller
+                ) {
                     console.log(
                         '[FontCompilation]',
                         '⏳ Service worker registered but not controlling page yet. Waiting...'
@@ -514,19 +521,27 @@ async function initFontCompilation() {
 // Only run in browser environment
 if (typeof document !== 'undefined') {
     document.addEventListener('DOMContentLoaded', async () => {
-        console.log('[FontCompilation] DOMContentLoaded - starting initialization');
+        console.log(
+            '[FontCompilation] DOMContentLoaded - starting initialization'
+        );
         // Wait for service worker to be ready before initializing (only if one is registering)
         if ('serviceWorker' in navigator) {
             // Check if a service worker is actually being registered
-            const registrations = await navigator.serviceWorker.getRegistrations();
-            if (registrations.length > 0 || navigator.serviceWorker.controller) {
+            const registrations =
+                await navigator.serviceWorker.getRegistrations();
+            if (
+                registrations.length > 0 ||
+                navigator.serviceWorker.controller
+            ) {
                 console.log('[FontCompilation] Waiting for service worker...');
                 await navigator.serviceWorker.ready;
                 console.log('[FontCompilation] Service worker ready');
                 // Give it a brief moment to ensure controller is set
-                await new Promise(resolve => setTimeout(resolve, 500));
+                await new Promise((resolve) => setTimeout(resolve, 500));
             } else {
-                console.log('[FontCompilation] No service worker registered (development mode)');
+                console.log(
+                    '[FontCompilation] No service worker registered (development mode)'
+                );
             }
         }
         console.log('[FontCompilation] Calling initFontCompilation...');
