@@ -56,6 +56,8 @@ module.exports = {
         ],
         port: 8000,
         server: 'https',
+        hot: true,
+        liveReload: true,
         headers: {
             'Cross-Origin-Embedder-Policy': 'require-corp',
             'Cross-Origin-Opener-Policy': 'same-origin',
