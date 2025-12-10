@@ -1,5 +1,6 @@
 # Unreleased
 
+- **Live Interpolation**: Fixed broken glyph interpolation in editor view after PR #8 TypeScript refactor by adding missing module import to bootstrap and restoring `window.fontInterpolation` global. Fixed node destructuring bug in `LayerDataNormalizer`.
 - **Nested Components**: Refactored to pre-populate component `layerData` recursively for simpler, unified data structure. Bounding box calculations include nested components.
 - **Auto-Zoom**: Restored auto-zoom functionality when navigating between glyphs in edit mode via keyboard (Cmd+Left/Right arrows)
 - **Layer Switching**: Fixed font recompilation not triggering after switching layers via keyboard (Cmd+Up/Down). Now properly calls `autoSelectMatchingLayer()` after animation completes.

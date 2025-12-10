@@ -243,3 +243,8 @@ class FontInterpolationManager {
 
 // Create singleton
 export const fontInterpolation = new FontInterpolationManager();
+
+// Make available globally
+if (typeof window !== 'undefined') {
+    window.fontInterpolation = fontInterpolation;
+}

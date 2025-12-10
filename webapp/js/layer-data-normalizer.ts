@@ -208,10 +208,10 @@ export class LayerDataNormalizer {
 
         // Log first point coordinates to see if they're changing
         if (normalized?.shapes?.[0]?.nodes?.[0]) {
-            const [x, y, type] = normalized.shapes[0].nodes[0];
+            const node = normalized.shapes[0].nodes[0];
             console.log(
                 '[LayerDataNormalizer]',
-                `First point: x=${x}, y=${y}, type=${type}`
+                `First point: x=${node.x}, y=${node.y}, type=${node.type}`
             );
         }
 
