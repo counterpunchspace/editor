@@ -45,6 +45,12 @@ This is a WebAssembly-based font editor using Rust (fontc/babelfont) compiled to
 - Update Rust dependencies with `update-rust-deps.sh`
 - Build WASM with `build-fontc-wasm.sh`
 
+## Testing & Verification
+- **Always verify TypeScript/JavaScript changes** by running `cd webapp && npm run build` after making edits
+- The `get_errors` tool only checks VS Code's TypeScript language server, which may miss errors that webpack's stricter compilation catches
+- Look for "compiled successfully" or "ERROR" in the build output
+- Check exit code to ensure compilation succeeded
+
 ## Important Notes
 - CORS headers are required for SharedArrayBuffer (see _headers and coi-serviceworker.js)
 - Keep instructions/ directory updated with architectural decisions
