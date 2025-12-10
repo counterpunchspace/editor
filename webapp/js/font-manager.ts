@@ -575,24 +575,80 @@ class FontManager {
         layerId: string,
         layerData: PythonBabelfont.Layer
     ) {
-        // Convert nodes array back to string format
-        let newShapes = layerData.shapes?.map((shape) => {
-            if ('nodes' in shape && Array.isArray(shape.nodes)) {
-                // Convert array back to string: [{x, y, type}, ...] -> "x y type x y type ..."
-                const nodesString = shape.nodes
-                    .map((node) => `${node.x} ${node.y} ${node.type}`)
-                    .join(' ');
-                let reworkedShape = {
-                    Path: { nodes: nodesString, closed: true }
+        // Helper function to recursively clean shapes for saving
+        const cleanShapeForSaving = (shape: PythonBabelfont.Shape): any => {
+            if ('Path' in shape) {
+                // For Path shapes, ensure we only save the string representation
+                // Remove any parsed 'nodes' array that was added during rendering
+                if ('nodes' in shape && Array.isArray(shape.nodes)) {
+                    // Convert array back to string: [{x, y, type}, ...] -> "x y type x y type ..."
+                    const nodesString = shape.nodes
+                        .map((node) => `${node.x} ${node.y} ${node.type}`)
+                        .join(' ');
+                    return {
+                        Path: { nodes: nodesString, closed: shape.Path.closed }
+                    };
+                } else {
+                    // Already in string format, just copy the Path data
+                    return {
+                        Path: { ...shape.Path }
+                    };
+                }
+            } else if ('Component' in shape) {
+                // Strip the layerData property from components before saving
+                // layerData is only for internal rendering, not part of the font format
+                const componentData = { ...shape.Component };
+                delete componentData.layerData; // Remove the populated layerData
+                return {
+                    Component: componentData
                 };
-                return reworkedShape;
             } else {
-                return JSON.parse(JSON.stringify(shape));
+                // For other shape types (Anchor, etc.), create a clean copy
+                // Avoid JSON.parse(JSON.stringify()) which can fail on circular refs
+                return { ...shape };
             }
-        });
+        };
+
+        // Convert nodes array back to string format and strip internal properties
+        let newShapes = layerData.shapes?.map(cleanShapeForSaving);
+        
+        // Deep copy anchors and guides to avoid circular references
+        const cleanAnchors = layerData.anchors?.map(anchor => ({
+            name: anchor.name,
+            x: anchor.x,
+            y: anchor.y
+        }));
+        
+        const cleanGuides = layerData.guides?.map(guide => ({
+            pos: {
+                x: guide.pos.x,
+                y: guide.pos.y,
+                angle: guide.pos.angle
+            },
+            name: guide.name,
+            ...(guide.color && { color: guide.color })
+        }));
+        
+        // Create a clean copy of the layer data with only serializable properties
+        // Don't save isInterpolated flag - it's runtime state only
         let layerDataCopy: PythonBabelfont.Layer = {
-            ...layerData,
-            shapes: newShapes
+            width: layerData.width,
+            height: layerData.height,
+            vertWidth: layerData.vertWidth,
+            name: layerData.name,
+            id: layerData.id,
+            _master: layerData._master,
+            shapes: newShapes,
+            isInterpolated: false, // Always false for saved data
+            // Copy other optional properties if they exist
+            ...(cleanAnchors && { anchors: cleanAnchors }),
+            ...(cleanGuides && { guides: cleanGuides }),
+            ...(layerData.color && { color: layerData.color }),
+            ...(layerData.layerIndex !== undefined && { layerIndex: layerData.layerIndex }),
+            ...(layerData.is_background !== undefined && { is_background: layerData.is_background }),
+            ...(layerData.background && { background: layerData.background }),
+            ...(layerData.location && { location: { ...layerData.location } }),
+            ...(layerData.format_specific && { format_specific: layerData.format_specific })
         };
 
         let glyph = this.getGlyph(glyphName);
@@ -613,12 +669,33 @@ class FontManager {
             );
             return;
         }
-        glyph.layers[layerIndex] = JSON.parse(JSON.stringify(layerDataCopy));
+        // Directly assign the cleaned layer data (no need for JSON.parse/stringify)
+        glyph.layers[layerIndex] = layerDataCopy;
         console.log(glyph.layers[layerIndex]);
+        
         // Update the babelfontJson string
-        this.currentFont!.babelfontJson = JSON.stringify(
-            this.currentFont!.babelfontData
-        );
+        // We need to parse the JSON, update the specific layer, and stringify again
+        // to avoid circular references from other layers that were rendered
+        try {
+            const fontData = JSON.parse(this.currentFont!.babelfontJson);
+            // Find the glyph in the parsed data
+            const glyphInJson = fontData.glyphs.find((g: any) => 
+                g.name === glyphName || (glyphName.startsWith('GID ') && g.name === undefined)
+            );
+            if (glyphInJson && glyphInJson.layers) {
+                const layerIndexInJson = glyphInJson.layers.findIndex((l: any) => l.id === layerId);
+                if (layerIndexInJson !== -1) {
+                    glyphInJson.layers[layerIndexInJson] = layerDataCopy;
+                }
+            }
+            this.currentFont!.babelfontJson = JSON.stringify(fontData);
+            // Also update the babelfontData reference
+            this.currentFont!.babelfontData = fontData;
+        } catch (error) {
+            console.error('[FontManager] Error updating babelfont JSON:', error);
+            return;
+        }
+        
         // Mark font as dirty
         this.currentFont!.dirty = true;
         window.autoCompileManager.checkAndSchedule();

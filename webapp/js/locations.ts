@@ -47,7 +47,7 @@ export function userspaceToDesignspace(
     for (const axis of axes) {
         const tag = axis.tag;
         const userValue = location[tag] ?? axis.default;
-        const mapping = axis.map;
+        const mapping = axis.map || []; // Handle undefined map
         result[tag] = piecewiseLinearMap(userValue, mapping);
     }
     console.log('Result:', result);
@@ -64,7 +64,7 @@ export function designspaceToUserspace(
     for (const axis of axes) {
         const tag = axis.tag;
         const userValue = location[tag] ?? axis.default;
-        const mapping: AxisMap = axis.map.map(([u, d]) => [d, u]); // Invert mapping
+        const mapping: AxisMap = axis.map ? axis.map.map(([u, d]) => [d, u]) : []; // Handle undefined map and invert
         result[tag] = piecewiseLinearMap(userValue, mapping);
     }
     console.log('Result:', result);

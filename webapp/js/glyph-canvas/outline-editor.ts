@@ -17,7 +17,8 @@ export type ComponentStackItem = {
     selectedPoints: Point[];
     selectedAnchors: number[];
     selectedComponents: number[];
-    glyphName: string;
+    glyphName: string; // The glyph name of the context we're leaving (for breadcrumb)
+    editingGlyphName: string; // The glyph name of the component we're entering (for saving)
 };
 
 // Recursively parse nodes in component layer data (including nested components)
@@ -110,7 +111,8 @@ export class OutlineEditor {
     saveState(
         componentIndex: number,
         transform: number[],
-        glyphName: string
+        glyphName: string,
+        editingGlyphName: string
     ): ComponentStackItem {
         return {
             componentIndex,
@@ -119,7 +121,8 @@ export class OutlineEditor {
             selectedPoints: this.selectedPoints,
             selectedAnchors: this.selectedAnchors,
             selectedComponents: this.selectedComponents,
-            glyphName
+            glyphName,
+            editingGlyphName
         };
     }
 
@@ -1076,11 +1079,43 @@ export class OutlineEditor {
             'Before copy - layerData.isInterpolated:',
             this.layerData.isInterpolated
         );
-        // Make a deep copy of the target layer data so it doesn't get overwritten during animation
-        this.targetLayerData = JSON.parse(
-            JSON.stringify(LayerDataNormalizer.stripCycles(this.layerData))
-        );
-        LayerDataNormalizer.relinkCycles(this.layerData);
+        
+        // Create a deep copy without circular references
+        // Similar to saveLayerData, we need to clean the data before copying
+        const cleanShapes = this.layerData.shapes?.map(shape => {
+            if ('Path' in shape) {
+                // Copy path data without the parsed nodes array (which has circular refs)
+                if ('nodes' in shape && Array.isArray(shape.nodes)) {
+                    // Convert to clean node objects without next/prev references
+                    const cleanNodes = shape.nodes.map(node => ({
+                        x: node.x,
+                        y: node.y,
+                        type: node.type
+                    }));
+                    return {
+                        Path: { ...shape.Path },
+                        nodes: cleanNodes
+                    };
+                } else {
+                    return {
+                        Path: { ...shape.Path }
+                    };
+                }
+            } else if ('Component' in shape) {
+                return {
+                    Component: { ...shape.Component }
+                };
+            } else {
+                return { ...shape };
+            }
+        });
+        
+        this.targetLayerData = {
+            ...this.layerData,
+            shapes: cleanShapes,
+            isInterpolated: this.layerData.isInterpolated
+        };
+        
         console.log(
             'After copy - targetLayerData.isInterpolated:',
             this.targetLayerData!.isInterpolated
@@ -1579,15 +1614,10 @@ export class OutlineEditor {
 
             if (this.componentStack.length > 0) {
                 // We're editing a component - save to the component's glyph
-                // Get the component reference from the parent layer
-                const parentState =
+                // Get the editingGlyphName from the top of the stack
+                const currentState =
                     this.componentStack[this.componentStack.length - 1];
-                const componentShape =
-                    parentState.layerData!.shapes[this.editingComponentIndex!];
-                if (!('Component' in componentShape)) {
-                    throw new Error('Current editing shape is not a component');
-                }
-                glyphName = componentShape.Component.reference;
+                glyphName = currentState.editingGlyphName;
             } else {
                 glyphName = this.glyphCanvas.getCurrentGlyphName();
             }
@@ -1768,11 +1798,14 @@ export class OutlineEditor {
 
         // Push current state onto stack (before changing this.layerData)
         // Store the component we're about to enter (componentIndex), not the old editingComponentIndex
+        // editingGlyphName is the reference of the component we're entering (for save operations)
+        const editingGlyphName = componentShape.Component.reference;
         this.componentStack.push(
             this.saveState(
                 componentIndex,
                 this.getAccumulatedTransform(),
-                currentGlyphName
+                currentGlyphName,
+                editingGlyphName
             )
         );
 
