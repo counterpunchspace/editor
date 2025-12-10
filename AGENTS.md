@@ -46,7 +46,7 @@ This is a WebAssembly-based font editor using Rust (fontc/babelfont) compiled to
 - Build WASM with `build-fontc-wasm.sh`
 
 ## Testing & Verification
-- **Always verify TypeScript/JavaScript changes** by running `cd webapp && npm run build` after making edits
+- **Always verify TypeScript/JavaScript changes** by running `cd webapp && npm run build` after making edits and checking it for errors
 - The `get_errors` tool only checks VS Code's TypeScript language server, which may miss errors that webpack's stricter compilation catches
 - Look for "compiled successfully" or "ERROR" in the build output
 - Check exit code to ensure compilation succeeded
