@@ -1814,7 +1814,9 @@ export class OutlineEditor {
         );
 
         // Set the component as the current editing context
-        this.editingComponentIndex = componentIndex;
+        // After entering, we're no longer "editing" a component reference - we're inside it
+        // So editingComponentIndex should be null
+        this.editingComponentIndex = null;
         this.layerData = componentLayerData;
         // Clear isInterpolated flag since we're loading actual layer data
         if (this.layerData) {
@@ -1828,13 +1830,29 @@ export class OutlineEditor {
 
         // Clear selections
         this.clearAllSelections();
+        
+        console.log(
+            '[OutlineEditor] After clearAllSelections:',
+            'selectedComponents:', this.selectedComponents,
+            'selectedPoints:', this.selectedPoints,
+            'selectedAnchors:', this.selectedAnchors
+        );
 
         console.log(
             `Entered component editing: ${componentShape.Component.reference}, stack depth: ${this.componentStack.length}`
         );
 
         if (!skipUIUpdate) {
-            this.glyphCanvas.doUIUpdate();
+            // Update UI but skip hit detection since mouse context has changed
+            this.glyphCanvas.updateComponentBreadcrumb();
+            this.glyphCanvas.updatePropertiesUI();
+            this.glyphCanvas.render();
+            // Don't call performHitDetection here - let the next mouse move handle it
+            
+            console.log(
+                '[OutlineEditor] After UI update (without hit detection):',
+                'selectedComponents:', this.selectedComponents
+            );
         }
     }
 
