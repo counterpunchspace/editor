@@ -439,13 +439,23 @@ export class GlyphCanvasRenderer {
 
         // Apply accumulated component transform if editing a component
         // This positions the editor at the component's location in the parent
-        const transform =
-            this.glyphCanvas.outlineEditor.getAccumulatedTransform();
+        // Use interpolated transform if available (during slider interpolation),
+        // otherwise use the static transform from the component stack
+        let transform: number[];
+        if (
+            this.glyphCanvas.outlineEditor.componentStack.length > 0 &&
+            this.glyphCanvas.outlineEditor.interpolatedComponentTransform
+        ) {
+            // Use interpolated transform during slider movement
+            transform =
+                this.glyphCanvas.outlineEditor.interpolatedComponentTransform;
+        } else {
+            // Use static transform from component stack
+            transform =
+                this.glyphCanvas.outlineEditor.getAccumulatedTransform();
+        }
+
         if (this.glyphCanvas.outlineEditor.componentStack.length > 0) {
-            console.log(
-                '[Renderer]',
-                `drawOutlineEditor: componentStack.length=${this.glyphCanvas.outlineEditor.componentStack.length}, accumulated transform=[${transform}]`
-            );
             this.ctx.transform(
                 transform[0],
                 transform[1],

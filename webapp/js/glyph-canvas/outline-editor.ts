@@ -67,6 +67,7 @@ export class OutlineEditor {
 
     layerDataDirty: boolean = false;
     componentStack: ComponentStackItem[] = [];
+    interpolatedComponentTransform: number[] | null = null; // Interpolated transform when in component editing mode
     previousSelectedLayerId: string | null = null;
     previousVariationSettings: Record<string, number> | null = null;
     layerData: PythonBabelfont.Layer | null = null;
@@ -1180,17 +1181,35 @@ export class OutlineEditor {
 
         try {
             const location = this.glyphCanvas.axesManager!.variationSettings;
-            console.log(
-                `🔄 Interpolating glyph "${this.currentGlyphName}" at location:`,
-                JSON.stringify(location)
-            );
-
-            const interpolatedLayer = await fontInterpolation.interpolateGlyph(
-                this.currentGlyphName,
-                location
-            );
-
-            console.log(`📦 Received interpolated layer:`, interpolatedLayer);
+            let interpolatedLayer;
+            
+            // When in component editing mode, interpolate the component and extract its transform from the parent
+            if (this.componentStack.length > 0) {
+                // Interpolate the component itself (gives us the shapes)
+                interpolatedLayer = await fontInterpolation.interpolateGlyph(
+                    this.currentGlyphName,
+                    location
+                );
+                
+                // Also interpolate the parent to get the interpolated component reference transform
+                const rootGlyphName = this.glyphCanvas.getCurrentGlyphName();
+                const parentLayer = await fontInterpolation.interpolateGlyph(
+                    rootGlyphName,
+                    location
+                );
+                
+                // Extract the interpolated transform for this component
+                this.interpolatedComponentTransform = this.extractComponentTransformFromInterpolatedLayer(
+                    parentLayer,
+                    this.componentStack
+                );
+            } else {
+                // Not in component mode - interpolate directly
+                interpolatedLayer = await fontInterpolation.interpolateGlyph(
+                    this.currentGlyphName,
+                    location
+                );
+            }
 
             // Apply interpolated data using normalizer
             console.log(
@@ -1543,6 +1562,9 @@ export class OutlineEditor {
     }
 
     async fetchLayerData(): Promise<void> {
+        // Clear interpolated transform when switching to exact layer
+        this.interpolatedComponentTransform = null;
+        
         // If we're editing a component, refresh the component's layer data for the new layer
         if (this.componentStack.length > 0) {
             console.log('Refreshing component layer data for new layer');
@@ -1575,7 +1597,12 @@ export class OutlineEditor {
             if (this.layerData) {
                 this.layerData.isInterpolated = false;
             }
-            this.currentGlyphName = glyphName; // Store for interpolation
+            
+            // Only update currentGlyphName if we're NOT in component editing mode
+            // When in component editing, currentGlyphName should stay set to the component reference
+            if (this.componentStack.length === 0) {
+                this.currentGlyphName = glyphName; // Store for interpolation
+            }
 
             if (this.layerData && this.layerData.shapes) {
                 parseComponentNodes(this.layerData.shapes);
@@ -1813,6 +1840,9 @@ export class OutlineEditor {
             `Pushed to stack. Stack depth: ${this.componentStack.length}, storing glyphName: ${currentGlyphName}`
         );
 
+        // Update currentGlyphName for interpolation to target the component we're entering
+        this.currentGlyphName = editingGlyphName;
+
         // Set the component as the current editing context
         // After entering, we're no longer "editing" a component reference - we're inside it
         // So editingComponentIndex should be null
@@ -1873,6 +1903,16 @@ export class OutlineEditor {
             this.layerData.isInterpolated = false;
         }
         this.popState(previousState);
+
+        // Restore currentGlyphName for interpolation
+        // If still in nested component, use parent's editingGlyphName
+        // Otherwise use top-level glyph name
+        if (this.componentStack.length > 0) {
+            const parentState = this.componentStack[this.componentStack.length - 1];
+            this.currentGlyphName = parentState.editingGlyphName;
+        } else {
+            this.currentGlyphName = this.glyphCanvas.getCurrentGlyphName();
+        }
 
         console.log(
             `Exited component editing, stack depth: ${this.componentStack.length}`
@@ -2059,6 +2099,114 @@ export class OutlineEditor {
 
             glyphNameElement.appendChild(mainNameSpan);
         }
+    }
+
+    extractComponentTransformFromInterpolatedLayer(
+        parentLayer: any,
+        componentStack: ComponentStackItem[]
+    ): number[] | null {
+        // Navigate through the component stack accumulating interpolated transforms
+        // This matches how getAccumulatedTransform() works for master layers
+        
+        let a = 1, b = 0, c = 0, d = 1, tx = 0, ty = 0;
+        let currentLayer = parentLayer;
+        
+        for (const stackItem of componentStack) {
+            if (!currentLayer?.shapes || stackItem.componentIndex === null) {
+                console.error(
+                    '[OutlineEditor] Cannot navigate component stack - missing shapes or invalid index',
+                    { stackItem, currentLayer }
+                );
+                return null;
+            }
+            
+            const componentShape = currentLayer.shapes[stackItem.componentIndex];
+            if (!componentShape || !('Component' in componentShape)) {
+                console.error(
+                    '[OutlineEditor] Component shape not found at index',
+                    stackItem.componentIndex
+                );
+                return null;
+            }
+            
+            // Get this component's interpolated transform and accumulate it
+            const t = componentShape.Component.transform || [1, 0, 0, 1, 0, 0];
+            
+            // Multiply transforms: new = current * level
+            const newA = a * t[0] + c * t[1];
+            const newB = b * t[0] + d * t[1];
+            const newC = a * t[2] + c * t[3];
+            const newD = b * t[2] + d * t[3];
+            const newTx = a * t[4] + c * t[5] + tx;
+            const newTy = b * t[4] + d * t[5] + ty;
+            
+            a = newA;
+            b = newB;
+            c = newC;
+            d = newD;
+            tx = newTx;
+            ty = newTy;
+            
+            // Get the component's layer data to continue navigating (unless this is the last level)
+            if (stackItem !== componentStack[componentStack.length - 1]) {
+                if (!componentShape.Component.layerData) {
+                    console.error(
+                        '[OutlineEditor] Component has no layerData',
+                        componentShape.Component.reference
+                    );
+                    return null;
+                }
+                
+                // Move to the next level
+                currentLayer = componentShape.Component.layerData;
+            }
+        }
+        
+        // Return the accumulated transform
+        return [a, b, c, d, tx, ty];
+    }
+
+    extractComponentFromInterpolatedLayer(
+        parentLayer: any,
+        componentStack: ComponentStackItem[]
+    ): any {
+        // Navigate through the component stack to extract the nested component layer data
+        // This walks the same path as enterComponentEditing to get to the current editing level
+        
+        let currentLayer = parentLayer;
+        
+        for (const stackItem of componentStack) {
+            if (!currentLayer?.shapes || stackItem.componentIndex === null) {
+                console.error(
+                    '[OutlineEditor] Cannot navigate component stack - missing shapes or invalid index',
+                    { stackItem, currentLayer }
+                );
+                return null;
+            }
+            
+            const componentShape = currentLayer.shapes[stackItem.componentIndex];
+            if (!componentShape || !('Component' in componentShape)) {
+                console.error(
+                    '[OutlineEditor] Component shape not found at index',
+                    stackItem.componentIndex
+                );
+                return null;
+            }
+            
+            // Get the component's layer data (which should be populated by Rust interpolation)
+            if (!componentShape.Component.layerData) {
+                console.error(
+                    '[OutlineEditor] Component has no layerData',
+                    componentShape.Component.reference
+                );
+                return null;
+            }
+            
+            // Move to the next level
+            currentLayer = componentShape.Component.layerData;
+        }
+        
+        return currentLayer;
     }
 
     getAccumulatedTransform(): number[] {

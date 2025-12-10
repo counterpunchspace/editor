@@ -833,7 +833,9 @@ class GlyphCanvas {
         }
 
         // Store glyph name for interpolation (needed even when not on a layer)
-        if (this.fontData.glyphName) {
+        // But only if we're NOT in component editing mode - when editing a component,
+        // currentGlyphName should stay set to the component reference
+        if (this.fontData.glyphName && this.outlineEditor.componentStack.length === 0) {
             this.outlineEditor.currentGlyphName = this.fontData.glyphName;
             console.log(
                 '[GlyphCanvas]',

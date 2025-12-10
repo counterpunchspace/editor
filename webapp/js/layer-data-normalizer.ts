@@ -189,29 +189,7 @@ export class LayerDataNormalizer {
             '📍 Location:',
             JSON.stringify(location)
         );
-        console.log(
-            '[LayerDataNormalizer]',
-            'Applying interpolated layer:',
-            interpolatedLayer
-        );
-
         const normalized = this.normalize(interpolatedLayer, true);
-
-        console.log('[LayerDataNormalizer]', 'Normalized layer:', normalized);
-        console.log(
-            '[LayerDataNormalizer]',
-            'Normalized shapes count:',
-            normalized?.shapes?.length
-        );
-
-        // Log first point coordinates to see if they're changing
-        if (normalized?.shapes?.[0]?.nodes?.[0]) {
-            const node = normalized.shapes[0].nodes[0];
-            console.log(
-                '[LayerDataNormalizer]',
-                `First point: x=${node.x}, y=${node.y}, type=${node.type}`
-            );
-        }
 
         // Parse component nodes recursively
         const parseComponentNodes = (shapes: any[]) => {
