@@ -78,6 +78,7 @@
             });
 
             // ESC to close settings (only if no popups are open and event not already handled)
+            // Use capture phase to ensure this runs before other escape handlers
             document.addEventListener('keydown', (e) => {
                 if (
                     e.key === 'Escape' &&
@@ -93,10 +94,11 @@
                     );
                     if (openPopups.length === 0) {
                         e.preventDefault();
+                        e.stopImmediatePropagation(); // Prevent other escape handlers from firing
                         this.closeSettings();
                     }
                 }
-            });
+            }, true); // Use capture phase to run before other handlers
         }
 
         toggleSettings() {

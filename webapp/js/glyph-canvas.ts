@@ -250,6 +250,7 @@ class GlyphCanvas {
 
         // Global Escape key handler (works even when sliders have focus)
         // Only active when editor view is focused
+        // Note: Settings panel escape is handled in theme-switcher.js with capture phase
         document.addEventListener('keydown', (e) => {
             if (e.key === 'Escape') {
                 this.outlineEditor.onEscapeKey(e);
