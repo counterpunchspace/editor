@@ -13,21 +13,14 @@
         <meta name="apple-mobile-web-app-title" content="contxt" />
         <title>contxt</title>
         <!-- COI Service Worker for GitHub Pages (adds COOP/COEP headers) -->
-        <!-- Only load in production - webpack dev server provides headers directly -->
+        <!-- In development (localhost:8000), skip service worker - webpack provides headers -->
         <script>
-            // Check if running in webpack dev server (has HMR)
-            const isDevelopment = window.location.port === '8000' || 
-                                 window.location.hostname === 'localhost' && 
-                                 typeof window.webpackHotUpdate !== 'undefined';
-            
-            if (!isDevelopment) {
-                // Production: Load service worker for COOP/COEP headers
+            if (window.location.hostname === 'localhost' && window.location.port === '8000') {
+                console.log('[Init] Development mode - skipping service worker (webpack provides headers)');
+            } else {
                 const script = document.createElement('script');
                 script.src = 'coi-serviceworker.js';
                 document.head.appendChild(script);
-                console.log('[Init] Loading service worker (production mode)');
-            } else {
-                console.log('[Init] Skipping service worker (development mode - webpack provides headers)');
             }
         </script>
         <!-- PWA Manifest -->

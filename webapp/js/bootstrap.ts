@@ -22,26 +22,3 @@ import './script-editor.js';
 import './sound-preloader.js';
 import './theme-switcher.js';
 import './view-settings.js';
-
-// Import and initialize font compilation explicitly
-import { fontCompilation } from './font-compilation';
-
-// Initialize font compilation system early
-(async () => {
-    console.log('[Bootstrap] Initializing font compilation system...');
-    // Wait for service worker if it's being used (production)
-    if ('serviceWorker' in navigator) {
-        try {
-            // Wait with timeout in case SW is loading
-            await Promise.race([
-                navigator.serviceWorker.ready,
-                new Promise(resolve => setTimeout(resolve, 2000))
-            ]);
-            console.log('[Bootstrap] Service worker ready');
-        } catch (e) {
-            console.log('[Bootstrap] No service worker (development mode)');
-        }
-    }
-    await fontCompilation.initialize();
-    console.log('[Bootstrap] Font compilation system ready');
-})();
