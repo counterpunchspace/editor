@@ -139,6 +139,27 @@ class FontInterpolationManager {
             );
 
             if (pending) {
+                // Check if this is still the current request for this glyph
+                // Ignore stale responses that arrived after a newer request was made
+                if (
+                    this.currentGlyphRequest &&
+                    this.currentGlyphRequest.glyphName === pending.glyphName &&
+                    this.currentGlyphRequest.id !== data.id
+                ) {
+                    console.log(
+                        '[FontInterpolation]',
+                        '⏩ Ignoring stale response for',
+                        pending.glyphName,
+                        '(request',
+                        data.id,
+                        'superseded by',
+                        this.currentGlyphRequest.id,
+                        ')'
+                    );
+                    this.pendingRequests.delete(data.id);
+                    return;
+                }
+
                 this.pendingRequests.delete(data.id);
 
                 if (data.error) {
