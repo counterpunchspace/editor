@@ -1,9 +1,11 @@
 // File Browser for in-browser memfs
 // Shows the Pyodide file system in view 3
 
-let fileSystemCache = {};
+let fileSystemCache = { currentPath: '/' };
 
-function formatFileSize(bytes) {
+import { createWorker, OPFSFileSystem } from 'opfs-worker';
+
+function formatFileSize(bytes: number): string {
     if (bytes === 0) return '0 B';
     const k = 1024;
     const sizes = ['B', 'KB', 'MB', 'GB'];
@@ -11,10 +13,10 @@ function formatFileSize(bytes) {
     return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
 }
 
-function getFileIcon(filename, isDir) {
+function getFileIcon(filename: string, isDir: boolean): string {
     if (isDir) return '📁';
 
-    const ext = filename.split('.').pop().toLowerCase();
+    const ext = filename.split('.').pop()?.toLowerCase();
     switch (ext) {
         case 'py':
             return '🐍';
@@ -54,15 +56,15 @@ function getFileIcon(filename, isDir) {
     }
 }
 
-function getFileClass(filename, isDir) {
+function getFileClass(filename: string, isDir: boolean): string {
     if (isDir) return 'directory';
 
-    const ext = filename.split('.').pop().toLowerCase();
+    const ext = filename.split('.').pop()?.toLowerCase();
     if (ext === 'py') return 'python-file';
     return 'file';
 }
 
-function isSupportedFontFormat(name, isDir) {
+function isSupportedFontFormat(name: string, isDir: boolean): boolean {
     // Check if it's a .babelfont file (JSON format, not a folder)
     if (!isDir && name.endsWith('.babelfont')) {
         return true;
@@ -70,7 +72,7 @@ function isSupportedFontFormat(name, isDir) {
     return false;
 }
 
-async function openFont(path) {
+async function openFont(path: string) {
     if (!window.pyodide) {
         alert('Python not ready yet. Please wait a moment and try again.');
         return;
@@ -79,27 +81,9 @@ async function openFont(path) {
     try {
         const startTime = performance.now();
         console.log('[FileBrowser]', `Opening font: ${path}`);
+        let fs = await getOPFSRoot();
+        let contents = await fs.readFile(path);
 
-        // Call Python's OpenFont function (loads font quickly)
-        const fontData = await window.pyodide.runPythonAsync(`
-import time
-import json
-start_time = time.time()
-font = OpenFont('${path}')
-# Try to get font name from font.names.familyName['dflt']
-font_name = 'Untitled'
-if hasattr(font, 'names') and hasattr(font.names, 'familyName') and isinstance(font.names.familyName, dict) and 'dflt' in font.names.familyName:
-    font_name = font.names.familyName['dflt']
-duration = time.time() - start_time
-print(f"✅ Font loaded: {font_name} ({duration:.2f}s)")
-print("⏳ Initializing dirty tracking...")
-
-# Get the current font ID for tracking init
-font_id = GetCurrentFontId()
-json.dumps({"font_name": font_name, "font_id": font_id, "load_time": duration})
-        `);
-
-        const data = JSON.parse(fontData);
         const endTime = performance.now();
         const duration = ((endTime - startTime) / 1000).toFixed(2);
 
@@ -108,61 +92,16 @@ json.dumps({"font_name": font_name, "font_id": font_id, "load_time": duration})
             `Successfully opened font: ${path} (${duration}s)`
         );
 
-        // Initialize dirty tracking synchronously (blocks UI, but simpler)
-        console.log('[FileBrowser]', '⏳ Initializing dirty tracking...');
-        const trackingStart = performance.now();
-
-        try {
-            const resultJson = await window.pyodide.runPythonAsync(`
-import json
-result = InitializeTracking('${data.font_id}')
-json.dumps(result)
-`);
-
-            const result = JSON.parse(resultJson);
-
-            if (result.error) {
-                console.error(
-                    '[FileBrowser]',
-                    `Error initializing tracking: ${result.error}`
-                );
-            }
-        } catch (error) {
-            console.error(
-                '[FileBrowser]',
-                'Error initializing tracking:',
-                error
-            );
-        }
-
-        const trackingEnd = performance.now();
-        const trackingDuration = ((trackingEnd - trackingStart) / 1000).toFixed(
-            2
-        );
-        console.log(
-            '[FileBrowser]',
-            `✅ Dirty tracking ready (${trackingDuration}s)`
-        );
-
-        // Update the font dropdown and dirty indicator
-        if (window.fontDropdownManager) {
-            await window.fontDropdownManager.updateDropdown();
-            if (window.saveButton) {
-                window.saveButton.updateButtonState();
-            }
-            if (window.compileFontButton) {
-                window.compileFontButton.updateState();
-            }
-            await window.fontDropdownManager.updateDirtyIndicator();
-        }
-
         // Clear tracking promise (for save button compatibility)
         window._trackingInitPromise = Promise.resolve();
 
-        // Dispatch fontLoaded event
+        // Dispatch fontLoaded event to font manager
         window.dispatchEvent(
             new CustomEvent('fontLoaded', {
-                detail: { fontId: data.font_id, path }
+                detail: {
+                    path: path,
+                    babelfontJson: contents
+                }
             })
         );
 
@@ -170,54 +109,68 @@ json.dumps(result)
         if (window.playSound) {
             window.playSound('done');
         }
-    } catch (error) {
+    } catch (error: any) {
         console.error('[FileBrowser]', 'Error opening font:', error);
         alert(`Error opening font: ${error.message}`);
     }
 }
 
-async function scanDirectory(path = '/') {
-    if (!window.pyodide) {
-        console.error('[FileBrowser]', 'Pyodide not available');
-        return {};
+interface FileInfo {
+    path: string;
+    is_dir: boolean;
+    size: number;
+    mtime: string;
+    handle?: FileSystemHandle;
+}
+
+// OPFS Root handle cache
+let fs: OPFSFileSystem | null = null;
+
+async function getOPFSRoot(): Promise<OPFSFileSystem> {
+    if (!fs) {
+        fs = await createWorker();
     }
+    return fs;
+}
 
+async function scanDirectory(
+    path: string = '/'
+): Promise<Record<string, FileInfo>> {
     try {
-        const result = await window.pyodide.runPython(`
-import os
-import json
+        const fs = await getOPFSRoot();
+        const dirHandle = await fs.readDir(path);
+        const items: Record<string, FileInfo> = {};
 
-def scan_directory(path='/'):
-    items = {}
-    try:
-        if not os.path.exists(path):
-            return items
-            
-        for item in sorted(os.listdir(path)):
-            item_path = os.path.join(path, item)
-            try:
-                stat = os.stat(item_path)
-                is_dir = os.path.isdir(item_path)
-                items[item] = {
-                    'path': item_path,
-                    'is_dir': is_dir,
-                    'size': stat.st_size if not is_dir else 0,
-                    'mtime': stat.st_mtime
+        for (const dirEnt of dirHandle || []) {
+            const is_dir = dirEnt.kind === 'directory';
+            let size = 0;
+            let mtime = '';
+            let name = dirEnt.name;
+            const itemPath = path === '/' ? `/${name}` : `${path}/${name}`;
+
+            if (!is_dir) {
+                let full_path =
+                    path === '/' ? `/${dirEnt.name}` : `${path}/${dirEnt.name}`;
+                try {
+                    const stat = await fs?.stat(full_path);
+                    size = stat!.size;
+                    mtime = stat!.mtime;
+                } catch (e) {
+                    // Skip files we can't access
+                    continue;
                 }
-            except (OSError, IOError) as e:
-                # Skip items we can't access
-                continue
-    except (OSError, IOError) as e:
-        # Skip directories we can't access
-        pass
-    
-    return items
+            }
 
-json.dumps(scan_directory('${path}'))
-        `);
+            items[name] = {
+                path: itemPath,
+                is_dir,
+                size,
+                mtime
+            };
+        }
 
-        return JSON.parse(result);
-    } catch (error) {
+        return items;
+    } catch (error: any) {
         console.error('[FileBrowser]', 'Error scanning directory:', error);
         return {};
     }
@@ -236,11 +189,8 @@ async function createFolder() {
     }
 
     try {
-        await window.pyodide.runPython(`
-import os
-path = '${currentPath}/${folderName}'
-os.makedirs(path, exist_ok=True)
-        `);
+        const fs = await getOPFSRoot();
+        await fs.mkdir(`${currentPath}/${folderName}`, { recursive: true });
 
         console.log(
             '[FileBrowser]',
@@ -248,20 +198,29 @@ os.makedirs(path, exist_ok=True)
         );
 
         await refreshFileSystem();
-    } catch (error) {
+    } catch (error: any) {
         console.error('[FileBrowser]', 'Error creating folder:', error);
         alert(`Error creating folder: ${error.message}`);
     }
 }
 
-async function downloadFile(filePath, fileName) {
+async function downloadFile(filePath: string, fileName: string) {
     try {
-        // Read file from Pyodide filesystem
-        const fileData = window.pyodide.FS.readFile(filePath);
+        // Parse the path to get directory and filename
+        const pathParts = filePath.replace(/^\/+/, '').split('/');
+        const fileNameFromPath = pathParts.pop() || fileName;
+        const dirPath = '/' + pathParts.join('/');
+
+        // Get the file handle
+        const fs = await getOPFSRoot();
+        const file = (await fs.readFile(
+            filePath,
+            'binary'
+        )) as Uint8Array<ArrayBuffer>;
 
         // Create blob and download
-        const blob = new Blob([fileData]);
-        const url = URL.createObjectURL(blob);
+        const fileBlob = new Blob([file], { type: 'application/octet-stream' });
+        const url = URL.createObjectURL(fileBlob);
         const a = document.createElement('a');
         a.href = url;
         a.download = fileName;
@@ -273,13 +232,13 @@ async function downloadFile(filePath, fileName) {
         if (window.term) {
             window.term.echo(`[[;lime;]📥 Downloaded: ${fileName}]`);
         }
-    } catch (error) {
+    } catch (error: any) {
         console.error('[FileBrowser]', 'Error downloading file:', error);
         alert(`Error downloading file: ${error.message}`);
     }
 }
 
-async function deleteItem(itemPath, itemName, isDir) {
+async function deleteItem(itemPath: string, itemName: string, isDir: boolean) {
     const confirmMsg = isDir
         ? `Delete folder "${itemName}" and all its contents?`
         : `Delete file "${itemName}"?`;
@@ -287,61 +246,45 @@ async function deleteItem(itemPath, itemName, isDir) {
     if (!confirm(confirmMsg)) return;
 
     try {
-        await window.pyodide.runPython(`
-import os
-import shutil
-
-path = '${itemPath}'
-if os.path.isdir(path):
-    shutil.rmtree(path)
-else:
-    os.remove(path)
-        `);
+        const fs = await getOPFSRoot();
+        // Remove the item
+        await fs.remove(itemName, { recursive: isDir });
 
         console.log('[FileBrowser]', `Deleted: ${itemPath}`);
 
         await refreshFileSystem();
-    } catch (error) {
+    } catch (error: any) {
         console.error('[FileBrowser]', 'Error deleting item:', error);
         alert(`Error deleting item: ${error.message}`);
     }
 }
 
-async function uploadFiles(files) {
+async function uploadFiles(
+    files: File[] | FileList,
+    directory: string | null = null
+) {
     const startTime = performance.now();
-    const currentPath = fileSystemCache.currentPath || '/';
+    const currentPath = directory || fileSystemCache.currentPath || '/';
     let uploadedCount = 0;
     let folderCount = 0;
 
     for (const file of files) {
         try {
-            const content = await file.arrayBuffer();
-            const uint8Array = new Uint8Array(content);
-
             // Handle files with relative paths (from folder upload)
             // file.webkitRelativePath contains the full path including folder structure
             const relativePath = file.webkitRelativePath || file.name;
-            const fullPath = `${currentPath}/${relativePath}`;
+            const fullpath = currentPath + '/' + relativePath;
 
-            // Create all parent directories
-            await window.pyodide.runPython(`
-import os
-path = '${fullPath}'
-parent_dir = os.path.dirname(path)
-if parent_dir:
-    os.makedirs(parent_dir, exist_ok=True)
-            `);
-
-            // Write file to Pyodide filesystem
-            window.pyodide.FS.writeFile(fullPath, uint8Array);
+            // Get or create parent directories
+            const fs = await getOPFSRoot();
+            let contents = await file.arrayBuffer();
+            await fs.writeFile(fullpath, contents);
+            console.log(
+                '[FileBrowser]',
+                `Uploading file: ${currentPath}/${relativePath}`
+            );
             uploadedCount++;
-
-            // Count unique folders created
-            const pathParts = relativePath.split('/');
-            if (pathParts.length > 1) {
-                folderCount = Math.max(folderCount, pathParts.length - 1);
-            }
-        } catch (error) {
+        } catch (error: any) {
             console.error(
                 '[FileBrowser]',
                 `Error uploading ${file.name}:`,
@@ -354,14 +297,11 @@ if parent_dir:
         const endTime = performance.now();
         const duration = ((endTime - startTime) / 1000).toFixed(2);
 
-        if (folderCount > 0) {
-            await window.pyodide.runPythonAsync(
-                `print("Uploaded ${uploadedCount} file(s) with folder structure preserved in ${duration} seconds")`
-            );
-        } else {
-            await window.pyodide.runPythonAsync(
-                `print("Uploaded ${uploadedCount} file(s) in ${duration} seconds")`
-            );
+        const msg = `Uploaded ${uploadedCount} file(s) in ${duration} seconds`;
+
+        console.log('[FileBrowser]', msg);
+        if (window.term) {
+            window.term.echo(`[[;lime;]${msg}]`);
         }
 
         await refreshFileSystem();
@@ -443,22 +383,22 @@ async function buildFileTree(rootPath = '/') {
     return html;
 }
 
-function handleFileUpload(event) {
-    const files = Array.from(event.target.files);
+function handleFileUpload(event: Event) {
+    const files: FileList = (event.target as HTMLInputElement).files!;
     if (files.length > 0) {
         uploadFiles(files);
     }
     // Reset input so same file can be uploaded again
-    event.target.value = '';
+    (event.target as HTMLInputElement).value = '';
 }
 
-async function navigateToPath(path) {
+async function navigateToPath(path: string) {
     try {
         const fileTree = document.getElementById('file-tree');
-        fileTree.innerHTML = '<div style="color: #888;">Loading...</div>';
+        fileTree!.innerHTML = '<div style="color: #888;">Loading...</div>';
 
         const html = await buildFileTree(path);
-        fileTree.innerHTML = `
+        fileTree!.innerHTML = `
             <div class="file-path">Current path: ${path}</div>
             ${html}
         `;
@@ -468,16 +408,16 @@ async function navigateToPath(path) {
 
         // Setup drag & drop on the file tree
         setupDragAndDrop();
-    } catch (error) {
+    } catch (error: any) {
         console.error('[FileBrowser]', 'Error navigating to path:', error);
-        document.getElementById('file-tree').innerHTML = `
+        document.getElementById('file-tree')!.innerHTML = `
             <div style="color: #ff3300;">Error loading directory: ${error.message}</div>
         `;
     }
 }
 
 function setupDragAndDrop() {
-    const fileTree = document.getElementById('file-tree');
+    const fileTree = document.getElementById('file-tree')!;
 
     fileTree.addEventListener('dragover', (e) => {
         e.preventDefault();
@@ -496,14 +436,14 @@ function setupDragAndDrop() {
         e.stopPropagation();
         fileTree.classList.remove('drag-over');
 
-        const files = Array.from(e.dataTransfer.files);
+        const files = Array.from(e.dataTransfer!.files);
         if (files.length > 0) {
             await uploadFiles(files);
         }
     });
 }
 
-function selectFile(filePath) {
+function selectFile(filePath: string) {
     console.log('[FileBrowser]', 'Selected file:', filePath);
     // TODO: Add file selection handling (e.g., show content, download, etc.)
 }
@@ -524,24 +464,31 @@ async function refreshFileSystem() {
 // Initialize file browser when Pyodide is ready
 async function initFileBrowser() {
     try {
-        if (!window.pyodide) {
-            setTimeout(initFileBrowser, 500);
+        console.log('[FileBrowser]', 'Initializing file browser with OPFS...');
+
+        // Check if OPFS is supported
+        if (!navigator.storage?.getDirectory) {
+            console.error(
+                '[FileBrowser]',
+                'OPFS not supported in this browser'
+            );
+            alert(
+                'File system not supported in this browser. Please use a modern browser like Chrome or Edge.'
+            );
             return;
         }
 
-        console.log('[FileBrowser]', 'Initializing file browser...');
+        // Initialize OPFS root
+        await getOPFSRoot();
 
         // Create /user folder if it doesn't exist
-        await window.pyodide.runPython(`
-import os
-if not os.path.exists('/user'):
-    os.makedirs('/user')
-        `);
+        const root = await getOPFSRoot();
+        await root.mkdir('/user', { recursive: true });
 
         // Navigate to /user folder
         await navigateToPath('/user');
-        console.log('[FileBrowser]', 'File browser initialized');
-    } catch (error) {
+        console.log('[FileBrowser]', 'File browser initialized with OPFS');
+    } catch (error: any) {
         console.error(
             '[FileBrowser]',
             'Error initializing file browser:',

@@ -1,18 +1,15 @@
 {
     "compilerOptions": {
-        "allowJs": true,
-        "checkJs": true,
-        "noEmit": true,
-        "target": "es2022",
+        "target": "es6",
         "module": "esnext",
-        "moduleResolution": "bundler",
-        "lib": ["es2022", "dom"],
-        "strict": false,
+        "moduleResolution": "node",
+        "strict": true,
+        "esModuleInterop": true,
         "skipLibCheck": true,
-        "paths": {
-            "*": ["./js/*"]
-        }
+        "forceConsistentCasingInFileNames": true,
+        "allowJs": true,
+        "outDir": "./build",
+        "lib": ["es6", "dom", "DOM.AsyncIterable"]
     },
-    "include": ["js/**/*.js", "js/index.d.ts"],
-    "exclude": ["node_modules", "wasm-dist", "wheels"]
+    "include": ["js/**/*.ts"]
 }

@@ -1,15 +1,5 @@
-global.ViewportManager =
-    require('../js/glyph-canvas/viewport.js').ViewportManager;
-global.AxesManager = require('../js/glyph-canvas/variations.js').AxesManager;
-global.FeaturesManager =
-    require('../js/glyph-canvas/features.js').FeaturesManager;
-global.TextRunEditor = require('../js/glyph-canvas/textrun.js').TextRunEditor;
-global.GlyphCanvas = require('../js/glyph-canvas.js').GlyphCanvas;
-
-// Load design utility functions
-const designModule = require('../js/design.js');
-global.adjustColorHueAndLightness = designModule.adjustColorHueAndLightness;
-global.desaturateColor = designModule.desaturateColor;
+global.GlyphCanvas = require('../js/glyph-canvas').GlyphCanvas;
+global.ViewportManager = require('../js/glyph-canvas/viewport').ViewportManager;
 
 // Mock browser-specific APIs that are not available in JSDOM by default
 if (typeof window.requestAnimationFrame === 'undefined') {
@@ -22,27 +12,7 @@ if (typeof window.ResizeObserver === 'undefined') {
         disconnect() {}
     };
 }
-// Add a dummy opentype.js and other dependencies if they are not loaded
-if (typeof window.opentype === 'undefined') {
-    window.opentype = {
-        parse: () => ({
-            names: { fontFamily: { en: 'mock' } },
-            tables: { fvar: { axes: [] } },
-            glyphs: {
-                get: () => ({
-                    name: 'mockGlyph',
-                    getBoundingBox: () => ({ y1: 0 })
-                })
-            }
-        })
-    };
-}
-if (typeof window.bidi_js === 'undefined') {
-    window.bidi_js = () => ({
-        getEmbeddingLevels: (text) => ({ levels: Array(text.length).fill(0) }),
-        getReorderedIndices: (text) => [...Array(text.length).keys()]
-    });
-}
+
 // Mock for HarfBuzz
 if (typeof createHarfBuzz === 'undefined') {
     global.createHarfBuzz = async () => ({});
@@ -83,9 +53,15 @@ if (typeof window.pyodide === 'undefined') {
 }
 if (typeof window.fontManager === 'undefined') {
     window.fontManager = {
-        getGlyphName: () => 'mockGlyphName'
+        getGlyphName: () => 'mockGlyphName',
+        setFormatSpecific: () => {}
     };
 }
+// Also set on global in case window.fontManager is redefined
+global.fontManager = {
+    getGlyphName: () => 'mockGlyphName',
+    setFormatSpecific: () => {}
+};
 if (typeof APP_SETTINGS === 'undefined') {
     global.APP_SETTINGS = {
         OUTLINE_EDITOR: {

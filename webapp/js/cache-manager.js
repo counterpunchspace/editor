@@ -494,18 +494,6 @@ Manual cache access:
         `
 %c💡 Cache & Memory Management %c
 
-Cache commands:
-  clearAllCaches()          - Clear all caches
-  clearAndReload()          - Clear and reload page
-  hardReset()               - Nuclear option: reset everything
-  openCleanTab()            - Open in new tab (cleanest reset)
-  forceServiceWorkerReset() - Force reset service worker
-  cacheStats()              - Check cache support
-
-Memory tracking:
-  showMemoryReport()        - Show current memory usage
-  resetMemoryTracking()     - Reset reload counter
-
 Manual access:
   window.cacheManager.clearServiceWorkers()
   window.cacheManager.clearCaches()
@@ -518,7 +506,6 @@ Manual access:
 %c⚠️  If memory still grows, try: hardReset()
 `,
         'color: #0ff; font-weight: bold; font-size: 14px;',
-        'color: #999;',
         'color: #0f0; font-style: italic;',
         'color: #ff0; font-style: italic;'
     );

@@ -87,15 +87,9 @@
             rel="stylesheet"
         />
 
-        <!-- OpenType.js for font parsing and glyph path extraction -->
-        <script src="https://cdn.jsdelivr.net/npm/opentype.js@1.3.4/dist/opentype.min.js"></script>
-
         <!-- HarfBuzz.js for text shaping (v0.4.13) -->
         <script src="https://cdn.jsdelivr.net/npm/harfbuzzjs@0.4.13/hb.js"></script>
         <script src="https://cdn.jsdelivr.net/npm/harfbuzzjs@0.4.13/hbjs.js"></script>
-
-        <!-- Unicode Bidirectional Algorithm -->
-        <script src="js/bidi-js.js"></script>
 
         <!-- Ace Editor for Python -->
         <script src="https://cdn.jsdelivr.net/npm/ace-builds@1.32.2/src-min-noconflict/ace.js"></script>
@@ -112,12 +106,6 @@
 
         <!-- Markdown parser -->
         <script src="https://cdn.jsdelivr.net/npm/marked@11.1.1/marked.min.js"></script>
-
-        <!-- Loading animation -->
-        <script src="js/loading-animation.js"></script>
-
-        <!-- Tab Lifecycle Management (loads early to protect tab) -->
-        <script src="js/tab-lifecycle.js"></script>
 
         <!-- Cache busting for local development only -->
         <script>
@@ -521,64 +509,7 @@
             </div>
         </div>
 
-        <!-- Local scripts loaded with cache-busting for development -->
-        <script>
-            (function () {
-                const isLocal =
-                    window.location.hostname === 'localhost' ||
-                    window.location.hostname === '127.0.0.1';
-                const version = isLocal ? '?v=' + Date.now() : '';
-
-                const scripts = [
-                    'js/design.js',
-                    'js/settings.js',
-                    'js/theme-switcher.js',
-                    'js/sound-preloader.js',
-                    'js/memory-monitor.js',
-                    'js/python-ui-sync.js',
-                    'js/python-execution-wrapper.js',
-                    'js/resizer.js',
-                    'js/view-settings.js',
-                    'js/keyboard-navigation.js',
-                    'js/matplotlib-handler.js',
-                    'js/pyodide-official-console.js',
-                    'js/example-loader.js',
-                    'js/fonteditor.js',
-                    'js/font-dropdown.js',
-                    'js/save-button.js',
-                    'js/font-manager.js',
-                    'js/compile-button.js',
-                    'js/auto-compile-manager.js',
-                    'js/file-browser.js',
-                    'js/script-editor.js',
-                    'js/ai-assistant.js',
-                    'js/glyph-canvas/features.js',
-                    'js/glyph-canvas/textrun.js',
-                    'js/glyph-canvas/viewport.js',
-                    'js/glyph-canvas/variations.js',
-                    'js/layer-data-normalizer.js',
-                    'js/glyph-canvas.js'
-                ];
-
-                scripts.forEach((src) => {
-                    document.write(
-                        '<script src="' + src + version + '"><\/script>'
-                    );
-                });
-
-                // Module script
-                document.write(
-                    '<script type="module" src="js/font-compilation.js' +
-                        version +
-                        '"><\/script>'
-                );
-                document.write(
-                    '<script type="module" src="js/font-interpolation.js' +
-                        version +
-                        '"><\/script>'
-                );
-            })();
-        </script>
+        <script src="js/bootstrap.js"></script>
 
         <!-- Diff Review Modal -->
         <div id="diff-review-modal" class="diff-modal">

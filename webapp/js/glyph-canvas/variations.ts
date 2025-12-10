@@ -1,4 +1,19 @@
-class AxesManager {
+import { Font } from 'opentype.js';
+import Babelfont from '../babelfont';
+
+export class AxesManager {
+    variationSettings: Record<string, number>;
+    axesSection: HTMLElement | null;
+    // Animation state
+    animationFrames: number;
+    isAnimating: boolean;
+    animationStartValues: Record<string, number>;
+    animationTargetValues: Record<string, number>;
+    animationCurrentFrame: number;
+    opentypeFont: Font | null;
+    callbacks: Record<string, Function>;
+    isSliderActive: boolean;
+
     constructor() {
         this.variationSettings = {}; // Current variation settings
         this.axesSection = null; // Container for axes UI
@@ -11,16 +26,17 @@ class AxesManager {
         this.animationStartValues = {};
         this.animationTargetValues = {};
         this.animationCurrentFrame = 0;
+        this.isSliderActive = false;
 
         this.opentypeFont = null; // To be set externally
         this.callbacks = {}; // Optional callbacks for interaction with GlyphCanvas
     }
 
-    on(event, callback) {
+    on(event: string, callback: Function) {
         this.callbacks[event] = callback;
     }
 
-    call(event, ...args) {
+    call(event: string, ...args: any[]) {
         if (this.callbacks[event]) {
             this.callbacks[event](...args);
         }
@@ -41,14 +57,12 @@ class AxesManager {
         if (!this.axesSection) return;
 
         // Update all sliders
-        /** @type {NodeListOf<HTMLInputElement>} */
-        const sliders = this.axesSection.querySelectorAll(
-            'input[data-axis-tag]'
-        );
+        const sliders: NodeListOf<HTMLInputElement> =
+            this.axesSection.querySelectorAll('input[data-axis-tag]');
         sliders.forEach((slider) => {
-            const axisTag = slider.getAttribute('data-axis-tag');
-            if (this.variationSettings[axisTag] !== undefined) {
-                slider.value = this.variationSettings[axisTag];
+            const axisTag: string | null = slider.getAttribute('data-axis-tag');
+            if (axisTag && this.variationSettings[axisTag] !== undefined) {
+                slider.value = this.variationSettings[axisTag].toString();
             }
         });
 
@@ -57,8 +71,8 @@ class AxesManager {
             'span[data-axis-tag]'
         );
         valueLabels.forEach((label) => {
-            const axisTag = label.getAttribute('data-axis-tag');
-            if (this.variationSettings[axisTag] !== undefined) {
+            const axisTag: string | null = label.getAttribute('data-axis-tag');
+            if (axisTag && this.variationSettings[axisTag] !== undefined) {
                 label.textContent = this.variationSettings[axisTag].toFixed(0);
             }
         });
@@ -78,7 +92,7 @@ class AxesManager {
 
         if (axes.length === 0) {
             requestAnimationFrame(() => {
-                this.axesSection.innerHTML = '';
+                this.axesSection!.innerHTML = '';
             });
             return; // No variable axes
         }
@@ -93,7 +107,7 @@ class AxesManager {
         tempContainer.appendChild(title);
 
         // Create slider for each axis
-        axes.forEach((axis) => {
+        axes.forEach((axis: any) => {
             const axisContainer = document.createElement('div');
             axisContainer.className = 'editor-axis-container';
 
@@ -163,9 +177,9 @@ class AxesManager {
 
         // Swap content in one frame to prevent flicker
         requestAnimationFrame(() => {
-            this.axesSection.innerHTML = '';
+            this.axesSection!.innerHTML = '';
             while (tempContainer.firstChild) {
-                this.axesSection.appendChild(tempContainer.firstChild);
+                this.axesSection!.appendChild(tempContainer.firstChild);
             }
         });
 
@@ -184,11 +198,11 @@ class AxesManager {
         });
     }
 
-    setVariation(axisTag, value) {
+    setVariation(axisTag: string, value: number) {
         this._setupAnimation({ [axisTag]: value });
     }
 
-    _setupAnimation(newSettings) {
+    _setupAnimation(newSettings: { [key: string]: number }) {
         if (this.isAnimating) {
             this.isAnimating = false;
         }
@@ -239,8 +253,4 @@ class AxesManager {
             this.call('animationComplete');
         }
     }
-}
-
-if (typeof module !== 'undefined' && module.exports) {
-    module.exports = { AxesManager };
 }

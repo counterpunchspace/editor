@@ -219,9 +219,12 @@
                 percentUsed: 0,
                 percentUsedRaw: 0, // Uncapped percentage for calculations
                 overLimit: false,
-                pyodideObjects: 0,
                 openFonts: 0
             };
+            // Count open fonts from fontManager
+            if (window.fontManager && fontManager.openFonts) {
+                info.openFonts = fontManager.openedFonts.length;
+            }
 
             // Chrome/Edge specific
             if (performance.memory) {
@@ -248,39 +251,6 @@
 
                 // Cap display percentage at 100% for UI purposes
                 info.percentUsed = Math.min(100, rawPercent).toFixed(1);
-            }
-
-            // Get Python object count if Pyodide is loaded
-            if (window.pyodide) {
-                try {
-                    // Use _originalRunPython to avoid triggering afterPythonExecution hooks
-                    const runPython =
-                        window.pyodide._originalRunPython ||
-                        window.pyodide.runPython;
-                    const result = runPython.call(
-                        window.pyodide,
-                        `
-import gc
-import json
-# Don't collect here - only when Force GC button is pressed
-obj_count = len(gc.get_objects())
-
-# Get open fonts count
-open_fonts = 0
-try:
-    open_fonts = len(GetOpenFonts())
-except:
-    pass
-
-json.dumps({"objects": obj_count, "fonts": open_fonts})
-                    `
-                    );
-                    const data = JSON.parse(result);
-                    info.pyodideObjects = data.objects.toLocaleString();
-                    info.openFonts = data.fonts;
-                } catch (e) {
-                    // Ignore errors during memory check
-                }
             }
 
             return info;
@@ -328,17 +298,9 @@ json.dumps({"objects": obj_count, "fonts": open_fonts})
                     <div>Total:</div><div style="text-align: right;">${info.totalMB} MB</div>
                     <div>Limit:</div><div style="text-align: right;">${info.limitMB} MB</div>
                     <div>Usage:</div><div style="text-align: right; font-weight: bold;">${usageDisplay}</div>
-                    ${
-                        info.pyodideObjects
-                            ? `
-                    <div style="grid-column: 1/-1; margin-top: 8px; padding-top: 8px; border-top: 1px solid currentColor; opacity: 0.7;">
-                        Python Objects: ${info.pyodideObjects}
-                    </div>
                     <div style="grid-column: 1/-1; opacity: 0.7;">
                         Open Fonts: ${info.openFonts}
                     </div>
-                    `
-                            : ''
                     }
                 </div>
                 <div style="margin-top: 12px; padding-top: 8px; border-top: 1px solid currentColor;">
@@ -361,31 +323,6 @@ json.dumps({"objects": obj_count, "fonts": open_fonts})
 
         async forceGarbageCollection() {
             console.log('[MemoryMonitor]', '🗑️ Forcing garbage collection...');
-
-            // Python GC
-            if (window.pyodide) {
-                try {
-                    // Use _originalRunPython to avoid triggering afterPythonExecution hooks
-                    const runPython =
-                        window.pyodide._originalRunPython ||
-                        window.pyodide.runPython;
-                    const result = runPython.call(
-                        window.pyodide,
-                        `
-import gc
-collected = gc.collect()
-print(f"Python GC collected {collected} objects")
-collected
-                    `
-                    );
-                    console.log(
-                        '[MemoryMonitor]',
-                        `Python GC: Collected ${result} objects`
-                    );
-                } catch (e) {
-                    console.error('[MemoryMonitor]', 'Python GC failed:', e);
-                }
-            }
 
             // JavaScript GC (can't force directly, but we can help)
             if (window.gc) {

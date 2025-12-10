@@ -34,14 +34,6 @@ async function loadExampleFonts() {
             `Found ${manifest.examples.length} example(s) in manifest`
         );
 
-        // Ensure /user directory exists
-        await window.pyodide.runPython(`
-import os
-if not os.path.exists('/user'):
-    os.makedirs('/user')
-    print('📁 Created /user directory')
-        `);
-
         // Load each example
         let loadedCount = 0;
         for (const example of manifest.examples) {
@@ -64,18 +56,12 @@ if not os.path.exists('/user'):
                 // Get file content as ArrayBuffer for efficient binary handling
                 const fileArrayBuffer = await fileResponse.arrayBuffer();
                 const fileBytes = new Uint8Array(fileArrayBuffer);
+                const file = new File([fileBytes], example.destination, {
+                    type: 'application/octet-stream'
+                });
 
-                // Write to destination in Pyodide filesystem
-                await window.pyodide.FS.writeFile(
-                    example.destination,
-                    fileBytes
-                );
-
-                console.log(
-                    '[ExampleLoader]',
-                    `  ✅ Copied to ${example.destination} (${fileBytes.length} bytes)`
-                );
-
+                // Write to destination in filesystem
+                await window.uploadFiles([file], '/'); // Manifest has full paths
                 loadedCount++;
             } catch (error) {
                 console.error(

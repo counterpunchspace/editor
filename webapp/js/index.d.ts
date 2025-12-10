@@ -1,3 +1,14 @@
+import TabLifecycleManager from './tab-lifecycle.js';
+import ThemeSwitcher from './theme-switcher.js';
+import AIAssistant from './ai-assistant.js';
+import CacheManager from './cache-manager.js';
+import type { FontCompilation } from './font-compilation.js';
+import FontManager from './font-manager.js';
+import FontDropdownManager from './font-dropdown.js';
+import { GlyphCanvas } from './glyph-canvas.js';
+import MemoryMonitor from './memory-monitor.js';
+import ResizableViews from './resizer.js';
+import SaveButton from './save-button.js';
 declare global {
     // Any property augmentation we make to the Window interface
     // should be declared here.
@@ -5,9 +16,9 @@ declare global {
         // From our dependencies
         opentype: any; // OpenType.js
         pyodide: any; // Pyodide
-        bidi_js: any; // bidi-js
         createHarfBuzz: any; // HarfBuzz.js
         hbjs: any; // HarfBuzz.js
+        hbInit: () => Promise<void>; // HarfBuzz.js
 
         // From ai-assistant.js
         aiAssistant: AIAssistant;
@@ -36,7 +47,20 @@ declare global {
         };
 
         // From file-browser.js
-        _trackingInitPromise: Promise<void>;
+        _trackingInitPromise: Promise<void> | null;
+        navigateToPath: (path: string) => Promise<void>;
+        selectFile: (filePath: string) => void;
+        initFileBrowser: () => Promise<void>;
+        uploadFiles: (files: File[], targetPath?: string) => Promise<void>;
+        createFolder: () => Promise<void>;
+        deleteItem: (
+            itemPath: string,
+            itemName: string,
+            isDir: boolean
+        ) => Promise<void>;
+        handleFileUpload: (e: Event) => void;
+        openFont: (path: string) => Promise<void>;
+        downloadFile: (filePath: string, fileName: string) => Promise<void>;
 
         // From font-compilation.js
         fontCompilation: FontCompilation;
@@ -49,9 +73,16 @@ declare global {
             json: any,
             outputFile: string
         ) => Promise<Uint8Array>;
+        shapeTextWithFont: (
+            fontBytes: Uint8Array,
+            text: string
+        ) => Promise<string[]>;
+
+        // From file-browser.js
+        refreshFileSystem: () => Promise<void>;
 
         // From font-manager.js
-        fontManager: FontManager;
+        fontManager: typeof FontManager;
 
         // From font-dropdown.js
         fontDropdownManager: FontDropdownManager;
@@ -66,7 +97,7 @@ declare global {
         focusView: (viewId: string) => void;
 
         // From loading-animation.js
-        updateLoadingStatus: (status: string, isReady: boolean = false) => void;
+        updateLoadingStatus: (status: string, isReady: boolean) => void;
         WarpSpeedAnimation: {
             requestStop: (onCompleteHook: () => void) => void;
             instance: () => any; // WarpSpeedAnimation instance

@@ -7,7 +7,11 @@
  * @param {number} lightnessPercent - Percentage to adjust lightness (-100 to 100, negative makes darker)
  * @returns {string} Color in rgba() format
  */
-function adjustColorHueAndLightness(colorString, hueDegrees, lightnessPercent) {
+export function adjustColorHueAndLightness(
+    colorString: string,
+    hueDegrees: number,
+    lightnessPercent: number
+): string {
     let r, g, b, a;
 
     // Parse the color string
@@ -57,7 +61,7 @@ function adjustColorHueAndLightness(colorString, hueDegrees, lightnessPercent) {
     }
 
     // Shift hue
-    h = (h + hueDegrees / 360) % 1;
+    h = (h! + hueDegrees / 360) % 1;
     if (h < 0) h += 1;
 
     // Adjust lightness (negative percentage makes it darker)
@@ -68,7 +72,7 @@ function adjustColorHueAndLightness(colorString, hueDegrees, lightnessPercent) {
     if (s === 0) {
         r2 = g2 = b2 = l; // achromatic
     } else {
-        const hue2rgb = (p, q, t) => {
+        const hue2rgb = (p: number, q: number, t: number): number => {
             if (t < 0) t += 1;
             if (t > 1) t -= 1;
             if (t < 1 / 6) return p + (q - p) * 6 * t;
@@ -92,7 +96,7 @@ function adjustColorHueAndLightness(colorString, hueDegrees, lightnessPercent) {
  * @param {string} colorString - Color in rgba(), rgb(), or hex format
  * @returns {string} Desaturated color in rgba() format
  */
-function desaturateColor(colorString) {
+export function desaturateColor(colorString: string): string {
     let r, g, b, a;
 
     // Parse the color string

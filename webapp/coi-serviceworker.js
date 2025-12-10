@@ -23,7 +23,6 @@ const PRECACHE_ASSETS = [
     './js/bidi-js.js',
     './js/cache-manager.js',
     './js/compile-button.js',
-    './js/design.js',
     './js/file-browser.js',
     './js/font-compilation.js',
     './js/font-dropdown.js',

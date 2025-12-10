@@ -1,0 +1,25 @@
+import './loading-animation.js';
+import './tab-lifecycle.js';
+
+import './ai-assistant.js';
+import './auto-compile-manager';
+import './cache-manager.js';
+import './compile-button.ts';
+import './example-loader.js';
+import './file-browser';
+import './font-compilation';
+import './font-manager';
+import './fonteditor.js';
+import './glyph-canvas';
+import './keyboard-navigation.js';
+import './matplotlib-handler.js';
+import './memory-monitor.js';
+import './pyodide-official-console.js';
+import './python-execution-wrapper.js';
+import './python-ui-sync.js';
+import './resizer.js';
+import './save-button.js';
+import './script-editor.js';
+import './sound-preloader.js';
+import './theme-switcher.js';
+import './view-settings.js';

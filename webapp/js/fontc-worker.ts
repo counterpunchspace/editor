@@ -42,7 +42,7 @@ async function initializeWasm() {
         console.log('[Fontc Worker] Version:', ver);
 
         return ver;
-    } catch (error) {
+    } catch (error: any) {
         console.error('[Fontc Worker] Initialization error:', error);
         throw error;
     }
@@ -68,9 +68,9 @@ self.onmessage = async (event) => {
     // Protocol 1: Type-based messages (from compile-button.js)
     if (data.type === 'init') {
         try {
-            const ver = await initializeWasm();
+            const ver: string = await initializeWasm();
             self.postMessage({ type: 'ready', version: ver });
-        } catch (error) {
+        } catch (error: any) {
             self.postMessage({
                 type: 'error',
                 error: error.message,
@@ -92,7 +92,7 @@ self.onmessage = async (event) => {
 
         try {
             const startTime = performance.now();
-            const ttfBytes = compile_babelfont(data.data.babelfontJson);
+            const ttfBytes = compile_babelfont(data.data.babelfontJson, {});
             const endTime = performance.now();
 
             console.log(
@@ -105,7 +105,7 @@ self.onmessage = async (event) => {
                 ttfBytes: ttfBytes,
                 duration: endTime - startTime
             });
-        } catch (error) {
+        } catch (error: any) {
             console.error('[Fontc Worker] Error:', error);
             self.postMessage({
                 type: 'error',
@@ -123,7 +123,7 @@ self.onmessage = async (event) => {
         try {
             await initializeWasm();
             self.postMessage({ ready: true });
-        } catch (error) {
+        } catch (error: any) {
             self.postMessage({
                 error: `Failed to initialize babelfont-fontc WASM: ${error.message}`
             });
@@ -155,7 +155,7 @@ self.onmessage = async (event) => {
                 result: layerJson,
                 glyphName
             });
-        } catch (e) {
+        } catch (e: any) {
             console.error('[Fontc Worker] Interpolation error:', e);
             self.postMessage({
                 id,
@@ -176,7 +176,7 @@ self.onmessage = async (event) => {
                 type: 'clearCache',
                 success: true
             });
-        } catch (e) {
+        } catch (e: any) {
             console.error('[Fontc Worker] Error clearing cache:', e);
             self.postMessage({
                 type: 'clearCache',
@@ -247,7 +247,7 @@ self.onmessage = async (event) => {
                 time_taken,
                 filename: filename.replace(/\.babelfont$/, '.ttf')
             });
-        } catch (e) {
+        } catch (e: any) {
             console.error('[Fontc Worker] Compilation error:', e);
             self.postMessage({
                 id,
