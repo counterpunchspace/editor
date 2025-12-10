@@ -7,6 +7,7 @@ This is a WebAssembly-based font editor using Rust (fontc/babelfont) compiled to
 
 ### General
 - Scan for reusable code in any of the languages, avoid duplicate implementations where possible
+- Don't write spaghetti code
 
 ### JavaScript
 - Use modern ES6+ syntax
