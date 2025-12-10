@@ -235,14 +235,17 @@ export class ViewportManager {
         // Reset accumulated vertical bounds on frame operation
         this.accumulatedVerticalBounds = null;
 
-        // Calculate center of the bounding box in glyph-local space
-        const centerX = (bounds.minX + bounds.maxX) / 2;
-        const centerY = (bounds.minY + bounds.maxY) / 2;
+        // Calculate the full bounding box in font space (same approach as panToGlyph)
+        const fontSpaceMinX =
+            glyphPosition.xPosition + glyphPosition.xOffset + bounds.minX;
+        const fontSpaceMaxX =
+            glyphPosition.xPosition + glyphPosition.xOffset + bounds.maxX;
+        const fontSpaceMinY = glyphPosition.yOffset + bounds.minY;
+        const fontSpaceMaxY = glyphPosition.yOffset + bounds.maxY;
 
-        // Convert bbox center to font space
-        const fontSpaceCenterX =
-            glyphPosition.xPosition + glyphPosition.xOffset + centerX;
-        const fontSpaceCenterY = glyphPosition.yOffset + centerY;
+        // Calculate center from font space bounds
+        const fontSpaceCenterX = (fontSpaceMinX + fontSpaceMaxX) / 2;
+        const fontSpaceCenterY = (fontSpaceMinY + fontSpaceMaxY) / 2;
 
         // Calculate the scale needed to fit the bounding box with margin
         const scaleX = (canvasRect.width - margin * 2) / bounds.width;

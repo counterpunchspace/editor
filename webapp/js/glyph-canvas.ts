@@ -1032,9 +1032,47 @@ class GlyphCanvas {
             this.textRunEditor!.selectedGlyphIndex
         );
 
+        // If editing inside a component, transform the bounding box to glyph space
+        let transformedBounds = bounds;
+        if (this.outlineEditor.componentStack.length > 0) {
+            const transform = this.outlineEditor.getAccumulatedTransform();
+            const [a, b, c, d, tx, ty] = transform;
+
+            // Transform all four corners of the bbox
+            const corners = [
+                { x: bounds.minX, y: bounds.minY },
+                { x: bounds.maxX, y: bounds.minY },
+                { x: bounds.minX, y: bounds.maxY },
+                { x: bounds.maxX, y: bounds.maxY }
+            ];
+
+            let minX = Infinity;
+            let minY = Infinity;
+            let maxX = -Infinity;
+            let maxY = -Infinity;
+
+            for (const corner of corners) {
+                const transformedX = a * corner.x + c * corner.y + tx;
+                const transformedY = b * corner.x + d * corner.y + ty;
+                minX = Math.min(minX, transformedX);
+                minY = Math.min(minY, transformedY);
+                maxX = Math.max(maxX, transformedX);
+                maxY = Math.max(maxY, transformedY);
+            }
+
+            transformedBounds = {
+                minX,
+                minY,
+                maxX,
+                maxY,
+                width: maxX - minX,
+                height: maxY - minY
+            };
+        }
+
         // Delegate to ViewportManager
         this.viewportManager!.frameGlyph(
-            bounds,
+            transformedBounds,
             glyphPosition,
             rect,
             this.render.bind(this),
@@ -1073,9 +1111,47 @@ class GlyphCanvas {
         // Get glyph position in text run
         const glyphPosition = this.textRunEditor!._getGlyphPosition(glyphIndex);
 
+        // If editing inside a component, transform the bounding box to glyph space
+        let transformedBounds = bounds;
+        if (this.outlineEditor.componentStack.length > 0) {
+            const transform = this.outlineEditor.getAccumulatedTransform();
+            const [a, b, c, d, tx, ty] = transform;
+
+            // Transform all four corners of the bbox
+            const corners = [
+                { x: bounds.minX, y: bounds.minY },
+                { x: bounds.maxX, y: bounds.minY },
+                { x: bounds.minX, y: bounds.maxY },
+                { x: bounds.maxX, y: bounds.maxY }
+            ];
+
+            let minX = Infinity;
+            let minY = Infinity;
+            let maxX = -Infinity;
+            let maxY = -Infinity;
+
+            for (const corner of corners) {
+                const transformedX = a * corner.x + c * corner.y + tx;
+                const transformedY = b * corner.x + d * corner.y + ty;
+                minX = Math.min(minX, transformedX);
+                minY = Math.min(minY, transformedY);
+                maxX = Math.max(maxX, transformedX);
+                maxY = Math.max(maxY, transformedY);
+            }
+
+            transformedBounds = {
+                minX,
+                minY,
+                maxX,
+                maxY,
+                width: maxX - minX,
+                height: maxY - minY
+            };
+        }
+
         // Delegate to ViewportManager
         this.viewportManager!.panToGlyph(
-            bounds,
+            transformedBounds,
             glyphPosition,
             rect,
             this.render.bind(this)
