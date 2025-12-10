@@ -1545,7 +1545,7 @@ export class GlyphCanvasRenderer {
 
     drawCursor() {
         // Draw the text cursor at the current position
-        // Don't draw cursor in glyph edit mode
+        // Don't draw cursor if not visible or in glyph edit mode
         if (
             !this.glyphCanvas.cursorVisible ||
             this.glyphCanvas.outlineEditor.active
@@ -1554,13 +1554,6 @@ export class GlyphCanvasRenderer {
         }
 
         const invScale = 1 / this.viewportManager.scale;
-
-        console.log(
-            '[Renderer]',
-            `Drawing cursor at x=${this.textRunEditor.cursorX.toFixed(
-                0
-            )} for logical position ${this.textRunEditor.cursorPosition}`
-        );
 
         // Draw cursor line - dimmed when not focused, bright when focused
         const opacity = this.glyphCanvas.isFocused ? 0.8 : 0.3;

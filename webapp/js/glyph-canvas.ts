@@ -612,8 +612,14 @@ class GlyphCanvas {
             return;
         }
 
+        // In outline editor mode, let it control the cursor
+        if (this.outlineEditor.active) {
+            this.outlineEditor.cursorStyle();
+            return;
+        }
+
         // In text mode, show text cursor
-        this.canvas!.style.cursor = this.outlineEditor.cursorStyle() || 'text';
+        this.canvas!.style.cursor = 'text';
     }
 
     updateHoveredGlyph(): void {
