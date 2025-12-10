@@ -7,6 +7,7 @@ import './cache-manager.js';
 import './compile-button.ts';
 import './example-loader.js';
 import './file-browser';
+import './font-interpolation';
 import './font-manager';
 import './fonteditor.js';
 import './glyph-canvas';
