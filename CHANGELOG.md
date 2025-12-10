@@ -4,6 +4,7 @@
 - **Auto-Zoom**: Restored auto-zoom functionality when navigating between glyphs in edit mode via keyboard (Cmd+Left/Right arrows)
 - **Layer Switching**: Fixed font recompilation not triggering after switching layers via keyboard (Cmd+Up/Down). Now properly calls `autoSelectMatchingLayer()` after animation completes.
 - **Hot Reload**: Fixed webpack dev server hot reload by enabling script injection. Browser now automatically reloads after TypeScript recompilation.
+- **Production Settings**: Added production override system to settings framework. `SHOW_BOUNDING_BOX` now defaults to `false` in production.
 
 # v0.1a
 

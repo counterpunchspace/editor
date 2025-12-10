@@ -66,7 +66,7 @@ const APP_SETTINGS = {
         PAN_SPEED_MOUSE_HORIZONTAL: 1.5, // mouse wheel horizontal pan speed (Shift+scroll)
 
         // Debug/development
-        SHOW_BOUNDING_BOX: false, // Show calculated bounding box in editing mode
+        SHOW_BOUNDING_BOX: true, // Show calculated bounding box in editing mode
 
         // Colors - Light Theme
         COLORS_LIGHT: {
@@ -159,4 +159,40 @@ const APP_SETTINGS = {
 
     // Add other settings here as needed
 };
+
+// Production overrides
+// These settings override the defaults when running in production mode
+const PRODUCTION_OVERRIDES = {
+    OUTLINE_EDITOR: {
+        SHOW_BOUNDING_BOX: false // Hide bounding box in production
+    }
+};
+
+// Detect if running in production (not localhost or webpack dev server)
+const isProduction = () => {
+    const hostname = window.location.hostname;
+    const port = window.location.port;
+    
+    // Development indicators
+    const isDevelopment = 
+        hostname === 'localhost' || 
+        hostname === '127.0.0.1' ||
+        port === '8000' || // webpack dev server
+        port === '5500'; // live server
+    
+    return !isDevelopment;
+};
+
+// Apply production overrides if in production mode
+if (isProduction()) {
+    console.log('[Settings] Running in production mode - applying overrides');
+    
+    // Deep merge production overrides into APP_SETTINGS
+    if (PRODUCTION_OVERRIDES.OUTLINE_EDITOR) {
+        Object.assign(APP_SETTINGS.OUTLINE_EDITOR, PRODUCTION_OVERRIDES.OUTLINE_EDITOR);
+    }
+} else {
+    console.log('[Settings] Running in development mode');
+}
+
 export default APP_SETTINGS;
