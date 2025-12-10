@@ -1,6 +1,6 @@
 # Unreleased
 
-- **Add items here** for the next release (Replace this comment)
+- **Nested Components**: Refactored to pre-populate component `layerData` recursively for simpler, unified data structure. Bounding box calculations include nested components.
 
 # v0.1a
 

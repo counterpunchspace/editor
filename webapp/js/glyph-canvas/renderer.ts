@@ -607,7 +607,7 @@ export class GlyphCanvasRenderer {
 
                     console.log(
                         '[Renderer]',
-                        `Component ${index}: reference="${shape.Component.reference}", has layerData=${!!shape.Component.layerData}, shapes=${shape.Component.layerData?.shapes?.length || 0}`
+                        `Component ${index}: reference="${shape.Component.reference}"`
                     );
 
                     // Disable selection/hover highlighting for interpolated data
@@ -659,12 +659,11 @@ export class GlyphCanvasRenderer {
                     ) {
                         // Recursively render all shapes in the component (including nested components)
                         const renderComponentShapes = (
-                            shapes: any[],
-                            transform = [1, 0, 0, 1, 0, 0]
+                            shapes: any[]
                         ) => {
                             shapes.forEach((componentShape) => {
                                 // Handle nested components
-                                if (componentShape.Component) {
+                                if ('Component' in componentShape) {
                                     // Save context for nested component transform
                                     this.ctx.save();
 
@@ -1053,11 +1052,8 @@ export class GlyphCanvasRenderer {
         let nodes = 'nodes' in shape ? shape.nodes : undefined;
         if (!nodes && 'Path' in shape && shape.Path.nodes) {
             // Nodes are in a string format from to_dict() - parse them
-            (shape as any).nodes = LayerDataNormalizer.parseNodes(
-                shape.Path.nodes
-            );
-            delete (shape as any).Path; // Remove Path wrapper after parsing
-            nodes = (shape as any).nodes;
+            // Don't mutate the original shape - just use the parsed nodes for rendering
+            nodes = LayerDataNormalizer.parseNodes(shape.Path.nodes);
         }
 
         if (!nodes || nodes.length === 0) {

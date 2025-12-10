@@ -471,20 +471,20 @@ class FontManager {
     }
 
     /**
-     *  Fetch layer data for a specific glyph
+     *  Fetch layer data for a specific glyph, including nested components
      */
     fetchLayerData(
         componentGlyphName: string,
         selectedLayerId: string
     ): PythonBabelfont.Layer | null {
-        // Fetch layer data for a specific component glyph, including nested components
+        // Fetch layer data for a specific glyph, recursively fetching nested component layer data
         let layer = this.getLayer(componentGlyphName, selectedLayerId);
         if (!layer) {
             return null;
         }
+        // Recursively fetch component layer data for nested components
         for (const shape of layer.shapes || []) {
             if ('Component' in shape && shape.Component.reference) {
-                // Recursively fetch component layer data
                 let nestedData = this.fetchLayerData(
                     shape.Component.reference,
                     selectedLayerId
