@@ -18,6 +18,7 @@ import './memory-monitor.js';
 import './pyodide-official-console.js';
 import './python-execution-wrapper.js';
 import './python-ui-sync.js';
+import './python-post-execution';
 import './resizer.js';
 import './save-button.js';
 import './script-editor.js';

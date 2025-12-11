@@ -581,74 +581,113 @@ export class OutlineEditor {
 
     _updateDraggedPoints(deltaX: number, deltaY: number): void {
         if (!this.layerData) return;
-        let selectedNodes = new Set(
-            this.selectedPoints.flatMap(({ contourIndex, nodeIndex }) => {
-                let contour = this.layerData!.shapes[contourIndex];
-                if (contour && 'nodes' in contour) {
-                    return [contour.nodes[nodeIndex]];
-                }
-                return [];
-            })
+        
+        // Build a set of selected point identifiers to avoid moving them twice
+        const selectedPointKeys = new Set(
+            this.selectedPoints.map(({ contourIndex, nodeIndex }) => 
+                `${contourIndex}:${nodeIndex}`
+            )
         );
-        // If any node is a curve/cs, *remove* its handles as we will move them together
-        for (const node of selectedNodes) {
+        
+        // Process each selected point
+        for (const { contourIndex, nodeIndex } of this.selectedPoints) {
+            const contour = this.layerData.shapes[contourIndex];
+            if (!contour || !('nodes' in contour)) continue;
+            
+            const nodes = contour.nodes;
+            const node = nodes[nodeIndex];
+            if (!node) continue;
+            
+            // If this is a curve point, remove its handles from selection (we'll move them together)
             if (node.type === 'c' || node.type === 'cs') {
-                if (node.prev && node.prev.type == 'o')
-                    selectedNodes.delete(node.prev);
-                if (node.next && node.next.type == 'o')
-                    selectedNodes.delete(node.next);
+                const prevIndex = (nodeIndex - 1 + nodes.length) % nodes.length;
+                const nextIndex = (nodeIndex + 1) % nodes.length;
+                const prevNode = nodes[prevIndex];
+                const nextNode = nodes[nextIndex];
+                
+                if (prevNode?.type === 'o') {
+                    selectedPointKeys.delete(`${contourIndex}:${prevIndex}`);
+                }
+                if (nextNode?.type === 'o') {
+                    selectedPointKeys.delete(`${contourIndex}:${nextIndex}`);
+                }
             }
         }
-
-        for (const node of selectedNodes) {
+        
+        // Move the selected nodes
+        for (const { contourIndex, nodeIndex } of this.selectedPoints) {
+            const key = `${contourIndex}:${nodeIndex}`;
+            if (!selectedPointKeys.has(key)) continue; // Skip if removed above
+            
+            const contour = this.layerData.shapes[contourIndex];
+            if (!contour || !('nodes' in contour)) continue;
+            
+            const nodes = contour.nodes;
+            const node = nodes[nodeIndex];
+            if (!node) continue;
+            
             node.x += deltaX;
             node.y += deltaY;
+            
+            // If this is a curve point, move its handles together
             if (node.type === 'c' || node.type === 'cs') {
-                // Move handles together with curve point
-                if (node.prev && node.prev.type == 'o') {
-                    node.prev.x += deltaX;
-                    node.prev.y += deltaY;
+                const prevIndex = (nodeIndex - 1 + nodes.length) % nodes.length;
+                const nextIndex = (nodeIndex + 1) % nodes.length;
+                const prevNode = nodes[prevIndex];
+                const nextNode = nodes[nextIndex];
+                
+                if (prevNode?.type === 'o') {
+                    prevNode.x += deltaX;
+                    prevNode.y += deltaY;
                 }
-                if (node.next && node.next.type == 'o') {
-                    node.next.x += deltaX;
-                    node.next.y += deltaY;
+                if (nextNode?.type === 'o') {
+                    nextNode.x += deltaX;
+                    nextNode.y += deltaY;
                 }
             }
         }
-
-        // If we are dragging a single offcurve and it belongs to a smooth curve, the other
-        // handle needs to be moved symmetrically - that is, it should keep the same angle and distance
-        // from the curve point.
-        if (selectedNodes.size === 1 && [...selectedNodes][0].type === 'o') {
-            const offcurve = [...selectedNodes][0];
-            let curvePoint: PythonBabelfont.Node | null = null;
-            let otherHandle: PythonBabelfont.Node | null = null;
-
-            // Find the associated curve point and the other handle
-            if (
-                offcurve.next &&
-                (offcurve.next.type === 'c' || offcurve.next.type === 'cs')
-            ) {
-                curvePoint = offcurve.next;
-                if (curvePoint.next && curvePoint.next !== offcurve) {
-                    otherHandle = curvePoint.next;
+        
+        // Handle smooth curve constraint for single offcurve dragging
+        if (this.selectedPoints.length === 1) {
+            const { contourIndex, nodeIndex } = this.selectedPoints[0];
+            const contour = this.layerData.shapes[contourIndex];
+            if (contour && 'nodes' in contour) {
+                const nodes = contour.nodes;
+                const offcurve = nodes[nodeIndex];
+                
+                if (offcurve?.type === 'o') {
+                    // Find the associated curve point and the other handle
+                    const nextIndex = (nodeIndex + 1) % nodes.length;
+                    const prevIndex = (nodeIndex - 1 + nodes.length) % nodes.length;
+                    const nextNode = nodes[nextIndex];
+                    const prevNode = nodes[prevIndex];
+                    
+                    let curvePoint: PythonBabelfont.Node | null = null;
+                    let otherHandleIndex = -1;
+                    
+                    if (nextNode && (nextNode.type === 'c' || nextNode.type === 'cs')) {
+                        curvePoint = nextNode;
+                        const afterCurve = (nextIndex + 1) % nodes.length;
+                        if (afterCurve !== nodeIndex && nodes[afterCurve]?.type === 'o') {
+                            otherHandleIndex = afterCurve;
+                        }
+                    } else if (prevNode && (prevNode.type === 'c' || prevNode.type === 'cs')) {
+                        curvePoint = prevNode;
+                        const beforeCurve = (prevIndex - 1 + nodes.length) % nodes.length;
+                        if (beforeCurve !== nodeIndex && nodes[beforeCurve]?.type === 'o') {
+                            otherHandleIndex = beforeCurve;
+                        }
+                    }
+                    
+                    // If we found a smooth curve point and the other handle, move it symmetrically
+                    if (curvePoint && otherHandleIndex >= 0) {
+                        const otherHandle = nodes[otherHandleIndex];
+                        const dx = offcurve.x - curvePoint.x;
+                        const dy = offcurve.y - curvePoint.y;
+                        otherHandle.x = curvePoint.x - dx;
+                        otherHandle.y = curvePoint.y - dy;
+                    }
                 }
-            } else if (
-                offcurve.prev &&
-                (offcurve.prev.type === 'c' || offcurve.prev.type === 'cs')
-            ) {
-                curvePoint = offcurve.prev;
-                if (curvePoint.prev && curvePoint.prev !== offcurve) {
-                    otherHandle = curvePoint.prev;
-                }
-            }
-
-            // If we found a smooth curve point and the other handle, move it symmetrically
-            if (curvePoint && otherHandle) {
-                const dx = offcurve.x - curvePoint.x;
-                const dy = offcurve.y - curvePoint.y;
-                otherHandle.x = curvePoint.x - dx;
-                otherHandle.y = curvePoint.y - dy;
             }
         }
     }

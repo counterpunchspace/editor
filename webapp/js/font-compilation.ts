@@ -406,6 +406,20 @@ class FontCompilation {
         return new Promise((resolve, reject) => {
             this.pendingCompilations.set(id, { resolve, reject, filename });
 
+            // Validate JSON before sending to worker
+            try {
+                JSON.parse(babelfontJson);
+            } catch (error: any) {
+                console.error('[FontCompilation]', '❌ Invalid JSON before sending to worker:', error);
+                const errorPos = error.message?.match(/column (\d+)/)?.[1];
+                if (errorPos) {
+                    const pos = parseInt(errorPos);
+                    console.error('[FontCompilation]', 'Context:', babelfontJson.substring(pos - 100, pos + 100));
+                }
+                reject(error);
+                return;
+            }
+
             // Send JSON string directly to worker
             this.worker!.postMessage({
                 id,

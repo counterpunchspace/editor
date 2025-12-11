@@ -14,6 +14,18 @@
 import type { Babelfont } from './babelfont';
 
 /**
+ * Mark the current font as dirty when data is modified
+ */
+function markFontDirty(): void {
+    if (window.fontManager?.currentFont) {
+        window.fontManager.currentFont.dirty = true;
+        console.log('[BabelfontModel]', '✏️ Font marked as dirty');
+    } else {
+        console.warn('[BabelfontModel]', '⚠️ Cannot mark font dirty - no currentFont');
+    }
+}
+
+/**
  * Base class for model objects that wrap JSON data
  */
 abstract class ModelBase {
@@ -52,10 +64,11 @@ abstract class ArrayElementBase extends ModelBase {
     }
 
     /**
-     * Update underlying data reference
+     * Update underlying data reference and mark font as dirty
      */
     protected set data(value: any) {
         this._parent[this._index] = value;
+        markFontDirty();
     }
 }
 
@@ -69,6 +82,7 @@ export class Node extends ArrayElementBase {
 
     set x(value: number) {
         this.data.x = value;
+        markFontDirty();
     }
 
     get y(): number {
@@ -77,6 +91,7 @@ export class Node extends ArrayElementBase {
 
     set y(value: number) {
         this.data.y = value;
+        markFontDirty();
     }
 
     get nodetype(): Babelfont.NodeType {
@@ -85,6 +100,7 @@ export class Node extends ArrayElementBase {
 
     set nodetype(value: Babelfont.NodeType) {
         this.data.nodetype = value;
+        markFontDirty();
     }
 
     get smooth(): boolean | undefined {
@@ -93,6 +109,7 @@ export class Node extends ArrayElementBase {
 
     set smooth(value: boolean | undefined) {
         this.data.smooth = value;
+        markFontDirty();
     }
 }
 
@@ -175,6 +192,62 @@ export class Path extends ArrayElementBase {
             'q': 'QCurve'
         };
         return map[shortType] || 'Line';
+    }
+
+    /**
+     * Convert nodes array back to compact string format for serialization
+     */
+    static nodesToString(nodes: Babelfont.Node[]): string {
+        const tokens: string[] = [];
+        
+        for (const node of nodes) {
+            // Ensure we have valid numbers
+            const x = typeof node.x === 'number' ? node.x : parseFloat(String(node.x));
+            const y = typeof node.y === 'number' ? node.y : parseFloat(String(node.y));
+            
+            if (isNaN(x) || isNaN(y)) {
+                console.error('[Path]', 'Invalid node coordinates:', node);
+                continue;
+            }
+            
+            tokens.push(x.toString());
+            tokens.push(y.toString());
+            
+            // Get node type - check both 'nodetype' (object model) and 'type' (normalizer)
+            const nodeType = (node as any).nodetype || (node as any).type;
+            
+            // Map nodetype back to short form
+            const typeMap: Record<string, string> = {
+                'Move': 'm',
+                'Line': 'l',
+                'OffCurve': 'o',
+                'Curve': 'c',
+                'QCurve': 'q',
+                // Also handle short forms directly (from normalizer)
+                'm': 'm',
+                'l': 'l',
+                'o': 'o',
+                'c': 'c',
+                'q': 'q',
+                'ms': 'm',
+                'ls': 'l',
+                'os': 'o',
+                'cs': 'c',
+                'qs': 'q'
+            };
+            
+            let typeStr = typeMap[nodeType] || 'l';
+            
+            // Handle smooth flag - check if it's in the type string or separate property
+            const isSmooth = node.smooth || (typeof nodeType === 'string' && nodeType.endsWith('s'));
+            if (isSmooth) {
+                typeStr += 's';
+            }
+            
+            tokens.push(typeStr);
+        }
+        
+        return tokens.join(' ');
     }
 
     get closed(): boolean {
@@ -1146,7 +1219,23 @@ export class Font extends ModelBase {
      * Serialize the font back to JSON string
      */
     toJSONString(): string {
-        return JSON.stringify(this._data);
+        return JSON.stringify(this._data, (key, value) => {
+            // When serializing shape objects, filter out normalizer wrapper properties
+            // The normalizer adds { Path: {...}, nodes: [...], isInterpolated?: bool }
+            // but we only want { Path: {...} } or { Component: {...} } in the JSON
+            if (value && typeof value === 'object' && !Array.isArray(value)) {
+                // Check if this looks like a normalizer wrapper for a Path shape
+                // It will have BOTH 'Path' and 'nodes' at the same level (duplicate property)
+                if ('Path' in value && 'nodes' in value && !('Component' in value)) {
+                    return { Path: value.Path };
+                }
+                // Check if this looks like a normalizer wrapper for a Component shape  
+                if ('Component' in value && ('isInterpolated' in value || 'nodes' in value) && !('Path' in value)) {
+                    return { Component: value.Component };
+                }
+            }
+            return value;
+        });
     }
 
     /**

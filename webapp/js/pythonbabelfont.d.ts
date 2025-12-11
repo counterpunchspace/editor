@@ -173,7 +173,5 @@ master locations on export. */
         x: number;
         y: number;
         type: NodeType;
-        next: Node | null;
-        prev: Node | null;
     }; // our parsed format
 }

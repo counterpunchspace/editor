@@ -88,7 +88,7 @@ declare global {
         refreshFileSystem: () => Promise<void>;
 
         // From font-manager.js
-        fontManager: typeof FontManager;
+        fontManager: FontManager;
 
         // From font-dropdown.js
         fontDropdownManager: FontDropdownManager;
@@ -128,6 +128,10 @@ declare global {
         consoleError: (msg: string, ...opts: any[]) => void;
         term: any; // Terminal
         clearConsole: () => void;
+
+        // From python-execution-wrapper.js
+        beforePythonExecution?: () => void;
+        afterPythonExecution?: () => void;
 
         // From resizer.js
         resizableViews: ResizableViews;
