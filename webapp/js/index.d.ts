@@ -24,6 +24,11 @@ declare global {
         // From ai-assistant.js
         aiAssistant: AIAssistant;
 
+        // From api-docs-generator.js
+        generateAPIDocs: () => Promise<string>;
+        downloadAPIDocs: (filename?: string) => Promise<string>;
+        showAPIDocs: () => Promise<void>;
+
         // From auto-compile-manager.js
         autoCompileManager: {
             checkAndSchedule: () => void;
