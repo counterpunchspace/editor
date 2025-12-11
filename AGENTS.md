@@ -1,7 +1,7 @@
 # Context Font Editor - Coding Instructions
 
 ## Project Overview
-This is a WebAssembly-based font editor using Rust (fontc/babelfont) compiled to WASM and a JavaScript/HTML/CSS frontend. It uses a Python object model as the primary font source data storage which is exposed to the users via the Pyodide console and Python scripting environment.
+This is a WebAssembly-based font editor using Rust (fontc/babelfont) compiled to WASM and a JavaScript/HTML/CSS frontend. It uses a Javascript object model as the primary font source data storage which is exposed to the users via the Pyodide console and Python scripting environment transparently translated from Javascript.
 
 ## Code Style
 
