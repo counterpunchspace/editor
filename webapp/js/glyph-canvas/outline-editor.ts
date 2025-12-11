@@ -358,7 +358,9 @@ export class OutlineEditor {
         if (this.active && this.currentGlyphName) {
             if (this.isInterpolating || this.isLayerSwitchAnimating) {
                 // Interpolate at current position for smooth animation
-                console.log('[OutlineEditor] Calling interpolateCurrentGlyph from animationInProgress');
+                console.log(
+                    '[OutlineEditor] Calling interpolateCurrentGlyph from animationInProgress'
+                );
                 this.interpolateCurrentGlyph();
             }
         }
@@ -1280,18 +1282,30 @@ export class OutlineEditor {
             console.log(
                 'Calling LayerDataNormalizer.applyInterpolatedLayer...'
             );
-            console.log('[OutlineEditor] Before applyInterpolatedLayer - layerData.width:', this.layerData?.width);
+            console.log(
+                '[OutlineEditor] Before applyInterpolatedLayer - layerData.width:',
+                this.layerData?.width
+            );
             LayerDataNormalizer.applyInterpolatedLayer(
                 this,
                 interpolatedLayer,
                 location
             );
-            console.log('[OutlineEditor] After applyInterpolatedLayer - layerData.width:', this.layerData?.width);
+            console.log(
+                '[OutlineEditor] After applyInterpolatedLayer - layerData.width:',
+                this.layerData?.width
+            );
 
             // Render with the new interpolated data
-            console.log('[OutlineEditor] About to render with layerData.width:', this.layerData?.width);
+            console.log(
+                '[OutlineEditor] About to render with layerData.width:',
+                this.layerData?.width
+            );
             this.glyphCanvas.render();
-            console.log('[OutlineEditor] After render - layerData.width:', this.layerData?.width);
+            console.log(
+                '[OutlineEditor] After render - layerData.width:',
+                this.layerData?.width
+            );
 
             console.log(
                 `✅ Applied interpolated layer for "${this.currentGlyphName}"`
@@ -1512,7 +1526,7 @@ export class OutlineEditor {
     async onAnimationComplete() {
         // Clear layer switch animation flag
         this.isLayerSwitchAnimating = false;
-        
+
         // Check if new variation settings match any layer
         if (this.active && this.glyphCanvas.fontData) {
             await this.autoSelectMatchingLayer();

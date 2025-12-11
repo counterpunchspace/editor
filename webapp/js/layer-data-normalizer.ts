@@ -73,8 +73,8 @@ export class LayerDataNormalizer {
                 // Parse nodes if they're a string (from babelfont-rs)
                 let parsedNodes = this.parseNodes(shape.Path.nodes);
 
-                // IMPORTANT: For non-interpolated data, replace string with array in place 
-                // so object model and renderer share the same array reference. 
+                // IMPORTANT: For non-interpolated data, replace string with array in place
+                // so object model and renderer share the same array reference.
                 // This ensures modifications through window.currentFontModel are immediately visible.
                 // For interpolated data, always use the freshly parsed nodes.
                 if (typeof shape.Path.nodes === 'string') {
