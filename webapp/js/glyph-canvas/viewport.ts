@@ -644,4 +644,80 @@ export class ViewportManager {
 
         return panApplied;
     }
+
+    /**
+     * Zoom and pan to fit the entire text run in the canvas viewport.
+     * @param {Array} shapedGlyphs - The array of shaped glyphs from HarfBuzz.
+     * @param {DOMRect} canvasRect - The canvas bounding rectangle.
+     * @param {Function} renderCallback - Callback to render after zoom/pan.
+     * @param {number} margin - Canvas margin in pixels (defaults to CANVAS_MARGIN setting).
+     */
+    zoomToFitText(
+        shapedGlyphs: ShapedGlyph[] | null,
+        canvasRect: DOMRect,
+        renderCallback: Function,
+        margin: number | null = null
+    ) {
+        if (!shapedGlyphs || shapedGlyphs.length === 0) {
+            return;
+        }
+
+        // Use setting if no margin specified
+        if (margin === null) {
+            margin = APP_SETTINGS.OUTLINE_EDITOR.CANVAS_MARGIN;
+        }
+
+        // Calculate total text bounding box in font space
+        let minX = 0;
+        let maxX = 0;
+        let minY = -200; // Default baseline region
+        let maxY = 800; // Default cap height region
+        let xPosition = 0;
+
+        for (const glyph of shapedGlyphs) {
+            const xOffset = glyph.dx || 0;
+            const yOffset = glyph.dy || 0;
+            const xAdvance = glyph.ax || 0;
+
+            const glyphX = xPosition + xOffset;
+
+            // Update bounds
+            minX = Math.min(minX, glyphX);
+            maxX = Math.max(maxX, glyphX + xAdvance);
+
+            xPosition += xAdvance;
+        }
+
+        // Calculate text dimensions
+        const textWidth = maxX - minX;
+        const textHeight = maxY - minY;
+        const centerX = (minX + maxX) / 2;
+        const centerY = (minY + maxY) / 2;
+
+        // Calculate scale to fit with margin
+        const scaleX = (canvasRect.width - margin * 2) / textWidth;
+        const scaleY = (canvasRect.height - margin * 2) / textHeight;
+        const targetScale = Math.min(scaleX, scaleY);
+
+        // Clamp scale to reasonable limits
+        const clampedScale = Math.max(
+            0.01,
+            Math.min(
+                APP_SETTINGS.OUTLINE_EDITOR.MAX_ZOOM_FOR_CMD_ZERO,
+                targetScale
+            )
+        );
+
+        // Calculate pan to center the text
+        const targetPanX = canvasRect.width / 2 - centerX * clampedScale;
+        const targetPanY = canvasRect.height / 2 - -centerY * clampedScale;
+
+        // Animate to target (10 frames)
+        this.animateZoomAndPan(
+            clampedScale,
+            targetPanX,
+            targetPanY,
+            renderCallback
+        );
+    }
 }

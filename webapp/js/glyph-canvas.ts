@@ -727,6 +727,14 @@ class GlyphCanvas {
                     this.featuresManager!.updateFeaturesUI().then(() => {
                         // Shape text with new font after features are initialized
                         this.textRunEditor!.shapeText();
+
+                        // Zoom to fit the entire text in the canvas
+                        const rect = this.canvas!.getBoundingClientRect();
+                        this.viewportManager!.zoomToFitText(
+                            this.textRunEditor!.shapedGlyphs,
+                            rect,
+                            this.render.bind(this)
+                        );
                     });
                 }
             );
