@@ -70,17 +70,20 @@ export class LayerDataNormalizer {
     static normalizeShapes(shapes: any[], isInterpolated: boolean): any[] {
         return shapes.map((shape) => {
             if (shape.Path) {
+                // Parse nodes if they're a string (from babelfont-rs)
+                const parsedNodes = this.parseNodes(shape.Path.nodes);
+                
+                // IMPORTANT: Replace string with array in place so object model and renderer
+                // share the same array reference. This ensures modifications through
+                // window.currentFontModel are immediately visible to the canvas.
+                if (typeof shape.Path.nodes === 'string') {
+                    shape.Path.nodes = parsedNodes;
+                }
+                
                 return {
-                    Path: {
-                        nodes: shape.Path.nodes,
-                        closed:
-                            shape.Path.closed !== undefined
-                                ? shape.Path.closed
-                                : true,
-                        format_specific: shape.Path.format_specific || {}
-                    },
-                    // For rendering: parse nodes if they're a string (from babelfont-rs)
-                    nodes: this.parseNodes(shape.Path.nodes),
+                    Path: shape.Path, // Reference the same Path object
+                    // For rendering: use the same array (not a copy)
+                    nodes: shape.Path.nodes,
                     isInterpolated: isInterpolated
                 };
             } else if (shape.Component) {

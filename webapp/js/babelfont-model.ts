@@ -103,12 +103,78 @@ export class Path extends ArrayElementBase {
     private _nodeWrappers: Node[] | null = null;
 
     get nodes(): Node[] {
+        // If nodes is a string (from babelfont-rs compact format), parse it once
+        // and replace the string with the array in the underlying JSON data.
+        // This ensures all future accesses see the array, and modifications
+        // are properly persisted to the JSON structure.
+        if (typeof this.data.nodes === 'string') {
+            this.data.nodes = this.parseNodesString(this.data.nodes);
+        }
+        
+        // Ensure nodes is an array (defensive)
+        if (!Array.isArray(this.data.nodes)) {
+            this.data.nodes = [];
+        }
+        
+        // Create wrapper objects if needed
         if (!this._nodeWrappers || this._nodeWrappers.length !== this.data.nodes.length) {
             this._nodeWrappers = this.data.nodes.map(
                 (_: any, i: number) => new Node(this.data.nodes, i)
             );
         }
         return this._nodeWrappers!;
+    }
+
+    set nodes(value: Babelfont.Node[]) {
+        this.data.nodes = value;
+        this._nodeWrappers = null; // Invalidate cache
+    }
+
+    /**
+     * Parse nodes from babelfont-rs string format
+     * Format: "x1 y1 type x2 y2 type ..."
+     * Types: m, l, o, c, q (with optional 's' suffix for smooth)
+     */
+    private parseNodesString(nodesStr: string): Babelfont.Node[] {
+        const trimmed = nodesStr.trim();
+        if (!trimmed) return [];
+
+        const tokens = trimmed.split(/\s+/);
+        const nodesArray: Babelfont.Node[] = [];
+
+        for (let i = 0; i + 2 < tokens.length; i += 3) {
+            const typeStr = tokens[i + 2];
+            const smooth = typeStr.endsWith('s');
+            const nodetype = this.mapNodeType(smooth ? typeStr.slice(0, -1) : typeStr);
+            
+            const node: Babelfont.Node = {
+                x: parseFloat(tokens[i]),
+                y: parseFloat(tokens[i + 1]),
+                nodetype: nodetype
+            };
+            
+            if (smooth) {
+                node.smooth = true;
+            }
+            
+            nodesArray.push(node);
+        }
+
+        return nodesArray;
+    }
+
+    /**
+     * Map short node type to Babelfont.NodeType
+     */
+    private mapNodeType(shortType: string): Babelfont.NodeType {
+        const map: Record<string, Babelfont.NodeType> = {
+            'm': 'Move',
+            'l': 'Line',
+            'o': 'OffCurve',
+            'c': 'Curve',
+            'q': 'QCurve'
+        };
+        return map[shortType] || 'Line';
     }
 
     get closed(): boolean {

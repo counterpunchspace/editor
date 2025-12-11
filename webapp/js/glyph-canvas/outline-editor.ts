@@ -28,9 +28,12 @@ const parseComponentNodes = (shapes: PythonBabelfont.Shape[]) => {
     shapes.forEach((shape) => {
         // Parse nodes in Path shapes
         if ('Path' in shape && shape.Path.nodes) {
-            let nodesArray = LayerDataNormalizer.parseNodes(shape.Path.nodes);
-            // Add parsed nodes to the shape for rendering
-            (shape as any).nodes = nodesArray;
+            // Parse if string, replace in place so object model and renderer share same reference
+            if (typeof shape.Path.nodes === 'string') {
+                (shape.Path.nodes as any) = LayerDataNormalizer.parseNodes(shape.Path.nodes);
+            }
+            // Reference the same array (not a copy) so modifications propagate
+            (shape as any).nodes = shape.Path.nodes;
         }
 
         // Recursively parse nested component data
