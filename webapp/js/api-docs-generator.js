@@ -1,11 +1,11 @@
 /**
  * API Documentation Generator
- * 
+ *
  * Provides functions to generate and download API documentation
  * for the Font Object Model.
  */
 
-(function() {
+(function () {
     'use strict';
 
     /**
@@ -14,7 +14,7 @@
      */
     async function generateAPIDocs() {
         console.log('[APIDocs]', 'Generating API documentation...');
-        
+
         if (!window.pyodide) {
             throw new Error('Pyodide not loaded');
         }
@@ -22,16 +22,19 @@
         // Fetch and execute the generate_api_docs module
         const response = await fetch('./py/generate_api_docs.py');
         const code = await response.text();
-        
+
         // Execute the module code and then call generate_docs()
         await window.pyodide.runPython(code);
-        
+
         const result = await window.pyodide.runPythonAsync(`
 docs = generate_docs()
 docs
         `);
 
-        console.log('[APIDocs]', `Generated ${result.length} characters of documentation`);
+        console.log(
+            '[APIDocs]',
+            `Generated ${result.length} characters of documentation`
+        );
         return result;
     }
 
@@ -42,24 +45,24 @@ docs
     async function downloadAPIDocs(filename = 'font-api-docs.md') {
         try {
             const docs = await generateAPIDocs();
-            
+
             // Create a blob from the markdown text
             const blob = new Blob([docs], { type: 'text/markdown' });
-            
+
             // Create a download link
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;
             a.download = filename;
-            
+
             // Trigger download
             document.body.appendChild(a);
             a.click();
-            
+
             // Cleanup
             document.body.removeChild(a);
             URL.revokeObjectURL(url);
-            
+
             console.log('[APIDocs]', `Downloaded ${filename}`);
             return docs;
         } catch (error) {
@@ -74,14 +77,17 @@ docs
     async function showAPIDocs() {
         try {
             const docs = await generateAPIDocs();
-            
+
             // Open in new window
             const win = window.open('', '_blank');
             if (!win) {
-                console.error('[APIDocs]', 'Failed to open new window - popup blocked?');
+                console.error(
+                    '[APIDocs]',
+                    'Failed to open new window - popup blocked?'
+                );
                 return;
             }
-            
+
             // Create a simple HTML page with the markdown rendered
             win.document.write(`
 <!DOCTYPE html>
@@ -143,7 +149,7 @@ docs
 </html>
             `);
             win.document.close();
-            
+
             console.log('[APIDocs]', 'Documentation opened in new window');
         } catch (error) {
             console.error('[APIDocs]', 'Error showing docs:', error);

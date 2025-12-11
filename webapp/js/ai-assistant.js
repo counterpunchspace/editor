@@ -1528,10 +1528,10 @@ ${errorTraceback}
                 // Fetch and load the generate_api_docs module
                 const response = await fetch('./py/generate_api_docs.py');
                 const code = await response.text();
-                
+
                 // Execute the module code
                 await window.pyodide.runPython(code);
-                
+
                 // Call generate_docs()
                 this.cachedApiDocs = await window.pyodide.runPythonAsync(`
 generate_docs()

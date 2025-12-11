@@ -72,14 +72,14 @@ export class LayerDataNormalizer {
             if (shape.Path) {
                 // Parse nodes if they're a string (from babelfont-rs)
                 const parsedNodes = this.parseNodes(shape.Path.nodes);
-                
+
                 // IMPORTANT: Replace string with array in place so object model and renderer
                 // share the same array reference. This ensures modifications through
                 // window.currentFontModel are immediately visible to the canvas.
                 if (typeof shape.Path.nodes === 'string') {
                     shape.Path.nodes = parsedNodes;
                 }
-                
+
                 return {
                     Path: shape.Path, // Reference the same Path object
                     // For rendering: use the same array (not a copy)
@@ -233,7 +233,10 @@ export class LayerDataNormalizer {
     /**
      * Get the next node in a circular array
      */
-    static getNextNode(nodes: PythonBabelfont.Node[], currentIndex: number): PythonBabelfont.Node | null {
+    static getNextNode(
+        nodes: PythonBabelfont.Node[],
+        currentIndex: number
+    ): PythonBabelfont.Node | null {
         if (!nodes || nodes.length === 0) return null;
         const nextIndex = (currentIndex + 1) % nodes.length;
         return nodes[nextIndex];
@@ -242,7 +245,10 @@ export class LayerDataNormalizer {
     /**
      * Get the previous node in a circular array
      */
-    static getPrevNode(nodes: PythonBabelfont.Node[], currentIndex: number): PythonBabelfont.Node | null {
+    static getPrevNode(
+        nodes: PythonBabelfont.Node[],
+        currentIndex: number
+    ): PythonBabelfont.Node | null {
         if (!nodes || nodes.length === 0) return null;
         const prevIndex = (currentIndex - 1 + nodes.length) % nodes.length;
         return nodes[prevIndex];

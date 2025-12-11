@@ -21,7 +21,10 @@ function markFontDirty(): void {
         window.fontManager.currentFont.dirty = true;
         console.log('[BabelfontModel]', '✏️ Font marked as dirty');
     } else {
-        console.warn('[BabelfontModel]', '⚠️ Cannot mark font dirty - no currentFont');
+        console.warn(
+            '[BabelfontModel]',
+            '⚠️ Cannot mark font dirty - no currentFont'
+        );
     }
 }
 
@@ -127,14 +130,17 @@ export class Path extends ArrayElementBase {
         if (typeof this.data.nodes === 'string') {
             this.data.nodes = this.parseNodesString(this.data.nodes);
         }
-        
+
         // Ensure nodes is an array (defensive)
         if (!Array.isArray(this.data.nodes)) {
             this.data.nodes = [];
         }
-        
+
         // Create wrapper objects if needed
-        if (!this._nodeWrappers || this._nodeWrappers.length !== this.data.nodes.length) {
+        if (
+            !this._nodeWrappers ||
+            this._nodeWrappers.length !== this.data.nodes.length
+        ) {
             this._nodeWrappers = this.data.nodes.map(
                 (_: any, i: number) => new Node(this.data.nodes, i)
             );
@@ -162,18 +168,20 @@ export class Path extends ArrayElementBase {
         for (let i = 0; i + 2 < tokens.length; i += 3) {
             const typeStr = tokens[i + 2];
             const smooth = typeStr.endsWith('s');
-            const nodetype = this.mapNodeType(smooth ? typeStr.slice(0, -1) : typeStr);
-            
+            const nodetype = this.mapNodeType(
+                smooth ? typeStr.slice(0, -1) : typeStr
+            );
+
             const node: Babelfont.Node = {
                 x: parseFloat(tokens[i]),
                 y: parseFloat(tokens[i + 1]),
                 nodetype: nodetype
             };
-            
+
             if (smooth) {
                 node.smooth = true;
             }
-            
+
             nodesArray.push(node);
         }
 
@@ -185,11 +193,11 @@ export class Path extends ArrayElementBase {
      */
     private mapNodeType(shortType: string): Babelfont.NodeType {
         const map: Record<string, Babelfont.NodeType> = {
-            'm': 'Move',
-            'l': 'Line',
-            'o': 'OffCurve',
-            'c': 'Curve',
-            'q': 'QCurve'
+            m: 'Move',
+            l: 'Line',
+            o: 'OffCurve',
+            c: 'Curve',
+            q: 'QCurve'
         };
         return map[shortType] || 'Line';
     }
@@ -199,54 +207,62 @@ export class Path extends ArrayElementBase {
      */
     static nodesToString(nodes: Babelfont.Node[]): string {
         const tokens: string[] = [];
-        
+
         for (const node of nodes) {
             // Ensure we have valid numbers
-            const x = typeof node.x === 'number' ? node.x : parseFloat(String(node.x));
-            const y = typeof node.y === 'number' ? node.y : parseFloat(String(node.y));
-            
+            const x =
+                typeof node.x === 'number'
+                    ? node.x
+                    : parseFloat(String(node.x));
+            const y =
+                typeof node.y === 'number'
+                    ? node.y
+                    : parseFloat(String(node.y));
+
             if (isNaN(x) || isNaN(y)) {
                 console.error('[Path]', 'Invalid node coordinates:', node);
                 continue;
             }
-            
+
             tokens.push(x.toString());
             tokens.push(y.toString());
-            
+
             // Get node type - check both 'nodetype' (object model) and 'type' (normalizer)
             const nodeType = (node as any).nodetype || (node as any).type;
-            
+
             // Map nodetype back to short form
             const typeMap: Record<string, string> = {
-                'Move': 'm',
-                'Line': 'l',
-                'OffCurve': 'o',
-                'Curve': 'c',
-                'QCurve': 'q',
+                Move: 'm',
+                Line: 'l',
+                OffCurve: 'o',
+                Curve: 'c',
+                QCurve: 'q',
                 // Also handle short forms directly (from normalizer)
-                'm': 'm',
-                'l': 'l',
-                'o': 'o',
-                'c': 'c',
-                'q': 'q',
-                'ms': 'm',
-                'ls': 'l',
-                'os': 'o',
-                'cs': 'c',
-                'qs': 'q'
+                m: 'm',
+                l: 'l',
+                o: 'o',
+                c: 'c',
+                q: 'q',
+                ms: 'm',
+                ls: 'l',
+                os: 'o',
+                cs: 'c',
+                qs: 'q'
             };
-            
+
             let typeStr = typeMap[nodeType] || 'l';
-            
+
             // Handle smooth flag - check if it's in the type string or separate property
-            const isSmooth = node.smooth || (typeof nodeType === 'string' && nodeType.endsWith('s'));
+            const isSmooth =
+                node.smooth ||
+                (typeof nodeType === 'string' && nodeType.endsWith('s'));
             if (isSmooth) {
                 typeStr += 's';
             }
-            
+
             tokens.push(typeStr);
         }
-        
+
         return tokens.join(' ');
     }
 
@@ -269,7 +285,13 @@ export class Path extends ArrayElementBase {
     /**
      * Insert a node at the specified index
      */
-    insertNode(index: number, x: number, y: number, nodetype: Babelfont.NodeType = 'Line', smooth?: boolean): Node {
+    insertNode(
+        index: number,
+        x: number,
+        y: number,
+        nodetype: Babelfont.NodeType = 'Line',
+        smooth?: boolean
+    ): Node {
         const nodeData: Babelfont.Node = { x, y, nodetype };
         if (smooth !== undefined) {
             nodeData.smooth = smooth;
@@ -291,7 +313,12 @@ export class Path extends ArrayElementBase {
     /**
      * Append a node to the end of the path
      */
-    appendNode(x: number, y: number, nodetype: Babelfont.NodeType = 'Line', smooth?: boolean): Node {
+    appendNode(
+        x: number,
+        y: number,
+        nodetype: Babelfont.NodeType = 'Line',
+        smooth?: boolean
+    ): Node {
         return this.insertNode(this.data.nodes.length, x, y, nodetype, smooth);
     }
 }
@@ -496,7 +523,10 @@ export class Layer extends ArrayElementBase {
 
     get guides(): Guide[] | undefined {
         if (!this.data.guides) return undefined;
-        if (!this._guideWrappers || this._guideWrappers.length !== this.data.guides.length) {
+        if (
+            !this._guideWrappers ||
+            this._guideWrappers.length !== this.data.guides.length
+        ) {
             this._guideWrappers = this.data.guides.map(
                 (_: any, i: number) => new Guide(this.data.guides, i)
             );
@@ -506,7 +536,10 @@ export class Layer extends ArrayElementBase {
 
     get shapes(): Shape[] | undefined {
         if (!this.data.shapes) return undefined;
-        if (!this._shapeWrappers || this._shapeWrappers.length !== this.data.shapes.length) {
+        if (
+            !this._shapeWrappers ||
+            this._shapeWrappers.length !== this.data.shapes.length
+        ) {
             this._shapeWrappers = this.data.shapes.map(
                 (_: any, i: number) => new Shape(this.data.shapes, i)
             );
@@ -516,7 +549,10 @@ export class Layer extends ArrayElementBase {
 
     get anchors(): Anchor[] | undefined {
         if (!this.data.anchors) return undefined;
-        if (!this._anchorWrappers || this._anchorWrappers.length !== this.data.anchors.length) {
+        if (
+            !this._anchorWrappers ||
+            this._anchorWrappers.length !== this.data.anchors.length
+        ) {
             this._anchorWrappers = this.data.anchors.map(
                 (_: any, i: number) => new Anchor(this.data.anchors, i)
             );
@@ -687,7 +723,10 @@ export class Glyph extends ArrayElementBase {
 
     get layers(): Layer[] | undefined {
         if (!this.data.layers) return undefined;
-        if (!this._layerWrappers || this._layerWrappers.length !== this.data.layers.length) {
+        if (
+            !this._layerWrappers ||
+            this._layerWrappers.length !== this.data.layers.length
+        ) {
             this._layerWrappers = this.data.layers.map(
                 (_: any, i: number) => new Layer(this.data.layers, i)
             );
@@ -765,7 +804,10 @@ export class Glyph extends ArrayElementBase {
             const master = l.master;
             if (!master) return false;
             if (typeof master === 'object') {
-                return master.DefaultForMaster === masterId || master.AssociatedWithMaster === masterId;
+                return (
+                    master.DefaultForMaster === masterId ||
+                    master.AssociatedWithMaster === masterId
+                );
             }
             return false;
         });
@@ -890,7 +932,10 @@ export class Master extends ArrayElementBase {
 
     get guides(): Guide[] | undefined {
         if (!this.data.guides) return undefined;
-        if (!this._guideWrappers || this._guideWrappers.length !== this.data.guides.length) {
+        if (
+            !this._guideWrappers ||
+            this._guideWrappers.length !== this.data.guides.length
+        ) {
             this._guideWrappers = this.data.guides.map(
                 (_: any, i: number) => new Guide(this.data.guides, i)
             );
@@ -1023,7 +1068,10 @@ export class Font extends ModelBase {
 
     get axes(): Axis[] | undefined {
         if (!this._data.axes) return undefined;
-        if (!this._axisWrappers || this._axisWrappers.length !== this._data.axes.length) {
+        if (
+            !this._axisWrappers ||
+            this._axisWrappers.length !== this._data.axes.length
+        ) {
             this._axisWrappers = this._data.axes.map(
                 (_: any, i: number) => new Axis(this._data.axes, i)
             );
@@ -1033,7 +1081,10 @@ export class Font extends ModelBase {
 
     get instances(): Instance[] | undefined {
         if (!this._data.instances) return undefined;
-        if (!this._instanceWrappers || this._instanceWrappers.length !== this._data.instances.length) {
+        if (
+            !this._instanceWrappers ||
+            this._instanceWrappers.length !== this._data.instances.length
+        ) {
             this._instanceWrappers = this._data.instances.map(
                 (_: any, i: number) => new Instance(this._data.instances, i)
             );
@@ -1043,7 +1094,10 @@ export class Font extends ModelBase {
 
     get masters(): Master[] | undefined {
         if (!this._data.masters) return undefined;
-        if (!this._masterWrappers || this._masterWrappers.length !== this._data.masters.length) {
+        if (
+            !this._masterWrappers ||
+            this._masterWrappers.length !== this._data.masters.length
+        ) {
             this._masterWrappers = this._data.masters.map(
                 (_: any, i: number) => new Master(this._data.masters, i)
             );
@@ -1052,7 +1106,10 @@ export class Font extends ModelBase {
     }
 
     get glyphs(): Glyph[] {
-        if (!this._glyphWrappers || this._glyphWrappers.length !== this._data.glyphs.length) {
+        if (
+            !this._glyphWrappers ||
+            this._glyphWrappers.length !== this._data.glyphs.length
+        ) {
             this._glyphWrappers = this._data.glyphs.map(
                 (_: any, i: number) => new Glyph(this._data.glyphs, i)
             );
@@ -1092,11 +1149,15 @@ export class Font extends ModelBase {
         this._data.custom_ot_values = value;
     }
 
-    get variation_sequences(): Record<number, Record<number, string>> | undefined {
+    get variation_sequences():
+        | Record<number, Record<number, string>>
+        | undefined {
         return this._data.variation_sequences;
     }
 
-    set variation_sequences(value: Record<number, Record<number, string>> | undefined) {
+    set variation_sequences(
+        value: Record<number, Record<number, string>> | undefined
+    ) {
         this._data.variation_sequences = value;
     }
 
@@ -1152,8 +1213,8 @@ export class Font extends ModelBase {
      * Find a glyph by codepoint
      */
     findGlyphByCodepoint(codepoint: number): Glyph | undefined {
-        const index = this._data.glyphs.findIndex((g: any) => 
-            g.codepoints && g.codepoints.includes(codepoint)
+        const index = this._data.glyphs.findIndex(
+            (g: any) => g.codepoints && g.codepoints.includes(codepoint)
         );
         return index >= 0 ? this.glyphs[index] : undefined;
     }
@@ -1226,11 +1287,19 @@ export class Font extends ModelBase {
             if (value && typeof value === 'object' && !Array.isArray(value)) {
                 // Check if this looks like a normalizer wrapper for a Path shape
                 // It will have BOTH 'Path' and 'nodes' at the same level (duplicate property)
-                if ('Path' in value && 'nodes' in value && !('Component' in value)) {
+                if (
+                    'Path' in value &&
+                    'nodes' in value &&
+                    !('Component' in value)
+                ) {
                     return { Path: value.Path };
                 }
-                // Check if this looks like a normalizer wrapper for a Component shape  
-                if ('Component' in value && ('isInterpolated' in value || 'nodes' in value) && !('Path' in value)) {
+                // Check if this looks like a normalizer wrapper for a Component shape
+                if (
+                    'Component' in value &&
+                    ('isInterpolated' in value || 'nodes' in value) &&
+                    !('Path' in value)
+                ) {
                     return { Component: value.Component };
                 }
             }

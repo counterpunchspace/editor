@@ -37,8 +37,12 @@ import fontManager from './font-manager';
      * Check if font needs compilation and trigger it.
      */
     async function triggerCompilation() {
-        console.log('[AutoCompile]', 'Checking dirty flag:', fontManager.currentFont?.dirty);
-        
+        console.log(
+            '[AutoCompile]',
+            'Checking dirty flag:',
+            fontManager.currentFont?.dirty
+        );
+
         if (fontManager.currentFont?.dirty) {
             // Show message in terminal if available
             if (window.term) {
@@ -53,7 +57,10 @@ import fontManager from './font-manager';
                 await fontManager.recompileEditingFont();
             }
         } else {
-            console.log('[AutoCompile]', 'Font not dirty, skipping compilation');
+            console.log(
+                '[AutoCompile]',
+                'Font not dirty, skipping compilation'
+            );
         }
     }
 

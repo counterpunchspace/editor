@@ -54,90 +54,151 @@ class OpenedFont {
      */
     syncJsonFromModel(): void {
         console.log('[FontManager]', 'Starting syncJsonFromModel...');
-        
+
         let pathsFound = 0;
         let pathsConverted = 0;
         let pathsAlreadyString = 0;
         let wrappersFixed = 0;
-        
+
         // Process all layers to prepare for serialization
         for (const glyph of this.babelfontData.glyphs || []) {
             for (const layer of glyph.layers || []) {
                 if (!layer?.shapes) continue;
-                
+
                 for (let i = 0; i < layer.shapes.length; i++) {
                     let shape = layer.shapes[i];
-                    
+
                     // Handle Path shapes - convert array nodes to strings
                     if (shape.Path?.nodes) {
                         pathsFound++;
                         const pathObj = shape.Path;
-                        
+
                         if (Array.isArray(pathObj.nodes)) {
                             // Log first few nodes before conversion to debug
                             if (glyph.name === 'o') {
-                                console.log('[FontManager]', `  Before conversion, first 3 nodes:`, 
-                                    pathObj.nodes.slice(0, 3).map((n: any) => `(${n.x},${n.y},${n.nodetype}${n.smooth?'s':''})`).join(' '));
+                                console.log(
+                                    '[FontManager]',
+                                    `  Before conversion, first 3 nodes:`,
+                                    pathObj.nodes
+                                        .slice(0, 3)
+                                        .map(
+                                            (n: any) =>
+                                                `(${n.x},${n.y},${n.nodetype}${n.smooth ? 's' : ''})`
+                                        )
+                                        .join(' ')
+                                );
                             }
-                            
+
                             // Convert nodes array back to compact string format
-                            const nodesString = Path.nodesToString(pathObj.nodes);
-                            console.log('[FontManager]', `Converting nodes for ${glyph.name}:`, 
-                                pathObj.nodes.length, 'nodes →', nodesString.substring(0, 50) + '...');
+                            const nodesString = Path.nodesToString(
+                                pathObj.nodes
+                            );
+                            console.log(
+                                '[FontManager]',
+                                `Converting nodes for ${glyph.name}:`,
+                                pathObj.nodes.length,
+                                'nodes →',
+                                nodesString.substring(0, 50) + '...'
+                            );
                             pathObj.nodes = nodesString;
                             pathsConverted++;
-                            
+
                             // If this is a normalizer wrapper, also update the duplicate nodes property
                             // so they stay in sync (both should be strings now)
                             if ('nodes' in shape && 'isInterpolated' in shape) {
-                                console.log('[FontManager]', `  Wrapper detected, updating shape.nodes too`);
-                                console.log('[FontManager]', `  Before: shape.nodes type =`, typeof shape.nodes, Array.isArray(shape.nodes) ? `array[${shape.nodes.length}]` : '');
+                                console.log(
+                                    '[FontManager]',
+                                    `  Wrapper detected, updating shape.nodes too`
+                                );
+                                console.log(
+                                    '[FontManager]',
+                                    `  Before: shape.nodes type =`,
+                                    typeof shape.nodes,
+                                    Array.isArray(shape.nodes)
+                                        ? `array[${shape.nodes.length}]`
+                                        : ''
+                                );
                                 shape.nodes = nodesString;
-                                console.log('[FontManager]', `  After: shape.nodes type =`, typeof shape.nodes);
+                                console.log(
+                                    '[FontManager]',
+                                    `  After: shape.nodes type =`,
+                                    typeof shape.nodes
+                                );
                                 wrappersFixed++;
                             }
-                            
+
                             // Verify conversion worked
-                            console.log('[FontManager]', `  After conversion: pathObj.nodes type =`, typeof pathObj.nodes);
-                            console.log('[FontManager]', `  Shape object keys:`, Object.keys(shape));
+                            console.log(
+                                '[FontManager]',
+                                `  After conversion: pathObj.nodes type =`,
+                                typeof pathObj.nodes
+                            );
+                            console.log(
+                                '[FontManager]',
+                                `  Shape object keys:`,
+                                Object.keys(shape)
+                            );
                             if ('nodes' in shape) {
-                                console.log('[FontManager]', `  shape.nodes type =`, typeof shape.nodes, 'same as pathObj.nodes?', shape.nodes === pathObj.nodes);
+                                console.log(
+                                    '[FontManager]',
+                                    `  shape.nodes type =`,
+                                    typeof shape.nodes,
+                                    'same as pathObj.nodes?',
+                                    shape.nodes === pathObj.nodes
+                                );
                             }
                         } else if (typeof pathObj.nodes === 'string') {
                             pathsAlreadyString++;
                         } else {
-                            console.error('[FontManager]', `Unexpected nodes type for ${glyph.name}:`, 
-                                typeof pathObj.nodes, pathObj.nodes);
+                            console.error(
+                                '[FontManager]',
+                                `Unexpected nodes type for ${glyph.name}:`,
+                                typeof pathObj.nodes,
+                                pathObj.nodes
+                            );
                         }
                     }
-                    
+
                     // Note: normalizer wrapper properties (nodes, isInterpolated) are filtered
                     // out during JSON.stringify by the replacer function in toJSONString()
                 }
             }
         }
-        
-        console.log('[FontManager]', `Paths: ${pathsFound} total, ${pathsConverted} converted, ${pathsAlreadyString} already strings, ${wrappersFixed} wrappers fixed`);
-        
+
+        console.log(
+            '[FontManager]',
+            `Paths: ${pathsFound} total, ${pathsConverted} converted, ${pathsAlreadyString} already strings, ${wrappersFixed} wrappers fixed`
+        );
+
         this.babelfontJson = this.fontModel.toJSONString();
-        console.log('[FontManager]', `✅ JSON generated (${this.babelfontJson.length} chars)`);
-        
+        console.log(
+            '[FontManager]',
+            `✅ JSON generated (${this.babelfontJson.length} chars)`
+        );
+
         // Verify conversion worked by checking a sample
         if (pathsConverted > 0) {
             const parsed = JSON.parse(this.babelfontJson);
             const sampleGlyph = parsed.glyphs[0];
             const sampleShape = sampleGlyph?.layers?.[0]?.shapes?.[0];
             if (sampleShape?.Path?.nodes) {
-                console.log('[FontManager]', 'Sample nodes type after serialization:', 
-                    typeof sampleShape.Path.nodes, 
-                    Array.isArray(sampleShape.Path.nodes) ? '(ARRAY - BUG!)' : '(string - OK)');
+                console.log(
+                    '[FontManager]',
+                    'Sample nodes type after serialization:',
+                    typeof sampleShape.Path.nodes,
+                    Array.isArray(sampleShape.Path.nodes)
+                        ? '(ARRAY - BUG!)'
+                        : '(string - OK)'
+                );
             }
-            
+
             // Check the specific area where Rust parser fails
             const errorCol = 389511;
             if (this.babelfontJson.length > errorCol) {
                 console.log('[FontManager]', 'Context around column 389511:');
-                console.log(this.babelfontJson.substring(errorCol - 100, errorCol + 100));
+                console.log(
+                    this.babelfontJson.substring(errorCol - 100, errorCol + 100)
+                );
             }
         }
     }
