@@ -730,8 +730,27 @@ if glyph.layers:
     for layer in glyph.layers:
         if layer.shapes:
             for shape in layer.shapes:
-                # Process shapes
-                pass
+                if shape.isPath():
+                    path = shape.asPath()
+                    # Now you can access nodes
+                    for node in path.nodes:
+                        print(f"Node at ({node.x}, {node.y})")
+```
+
+### Accessing Nodes Example
+
+```python
+# Direct access (may fail if properties are None)
+# glyph.layers[0].shapes[0].asPath().nodes  # DON'T DO THIS
+
+# Safe access with checks:
+layer = glyph.layers[0] if glyph.layers else None
+if layer and layer.shapes:
+    shape = layer.shapes[0]
+    if shape.isPath():
+        path = shape.asPath()
+        nodes = path.nodes
+        print(f"Path has {len(nodes)} nodes")
 ```
 
 ### Coordinate System
@@ -739,6 +758,33 @@ if glyph.layers:
 - Origin (0, 0) is at the baseline on the left
 - Y-axis points upward
 - All coordinates are in font units (1/upm of the em square)
+
+### Common Issues
+
+**Q: Why does `glyph.layers[0].shapes[0].asPath().nodes` fail?**
+
+A: Optional properties may be `None`. Use safe access:
+```python
+# Check each step
+if glyph.layers and len(glyph.layers) > 0:
+    layer = glyph.layers[0]
+    if layer.shapes and len(layer.shapes) > 0:
+        shape = layer.shapes[0]
+        if shape.isPath():
+            path = shape.asPath()
+            nodes = path.nodes  # Now safe to access
+```
+
+**Q: How do I know if a shape is a path or component?**
+
+A: Always check with `isPath()` or `isComponent()` before calling `asPath()` or `asComponent()`:
+```python
+for shape in layer.shapes:
+    if shape.isPath():
+        path = shape.asPath()
+    elif shape.isComponent():
+        component = shape.asComponent()
+```
 
 ---
 
