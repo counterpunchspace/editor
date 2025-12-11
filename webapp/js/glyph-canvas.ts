@@ -740,7 +740,7 @@ class GlyphCanvas {
         if (this.outlineEditor.active) return;
         let glyphIndex = this.textRunEditor!.getGlyphIndexAtCursorPosition();
 
-        if (glyphIndex && glyphIndex >= 0) {
+        if (glyphIndex !== undefined && glyphIndex >= 0) {
             console.log(
                 `Entering glyph edit mode at cursor position ${this.textRunEditor!.cursorPosition}, glyph index ${glyphIndex}`
             );
