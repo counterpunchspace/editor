@@ -316,12 +316,45 @@ fn manually_interpolate_layer(
     // Interpolate width
     let width = interpolate_scalar_values(&masters, target_value, |layer| layer.width as f64)? as f32;
     
+    // Interpolate anchors
+    let mut interpolated_anchors = Vec::new();
+    for (anchor_idx, reference_anchor) in reference_layer.anchors.iter().enumerate() {
+        // Collect x, y values for this anchor from all masters
+        let x_values: Vec<(f64, f64)> = masters.iter()
+            .filter_map(|(layer, loc_value)| {
+                layer.anchors.get(anchor_idx).map(|anchor| (anchor.x as f64, *loc_value))
+            })
+            .collect();
+        
+        let y_values: Vec<(f64, f64)> = masters.iter()
+            .filter_map(|(layer, loc_value)| {
+                layer.anchors.get(anchor_idx).map(|anchor| (anchor.y as f64, *loc_value))
+            })
+            .collect();
+        
+        // Only interpolate if we have matching anchors in all masters
+        if x_values.len() == masters.len() && y_values.len() == masters.len() {
+            let interp_x = interpolate_values(&x_values, target_value)?;
+            let interp_y = interpolate_values(&y_values, target_value)?;
+            
+            interpolated_anchors.push(babelfont::Anchor {
+                name: reference_anchor.name.clone(),
+                x: interp_x,
+                y: interp_y,
+                format_specific: reference_anchor.format_specific.clone(),
+            });
+        } else {
+            // If anchor is missing in some masters, just use reference
+            interpolated_anchors.push(reference_anchor.clone());
+        }
+    }
+    
     Ok(Layer {
         id: reference_layer.id.clone(),
         name: None,
         width,
         shapes: interpolated_shapes,
-        anchors: Vec::new(),
+        anchors: interpolated_anchors,
         guides: Vec::new(),
         color: None,
         location: Some(target_location.clone()),
