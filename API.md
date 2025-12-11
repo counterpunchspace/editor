@@ -1,6 +1,27 @@
 # Font Object Model API Documentation
 *Auto-generated from JavaScript object model via Pyodide*
 
+## Table of Contents
+
+- [Overview](#overview)
+- [Class Reference](#class-reference)
+  - [Font](#font) - Main font class
+  - [Glyph](#glyph) - Glyph in the font
+  - [Layer](#layer) - Layer in a glyph
+  - [Shape](#shape) - Shape wrapper (Component or Path)
+  - [Path](#path) - Path (contour) in a layer
+  - [Node](#node) - Point in a path
+  - [Component](#component) - Component reference
+  - [Anchor](#anchor) - Anchor point
+  - [Guide](#guide) - Guideline
+  - [Axis](#axis) - Variation axis
+  - [Master](#master) - Master/source
+  - [Instance](#instance) - Named instance
+- [Complete Examples](#complete-examples)
+- [Tips and Best Practices](#tips-and-best-practices)
+
+---
+
 ## Overview
 
 The Font Object Model provides an object-oriented interface for manipulating font data.
@@ -17,6 +38,8 @@ font = window.currentFontModel
 ```
 
 ---
+
+## Class Reference
 
 ## Font
 
@@ -46,14 +69,14 @@ font = window.currentFontModel
 
 #### Read-Only Properties
 
-- **`glyphs`** (list[Glyph]): List of all glyphs in the font
-- **`axes`** (list[Axis] | None): List of variation axes (for variable fonts)
-- **`masters`** (list[Master] | None): List of masters/sources
-- **`instances`** (list[Instance] | None): List of named instances
+- **`glyphs`** (list[[Glyph](#glyph)]): List of all glyphs in the font
+- **`axes`** (list[[Axis](#axis)] | None): List of variation axes (for variable fonts)
+- **`masters`** (list[[Master](#master)] | None): List of masters/sources
+- **`instances`** (list[[Instance](#instance)] | None): List of named instances
 
 ### Methods
 
-#### `findGlyph(name: str) -> Glyph | None`
+#### `findGlyph(name: str) -> `[`Glyph`](#glyph)` | None`
 Find a glyph by name.
 
 **Example:**
@@ -63,7 +86,7 @@ if glyph:
     print(glyph.name)
 ```
 
-#### `findGlyphByCodepoint(codepoint: int) -> Glyph | None`
+#### `findGlyphByCodepoint(codepoint: int) -> `[`Glyph`](#glyph)` | None`
 Find a glyph by Unicode codepoint.
 
 **Example:**
@@ -71,10 +94,10 @@ Find a glyph by Unicode codepoint.
 glyph = font.findGlyphByCodepoint(0x0041)  # Find 'A'
 ```
 
-#### `findAxis(id: str) -> Axis | None`
+#### `findAxis(id: str) -> `[`Axis`](#axis)` | None`
 Find an axis by ID.
 
-#### `findAxisByTag(tag: str) -> Axis | None`
+#### `findAxisByTag(tag: str) -> `[`Axis`](#axis)` | None`
 Find an axis by 4-character tag.
 
 **Example:**
@@ -82,10 +105,10 @@ Find an axis by 4-character tag.
 weight_axis = font.findAxisByTag("wght")
 ```
 
-#### `findMaster(id: str) -> Master | None`
+#### `findMaster(id: str) -> `[`Master`](#master)` | None`
 Find a master by ID.
 
-#### `addGlyph(name: str, category: str = "Base") -> Glyph`
+#### `addGlyph(name: str, category: str = "Base") -> `[`Glyph`](#glyph)
 Add a new glyph to the font.
 
 **Example:**
@@ -129,11 +152,11 @@ glyph = font.findGlyph("A")
 
 #### Read-Only Properties
 
-- **`layers`** (list[Layer] | None): All layers in the glyph
+- **`layers`** (list[[Layer](#layer)] | None): All layers in the glyph
 
 ### Methods
 
-#### `addLayer(width: float, master: dict | None = None) -> Layer`
+#### `addLayer(width: float, master: dict | None = None) -> `[`Layer`](#layer)
 Add a new layer to the glyph.
 
 **Example:**
@@ -144,7 +167,7 @@ layer = glyph.addLayer(600)
 #### `removeLayer(index: int) -> None`
 Remove a layer at the specified index.
 
-#### `findLayerById(id: str) -> Layer | None`
+#### `findLayerById(id: str) -> `[`Layer`](#layer)` | None`
 Find a layer by its ID.
 
 **Example:**
@@ -152,7 +175,7 @@ Find a layer by its ID.
 layer = glyph.findLayerById("layer-uuid")
 ```
 
-#### `findLayerByMasterId(master_id: str) -> Layer | None`
+#### `findLayerByMasterId(master_id: str) -> `[`Layer`](#layer)` | None`
 Find a layer associated with a specific master.
 
 ---
@@ -185,13 +208,13 @@ layer = glyph.findLayerById("layer-id")
 
 #### Read-Only Properties
 
-- **`shapes`** (list[Shape] | None): Shapes (paths and components) in the layer
-- **`anchors`** (list[Anchor] | None): Anchor points in the layer
-- **`guides`** (list[Guide] | None): Guidelines in the layer
+- **`shapes`** (list[[Shape](#shape)] | None): Shapes (paths and components) in the layer
+- **`anchors`** (list[[Anchor](#anchor)] | None): Anchor points in the layer
+- **`guides`** (list[[Guide](#guide)] | None): Guidelines in the layer
 
 ### Methods
 
-#### `addPath(closed: bool = True) -> Path`
+#### `addPath(closed: bool = True) -> `[`Path`](#path)
 Add a new path to the layer.
 
 **Example:**
@@ -199,7 +222,7 @@ Add a new path to the layer.
 path = layer.addPath(closed=True)
 ```
 
-#### `addComponent(reference: str, transform: list[float] | None = None) -> Component`
+#### `addComponent(reference: str, transform: list[float] | None = None) -> `[`Component`](#component)
 Add a new component reference to the layer.
 
 **Example:**
@@ -209,13 +232,13 @@ component = layer.addComponent("A")
 component = layer.addComponent("A", [1, 0, 0, 1, 100, 0])
 ```
 
-#### `addShape(shape_data: dict) -> Shape`
+#### `addShape(shape_data: dict) -> `[`Shape`](#shape)
 Add a new shape (component or path) to the layer.
 
 #### `removeShape(index: int) -> None`
 Remove a shape at the specified index.
 
-#### `addAnchor(x: float, y: float, name: str | None = None) -> Anchor`
+#### `addAnchor(x: float, y: float, name: str | None = None) -> `[`Anchor`](#anchor)
 Add a new anchor point.
 
 **Example:**
@@ -245,7 +268,7 @@ Check if this shape is a component.
 #### `isPath() -> bool`
 Check if this shape is a path.
 
-#### `asComponent() -> Component`
+#### `asComponent() -> `[`Component`](#component)
 Get as Component. Raises error if not a component.
 
 **Example:**
@@ -255,7 +278,7 @@ if shape.isComponent():
     print(component.reference)
 ```
 
-#### `asPath() -> Path`
+#### `asPath() -> `[`Path`](#path)
 Get as Path. Raises error if not a path.
 
 **Example:**
@@ -287,11 +310,11 @@ if shape.isPath():
 
 #### Read-Only Properties
 
-- **`nodes`** (list[Node]): List of nodes in the path
+- **`nodes`** (list[[Node](#node)]): List of nodes in the path
 
 ### Methods
 
-#### `insertNode(index: int, x: float, y: float, nodetype: str = "Line", smooth: bool | None = None) -> Node`
+#### `insertNode(index: int, x: float, y: float, nodetype: str = "Line", smooth: bool | None = None) -> `[`Node`](#node)
 Insert a node at the specified index.
 
 **Node Types:** "Move", "Line", "Curve", "QCurve", "OffCurve"
@@ -305,7 +328,7 @@ node = path.insertNode(1, 150, 250, "Curve", smooth=True)
 #### `removeNode(index: int) -> None`
 Remove a node at the specified index.
 
-#### `appendNode(x: float, y: float, nodetype: str = "Line", smooth: bool | None = None) -> Node`
+#### `appendNode(x: float, y: float, nodetype: str = "Line", smooth: bool | None = None) -> `[`Node`](#node)
 Append a node to the end of the path.
 
 **Example:**
@@ -486,7 +509,7 @@ master = font.findMaster("master-id")
 
 #### Read-Only Properties
 
-- **`guides`** (list[Guide] | None): Global guidelines for this master
+- **`guides`** (list[[Guide](#guide)] | None): Global guidelines for this master
 
 **Example:**
 ```python
