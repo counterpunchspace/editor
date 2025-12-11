@@ -75,12 +75,6 @@ export class GlyphCanvasRenderer {
             transform.f
         );
 
-        // Draw coordinate system (optional, for debugging)
-        this.drawCoordinateSystem();
-
-        // Draw baseline
-        this.drawBaseline();
-
         // Draw selection highlight
         this.drawSelection();
 
@@ -100,50 +94,6 @@ export class GlyphCanvasRenderer {
 
         // Draw UI overlay (zoom level, etc.)
         this.drawUIOverlay();
-    }
-
-    drawCoordinateSystem() {
-        const rect = this.canvas.getBoundingClientRect();
-        const invScale = 1 / this.viewportManager.scale;
-
-        this.ctx.strokeStyle = 'rgba(255, 255, 0, 0.3)';
-        this.ctx.lineWidth = 1 * invScale;
-
-        // Draw X axis
-        this.ctx.beginPath();
-        this.ctx.moveTo(-10000, 0);
-        this.ctx.lineTo(10000, 0);
-        this.ctx.stroke();
-
-        // Draw Y axis
-        this.ctx.beginPath();
-        this.ctx.moveTo(0, -10000);
-        this.ctx.lineTo(0, 10000);
-        this.ctx.stroke();
-    }
-
-    drawBaseline() {
-        if (
-            !this.textRunEditor.shapedGlyphs ||
-            this.textRunEditor.shapedGlyphs.length === 0
-        )
-            return;
-
-        const invScale = 1 / this.viewportManager.scale;
-
-        // Calculate total advance width
-        let totalAdvance = 0;
-        for (const glyph of this.textRunEditor.shapedGlyphs) {
-            totalAdvance += glyph.ax || 0;
-        }
-
-        this.ctx.strokeStyle = 'rgba(0, 255, 255, 0.5)';
-        this.ctx.lineWidth = 1 * invScale;
-
-        this.ctx.beginPath();
-        this.ctx.moveTo(0, 0);
-        this.ctx.lineTo(totalAdvance, 0);
-        this.ctx.stroke();
     }
 
     drawShapedGlyphs() {
@@ -1492,19 +1442,19 @@ export class GlyphCanvasRenderer {
             : 'rgba(0, 0, 0, 0.7)';
         this.ctx.font = '12px monospace';
 
-        // Draw zoom level
-        const zoomText = `Zoom: ${(this.viewportManager.scale * 100).toFixed(1)}%`;
-        this.ctx.fillText(zoomText, 10, rect.height - 10);
-
-        // Draw pan position
-        const panText = `Pan: (${Math.round(this.viewportManager.panX)}, ${Math.round(this.viewportManager.panY)})`;
-        this.ctx.fillText(panText, 10, rect.height - 25);
-
-        // Draw text buffer info
+        // Draw text buffer info (top left)
         if (this.textRunEditor.textBuffer) {
             const textInfo = `Text: "${this.textRunEditor.textBuffer}" (${this.textRunEditor.shapedGlyphs.length} glyphs)`;
             this.ctx.fillText(textInfo, 10, 20);
         }
+
+        // Draw pan position (top left)
+        const panText = `Pan: (${Math.round(this.viewportManager.panX)}, ${Math.round(this.viewportManager.panY)})`;
+        this.ctx.fillText(panText, 10, 35);
+
+        // Draw zoom level (top left)
+        const zoomText = `Zoom: ${(this.viewportManager.scale * 100).toFixed(1)}%`;
+        this.ctx.fillText(zoomText, 10, 50);
 
         this.ctx.restore();
     }

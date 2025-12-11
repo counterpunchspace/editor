@@ -76,7 +76,7 @@ const APP_SETTINGS = {
 
             // Glyphs in text/preview mode
             GLYPH_NORMAL: '#000000',
-            GLYPH_HOVERED: '#ff00ff',
+            GLYPH_HOVERED: '#e9b300',
             GLYPH_SELECTED: '#00ff00',
 
             // Glyphs when outline editor is active
@@ -120,7 +120,7 @@ const APP_SETTINGS = {
 
             // Glyphs in text/preview mode
             GLYPH_NORMAL: '#ffffff',
-            GLYPH_HOVERED: '#ff00ff',
+            GLYPH_HOVERED: '#e9b300',
             GLYPH_SELECTED: '#00ff00',
 
             // Glyphs when outline editor is active
