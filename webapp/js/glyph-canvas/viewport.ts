@@ -60,6 +60,23 @@ export class ViewportManager {
     }
 
     /**
+     * Transforms font-space coordinates to canvas-space (screen) coordinates.
+     * This is the inverse of getFontSpaceCoordinates.
+     * @param {number} fontX - The x-coordinate in font space.
+     * @param {number} fontY - The y-coordinate in font space.
+     * @returns {Point} The coordinates in canvas space.
+     */
+    fontToScreenCoordinates(fontX: number, fontY: number): Point {
+        const transform = this.getTransformMatrix();
+        // Apply the transform matrix: screen = transform * font
+        // screenX = a * fontX + c * fontY + e
+        // screenY = b * fontX + d * fontY + f
+        const screenX = transform.a * fontX + transform.c * fontY + transform.e;
+        const screenY = transform.b * fontX + transform.d * fontY + transform.f;
+        return { x: screenX, y: screenY };
+    }
+
+    /**
      * Transforms canvas-space coordinates to the local coordinate system of a specific glyph within the shaped text run.
      * @param {number} canvasX - The x-coordinate in canvas space.
      * @param {number} canvasY - The y-coordinate in canvas space.

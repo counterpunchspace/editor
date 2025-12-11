@@ -84,6 +84,10 @@ export class OutlineEditor {
     lastGlyphY: number | null = null;
     canvas: HTMLCanvasElement | null = null;
 
+    // Auto-panning properties to keep glyph centered during animation
+    autoPanAnchorScreen: { x: number; y: number } | null = null; // Screen coordinates of bbox center before animation
+    autoPanEnabled: boolean = true; // Can be toggled by user preference
+
     constructor(glyphCanvas: GlyphCanvas) {
         this.glyphCanvas = glyphCanvas;
     }
@@ -235,6 +239,9 @@ export class OutlineEditor {
         // Set interpolating flag (don't change preview mode)
         this.isInterpolating = true;
 
+        // Capture anchor point for auto-panning
+        this.captureAutoPanAnchor();
+
         // If not in preview mode, mark current layer data as interpolated and render
         // to show monochrome visual feedback immediately
         if (!this.isPreviewMode && this.layerData) {
@@ -282,6 +289,9 @@ export class OutlineEditor {
                 }
             }
 
+            // Clear auto-pan anchor since animation is complete
+            this.autoPanAnchorScreen = null;
+
             // Always render to update colors after clearing isInterpolating flag
             this.glyphCanvas.render();
         } else if (this.active) {
@@ -308,6 +318,9 @@ export class OutlineEditor {
             }
 
             // If no exact layer match, keep showing interpolated data
+
+            // Clear auto-pan anchor since animation is complete
+            this.autoPanAnchorScreen = null;
 
             this.glyphCanvas.render();
             // Restore focus to canvas
@@ -362,6 +375,9 @@ export class OutlineEditor {
                     '[OutlineEditor] Calling interpolateCurrentGlyph from animationInProgress'
                 );
                 this.interpolateCurrentGlyph();
+
+                // Apply auto-pan adjustment to keep glyph centered
+                this.applyAutoPanAdjustment();
             }
         }
     }
@@ -1479,6 +1495,9 @@ export class OutlineEditor {
         );
         this.selectedLayerId = layer.id!;
 
+        // Capture anchor point before layer switch animation begins
+        this.captureAutoPanAnchor();
+
         // Immediately clear interpolated flag on existing data
         // to prevent rendering with monochrome colors
         if (this.layerData) {
@@ -1526,6 +1545,9 @@ export class OutlineEditor {
     async onAnimationComplete() {
         // Clear layer switch animation flag
         this.isLayerSwitchAnimating = false;
+
+        // Clear auto-pan anchor since animation is complete
+        this.autoPanAnchorScreen = null;
 
         // Check if new variation settings match any layer
         if (this.active && this.glyphCanvas.fontData) {
@@ -2400,6 +2422,112 @@ export class OutlineEditor {
         }
 
         return { glyphX, glyphY };
+    }
+
+    /**
+     * Capture the current bbox center as an anchor point in screen coordinates.
+     * This is called before starting an animation (slider or layer switch).
+     */
+    captureAutoPanAnchor() {
+        if (!this.autoPanEnabled) {
+            this.autoPanAnchorScreen = null;
+            return;
+        }
+
+        if (!this.active) {
+            this.autoPanAnchorScreen = null;
+            return;
+        }
+
+        const bbox = this.calculateGlyphBoundingBox();
+        if (!bbox) {
+            this.autoPanAnchorScreen = null;
+            return;
+        }
+
+        // Check if we have a valid selected glyph
+        if (
+            !this.glyphCanvas.textRunEditor ||
+            this.glyphCanvas.textRunEditor.selectedGlyphIndex < 0
+        ) {
+            this.autoPanAnchorScreen = null;
+            return;
+        }
+
+        // Get glyph position in text run
+        const glyphPosition = this.glyphCanvas.textRunEditor!._getGlyphPosition(
+            this.glyphCanvas.textRunEditor!.selectedGlyphIndex
+        );
+
+        // Calculate bbox center in glyph-local space
+        const localCenterX = bbox.minX + bbox.width / 2;
+        const localCenterY = bbox.minY + bbox.height / 2;
+
+        // Transform to world space (account for glyph position in text run)
+        const worldCenterX =
+            glyphPosition.xPosition + glyphPosition.xOffset + localCenterX;
+        const worldCenterY = glyphPosition.yOffset + localCenterY;
+
+        // Convert to screen coordinates
+        const screenPos =
+            this.glyphCanvas.viewportManager!.fontToScreenCoordinates(
+                worldCenterX,
+                worldCenterY
+            );
+
+        this.autoPanAnchorScreen = screenPos;
+    }
+
+    /**
+     * Adjust pan to keep the bbox center at the anchor point.
+     * This is called after interpolation updates the glyph.
+     */
+    applyAutoPanAdjustment() {
+        if (!this.autoPanEnabled || !this.autoPanAnchorScreen) {
+            return;
+        }
+
+        const bbox = this.calculateGlyphBoundingBox();
+        if (!bbox) {
+            return;
+        }
+
+        // Check if we have a valid selected glyph
+        if (
+            !this.glyphCanvas.textRunEditor ||
+            this.glyphCanvas.textRunEditor.selectedGlyphIndex < 0
+        ) {
+            return;
+        }
+
+        // Get glyph position in text run
+        const glyphPosition = this.glyphCanvas.textRunEditor!._getGlyphPosition(
+            this.glyphCanvas.textRunEditor!.selectedGlyphIndex
+        );
+
+        // Calculate new bbox center in glyph-local space
+        const localCenterX = bbox.minX + bbox.width / 2;
+        const localCenterY = bbox.minY + bbox.height / 2;
+
+        // Transform to world space (account for glyph position in text run)
+        const worldCenterX =
+            glyphPosition.xPosition + glyphPosition.xOffset + localCenterX;
+        const worldCenterY = glyphPosition.yOffset + localCenterY;
+
+        // Convert to screen coordinates with current pan/scale
+        const currentScreenPos =
+            this.glyphCanvas.viewportManager!.fontToScreenCoordinates(
+                worldCenterX,
+                worldCenterY
+            );
+
+        // Calculate the offset between where the bbox center is now vs where it should be
+        const offsetX = this.autoPanAnchorScreen.x - currentScreenPos.x;
+        const offsetY = this.autoPanAnchorScreen.y - currentScreenPos.y;
+
+        // Apply the pan adjustment
+        this.glyphCanvas.viewportManager!.panX += offsetX;
+        this.glyphCanvas.viewportManager!.panY += offsetY;
     }
 
     calculateGlyphBoundingBox(): {
