@@ -11,6 +11,7 @@ import * as opentype from 'opentype.js';
 import { PythonBabelfont } from './pythonbabelfont';
 import { designspaceToUserspace, userspaceToDesignspace } from './locations';
 import type { DesignspaceLocation } from './locations';
+import { Font } from './babelfont-model';
 
 export type GlyphData = {
     glyphName: string;
@@ -31,6 +32,7 @@ export type GlyphData = {
 class OpenedFont {
     babelfontJson: string;
     babelfontData: any;
+    fontModel: Font; // Object model facade
     name: string;
     path: string;
     dirty: boolean;
@@ -38,10 +40,19 @@ class OpenedFont {
     constructor(babelfontJson: string, path: string) {
         this.babelfontJson = babelfontJson;
         this.babelfontData = JSON.parse(babelfontJson);
+        this.fontModel = Font.fromData(this.babelfontData); // Create object model
         this.path = path;
         this.name =
             this.babelfontData?.names.family_name.dflt || 'Untitled Font';
         this.dirty = false;
+    }
+
+    /**
+     * Sync the JSON string from the object model data
+     * Call this after making changes through the object model
+     */
+    syncJsonFromModel(): void {
+        this.babelfontJson = this.fontModel.toJSONString();
     }
 }
 
@@ -89,8 +100,16 @@ class FontManager {
 
     get currentFont(): OpenedFont | null {
         if (this.currentFontId && this.openedFonts.has(this.currentFontId)) {
-            return this.openedFonts.get(this.currentFontId) || null;
+            const font = this.openedFonts.get(this.currentFontId) || null;
+            // Update global reference for Python/script access
+            if (font) {
+                window.currentFontModel = font.fontModel;
+            } else {
+                window.currentFontModel = null;
+            }
+            return font;
         }
+        window.currentFontModel = null;
         return null;
     }
 
@@ -701,6 +720,10 @@ class FontManager {
             this.currentFont!.babelfontJson = JSON.stringify(fontData);
             // Also update the babelfontData reference
             this.currentFont!.babelfontData = fontData;
+            // Recreate the font model to reflect changes
+            this.currentFont!.fontModel = Font.fromData(fontData);
+            // Update global reference
+            window.currentFontModel = this.currentFont!.fontModel;
         } catch (error) {
             console.error(
                 '[FontManager] Error updating babelfont JSON:',
@@ -718,6 +741,9 @@ class FontManager {
 
 // Create singleton instance when page loads
 let fontManager: FontManager = new FontManager();
+
+// Initialize global font model reference
+window.currentFontModel = null;
 
 document.addEventListener('DOMContentLoaded', () => {
     fontManager.init();

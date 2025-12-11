@@ -9,6 +9,7 @@ import { GlyphCanvas } from './glyph-canvas.js';
 import MemoryMonitor from './memory-monitor.js';
 import ResizableViews from './resizer.js';
 import SaveButton from './save-button.js';
+import { Font } from './babelfont-model.js';
 declare global {
     // Any property augmentation we make to the Window interface
     // should be declared here.
@@ -86,6 +87,9 @@ declare global {
 
         // From font-dropdown.js
         fontDropdownManager: FontDropdownManager;
+
+        // From babelfont-model.js
+        currentFontModel: Font | null;
 
         // From font-interpolation.js
         fontInterpolation: FontInterpolationManager;

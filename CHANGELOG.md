@@ -1,5 +1,6 @@
 # Unreleased
 
+- **Object Model Facade**: Implemented JavaScript/TypeScript object model with getters/setters over babelfontJson. Classes (Font, Glyph, Layer, Path, Node, etc.) provide OOP interface without data duplication, enabling rich methods (e.g., `path.insertNode()`) and synchronous Python access via Pyodide's JsProxy. Exposed as `window.currentFontModel`.
 - **Live Component Interpolation**: Implemented recursive component interpolation in Rust WASM. Components now interpolate correctly during live slider adjustment, matching Python's recursive `fetchLayerData` behavior. Unified layer data structure between interpolated and master layers.
 - **Live Interpolation**: Fixed broken glyph interpolation in editor view after PR #8 TypeScript refactor by adding missing module import to bootstrap and restoring `window.fontInterpolation` global. Fixed node destructuring bug in `LayerDataNormalizer`. Added stale response detection to prevent out-of-order interpolation results during rapid layer switching.
 - **Nested Components**: Refactored to pre-populate component `layerData` recursively for simpler, unified data structure. Bounding box calculations include nested components.
