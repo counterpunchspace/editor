@@ -66,7 +66,24 @@
             } finally {
                 // Call after-execution hook (always, even on error)
                 if (window.afterPythonExecution) {
+                    console.log(
+                        '[PythonExec]',
+                        `🪝 Calling afterPythonExecution hook for async #${execId}`
+                    );
+                    console.log(
+                        '[PythonExec]',
+                        `   Hook type: ${typeof window.afterPythonExecution}, toString: ${window.afterPythonExecution.toString().substring(0, 100)}`
+                    );
                     window.afterPythonExecution();
+                    console.log(
+                        '[PythonExec]',
+                        `   ✅ Hook completed for async #${execId}`
+                    );
+                } else {
+                    console.warn(
+                        '[PythonExec]',
+                        `⚠️ No afterPythonExecution hook registered for async #${execId}`
+                    );
                 }
             }
         };
@@ -104,7 +121,16 @@
             } finally {
                 // Call after-execution hook (always, even on error)
                 if (window.afterPythonExecution) {
+                    console.log(
+                        '[PythonExec]',
+                        `🪝 Calling afterPythonExecution hook for sync #${execId}`
+                    );
                     window.afterPythonExecution();
+                } else {
+                    console.warn(
+                        '[PythonExec]',
+                        `⚠️ No afterPythonExecution hook registered for sync #${execId}`
+                    );
                 }
             }
         };

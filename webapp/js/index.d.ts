@@ -9,6 +9,7 @@ import { GlyphCanvas } from './glyph-canvas.js';
 import MemoryMonitor from './memory-monitor.js';
 import ResizableViews from './resizer.js';
 import SaveButton from './save-button.js';
+import { Font } from './babelfont-model.js';
 declare global {
     // Any property augmentation we make to the Window interface
     // should be declared here.
@@ -22,6 +23,11 @@ declare global {
 
         // From ai-assistant.js
         aiAssistant: AIAssistant;
+
+        // From api-docs-generator.js
+        generateAPIDocs: () => Promise<string>;
+        downloadAPIDocs: (filename?: string) => Promise<string>;
+        showAPIDocs: () => Promise<void>;
 
         // From auto-compile-manager.js
         autoCompileManager: {
@@ -82,10 +88,13 @@ declare global {
         refreshFileSystem: () => Promise<void>;
 
         // From font-manager.js
-        fontManager: typeof FontManager;
+        fontManager: FontManager;
 
         // From font-dropdown.js
         fontDropdownManager: FontDropdownManager;
+
+        // From babelfont-model.js
+        currentFontModel: Font | null;
 
         // From font-interpolation.js
         fontInterpolation: FontInterpolationManager;
@@ -119,6 +128,10 @@ declare global {
         consoleError: (msg: string, ...opts: any[]) => void;
         term: any; // Terminal
         clearConsole: () => void;
+
+        // From python-execution-wrapper.js
+        beforePythonExecution?: () => void;
+        afterPythonExecution?: () => void;
 
         // From resizer.js
         resizableViews: ResizableViews;

@@ -2,6 +2,7 @@ import './loading-animation.js';
 import './tab-lifecycle.js';
 
 import './ai-assistant.js';
+import './api-docs-generator.js';
 import './auto-compile-manager';
 import './cache-manager.js';
 import './compile-button.ts';
@@ -17,6 +18,7 @@ import './memory-monitor.js';
 import './pyodide-official-console.js';
 import './python-execution-wrapper.js';
 import './python-ui-sync.js';
+import './python-post-execution';
 import './resizer.js';
 import './save-button.js';
 import './script-editor.js';

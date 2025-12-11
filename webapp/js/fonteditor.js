@@ -95,17 +95,6 @@ async function initFontEditor() {
             `);
         }
 
-        // Import context and make it available
-        if (window.updateLoadingStatus) {
-            window.updateLoadingStatus('Importing context module...');
-        }
-        await window.pyodide.runPython(`
-            import context
-            
-            # Make context available globally in Python namespace
-            globals()['context'] = context
-        `);
-
         // Load the fonteditor Python module
         if (window.updateLoadingStatus) {
             window.updateLoadingStatus('Loading font editor...');

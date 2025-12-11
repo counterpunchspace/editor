@@ -28,9 +28,14 @@ const parseComponentNodes = (shapes: PythonBabelfont.Shape[]) => {
     shapes.forEach((shape) => {
         // Parse nodes in Path shapes
         if ('Path' in shape && shape.Path.nodes) {
-            let nodesArray = LayerDataNormalizer.parseNodes(shape.Path.nodes);
-            // Add parsed nodes to the shape for rendering
-            (shape as any).nodes = nodesArray;
+            // Parse if string, replace in place so object model and renderer share same reference
+            if (typeof shape.Path.nodes === 'string') {
+                (shape.Path.nodes as any) = LayerDataNormalizer.parseNodes(
+                    shape.Path.nodes
+                );
+            }
+            // Reference the same array (not a copy) so modifications propagate
+            (shape as any).nodes = shape.Path.nodes;
         }
 
         // Recursively parse nested component data
@@ -343,17 +348,21 @@ export class OutlineEditor {
     }
 
     animationInProgress() {
-        // Interpolate during slider dragging OR layer switch animation
-        // But NOT after layer switch animation has ended
+        // Interpolate during both slider dragging AND layer switch animations
+        console.log('[OutlineEditor] animationInProgress called:', {
+            active: this.active,
+            hasGlyphName: !!this.currentGlyphName,
+            isInterpolating: this.isInterpolating,
+            isLayerSwitchAnimating: this.isLayerSwitchAnimating
+        });
         if (this.active && this.currentGlyphName) {
-            if (this.isInterpolating) {
-                // Slider being dragged
-                this.interpolateCurrentGlyph();
-            } else if (this.isLayerSwitchAnimating) {
-                // Layer switch animation in progress - interpolate at current animated position
+            if (this.isInterpolating || this.isLayerSwitchAnimating) {
+                // Interpolate at current position for smooth animation
+                console.log(
+                    '[OutlineEditor] Calling interpolateCurrentGlyph from animationInProgress'
+                );
                 this.interpolateCurrentGlyph();
             }
-            // If neither flag is set, don't interpolate (normal axis animation without layer switch)
         }
     }
 
@@ -578,74 +587,127 @@ export class OutlineEditor {
 
     _updateDraggedPoints(deltaX: number, deltaY: number): void {
         if (!this.layerData) return;
-        let selectedNodes = new Set(
-            this.selectedPoints.flatMap(({ contourIndex, nodeIndex }) => {
-                let contour = this.layerData!.shapes[contourIndex];
-                if (contour && 'nodes' in contour) {
-                    return [contour.nodes[nodeIndex]];
-                }
-                return [];
-            })
+
+        // Build a set of selected point identifiers to avoid moving them twice
+        const selectedPointKeys = new Set(
+            this.selectedPoints.map(
+                ({ contourIndex, nodeIndex }) => `${contourIndex}:${nodeIndex}`
+            )
         );
-        // If any node is a curve/cs, *remove* its handles as we will move them together
-        for (const node of selectedNodes) {
+
+        // Process each selected point
+        for (const { contourIndex, nodeIndex } of this.selectedPoints) {
+            const contour = this.layerData.shapes[contourIndex];
+            if (!contour || !('nodes' in contour)) continue;
+
+            const nodes = contour.nodes;
+            const node = nodes[nodeIndex];
+            if (!node) continue;
+
+            // If this is a curve point, remove its handles from selection (we'll move them together)
             if (node.type === 'c' || node.type === 'cs') {
-                if (node.prev && node.prev.type == 'o')
-                    selectedNodes.delete(node.prev);
-                if (node.next && node.next.type == 'o')
-                    selectedNodes.delete(node.next);
+                const prevIndex = (nodeIndex - 1 + nodes.length) % nodes.length;
+                const nextIndex = (nodeIndex + 1) % nodes.length;
+                const prevNode = nodes[prevIndex];
+                const nextNode = nodes[nextIndex];
+
+                if (prevNode?.type === 'o') {
+                    selectedPointKeys.delete(`${contourIndex}:${prevIndex}`);
+                }
+                if (nextNode?.type === 'o') {
+                    selectedPointKeys.delete(`${contourIndex}:${nextIndex}`);
+                }
             }
         }
 
-        for (const node of selectedNodes) {
+        // Move the selected nodes
+        for (const { contourIndex, nodeIndex } of this.selectedPoints) {
+            const key = `${contourIndex}:${nodeIndex}`;
+            if (!selectedPointKeys.has(key)) continue; // Skip if removed above
+
+            const contour = this.layerData.shapes[contourIndex];
+            if (!contour || !('nodes' in contour)) continue;
+
+            const nodes = contour.nodes;
+            const node = nodes[nodeIndex];
+            if (!node) continue;
+
             node.x += deltaX;
             node.y += deltaY;
+
+            // If this is a curve point, move its handles together
             if (node.type === 'c' || node.type === 'cs') {
-                // Move handles together with curve point
-                if (node.prev && node.prev.type == 'o') {
-                    node.prev.x += deltaX;
-                    node.prev.y += deltaY;
+                const prevIndex = (nodeIndex - 1 + nodes.length) % nodes.length;
+                const nextIndex = (nodeIndex + 1) % nodes.length;
+                const prevNode = nodes[prevIndex];
+                const nextNode = nodes[nextIndex];
+
+                if (prevNode?.type === 'o') {
+                    prevNode.x += deltaX;
+                    prevNode.y += deltaY;
                 }
-                if (node.next && node.next.type == 'o') {
-                    node.next.x += deltaX;
-                    node.next.y += deltaY;
+                if (nextNode?.type === 'o') {
+                    nextNode.x += deltaX;
+                    nextNode.y += deltaY;
                 }
             }
         }
 
-        // If we are dragging a single offcurve and it belongs to a smooth curve, the other
-        // handle needs to be moved symmetrically - that is, it should keep the same angle and distance
-        // from the curve point.
-        if (selectedNodes.size === 1 && [...selectedNodes][0].type === 'o') {
-            const offcurve = [...selectedNodes][0];
-            let curvePoint: PythonBabelfont.Node | null = null;
-            let otherHandle: PythonBabelfont.Node | null = null;
+        // Handle smooth curve constraint for single offcurve dragging
+        if (this.selectedPoints.length === 1) {
+            const { contourIndex, nodeIndex } = this.selectedPoints[0];
+            const contour = this.layerData.shapes[contourIndex];
+            if (contour && 'nodes' in contour) {
+                const nodes = contour.nodes;
+                const offcurve = nodes[nodeIndex];
 
-            // Find the associated curve point and the other handle
-            if (
-                offcurve.next &&
-                (offcurve.next.type === 'c' || offcurve.next.type === 'cs')
-            ) {
-                curvePoint = offcurve.next;
-                if (curvePoint.next && curvePoint.next !== offcurve) {
-                    otherHandle = curvePoint.next;
-                }
-            } else if (
-                offcurve.prev &&
-                (offcurve.prev.type === 'c' || offcurve.prev.type === 'cs')
-            ) {
-                curvePoint = offcurve.prev;
-                if (curvePoint.prev && curvePoint.prev !== offcurve) {
-                    otherHandle = curvePoint.prev;
-                }
-            }
+                if (offcurve?.type === 'o') {
+                    // Find the associated curve point and the other handle
+                    const nextIndex = (nodeIndex + 1) % nodes.length;
+                    const prevIndex =
+                        (nodeIndex - 1 + nodes.length) % nodes.length;
+                    const nextNode = nodes[nextIndex];
+                    const prevNode = nodes[prevIndex];
 
-            // If we found a smooth curve point and the other handle, move it symmetrically
-            if (curvePoint && otherHandle) {
-                const dx = offcurve.x - curvePoint.x;
-                const dy = offcurve.y - curvePoint.y;
-                otherHandle.x = curvePoint.x - dx;
-                otherHandle.y = curvePoint.y - dy;
+                    let curvePoint: PythonBabelfont.Node | null = null;
+                    let otherHandleIndex = -1;
+
+                    if (
+                        nextNode &&
+                        (nextNode.type === 'c' || nextNode.type === 'cs')
+                    ) {
+                        curvePoint = nextNode;
+                        const afterCurve = (nextIndex + 1) % nodes.length;
+                        if (
+                            afterCurve !== nodeIndex &&
+                            nodes[afterCurve]?.type === 'o'
+                        ) {
+                            otherHandleIndex = afterCurve;
+                        }
+                    } else if (
+                        prevNode &&
+                        (prevNode.type === 'c' || prevNode.type === 'cs')
+                    ) {
+                        curvePoint = prevNode;
+                        const beforeCurve =
+                            (prevIndex - 1 + nodes.length) % nodes.length;
+                        if (
+                            beforeCurve !== nodeIndex &&
+                            nodes[beforeCurve]?.type === 'o'
+                        ) {
+                            otherHandleIndex = beforeCurve;
+                        }
+                    }
+
+                    // If we found a smooth curve point and the other handle, move it symmetrically
+                    if (curvePoint && otherHandleIndex >= 0) {
+                        const otherHandle = nodes[otherHandleIndex];
+                        const dx = offcurve.x - curvePoint.x;
+                        const dy = offcurve.y - curvePoint.y;
+                        otherHandle.x = curvePoint.x - dx;
+                        otherHandle.y = curvePoint.y - dy;
+                    }
+                }
             }
         }
     }
@@ -1174,8 +1236,7 @@ export class OutlineEditor {
             return;
         }
 
-        // Don't interpolate if we just finished a layer switch animation
-        // The target layer data has already been restored
+        // Allow interpolation during active interpolation OR layer switch animation
         // Unless force=true (e.g., entering edit mode at interpolated position)
         if (!force && !this.isInterpolating && !this.isLayerSwitchAnimating) {
             console.log(
@@ -1221,14 +1282,30 @@ export class OutlineEditor {
             console.log(
                 'Calling LayerDataNormalizer.applyInterpolatedLayer...'
             );
+            console.log(
+                '[OutlineEditor] Before applyInterpolatedLayer - layerData.width:',
+                this.layerData?.width
+            );
             LayerDataNormalizer.applyInterpolatedLayer(
                 this,
                 interpolatedLayer,
                 location
             );
+            console.log(
+                '[OutlineEditor] After applyInterpolatedLayer - layerData.width:',
+                this.layerData?.width
+            );
 
             // Render with the new interpolated data
+            console.log(
+                '[OutlineEditor] About to render with layerData.width:',
+                this.layerData?.width
+            );
             this.glyphCanvas.render();
+            console.log(
+                '[OutlineEditor] After render - layerData.width:',
+                this.layerData?.width
+            );
 
             console.log(
                 `✅ Applied interpolated layer for "${this.currentGlyphName}"`
@@ -1395,6 +1472,11 @@ export class OutlineEditor {
         this.previousSelectedLayerId = null;
         this.previousVariationSettings = null;
 
+        console.log(
+            `[OutlineEditor] selectLayer called with layer:`,
+            layer,
+            `id: ${layer.id}, _master: ${layer._master}`
+        );
         this.selectedLayerId = layer.id!;
 
         // Immediately clear interpolated flag on existing data
@@ -1442,6 +1524,9 @@ export class OutlineEditor {
     }
 
     async onAnimationComplete() {
+        // Clear layer switch animation flag
+        this.isLayerSwitchAnimating = false;
+
         // Check if new variation settings match any layer
         if (this.active && this.glyphCanvas.fontData) {
             await this.autoSelectMatchingLayer();
@@ -1472,10 +1557,20 @@ export class OutlineEditor {
             ...this.glyphCanvas.axesManager!.variationSettings
         };
 
+        console.log(
+            '[OutlineEditor]',
+            'autoSelectMatchingLayer - current axis values:',
+            currentLocation
+        );
+
         // Check each layer to find a match
         for (const layer of layers) {
             const master = masters.find((m) => m.id === layer._master);
             if (!master || !master.location) {
+                console.log(
+                    '[OutlineEditor]',
+                    `  Skipping layer ${layer.id}: no master found for _master=${layer._master}`
+                );
                 continue;
             }
 
@@ -1489,6 +1584,11 @@ export class OutlineEditor {
             }
 
             if (allMatch) {
+                console.log(
+                    '[OutlineEditor]',
+                    `  ✓ MATCH found: layer ${layer.id} with master location`,
+                    master.location
+                );
                 // Found a matching layer - select it
                 this.selectedLayerId = layer.id;
 

@@ -68,19 +68,23 @@ export class LayerDataNormalizer {
      * @returns {Array} Normalized shapes array
      */
     static normalizeShapes(shapes: any[], isInterpolated: boolean): any[] {
-        return shapes.map((shape) => {
+        return shapes.map((shape, shapeIndex) => {
             if (shape.Path) {
+                // Parse nodes if they're a string (from babelfont-rs)
+                let parsedNodes = this.parseNodes(shape.Path.nodes);
+
+                // IMPORTANT: For non-interpolated data, replace string with array in place
+                // so object model and renderer share the same array reference.
+                // This ensures modifications through window.currentFontModel are immediately visible.
+                // For interpolated data, always use the freshly parsed nodes.
+                if (typeof shape.Path.nodes === 'string') {
+                    shape.Path.nodes = parsedNodes;
+                }
+
                 return {
-                    Path: {
-                        nodes: shape.Path.nodes,
-                        closed:
-                            shape.Path.closed !== undefined
-                                ? shape.Path.closed
-                                : true,
-                        format_specific: shape.Path.format_specific || {}
-                    },
-                    // For rendering: parse nodes if they're a string (from babelfont-rs)
-                    nodes: this.parseNodes(shape.Path.nodes),
+                    Path: shape.Path, // Reference the same Path object
+                    // For rendering: use the parsed nodes (ensures interpolated data uses new array)
+                    nodes: parsedNodes,
                     isInterpolated: isInterpolated
                 };
             } else if (shape.Component) {
@@ -134,12 +138,9 @@ export class LayerDataNormalizer {
                 nodesArray.push({
                     x: parseFloat(tokens[i]), // x
                     y: parseFloat(tokens[i + 1]), // y
-                    type: tokens[i + 2] as PythonBabelfont.NodeType, // type (m, l, o, c, q, ms, ls, etc.)
-                    next: null,
-                    prev: null
+                    type: tokens[i + 2] as PythonBabelfont.NodeType // type (m, l, o, c, q, ms, ls, etc.)
                 });
             }
-            this.relinkNodesArray(nodesArray);
 
             return nodesArray;
         }
@@ -230,35 +231,27 @@ export class LayerDataNormalizer {
         await outlineEditor.fetchLayerData();
     }
 
-    static stripCycles(
-        layerData: PythonBabelfont.Layer
-    ): PythonBabelfont.Layer {
-        for (const shape of layerData.shapes) {
-            if ('nodes' in shape) {
-                for (let node of shape.nodes) {
-                    node.next = null;
-                    node.prev = null;
-                }
-            }
-        }
-        return layerData;
+    /**
+     * Get the next node in a circular array
+     */
+    static getNextNode(
+        nodes: PythonBabelfont.Node[],
+        currentIndex: number
+    ): PythonBabelfont.Node | null {
+        if (!nodes || nodes.length === 0) return null;
+        const nextIndex = (currentIndex + 1) % nodes.length;
+        return nodes[nextIndex];
     }
 
-    static relinkCycles(layerData: PythonBabelfont.Layer) {
-        for (const shape of layerData.shapes) {
-            if ('nodes' in shape) {
-                const nodes = shape.nodes;
-                this.relinkNodesArray(nodes);
-            }
-        }
-    }
-
-    static relinkNodesArray(nodes: PythonBabelfont.Node[]) {
-        for (let i = 0; i < nodes.length; i++) {
-            let nextIx = (i + 1) % nodes.length;
-            let prevIx = (i - 1 + nodes.length) % nodes.length;
-            nodes[i].next = nodes[nextIx];
-            nodes[i].prev = nodes[prevIx];
-        }
+    /**
+     * Get the previous node in a circular array
+     */
+    static getPrevNode(
+        nodes: PythonBabelfont.Node[],
+        currentIndex: number
+    ): PythonBabelfont.Node | null {
+        if (!nodes || nodes.length === 0) return null;
+        const prevIndex = (currentIndex - 1 + nodes.length) % nodes.length;
+        return nodes[prevIndex];
     }
 }

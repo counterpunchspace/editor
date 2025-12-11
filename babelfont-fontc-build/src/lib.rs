@@ -291,9 +291,21 @@ fn manually_interpolate_layer(
                 }));
             },
             Shape::Path(_) => {
-                // For paths, we'd need to interpolate nodes manually
-                // For now, just clone from reference (this should be rare in component glyphs)
-                interpolated_shapes.push(reference_shape.clone());
+                // Collect paths from all masters for this shape
+                let master_paths: Vec<(&Shape, f64)> = masters.iter()
+                    .filter_map(|(layer, loc_value)| {
+                        layer.shapes.get(shape_idx).map(|s| (s, *loc_value))
+                    })
+                    .collect();
+                
+                if master_paths.len() >= 2 {
+                    // Interpolate the path nodes
+                    let interpolated_path = interpolate_path_shape(&master_paths, target_value)?;
+                    interpolated_shapes.push(interpolated_path);
+                } else {
+                    // If only one master or error, use reference
+                    interpolated_shapes.push(reference_shape.clone());
+                }
             },
             _ => {
                 interpolated_shapes.push(reference_shape.clone());
@@ -319,6 +331,68 @@ fn manually_interpolate_layer(
         master: babelfont::LayerType::FreeFloating,
         format_specific: Default::default(),
     })
+}
+
+/// Interpolate a Path shape across masters
+fn interpolate_path_shape(
+    master_paths: &[(&Shape, f64)],
+    target_value: f64,
+) -> Result<Shape, String> {
+    // Extract the Path from each shape
+    let paths_with_locations: Vec<(&babelfont::Path, f64)> = master_paths.iter()
+        .filter_map(|(shape, loc)| {
+            if let Shape::Path(path) = shape {
+                Some((path, *loc))
+            } else {
+                None
+            }
+        })
+        .collect();
+    
+    if paths_with_locations.len() < 2 {
+        return Err("Need at least 2 master paths to interpolate".to_string());
+    }
+    
+    let reference_path = paths_with_locations[0].0;
+    let node_count = reference_path.nodes.len();
+    
+    // Interpolate each node
+    let mut interpolated_nodes = Vec::with_capacity(node_count);
+    for node_idx in 0..node_count {
+        // Collect x, y values for this node from all masters
+        let x_values: Vec<(f64, f64)> = paths_with_locations.iter()
+            .filter_map(|(path, loc)| {
+                path.nodes.get(node_idx).map(|node| (node.x as f64, *loc))
+            })
+            .collect();
+        
+        let y_values: Vec<(f64, f64)> = paths_with_locations.iter()
+            .filter_map(|(path, loc)| {
+                path.nodes.get(node_idx).map(|node| (node.y as f64, *loc))
+            })
+            .collect();
+        
+        if x_values.len() != paths_with_locations.len() || y_values.len() != paths_with_locations.len() {
+            return Err(format!("Node count mismatch at index {}", node_idx));
+        }
+        
+        let interp_x = interpolate_values(&x_values, target_value)?;
+        let interp_y = interpolate_values(&y_values, target_value)?;
+        
+        let reference_node = &reference_path.nodes[node_idx];
+        interpolated_nodes.push(babelfont::Node {
+            x: interp_x,
+            y: interp_y,
+            nodetype: reference_node.nodetype.clone(),
+            smooth: reference_node.smooth,
+        });
+    }
+    
+    Ok(Shape::Path(babelfont::Path {
+        nodes: interpolated_nodes,
+        closed: reference_path.closed,
+        format_specific: Default::default(),
+    }))
 }
 
 /// Interpolate a scalar value across masters
