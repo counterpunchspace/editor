@@ -1,0 +1,589 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ShapeShifter - 80s Retro 3D</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Kablammo:MORF@0..60&display=swap" rel="stylesheet">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            overflow: hidden;
+            font-family: 'Courier New', monospace;
+            background: #000;
+            cursor: none;
+        }
+        
+        canvas {
+            display: block;
+            width: 100%;
+            height: 100vh;
+            background: #000;
+        }
+        
+        #title-container {
+            position: absolute;
+            pointer-events: none;
+            transform: translate(-50%, -50%);
+            text-align: center;
+            white-space: nowrap;
+        }
+        
+        .title-letter {
+            font-family: 'Kablammo', cursive;
+            font-weight: 400;
+            color: #ffffff;
+            display: inline-block;
+            font-variation-settings: 'MORF' 0;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="canvas"></canvas>
+    <div id="title-container"></div>
+    
+    <script>
+        // ============ SETTINGS ============
+        const settings = {
+            // Landscape
+            landscape: {
+                enabled: true,         // Turn grid floor on/off
+                gridSpeed: 1.0,        // Speed of grid movement (positive = away from viewer)
+                gridSpacing: 50,       // Distance between grid lines
+                color: '#00ff00',      // Neon green
+                lineWidth: 3,          // Thickness of grid lines
+                horizonY: 0.4,         // Horizon position (0-1, where 0.5 is center)
+                fadeStart: 0.3,        // Where fade begins (0-1 from bottom)
+                fadeEnd: 1.0           // Where fade ends (0-1 from bottom)
+            },
+            
+            // Floating Objects
+            floatingObjects: {
+                enabled: false,          // Turn objects on/off
+                sphere: {
+                    colors: ['#ff0080', '#ff00ff', '#8000ff', '#0080ff', '#00ffff', '#00ff80'],
+                    rotationSpeed: 0.003,
+                    basePosition: [-70, -25, -70],  // Base position before spacing applied
+                    size: 400
+                },
+                cube: {
+                    colors: ['#ff0000', '#ff8000', '#ffff00', '#80ff00', '#00ff00', '#00ff80'],
+                    rotationSpeed: 0.002,
+                    basePosition: [85, -30, -85],   // Base position before spacing applied
+                    size: 330
+                },
+                pyramid: {
+                    colors: ['#ff00ff', '#00ffff', '#ffff00', '#ff0000'],
+                    rotationSpeed: 0.0025,
+                    basePosition: [0, -20, -75],    // Base position before spacing applied
+                    size: 360
+                },
+                moveSpeed: 1,        // Speed objects move toward viewer
+                spacing: 10         // Multiplier for distance between objects
+            },
+            
+            // Camera
+            camera: {
+                fov: 800,               // Field of view (simulates 50mm lens with natural perspective)
+                mouseInfluence: 0.15,   // How much mouse affects vanishing point
+                lagFactor: 0.05         // Smoothness of camera follow (0.01 = slow, 0.2 = fast)
+            },
+            
+            // Title Animation
+            title: {
+                text: ['SHAPE', 'SHIFTER'],
+                fontSize: 288,          // Font size in pixels
+                lineHeight: 0.9,        // Line height multiplier
+                morphSpeedMin: 0.5,     // Minimum animation speed
+                morphSpeedMax: 1.0,     // Maximum animation speed
+                morphMin: 0,            // Minimum MORF axis value
+                morphMax: 60,           // Maximum MORF axis value
+                growthRate: 20        // How fast text grows (pixels per second)
+            },
+            
+            // Animation Control
+            animationDuration: 10       // Duration in seconds before stopping forward movement
+        };
+        
+        // ============ SETUP ============
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        const titleContainer = document.getElementById('title-container');
+        
+        let width, height;
+        let mouseX, mouseY;
+        let cameraX, cameraY;
+        let offset = 0;
+        const startTime = performance.now() * 0.001;
+        
+        // Setup canvas with hi-dpi support
+        function resizeCanvas() {
+            const dpr = window.devicePixelRatio || 1;
+            const rect = canvas.getBoundingClientRect();
+            
+            width = rect.width;
+            height = rect.height;
+            
+            canvas.width = width * dpr;
+            canvas.height = height * dpr;
+            
+            canvas.style.width = width + 'px';
+            canvas.style.height = height + 'px';
+            
+            ctx.scale(dpr, dpr);
+            
+            // Initialize camera position
+            if (!mouseX) {
+                mouseX = width / 2;
+                mouseY = height / 2;
+                cameraX = width / 2;
+                cameraY = height / 2;
+            }
+        }
+        
+        resizeCanvas();
+        
+        // Apply title styling from settings
+        titleContainer.style.lineHeight = settings.title.lineHeight;
+        
+        // ============ TITLE ANIMATION ============
+        class AnimatedLetter {
+            constructor(char) {
+                this.char = char;
+                this.speed = settings.title.morphSpeedMin + 
+                    Math.random() * (settings.title.morphSpeedMax - settings.title.morphSpeedMin);
+                this.offset = Math.random() * Math.PI * 2;
+                this.element = document.createElement('span');
+                this.element.className = 'title-letter';
+                this.element.textContent = char;
+                this.baseFontSize = settings.title.fontSize;
+            }
+            
+            update(time) {
+                const morph = settings.title.morphMin + 
+                    (settings.title.morphMax - settings.title.morphMin) * 
+                    (Math.sin(time * this.speed + this.offset) * 0.5 + 0.5);
+                this.element.style.fontVariationSettings = `'MORF' ${morph}`;
+                
+                // Grow font size over time
+                const currentSize = this.baseFontSize + (time * settings.title.growthRate);
+                this.element.style.fontSize = currentSize + 'px';
+            }
+        }
+        
+        // Create animated letters
+        const letters = [];
+        settings.title.text.forEach((word, lineIndex) => {
+            if (lineIndex > 0) {
+                const br = document.createElement('br');
+                titleContainer.appendChild(br);
+            }
+            for (let i = 0; i < word.length; i++) {
+                const letter = new AnimatedLetter(word[i]);
+                letters.push(letter);
+                titleContainer.appendChild(letter.element);
+            }
+        });
+        
+        // ============ VECTOR MATH ============
+        class Vec3 {
+            constructor(x, y, z) {
+                this.x = x;
+                this.y = y;
+                this.z = z;
+            }
+            
+            add(v) {
+                return new Vec3(this.x + v.x, this.y + v.y, this.z + v.z);
+            }
+            
+            subtract(v) {
+                return new Vec3(this.x - v.x, this.y - v.y, this.z - v.z);
+            }
+            
+            multiply(scalar) {
+                return new Vec3(this.x * scalar, this.y * scalar, this.z * scalar);
+            }
+            
+            dot(v) {
+                return this.x * v.x + this.y * v.y + this.z * v.z;
+            }
+            
+            cross(v) {
+                return new Vec3(
+                    this.y * v.z - this.z * v.y,
+                    this.z * v.x - this.x * v.z,
+                    this.x * v.y - this.y * v.x
+                );
+            }
+            
+            normalize() {
+                const len = Math.sqrt(this.x * this.x + this.y * this.y + this.z * this.z);
+                return len > 0 ? new Vec3(this.x / len, this.y / len, this.z / len) : new Vec3(0, 0, 0);
+            }
+            
+            length() {
+                return Math.sqrt(this.x * this.x + this.y * this.y + this.z * this.z);
+            }
+        }
+        
+        // ============ 3D PROJECTION ============
+        function project(point, vanishX, vanishY) {
+            const fov = settings.camera.fov;
+            if (point.z >= fov) {
+                // Point is behind or at camera, project to far distance
+                return { x: vanishX, y: vanishY, scale: 0 };
+            }
+            const scale = fov / (fov - point.z);
+            const x = point.x * scale + vanishX;
+            const y = point.y * scale + vanishY;
+            return { x, y, scale };
+        }
+        
+        // ============ ROTATION MATRICES ============
+        function rotateX(point, angle) {
+            const cos = Math.cos(angle);
+            const sin = Math.sin(angle);
+            return new Vec3(
+                point.x,
+                point.y * cos - point.z * sin,
+                point.y * sin + point.z * cos
+            );
+        }
+        
+        function rotateY(point, angle) {
+            const cos = Math.cos(angle);
+            const sin = Math.sin(angle);
+            return new Vec3(
+                point.x * cos + point.z * sin,
+                point.y,
+                -point.x * sin + point.z * cos
+            );
+        }
+        
+        function rotateZ(point, angle) {
+            const cos = Math.cos(angle);
+            const sin = Math.sin(angle);
+            return new Vec3(
+                point.x * cos - point.y * sin,
+                point.x * sin + point.y * cos,
+                point.z
+            );
+        }
+        
+        // ============ LIGHTING ============
+        function calculateShading(normal, lightPos, vertexPos) {
+            const lightDir = lightPos.subtract(vertexPos).normalize();
+            const intensity = Math.max(0, normal.dot(lightDir));
+            return 0.3 + intensity * 0.7; // Ambient + diffuse
+        }
+        
+        // ============ DRAW 3D GRID FLOOR ============
+        function drawGridPlane(vanishX, vanishY, offset) {
+            const spacing = settings.landscape.gridSpacing;
+            const horizonY = height * settings.landscape.horizonY;
+            
+            // Calculate perspective parameters - many more lines
+            const gridDepth = 40;  // More lines going into distance
+            const gridWidth = 30;  // More lines going left-right
+            
+            // Draw horizontal lines (receding into distance)
+            for (let i = 0; i <= gridDepth; i++) {
+                const t = i / gridDepth;
+                const animatedT = (i - (offset / spacing)) / gridDepth;
+                const wrappedT = ((animatedT % 1) + 1) % 1;  // Ensure positive wrap
+                
+                // Apply easing to create tighter spacing at bottom, larger at horizon
+                const easedT = Math.sqrt(wrappedT);
+                
+                // Y position interpolates from bottom of screen to horizon
+                const y = height - (height - horizonY) * easedT;
+                
+                // Skip lines too close to horizon
+                if (y <= horizonY + 5) continue;
+                
+                // Width of line gets narrower as it approaches horizon
+                const leftX = vanishX - (width * 0.8) * (1 - easedT);  // Spread wider
+                const rightX = vanishX + (width * 0.8) * (1 - easedT);  // Spread wider
+                
+                ctx.strokeStyle = settings.landscape.color;  // Solid green
+                ctx.lineWidth = settings.landscape.lineWidth * (0.3 + easedT * 0.7);
+                
+                ctx.beginPath();
+                ctx.moveTo(leftX, y);
+                ctx.lineTo(rightX, y);
+                ctx.stroke();
+            }
+            
+            // Draw vertical lines (going into distance)
+            for (let i = -gridWidth; i <= gridWidth; i++) {
+                // Skip the outer two lines on each side
+                if (Math.abs(i) === gridWidth || Math.abs(i) === gridWidth - 1) continue;
+                
+                const xRatio = i / gridWidth;
+                
+                // X position at bottom of screen - spread much wider
+                const bottomX = vanishX + xRatio * width * 1.2;
+                
+                // Lines converge to vanishing point
+                ctx.lineWidth = settings.landscape.lineWidth;
+                ctx.strokeStyle = settings.landscape.color;  // Solid green
+                
+                ctx.beginPath();
+                ctx.moveTo(bottomX, height);
+                ctx.lineTo(vanishX, horizonY);
+                ctx.stroke();
+            }
+        }
+        
+        // ============ 3D OBJECTS ============
+        class FloatingObject {
+            constructor(type, config) {
+                this.type = type;
+                // Apply spacing multiplier to base position
+                const spacing = settings.floatingObjects.spacing;
+                this.position = new Vec3(
+                    config.basePosition[0] * spacing,
+                    config.basePosition[1] * spacing,
+                    config.basePosition[2] * spacing
+                );
+                this.rotation = { x: 0, y: 0, z: 0 };
+                this.colors = config.colors;
+                this.rotationSpeed = config.rotationSpeed;
+                this.size = config.size;
+            }
+            
+            update(time) {
+                this.rotation.x += this.rotationSpeed;
+                this.rotation.y += this.rotationSpeed * 1.3;
+                this.rotation.z += this.rotationSpeed * 0.7;
+                
+                // Move toward viewer only if within animation duration
+                if (time < settings.animationDuration) {
+                    this.position.z += settings.floatingObjects.moveSpeed;
+                }
+            }
+            
+            getVertices() {
+                const s = this.size;
+                let vertices = [];
+                
+                if (this.type === 'cube') {
+                    vertices = [
+                        new Vec3(-s, -s, -s), new Vec3(s, -s, -s), new Vec3(s, s, -s), new Vec3(-s, s, -s),
+                        new Vec3(-s, -s, s), new Vec3(s, -s, s), new Vec3(s, s, s), new Vec3(-s, s, s)
+                    ];
+                } else if (this.type === 'pyramid') {
+                    vertices = [
+                        new Vec3(0, s * 1.5, 0),
+                        new Vec3(-s, -s, s),
+                        new Vec3(s, -s, s),
+                        new Vec3(0, -s, -s * 1.5)
+                    ];
+                } else if (this.type === 'sphere') {
+                    const rings = 8;
+                    const segments = 12;
+                    for (let ring = 0; ring <= rings; ring++) {
+                        const phi = (ring / rings) * Math.PI;
+                        for (let seg = 0; seg < segments; seg++) {
+                            const theta = (seg / segments) * Math.PI * 2;
+                            vertices.push(new Vec3(
+                                s * Math.sin(phi) * Math.cos(theta),
+                                s * Math.cos(phi),
+                                s * Math.sin(phi) * Math.sin(theta)
+                            ));
+                        }
+                    }
+                }
+                
+                // Apply rotations
+                return vertices.map(v => {
+                    v = rotateX(v, this.rotation.x);
+                    v = rotateY(v, this.rotation.y);
+                    v = rotateZ(v, this.rotation.z);
+                    return v.add(this.position);
+                });
+            }
+            
+            getFaces() {
+                if (this.type === 'cube') {
+                    return [
+                        [0, 1, 2, 3], // front
+                        [7, 6, 5, 4], // back
+                        [4, 5, 1, 0], // bottom
+                        [3, 2, 6, 7], // top
+                        [4, 0, 3, 7], // left
+                        [1, 5, 6, 2]  // right
+                    ];
+                } else if (this.type === 'pyramid') {
+                    return [
+                        [0, 2, 1], // front
+                        [0, 3, 2], // right
+                        [0, 1, 3], // left
+                        [1, 2, 3]  // base
+                    ];
+                } else if (this.type === 'sphere') {
+                    const faces = [];
+                    const segments = 12;
+                    const rings = 8;
+                    for (let ring = 0; ring < rings; ring++) {
+                        for (let seg = 0; seg < segments; seg++) {
+                            const a = ring * segments + seg;
+                            const b = ring * segments + ((seg + 1) % segments);
+                            const c = (ring + 1) * segments + ((seg + 1) % segments);
+                            const d = (ring + 1) * segments + seg;
+                            // Draw both triangles to ensure quad is filled
+                            faces.push([a, b, c, d]);
+                        }
+                    }
+                    return faces;
+                }
+                return [];
+            }
+            
+            draw(vanishX, vanishY, lightPos) {
+                const vertices = this.getVertices();
+                const faces = this.getFaces();
+                
+                // Calculate face depths for sorting (use average z)
+                const facesWithDepth = faces.map((face, idx) => {
+                    let totalZ = 0;
+                    for (let i = 0; i < face.length; i++) {
+                        totalZ += vertices[face[i]].z;
+                    }
+                    const avgZ = totalZ / face.length;
+                    return { face, depth: avgZ, idx };
+                });
+                
+                // Sort back to front (furthest first)
+                facesWithDepth.sort((a, b) => a.depth - b.depth);
+                
+                // Draw faces
+                facesWithDepth.forEach(({ face, idx }) => {
+                    const points = face.map(i => vertices[i]);
+                    
+                    // Skip faces with invalid vertices
+                    if (points.some(p => !p || p.z === undefined)) return;
+                    
+                    const projected = points.map(p => project(p, vanishX, vanishY));
+                    
+                    // Skip if any points failed to project properly
+                    if (projected.some(p => !p || isNaN(p.x) || isNaN(p.y))) return;
+                    
+                    // Calculate normal for lighting
+                    if (points.length >= 3) {
+                        const v1 = points[1].subtract(points[0]);
+                        const v2 = points[2].subtract(points[0]);
+                        const normal = v1.cross(v2).normalize();
+                        const faceCenter = points.reduce((sum, p) => sum.add(p), new Vec3(0, 0, 0))
+                            .multiply(1 / points.length);
+                        
+                        const shading = calculateShading(normal, lightPos, faceCenter);
+                        
+                        // Get color and apply shading
+                        const color = this.colors[idx % this.colors.length];
+                        const shadedColor = this.adjustBrightness(color, shading);
+                        
+                        ctx.fillStyle = shadedColor;
+                        ctx.strokeStyle = '#000';
+                        ctx.lineWidth = 2;
+                        
+                        ctx.beginPath();
+                        ctx.moveTo(projected[0].x, projected[0].y);
+                        for (let i = 1; i < projected.length; i++) {
+                            ctx.lineTo(projected[i].x, projected[i].y);
+                        }
+                        ctx.closePath();
+                        ctx.fill();
+                        ctx.stroke();
+                    }
+                });
+            }
+            
+            adjustBrightness(hex, factor) {
+                const r = parseInt(hex.slice(1, 3), 16);
+                const g = parseInt(hex.slice(3, 5), 16);
+                const b = parseInt(hex.slice(5, 7), 16);
+                
+                const nr = Math.round(r * factor);
+                const ng = Math.round(g * factor);
+                const nb = Math.round(b * factor);
+                
+                return `#${nr.toString(16).padStart(2, '0')}${ng.toString(16).padStart(2, '0')}${nb.toString(16).padStart(2, '0')}`;
+            }
+        }
+        
+        // ============ INITIALIZE OBJECTS ============
+        const objects = [
+            new FloatingObject('sphere', settings.floatingObjects.sphere),
+            new FloatingObject('cube', settings.floatingObjects.cube),
+            new FloatingObject('pyramid', settings.floatingObjects.pyramid)
+        ];
+        
+        // ============ ANIMATION LOOP ============
+        function animate() {
+            const time = performance.now() * 0.001; // Convert to seconds
+            
+            ctx.fillStyle = '#000';
+            ctx.fillRect(0, 0, width, height);
+            
+            // Smoothly interpolate camera position toward mouse
+            cameraX += (mouseX - cameraX) * settings.camera.lagFactor;
+            cameraY += (mouseY - cameraY) * settings.camera.lagFactor;
+            
+            // Calculate vanishing point with smooth camera influence
+            const vanishX = width / 2 + (cameraX - width / 2) * settings.camera.mouseInfluence;
+            const vanishY = height / 2 + (cameraY - height / 2) * settings.camera.mouseInfluence;
+            
+            // Light source at mouse position
+            const lightPos = new Vec3(
+                (mouseX - width / 2) / 50,
+                (mouseY - height / 2) / 50,
+                10
+            );
+            
+            // Update and draw grid plane
+            const elapsedTime = time - startTime;
+            if (settings.landscape.enabled) {
+                offset += settings.landscape.gridSpeed;
+                drawGridPlane(vanishX, vanishY, offset);
+            }
+            
+            // Update and draw floating objects
+            if (settings.floatingObjects.enabled) {
+                objects.forEach(obj => {
+                    obj.update(elapsedTime);
+                    obj.draw(vanishX, vanishY, lightPos);
+                });
+            }
+            
+            // Update title position and letter animations
+            titleContainer.style.left = cameraX + 'px';
+            titleContainer.style.top = cameraY + 'px';
+            letters.forEach(letter => letter.update(time));
+            
+            requestAnimationFrame(animate);
+        }
+        
+        // ============ EVENT LISTENERS ============
+        window.addEventListener('mousemove', (e) => {
+            mouseX = e.clientX;
+            mouseY = e.clientY;
+        });
+        
+        window.addEventListener('resize', () => {
+            resizeCanvas();
+        });
+        
+        // ============ START ============
+        animate();
+    </script>
+</body>
+</html>
