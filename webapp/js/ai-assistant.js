@@ -988,9 +988,9 @@ class AIAssistant {
 
     openCodeInEditor(code) {
         // Get the script editor instance
-        if (window.scriptEditor) {
+        if (window.scriptEditor && window.scriptEditor.editor) {
             // Set the code in the editor
-            window.scriptEditor.setValue(code, -1); // -1 moves cursor to start
+            window.scriptEditor.editor.setValue(code, -1); // -1 moves cursor to start
 
             // Focus the script editor view
             const scriptView = document.getElementById('view-scripts');
@@ -1521,28 +1521,29 @@ ${errorTraceback}
     }
 
     async callClaude(userPrompt, previousError = null, attemptNumber = 0) {
-        // Get API documentation from context (cached after first generation)
+        // Get API documentation from JavaScript object model (cached after first generation)
         if (!this.cachedApiDocs) {
             try {
+                // Fetch and load the generate_api_docs module
+                const response = await fetch('./py/generate_api_docs.py');
+                const code = await response.text();
+                
+                // Execute the module code
+                await window.pyodide.runPython(code);
+                
+                // Call generate_docs()
                 this.cachedApiDocs = await window.pyodide.runPythonAsync(`
-import context
-context.generate_all_docs()
+generate_docs()
                 `);
                 console.log(
                     '[AIAssistant]',
-                    'Context API documentation cached'
+                    'Font Object Model API documentation generated and cached'
                 );
             } catch (error) {
-                console.warn(
-                    'Could not generate context API docs, using fallback:',
+                console.fail(
+                    'Could not generate API docs, using fallback:',
                     error
                 );
-                this.cachedApiDocs = `API documentation not available. Use standard context attributes:
-- font.glyphs, font.names, font.masters, etc.
-- glyph.name, glyph.width, glyph.layers
-- layer.paths, layer.width
-- path.nodes
-- node.x, node.y, node.type`;
             }
         }
 
@@ -1565,7 +1566,7 @@ PRIMARY FOCUS:
 
 CRITICAL RULES FOR SCRIPT MODE:
 1. Generate complete, standalone Python scripts that can be saved and reused
-2. ALWAYS use CurrentFont() and assign it to the "font" variable to get the main font object
+2. Get the main font object from JavaScript using \`from js import window\` and then: \`font = window.currentFontModel\`
 3. Scripts should be self-contained and well-documented
 4. Include proper error handling and user feedback via print statements
 5. The context-py API documentation below is provided for reference when writing scripts
@@ -1575,7 +1576,7 @@ CRITICAL RULES FOR SCRIPT MODE:
 You are working directly on the user's currently open font. Generate Python code that will be executed immediately on the active font using the context-py library.
 
 CRITICAL RULES FOR FONT MODE:
-1. ALWAYS use CurrentFont() and assign it to the "font" variable to get the main font object
+1. Get the main font object from JavaScript using \`from js import window\` and then: \`font = window.currentFontModel\`
 2. Only set data in the font object if there is a clear instruction to do so in the user prompt, otherwise just read or analyze data
 3. Code will be executed immediately - keep it focused and efficient
 4. Always include a summary print statement at the end indicating what was done`;
