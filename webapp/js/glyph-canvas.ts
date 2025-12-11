@@ -10,6 +10,7 @@ import * as opentype from 'opentype.js';
 import fontManager from './font-manager';
 import { OutlineEditor } from './glyph-canvas/outline-editor';
 import { Logger } from './logger';
+import APP_SETTINGS from './settings';
 
 let console: Logger = new Logger('GlyphCanvas', true);
 
@@ -1237,7 +1238,7 @@ class GlyphCanvas {
         // Don't start a new animation if one is already in progress
         if (this.zoomAnimation.active) return;
 
-        const settings = window.APP_SETTINGS.OUTLINE_EDITOR;
+        const settings = APP_SETTINGS.OUTLINE_EDITOR;
         const zoomFactor = zoomIn
             ? settings.ZOOM_KEYBOARD_FACTOR
             : 1 / settings.ZOOM_KEYBOARD_FACTOR;
