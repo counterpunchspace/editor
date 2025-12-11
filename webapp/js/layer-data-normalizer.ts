@@ -68,22 +68,23 @@ export class LayerDataNormalizer {
      * @returns {Array} Normalized shapes array
      */
     static normalizeShapes(shapes: any[], isInterpolated: boolean): any[] {
-        return shapes.map((shape) => {
+        return shapes.map((shape, shapeIndex) => {
             if (shape.Path) {
                 // Parse nodes if they're a string (from babelfont-rs)
-                const parsedNodes = this.parseNodes(shape.Path.nodes);
+                let parsedNodes = this.parseNodes(shape.Path.nodes);
 
-                // IMPORTANT: Replace string with array in place so object model and renderer
-                // share the same array reference. This ensures modifications through
-                // window.currentFontModel are immediately visible to the canvas.
+                // IMPORTANT: For non-interpolated data, replace string with array in place 
+                // so object model and renderer share the same array reference. 
+                // This ensures modifications through window.currentFontModel are immediately visible.
+                // For interpolated data, always use the freshly parsed nodes.
                 if (typeof shape.Path.nodes === 'string') {
                     shape.Path.nodes = parsedNodes;
                 }
 
                 return {
                     Path: shape.Path, // Reference the same Path object
-                    // For rendering: use the same array (not a copy)
-                    nodes: shape.Path.nodes,
+                    // For rendering: use the parsed nodes (ensures interpolated data uses new array)
+                    nodes: parsedNodes,
                     isInterpolated: isInterpolated
                 };
             } else if (shape.Component) {

@@ -40,6 +40,24 @@ class OpenedFont {
     constructor(babelfontJson: string, path: string) {
         this.babelfontJson = babelfontJson;
         this.babelfontData = JSON.parse(babelfontJson);
+
+        // Normalize layer master references from dict format to _master field
+        // Babelfont format stores: master: { DefaultForMaster: "id" } or { AssociatedWithMaster: "id" }
+        // We need: _master: "id"
+        for (const glyph of this.babelfontData.glyphs || []) {
+            for (const layer of glyph.layers || []) {
+                if (layer.master && typeof layer.master === 'object') {
+                    // Extract master ID from dict format
+                    const masterDict = layer.master;
+                    if ('DefaultForMaster' in masterDict) {
+                        layer._master = masterDict.DefaultForMaster;
+                    } else if ('AssociatedWithMaster' in masterDict) {
+                        layer._master = masterDict.AssociatedWithMaster;
+                    }
+                }
+            }
+        }
+
         this.fontModel = Font.fromData(this.babelfontData); // Create object model
         this.path = path;
         this.name =
@@ -628,12 +646,25 @@ class FontManager {
         // Get layer data for a specific glyph and layer ID
         let glyph = this.getGlyph(glyphName);
         if (!glyph) {
+            console.warn(
+                `[FontManager] getLayer: glyph "${glyphName}" not found`
+            );
             return null;
         }
         let layer = glyph.layers.find((l) => l.id === layerId);
         if (!layer) {
+            console.warn(
+                `[FontManager] getLayer: layer ID "${layerId}" not found in glyph "${glyphName}"`,
+                {
+                    availableLayerIds: glyph.layers.map((l) => l.id),
+                    requestedLayerId: layerId
+                }
+            );
             return null;
         }
+        console.log(
+            `[FontManager] getLayer: Found layer "${layerId}" for glyph "${glyphName}"`
+        );
         return layer;
     }
 
@@ -700,15 +731,26 @@ class FontManager {
         }
         let layersData = [];
         for (let layer of glyph.layers) {
+            // Only include non-background layers that are DEFAULT layers for their master
+            // (not AssociatedWithMaster layers, which are intermediate/alternate designs)
             if (!layer.is_background) {
-                let master_id = layer._master || layer.id;
-                if (master_id && master_ids.has(master_id)) {
-                    layersData.push({
-                        id: layer.id as string,
-                        name: layer.name || 'Default',
-                        _master: master_id,
-                        location: layer.location
-                    });
+                // Check if this is a default layer (has DefaultForMaster in master dict)
+                const layerAny = layer as any;
+                const isDefaultLayer =
+                    layerAny.master &&
+                    typeof layerAny.master === 'object' &&
+                    'DefaultForMaster' in layerAny.master;
+
+                if (isDefaultLayer) {
+                    let master_id = layer._master || layer.id;
+                    if (master_id && master_ids.has(master_id)) {
+                        layersData.push({
+                            id: layer.id as string,
+                            name: layer.name || 'Default',
+                            _master: master_id,
+                            location: layer.location
+                        });
+                    }
                 }
             }
         }

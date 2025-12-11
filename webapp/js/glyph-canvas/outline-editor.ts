@@ -348,17 +348,19 @@ export class OutlineEditor {
     }
 
     animationInProgress() {
-        // Interpolate during slider dragging OR layer switch animation
-        // But NOT after layer switch animation has ended
+        // Interpolate during both slider dragging AND layer switch animations
+        console.log('[OutlineEditor] animationInProgress called:', {
+            active: this.active,
+            hasGlyphName: !!this.currentGlyphName,
+            isInterpolating: this.isInterpolating,
+            isLayerSwitchAnimating: this.isLayerSwitchAnimating
+        });
         if (this.active && this.currentGlyphName) {
-            if (this.isInterpolating) {
-                // Slider being dragged
-                this.interpolateCurrentGlyph();
-            } else if (this.isLayerSwitchAnimating) {
-                // Layer switch animation in progress - interpolate at current animated position
+            if (this.isInterpolating || this.isLayerSwitchAnimating) {
+                // Interpolate at current position for smooth animation
+                console.log('[OutlineEditor] Calling interpolateCurrentGlyph from animationInProgress');
                 this.interpolateCurrentGlyph();
             }
-            // If neither flag is set, don't interpolate (normal axis animation without layer switch)
         }
     }
 
@@ -1232,8 +1234,7 @@ export class OutlineEditor {
             return;
         }
 
-        // Don't interpolate if we just finished a layer switch animation
-        // The target layer data has already been restored
+        // Allow interpolation during active interpolation OR layer switch animation
         // Unless force=true (e.g., entering edit mode at interpolated position)
         if (!force && !this.isInterpolating && !this.isLayerSwitchAnimating) {
             console.log(
@@ -1279,14 +1280,18 @@ export class OutlineEditor {
             console.log(
                 'Calling LayerDataNormalizer.applyInterpolatedLayer...'
             );
+            console.log('[OutlineEditor] Before applyInterpolatedLayer - layerData.width:', this.layerData?.width);
             LayerDataNormalizer.applyInterpolatedLayer(
                 this,
                 interpolatedLayer,
                 location
             );
+            console.log('[OutlineEditor] After applyInterpolatedLayer - layerData.width:', this.layerData?.width);
 
             // Render with the new interpolated data
+            console.log('[OutlineEditor] About to render with layerData.width:', this.layerData?.width);
             this.glyphCanvas.render();
+            console.log('[OutlineEditor] After render - layerData.width:', this.layerData?.width);
 
             console.log(
                 `✅ Applied interpolated layer for "${this.currentGlyphName}"`
@@ -1453,6 +1458,11 @@ export class OutlineEditor {
         this.previousSelectedLayerId = null;
         this.previousVariationSettings = null;
 
+        console.log(
+            `[OutlineEditor] selectLayer called with layer:`,
+            layer,
+            `id: ${layer.id}, _master: ${layer._master}`
+        );
         this.selectedLayerId = layer.id!;
 
         // Immediately clear interpolated flag on existing data
@@ -1500,6 +1510,9 @@ export class OutlineEditor {
     }
 
     async onAnimationComplete() {
+        // Clear layer switch animation flag
+        this.isLayerSwitchAnimating = false;
+        
         // Check if new variation settings match any layer
         if (this.active && this.glyphCanvas.fontData) {
             await this.autoSelectMatchingLayer();
@@ -1530,10 +1543,20 @@ export class OutlineEditor {
             ...this.glyphCanvas.axesManager!.variationSettings
         };
 
+        console.log(
+            '[OutlineEditor]',
+            'autoSelectMatchingLayer - current axis values:',
+            currentLocation
+        );
+
         // Check each layer to find a match
         for (const layer of layers) {
             const master = masters.find((m) => m.id === layer._master);
             if (!master || !master.location) {
+                console.log(
+                    '[OutlineEditor]',
+                    `  Skipping layer ${layer.id}: no master found for _master=${layer._master}`
+                );
                 continue;
             }
 
@@ -1547,6 +1570,11 @@ export class OutlineEditor {
             }
 
             if (allMatch) {
+                console.log(
+                    '[OutlineEditor]',
+                    `  ✓ MATCH found: layer ${layer.id} with master location`,
+                    master.location
+                );
                 // Found a matching layer - select it
                 this.selectedLayerId = layer.id;
 

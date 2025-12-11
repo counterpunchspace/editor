@@ -1097,11 +1097,15 @@ export class GlyphCanvasRenderer {
             // Nodes are in a string format from to_dict() - parse them
             // Don't mutate the original shape - just use the parsed nodes for rendering
             nodes = LayerDataNormalizer.parseNodes(shape.Path.nodes);
+            console.log('[Renderer] Parsed from shape.Path.nodes, first coords:', nodes?.[0]?.x, nodes?.[0]?.y);
         }
 
         if (!nodes || nodes.length === 0) {
             return;
         }
+        
+        // Log first node coordinates to track interpolation
+        console.log('[Renderer] Final nodes to render, first coords:', nodes[0]?.x, nodes[0]?.y);
 
         // Draw the outline path
         this.ctx.beginPath();
