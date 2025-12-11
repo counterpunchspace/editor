@@ -1007,9 +1007,10 @@ class AIAssistant {
 
     showDiffReview(newCode, markdownText = '') {
         // Get current code from script editor
-        const oldCode = window.scriptEditor
-            ? window.scriptEditor.getValue()
-            : '';
+        const oldCode =
+            window.scriptEditor && window.scriptEditor.editor
+                ? window.scriptEditor.editor.getValue()
+                : '';
 
         // Store new code for later use
         this.pendingCode = newCode;
