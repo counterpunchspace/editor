@@ -1410,9 +1410,13 @@ class GlyphCanvas {
             return;
         }
 
-        // Prevent all other text editing and cursor movement in glyph edit mode
+        // In glyph edit mode: only prevent default for keys we handle
+        // Let browser shortcuts (Cmd+R, Cmd+T, Cmd+W, etc.) pass through
         if (this.outlineEditor.active) {
-            e.preventDefault();
+            // Only prevent default for non-modifier keys and arrow keys that we handle
+            if (!e.metaKey && !e.ctrlKey) {
+                e.preventDefault();
+            }
             return;
         }
 

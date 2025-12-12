@@ -1,6 +1,6 @@
 # Unreleased
 
-- **Add items here** for the next release (Replace this comment)
+- **Keyboard Shortcuts Fix**: Fixed canvas keyboard handling to allow browser shortcuts (Cmd+R, Cmd+T, Cmd+W, etc.) to work when canvas has focus. Only app-specific shortcuts are now intercepted, preventing default behavior.
 
 # v0.1.1a
 

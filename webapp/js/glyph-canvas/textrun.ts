@@ -1202,7 +1202,8 @@ export class TextRunEditor {
             return;
         }
 
-        if (e.key === 'ArrowLeft') {
+        // Arrow keys without modifier - cursor movement
+        if (e.key === 'ArrowLeft' && !e.metaKey && !e.ctrlKey) {
             e.preventDefault();
             if (e.shiftKey) {
                 this.moveCursorLeftWithSelection();
@@ -1210,7 +1211,10 @@ export class TextRunEditor {
                 this.clearSelection();
                 this.moveCursorLeft();
             }
-        } else if (e.key === 'ArrowRight') {
+            return;
+        }
+        
+        if (e.key === 'ArrowRight' && !e.metaKey && !e.ctrlKey) {
             e.preventDefault();
             if (e.shiftKey) {
                 this.moveCursorRightWithSelection();
@@ -1218,13 +1222,24 @@ export class TextRunEditor {
                 this.clearSelection();
                 this.moveCursorRight();
             }
-        } else if (e.key === 'Backspace') {
+            return;
+        }
+        
+        // Backspace and Delete
+        if (e.key === 'Backspace') {
             e.preventDefault();
             this.deleteBackward();
-        } else if (e.key === 'Delete') {
+            return;
+        }
+        
+        if (e.key === 'Delete') {
             e.preventDefault();
             this.deleteForward();
-        } else if (e.key === 'Home') {
+            return;
+        }
+        
+        // Home and End keys
+        if (e.key === 'Home') {
             e.preventDefault();
             if (e.shiftKey) {
                 this.moveToStartWithSelection();
@@ -1234,7 +1249,10 @@ export class TextRunEditor {
                 this.updateCursorVisualPosition();
                 this.call('cursormoved');
             }
-        } else if (e.key === 'End') {
+            return;
+        }
+        
+        if (e.key === 'End') {
             e.preventDefault();
             if (e.shiftKey) {
                 this.moveToEndWithSelection();
@@ -1244,11 +1262,17 @@ export class TextRunEditor {
                 this.updateCursorVisualPosition();
                 this.call('cursormoved');
             }
-        } else if (e.key.length === 1 && !e.ctrlKey && !e.metaKey) {
-            // Regular character input
+            return;
+        }
+        
+        // Regular character input (only if not a modifier key combo)
+        if (e.key.length === 1 && !e.ctrlKey && !e.metaKey) {
             e.preventDefault();
             this.insertText(e.key);
+            return;
         }
+        
+        // Don't prevent default for unhandled keys - let browser shortcuts work
     }
 
     destroyHarfbuzz() {
