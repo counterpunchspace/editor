@@ -1,5 +1,6 @@
 # Unreleased
 
+- **Pinch-to-Zoom**: Added trackpad pinch-to-zoom support for canvas with dedicated `ZOOM_SPEED_PINCH` setting (default: 0.01). Pinch gestures now zoom in/out at cursor position, separate from Alt+wheel behavior for better control.
 - **Keyboard Shortcuts Fix**: Fixed canvas keyboard handling to allow browser shortcuts (Cmd+R, Cmd+T, Cmd+W, etc.) to work when canvas has focus. Only app-specific shortcuts are now intercepted, preventing default behavior.
 
 # v0.1.1a

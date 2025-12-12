@@ -541,18 +541,27 @@ export class ViewportManager {
             isTrackpad,
             detectedDevice: this.detectedDevice,
             shiftKey: e.shiftKey,
-            altKey: e.altKey
+            altKey: e.altKey,
+            ctrlKey: e.ctrlKey
         });
 
-        // Alt key + wheel = zoom
-        if (e.altKey) {
+        // Pinch-to-zoom on trackpad (ctrlKey set by browser) OR Alt key + wheel = zoom
+        if (e.ctrlKey || e.altKey) {
             const mouseX = e.clientX - canvasRect.left;
             const mouseY = e.clientY - canvasRect.top;
 
-            // Determine zoom speed based on input device
-            const zoomSpeed = isTrackpad
-                ? APP_SETTINGS.OUTLINE_EDITOR.ZOOM_SPEED_TRACKPAD
-                : APP_SETTINGS.OUTLINE_EDITOR.ZOOM_SPEED_MOUSE;
+            // Determine zoom speed based on input method
+            // Pinch gestures (ctrlKey) get their own setting for better control
+            let zoomSpeed;
+            if (e.ctrlKey) {
+                // Pinch-to-zoom gesture
+                zoomSpeed = APP_SETTINGS.OUTLINE_EDITOR.ZOOM_SPEED_PINCH;
+            } else {
+                // Alt+wheel/scroll
+                zoomSpeed = isTrackpad
+                    ? APP_SETTINGS.OUTLINE_EDITOR.ZOOM_SPEED_TRACKPAD
+                    : APP_SETTINGS.OUTLINE_EDITOR.ZOOM_SPEED_MOUSE;
+            }
 
             // Normalize deltaY for consistent zoom behavior
             // Mouse wheels send large discrete values (e.g., ±100-120)
@@ -578,6 +587,7 @@ export class ViewportManager {
                 zoomSpeed,
                 zoomDelta,
                 zoomFactor: zoomFactor.toFixed(4),
+                isPinch: e.ctrlKey,
                 isTrackpad
             });
 

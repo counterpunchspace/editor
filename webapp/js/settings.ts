@@ -59,8 +59,9 @@ const APP_SETTINGS = {
 
         // Zoom settings
         ZOOM_SPEED_MOUSE: 0.015, // zoom speed for mouse wheel (per deltaY unit)
-        ZOOM_SPEED_TRACKPAD: 0.005, // zoom speed for trackpad (per deltaY unit)
-        ZOOM_KEYBOARD_FACTOR: 2.0, // zoom factor for keyboard zoom (Cmd +/-)
+        ZOOM_SPEED_TRACKPAD: 0.005, // zoom speed for trackpad scroll (per deltaY unit)
+        ZOOM_SPEED_PINCH: 0.01, // zoom speed for trackpad pinch gesture (per deltaY unit)
+        ZOOM_KEYBOARD_FACTOR: 1.5, // zoom factor for keyboard zoom (Cmd +/-)
 
         // Pan settings
         PAN_SPEED_TRACKPAD: 1.0, // trackpad pan speed (vertical and horizontal)
