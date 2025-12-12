@@ -155,6 +155,10 @@ declare global {
             get editor(): any; // Ace Editor instance
         };
 
+        // From index.html (inline script)
+        isDevelopment: () => boolean;
+        isProduction: () => boolean;
+
         // From settings.js
         APP_SETTINGS: Record<string, any>;
 

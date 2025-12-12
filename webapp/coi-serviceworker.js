@@ -17,46 +17,20 @@ const PRECACHE_ASSETS = [
     // CSS
     './css/style.css',
 
-    // JavaScript files
-    './js/ai-assistant.js',
-    './js/auto-compile-manager.js',
-    './js/bidi-js.js',
-    './js/cache-manager.js',
-    './js/compile-button.js',
-    './js/file-browser.js',
-    './js/font-compilation.js',
-    './js/font-dropdown.js',
-    './js/font-manager.js',
+    // JavaScript bundles (webpack output)
+    './js/bootstrap.js',
     './js/fontc-worker.js',
-    './js/fonteditor.js',
-    './js/glyph-canvas.js',
-    './js/keyboard-navigation.js',
-    './js/loading-animation.js',
-    './js/matplotlib-handler.js',
-    './js/memory-monitor.js',
-    './js/pyodide-official-console.js',
-    './js/python-execution-wrapper.js',
-    './js/python-ui-sync.js',
-    './js/resizer.js',
-    './js/save-button.js',
-    './js/script-editor.js',
-    './js/settings.js',
-    './js/sound-preloader.js',
-    './js/theme-switcher.js',
-    './js/view-settings.js',
+    './js/node_modules_idb-keyval_dist_index_js.js',
 
     // Python files
     './py/fonteditor.py',
+    './py/generate_api_docs.py',
 
     // WASM files (critical for font compilation)
     './wasm-dist/babelfont_fontc_web.js',
     './wasm-dist/babelfont_fontc_web_bg.wasm',
     './wasm-dist/babelfont_fontc_web_bg.wasm.d.ts',
     './wasm-dist/babelfont_fontc_web.d.ts',
-    './wasm-dist/fontc_web.js',
-    './wasm-dist/fontc_web_bg.wasm',
-    './wasm-dist/fontc_web_bg.wasm.d.ts',
-    './wasm-dist/fontc_web.d.ts',
 
     // Sound assets
     './assets/sounds/attention.wav',

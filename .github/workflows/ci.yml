@@ -24,6 +24,9 @@ jobs:
       - name: Install dependencies in webapp
         run: npm install --prefix webapp
 
+      - name: Build webapp with webpack
+        run: npm run build --prefix webapp
+
       - name: Run tests in webapp
         run: npm test --prefix webapp
 

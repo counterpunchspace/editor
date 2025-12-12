@@ -1,0 +1,136 @@
+<!doctype html>
+<html>
+    <head>
+        <title>Service Worker Debug</title>
+        <style>
+            body {
+                font-family: monospace;
+                padding: 20px;
+            }
+            button {
+                margin: 5px;
+                padding: 10px;
+                cursor: pointer;
+            }
+            pre {
+                background: #f0f0f0;
+                padding: 10px;
+                border-radius: 5px;
+            }
+            .success {
+                color: green;
+            }
+            .error {
+                color: red;
+            }
+        </style>
+    </head>
+    <body>
+        <h1>Service Worker Debug Tools</h1>
+
+        <div>
+            <button onclick="checkStatus()">Check Status</button>
+            <button onclick="unregisterAll()">Unregister All</button>
+            <button onclick="clearCaches()">Clear All Caches</button>
+            <button onclick="reloadPage()">Reload Page</button>
+        </div>
+
+        <h2>Status:</h2>
+        <pre id="status">Click "Check Status" to see service worker info</pre>
+
+        <h2>Console:</h2>
+        <pre id="console"></pre>
+
+        <script>
+            const statusEl = document.getElementById('status');
+            const consoleEl = document.getElementById('console');
+
+            function log(msg, isError = false) {
+                const timestamp = new Date().toLocaleTimeString();
+                const className = isError ? 'error' : 'success';
+                consoleEl.innerHTML += `<span class="${className}">[${timestamp}] ${msg}</span>\n`;
+                console.log(msg);
+            }
+
+            async function checkStatus() {
+                try {
+                    const registrations =
+                        await navigator.serviceWorker.getRegistrations();
+                    let status = `Service Workers Found: ${registrations.length}\n\n`;
+
+                    registrations.forEach((reg, i) => {
+                        status += `[${i + 1}] Scope: ${reg.scope}\n`;
+                        status += `    Installing: ${reg.installing ? 'YES' : 'NO'}\n`;
+                        status += `    Waiting: ${reg.waiting ? 'YES' : 'NO'}\n`;
+                        status += `    Active: ${reg.active ? 'YES' : 'NO'}\n`;
+                        if (reg.active) {
+                            status += `    State: ${reg.active.state}\n`;
+                            status += `    Script URL: ${reg.active.scriptURL}\n`;
+                        }
+                        status += '\n';
+                    });
+
+                    const caches = await window.caches.keys();
+                    status += `\nCaches Found: ${caches.length}\n`;
+                    caches.forEach((cacheName, i) => {
+                        status += `  ${i + 1}. ${cacheName}\n`;
+                    });
+
+                    statusEl.textContent = status;
+                    log('Status checked');
+                } catch (err) {
+                    log('Error checking status: ' + err.message, true);
+                }
+            }
+
+            async function unregisterAll() {
+                try {
+                    const registrations =
+                        await navigator.serviceWorker.getRegistrations();
+                    log(
+                        `Unregistering ${registrations.length} service worker(s)...`
+                    );
+
+                    for (const reg of registrations) {
+                        const success = await reg.unregister();
+                        log(
+                            `Unregistered ${reg.scope}: ${success ? 'SUCCESS' : 'FAILED'}`,
+                            !success
+                        );
+                    }
+
+                    log(
+                        'All service workers unregistered. Reload page to see effect.'
+                    );
+                    await checkStatus();
+                } catch (err) {
+                    log('Error unregistering: ' + err.message, true);
+                }
+            }
+
+            async function clearCaches() {
+                try {
+                    const cacheNames = await window.caches.keys();
+                    log(`Clearing ${cacheNames.length} cache(s)...`);
+
+                    for (const cacheName of cacheNames) {
+                        await caches.delete(cacheName);
+                        log(`Cleared cache: ${cacheName}`);
+                    }
+
+                    log('All caches cleared.');
+                    await checkStatus();
+                } catch (err) {
+                    log('Error clearing caches: ' + err.message, true);
+                }
+            }
+
+            function reloadPage() {
+                window.location.reload();
+            }
+
+            // Auto-check on load
+            checkStatus();
+        </script>
+    </body>
+</html>

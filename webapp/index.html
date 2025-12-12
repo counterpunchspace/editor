@@ -12,14 +12,57 @@
         <meta name="apple-mobile-web-app-status-bar-style" content="black" />
         <meta name="apple-mobile-web-app-title" content="contxt" />
         <title>contxt</title>
+        <!-- Development/Production detection helper (matches settings.ts logic) -->
+        <script>
+            // Shared helper functions to detect development/production mode
+            // This is the single source of truth - settings.ts references these
+            window.isDevelopment = function () {
+                // URL parameter override for testing production mode locally
+                const urlParams = new URLSearchParams(window.location.search);
+                if (urlParams.has('production')) {
+                    console.log(
+                        '[isDevelopment] URL param ?production detected - forcing production mode'
+                    );
+                    return false; // Force production mode
+                }
+                if (urlParams.has('development')) {
+                    console.log(
+                        '[isDevelopment] URL param ?development detected - forcing development mode'
+                    );
+                    return true; // Force development mode
+                }
+
+                const hostname = window.location.hostname;
+                const port = window.location.port;
+                const isDev =
+                    hostname === 'localhost' ||
+                    hostname === '127.0.0.1' ||
+                    port === '8000' || // webpack dev server
+                    port === '5500'; // live server
+                console.log(
+                    `[isDevelopment] Auto-detected: ${isDev ? 'development' : 'production'} (hostname: ${hostname}, port: ${port})`
+                );
+                return isDev;
+            };
+            window.isProduction = function () {
+                return !window.isDevelopment();
+            };
+        </script>
         <!-- COI Service Worker for GitHub Pages (adds COOP/COEP headers) -->
         <!-- In development (localhost:8000), skip service worker - webpack provides headers -->
         <script>
-            if (window.location.hostname === 'localhost' && window.location.port === '8000') {
-                console.log('[Init] Development mode - skipping service worker (webpack provides headers)');
+            if (window.isDevelopment()) {
+                console.log(
+                    '[Init] Development mode - skipping service worker (webpack provides headers)'
+                );
             } else {
+                console.log('[Init] Production mode - loading service worker');
                 const script = document.createElement('script');
                 script.src = 'coi-serviceworker.js';
+                script.onload = () =>
+                    console.log('[Init] Service worker script loaded');
+                script.onerror = (e) =>
+                    console.error('[Init] Failed to load service worker:', e);
                 document.head.appendChild(script);
             }
         </script>
@@ -119,14 +162,11 @@
         <!-- Cache busting for local development only -->
         <script>
             (function () {
-                const isLocal =
-                    window.location.hostname === 'localhost' ||
-                    window.location.hostname === '127.0.0.1';
-                if (isLocal) {
+                if (window.isDevelopment()) {
                     const version = Date.now();
                     // Update CSS
                     const css = document.getElementById('local-css');
-                    if (css) href = 'css/style.css?v=' + version;
+                    if (css) css.href = 'css/style.css?v=' + version;
                 }
             })();
         </script>

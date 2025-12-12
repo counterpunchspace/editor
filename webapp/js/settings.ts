@@ -172,20 +172,9 @@ const PRODUCTION_OVERRIDES = {
     }
 };
 
-// Detect if running in production (not localhost or webpack dev server)
-const isProduction = () => {
-    const hostname = window.location.hostname;
-    const port = window.location.port;
-
-    // Development indicators
-    const isDevelopment =
-        hostname === 'localhost' ||
-        hostname === '127.0.0.1' ||
-        port === '8000' || // webpack dev server
-        port === '5500'; // live server
-
-    return !isDevelopment;
-};
+// Use the global isDevelopment function from index.html (defined before this script loads)
+// Export wrapper for convenience in modules
+export const isProduction = () => !window.isDevelopment();
 
 // Apply production overrides if in production mode
 if (isProduction()) {
@@ -204,5 +193,6 @@ if (isProduction()) {
 
 // Expose globally for runtime access
 (window as any).APP_SETTINGS = APP_SETTINGS;
+(window as any).isProduction = isProduction;
 
 export default APP_SETTINGS;
