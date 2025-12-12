@@ -1213,7 +1213,7 @@ export class TextRunEditor {
             }
             return;
         }
-        
+
         if (e.key === 'ArrowRight' && !e.metaKey && !e.ctrlKey) {
             e.preventDefault();
             if (e.shiftKey) {
@@ -1224,20 +1224,20 @@ export class TextRunEditor {
             }
             return;
         }
-        
+
         // Backspace and Delete
         if (e.key === 'Backspace') {
             e.preventDefault();
             this.deleteBackward();
             return;
         }
-        
+
         if (e.key === 'Delete') {
             e.preventDefault();
             this.deleteForward();
             return;
         }
-        
+
         // Home and End keys
         if (e.key === 'Home') {
             e.preventDefault();
@@ -1251,7 +1251,7 @@ export class TextRunEditor {
             }
             return;
         }
-        
+
         if (e.key === 'End') {
             e.preventDefault();
             if (e.shiftKey) {
@@ -1264,14 +1264,14 @@ export class TextRunEditor {
             }
             return;
         }
-        
+
         // Regular character input (only if not a modifier key combo)
         if (e.key.length === 1 && !e.ctrlKey && !e.metaKey) {
             e.preventDefault();
             this.insertText(e.key);
             return;
         }
-        
+
         // Don't prevent default for unhandled keys - let browser shortcuts work
     }
 
