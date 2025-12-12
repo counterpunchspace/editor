@@ -5,3 +5,5 @@
 # Ignore compiled wasm and python wheels
 wasm-dist/
 wheels/
+# Ignore webpack build output
+build/
