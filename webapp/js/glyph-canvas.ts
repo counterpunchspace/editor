@@ -82,6 +82,9 @@ class GlyphCanvas {
     mouseCanvasY: number = 0;
     cursorVisible: boolean = true;
 
+    // Auto-pan anchor for text mode (cursor position)
+    textModeAutoPanAnchorScreen: { x: number; y: number } | null = null;
+
     constructor(containerId: string) {
         this.container = document.getElementById(containerId)!;
         if (!this.container) {
@@ -298,18 +301,30 @@ class GlyphCanvas {
     setupAxesManagerEventHandlers(): void {
         this.axesManager!.on('sliderMouseDown', () => {
             this.outlineEditor.onSliderMouseDown();
+            // Also capture text mode cursor position for auto-panning
+            if (!this.outlineEditor.active && this.textRunEditor) {
+                this.captureTextModeAutoPanAnchor();
+            }
         });
         this.axesManager!.on('sliderMouseUp', async () => {
             if (this.outlineEditor.active) {
                 this.outlineEditor.onSliderMouseUp();
             } else {
                 // In text editing mode, restore focus to canvas
+                // Clear auto-pan anchor if animation is already complete
+                if (!this.axesManager!.isAnimating) {
+                    this.textModeAutoPanAnchorScreen = null;
+                }
                 setTimeout(() => this.canvas!.focus(), 0);
             }
         });
         this.axesManager!.on('animationInProgress', () => {
             this.textRunEditor!.shapeText();
             this.outlineEditor.animationInProgress();
+            // Apply auto-pan for text mode cursor
+            if (!this.outlineEditor.active) {
+                this.applyTextModeAutoPanAdjustment();
+            }
         });
         this.axesManager!.on('animationComplete', async () => {
             // Skip layer matching during manual slider interpolation
@@ -321,6 +336,7 @@ class GlyphCanvas {
                 if (!this.axesManager!.isSliderActive) {
                     this.outlineEditor.isInterpolating = false;
                     this.outlineEditor.autoPanAnchorScreen = null;
+                    this.textModeAutoPanAnchorScreen = null;
                 }
                 return;
             }
@@ -335,6 +351,7 @@ class GlyphCanvas {
                 await this.outlineEditor.autoSelectMatchingLayer();
 
                 this.textRunEditor!.shapeText();
+                this.textModeAutoPanAnchorScreen = null;
                 return;
             }
 
@@ -1467,6 +1484,45 @@ class GlyphCanvas {
             this.viewportManager!.panY,
             this.render.bind(this)
         );
+    }
+
+    captureTextModeAutoPanAnchor(): void {
+        // Capture the current cursor screen position for auto-panning during slider animation
+        if (!this.textRunEditor || !this.viewportManager) {
+            this.textModeAutoPanAnchorScreen = null;
+            return;
+        }
+
+        // Convert cursor position from font coordinates to screen coordinates
+        const screenPos = this.viewportManager.fontToScreenCoordinates(
+            this.textRunEditor.cursorX,
+            0 // Y position doesn't matter for horizontal text
+        );
+
+        this.textModeAutoPanAnchorScreen = screenPos;
+    }
+
+    applyTextModeAutoPanAdjustment(): void {
+        // Adjust pan to keep cursor at the anchor position during animation
+        if (
+            !this.textModeAutoPanAnchorScreen ||
+            !this.textRunEditor ||
+            !this.viewportManager
+        ) {
+            return;
+        }
+
+        // Get current cursor screen position
+        const currentScreenPos = this.viewportManager.fontToScreenCoordinates(
+            this.textRunEditor.cursorX,
+            0
+        );
+
+        // Calculate the offset
+        const offsetX = this.textModeAutoPanAnchorScreen.x - currentScreenPos.x;
+
+        // Apply the pan adjustment (only horizontal for text mode)
+        this.viewportManager.panX += offsetX;
     }
 
     resetZoomAndPosition(): void {

@@ -242,10 +242,6 @@ export class OutlineEditor {
 
         // Capture anchor point for auto-panning
         this.captureAutoPanAnchor();
-        console.log(
-            '[OutlineEditor] onSliderMouseDown - captured anchor:',
-            this.autoPanAnchorScreen
-        );
 
         // If not in preview mode, mark current layer data as interpolated and render
         // to show monochrome visual feedback immediately
@@ -2524,12 +2520,6 @@ export class OutlineEditor {
      * This is called after interpolation updates the glyph.
      */
     applyAutoPanAdjustment() {
-        console.log(
-            '[OutlineEditor] applyAutoPanAdjustment called - anchor:',
-            this.autoPanAnchorScreen,
-            'enabled:',
-            this.autoPanEnabled
-        );
         if (!this.autoPanEnabled || !this.autoPanAnchorScreen) {
             return;
         }
