@@ -1,5 +1,9 @@
 # Unreleased
 
+- **Add items here** for the next release (Replace this comment)
+
+# v0.1.2a
+
 - **Service Worker Reload Loop Fix**: Fixed infinite reload loop in production caused by multiple unchecked reload triggers in COI service worker. All reload conditions now properly check `reloaded` flag before triggering.
 
 # v0.1.1a
