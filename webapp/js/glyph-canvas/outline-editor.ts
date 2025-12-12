@@ -1534,7 +1534,9 @@ export class OutlineEditor {
             this.targetLayerData = this.layerData;
             this.layerData = oldLayerData;
             this.isLayerSwitchAnimating = true;
-            console.log('Starting layer switch animation - old layer in layerData, new layer in targetLayerData');
+            console.log(
+                'Starting layer switch animation - old layer in layerData, new layer in targetLayerData'
+            );
         }
         // Perform mouse hit detection after layer data is loaded
         this.performHitDetection(null);

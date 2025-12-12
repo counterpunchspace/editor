@@ -244,9 +244,14 @@ export class AxesManager {
         this.call('animationInProgress');
 
         if (progress < 1.0) {
-            const delay = (window as any).APP_SETTINGS?.OUTLINE_EDITOR?.INTERPOLATION_ANIMATION_DELAY || 0;
+            const delay =
+                (window as any).APP_SETTINGS?.OUTLINE_EDITOR
+                    ?.INTERPOLATION_ANIMATION_DELAY || 0;
             if (delay > 0) {
-                setTimeout(() => requestAnimationFrame(() => this.animateVariation()), delay);
+                setTimeout(
+                    () => requestAnimationFrame(() => this.animateVariation()),
+                    delay
+                );
             } else {
                 requestAnimationFrame(() => this.animateVariation());
             }
