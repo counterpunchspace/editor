@@ -470,7 +470,9 @@ if (typeof window === 'undefined') {
                     '[COI] Service worker active but SharedArrayBuffer still unavailable. Check browser support.'
                 );
             } else if (hasSAB) {
-                console.log('[COI] ✅ SharedArrayBuffer available, clearing reload flag');
+                console.log(
+                    '[COI] ✅ SharedArrayBuffer available, clearing reload flag'
+                );
                 // Only clear the flag if SAB is working - this prevents reload loops
                 window.sessionStorage.removeItem('coiReloadedBySelf');
             }
