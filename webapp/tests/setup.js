@@ -1,3 +1,12 @@
+// Mock isDevelopment/isProduction functions (from index.html)
+// These must be defined BEFORE importing any modules that use them
+if (typeof window.isDevelopment === 'undefined') {
+    window.isDevelopment = () => true; // Default to development mode in tests
+}
+if (typeof window.isProduction === 'undefined') {
+    window.isProduction = () => !window.isDevelopment();
+}
+
 global.GlyphCanvas = require('../js/glyph-canvas').GlyphCanvas;
 global.ViewportManager = require('../js/glyph-canvas/viewport').ViewportManager;
 
