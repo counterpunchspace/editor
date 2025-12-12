@@ -907,43 +907,37 @@ class GlyphCanvas {
         layersTitle.textContent = 'Foreground Layers';
         this.propertiesSection!.appendChild(layersTitle);
 
-        // Sort layers by master order (order in which masters are defined in font.masters)
-        const sortedLayers = [...this.fontData.layers].sort((a, b) => {
-            const masterIndexA = this.fontData.masters.findIndex(
-                (m: any) => m.id === a._master
-            );
-            const masterIndexB = this.fontData.masters.findIndex(
-                (m: any) => m.id === b._master
-            );
-
-            // If master not found, put at end
-            const posA =
-                masterIndexA === -1
-                    ? this.fontData.masters.length
-                    : masterIndexA;
-            const posB =
-                masterIndexB === -1
-                    ? this.fontData.masters.length
-                    : masterIndexB;
-
-            return posA - posB;
-        });
+        // Get filtered and sorted layers from the object model
+        // This uses Glyph.layers which filters out background layers and copies,
+        // and sorts by master order
+        const glyphName = this.getCurrentGlyphName();
+        const fontModel = fontManager.currentFont?.fontModel;
+        const glyph = fontModel?.glyphs.find((g) => g.name === glyphName);
+        const filteredLayers = glyph?.layers || [];
 
         // Create layers list
         const layersList = document.createElement('div');
         layersList.className = 'editor-layers-list';
 
-        for (const layer of sortedLayers) {
+        for (const layer of filteredLayers) {
             const layerItem = document.createElement('div');
             layerItem.className = 'editor-layer-item';
             if (this.outlineEditor.selectedLayerId === layer.id) {
                 layerItem.classList.add('selected');
             }
-            layerItem.setAttribute('data-layer-id', layer.id); // Add data attribute for selection updates
+            layerItem.setAttribute('data-layer-id', layer.id!); // Add data attribute for selection updates
+
+            // Extract master ID from layer
+            const masterId =
+                layer.master &&
+                typeof layer.master === 'object' &&
+                'DefaultForMaster' in layer.master
+                    ? layer.master.DefaultForMaster
+                    : layer.id;
 
             // Find the master for this layer
             const master = this.fontData.masters.find(
-                (m: any) => m.id === layer._master
+                (m: any) => m.id === masterId
             );
 
             // Format axis values for display (e.g., "wght:400, wdth:100")
@@ -966,9 +960,9 @@ class GlyphCanvas {
 
             layerItem.textContent = axisValues || layer.name || 'Default';
 
-            // Click handler
+            // Click handler - convert Layer wrapper to raw layer data for compatibility
             layerItem.addEventListener('click', () => {
-                this.outlineEditor.selectLayer(layer);
+                this.outlineEditor.selectLayer(layer.toJSON());
             });
 
             layersList.appendChild(layerItem);

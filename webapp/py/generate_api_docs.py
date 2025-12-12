@@ -233,7 +233,9 @@ glyph = font.findGlyph("A")
 
 #### Read-Only Properties
 
-- **`layers`** (list[[Layer](#layer)] | None): All layers in the glyph
+- **`layers`** (list[[Layer](#layer)] | None): Foreground layers that are
+  default for their master (excludes background layers and copies), sorted
+  by master order
 
 ### Methods
 

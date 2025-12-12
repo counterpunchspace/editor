@@ -1025,15 +1025,93 @@ export class Glyph extends ArrayElementBase {
 
     get layers(): Layer[] | undefined {
         if (!this.data.layers) return undefined;
-        if (
-            !this._layerWrappers ||
-            this._layerWrappers.length !== this.data.layers.length
-        ) {
-            this._layerWrappers = this.data.layers.map(
-                (_: any, i: number) => new Layer(this.data.layers, i)
-            );
+
+        // Get font masters to filter and sort layers
+        const font = window.fontManager?.currentFont?.babelfontData;
+        if (!font?.masters) {
+            // Fallback: return all layers if we can't access font data
+            if (
+                !this._layerWrappers ||
+                this._layerWrappers.length !== this.data.layers.length
+            ) {
+                this._layerWrappers = this.data.layers.map(
+                    (_: any, i: number) => new Layer(this.data.layers, i)
+                );
+            }
+            return this._layerWrappers!;
         }
-        return this._layerWrappers!;
+
+        // Filter: only foreground layers that are default for their master
+        const masterIds = new Set(font.masters.map((m: any) => m.id));
+        const filteredIndices: number[] = [];
+
+        for (let i = 0; i < this.data.layers.length; i++) {
+            const layer = this.data.layers[i];
+
+            // Skip background layers
+            if (layer.is_background) continue;
+
+            // Check if this is a default layer (has DefaultForMaster in master dict)
+            const isDefaultLayer =
+                layer.master &&
+                typeof layer.master === 'object' &&
+                'DefaultForMaster' in layer.master;
+
+            if (!isDefaultLayer) continue;
+
+            // Extract master ID from layer.master.DefaultForMaster or use layer._master
+            const masterId =
+                layer.master &&
+                typeof layer.master === 'object' &&
+                'DefaultForMaster' in layer.master
+                    ? layer.master.DefaultForMaster
+                    : layer._master || layer.id;
+
+            if (!masterId || !masterIds.has(masterId)) continue;
+
+            filteredIndices.push(i);
+        }
+
+        // Create wrappers for filtered layers
+        const wrappers = filteredIndices.map(
+            (i: number) => new Layer(this.data.layers, i)
+        );
+
+        // Sort by master order
+        wrappers.sort((a, b) => {
+            // Extract master IDs from the wrappers
+            const getMasterId = (layer: Layer): string => {
+                const masterData = layer.master;
+                if (
+                    masterData &&
+                    typeof masterData === 'object' &&
+                    'DefaultForMaster' in masterData
+                ) {
+                    return masterData.DefaultForMaster;
+                }
+                // Fallback to raw data access
+                return (layer as any).data._master || layer.id || '';
+            };
+
+            const masterIdA = getMasterId(a);
+            const masterIdB = getMasterId(b);
+
+            const masterIndexA = font.masters.findIndex(
+                (m: any) => m.id === masterIdA
+            );
+            const masterIndexB = font.masters.findIndex(
+                (m: any) => m.id === masterIdB
+            );
+
+            const posA =
+                masterIndexA === -1 ? font.masters.length : masterIndexA;
+            const posB =
+                masterIndexB === -1 ? font.masters.length : masterIndexB;
+
+            return posA - posB;
+        });
+
+        return wrappers;
     }
 
     get exported(): boolean | undefined {
