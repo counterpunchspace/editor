@@ -1,10 +1,10 @@
 # Unreleased
 
-- **Add items here** for the next release (Replace this comment)
+- **Service Worker Reload Loop Fix**: Fixed again
 
 # v0.1.6a
 
-- **Add items here** for the next release (Replace this comment)
+- **Service Worker Reload Loop Fix**: Fixed again
 
 # v0.1.5a
 
