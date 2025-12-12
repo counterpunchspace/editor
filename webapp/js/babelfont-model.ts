@@ -114,6 +114,11 @@ export class Node extends ArrayElementBase {
         this.data.smooth = value;
         markFontDirty();
     }
+
+    toString(): string {
+        const smooth = this.smooth ? ' smooth' : '';
+        return `<Node (${this.x}, ${this.y}) ${this.nodetype}${smooth}>`;
+    }
 }
 
 /**
@@ -321,6 +326,14 @@ export class Path extends ArrayElementBase {
     ): Node {
         return this.insertNode(this.data.nodes.length, x, y, nodetype, smooth);
     }
+
+    toString(): string {
+        const closedStr = this.closed ? 'closed' : 'open';
+        const nodeCount = Array.isArray(this.data.nodes)
+            ? this.data.nodes.length
+            : 0;
+        return `<Path ${closedStr} ${nodeCount} nodes>`;
+    }
 }
 
 /**
@@ -349,6 +362,13 @@ export class Component extends ArrayElementBase {
 
     set format_specific(value: Babelfont.FormatSpecific | undefined) {
         this.data.format_specific = value;
+    }
+
+    toString(): string {
+        const transform = this.transform
+            ? ` transform=${JSON.stringify(this.transform)}`
+            : '';
+        return `<Component ref="${this.reference}"${transform}>`;
     }
 }
 
@@ -387,6 +407,11 @@ export class Anchor extends ArrayElementBase {
     set format_specific(value: Babelfont.FormatSpecific | undefined) {
         this.data.format_specific = value;
     }
+
+    toString(): string {
+        const name = this.name ? ` "${this.name}"` : '';
+        return `<Anchor${name} (${this.x}, ${this.y})>`;
+    }
 }
 
 /**
@@ -423,6 +448,11 @@ export class Guide extends ArrayElementBase {
 
     set format_specific(value: Babelfont.FormatSpecific | undefined) {
         this.data.format_specific = value;
+    }
+
+    toString(): string {
+        const name = this.name ? ` "${this.name}"` : '';
+        return `<Guide${name} pos=${JSON.stringify(this.pos)}>`;
     }
 }
 
@@ -478,6 +508,15 @@ export class Shape extends ArrayElementBase {
             }
         });
         return new Path(fakeArray as any, 0);
+    }
+
+    toString(): string {
+        if (this.isComponent()) {
+            return `<Shape:${this.asComponent().toString()}>`;
+        } else if (this.isPath()) {
+            return `<Shape:${this.asPath().toString()}>`;
+        }
+        return '<Shape unknown>';
     }
 }
 
@@ -681,6 +720,23 @@ export class Layer extends ArrayElementBase {
             this._anchorWrappers = null; // Invalidate cache
         }
     }
+
+    toString(): string {
+        let masterId: string;
+        if (typeof this.master === 'object') {
+            if ('DefaultForMaster' in this.master) {
+                masterId = this.master.DefaultForMaster;
+            } else if ('AssociatedWithMaster' in this.master) {
+                masterId = this.master.AssociatedWithMaster;
+            } else {
+                masterId = 'unknown';
+            }
+        } else {
+            masterId = this.master || 'none';
+        }
+        const shapesCount = this.shapes?.length || 0;
+        return `<Layer width=${this.width} master="${masterId}" shapes=${shapesCount}>`;
+    }
 }
 
 /**
@@ -813,6 +869,18 @@ export class Glyph extends ArrayElementBase {
         });
         return index >= 0 ? layers[index] : undefined;
     }
+
+    toString(): string {
+        const codepoints =
+            this.codepoints
+                ?.map(
+                    (cp) =>
+                        `U+${cp.toString(16).toUpperCase().padStart(4, '0')}`
+                )
+                .join(', ') || 'none';
+        const layerCount = this.layers?.length || 0;
+        return `<Glyph "${this.name}" [${codepoints}] ${layerCount} layers>`;
+    }
 }
 
 /**
@@ -898,6 +966,17 @@ export class Axis extends ArrayElementBase {
     set formatspecific(value: Babelfont.FormatSpecific | undefined) {
         this.data.formatspecific = value;
     }
+
+    toString(): string {
+        const displayName =
+            typeof this.name === 'string'
+                ? this.name
+                : this.name?.en ||
+                  Object.values(this.name || {})[0] ||
+                  'unknown';
+        const range = `${this.min || '?'}-${this.default || '?'}-${this.max || '?'}`;
+        return `<Axis "${displayName}" tag="${this.tag}" ${range}>`;
+    }
 }
 
 /**
@@ -974,6 +1053,17 @@ export class Master extends ArrayElementBase {
     set format_specific(value: Babelfont.FormatSpecific | undefined) {
         this.data.format_specific = value;
     }
+
+    toString(): string {
+        const displayName =
+            typeof this.name === 'string'
+                ? this.name
+                : this.name?.en ||
+                  Object.values(this.name || {})[0] ||
+                  'unknown';
+        const location = this.location ? JSON.stringify(this.location) : '{}';
+        return `<Master "${displayName}" id="${this.id}" location=${location}>`;
+    }
 }
 
 /**
@@ -1034,6 +1124,17 @@ export class Instance extends ArrayElementBase {
 
     set format_specific(value: Babelfont.FormatSpecific | undefined) {
         this.data.format_specific = value;
+    }
+
+    toString(): string {
+        const displayName =
+            typeof this.name === 'string'
+                ? this.name
+                : this.name?.en ||
+                  Object.values(this.name || {})[0] ||
+                  'unknown';
+        const location = this.location ? JSON.stringify(this.location) : '{}';
+        return `<Instance "${displayName}" location=${location}>`;
     }
 }
 
@@ -1319,5 +1420,18 @@ export class Font extends ModelBase {
      */
     static fromData(data: Babelfont.Font): Font {
         return new Font(data);
+    }
+
+    toString(): string {
+        const familyName =
+            this.names?.family_name?.en ||
+            Object.values(this.names?.family_name || {})[0] ||
+            'Unnamed';
+        const glyphCount = this.glyphs?.length || 0;
+        const masterCount = this.masters?.length || 0;
+        const axisCount = this.axes?.length || 0;
+        const info =
+            masterCount > 1 ? ` ${axisCount} axes, ${masterCount} masters` : '';
+        return `<Font "${familyName}" ${glyphCount} glyphs${info}>`;
     }
 }
