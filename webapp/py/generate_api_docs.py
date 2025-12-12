@@ -403,6 +403,11 @@ layer = glyph.findLayerById("layer-id")
 #### Read/Write Properties
 
 - **`width`** (float): Advance width of the layer
+- **`lsb`** (float): Left sidebearing - distance from x=0 to left \
+edge of bounding box. Setting this translates all geometry \
+(paths, components, anchors) and adjusts width
+- **`rsb`** (float): Right sidebearing - distance from right edge \
+of bounding box to advance width. Setting this adjusts width only
 - **`name`** (str | None): Layer name
 - **`id`** (str | None): Layer ID
 - **`master`** (dict | None): Relationship to master \

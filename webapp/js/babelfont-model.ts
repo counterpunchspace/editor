@@ -12,6 +12,7 @@
  */
 
 import type { Babelfont } from './babelfont';
+import { LayerDataNormalizer } from './layer-data-normalizer';
 
 /**
  * Mark the current font as dirty when data is modified
@@ -536,6 +537,87 @@ export class Layer extends ArrayElementBase {
         this.data.width = value;
     }
 
+    /**
+     * Get the left sidebearing (LSB) - the distance from x=0 to the left edge of the bounding box
+     * @returns The left sidebearing value, or 0 if no geometry
+     */
+    get lsb(): number {
+        const bbox = this.getBoundingBox(false);
+        if (!bbox) {
+            return 0;
+        }
+        return bbox.minX;
+    }
+
+    /**
+     * Set the left sidebearing (LSB) by translating all geometry horizontally
+     * This updates the position of all paths, components, and anchors, and adjusts width accordingly
+     * @param value - The new left sidebearing value
+     */
+    set lsb(value: number) {
+        const currentLsb = this.lsb;
+        const offset = value - currentLsb;
+
+        if (offset === 0) {
+            return; // No change needed
+        }
+
+        // Translate all shapes (paths and components)
+        if (this.data.shapes) {
+            for (const shape of this.data.shapes) {
+                if ('Path' in shape && shape.Path.nodes) {
+                    // Move all nodes in paths
+                    for (const node of shape.Path.nodes) {
+                        node.x += offset;
+                    }
+                } else if ('Component' in shape && shape.Component.transform) {
+                    // Update component transform translation
+                    const transform = shape.Component.transform;
+                    transform[4] += offset; // Update x translation
+                }
+            }
+        }
+
+        // Translate all anchors
+        if (this.data.anchors) {
+            for (const anchor of this.data.anchors) {
+                anchor.x += offset;
+            }
+        }
+
+        // Update width to maintain right sidebearing
+        this.data.width += offset;
+
+        markFontDirty();
+    }
+
+    /**
+     * Get the right sidebearing (RSB) - the distance from the right edge of the bounding box to the advance width
+     * @returns The right sidebearing value, or the width if no geometry
+     */
+    get rsb(): number {
+        const bbox = this.getBoundingBox(false);
+        if (!bbox) {
+            return this.width;
+        }
+        return this.width - bbox.maxX;
+    }
+
+    /**
+     * Set the right sidebearing (RSB) by adjusting the advance width
+     * This only changes the width, not the geometry position
+     * @param value - The new right sidebearing value
+     */
+    set rsb(value: number) {
+        const bbox = this.getBoundingBox(false);
+        if (!bbox) {
+            this.data.width = value;
+        } else {
+            this.data.width = bbox.maxX + value;
+        }
+        markFontDirty();
+    }
+
     get name(): string | undefined {
         return this.data.name;
     }
@@ -789,14 +871,35 @@ export class Layer extends ArrayElementBase {
                             combinedTransform
                         );
                     }
+                } else if ('Path' in shape && shape.Path.nodes) {
+                    // Path with nested structure
+                    let nodes = shape.Path.nodes;
+
+                    // Parse nodes if they're a string
+                    if (typeof nodes === 'string') {
+                        nodes = LayerDataNormalizer.parseNodes(nodes);
+                    }
+
+                    if (Array.isArray(nodes) && nodes.length > 0) {
+                        // Process all nodes with the accumulated transform
+                        for (const node of nodes) {
+                            const { x, y } = node;
+
+                            // Apply accumulated transform
+                            const [a, b, c, d, tx, ty] = transform;
+                            const transformedX = a * x + c * y + tx;
+                            const transformedY = b * x + d * y + ty;
+
+                            expandBounds(transformedX, transformedY);
+                        }
+                    }
                 } else if (
-                    'Path' in shape &&
-                    shape.Path.nodes &&
-                    Array.isArray(shape.Path.nodes) &&
-                    shape.Path.nodes.length > 0
+                    'nodes' in shape &&
+                    Array.isArray(shape.nodes) &&
+                    shape.nodes.length > 0
                 ) {
-                    // Path - process all nodes with the accumulated transform
-                    for (const node of shape.Path.nodes) {
+                    // Path with flat structure (parsed format) - process all nodes with the accumulated transform
+                    for (const node of shape.nodes) {
                         const { x, y } = node;
 
                         // Apply accumulated transform
