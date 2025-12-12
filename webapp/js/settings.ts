@@ -68,6 +68,7 @@ const APP_SETTINGS = {
 
         // Debug/development
         SHOW_BOUNDING_BOX: false, // Show calculated bounding box in editing mode
+        INTERPOLATION_ANIMATION_DELAY: 0, // ms - delay between animation frames for debugging (0 = no delay)
 
         // Colors - Light Theme
         COLORS_LIGHT: {
@@ -198,5 +199,8 @@ if (isProduction()) {
 } else {
     console.log('[Settings] Running in development mode');
 }
+
+// Expose globally for runtime access
+(window as any).APP_SETTINGS = APP_SETTINGS;
 
 export default APP_SETTINGS;

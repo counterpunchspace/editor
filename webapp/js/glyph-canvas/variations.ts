@@ -244,7 +244,12 @@ export class AxesManager {
         this.call('animationInProgress');
 
         if (progress < 1.0) {
-            requestAnimationFrame(() => this.animateVariation());
+            const delay = (window as any).APP_SETTINGS?.OUTLINE_EDITOR?.INTERPOLATION_ANIMATION_DELAY || 0;
+            if (delay > 0) {
+                setTimeout(() => requestAnimationFrame(() => this.animateVariation()), delay);
+            } else {
+                requestAnimationFrame(() => this.animateVariation());
+            }
         } else {
             // Ensure we end exactly at target values
             this.variationSettings = { ...this.animationTargetValues };

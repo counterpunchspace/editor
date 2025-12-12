@@ -36,11 +36,13 @@ class FontInterpolationManager {
     >;
     requestId: number;
     currentGlyphRequest: { id: number; glyphName: string } | null;
+    lastRenderedRequestId: number;
     constructor() {
         this.worker = null;
         this.pendingRequests = new Map();
         this.requestId = 0;
         this.currentGlyphRequest = null; // Track current glyph being interpolated
+        this.lastRenderedRequestId = -1; // Track the last rendered request to discard out-of-order responses
     }
 
     /**
@@ -175,8 +177,11 @@ class FontInterpolationManager {
                         const layer = JSON.parse(data.result);
                         console.log(
                             '[FontInterpolation]',
-                            '✅ Parsed layer, resolving promise'
+                            '✅ Parsed layer, resolving promise with requestId:',
+                            data.id
                         );
+                        // Include the request ID with the layer so the caller can check ordering
+                        layer._interpolationRequestId = data.id;
                         pending.resolve(layer);
                     } catch (parseError) {
                         console.error(
@@ -231,6 +236,16 @@ class FontInterpolationManager {
 
         const results = await Promise.all(promises);
         return new Map(results.filter(([_, layer]) => layer !== null));
+    }
+
+    /**
+     * Reset the last rendered request ID counter
+     * Call this when switching glyphs or exiting interpolation mode to prevent
+     * stale responses from old sessions being discarded incorrectly
+     */
+    resetRequestTracking() {
+        this.lastRenderedRequestId = -1;
+        console.log('[FontInterpolation]', '🔄 Reset request tracking');
     }
 
     /**

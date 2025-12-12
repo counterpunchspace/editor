@@ -80,6 +80,7 @@ export class OutlineEditor {
     selectedLayerId: string | null = null;
     isInterpolating: boolean = false;
     isLayerSwitchAnimating: boolean = false;
+    currentInterpolationId: number = 0; // Counter to track and cancel old interpolations
     lastGlyphX: number | null = null;
     lastGlyphY: number | null = null;
     canvas: HTMLCanvasElement | null = null;
@@ -263,8 +264,9 @@ export class OutlineEditor {
             // Check if we're on an exact layer (do this before clearing isInterpolating)
             await this.autoSelectMatchingLayer();
 
-            // Now clear interpolating flag
+            // Now clear interpolating flag and reset request tracking
             this.isInterpolating = false;
+            fontInterpolation.resetRequestTracking();
 
             // If we landed on an exact layer, update the saved state to this new layer
             // so Escape will return here, not to the original layer
@@ -300,8 +302,9 @@ export class OutlineEditor {
             // Check if we're on an exact layer (do this before clearing isInterpolating)
             await this.autoSelectMatchingLayer();
 
-            // Now clear interpolating flag
+            // Now clear interpolating flag and reset request tracking
             this.isInterpolating = false;
+            fontInterpolation.resetRequestTracking();
 
             // If we landed on an exact layer, update the saved state to this new layer
             // so Escape will return here, not to the original layer
@@ -1155,59 +1158,6 @@ export class OutlineEditor {
         console.log(`Toggled point smooth: ${type} -> ${newType}`);
     }
 
-    setupLayerSwitchAnimation() {
-        if (!this.active || !this.layerData) {
-            return;
-        }
-        console.log(
-            'Before copy - layerData.isInterpolated:',
-            this.layerData.isInterpolated
-        );
-
-        // Create a deep copy without circular references
-        // Similar to saveLayerData, we need to clean the data before copying
-        const cleanShapes = this.layerData.shapes?.map((shape) => {
-            if ('Path' in shape) {
-                // Copy path data without the parsed nodes array (which has circular refs)
-                if ('nodes' in shape && Array.isArray(shape.nodes)) {
-                    // Convert to clean node objects without next/prev references
-                    const cleanNodes = shape.nodes.map((node) => ({
-                        x: node.x,
-                        y: node.y,
-                        type: node.type
-                    }));
-                    return {
-                        Path: { ...shape.Path },
-                        nodes: cleanNodes
-                    };
-                } else {
-                    return {
-                        Path: { ...shape.Path }
-                    };
-                }
-            } else if ('Component' in shape) {
-                return {
-                    Component: { ...shape.Component }
-                };
-            } else {
-                return { ...shape };
-            }
-        });
-
-        this.targetLayerData = {
-            ...this.layerData,
-            shapes: cleanShapes,
-            isInterpolated: this.layerData.isInterpolated
-        };
-
-        console.log(
-            'After copy - targetLayerData.isInterpolated:',
-            this.targetLayerData!.isInterpolated
-        );
-        this.isLayerSwitchAnimating = true;
-        console.log('Starting layer switch animation with stored target layer');
-    }
-
     onSpaceKeyReleased() {
         if (!this.active || !this.isPreviewMode) return;
         this.spaceKeyPressed = false;
@@ -1246,7 +1196,7 @@ export class OutlineEditor {
     async interpolateCurrentGlyph(force: boolean = false): Promise<void> {
         // Interpolate the current glyph at current variation settings
         if (!this.currentGlyphName) {
-            console.log('Skipping interpolation:', {
+            console.log('[OutlineEditor] Skipping interpolation:', {
                 hasGlyphName: !!this.currentGlyphName
             });
             return;
@@ -1256,10 +1206,17 @@ export class OutlineEditor {
         // Unless force=true (e.g., entering edit mode at interpolated position)
         if (!force && !this.isInterpolating && !this.isLayerSwitchAnimating) {
             console.log(
-                'Skipping interpolation - not in active interpolation state'
+                '[OutlineEditor] Skipping interpolation - not in active interpolation state'
             );
             return;
         }
+
+        // Increment counter and capture it locally - this invalidates all previous calls
+        const myInterpolationId = ++this.currentInterpolationId;
+        console.log(
+            '[OutlineEditor] Starting interpolation',
+            myInterpolationId
+        );
 
         try {
             const location = this.glyphCanvas.axesManager!.variationSettings;
@@ -1273,12 +1230,36 @@ export class OutlineEditor {
                     location
                 );
 
+                // Check if we've been superseded by a newer interpolation call
+                if (myInterpolationId !== this.currentInterpolationId) {
+                    console.log(
+                        '[OutlineEditor] 🚫 Aborting stale interpolation',
+                        myInterpolationId,
+                        '(current is',
+                        this.currentInterpolationId,
+                        ')'
+                    );
+                    return;
+                }
+
                 // Also interpolate the parent to get the interpolated component reference transform
                 const rootGlyphName = this.glyphCanvas.getCurrentGlyphName();
                 const parentLayer = await fontInterpolation.interpolateGlyph(
                     rootGlyphName,
                     location
                 );
+
+                // Check again after second await
+                if (myInterpolationId !== this.currentInterpolationId) {
+                    console.log(
+                        '[OutlineEditor] 🚫 Aborting stale interpolation',
+                        myInterpolationId,
+                        '(current is',
+                        this.currentInterpolationId,
+                        ')'
+                    );
+                    return;
+                }
 
                 // Extract the interpolated transform for this component
                 this.interpolatedComponentTransform =
@@ -1292,11 +1273,40 @@ export class OutlineEditor {
                     this.currentGlyphName,
                     location
                 );
+
+                // Check if we've been superseded by a newer interpolation call
+                if (myInterpolationId !== this.currentInterpolationId) {
+                    console.log(
+                        '[OutlineEditor] 🚫 Aborting stale interpolation',
+                        myInterpolationId,
+                        '(current is',
+                        this.currentInterpolationId,
+                        ')'
+                    );
+                    return;
+                }
             }
+
+            // Final check before rendering
+            if (myInterpolationId !== this.currentInterpolationId) {
+                console.log(
+                    '[OutlineEditor] 🚫 Aborting stale interpolation',
+                    myInterpolationId,
+                    '(current is',
+                    this.currentInterpolationId,
+                    ')'
+                );
+                return;
+            }
+
+            console.log(
+                '[OutlineEditor] ✅ Rendering interpolation',
+                myInterpolationId
+            );
 
             // Apply interpolated data using normalizer
             console.log(
-                'Calling LayerDataNormalizer.applyInterpolatedLayer...'
+                '[OutlineEditor] Calling LayerDataNormalizer.applyInterpolatedLayer...'
             );
             console.log(
                 '[OutlineEditor] Before applyInterpolatedLayer - layerData.width:',
@@ -1324,19 +1334,19 @@ export class OutlineEditor {
             );
 
             console.log(
-                `✅ Applied interpolated layer for "${this.currentGlyphName}"`
+                `[OutlineEditor] ✅ Applied interpolated layer for "${this.currentGlyphName}"`
             );
         } catch (error: any) {
             // Silently ignore cancellation errors
             if (error.message && error.message.includes('cancelled')) {
                 console.log(
-                    '🚫 Interpolation cancelled (newer request pending)'
+                    '[OutlineEditor] 🚫 Interpolation cancelled (newer request pending)'
                 );
                 return;
             }
 
             console.warn(
-                `⚠️ Interpolation failed for "${this.currentGlyphName}":`,
+                `[OutlineEditor] ⚠️ Interpolation failed for "${this.currentGlyphName}":`,
                 error
             );
             // On error, keep showing whatever data we have
@@ -1509,12 +1519,23 @@ export class OutlineEditor {
         console.log('Layer data:', layer);
         console.log('Available masters:', masters);
 
+        // Store current layer data before fetching new one (for animation)
+        const oldLayerData = this.layerData;
+
         // Fetch layer data now and store as target for animation
         // This ensures new outlines are ready before animation starts
-        await this.fetchLayerData();
+        // Skip rendering to prevent flicker - animation will handle first render
+        await this.fetchLayerData(true);
 
         // If we're in edit mode, set up animation state
-        this.setupLayerSwitchAnimation();
+        // Move the NEW layer data to targetLayerData and restore OLD layer data
+        // so the animation interpolates FROM old TO new
+        if (this.active && this.layerData) {
+            this.targetLayerData = this.layerData;
+            this.layerData = oldLayerData;
+            this.isLayerSwitchAnimating = true;
+            console.log('Starting layer switch animation - old layer in layerData, new layer in targetLayerData');
+        }
         // Perform mouse hit detection after layer data is loaded
         this.performHitDetection(null);
 
@@ -1543,8 +1564,9 @@ export class OutlineEditor {
     }
 
     async onAnimationComplete() {
-        // Clear layer switch animation flag
+        // Clear layer switch animation flag and reset request tracking
         this.isLayerSwitchAnimating = false;
+        fontInterpolation.resetRequestTracking();
 
         // Clear auto-pan anchor since animation is complete
         this.autoPanAnchorScreen = null;
@@ -1689,9 +1711,12 @@ export class OutlineEditor {
         }
     }
 
-    async fetchLayerData(): Promise<void> {
+    async fetchLayerData(skipRender: boolean = false): Promise<void> {
         // Clear interpolated transform when switching to exact layer
         this.interpolatedComponentTransform = null;
+
+        // Reset interpolation request tracking since we're loading exact layer data
+        fontInterpolation.resetRequestTracking();
 
         // If we're editing a component, refresh the component's layer data for the new layer
         if (this.componentStack.length > 0) {
@@ -1737,7 +1762,9 @@ export class OutlineEditor {
             }
 
             console.log('Fetched layer data:', this.layerData);
-            this.glyphCanvas.render();
+            if (!skipRender) {
+                this.glyphCanvas.render();
+            }
         } catch (error) {
             console.error('Error fetching layer data from Python:', error);
             this.layerData = null;
