@@ -566,9 +566,20 @@ export class Layer extends ArrayElementBase {
         if (this.data.shapes) {
             for (const shape of this.data.shapes) {
                 if ('Path' in shape && shape.Path.nodes) {
+                    // Parse nodes from string format
+                    let nodes = shape.Path.nodes;
+                    if (typeof nodes === 'string') {
+                        nodes = LayerDataNormalizer.parseNodes(nodes);
+                    }
+
                     // Move all nodes in paths
-                    for (const node of shape.Path.nodes) {
-                        node.x += offset;
+                    if (Array.isArray(nodes)) {
+                        for (const node of nodes) {
+                            node.x += offset;
+                        }
+                        // Serialize back to string format
+                        shape.Path.nodes =
+                            LayerDataNormalizer.serializeNodes(nodes);
                     }
                 } else if ('Component' in shape && shape.Component.transform) {
                     // Update component transform translation

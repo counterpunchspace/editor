@@ -149,6 +149,22 @@ export class LayerDataNormalizer {
     }
 
     /**
+     * Serialize nodes array back to string format
+     *
+     * @param {Array} nodes - Array of node objects with x, y, type properties
+     * @returns {string} Nodes as space-separated string "x1 y1 type x2 y2 type ..."
+     */
+    static serializeNodes(nodes: PythonBabelfont.Node[]): string {
+        if (!Array.isArray(nodes) || nodes.length === 0) {
+            return '';
+        }
+
+        return nodes
+            .map((node) => `${node.x} ${node.y} ${node.type}`)
+            .join(' ');
+    }
+
+    /**
      * Normalize anchors array
      *
      * @param {Array} anchors - Array of anchor objects
