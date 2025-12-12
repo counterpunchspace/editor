@@ -643,8 +643,12 @@ class GlyphCanvas {
             return;
         }
 
-        // In text mode, show text cursor
-        this.canvas!.style.cursor = 'text';
+        // In text mode, show pointer when hovering over a glyph, otherwise text cursor
+        if (this.outlineEditor.hoveredGlyphIndex !== -1) {
+            this.canvas!.style.cursor = 'pointer';
+        } else {
+            this.canvas!.style.cursor = 'text';
+        }
     }
 
     updateHoveredGlyph(): void {
