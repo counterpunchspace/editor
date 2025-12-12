@@ -450,7 +450,6 @@ if (typeof window === 'undefined') {
     (() => {
         const reloadedBySelf =
             window.sessionStorage.getItem('coiReloadedBySelf');
-        window.sessionStorage.removeItem('coiReloadedBySelf');
         const coepDegrading = reloadedBySelf == 'coepdegrade';
 
         // Check if SharedArrayBuffer is available
@@ -466,6 +465,8 @@ if (typeof window === 'undefined') {
         // If we already reloaded once but still no SAB, something is wrong - don't loop
         const reloaded = reloadedBySelf == 'true';
         if (reloaded) {
+            // Clear the flag only after we've confirmed we won't reload again
+            window.sessionStorage.removeItem('coiReloadedBySelf');
             if (!hasSAB && !isIOS) {
                 console.error(
                     '[COI] Service worker active but SharedArrayBuffer still unavailable. Check browser support.'
@@ -521,7 +522,8 @@ if (typeof window === 'undefined') {
                     // This handles first-time registration
                     if (
                         registration.active &&
-                        !navigator.serviceWorker.controller
+                        !navigator.serviceWorker.controller &&
+                        !window.sessionStorage.getItem('coiReloadedBySelf')
                     ) {
                         window.sessionStorage.setItem(
                             'coiReloadedBySelf',
@@ -536,13 +538,19 @@ if (typeof window === 'undefined') {
 
                     // Also handle the case where SW just activated
                     // This handles when SW is installing (not active yet)
-                    if (registration.installing) {
+                    if (
+                        registration.installing &&
+                        !window.sessionStorage.getItem('coiReloadedBySelf')
+                    ) {
                         registration.installing.addEventListener(
                             'statechange',
                             (e) => {
                                 if (
                                     e.target.state === 'activated' &&
-                                    !navigator.serviceWorker.controller
+                                    !navigator.serviceWorker.controller &&
+                                    !window.sessionStorage.getItem(
+                                        'coiReloadedBySelf'
+                                    )
                                 ) {
                                     window.sessionStorage.setItem(
                                         'coiReloadedBySelf',
