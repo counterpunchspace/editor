@@ -53,6 +53,9 @@ const APP_SETTINGS = {
         // Stroke widths
         OUTLINE_STROKE_WIDTH: 1, // px - width of glyph outline paths
 
+        // Hit detection
+        HIT_TOLERANCE: 15, // px - hit detection tolerance for glyphs and components (screen pixels)
+
         // Canvas margins
         CANVAS_MARGIN: 50, // px - margin around glyphs when framing or panning
         MAX_ZOOM_FOR_CMD_ZERO: 1.5, // maximum zoom level (150%) when framing glyph with Cmd+0

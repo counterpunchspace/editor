@@ -685,9 +685,23 @@ class GlyphCanvas {
                     );
                     this.ctx!.translate(x, y);
 
-                    // Test if mouse point is in path (in canvas coordinates)
+                    // Test if mouse point is in path or stroke (in canvas coordinates)
+                    // Use stroke for better hit detection tolerance
+                    // lineWidth is in transformed space, so divide by scale to get screen pixels
+                    this.ctx!.lineWidth =
+                        APP_SETTINGS.OUTLINE_EDITOR.HIT_TOLERANCE /
+                        this.viewportManager!.scale;
                     if (
-                        this.ctx!.isPointInPath(path, this.mouseX, this.mouseY)
+                        this.ctx!.isPointInPath(
+                            path,
+                            this.mouseX,
+                            this.mouseY
+                        ) ||
+                        this.ctx!.isPointInStroke(
+                            path,
+                            this.mouseX,
+                            this.mouseY
+                        )
                     ) {
                         foundIndex = i;
                         this.ctx!.restore();
@@ -1586,7 +1600,31 @@ class GlyphCanvas {
         );
 
         // Always use glyphX/glyphY which are in glyph-local space
-        const isInPath = this.ctx!.isPointInPath(path, glyphX, glyphY);
+        // Use stroke for better hit detection tolerance
+        // Calculate combined scale from both transforms to maintain constant screen-space tolerance
+        const combinedScaleX = Math.sqrt(
+            transform[0] * transform[0] + transform[1] * transform[1]
+        );
+        const combinedScaleY = Math.sqrt(
+            transform[2] * transform[2] + transform[3] * transform[3]
+        );
+        const combinedScale = Math.max(combinedScaleX, combinedScaleY);
+        const parentScaleX = Math.sqrt(
+            parentTransform[0] * parentTransform[0] +
+                parentTransform[1] * parentTransform[1]
+        );
+        const parentScaleY = Math.sqrt(
+            parentTransform[2] * parentTransform[2] +
+                parentTransform[3] * parentTransform[3]
+        );
+        const parentScale = Math.max(parentScaleX, parentScaleY);
+        const totalScale =
+            this.viewportManager!.scale * combinedScale * parentScale;
+        this.ctx!.lineWidth =
+            APP_SETTINGS.OUTLINE_EDITOR.HIT_TOLERANCE / totalScale;
+        const isInPath =
+            this.ctx!.isPointInPath(path, glyphX, glyphY) ||
+            this.ctx!.isPointInStroke(path, glyphX, glyphY);
 
         this.ctx!.restore();
         return isInPath;

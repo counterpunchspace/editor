@@ -3,6 +3,7 @@
 - **Python Object Representation**: Added `toString()` methods to all Babelfont model classes (Font, Glyph, Layer, Path, Node, Component, Anchor, Guide, Axis, Master, Instance, Shape) for readable Python `print()` output. Objects now display as `<Font "Family Name" 123 glyphs>` instead of `[object Object]`.
 - **Pinch-to-Zoom**: Added trackpad pinch-to-zoom support for canvas with dedicated `ZOOM_SPEED_PINCH` setting (default: 0.01). Pinch gestures now zoom in/out at cursor position, separate from Alt+wheel behavior for better control.
 - **Keyboard Shortcuts Fix**: Fixed canvas keyboard handling to allow browser shortcuts (Cmd+R, Cmd+T, Cmd+W, etc.) to work when canvas has focus. Only app-specific shortcuts are now intercepted, preventing default behavior.
+- **Mouse Hit Detection**: Improved hit tolerance for components and glyphs by adding stroke-based hit testing. Components in edit mode, inactive glyphs in edit mode, and HarfBuzz-rendered glyphs in text mode now have expanded hit areas similar to nodes, making them easier to click and select.
 
 # v0.1.1a
 
