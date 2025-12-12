@@ -450,10 +450,9 @@ if (typeof window === 'undefined') {
     (() => {
         const reloadedBySelf =
             window.sessionStorage.getItem('coiReloadedBySelf');
-        window.sessionStorage.removeItem('coiReloadedBySelf');
         const coepDegrading = reloadedBySelf == 'coepdegrade';
 
-        // If already reloaded once, stop here
+        // If already reloaded once, stop here (don't remove flag yet)
         if (reloadedBySelf == 'true') {
             return;
         }
@@ -490,6 +489,7 @@ if (typeof window === 'undefined') {
                     }
 
                     // Reload page when service worker is ready
+                    // Case 1: SW already active but not controlling yet
                     if (
                         registration.active &&
                         !navigator.serviceWorker.controller
@@ -499,6 +499,30 @@ if (typeof window === 'undefined') {
                             'true'
                         );
                         window.location.reload();
+                        return;
+                    }
+
+                    // Case 2: SW is still installing - wait for activation
+                    if (registration.installing) {
+                        registration.installing.addEventListener(
+                            'statechange',
+                            function stateChangeListener(e) {
+                                if (e.target.state === 'activated') {
+                                    // Check flag again - might have been set by another listener
+                                    if (
+                                        !window.sessionStorage.getItem(
+                                            'coiReloadedBySelf'
+                                        )
+                                    ) {
+                                        window.sessionStorage.setItem(
+                                            'coiReloadedBySelf',
+                                            'true'
+                                        );
+                                        window.location.reload();
+                                    }
+                                }
+                            }
+                        );
                     }
                 },
                 (err) => {
