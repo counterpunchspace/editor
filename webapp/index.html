@@ -633,8 +633,8 @@
                         } else if (!isIsolated) {
                             notice.innerHTML =
                                 '<strong>⚠️ Cross-Origin Isolation Required</strong>' +
-                                '<p style="margin: 5px 0;">Waiting for service worker to activate...</p>' +
-                                '<p style="margin: 5px 0;">If this message persists after reload, check server headers.</p>';
+                                '<p style="margin: 5px 0;">Service worker is activating. Please <strong>refresh the page manually</strong> (Cmd+R / F5).</p>' +
+                                '<p style="margin: 5px 0; font-size: 0.9em;">This is needed to load the page through the service worker with proper headers.</p>';
                         }
                     }
                 }

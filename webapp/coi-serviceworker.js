@@ -450,67 +450,11 @@ if (typeof window === 'undefined') {
     (() => {
         const reloadedBySelf =
             window.sessionStorage.getItem('coiReloadedBySelf');
+        window.sessionStorage.removeItem('coiReloadedBySelf');
         const coepDegrading = reloadedBySelf == 'coepdegrade';
 
-        // Check if SharedArrayBuffer is available
-        const hasSAB = typeof SharedArrayBuffer !== 'undefined';
-
-        // Detect iOS (all browsers on iOS use WebKit and don't support SharedArrayBuffer)
-        const isIOS =
-            /iPad|iPhone|iPod/.test(navigator.userAgent) ||
-            (navigator.platform === 'MacIntel' &&
-                navigator.maxTouchPoints > 1) ||
-            /iPad|iPhone|iPod/.test(navigator.platform);
-
-        // If we already reloaded once, verify everything is working but don't reload again
-        const reloaded = reloadedBySelf == 'true';
-        if (reloaded) {
-            console.log('[COI] Reload flag detected - verifying setup...');
-            console.log('[COI] - SharedArrayBuffer:', hasSAB);
-            console.log(
-                '[COI] - Service Worker Controller:',
-                navigator.serviceWorker.controller ? 'Active' : 'None'
-            );
-            console.log(
-                '[COI] - crossOriginIsolated:',
-                typeof crossOriginIsolated !== 'undefined'
-                    ? crossOriginIsolated
-                    : 'undefined'
-            );
-
-            if (!hasSAB && !isIOS) {
-                console.error(
-                    '[COI] Service worker active but SharedArrayBuffer still unavailable. Check browser support.'
-                );
-            } else if (hasSAB) {
-                console.log(
-                    '[COI] ✅ SharedArrayBuffer available, clearing reload flag'
-                );
-                // Only clear the flag if SAB is working - this prevents reload loops
-                window.sessionStorage.removeItem('coiReloadedBySelf');
-            }
-
-            // Don't return early - continue to ensure SW is registered
-            // This is needed because the early return was preventing SW registration
-            // We just won't trigger any reloads below
-        }
-
-        // IMPORTANT: Only reload ONCE per session. Check happens before AND after registration.
-        // If we have a controller but no SAB, the page wasn't served through the SW yet.
-        // Skip reload on iOS where SAB is not supported.
-        // Also skip if we've already reloaded (reloaded flag prevents infinite loops)
-        if (
-            navigator.serviceWorker.controller &&
-            !hasSAB &&
-            !isIOS &&
-            !reloaded
-        ) {
-            console.log(
-                '[COI] Service worker present but page not served through it - reloading...'
-            );
-            window.sessionStorage.setItem('coiReloadedBySelf', 'true');
-            // Hard reload to bypass browser cache and force fetch through SW
-            window.location.reload(true);
+        // If already reloaded once, stop here
+        if (reloadedBySelf == 'true') {
             return;
         }
 
@@ -545,57 +489,17 @@ if (typeof window === 'undefined') {
                         });
                     }
 
-                    // Reload page when service worker is ready (but only if we haven't already reloaded)
-                    // This handles first-time registration
+                    // Reload page when service worker is ready
                     if (
                         registration.active &&
-                        !navigator.serviceWorker.controller &&
-                        !reloaded
+                        !navigator.serviceWorker.controller
                     ) {
                         window.sessionStorage.setItem(
                             'coiReloadedBySelf',
                             'true'
                         );
-                        console.log(
-                            '[COI] Service worker registered but not controlling - reloading...'
-                        );
-                        // Hard reload to bypass browser cache and force fetch through SW
-                        window.location.reload(true);
-                        return;
+                        window.location.reload();
                     }
-
-                    // Also handle the case where SW just activated
-                    // This handles when SW is installing (not active yet)
-                    if (registration.installing && !reloaded) {
-                        registration.installing.addEventListener(
-                            'statechange',
-                            (e) => {
-                                const stillNotReloaded =
-                                    !window.sessionStorage.getItem(
-                                        'coiReloadedBySelf'
-                                    );
-                                if (
-                                    e.target.state === 'activated' &&
-                                    !navigator.serviceWorker.controller &&
-                                    stillNotReloaded
-                                ) {
-                                    window.sessionStorage.setItem(
-                                        'coiReloadedBySelf',
-                                        'true'
-                                    );
-                                    console.log(
-                                        '[COI] Service worker activated - reloading to enable control...'
-                                    );
-                                    // Hard reload to bypass browser cache and force fetch through SW
-                                    window.location.reload(true);
-                                }
-                            }
-                        );
-                    }
-
-                    // NOTE: Removed duplicate check for (controller && !hasSAB) here
-                    // That check already happens at line ~476 before registration
-                    // Having it in both places causes reload loops
                 },
                 (err) => {
                     console.error(
