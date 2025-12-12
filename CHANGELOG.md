@@ -1,5 +1,6 @@
 # Unreleased
 
+- **Canvas Zoom Fix**: Fixed unwanted zoom-to-fit on every node drag. Zoom now only occurs on initial font load, not on subsequent auto-recompilations.
 - **Component Origin Markers**: Added `SHOW_COMPONENT_ORIGIN_MARKERS` setting (default: false) to control visibility of component origin cross markers. Includes production override to ensure markers are hidden in production.
 - **Canvas UI Cleanup**: Removed crosshair (coordinate system) and baseline drawings from canvas. Pan and Zoom labels now positioned at bottom left corner.
 - **Auto-Pan During Interpolation**: Added automatic panning to keep glyph bbox center stable during slider movements and layer switches. Prevents glyphs from moving out of viewport when width changes during interpolation. Fixed auto-pan not working when clicking slider at random location by moving anchor clearing from mouseup to animation complete handler.

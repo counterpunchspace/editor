@@ -34,6 +34,7 @@ class GlyphCanvas {
     sourceGlyphNames: { [gid: number]: string } = {};
 
     isFocused: boolean = false;
+    initialFontLoaded: boolean = false;
 
     mouseX: number = 0;
     mouseY: number = 0;
@@ -752,13 +753,16 @@ class GlyphCanvas {
                         // Shape text with new font after features are initialized
                         this.textRunEditor!.shapeText();
 
-                        // Zoom to fit the entire text in the canvas
-                        const rect = this.canvas!.getBoundingClientRect();
-                        this.viewportManager!.zoomToFitText(
-                            this.textRunEditor!.shapedGlyphs,
-                            rect,
-                            this.render.bind(this)
-                        );
+                        // Zoom to fit the entire text in the canvas only on initial load
+                        if (!this.initialFontLoaded) {
+                            const rect = this.canvas!.getBoundingClientRect();
+                            this.viewportManager!.zoomToFitText(
+                                this.textRunEditor!.shapedGlyphs,
+                                rect,
+                                this.render.bind(this)
+                            );
+                            this.initialFontLoaded = true;
+                        }
                     });
                 }
             );
