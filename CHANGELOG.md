@@ -2,6 +2,10 @@
 
 - **Add items here** for the next release (Replace this comment)
 
+# v0.1.8a
+
+- **Add items here** for the next release (Replace this comment)
+
 # v0.1.7a
 
 - **Service Worker Reload Loop Fix**: Fixed again
