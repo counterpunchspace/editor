@@ -452,8 +452,24 @@ if (typeof window === 'undefined') {
             window.sessionStorage.getItem('coiReloadedBySelf');
         const coepDegrading = reloadedBySelf == 'coepdegrade';
 
-        // If already reloaded once, stop here (don't remove flag yet)
-        if (reloadedBySelf == 'true') {
+        console.log('[COI] Script executing, reloadedBySelf flag:', reloadedBySelf);
+
+        // Check if SharedArrayBuffer is available
+        const hasSAB = typeof SharedArrayBuffer !== 'undefined';
+        
+        console.log('[COI] SharedArrayBuffer available:', hasSAB);
+        console.log('[COI] Service worker controller:', navigator.serviceWorker.controller ? 'Active' : 'None');
+        
+        // If already reloaded once but still no SAB, clear flag and try again
+        if (reloadedBySelf == 'true' && !hasSAB) {
+            console.warn(
+                '[COI] Previously reloaded but SharedArrayBuffer still unavailable. Clearing flag to retry.'
+            );
+            window.sessionStorage.removeItem('coiReloadedBySelf');
+            // Don't return - continue to register SW
+        } else if (reloadedBySelf == 'true' && hasSAB) {
+            // Already reloaded and working - nothing to do
+            console.log('[COI] ✅ Service worker active, SharedArrayBuffer available');
             return;
         }
 
@@ -465,12 +481,19 @@ if (typeof window === 'undefined') {
             scope += '/';
         }
 
+        console.log('[COI] Registering service worker...');
         navigator.serviceWorker
             .register(window.document.currentScript.src, {
                 scope: scope
             })
             .then(
                 (registration) => {
+                    console.log('[COI] Service worker registered successfully');
+                    console.log('[COI] - Active:', registration.active ? 'Yes' : 'No');
+                    console.log('[COI] - Installing:', registration.installing ? 'Yes' : 'No');
+                    console.log('[COI] - Waiting:', registration.waiting ? 'Yes' : 'No');
+                    console.log('[COI] - Controller:', navigator.serviceWorker.controller ? 'Yes' : 'No');
+                    
                     registration.active?.postMessage({
                         type: 'coepCredentialless',
                         value: coepCredentialless
@@ -494,6 +517,7 @@ if (typeof window === 'undefined') {
                         registration.active &&
                         !navigator.serviceWorker.controller
                     ) {
+                        console.log('[COI] Service worker active but not controlling - reloading...');
                         window.sessionStorage.setItem(
                             'coiReloadedBySelf',
                             'true'
@@ -504,9 +528,11 @@ if (typeof window === 'undefined') {
 
                     // Case 2: SW is still installing - wait for activation
                     if (registration.installing) {
+                        console.log('[COI] Service worker installing - waiting for activation...');
                         registration.installing.addEventListener(
                             'statechange',
                             function stateChangeListener(e) {
+                                console.log('[COI] Service worker state changed to:', e.target.state);
                                 if (e.target.state === 'activated') {
                                     // Check flag again - might have been set by another listener
                                     if (
@@ -514,6 +540,7 @@ if (typeof window === 'undefined') {
                                             'coiReloadedBySelf'
                                         )
                                     ) {
+                                        console.log('[COI] Service worker activated - reloading...');
                                         window.sessionStorage.setItem(
                                             'coiReloadedBySelf',
                                             'true'
@@ -527,9 +554,11 @@ if (typeof window === 'undefined') {
                 },
                 (err) => {
                     console.error(
-                        'COOP/COEP Service Worker failed to register:',
+                        '[COI] ❌ Service Worker registration failed:',
                         err
                     );
+                    // Clear flag so user can try again
+                    window.sessionStorage.removeItem('coiReloadedBySelf');
                 }
             );
     })();

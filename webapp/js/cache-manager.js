@@ -396,6 +396,21 @@ Manual cache access:
     }
 
     async function autoClearOnLoad() {
+        // DISABLED: This was breaking the COI service worker
+        // The COI service worker needs to stay registered to provide
+        // Cross-Origin-Embedder-Policy and Cross-Origin-Opener-Policy headers
+        // which are required for SharedArrayBuffer (needed for WASM)
+        console.log(
+            '[CacheManager]',
+            '⚠️  Auto-clear on load DISABLED (required for COI service worker)'
+        );
+
+        // Track memory only
+        trackMemoryAcrossReloads();
+
+        return;
+
+        /* OLD CODE - DISABLED
         console.log(
             '[CacheManager]',
             '🧹 Auto-clearing service worker caches on page load...'
@@ -478,6 +493,7 @@ Manual cache access:
                 error
             );
         }
+        */
     }
 
     // Run auto-clear when page loads
