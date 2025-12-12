@@ -1,7 +1,24 @@
 #!/bin/bash
 
-# Script to increment the version number in coi-serviceworker.js
+# Script to update the version number in coi-serviceworker.js
 # This forces cache invalidation for all users when deployed
+# Usage: ./package.sh <version>
+# Example: ./package.sh v0.1.1a
+
+if [ -z "$1" ]; then
+    echo "Error: Version required"
+    echo "Usage: ./package.sh <version>"
+    echo "Example: ./package.sh v0.1.1a"
+    exit 1
+fi
+
+NEW_VERSION="$1"
+
+# Validate version format (must start with 'v')
+if ! echo "$NEW_VERSION" | grep -qE '^v'; then
+    echo "Error: Version must start with 'v' (e.g., v0.1.1a)"
+    exit 1
+fi
 
 SERVICE_WORKER_FILE="webapp/coi-serviceworker.js"
 
@@ -11,25 +28,25 @@ if [ ! -f "$SERVICE_WORKER_FILE" ]; then
     exit 1
 fi
 
-# Extract current version number
-CURRENT_VERSION=$(grep "const VERSION = 'v" "$SERVICE_WORKER_FILE" | sed -E "s/.*'v([0-9]+)'.*/\1/")
+# Extract current version
+CURRENT_VERSION=$(grep "const VERSION = " "$SERVICE_WORKER_FILE" | sed -E "s/.*'([^']+)'.*/\1/")
 
 if [ -z "$CURRENT_VERSION" ]; then
     echo "Error: Could not extract current version from $SERVICE_WORKER_FILE"
     exit 1
 fi
 
-# Increment version
-NEW_VERSION=$((CURRENT_VERSION + 1))
-
-echo "Current version: v$CURRENT_VERSION"
-echo "New version: v$NEW_VERSION"
+echo "Current version: $CURRENT_VERSION"
+echo "New version: $NEW_VERSION"
 
 # Update the version in the service worker file
-sed -i.bak "s/const VERSION = 'v$CURRENT_VERSION'/const VERSION = 'v$NEW_VERSION'/" "$SERVICE_WORKER_FILE"
-
-# Remove backup file
-rm "${SERVICE_WORKER_FILE}.bak"
+if [[ "$OSTYPE" == "darwin"* ]]; then
+    # macOS
+    sed -i '' "s/const VERSION = '[^']*'/const VERSION = '$NEW_VERSION'/" "$SERVICE_WORKER_FILE"
+else
+    # Linux
+    sed -i "s/const VERSION = '[^']*'/const VERSION = '$NEW_VERSION'/" "$SERVICE_WORKER_FILE"
+fi
 
 echo "✅ Version updated successfully in $SERVICE_WORKER_FILE"
 echo ""
