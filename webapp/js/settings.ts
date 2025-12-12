@@ -40,6 +40,7 @@ const APP_SETTINGS = {
 
         // Component marker size
         COMPONENT_MARKER_SIZE: 10, // px - size of component origin marker
+        SHOW_COMPONENT_ORIGIN_MARKERS: false, // whether to draw component origin markers
 
         // Component glow effect
         COMPONENT_GLOW_BLUR: 60, // font units - blur radius for component glow (stays constant in font space)
@@ -166,7 +167,8 @@ const APP_SETTINGS = {
 // These settings override the defaults when running in production mode
 const PRODUCTION_OVERRIDES = {
     OUTLINE_EDITOR: {
-        SHOW_BOUNDING_BOX: false // Hide bounding box in production
+        SHOW_BOUNDING_BOX: false, // Hide bounding box in production
+        SHOW_COMPONENT_ORIGIN_MARKERS: false // Hide component origin markers in production
     }
 };
 

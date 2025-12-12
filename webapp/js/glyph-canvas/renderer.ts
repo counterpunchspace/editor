@@ -875,7 +875,14 @@ export class GlyphCanvasRenderer {
                     }
 
                     // Draw component reference marker at origin
-                    // Skip drawing markers if zoom is under minimum threshold
+                    // Skip drawing markers if disabled or if zoom is under minimum threshold
+                    if (
+                        !APP_SETTINGS.OUTLINE_EDITOR
+                            .SHOW_COMPONENT_ORIGIN_MARKERS
+                    ) {
+                        this.ctx.restore();
+                        return;
+                    }
                     const minZoomForHandles =
                         APP_SETTINGS.OUTLINE_EDITOR.MIN_ZOOM_FOR_HANDLES;
                     if (this.viewportManager.scale < minZoomForHandles) {
