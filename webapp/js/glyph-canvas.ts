@@ -1534,16 +1534,11 @@ class GlyphCanvas {
     }
 
     resetZoomAndPosition(): void {
-        // Reset zoom to initial scale and position to origin with animation
+        // Zoom to fit text, matching the initial view when font loads
         const rect = this.canvas!.getBoundingClientRect();
-        const targetScale = this.initialScale;
-        const targetPanX = rect.width / 4; // Same as initial position
-        const targetPanY = rect.height / 2; // Same as initial position
-
-        this.viewportManager!.animateZoomAndPan(
-            targetScale,
-            targetPanX,
-            targetPanY,
+        this.viewportManager!.zoomToFitText(
+            this.textRunEditor!.shapedGlyphs,
+            rect,
             this.render.bind(this)
         );
     }

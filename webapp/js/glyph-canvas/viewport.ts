@@ -729,5 +729,8 @@ export class ViewportManager {
             targetPanY,
             renderCallback
         );
+
+        // Return the calculated zoom level so it can be stored
+        return clampedScale;
     }
 }
