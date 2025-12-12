@@ -214,15 +214,15 @@ layer = glyph.findLayerById("layer-id")
 
 ### Methods
 
-#### `addPath(closed: bool = True) -> `[`Path`](#path)
-Add a new path to the layer.
+#### `addAnchor(x: float, y: float, name: str | None = None) -> [`Anchor`](#anchor)`
+Add a new anchor point.
 
 **Example:**
 ```python
-path = layer.addPath(closed=True)
+anchor = layer.addAnchor(250, 700, "top")
 ```
 
-#### `addComponent(reference: str, transform: list[float] | None = None) -> `[`Component`](#component)
+#### `addComponent(reference: str, transform: list[float] | None = None) -> [`Component`](#component)`
 Add a new component reference to the layer.
 
 **Example:**
@@ -232,22 +232,42 @@ component = layer.addComponent("A")
 component = layer.addComponent("A", [1, 0, 0, 1, 100, 0])
 ```
 
-#### `addShape(shape_data: dict) -> `[`Shape`](#shape)
-Add a new shape (component or path) to the layer.
-
-#### `removeShape(index: int) -> None`
-Remove a shape at the specified index.
-
-#### `addAnchor(x: float, y: float, name: str | None = None) -> `[`Anchor`](#anchor)
-Add a new anchor point.
+#### `addPath(closed: bool = True) -> [`Path`](#path)`
+Add a new path to the layer.
 
 **Example:**
 ```python
-anchor = layer.addAnchor(250, 700, "top")
+path = layer.addPath(closed=True)
+```
+
+#### `addShape(shape_data: dict) -> [`Shape`](#shape)`
+Add a new shape (component or path) to the layer.
+
+#### `getBoundingBox(includeAnchors: bool = False) -> dict | None`
+Calculate the bounding box for this layer, respecting nested components and their transformation matrices.
+
+**Parameters:**
+- `includeAnchors` (bool): If True, include anchors in the bounding box calculation (default: False)
+
+**Returns:**
+Dictionary with keys: `minX`, `minY`, `maxX`, `maxY`, `width`, `height`, or `None` if no geometry.
+
+**Example:**
+```python
+bbox = layer.getBoundingBox()
+if bbox:
+    print(f"Bounds: {bbox[\'width\']} x {bbox[\'height\']}")
+    print(f"Position: ({bbox[\'minX\']}, {bbox[\'minY\']}")
+
+# Include anchors in bounds calculation
+bbox_with_anchors = layer.getBoundingBox(includeAnchors=True)
 ```
 
 #### `removeAnchor(index: int) -> None`
 Remove an anchor at the specified index.
+
+#### `removeShape(index: int) -> None`
+Remove a shape at the specified index.
 
 ---
 

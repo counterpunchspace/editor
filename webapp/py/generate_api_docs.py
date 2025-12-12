@@ -11,7 +11,38 @@ Usage from Python console:
 """
 
 from js import window
-import inspect
+
+
+def get_layer_methods():
+    """Introspect Layer class methods programmatically"""
+    try:
+        font = window.currentFontModel
+        if not font or not font.glyphs or len(font.glyphs) == 0:
+            return []
+        
+        # Get a layer instance
+        glyph = font.glyphs[0]
+        if not glyph.layers or len(glyph.layers) == 0:
+            return []
+        
+        layer = glyph.layers[0]
+        
+        # Get all methods (callable attributes)
+        methods = []
+        for attr_name in dir(layer):
+            if attr_name.startswith('_'):
+                continue
+            try:
+                attr = getattr(layer, attr_name)
+                if callable(attr):
+                    methods.append(attr_name)
+            except Exception:
+                pass
+        
+        return sorted(methods)
+    except Exception as e:
+        print(f"Error introspecting Layer methods: {e}")
+        return []
 
 
 def generate_docs():
@@ -234,7 +265,129 @@ Find a layer associated with a specific master.
 
 def get_layer_class_docs():
     """Generate documentation for the Layer class"""
-    return """## Layer
+    # Manual method documentation (with descriptions and examples)
+    manual_methods = {
+        'addPath': {
+            'signature': 'addPath(closed: bool = True) -> [`Path`](#path)',
+            'description': 'Add a new path to the layer.',
+            'example': 'path = layer.addPath(closed=True)'
+        },
+        'addComponent': {
+            'signature': (
+                'addComponent(reference: str, '
+                'transform: list[float] | None = None) -> '
+                '[`Component`](#component)'
+            ),
+            'description': 'Add a new component reference to the layer.',
+            'example': (
+                'component = layer.addComponent("A")\n'
+                '# With transformation: [xx, xy, yx, yy, x, y]\n'
+                'component = layer.addComponent("A", [1, 0, 0, 1, 100, 0])'
+            )
+        },
+        'addShape': {
+            'signature': 'addShape(shape_data: dict) -> [`Shape`](#shape)',
+            'description': 'Add a new shape (component or path) to the layer.',
+            'example': None
+        },
+        'removeShape': {
+            'signature': 'removeShape(index: int) -> None',
+            'description': 'Remove a shape at the specified index.',
+            'example': None
+        },
+        'addAnchor': {
+            'signature': (
+                'addAnchor(x: float, y: float, '
+                'name: str | None = None) -> [`Anchor`](#anchor)'
+            ),
+            'description': 'Add a new anchor point.',
+            'example': 'anchor = layer.addAnchor(250, 700, "top")'
+        },
+        'removeAnchor': {
+            'signature': 'removeAnchor(index: int) -> None',
+            'description': 'Remove an anchor at the specified index.',
+            'example': None
+        },
+        'getBoundingBox': {
+            'signature': (
+                'getBoundingBox(includeAnchors: bool = False) '
+                '-> dict | None'
+            ),
+            'description': (
+                'Calculate the bounding box for this layer, respecting '
+                'nested components and their transformation matrices.'
+            ),
+            'params': [
+                (
+                    '- `includeAnchors` (bool): If True, include anchors '
+                    'in the bounding box calculation (default: False)'
+                )
+            ],
+            'returns': (
+                'Dictionary with keys: `minX`, `minY`, `maxX`, `maxY`, '
+                '`width`, `height`, or `None` if no geometry.'
+            ),
+            'example': (
+                'bbox = layer.getBoundingBox()\n'
+                'if bbox:\n'
+                '    print(f"Bounds: {bbox[\\\'width\\\']} x '
+                '{bbox[\\\'height\\\']}")\n'
+                '    print(f"Position: ({bbox[\\\'minX\\\']}, '
+                '{bbox[\\\'minY\\\']}")\n'
+                '\n'
+                '# Include anchors in bounds calculation\n'
+                'bbox_with_anchors = layer.getBoundingBox('
+                'includeAnchors=True)'
+            )
+        }
+    }
+    
+    # Get methods programmatically
+    detected_methods = get_layer_methods()
+    
+    # Build methods section
+    methods_section = []
+    
+    # First add documented methods
+    for method_name in sorted(manual_methods.keys()):
+        method_info = manual_methods[method_name]
+        methods_section.append(
+            f"#### `{method_info['signature']}`\n"
+        )
+        methods_section.append(f"{method_info['description']}\n")
+        
+        if 'params' in method_info:
+            methods_section.append("\n**Parameters:**\n")
+            for param in method_info['params']:
+                methods_section.append(f"{param}\n")
+        
+        if 'returns' in method_info:
+            methods_section.append("\n**Returns:**\n")
+            methods_section.append(f"{method_info['returns']}\n")
+        
+        if method_info.get('example'):
+            methods_section.append("\n**Example:**\n")
+            methods_section.append("```python\n")
+            methods_section.append(f"{method_info['example']}\n")
+            methods_section.append("```\n")
+        
+        methods_section.append("\n")
+    
+    # Add any additional detected methods not in manual list
+    undocumented_methods = [
+        m for m in detected_methods if m not in manual_methods
+    ]
+    if undocumented_methods:
+        methods_section.append(
+            "#### Additional Methods\n\n"
+        )
+        for method_name in undocumented_methods:
+            methods_section.append(f"- `{method_name}()`\n")
+        methods_section.append("\n")
+    
+    methods_text = "".join(methods_section)
+    
+    return f"""## Layer
 
 Represents a layer in a glyph (one drawing per master/location).
 
@@ -252,58 +405,27 @@ layer = glyph.findLayerById("layer-id")
 - **`width`** (float): Advance width of the layer
 - **`name`** (str | None): Layer name
 - **`id`** (str | None): Layer ID
-- **`master`** (dict | None): Relationship to master (DefaultForMaster/AssociatedWithMaster)
-- **`color`** (dict | None): Layer color {r, g, b, a}
+- **`master`** (dict | None): Relationship to master \
+(DefaultForMaster/AssociatedWithMaster)
+- **`color`** (dict | None): Layer color {{r, g, b, a}}
 - **`layer_index`** (int | None): Index in a color font
 - **`is_background`** (bool | None): Whether this is a background layer
-- **`background_layer_id`** (str | None): ID of background layer for this layer
+- **`background_layer_id`** (str | None): ID of background layer \
+for this layer
 - **`location`** (dict | None): Location in design space
 - **`format_specific`** (dict | None): Format-specific data
 
 #### Read-Only Properties
 
-- **`shapes`** (list[[Shape](#shape)] | None): Shapes (paths and components) in the layer
-- **`anchors`** (list[[Anchor](#anchor)] | None): Anchor points in the layer
+- **`shapes`** (list[[Shape](#shape)] | None): Shapes (paths and \
+components) in the layer
+- **`anchors`** (list[[Anchor](#anchor)] | None): Anchor points \
+in the layer
 - **`guides`** (list[[Guide](#guide)] | None): Guidelines in the layer
 
 ### Methods
 
-#### `addPath(closed: bool = True) -> `[`Path`](#path)
-Add a new path to the layer.
-
-**Example:**
-```python
-path = layer.addPath(closed=True)
-```
-
-#### `addComponent(reference: str, transform: list[float] | None = None) -> `[`Component`](#component)
-Add a new component reference to the layer.
-
-**Example:**
-```python
-component = layer.addComponent("A")
-# With transformation: [xx, xy, yx, yy, x, y]
-component = layer.addComponent("A", [1, 0, 0, 1, 100, 0])
-```
-
-#### `addShape(shape_data: dict) -> `[`Shape`](#shape)
-Add a new shape (component or path) to the layer.
-
-#### `removeShape(index: int) -> None`
-Remove a shape at the specified index.
-
-#### `addAnchor(x: float, y: float, name: str | None = None) -> `[`Anchor`](#anchor)
-Add a new anchor point.
-
-**Example:**
-```python
-anchor = layer.addAnchor(250, 700, "top")
-```
-
-#### `removeAnchor(index: int) -> None`
-Remove an anchor at the specified index.
-
----
+{methods_text}---
 """
 
 

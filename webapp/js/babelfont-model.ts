@@ -721,6 +721,149 @@ export class Layer extends ArrayElementBase {
         }
     }
 
+    /**
+     * Calculate bounding box for layer data
+     * @param layerData - Raw layer data object
+     * @param includeAnchors - If true, include anchors in the bounding box calculation (default: false)
+     * @returns Bounding box {minX, minY, maxX, maxY, width, height} or null if no geometry
+     */
+    static calculateBoundingBox(
+        layerData: any,
+        includeAnchors: boolean = false
+    ): {
+        minX: number;
+        minY: number;
+        maxX: number;
+        maxY: number;
+        width: number;
+        height: number;
+    } | null {
+        let minX = Infinity;
+        let minY = Infinity;
+        let maxX = -Infinity;
+        let maxY = -Infinity;
+        let hasPoints = false;
+
+        // Helper function to expand bounding box with a point
+        const expandBounds = (x: number, y: number) => {
+            minX = Math.min(minX, x);
+            minY = Math.min(minY, y);
+            maxX = Math.max(maxX, x);
+            maxY = Math.max(maxY, y);
+            hasPoints = true;
+        };
+
+        // Helper function to process shapes recursively (for components)
+        const processShapes = (
+            shapes: any[],
+            transform: number[] = [1, 0, 0, 1, 0, 0]
+        ) => {
+            if (!shapes || !Array.isArray(shapes)) return;
+
+            for (const shape of shapes) {
+                if ('Component' in shape) {
+                    // Component - recursively process its outline shapes with accumulated transform
+                    const compTransform = shape.Component.transform || [
+                        1, 0, 0, 1, 0, 0
+                    ];
+                    const [a1, b1, c1, d1, tx1, ty1] = transform;
+                    const [a2, b2, c2, d2, tx2, ty2] = compTransform;
+
+                    // Combine transforms
+                    const combinedTransform = [
+                        a1 * a2 + c1 * b2,
+                        b1 * a2 + d1 * b2,
+                        a1 * c2 + c1 * d2,
+                        b1 * c2 + d1 * d2,
+                        a1 * tx2 + c1 * ty2 + tx1,
+                        b1 * tx2 + d1 * ty2 + ty1
+                    ];
+
+                    // Recursively process the component's actual outline shapes
+                    if (
+                        shape.Component.layerData &&
+                        shape.Component.layerData.shapes
+                    ) {
+                        processShapes(
+                            shape.Component.layerData.shapes,
+                            combinedTransform
+                        );
+                    }
+                } else if (
+                    'Path' in shape &&
+                    shape.Path.nodes &&
+                    Array.isArray(shape.Path.nodes) &&
+                    shape.Path.nodes.length > 0
+                ) {
+                    // Path - process all nodes with the accumulated transform
+                    for (const node of shape.Path.nodes) {
+                        const { x, y } = node;
+
+                        // Apply accumulated transform
+                        const [a, b, c, d, tx, ty] = transform;
+                        const transformedX = a * x + c * y + tx;
+                        const transformedY = b * x + d * y + ty;
+
+                        expandBounds(transformedX, transformedY);
+                    }
+                }
+            }
+        };
+
+        // Process all shapes
+        if (layerData.shapes) {
+            processShapes(layerData.shapes);
+        }
+
+        // Include anchors in bounding box if requested
+        if (includeAnchors && layerData.anchors) {
+            for (const anchor of layerData.anchors) {
+                expandBounds(anchor.x, anchor.y);
+            }
+        }
+
+        if (!hasPoints) {
+            // No points found (e.g., space character) - use glyph width from layer data
+            // Create a small bbox: 10 units high, centered on baseline, as wide as the glyph
+            const glyphWidth = layerData.width || 250; // Fallback to 250 if no width
+            const height = 10;
+
+            return {
+                minX: 0,
+                minY: -height / 2,
+                maxX: glyphWidth,
+                maxY: height / 2,
+                width: glyphWidth,
+                height: height
+            };
+        }
+
+        return {
+            minX,
+            minY,
+            maxX,
+            maxY,
+            width: maxX - minX,
+            height: maxY - minY
+        };
+    }
+
+    /**
+     * Calculate bounding box for this layer
+     * @param includeAnchors - If true, include anchors in the bounding box calculation (default: false)
+     * @returns Bounding box {minX, minY, maxX, maxY, width, height} or null if no geometry
+     */
+    getBoundingBox(includeAnchors: boolean = false): {
+        minX: number;
+        minY: number;
+        maxX: number;
+        maxY: number;
+        width: number;
+        height: number;
+    } | null {
+        return Layer.calculateBoundingBox(this.data, includeAnchors);
+    }
+
     toString(): string {
         let masterId: string;
         if (typeof this.master === 'object') {

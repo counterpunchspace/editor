@@ -5,6 +5,7 @@ import fontManager from '../font-manager';
 import { PythonBabelfont } from '../pythonbabelfont';
 import { Transform } from '../basictypes';
 import { Logger } from '../logger';
+import { Layer } from '../babelfont-model';
 
 let console: Logger = new Logger('OutlineEditor', true);
 
@@ -2580,6 +2581,7 @@ export class OutlineEditor {
         // Returns null if no glyph is selected or no layer data is available
 
         console.log(
+            '[OutlineEditor]',
             'calculateGlyphBoundingBox: isGlyphEditMode=',
             this.active,
             'layerData=',
@@ -2591,129 +2593,31 @@ export class OutlineEditor {
         }
 
         console.log(
+            '[OutlineEditor]',
             'calculateGlyphBoundingBox: layerData.shapes=',
             this.layerData.shapes,
             'layerData.width=',
             this.layerData.width
         );
 
-        let minX = Infinity;
-        let minY = Infinity;
-        let maxX = -Infinity;
-        let maxY = -Infinity;
-        let hasPoints = false;
+        // Use the Layer.calculateBoundingBox static method with includeAnchors=true
+        // to match the old behavior of including anchors
+        const bbox = Layer.calculateBoundingBox(this.layerData, true);
 
-        // Helper function to expand bounding box with a point
-        const expandBounds = (x: number, y: number) => {
-            minX = Math.min(minX, x);
-            minY = Math.min(minY, y);
-            maxX = Math.max(maxX, x);
-            maxY = Math.max(maxY, y);
-            hasPoints = true;
-        };
-
-        // Helper function to process shapes recursively (for components)
-        const processShapes = (
-            shapes: PythonBabelfont.Shape[],
-            transform: number[] = [1, 0, 0, 1, 0, 0]
-        ) => {
-            if (!shapes || !Array.isArray(shapes)) return;
-
-            for (const shape of shapes) {
-                if ('Component' in shape) {
-                    // Component - recursively process its outline shapes with accumulated transform
-                    const compTransform = shape.Component.transform || [
-                        1, 0, 0, 1, 0, 0
-                    ];
-                    const [a1, b1, c1, d1, tx1, ty1] = transform;
-                    const [a2, b2, c2, d2, tx2, ty2] = compTransform;
-
-                    // Combine transforms
-                    const combinedTransform = [
-                        a1 * a2 + c1 * b2,
-                        b1 * a2 + d1 * b2,
-                        a1 * c2 + c1 * d2,
-                        b1 * c2 + d1 * d2,
-                        a1 * tx2 + c1 * ty2 + tx1,
-                        b1 * tx2 + d1 * ty2 + ty1
-                    ];
-
-                    // Recursively process the component's actual outline shapes
-                    if (
-                        shape.Component.layerData &&
-                        shape.Component.layerData.shapes
-                    ) {
-                        processShapes(
-                            shape.Component.layerData.shapes,
-                            combinedTransform
-                        );
-                    }
-                } else if (
-                    'nodes' in shape &&
-                    Array.isArray(shape.nodes) &&
-                    shape.nodes.length > 0
-                ) {
-                    // Path - process all nodes with the accumulated transform
-                    for (const node of shape.nodes) {
-                        const { x, y } = node;
-
-                        // Apply accumulated transform
-                        const [a, b, c, d, tx, ty] = transform;
-                        const transformedX = a * x + c * y + tx;
-                        const transformedY = b * x + d * y + ty;
-
-                        expandBounds(transformedX, transformedY);
-                    }
-                }
-            }
-        };
-
-        // Process all shapes
-        processShapes(this.layerData.shapes);
-
-        // Also include anchors in bounding box
-        if (this.layerData.anchors && Array.isArray(this.layerData.anchors)) {
-            for (const anchor of this.layerData.anchors) {
-                expandBounds(anchor.x, anchor.y);
-            }
-        }
-
-        if (!hasPoints) {
-            // No points found (e.g., space character) - use glyph width from layer data
-            // Create a small bbox: 10 units high, centered on baseline, as wide as the glyph
-            const glyphWidth = this.layerData.width || 250; // Fallback to 250 if no width
-            const height = 10;
-
+        if (bbox) {
             console.log(
-                'calculateGlyphBoundingBox: No points found, creating bbox for empty glyph. width=',
-                glyphWidth
+                '[OutlineEditor]',
+                'calculateGlyphBoundingBox: bbox=',
+                bbox
             );
-
-            return {
-                minX: 0,
-                minY: -height / 2,
-                maxX: glyphWidth,
-                maxY: height / 2,
-                width: glyphWidth,
-                height: height
-            };
+        } else {
+            console.log(
+                '[OutlineEditor]',
+                'calculateGlyphBoundingBox: No bbox calculated'
+            );
         }
 
-        console.log('calculateGlyphBoundingBox: Found points, bbox=', {
-            minX,
-            minY,
-            maxX,
-            maxY
-        });
-
-        return {
-            minX,
-            minY,
-            maxX,
-            maxY,
-            width: maxX - minX,
-            height: maxY - minY
-        };
+        return bbox;
     }
 
     async restoreTargetLayerDataAfterAnimating(): Promise<void> {
