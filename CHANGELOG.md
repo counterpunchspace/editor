@@ -1,5 +1,9 @@
 # Unreleased
 
+- **Add items here** for the next release (Replace this comment)
+
+# v0.1.1a
+
 - **Canvas Zoom Fix**: Fixed unwanted zoom-to-fit on every node drag. Zoom now only occurs on initial font load, not on subsequent auto-recompilations.
 - **Component Origin Markers**: Added `SHOW_COMPONENT_ORIGIN_MARKERS` setting (default: false) to control visibility of component origin cross markers. Includes production override to ensure markers are hidden in production.
 - **Canvas UI Cleanup**: Removed crosshair (coordinate system) and baseline drawings from canvas. Pan and Zoom labels now positioned at bottom left corner.
