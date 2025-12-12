@@ -462,16 +462,19 @@ if (typeof window === 'undefined') {
                 navigator.maxTouchPoints > 1) ||
             /iPad|iPhone|iPod/.test(navigator.platform);
 
-        // If we already reloaded once but still no SAB, something is wrong - don't loop
+        // If we already reloaded once, don't reload again - just check if everything worked
         const reloaded = reloadedBySelf == 'true';
         if (reloaded) {
-            // Clear the flag only after we've confirmed we won't reload again
-            window.sessionStorage.removeItem('coiReloadedBySelf');
             if (!hasSAB && !isIOS) {
                 console.error(
                     '[COI] Service worker active but SharedArrayBuffer still unavailable. Check browser support.'
                 );
+            } else if (hasSAB) {
+                console.log('[COI] ✅ SharedArrayBuffer available, clearing reload flag');
+                // Only clear the flag if SAB is working - this prevents reload loops
+                window.sessionStorage.removeItem('coiReloadedBySelf');
             }
+            // Always return early if we've already reloaded - prevents infinite loops
             return;
         }
 
