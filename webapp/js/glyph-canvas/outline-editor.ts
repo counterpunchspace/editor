@@ -242,6 +242,10 @@ export class OutlineEditor {
 
         // Capture anchor point for auto-panning
         this.captureAutoPanAnchor();
+        console.log(
+            '[OutlineEditor] onSliderMouseDown - captured anchor:',
+            this.autoPanAnchorScreen
+        );
 
         // If not in preview mode, mark current layer data as interpolated and render
         // to show monochrome visual feedback immediately
@@ -261,11 +265,11 @@ export class OutlineEditor {
                 this.isPreviewMode = false;
             }
 
-            // Check if we're on an exact layer (do this before clearing isInterpolating)
+            // Check if we're on an exact layer
             await this.autoSelectMatchingLayer();
 
-            // Now clear interpolating flag and reset request tracking
-            this.isInterpolating = false;
+            // Note: Don't clear isInterpolating here - let it stay true until animation completes
+            // so auto-panning continues working. It will be cleared in animationComplete handler.
             fontInterpolation.resetRequestTracking();
 
             // If we landed on an exact layer, update the saved state to this new layer
@@ -291,19 +295,23 @@ export class OutlineEditor {
                 }
             }
 
-            // Clear auto-pan anchor since animation is complete
-            this.autoPanAnchorScreen = null;
+            // Clear flags only if animation is already complete
+            // (If still animating, animationComplete handler will clear them)
+            if (!this.glyphCanvas.axesManager!.isAnimating) {
+                this.isInterpolating = false;
+                this.autoPanAnchorScreen = null;
+            }
 
             // Always render to update colors after clearing isInterpolating flag
             this.glyphCanvas.render();
         } else if (this.active) {
             this.isPreviewMode = false;
 
-            // Check if we're on an exact layer (do this before clearing isInterpolating)
+            // Check if we're on an exact layer
             await this.autoSelectMatchingLayer();
 
-            // Now clear interpolating flag and reset request tracking
-            this.isInterpolating = false;
+            // Note: Don't clear isInterpolating here - let it stay true until animation completes
+            // so auto-panning continues working. It will be cleared in animationComplete handler.
             fontInterpolation.resetRequestTracking();
 
             // If we landed on an exact layer, update the saved state to this new layer
@@ -322,8 +330,12 @@ export class OutlineEditor {
 
             // If no exact layer match, keep showing interpolated data
 
-            // Clear auto-pan anchor since animation is complete
-            this.autoPanAnchorScreen = null;
+            // Clear flags only if animation is already complete
+            // (If still animating, animationComplete handler will clear them)
+            if (!this.glyphCanvas.axesManager!.isAnimating) {
+                this.isInterpolating = false;
+                this.autoPanAnchorScreen = null;
+            }
 
             this.glyphCanvas.render();
             // Restore focus to canvas
@@ -2512,6 +2524,12 @@ export class OutlineEditor {
      * This is called after interpolation updates the glyph.
      */
     applyAutoPanAdjustment() {
+        console.log(
+            '[OutlineEditor] applyAutoPanAdjustment called - anchor:',
+            this.autoPanAnchorScreen,
+            'enabled:',
+            this.autoPanEnabled
+        );
         if (!this.autoPanEnabled || !this.autoPanAnchorScreen) {
             return;
         }

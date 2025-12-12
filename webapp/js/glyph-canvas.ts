@@ -316,6 +316,12 @@ class GlyphCanvas {
             // It will be handled properly in sliderMouseUp
             if (this.outlineEditor.isInterpolating) {
                 this.textRunEditor!.shapeText();
+                // Only clear flags if slider is not currently active (dragging)
+                // If still dragging, keep flags set so auto-pan continues
+                if (!this.axesManager!.isSliderActive) {
+                    this.outlineEditor.isInterpolating = false;
+                    this.outlineEditor.autoPanAnchorScreen = null;
+                }
                 return;
             }
 
