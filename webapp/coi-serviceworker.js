@@ -473,15 +473,21 @@ if (typeof window === 'undefined') {
             return;
         }
 
-        // If we have a controller but no SAB, reload immediately (page wasn't served through SW)
+        // If we have a controller but no SAB, reload once (page wasn't served through SW)
         // Skip reload on iOS where SAB is not supported
         if (navigator.serviceWorker.controller && !hasSAB && !isIOS) {
-            console.log(
-                '[COI] Service worker present but page not served through it - reloading...'
-            );
-            window.sessionStorage.setItem('coiReloadedBySelf', 'true');
-            window.location.reload();
-            return;
+            if (!reloaded) {
+                console.log(
+                    '[COI] Service worker present but page not served through it - reloading...'
+                );
+                window.sessionStorage.setItem('coiReloadedBySelf', 'true');
+                window.location.reload();
+                return;
+            } else {
+                console.warn(
+                    '[COI] Already reloaded but SharedArrayBuffer still unavailable. This may indicate browser compatibility issues.'
+                );
+            }
         }
 
         const coepCredentialless = !coepDegrading && window.credentialless;
@@ -518,7 +524,8 @@ if (typeof window === 'undefined') {
                     // Reload page when service worker is ready (but only once)
                     if (
                         registration.active &&
-                        !navigator.serviceWorker.controller
+                        !navigator.serviceWorker.controller &&
+                        !reloaded
                     ) {
                         window.sessionStorage.setItem(
                             'coiReloadedBySelf',
@@ -532,13 +539,16 @@ if (typeof window === 'undefined') {
                     }
 
                     // Also handle the case where SW just activated
-                    if (registration.installing) {
+                    if (registration.installing && !reloaded) {
                         registration.installing.addEventListener(
                             'statechange',
                             (e) => {
                                 if (
                                     e.target.state === 'activated' &&
-                                    !navigator.serviceWorker.controller
+                                    !navigator.serviceWorker.controller &&
+                                    !window.sessionStorage.getItem(
+                                        'coiReloadedBySelf'
+                                    )
                                 ) {
                                     window.sessionStorage.setItem(
                                         'coiReloadedBySelf',
@@ -558,7 +568,8 @@ if (typeof window === 'undefined') {
                     if (
                         navigator.serviceWorker.controller &&
                         !hasSAB &&
-                        !isIOS
+                        !isIOS &&
+                        !reloaded
                     ) {
                         console.log(
                             '[COI] Service worker controlling but no SharedArrayBuffer - reloading...'
