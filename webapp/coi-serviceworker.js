@@ -509,7 +509,8 @@ if (typeof window === 'undefined') {
                 '[COI] Service worker present but page not served through it - reloading...'
             );
             window.sessionStorage.setItem('coiReloadedBySelf', 'true');
-            window.location.reload();
+            // Hard reload to bypass browser cache and force fetch through SW
+            window.location.reload(true);
             return;
         }
 
@@ -558,7 +559,8 @@ if (typeof window === 'undefined') {
                         console.log(
                             '[COI] Service worker registered but not controlling - reloading...'
                         );
-                        window.location.reload();
+                        // Hard reload to bypass browser cache and force fetch through SW
+                        window.location.reload(true);
                         return;
                     }
 
@@ -584,7 +586,8 @@ if (typeof window === 'undefined') {
                                     console.log(
                                         '[COI] Service worker activated - reloading to enable control...'
                                     );
-                                    window.location.reload();
+                                    // Hard reload to bypass browser cache and force fetch through SW
+                                    window.location.reload(true);
                                 }
                             }
                         );
