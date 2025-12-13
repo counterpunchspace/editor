@@ -828,14 +828,178 @@ export class Layer extends ArrayElementBase {
     }
 
     /**
+     * Flatten all components in the layer to paths with their transforms applied
+     * This recursively processes nested components to any depth
+     * @param layerData - Raw layer data object
+     * @param font - Font object for looking up component references
+     * @returns Array of flattened path data objects with transformed coordinates
+     */
+    private static flattenComponents(
+        layerData: any,
+        font?: Font,
+        masterId?: string
+    ): Babelfont.Path[] {
+        const flattenedPaths: Babelfont.Path[] = [];
+
+        // Helper function to apply transform to a node
+        const transformNode = (
+            node: Babelfont.Node,
+            transform: number[]
+        ): Babelfont.Node => {
+            const [a, b, c, d, tx, ty] = transform;
+            return {
+                x: a * node.x + c * node.y + tx,
+                y: b * node.x + d * node.y + ty,
+                nodetype: node.nodetype,
+                ...(node.smooth !== undefined && { smooth: node.smooth })
+            };
+        };
+
+        // Helper function to combine two transform matrices
+        const combineTransforms = (t1: number[], t2: number[]): number[] => {
+            const [a1, b1, c1, d1, tx1, ty1] = t1;
+            const [a2, b2, c2, d2, tx2, ty2] = t2;
+            return [
+                a1 * a2 + c1 * b2,
+                b1 * a2 + d1 * b2,
+                a1 * c2 + c1 * d2,
+                b1 * c2 + d1 * d2,
+                a1 * tx2 + c1 * ty2 + tx1,
+                b1 * tx2 + d1 * ty2 + ty1
+            ];
+        };
+
+        // Helper function to process shapes recursively (for components)
+        const processShapes = (
+            shapes: any[],
+            transform: number[] = [1, 0, 0, 1, 0, 0]
+        ) => {
+            if (!shapes || !Array.isArray(shapes)) return;
+
+            for (const shape of shapes) {
+                if ('Component' in shape) {
+                    // Component - recursively process its outline shapes with accumulated transform
+                    const compTransform = shape.Component.transform || [
+                        1, 0, 0, 1, 0, 0
+                    ];
+                    const combinedTransform = combineTransforms(
+                        transform,
+                        compTransform
+                    );
+
+                    // Get component's layer data - either from pre-populated layerData
+                    // or by looking up the component glyph in the font
+                    let componentLayerData = shape.Component.layerData;
+
+                    if (!componentLayerData && font) {
+                        // Look up the component glyph and get the matching layer for the current master
+                        const componentGlyph = font.findGlyph(
+                            shape.Component.reference
+                        );
+                        if (componentGlyph && componentGlyph.layers) {
+                            let layer;
+                            if (masterId) {
+                                // Find the layer that matches the current master
+                                layer = componentGlyph.layers.find(
+                                    (l) =>
+                                        l.data.master &&
+                                        (l.data.master as any)
+                                            .DefaultForMaster === masterId
+                                );
+                            }
+                            // Fallback to first layer if no matching master found
+                            if (!layer) {
+                                layer = componentGlyph.layers[0];
+                            }
+                            if (layer) {
+                                componentLayerData = layer.toJSON();
+                            }
+                        }
+                    }
+
+                    // Recursively process the component's actual outline shapes
+                    if (componentLayerData && componentLayerData.shapes) {
+                        processShapes(
+                            componentLayerData.shapes,
+                            combinedTransform
+                        );
+                    }
+                } else if ('Path' in shape && shape.Path.nodes) {
+                    // Path with nested structure
+                    let nodes = shape.Path.nodes;
+
+                    // Parse nodes if they're a string
+                    if (typeof nodes === 'string') {
+                        nodes = LayerDataNormalizer.parseNodes(nodes);
+                    }
+
+                    if (Array.isArray(nodes) && nodes.length > 0) {
+                        // Transform all nodes and create a new path
+                        const transformedNodes = nodes.map((node: any) =>
+                            transformNode(node, transform)
+                        );
+
+                        flattenedPaths.push({
+                            nodes: transformedNodes,
+                            closed: shape.Path.closed
+                        });
+                    }
+                } else if (
+                    'nodes' in shape &&
+                    Array.isArray(shape.nodes) &&
+                    shape.nodes.length > 0
+                ) {
+                    // Path with flat structure (parsed format)
+                    const transformedNodes = shape.nodes.map((node: any) =>
+                        transformNode(node, transform)
+                    );
+
+                    flattenedPaths.push({
+                        nodes: transformedNodes,
+                        closed: shape.closed !== undefined ? shape.closed : true
+                    });
+                }
+            }
+        };
+
+        // Process all shapes
+        if (layerData.shapes) {
+            processShapes(layerData.shapes);
+        }
+
+        return flattenedPaths;
+    }
+
+    /**
+     * Get all paths in this layer with components flattened to transformed paths
+     * This recursively processes nested components to any depth
+     * The returned paths are independent copies and not part of the Layer.shapes list
+     * @returns Array of flattened path data objects
+     */
+    private getFlattenedPaths(): Babelfont.Path[] {
+        // Navigate up to Font to enable component lookup
+        const glyph = this.parent() as Glyph;
+        const font = glyph ? (glyph.parent() as Font) : undefined;
+
+        // Get the master ID from the layer data
+        const masterId = this.data.master?.DefaultForMaster;
+
+        return Layer.flattenComponents(this.data, font, masterId);
+    }
+
+    /**
      * Calculate bounding box for layer data
      * @param layerData - Raw layer data object
      * @param includeAnchors - If true, include anchors in the bounding box calculation (default: false)
+     * @param font - Font object for component lookup (optional)
+     * @param masterId - Master ID for finding matching component layers (optional)
      * @returns Bounding box {minX, minY, maxX, maxY, width, height} or null if no geometry
      */
     static calculateBoundingBox(
         layerData: any,
-        includeAnchors: boolean = false
+        includeAnchors: boolean = false,
+        font?: Font,
+        masterId?: string
     ): {
         minX: number;
         minY: number;
@@ -859,87 +1023,20 @@ export class Layer extends ArrayElementBase {
             hasPoints = true;
         };
 
-        // Helper function to process shapes recursively (for components)
-        const processShapes = (
-            shapes: any[],
-            transform: number[] = [1, 0, 0, 1, 0, 0]
-        ) => {
-            if (!shapes || !Array.isArray(shapes)) return;
+        // Get all flattened paths (including transformed components)
+        const flattenedPaths = Layer.flattenComponents(
+            layerData,
+            font,
+            masterId
+        );
 
-            for (const shape of shapes) {
-                if ('Component' in shape) {
-                    // Component - recursively process its outline shapes with accumulated transform
-                    const compTransform = shape.Component.transform || [
-                        1, 0, 0, 1, 0, 0
-                    ];
-                    const [a1, b1, c1, d1, tx1, ty1] = transform;
-                    const [a2, b2, c2, d2, tx2, ty2] = compTransform;
-
-                    // Combine transforms
-                    const combinedTransform = [
-                        a1 * a2 + c1 * b2,
-                        b1 * a2 + d1 * b2,
-                        a1 * c2 + c1 * d2,
-                        b1 * c2 + d1 * d2,
-                        a1 * tx2 + c1 * ty2 + tx1,
-                        b1 * tx2 + d1 * ty2 + ty1
-                    ];
-
-                    // Recursively process the component's actual outline shapes
-                    if (
-                        shape.Component.layerData &&
-                        shape.Component.layerData.shapes
-                    ) {
-                        processShapes(
-                            shape.Component.layerData.shapes,
-                            combinedTransform
-                        );
-                    }
-                } else if ('Path' in shape && shape.Path.nodes) {
-                    // Path with nested structure
-                    let nodes = shape.Path.nodes;
-
-                    // Parse nodes if they're a string
-                    if (typeof nodes === 'string') {
-                        nodes = LayerDataNormalizer.parseNodes(nodes);
-                    }
-
-                    if (Array.isArray(nodes) && nodes.length > 0) {
-                        // Process all nodes with the accumulated transform
-                        for (const node of nodes) {
-                            const { x, y } = node;
-
-                            // Apply accumulated transform
-                            const [a, b, c, d, tx, ty] = transform;
-                            const transformedX = a * x + c * y + tx;
-                            const transformedY = b * x + d * y + ty;
-
-                            expandBounds(transformedX, transformedY);
-                        }
-                    }
-                } else if (
-                    'nodes' in shape &&
-                    Array.isArray(shape.nodes) &&
-                    shape.nodes.length > 0
-                ) {
-                    // Path with flat structure (parsed format) - process all nodes with the accumulated transform
-                    for (const node of shape.nodes) {
-                        const { x, y } = node;
-
-                        // Apply accumulated transform
-                        const [a, b, c, d, tx, ty] = transform;
-                        const transformedX = a * x + c * y + tx;
-                        const transformedY = b * x + d * y + ty;
-
-                        expandBounds(transformedX, transformedY);
-                    }
+        // Process all flattened paths
+        for (const path of flattenedPaths) {
+            if (path.nodes && Array.isArray(path.nodes)) {
+                for (const node of path.nodes) {
+                    expandBounds(node.x, node.y);
                 }
             }
-        };
-
-        // Process all shapes
-        if (layerData.shapes) {
-            processShapes(layerData.shapes);
         }
 
         // Include anchors in bounding box if requested
@@ -988,7 +1085,19 @@ export class Layer extends ArrayElementBase {
         width: number;
         height: number;
     } | null {
-        return Layer.calculateBoundingBox(this.data, includeAnchors);
+        // Navigate up to Font to enable component lookup
+        const glyph = this.parent() as Glyph;
+        const font = glyph ? (glyph.parent() as Font) : undefined;
+
+        // Get the master ID from the layer data
+        const masterId = this.data.master?.DefaultForMaster;
+
+        return Layer.calculateBoundingBox(
+            this.data,
+            includeAnchors,
+            font,
+            masterId
+        );
     }
 
     /**

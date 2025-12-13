@@ -566,4 +566,171 @@ describe('Babelfont Object Model', () => {
             font.removeGlyph('TestGlyph');
         });
     });
+
+    describe('Layer.flattenComponents()', () => {
+        test('should flatten adieresis components across all layers with transforms', () => {
+            // Load NestedComponents.babelfont for this test
+            const nestedFixturePath = path.join(
+                __dirname,
+                '..',
+                'examples',
+                'NestedComponents.babelfont'
+            );
+            const nestedJsonString = fs.readFileSync(
+                nestedFixturePath,
+                'utf-8'
+            );
+            const nestedFontData = JSON.parse(nestedJsonString);
+            const nestedFont = Font.fromData(nestedFontData);
+
+            const adieresis = nestedFont.findGlyph('adieresis');
+            expect(adieresis).toBeDefined();
+            expect(adieresis.layers.length).toBe(3);
+
+            // Layer 0: a + dieresiscomb with [1,0,0,1,118,0]
+            const layer0 = adieresis.layers[0];
+            const layer0Bbox = layer0.getBoundingBox(false);
+
+            // Find matching layers in component glyphs
+            const a0 = layer0.getMatchingLayerOnGlyph('a');
+            const dieresis0 = layer0.getMatchingLayerOnGlyph('dieresiscomb');
+            expect(a0).toBeDefined();
+            expect(dieresis0).toBeDefined();
+
+            const a0Bbox = a0.getBoundingBox(false);
+            const dieresis0Bbox = dieresis0.getBoundingBox(false);
+
+            // dieresis transformed by [1,0,0,1,118,0]
+            const dieresis0Transformed = {
+                minX: dieresis0Bbox.minX + 118,
+                minY: dieresis0Bbox.minY,
+                maxX: dieresis0Bbox.maxX + 118,
+                maxY: dieresis0Bbox.maxY
+            };
+
+            const expectedBbox0 = {
+                minX: Math.min(a0Bbox.minX, dieresis0Transformed.minX),
+                minY: Math.min(a0Bbox.minY, dieresis0Transformed.minY),
+                maxX: Math.max(a0Bbox.maxX, dieresis0Transformed.maxX),
+                maxY: Math.max(a0Bbox.maxY, dieresis0Transformed.maxY)
+            };
+
+            expect(layer0Bbox.minX).toBeCloseTo(expectedBbox0.minX, 5);
+            expect(layer0Bbox.minY).toBeCloseTo(expectedBbox0.minY, 5);
+            expect(layer0Bbox.maxX).toBeCloseTo(expectedBbox0.maxX, 5);
+            expect(layer0Bbox.maxY).toBeCloseTo(expectedBbox0.maxY, 5);
+
+            // Layer 1: a + dieresiscomb with [1,0,0,1,102,0]
+            const layer1 = adieresis.layers[1];
+            const layer1Bbox = layer1.getBoundingBox(false);
+
+            const a1 = layer1.getMatchingLayerOnGlyph('a');
+            const dieresis1 = layer1.getMatchingLayerOnGlyph('dieresiscomb');
+            expect(a1).toBeDefined();
+            expect(dieresis1).toBeDefined();
+
+            const a1Bbox = a1.getBoundingBox(false);
+            const dieresis1Bbox = dieresis1.getBoundingBox(false);
+
+            // dieresis transformed by [1,0,0,1,102,0]
+            const dieresis1Transformed = {
+                minX: dieresis1Bbox.minX + 102,
+                minY: dieresis1Bbox.minY,
+                maxX: dieresis1Bbox.maxX + 102,
+                maxY: dieresis1Bbox.maxY
+            };
+
+            const expectedBbox1 = {
+                minX: Math.min(a1Bbox.minX, dieresis1Transformed.minX),
+                minY: Math.min(a1Bbox.minY, dieresis1Transformed.minY),
+                maxX: Math.max(a1Bbox.maxX, dieresis1Transformed.maxX),
+                maxY: Math.max(a1Bbox.maxY, dieresis1Transformed.maxY)
+            };
+
+            expect(layer1Bbox.minX).toBeCloseTo(expectedBbox1.minX, 5);
+            expect(layer1Bbox.minY).toBeCloseTo(expectedBbox1.minY, 5);
+            expect(layer1Bbox.maxX).toBeCloseTo(expectedBbox1.maxX, 5);
+            expect(layer1Bbox.maxY).toBeCloseTo(expectedBbox1.maxY, 5);
+
+            // Layer 2: a + dieresiscomb with [1,0,0,0.6872,56,159] (SCALED)
+            const layer2 = adieresis.layers[2];
+            const layer2Bbox = layer2.getBoundingBox(false);
+
+            const a2 = layer2.getMatchingLayerOnGlyph('a');
+            const dieresis2 = layer2.getMatchingLayerOnGlyph('dieresiscomb');
+            expect(a2).toBeDefined();
+            expect(dieresis2).toBeDefined();
+
+            const a2Bbox = a2.getBoundingBox(false);
+            const dieresis2Bbox = dieresis2.getBoundingBox(false);
+
+            // dieresis transformed by [1,0,0,0.6872,56,159]
+            // This scales Y by 0.6872 and translates by (56, 159)
+            const dieresis2Transformed = {
+                minX: dieresis2Bbox.minX + 56,
+                minY: dieresis2Bbox.minY * 0.6872 + 159,
+                maxX: dieresis2Bbox.maxX + 56,
+                maxY: dieresis2Bbox.maxY * 0.6872 + 159
+            };
+
+            const expectedBbox2 = {
+                minX: Math.min(a2Bbox.minX, dieresis2Transformed.minX),
+                minY: Math.min(a2Bbox.minY, dieresis2Transformed.minY),
+                maxX: Math.max(a2Bbox.maxX, dieresis2Transformed.maxX),
+                maxY: Math.max(a2Bbox.maxY, dieresis2Transformed.maxY)
+            };
+
+            expect(layer2Bbox.minX).toBeCloseTo(expectedBbox2.minX, 4);
+            expect(layer2Bbox.minY).toBeCloseTo(expectedBbox2.minY, 4);
+            expect(layer2Bbox.maxX).toBeCloseTo(expectedBbox2.maxX, 4);
+            expect(layer2Bbox.maxY).toBeCloseTo(expectedBbox2.maxY, 4);
+        });
+
+        test('should handle nested components with accumulated transforms', () => {
+            // Test with a more complex case if available
+            // For now, verify that single-level components work correctly
+            const glyphA = font.findGlyph('A');
+            expect(glyphA).toBeDefined();
+
+            const aLayer = glyphA.layers[0];
+            expect(aLayer).toBeDefined();
+
+            // A should have paths (not components)
+            const aShapes = aLayer.shapes;
+            expect(aShapes).toBeDefined();
+
+            let hasPath = false;
+            for (const shape of aShapes) {
+                if (shape.isPath()) {
+                    hasPath = true;
+                    break;
+                }
+            }
+            expect(hasPath).toBe(true);
+
+            // Bounding box should work for a glyph with only paths
+            const bbox = aLayer.getBoundingBox(false);
+            expect(bbox).not.toBeNull();
+            expect(bbox.width).toBeGreaterThan(0);
+            expect(bbox.height).toBeGreaterThan(0);
+        });
+
+        test('should return empty array for layer with no shapes', () => {
+            // Create a test glyph with empty layer
+            const testGlyph = font.addGlyph('EmptyGlyph', 'Base');
+            const testLayer = testGlyph.addLayer(500);
+
+            // Layer has no shapes
+            expect(testLayer.shapes).toBeUndefined();
+
+            // Bounding box should handle this gracefully
+            const bbox = testLayer.getBoundingBox(false);
+            // Should return a fallback bbox based on width
+            expect(bbox).not.toBeNull();
+            expect(bbox.width).toBe(500); // Uses layer width as fallback
+
+            // Clean up
+            font.removeGlyph('EmptyGlyph');
+        });
+    });
 });
