@@ -37,6 +37,22 @@ from js import window
 font = window.currentFontModel
 ```
 
+### Parent Navigation
+
+All objects in the hierarchy have a `parent()` method that returns their parent object,
+allowing navigation up the object tree to the root Font object.
+
+**Example:**
+```python
+# Navigate from node up to font
+node = font.glyphs[0].layers[0].shapes[0].asPath().nodes[0]
+path = node.parent()      # Path object
+shape = path.parent()     # Shape object
+layer = shape.parent()    # Layer object
+glyph = layer.parent()    # Glyph object
+font = glyph.parent()     # Font object
+```
+
 ---
 
 ## Class Reference

@@ -62,6 +62,7 @@ This is a WebAssembly-based font editor using Rust (fontc/babelfont) compiled to
 - Look for "compiled successfully" or "ERROR" in the build output
 - Check exit code to ensure compilation succeeded
 - Run the command only once
+- After changes to Javascript/Typescript files, see if there are relevant unit tests in `tests/` that need to be run selectively.
 
 ## Babelfont object model
 

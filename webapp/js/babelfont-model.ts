@@ -34,9 +34,11 @@ function markFontDirty(): void {
  */
 abstract class ModelBase {
     protected _data: any;
+    protected _parentObject: any = null;
 
-    constructor(data: any) {
+    constructor(data: any, parentObject: any = null) {
         this._data = data;
+        this._parentObject = parentObject;
     }
 
     /**
@@ -44,6 +46,14 @@ abstract class ModelBase {
      */
     toJSON(): any {
         return this._data;
+    }
+
+    /**
+     * Get the parent object in the hierarchy
+     * @returns The parent object, or null if this is the root Font object
+     */
+    parent(): any {
+        return this._parentObject;
     }
 }
 
@@ -54,8 +64,8 @@ abstract class ArrayElementBase extends ModelBase {
     protected _parent: any[];
     protected _index: number;
 
-    constructor(parent: any[], index: number) {
-        super(parent[index]);
+    constructor(parent: any[], index: number, parentObject: any = null) {
+        super(parent[index], parentObject);
         this._parent = parent;
         this._index = index;
     }
@@ -148,7 +158,7 @@ export class Path extends ArrayElementBase {
             this._nodeWrappers.length !== this.data.nodes.length
         ) {
             this._nodeWrappers = this.data.nodes.map(
-                (_: any, i: number) => new Node(this.data.nodes, i)
+                (_: any, i: number) => new Node(this.data.nodes, i, this)
             );
         }
         return this._nodeWrappers!;
@@ -490,7 +500,7 @@ export class Shape extends ArrayElementBase {
                 this.data.Component = value;
             }
         });
-        return new Component(fakeArray as any, 0);
+        return new Component(fakeArray as any, 0, this);
     }
 
     /**
@@ -508,7 +518,7 @@ export class Shape extends ArrayElementBase {
                 this.data.Path = value;
             }
         });
-        return new Path(fakeArray as any, 0);
+        return new Path(fakeArray as any, 0, this);
     }
 
     toString(): string {
@@ -660,7 +670,7 @@ export class Layer extends ArrayElementBase {
             this._guideWrappers.length !== this.data.guides.length
         ) {
             this._guideWrappers = this.data.guides.map(
-                (_: any, i: number) => new Guide(this.data.guides, i)
+                (_: any, i: number) => new Guide(this.data.guides, i, this)
             );
         }
         return this._guideWrappers!;
@@ -673,7 +683,7 @@ export class Layer extends ArrayElementBase {
             this._shapeWrappers.length !== this.data.shapes.length
         ) {
             this._shapeWrappers = this.data.shapes.map(
-                (_: any, i: number) => new Shape(this.data.shapes, i)
+                (_: any, i: number) => new Shape(this.data.shapes, i, this)
             );
         }
         return this._shapeWrappers!;
@@ -686,7 +696,7 @@ export class Layer extends ArrayElementBase {
             this._anchorWrappers.length !== this.data.anchors.length
         ) {
             this._anchorWrappers = this.data.anchors.map(
-                (_: any, i: number) => new Anchor(this.data.anchors, i)
+                (_: any, i: number) => new Anchor(this.data.anchors, i, this)
             );
         }
         return this._anchorWrappers!;
@@ -1038,22 +1048,24 @@ export class Glyph extends ArrayElementBase {
         if (!this.data.layers) return undefined;
 
         // Get font masters to filter and sort layers
-        const font = window.fontManager?.currentFont?.babelfontData;
-        if (!font?.masters) {
+        // Navigate up to Font object via parent chain
+        const font = this.parent() as Font;
+        const fontMasters = font?.masters;
+        if (!fontMasters || fontMasters.length === 0) {
             // Fallback: return all layers if we can't access font data
             if (
                 !this._layerWrappers ||
                 this._layerWrappers.length !== this.data.layers.length
             ) {
                 this._layerWrappers = this.data.layers.map(
-                    (_: any, i: number) => new Layer(this.data.layers, i)
+                    (_: any, i: number) => new Layer(this.data.layers, i, this)
                 );
             }
             return this._layerWrappers!;
         }
 
         // Filter: only foreground layers that are default for their master
-        const masterIds = new Set(font.masters.map((m: any) => m.id));
+        const masterIds = new Set(fontMasters.map((m: Master) => m.id));
         const filteredIndices: number[] = [];
 
         for (let i = 0; i < this.data.layers.length; i++) {
@@ -1085,7 +1097,7 @@ export class Glyph extends ArrayElementBase {
 
         // Create wrappers for filtered layers
         const wrappers = filteredIndices.map(
-            (i: number) => new Layer(this.data.layers, i)
+            (i: number) => new Layer(this.data.layers, i, this)
         );
 
         // Sort by master order
@@ -1107,17 +1119,17 @@ export class Glyph extends ArrayElementBase {
             const masterIdA = getMasterId(a);
             const masterIdB = getMasterId(b);
 
-            const masterIndexA = font.masters.findIndex(
-                (m: any) => m.id === masterIdA
+            const masterIndexA = fontMasters.findIndex(
+                (m: Master) => m.id === masterIdA
             );
-            const masterIndexB = font.masters.findIndex(
-                (m: any) => m.id === masterIdB
+            const masterIndexB = fontMasters.findIndex(
+                (m: Master) => m.id === masterIdB
             );
 
             const posA =
-                masterIndexA === -1 ? font.masters.length : masterIndexA;
+                masterIndexA === -1 ? fontMasters.length : masterIndexA;
             const posB =
-                masterIndexB === -1 ? font.masters.length : masterIndexB;
+                masterIndexB === -1 ? fontMasters.length : masterIndexB;
 
             return posA - posB;
         });
@@ -1351,7 +1363,7 @@ export class Master extends ArrayElementBase {
             this._guideWrappers.length !== this.data.guides.length
         ) {
             this._guideWrappers = this.data.guides.map(
-                (_: any, i: number) => new Guide(this.data.guides, i)
+                (_: any, i: number) => new Guide(this.data.guides, i, this)
             );
         }
         return this._guideWrappers!;
@@ -1509,7 +1521,7 @@ export class Font extends ModelBase {
             this._axisWrappers.length !== this._data.axes.length
         ) {
             this._axisWrappers = this._data.axes.map(
-                (_: any, i: number) => new Axis(this._data.axes, i)
+                (_: any, i: number) => new Axis(this._data.axes, i, this)
             );
         }
         return this._axisWrappers!;
@@ -1522,7 +1534,8 @@ export class Font extends ModelBase {
             this._instanceWrappers.length !== this._data.instances.length
         ) {
             this._instanceWrappers = this._data.instances.map(
-                (_: any, i: number) => new Instance(this._data.instances, i)
+                (_: any, i: number) =>
+                    new Instance(this._data.instances, i, this)
             );
         }
         return this._instanceWrappers!;
@@ -1535,7 +1548,7 @@ export class Font extends ModelBase {
             this._masterWrappers.length !== this._data.masters.length
         ) {
             this._masterWrappers = this._data.masters.map(
-                (_: any, i: number) => new Master(this._data.masters, i)
+                (_: any, i: number) => new Master(this._data.masters, i, this)
             );
         }
         return this._masterWrappers!;
@@ -1547,7 +1560,7 @@ export class Font extends ModelBase {
             this._glyphWrappers.length !== this._data.glyphs.length
         ) {
             this._glyphWrappers = this._data.glyphs.map(
-                (_: any, i: number) => new Glyph(this._data.glyphs, i)
+                (_: any, i: number) => new Glyph(this._data.glyphs, i, this)
             );
         }
         return this._glyphWrappers!;
