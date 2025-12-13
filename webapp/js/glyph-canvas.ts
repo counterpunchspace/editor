@@ -84,6 +84,11 @@ class GlyphCanvas {
     mouseCanvasY: number = 0;
     cursorVisible: boolean = true;
 
+    // Measurement tool drag state
+    isMeasurementDragging: boolean = false;
+    measurementOriginX: number = 0;
+    measurementOriginY: number = 0;
+
     // Auto-pan anchor for text mode (cursor position)
     textModeAutoPanAnchorScreen: { x: number; y: number } | null = null;
 
@@ -578,6 +583,16 @@ class GlyphCanvas {
             }
         }
 
+        // Start measurement drag when Alt key is pressed in editing mode
+        if (this.altKeyPressed && this.outlineEditor.active) {
+            this.isMeasurementDragging = true;
+            const rect = this.canvas!.getBoundingClientRect();
+            this.measurementOriginX = e.clientX - rect.left;
+            this.measurementOriginY = e.clientY - rect.top;
+            this.render();
+            return;
+        }
+
         // Start canvas panning when Cmd key is pressed
         if (this.cmdKeyPressed) {
             console.log(
@@ -599,6 +614,12 @@ class GlyphCanvas {
     onMouseMove(e: MouseEvent): void {
         this.outlineEditor.onMouseMove(e);
 
+        // Handle measurement dragging
+        if (this.isMeasurementDragging) {
+            this.render();
+            return;
+        }
+
         // Handle canvas panning
         if (this.isDraggingCanvas) {
             const deltaX = e.clientX - this.lastMouseX;
@@ -616,6 +637,7 @@ class GlyphCanvas {
     onMouseUp(e: MouseEvent): void {
         this.outlineEditor.onMouseUp(e);
         this.isDraggingCanvas = false;
+        this.isMeasurementDragging = false;
 
         // Update cursor based on current mouse position and Cmd key state
         this.updateCursorStyle(e);

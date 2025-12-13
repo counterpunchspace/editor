@@ -1554,7 +1554,7 @@ export class GlyphCanvasRenderer {
         const zoomText = `Zoom: ${(this.viewportManager.scale * 100).toFixed(1)}%`;
         this.ctx.fillText(zoomText, 10, 50);
 
-        // Draw crosshair when alt key is pressed in editing mode (in screen space at mouse position)
+        // Draw crosshair or user-defined line when alt key is pressed in editing mode
         if (
             this.glyphCanvas.altKeyPressed &&
             this.glyphCanvas.outlineEditor.active
@@ -1562,12 +1562,37 @@ export class GlyphCanvasRenderer {
             this.ctx.strokeStyle = 'rgba(255, 255, 255, 0.5)';
             this.ctx.lineWidth = 1;
             this.ctx.beginPath();
-            // Horizontal line across entire canvas
-            this.ctx.moveTo(0, this.glyphCanvas.mouseCanvasY);
-            this.ctx.lineTo(this.canvas.width, this.glyphCanvas.mouseCanvasY);
-            // Vertical line across entire canvas
-            this.ctx.moveTo(this.glyphCanvas.mouseCanvasX, 0);
-            this.ctx.lineTo(this.glyphCanvas.mouseCanvasX, this.canvas.height);
+
+            if (this.glyphCanvas.isMeasurementDragging) {
+                // Draw user-defined line from origin to current mouse position
+                const originCanvasX =
+                    (this.glyphCanvas.measurementOriginX * this.canvas.width) /
+                    rect.width;
+                const originCanvasY =
+                    (this.glyphCanvas.measurementOriginY * this.canvas.height) /
+                    rect.height;
+
+                this.ctx.moveTo(originCanvasX, originCanvasY);
+                this.ctx.lineTo(
+                    this.glyphCanvas.mouseCanvasX,
+                    this.glyphCanvas.mouseCanvasY
+                );
+            } else {
+                // Draw crosshair at mouse position
+                // Horizontal line across entire canvas
+                this.ctx.moveTo(0, this.glyphCanvas.mouseCanvasY);
+                this.ctx.lineTo(
+                    this.canvas.width,
+                    this.glyphCanvas.mouseCanvasY
+                );
+                // Vertical line across entire canvas
+                this.ctx.moveTo(this.glyphCanvas.mouseCanvasX, 0);
+                this.ctx.lineTo(
+                    this.glyphCanvas.mouseCanvasX,
+                    this.canvas.height
+                );
+            }
+
             this.ctx.stroke();
         }
 
@@ -1611,25 +1636,80 @@ export class GlyphCanvasRenderer {
         const tempLayer = new Layer([layerData], 0, glyphWrapper);
 
         // Define line endpoints in component-local space
-        const largeDistance = 100000;
+        let horizontalIntersections: Array<{
+            x: number;
+            y: number;
+            t: number;
+        }> = [];
+        let verticalIntersections: Array<{ x: number; y: number; t: number }> =
+            [];
 
-        // Get intersections along horizontal line at crosshair Y (in component-local coords)
-        const horizontalP1 = { x: -largeDistance, y: localY };
-        const horizontalP2 = { x: largeDistance, y: localY };
-        const horizontalIntersections = tempLayer.getIntersectionsOnLine(
-            horizontalP1,
-            horizontalP2,
-            true // include nested components
-        );
+        if (this.glyphCanvas.isMeasurementDragging) {
+            // User-defined line: get intersections along the line from origin to current mouse
+            // Transform origin CSS coordinates to glyph-local space using the same method as current mouse
+            let { glyphX: originGlyphX, glyphY: originGlyphY } =
+                this.glyphCanvas.toGlyphLocal(
+                    this.glyphCanvas.measurementOriginX,
+                    this.glyphCanvas.measurementOriginY
+                );
 
-        // Get intersections along vertical line at crosshair X (in component-local coords)
-        const verticalP1 = { x: localX, y: -largeDistance };
-        const verticalP2 = { x: localX, y: largeDistance };
-        const verticalIntersections = tempLayer.getIntersectionsOnLine(
-            verticalP1,
-            verticalP2,
-            true // include nested components
-        );
+            // Transform current mouse position to component-local space
+            const currentTransformed =
+                this.glyphCanvas.outlineEditor.transformMouseToComponentSpace();
+            let currentLocalX = currentTransformed.glyphX;
+            let currentLocalY = currentTransformed.glyphY;
+
+            // Apply the same component transform to origin if in component mode
+            let originLocalX = originGlyphX;
+            let originLocalY = originGlyphY;
+
+            if (this.glyphCanvas.outlineEditor.componentStack.length > 0) {
+                const compTransform =
+                    this.glyphCanvas.outlineEditor.getAccumulatedTransform();
+                const [a, b, c, d, tx, ty] = compTransform;
+                const det = a * d - b * c;
+
+                if (Math.abs(det) > 0.0001) {
+                    // Inverse transform for origin point
+                    const localX = originGlyphX - tx;
+                    const localY = originGlyphY - ty;
+                    originLocalX = (d * localX - c * localY) / det;
+                    originLocalY = (a * localY - b * localX) / det;
+                }
+            }
+
+            // Get intersections along the user-defined line
+            const lineIntersections = tempLayer.getIntersectionsOnLine(
+                { x: originLocalX, y: originLocalY },
+                { x: currentLocalX, y: currentLocalY },
+                true // include nested components
+            );
+
+            // Use the same intersections for both (we'll handle them as a single line)
+            horizontalIntersections = lineIntersections;
+            verticalIntersections = []; // No vertical intersections for user-defined line
+        } else {
+            // Crosshair mode: get intersections along horizontal and vertical lines
+            const largeDistance = 100000;
+
+            // Get intersections along horizontal line at crosshair Y (in component-local coords)
+            const horizontalP1 = { x: -largeDistance, y: localY };
+            const horizontalP2 = { x: largeDistance, y: localY };
+            horizontalIntersections = tempLayer.getIntersectionsOnLine(
+                horizontalP1,
+                horizontalP2,
+                true // include nested components
+            );
+
+            // Get intersections along vertical line at crosshair X (in component-local coords)
+            const verticalP1 = { x: localX, y: -largeDistance };
+            const verticalP2 = { x: localX, y: largeDistance };
+            verticalIntersections = tempLayer.getIntersectionsOnLine(
+                verticalP1,
+                verticalP2,
+                true // include nested components
+            );
+        }
 
         // Get color from settings
         const isDarkTheme =
@@ -1690,47 +1770,75 @@ export class GlyphCanvasRenderer {
             };
         };
 
-        // Draw horizontal measurements
+        // Draw measurements
         this.ctx.strokeStyle = colors.MEASUREMENT_TOOL_INTERSECTION;
         this.ctx.lineWidth = 1 / this.viewportManager.scale;
 
-        for (let i = 0; i < horizontalIntersections.length - 1; i++) {
-            const p1 = transformToWorld(horizontalIntersections[i]);
-            const p2 = transformToWorld(horizontalIntersections[i + 1]);
+        if (
+            this.glyphCanvas.isMeasurementDragging &&
+            horizontalIntersections.length > 0
+        ) {
+            // User-defined line: draw measurements along the line
+            for (let i = 0; i < horizontalIntersections.length - 1; i++) {
+                const p1 = transformToWorld(horizontalIntersections[i]);
+                const p2 = transformToWorld(horizontalIntersections[i + 1]);
 
-            // Draw line between consecutive intersection points
-            this.ctx.beginPath();
-            this.ctx.moveTo(p1.x, p1.y);
-            this.ctx.lineTo(p2.x, p2.y);
-            this.ctx.stroke();
+                // Draw line between consecutive intersection points
+                this.ctx.beginPath();
+                this.ctx.moveTo(p1.x, p1.y);
+                this.ctx.lineTo(p2.x, p2.y);
+                this.ctx.stroke();
 
-            // Calculate distance and midpoint
-            const distance = Math.abs(p2.x - p1.x);
-            const midX = (p1.x + p2.x) / 2;
-            const midY = (p1.y + p2.y) / 2;
+                // Calculate distance and midpoint (Euclidean distance for user-defined line)
+                const dx = p2.x - p1.x;
+                const dy = p2.y - p1.y;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+                const midX = (p1.x + p2.x) / 2;
+                const midY = (p1.y + p2.y) / 2;
 
-            // Draw distance label
-            this.drawMeasurementLabel(midX, midY, distance, 'horizontal');
-        }
+                // Draw distance label
+                this.drawMeasurementLabel(midX, midY, distance, 'horizontal');
+            }
+        } else {
+            // Crosshair mode: draw horizontal and vertical measurements separately
+            for (let i = 0; i < horizontalIntersections.length - 1; i++) {
+                const p1 = transformToWorld(horizontalIntersections[i]);
+                const p2 = transformToWorld(horizontalIntersections[i + 1]);
 
-        // Draw vertical measurements
-        for (let i = 0; i < verticalIntersections.length - 1; i++) {
-            const p1 = transformToWorld(verticalIntersections[i]);
-            const p2 = transformToWorld(verticalIntersections[i + 1]);
+                // Draw line between consecutive intersection points
+                this.ctx.beginPath();
+                this.ctx.moveTo(p1.x, p1.y);
+                this.ctx.lineTo(p2.x, p2.y);
+                this.ctx.stroke();
 
-            // Draw line between consecutive intersection points
-            this.ctx.beginPath();
-            this.ctx.moveTo(p1.x, p1.y);
-            this.ctx.lineTo(p2.x, p2.y);
-            this.ctx.stroke();
+                // Calculate distance and midpoint
+                const distance = Math.abs(p2.x - p1.x);
+                const midX = (p1.x + p2.x) / 2;
+                const midY = (p1.y + p2.y) / 2;
 
-            // Calculate distance and midpoint
-            const distance = Math.abs(p2.y - p1.y);
-            const midX = (p1.x + p2.x) / 2;
-            const midY = (p1.y + p2.y) / 2;
+                // Draw distance label
+                this.drawMeasurementLabel(midX, midY, distance, 'horizontal');
+            }
 
-            // Draw distance label
-            this.drawMeasurementLabel(midX, midY, distance, 'vertical');
+            // Draw vertical measurements
+            for (let i = 0; i < verticalIntersections.length - 1; i++) {
+                const p1 = transformToWorld(verticalIntersections[i]);
+                const p2 = transformToWorld(verticalIntersections[i + 1]);
+
+                // Draw line between consecutive intersection points
+                this.ctx.beginPath();
+                this.ctx.moveTo(p1.x, p1.y);
+                this.ctx.lineTo(p2.x, p2.y);
+                this.ctx.stroke();
+
+                // Calculate distance and midpoint
+                const distance = Math.abs(p2.y - p1.y);
+                const midX = (p1.x + p2.x) / 2;
+                const midY = (p1.y + p2.y) / 2;
+
+                // Draw distance label
+                this.drawMeasurementLabel(midX, midY, distance, 'vertical');
+            }
         }
 
         // Draw intersection dots in world coordinates
