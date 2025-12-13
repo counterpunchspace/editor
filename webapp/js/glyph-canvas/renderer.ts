@@ -481,15 +481,21 @@ export class GlyphCanvasRenderer {
             this.glyphCanvas.outlineEditor.interpolatedComponentTransform
         ) {
             // Use interpolated transform during slider movement
+            console.log('[Renderer] Using interpolated transform');
             transform =
                 this.glyphCanvas.outlineEditor.interpolatedComponentTransform;
         } else {
             // Use static transform from component stack
+            console.log('[Renderer] Using static accumulated transform');
             transform =
                 this.glyphCanvas.outlineEditor.getAccumulatedTransform();
         }
 
         if (this.glyphCanvas.outlineEditor.componentStack.length > 0) {
+            console.log(
+                '[Renderer] Applying accumulated transform:',
+                transform
+            );
             this.ctx.transform(
                 transform[0],
                 transform[1],
@@ -728,6 +734,10 @@ export class GlyphCanvasRenderer {
                     this.ctx.save();
 
                     // Apply component transform
+                    console.log(
+                        '[Renderer] Applying component shape transform:',
+                        [a, b, c, d, tx, ty]
+                    );
                     this.ctx.transform(a, b, c, d, tx, ty);
 
                     // Draw the component's outline shapes if they were fetched

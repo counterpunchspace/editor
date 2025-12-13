@@ -109,6 +109,7 @@ export class OutlineEditor {
         this.hoveredPointIndex = null;
         this.hoveredAnchorIndex = null;
         this.hoveredComponentIndex = null;
+        this.hoveredGlyphIndex = -1;
     }
 
     clearAllSelections() {
@@ -118,6 +119,7 @@ export class OutlineEditor {
         this.hoveredPointIndex = null;
         this.hoveredAnchorIndex = null;
         this.hoveredComponentIndex = null;
+        this.hoveredGlyphIndex = -1;
     }
 
     saveState(
@@ -1859,6 +1861,9 @@ export class OutlineEditor {
             this.componentStack.length
         );
 
+        // Clear interpolated transform when switching layers
+        this.interpolatedComponentTransform = null;
+
         // Save the path of component indices from the stack
         const componentPath: number[] = [];
         for (let i = 0; i < this.componentStack.length; i++) {
@@ -1880,6 +1885,7 @@ export class OutlineEditor {
             );
 
             // Re-enter each component level without UI updates
+            // This will rebuild the stack with fresh layer data for the new layer
             for (const componentIndex of componentPath) {
                 if (!this.layerData || !this.layerData.shapes[componentIndex]) {
                     console.error(
@@ -1993,14 +1999,26 @@ export class OutlineEditor {
         // Store the component we're about to enter (componentIndex), not the old editingComponentIndex
         // editingGlyphName is the reference of the component we're entering (for save operations)
         const editingGlyphName = componentShape.Component.reference;
-        this.componentStack.push(
-            this.saveState(
-                componentIndex,
-                this.getAccumulatedTransform(),
-                currentGlyphName,
-                editingGlyphName
-            )
-        );
+
+        // Clear selections BEFORE saving state to avoid saving stale selections
+        const savedSelections = {
+            selectedPoints: this.selectedPoints,
+            selectedAnchors: this.selectedAnchors,
+            selectedComponents: this.selectedComponents
+        };
+        this.clearAllSelections();
+
+        // Save state with the selections we just cleared (not the current empty ones)
+        this.componentStack.push({
+            componentIndex,
+            transform: this.getAccumulatedTransform(),
+            layerData: this.layerData,
+            selectedPoints: savedSelections.selectedPoints,
+            selectedAnchors: savedSelections.selectedAnchors,
+            selectedComponents: savedSelections.selectedComponents,
+            glyphName: currentGlyphName,
+            editingGlyphName
+        });
 
         console.log(
             `Pushed to stack. Stack depth: ${this.componentStack.length}, storing glyphName: ${currentGlyphName}`
@@ -2023,9 +2041,6 @@ export class OutlineEditor {
             'Set layerData to component. this.layerData.shapes.length:',
             this.layerData?.shapes?.length
         );
-
-        // Clear selections
-        this.clearAllSelections();
 
         console.log(
             '[OutlineEditor] After clearAllSelections:',
@@ -2059,20 +2074,92 @@ export class OutlineEditor {
     exitComponentEditing(skipUIUpdate: boolean = false): boolean {
         // Exit current component editing level
         // skipUIUpdate: if true, skip UI updates (useful when exiting multiple levels)
+        console.log(
+            '[EXIT] exitComponentEditing called, current stack depth:',
+            this.componentStack.length
+        );
+
         if (this.componentStack.length === 0) {
             return false; // No component stack to exit from
         }
+
+        // Clear interpolated transform when exiting - it was calculated for the deeper nesting level
+        this.interpolatedComponentTransform = null;
 
         const previousState = this.componentStack.pop()!;
 
         // Restore previous state
         this.editingComponentIndex = previousState.componentIndex;
         this.layerData = previousState.layerData;
+
+        // DEBUG: Log what layer ID we're restoring
+        console.log(
+            '[EXIT] Restoring layerData with ID:',
+            this.layerData?.id,
+            'master:',
+            this.layerData?._master
+        );
+        if (
+            this.layerData &&
+            this.layerData.shapes &&
+            previousState.componentIndex !== null
+        ) {
+            const comp = this.layerData.shapes[previousState.componentIndex];
+            if (comp && 'Component' in comp) {
+                console.log(
+                    '[EXIT] Component transform in restored data:',
+                    comp.Component.transform
+                );
+                console.log(
+                    '[EXIT] Component.layerData.id:',
+                    comp.Component.layerData?.id
+                );
+                console.log(
+                    '[EXIT] Component.layerData._master:',
+                    comp.Component.layerData?._master
+                );
+                // Check nested component data
+                if (comp.Component.layerData?.shapes) {
+                    console.log(
+                        '[EXIT] Component has',
+                        comp.Component.layerData.shapes.length,
+                        'shapes'
+                    );
+                    comp.Component.layerData.shapes.forEach(
+                        (shape: any, idx: number) => {
+                            if ('Component' in shape) {
+                                console.log(
+                                    `[EXIT]   Shape ${idx}: Component "${shape.Component.reference}", transform:`,
+                                    shape.Component.transform
+                                );
+                                // Check if this nested component also has layerData
+                                if (shape.Component.layerData) {
+                                    console.log(
+                                        `[EXIT]     Nested component layerData.id:`,
+                                        shape.Component.layerData.id
+                                    );
+                                    console.log(
+                                        `[EXIT]     Nested component layerData._master:`,
+                                        shape.Component.layerData._master
+                                    );
+                                }
+                            }
+                        }
+                    );
+                }
+            }
+        }
+
         // Clear isInterpolated flag since we're restoring actual layer data
         if (this.layerData) {
             this.layerData.isInterpolated = false;
         }
         this.popState(previousState);
+
+        // Clear hover states since they refer to child layer indices that no longer apply
+        this.hoveredPointIndex = null;
+        this.hoveredAnchorIndex = null;
+        this.hoveredComponentIndex = null;
 
         // Restore currentGlyphName for interpolation
         // If still in nested component, use parent's editingGlyphName
@@ -2090,6 +2177,26 @@ export class OutlineEditor {
         );
 
         if (!skipUIUpdate) {
+            // DEBUG: Log what we're about to render
+            console.log(
+                '[EXIT] About to render after exit. layerData.id:',
+                this.layerData?.id
+            );
+            console.log(
+                '[EXIT] layerData has',
+                this.layerData?.shapes?.length,
+                'shapes'
+            );
+            if (this.layerData?.shapes) {
+                this.layerData.shapes.forEach((shape: any, idx: number) => {
+                    if ('Component' in shape) {
+                        console.log(
+                            `[EXIT] RENDER Shape ${idx}: Component "${shape.Component.reference}", transform:`,
+                            shape.Component.transform
+                        );
+                    }
+                });
+            }
             this.glyphCanvas.doUIUpdate();
         }
 
@@ -2279,6 +2386,11 @@ export class OutlineEditor {
         // Navigate through the component stack accumulating interpolated transforms
         // This matches how getAccumulatedTransform() works for master layers
 
+        console.log(
+            '[extractComponentTransform] Called with componentStack.length:',
+            componentStack.length
+        );
+
         let a = 1,
             b = 0,
             c = 0,
@@ -2308,6 +2420,14 @@ export class OutlineEditor {
 
             // Get this component's interpolated transform and accumulate it
             const t = componentShape.Component.transform || [1, 0, 0, 1, 0, 0];
+            console.log(
+                '[extractComponentTransform] Stack level',
+                componentStack.indexOf(stackItem),
+                'component:',
+                componentShape.Component.reference,
+                'transform:',
+                t
+            );
 
             // Multiply transforms: new = current * level
             const newA = a * t[0] + c * t[1];
@@ -2340,6 +2460,10 @@ export class OutlineEditor {
         }
 
         // Return the accumulated transform
+        console.log(
+            '[extractComponentTransform] Final accumulated transform:',
+            [a, b, c, d, tx, ty]
+        );
         return [a, b, c, d, tx, ty];
     }
 
@@ -2389,6 +2513,9 @@ export class OutlineEditor {
 
     getAccumulatedTransform(): number[] {
         // Get the accumulated transform matrix from all component levels
+        // Walk through the component stack and read transforms from the saved layer data
+        // The stack is refreshed with current layer data when switching layers via refreshComponentStack()
+
         let a = 1,
             b = 0,
             c = 0,
@@ -2396,40 +2523,66 @@ export class OutlineEditor {
             tx = 0,
             ty = 0;
 
-        // Apply transforms from all components in the stack
-        // The stack now contains all the components we've entered (level 0, 1, 2, etc.)
-        for (const level of this.componentStack) {
-            if (
-                level.componentIndex !== null &&
-                level.layerData &&
-                level.layerData.shapes[level.componentIndex]
-            ) {
-                let currentShape = level.layerData.shapes[level.componentIndex];
-                if (!('Component' in currentShape)) {
-                    continue; // Not a component shape
-                }
+        console.log(
+            `[getAccumulatedTransform] Stack depth: ${this.componentStack.length}`
+        );
 
-                const comp = currentShape.Component;
-                if (comp && comp.transform) {
-                    const t = comp.transform;
-                    // Multiply transforms: new = current * level
-                    const newA = a * t[0] + c * t[1];
-                    const newB = b * t[0] + d * t[1];
-                    const newC = a * t[2] + c * t[3];
-                    const newD = b * t[2] + d * t[3];
-                    const newTx = a * t[4] + c * t[5] + tx;
-                    const newTy = b * t[4] + d * t[5] + ty;
-                    a = newA;
-                    b = newB;
-                    c = newC;
-                    d = newD;
-                    tx = newTx;
-                    ty = newTy;
-                }
+        // Apply transforms from all components in the stack
+        for (let i = 0; i < this.componentStack.length; i++) {
+            const level = this.componentStack[i];
+            if (
+                level.componentIndex === null ||
+                level.componentIndex === undefined ||
+                !level.layerData ||
+                !level.layerData.shapes
+            ) {
+                console.error(
+                    '[getAccumulatedTransform] Invalid stack level',
+                    i,
+                    level
+                );
+                continue;
+            }
+
+            const currentShape: PythonBabelfont.Shape =
+                level.layerData.shapes[level.componentIndex];
+            if (!currentShape || !('Component' in currentShape)) {
+                console.error(
+                    '[getAccumulatedTransform] Component shape not found at level',
+                    i,
+                    'index',
+                    level.componentIndex
+                );
+                continue;
+            }
+
+            const comp: PythonBabelfont.Component = currentShape.Component;
+            console.log(
+                `[getAccumulatedTransform] Level ${i}: component "${comp.reference}", transform:`,
+                comp.transform
+            );
+
+            if (comp && comp.transform) {
+                const t = comp.transform;
+                // Multiply transforms: new = current * level
+                const newA = a * t[0] + c * t[1];
+                const newB = b * t[0] + d * t[1];
+                const newC = a * t[2] + c * t[3];
+                const newD = b * t[2] + d * t[3];
+                const newTx = a * t[4] + c * t[5] + tx;
+                const newTy = b * t[4] + d * t[5] + ty;
+                a = newA;
+                b = newB;
+                c = newC;
+                d = newD;
+                tx = newTx;
+                ty = newTy;
             }
         }
 
-        return [a, b, c, d, tx, ty];
+        const result = [a, b, c, d, tx, ty];
+        console.log('[getAccumulatedTransform] Result:', result);
+        return result;
     }
 
     transformMouseToComponentSpace(): { glyphX: number; glyphY: number } {
