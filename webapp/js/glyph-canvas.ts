@@ -524,7 +524,10 @@ class GlyphCanvas {
         // Check for double-click
         if (e.detail === 2) {
             // In outline editor mode with layer selected
-            this.outlineEditor.onDoubleClick(e); // Will return if not active
+            const doubleClickHandled = this.outlineEditor.onDoubleClick(e);
+            if (doubleClickHandled) {
+                return; // Skip single-click logic
+            }
 
             // Double-click on glyph - select glyph (when not in edit mode)
             if (

@@ -396,7 +396,7 @@ export class OutlineEditor {
         }
     }
 
-    onDoubleClick(e: MouseEvent) {
+    onDoubleClick(e: MouseEvent): boolean {
         console.log(
             'Double-click detected. isGlyphEditMode:',
             this.active,
@@ -405,7 +405,7 @@ export class OutlineEditor {
             'hoveredComponentIndex:',
             this.hoveredComponentIndex
         );
-        if (!this.active || !this.selectedLayerId) return;
+        if (!this.active || !this.selectedLayerId) return false;
         // Double-click on component - enter component editing (without selecting it)
         if (this.hoveredComponentIndex !== null) {
             console.log(
@@ -414,8 +414,8 @@ export class OutlineEditor {
             );
             // Clear component selection before entering
             this.selectedComponents = [];
-            this.enterComponentEditing(this.hoveredComponentIndex);
-            return;
+            this.enterComponentEditing(this.hoveredComponentIndex, false, e);
+            return true; // Event handled - skip single-click
         }
         // Double-click on point - toggle smooth for all selected points
         if (this.hoveredPointIndex) {
@@ -427,12 +427,14 @@ export class OutlineEditor {
             } else {
                 this.togglePointSmooth(this.hoveredPointIndex);
             }
-            return;
+            return true; // Event handled - skip single-click
         }
         // Double-click on other glyph - switch to that glyph
         if (this.hoveredGlyphIndex >= 0) {
             this.glyphCanvas.doubleClickOnGlyph(this.hoveredGlyphIndex);
+            return true; // Event handled - skip single-click
         }
+        return false; // Event not handled
     }
 
     onSingleClick(e: MouseEvent) {
@@ -1914,7 +1916,8 @@ export class OutlineEditor {
 
     async enterComponentEditing(
         componentIndex: number,
-        skipUIUpdate: boolean = false
+        skipUIUpdate: boolean = false,
+        mouseEvent: MouseEvent | null = null
     ): Promise<void> {
         // Enter editing mode for a component
         // skipUIUpdate: if true, skip UI updates (useful when rebuilding component stack)
@@ -2057,16 +2060,25 @@ export class OutlineEditor {
         );
 
         if (!skipUIUpdate) {
-            // Update UI but skip hit detection since mouse context has changed
+            // Update UI and perform hit detection to update hover states
             this.glyphCanvas.updateComponentBreadcrumb();
             this.glyphCanvas.updatePropertiesUI();
             this.glyphCanvas.render();
-            // Don't call performHitDetection here - let the next mouse move handle it
+
+            // Perform hit detection immediately if we have a mouse event
+            // This ensures nested components are detectable without mouse movement
+            if (mouseEvent) {
+                this.performHitDetection(mouseEvent);
+                // Re-render to show the updated hover state
+                this.glyphCanvas.render();
+            }
 
             console.log(
-                '[OutlineEditor] After UI update (without hit detection):',
+                '[OutlineEditor] After UI update with hit detection:',
                 'selectedComponents:',
-                this.selectedComponents
+                this.selectedComponents,
+                'hoveredComponentIndex:',
+                this.hoveredComponentIndex
             );
         }
     }
