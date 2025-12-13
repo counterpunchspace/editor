@@ -262,6 +262,21 @@ path = layer.addPath(closed=True)
 #### `addShape(shape_data: dict) -> [`Shape`](#shape)`
 Add a new shape (component or path) to the layer.
 
+#### `getAllPaths() -> list[dict]`
+Get all paths in this layer including transformed component paths. Components are recursively flattened and their transforms applied.
+
+**Returns:**
+List of path data objects with all components resolved to transformed paths. Each path has `nodes` (list of node dicts) and `closed` (bool) properties.
+
+**Example:**
+```python
+# Get all paths including flattened components
+paths = layer.getAllPaths()
+for path in paths:
+    print(f"Path with {len(path.nodes)} nodes")
+    print(f"  Closed: {path.closed}")
+```
+
 #### `getBoundingBox(includeAnchors: bool = False) -> dict | None`
 Calculate the bounding box for this layer, respecting nested components and their transformation matrices.
 
@@ -275,11 +290,35 @@ Dictionary with keys: `minX`, `minY`, `maxX`, `maxY`, `width`, `height`, or `Non
 ```python
 bbox = layer.getBoundingBox()
 if bbox:
-    print(f"Bounds: {bbox[\'width\']} x {bbox[\'height\']}")
-    print(f"Position: ({bbox[\'minX\']}, {bbox[\'minY\']}")
+    print(f"Bounds: {bbox.width} x {bbox.height}")
+    print(f"Position: ({bbox.minX}, {bbox.minY})")
 
 # Include anchors in bounds calculation
 bbox_with_anchors = layer.getBoundingBox(includeAnchors=True)
+```
+
+#### `getIntersectionsOnLine(p1: dict, p2: dict, includeComponents: bool = False) -> list[dict]`
+Calculate all intersections between a line segment and paths in this layer. Handles both curve-line and line-line intersections correctly.
+
+**Parameters:**
+- `p1` (dict): First point of the line with keys `x` and `y`
+- `p2` (dict): Second point of the line with keys `x` and `y`
+- `includeComponents` (bool): If True, include intersections with component paths (default: False)
+
+**Returns:**
+List of intersection points sorted by distance from p1. Each intersection is a dict with keys: `x`, `y` (coordinates), and `t` (parameter along the line where 0 is at p1 and 1 is at p2).
+
+**Example:**
+```python
+# Measure horizontal at y=500
+intersections = layer.getIntersectionsOnLine(
+    {\'x\': 0, \'y\': 500},
+    {\'x\': layer.width, \'y\': 500},
+    includeComponents=True
+)
+print(f"Found {len(intersections)} intersections")
+for i in intersections:
+    print(f"  Intersection at x={i.x:.2f}")
 ```
 
 #### `getMatchingLayerOnGlyph(glyphName: str) -> [`Layer`](#layer) | None`
@@ -296,7 +335,7 @@ The matching layer on the specified glyph, or `None` if not found.
 # Get the layer for "A" that matches the current layer's master
 a_layer = layer.getMatchingLayerOnGlyph("A")
 if a_layer:
-    print(f"Found matching layer on A: {a_layer.width}")
+    print(f"Found matching layer on A with width {a_layer.width}")
 ```
 
 #### `removeAnchor(index: int) -> None`
@@ -445,6 +484,24 @@ All properties are read/write:
 ```python
 component.reference = "B"
 component.transform = [1, 0, 0, 1, 50, 0]  # Translate by (50, 0)
+```
+
+### Methods
+
+#### `getTransformedPaths() -> list[dict]`
+
+Get all paths from this component with transforms applied recursively. Nested components are fully resolved. Automatically determines the correct master by walking up the parent chain to the layer.
+
+**Returns:**
+List of transformed path data objects, each with `nodes` (list of node dicts) and `closed` (bool) properties.
+
+**Example:**
+
+```python
+# Get all paths from a component
+component_paths = component.getTransformedPaths()
+for path in component_paths:
+    print(f"Transformed path with {len(path.nodes)} nodes")
 ```
 
 ---
@@ -750,7 +807,7 @@ print(f"Scaled {len(font.glyphs)} glyphs by {scale_factor}x")
 ### Performance
 
 - Changes to properties are immediately reflected in the underlying JSON data
-- No need to "save" or "commit" changes - they're live
+- No need to "save" or "commit" changes - they are live
 - For batch operations, group changes together to minimize redraws
 
 ### Type Checking

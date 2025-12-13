@@ -348,8 +348,8 @@ def get_layer_class_docs():
             'example': (
                 'bbox = layer.getBoundingBox()\n'
                 'if bbox:\n'
-                '    print(f"Bounds: {bbox[\\\'width\\\']} x {bbox[\\\'height\\\']}")\n'
-                '    print(f"Position: ({bbox[\\\'minX\\\']}, {bbox[\\\'minY\\\']}")\n'
+                '    print(f"Bounds: {bbox.width} x {bbox.height}")\n'
+                '    print(f"Position: ({bbox.minX}, {bbox.minY})")\n'
                 '\n'
                 '# Include anchors in bounds calculation\n'
                 'bbox_with_anchors = layer.getBoundingBox(includeAnchors=True)'
@@ -374,7 +374,61 @@ def get_layer_class_docs():
                 '# Get the layer for "A" that matches the current layer\'s master\n'
                 'a_layer = layer.getMatchingLayerOnGlyph("A")\n'
                 'if a_layer:\n'
-                '    print(f"Found matching layer on A: {a_layer.width}")'
+                '    print(f"Found matching layer on A with width {a_layer.width}")'
+            )
+        },
+        'getAllPaths': {
+            'signature': (
+                'getAllPaths() -> list[dict]'
+            ),
+            'description': (
+                'Get all paths in this layer including transformed component paths. '
+                'Components are recursively flattened and their transforms applied.'
+            ),
+            'returns': (
+                'List of path data objects with all components resolved to transformed paths. '
+                'Each path has `nodes` (list of node dicts) and `closed` (bool) properties.'
+            ),
+            'example': (
+                '# Get all paths including flattened components\n'
+                'paths = layer.getAllPaths()\n'
+                'for path in paths:\n'
+                '    print(f"Path with {len(path.nodes)} nodes")\n'
+                '    print(f"  Closed: {path.closed}")'
+            )
+        },
+        'getIntersectionsOnLine': {
+            'signature': (
+                'getIntersectionsOnLine(p1: dict, p2: dict, '
+                'includeComponents: bool = False) -> list[dict]'
+            ),
+            'description': (
+                'Calculate all intersections between a line segment and paths in this layer. '
+                'Handles both curve-line and line-line intersections correctly.'
+            ),
+            'params': [
+                '- `p1` (dict): First point of the line with keys `x` and `y`',
+                '- `p2` (dict): Second point of the line with keys `x` and `y`',
+                (
+                    '- `includeComponents` (bool): If True, include intersections '
+                    'with component paths (default: False)'
+                )
+            ],
+            'returns': (
+                'List of intersection points sorted by distance from p1. Each intersection '
+                'is a dict with keys: `x`, `y` (coordinates), and `t` (parameter along the '
+                'line where 0 is at p1 and 1 is at p2).'
+            ),
+            'example': (
+                '# Measure horizontal at y=500\n'
+                'intersections = layer.getIntersectionsOnLine(\n'
+                '    {\\\'x\\\': 0, \\\'y\\\': 500},\n'
+                '    {\\\'x\\\': layer.width, \\\'y\\\': 500},\n'
+                '    includeComponents=True\n'
+                ')\n'
+                'print(f"Found {len(intersections)} intersections")\n'
+                'for i in intersections:\n'
+                '    print(f"  Intersection at x={i.x:.2f}")'
             )
         }
     }
@@ -600,6 +654,50 @@ node.smooth = True
 
 def get_component_class_docs():
     """Generate documentation for the Component class"""
+    
+    manual_methods = {
+        'getTransformedPaths': {
+            'signature': 'getTransformedPaths() -> list[dict]',
+            'description': (
+                'Get all paths from this component with transforms applied recursively. '
+                'Nested components are fully resolved. Automatically determines the correct master '
+                'by walking up the parent chain to the layer.'
+            ),
+            'params': [],
+            'returns': (
+                'List of transformed path data objects, each with `nodes` (list of node dicts) '
+                'and `closed` (bool) properties.'
+            ),
+            'example': (
+                '```python\n'
+                '# Get all paths from a component\n'
+                'component_paths = component.getTransformedPaths()\n'
+                'for path in component_paths:\n'
+                '    print(f"Transformed path with {len(path.nodes)} nodes")\n'
+                '```'
+            )
+        }
+    }
+    
+    methods_section = []
+    methods_section.append("### Methods\n")
+    
+    for method_name, method_info in manual_methods.items():
+        methods_section.append(f"#### `{method_info['signature']}`\n")
+        methods_section.append(f"{method_info['description']}\n")
+        
+        if method_info.get('params'):
+            methods_section.append("**Parameters:**\n")
+            for param in method_info['params']:
+                methods_section.append(f"- `{param[0]}` ({param[1]}): {param[2]}\n")
+        
+        if method_info.get('returns'):
+            methods_section.append(f"**Returns:**\n{method_info['returns']}\n")
+        
+        if method_info.get('example'):
+            methods_section.append("**Example:**\n")
+            methods_section.append(f"{method_info['example']}\n")
+    
     return """## Component
 
 Represents a component reference in a layer.
@@ -625,6 +723,7 @@ component.reference = "B"
 component.transform = [1, 0, 0, 1, 50, 0]  # Translate by (50, 0)
 ```
 
+""" + "\n".join(methods_section) + """
 ---
 """
 
@@ -952,7 +1051,7 @@ print(f"Scaled {len(font.glyphs)} glyphs by {scale_factor}x")
 ### Performance
 
 - Changes to properties are immediately reflected in the underlying JSON data
-- No need to "save" or "commit" changes - they're live
+- No need to \"save\" or \"commit\" changes - they are live
 - For batch operations, group changes together to minimize redraws
 
 ### Type Checking

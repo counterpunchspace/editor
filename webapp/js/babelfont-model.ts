@@ -382,6 +382,123 @@ export class Component extends ArrayElementBase {
             : '';
         return `<Component ref="${this.reference}"${transform}>`;
     }
+
+    /**
+     * Get all paths from this component with transforms applied recursively
+     * Automatically determines the correct master by walking up the parent chain
+     * @returns Array of transformed path data objects
+     */
+    getTransformedPaths(): Babelfont.Path[] {
+        const paths: Babelfont.Path[] = [];
+        const componentTransform = this.transform || [1, 0, 0, 1, 0, 0];
+
+        // Get the Font object to look up component glyphs
+        // Component -> Shape -> Layer -> Glyph -> Font
+        const shape = this.parent() as Shape;
+        if (!shape) return paths;
+
+        const layer = shape.parent() as Layer;
+        if (!layer) return paths;
+
+        const glyph = layer.parent() as Glyph;
+        if (!glyph) return paths;
+
+        const font = glyph.parent() as Font;
+        if (!font) return paths;
+
+        // Get the master ID from the layer
+        const masterId = (layer.master as any)?.DefaultForMaster;
+
+        // Helper to transform a node
+        const transformNode = (node: any, transform: number[]): any => {
+            const [a, b, c, d, tx, ty] = transform;
+            const result: any = {
+                x: a * node.x + c * node.y + tx,
+                y: b * node.x + d * node.y + ty
+            };
+            if (node.type !== undefined) result.type = node.type;
+            if (node.nodetype !== undefined) result.nodetype = node.nodetype;
+            if (node.smooth !== undefined) result.smooth = node.smooth;
+            return result;
+        };
+
+        // Helper to combine two transform matrices
+        const combineTransforms = (t1: number[], t2: number[]): number[] => {
+            const [a1, b1, c1, d1, tx1, ty1] = t1;
+            const [a2, b2, c2, d2, tx2, ty2] = t2;
+            return [
+                a1 * a2 + c1 * b2,
+                b1 * a2 + d1 * b2,
+                a1 * c2 + c1 * d2,
+                b1 * c2 + d1 * d2,
+                a1 * tx2 + c1 * ty2 + tx1,
+                b1 * tx2 + d1 * ty2 + ty1
+            ];
+        };
+
+        // Look up the component glyph and get the matching layer
+        const componentGlyph = font.findGlyph(this.reference);
+        if (!componentGlyph || !componentGlyph.layers) return paths;
+
+        let componentLayer;
+        if (masterId) {
+            componentLayer = componentGlyph.layers.find(
+                (l) =>
+                    l.master && (l.master as any).DefaultForMaster === masterId
+            );
+        }
+        if (!componentLayer) {
+            componentLayer = componentGlyph.layers[0];
+        }
+        if (!componentLayer) return paths;
+
+        // Process shapes from the component layer
+        if (componentLayer.shapes) {
+            for (const shape of componentLayer.shapes) {
+                if (shape.isComponent()) {
+                    // Recursively get paths from nested components
+                    const nestedComponent = shape.asComponent();
+                    const nestedPaths = nestedComponent.getTransformedPaths();
+
+                    // Apply this component's transform to all nested paths
+                    for (const nestedPath of nestedPaths) {
+                        const transformedNodes = nestedPath.nodes.map(
+                            (node: any) =>
+                                transformNode(node, componentTransform)
+                        );
+                        paths.push({
+                            nodes: transformedNodes,
+                            closed: nestedPath.closed
+                        });
+                    }
+                } else if (shape.isPath()) {
+                    // Transform the path nodes
+                    const pathData = shape.asPath().toJSON();
+                    let nodes = pathData.nodes;
+
+                    // Parse nodes if they're a string
+                    if (typeof nodes === 'string') {
+                        nodes = LayerDataNormalizer.parseNodes(nodes);
+                    }
+
+                    if (nodes && Array.isArray(nodes) && nodes.length > 0) {
+                        const transformedNodes = nodes.map((node: any) =>
+                            transformNode(node, componentTransform)
+                        );
+                        paths.push({
+                            nodes: transformedNodes,
+                            closed:
+                                pathData.closed !== undefined
+                                    ? pathData.closed
+                                    : true
+                        });
+                    }
+                }
+            }
+        }
+
+        return paths;
+    }
 }
 
 /**
@@ -1104,20 +1221,51 @@ export class Layer extends ArrayElementBase {
     }
 
     /**
-     * Get all paths in this layer with components flattened to transformed paths
-     * This recursively processes nested components to any depth
-     * The returned paths are independent copies and not part of the Layer.shapes list
-     * @returns Array of flattened path data objects
+     * Get only direct paths in this layer (no components)
+     * @returns Array of path data objects from shapes that are paths
      */
-    private getFlattenedPaths(): Babelfont.Path[] {
-        // Navigate up to Font to enable component lookup
-        const glyph = this.parent() as Glyph;
-        const font = glyph ? (glyph.parent() as Font) : undefined;
+    private getDirectPaths(): Babelfont.Path[] {
+        const paths: Babelfont.Path[] = [];
 
-        // Get the master ID from the layer data
-        const masterId = this.data.master?.DefaultForMaster;
+        if (!this.shapes) return paths;
 
-        return Layer.flattenComponents(this.data, font, masterId);
+        for (const shape of this.shapes) {
+            if (shape.isPath()) {
+                const pathData = shape.asPath().toJSON();
+                if (pathData.nodes) {
+                    paths.push(pathData);
+                }
+            }
+        }
+
+        return paths;
+    }
+
+    /**
+     * Get all paths in this layer including transformed paths from components (recursively flattened)
+     * @returns Array of path data objects with all components resolved to transformed paths
+     */
+    getAllPaths(): Babelfont.Path[] {
+        const paths: Babelfont.Path[] = [];
+
+        if (!this.shapes) return paths;
+
+        for (const shape of this.shapes) {
+            if (shape.isPath()) {
+                // Add direct path
+                const pathData = shape.asPath().toJSON();
+                if (pathData.nodes) {
+                    paths.push(pathData);
+                }
+            } else if (shape.isComponent()) {
+                // Get transformed paths from component recursively
+                const component = shape.asComponent();
+                const componentPaths = component.getTransformedPaths();
+                paths.push(...componentPaths);
+            }
+        }
+
+        return paths;
     }
 
     /**
@@ -1156,15 +1304,12 @@ export class Layer extends ArrayElementBase {
             hasPoints = true;
         };
 
-        // Get all flattened paths (including transformed components)
-        const flattenedPaths = Layer.flattenComponents(
-            layerData,
-            font,
-            masterId
-        );
+        // Get all paths (we need to use the static flattenComponents for compatibility)
+        // since we're working with raw layer data, not a Layer instance
+        const paths = Layer.flattenComponents(layerData, font, masterId);
 
-        // Process all flattened paths
-        for (const path of flattenedPaths) {
+        // Process all paths
+        for (const path of paths) {
             if (path.nodes && Array.isArray(path.nodes)) {
                 for (const node of path.nodes) {
                     expandBounds(node.x, node.y);
@@ -1247,25 +1392,10 @@ export class Layer extends ArrayElementBase {
     ): Array<{ x: number; y: number; t: number }> {
         const intersections: Array<{ x: number; y: number; t: number }> = [];
 
-        // Get paths to process
-        let paths: Babelfont.Path[];
-        if (includeComponents) {
-            // Get flattened paths including transformed components
-            paths = this.getFlattenedPaths();
-        } else {
-            // Get only direct paths (no components)
-            paths = [];
-            if (this.shapes) {
-                for (const shape of this.shapes) {
-                    if (shape.isPath()) {
-                        const pathData = shape.asPath().toJSON();
-                        if (pathData.nodes) {
-                            paths.push(pathData);
-                        }
-                    }
-                }
-            }
-        }
+        // Get all paths including components if requested
+        const paths = includeComponents
+            ? this.getAllPaths()
+            : this.getDirectPaths();
 
         // Create a line object for intersections
         const line = {
