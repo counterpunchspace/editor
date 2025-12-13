@@ -31,10 +31,8 @@ reflected in the font structure.
 ### Accessing the Font Model
 
 ```python
-from js import window
-
-# Get the current font
-font = window.currentFontModel
+# Get the current font (fonteditor module is pre-loaded)
+font = CurrentFont()
 ```
 
 ### Parent Navigation
@@ -63,7 +61,8 @@ The main font class representing a complete font.
 
 **Access:**
 ```python
-font = window.currentFontModel
+# fonteditor module is pre-loaded
+font = CurrentFont()
 ```
 
 ### Properties
@@ -594,10 +593,8 @@ instance.location = {"wght": 700}
 ### Example 1: Creating a Simple Glyph
 
 ```python
-from js import window
-
 # Get the font
-font = window.currentFontModel
+font = CurrentFont()
 
 # Create a new glyph
 glyph = font.addGlyph("myGlyph", "Base")
@@ -618,9 +615,7 @@ print(f"Created glyph: {glyph.name}")
 ### Example 2: Modifying Existing Glyphs
 
 ```python
-from js import window
-
-font = window.currentFontModel
+font = CurrentFont()
 
 # Find glyph A
 glyph_a = font.findGlyph("A")
@@ -645,9 +640,7 @@ if glyph_a:
 ### Example 3: Working with Components
 
 ```python
-from js import window
-
-font = window.currentFontModel
+font = CurrentFont()
 
 # Create a glyph with a component
 glyph = font.addGlyph("Aacute", "Base")
@@ -666,9 +659,7 @@ print(f"Created {glyph.name} with components")
 ### Example 4: Iterating Through Font
 
 ```python
-from js import window
-
-font = window.currentFontModel
+font = CurrentFont()
 
 # Count nodes across all glyphs
 total_nodes = 0
@@ -687,9 +678,7 @@ print(f"Total nodes in font: {total_nodes}")
 ### Example 5: Working with Variable Fonts
 
 ```python
-from js import window
-
-font = window.currentFontModel
+font = CurrentFont()
 
 # Check if font has axes
 if font.axes:
@@ -708,9 +697,7 @@ if font.axes:
 ### Example 6: Batch Processing Glyphs
 
 ```python
-from js import window
-
-font = window.currentFontModel
+font = CurrentFont()
 
 # Scale all glyphs by 1.5x
 scale_factor = 1.5

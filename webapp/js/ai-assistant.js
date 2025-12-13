@@ -1567,7 +1567,7 @@ PRIMARY FOCUS:
 
 CRITICAL RULES FOR SCRIPT MODE:
 1. Generate complete, standalone Python scripts that can be saved and reused
-2. Get the main font object from JavaScript using \`from js import window\` and then: \`font = window.currentFontModel\`
+2. Get the main font object using \`font = CurrentFont()\` (raises error if no font is open). Note: The \`fonteditor\` module is already loaded, no import needed.
 3. Scripts should be self-contained and well-documented
 4. Include proper error handling and user feedback via print statements
 5. The context-py API documentation below is provided for reference when writing scripts
@@ -1577,7 +1577,7 @@ CRITICAL RULES FOR SCRIPT MODE:
 You are working directly on the user's currently open font. Generate Python code that will be executed immediately on the active font using the context-py library.
 
 CRITICAL RULES FOR FONT MODE:
-1. Get the main font object from JavaScript using \`from js import window\` and then: \`font = window.currentFontModel\`
+1. Get the main font object using \`font = CurrentFont()\` (raises error if no font is open). Note: The \`fonteditor\` module is already loaded, no import needed.
 2. Only set data in the font object if there is a clear instruction to do so in the user prompt, otherwise just read or analyze data
 3. Code will be executed immediately - keep it focused and efficient
 4. Always include a summary print statement at the end indicating what was done`;

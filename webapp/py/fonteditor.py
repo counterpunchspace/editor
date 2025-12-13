@@ -18,29 +18,26 @@ FontEditor Python Module
 Core functionality for font editing operations
 """
 
-# import uuid
+import js
 
 
-# __open_fonts = {}  # Dictionary of {font_id: font_object}
-# __current_font_id = None  # ID of the currently active font
-# # Track if dirty tracking has been initialized for each font
-# __tracking_initialized = {}
+def CurrentFont():
+    """
+    Get the currently active font.
 
+    Returns:
+        Font: The currently active context Font object
 
-# def CurrentFont():
-#     """
-#     Get the currently active font.
+    Raises:
+        RuntimeError: If no font is currently open
 
-#     Returns:
-#         Font: The currently active context Font object, or None if no font is open
-
-#     Example:
-#         >>> font = CurrentFont()
-#         >>> print(font.info.familyName)
-#     """
-#     if __current_font_id and __current_font_id in __open_fonts:
-#         return __open_fonts[__current_font_id]
-#     return None
+    Example:
+        >>> font = CurrentFont()
+        >>> print(font.info.familyName)
+    """
+    if js.window.currentFontModel is None:
+        raise RuntimeError("No font is currently open")
+    return js.window.currentFontModel
 
 
 # def SetCurrentFont(font_id):
