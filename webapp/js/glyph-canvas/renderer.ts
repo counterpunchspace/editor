@@ -1633,7 +1633,24 @@ export class GlyphCanvasRenderer {
         const glyphWrapper = glyphName
             ? (window as any).currentFontModel.findGlyph(glyphName)
             : null;
-        const tempLayer = new Layer([layerData], 0, glyphWrapper);
+
+        // Find the matching Layer wrapper on the glyph that corresponds to the current layerData
+        // This ensures component lookups use the correct master ID
+        let layerWrapper: Layer | null = null;
+        if (glyphWrapper && glyphWrapper.layers) {
+            const currentLayerId =
+                this.glyphCanvas.outlineEditor.selectedLayerId;
+            for (const layer of glyphWrapper.layers) {
+                if (layer.id === currentLayerId) {
+                    layerWrapper = layer;
+                    break;
+                }
+            }
+        }
+
+        // Fallback: create temporary wrapper if we couldn't find the layer
+        const tempLayer =
+            layerWrapper || new Layer([layerData], 0, glyphWrapper);
 
         // Define line endpoints in component-local space
         let horizontalIntersections: Array<{
