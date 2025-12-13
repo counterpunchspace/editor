@@ -733,4 +733,90 @@ describe('Babelfont Object Model', () => {
             font.removeGlyph('EmptyGlyph');
         });
     });
+
+    describe('Layer.getIntersectionsOnLine()', () => {
+        test('should calculate intersections on adieresis layer 2 with components', () => {
+            // Load NestedComponents.babelfont for this test
+            const nestedFixturePath = path.join(
+                __dirname,
+                '..',
+                'examples',
+                'NestedComponents.babelfont'
+            );
+            const nestedJsonString = fs.readFileSync(
+                nestedFixturePath,
+                'utf-8'
+            );
+            const nestedFontData = JSON.parse(nestedJsonString);
+            const nestedFont = Font.fromData(nestedFontData);
+
+            const adieresis = nestedFont.findGlyph('adieresis');
+            const layer2 = adieresis.layers[2];
+
+            expect(layer2).toBeDefined();
+            expect(layer2.width).toBe(558);
+
+            // Horizontal measurement at y=332 from x=0 to glyph width
+            const horizontalIntersections = layer2.getIntersectionsOnLine(
+                { x: 0, y: 332 },
+                { x: layer2.width, y: 332 },
+                true // include components
+            );
+
+            // Expected intersection count (verified)
+            expect(horizontalIntersections.length).toBe(2);
+
+            // Verify intersections are sorted by t parameter
+            for (let i = 1; i < horizontalIntersections.length; i++) {
+                expect(horizontalIntersections[i].t).toBeGreaterThanOrEqual(
+                    horizontalIntersections[i - 1].t
+                );
+            }
+
+            // Verify intersections are on the line (y should be 332)
+            horizontalIntersections.forEach((int) => {
+                expect(int.y).toBeCloseTo(332, 1);
+            });
+
+            // Expected x coordinates (measured values)
+            const expectedX = [369.6547, 500.0508];
+            horizontalIntersections.forEach((int, i) => {
+                if (i < expectedX.length) {
+                    expect(int.x).toBeCloseTo(expectedX[i], 1);
+                }
+            });
+
+            // Vertical measurement at x=114 from y=-50 to y=750
+            const verticalIntersections = layer2.getIntersectionsOnLine(
+                { x: 114, y: -50 },
+                { x: 114, y: 750 },
+                true // include components
+            );
+
+            // Expected intersection count (verified)
+            expect(verticalIntersections.length).toBe(6);
+
+            // Verify intersections are sorted by t parameter
+            for (let i = 1; i < verticalIntersections.length; i++) {
+                expect(verticalIntersections[i].t).toBeGreaterThanOrEqual(
+                    verticalIntersections[i - 1].t
+                );
+            }
+
+            // Verify intersections are on the line (x should be 114)
+            verticalIntersections.forEach((int) => {
+                expect(int.x).toBeCloseTo(114, 1);
+            });
+
+            // Expected y coordinates (measured values)
+            const expectedY = [
+                8.1505, 278.9654, 348.6316, 477.1882, 566.1586, 650.0777
+            ];
+            verticalIntersections.forEach((int, i) => {
+                if (i < expectedY.length) {
+                    expect(int.y).toBeCloseTo(expectedY[i], 1);
+                }
+            });
+        });
+    });
 });
