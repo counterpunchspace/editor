@@ -591,10 +591,13 @@ export class Layer extends ArrayElementBase {
                         shape.Path.nodes =
                             LayerDataNormalizer.serializeNodes(nodes);
                     }
-                } else if ('Component' in shape && shape.Component.transform) {
+                } else if ('Component' in shape) {
                     // Update component transform translation
-                    const transform = shape.Component.transform;
-                    transform[4] += offset; // Update x translation
+                    if (!shape.Component.transform) {
+                        // Create identity transform if none exists
+                        shape.Component.transform = [1, 0, 0, 1, 0, 0];
+                    }
+                    shape.Component.transform[4] += offset; // Update x translation
                 }
             }
         }
