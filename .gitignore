@@ -16,7 +16,7 @@ __pycache__/
 .LSOverride
 
 # IDE
-.vscode/
+# .vscode/
 .idea/
 *.swp
 *.swo

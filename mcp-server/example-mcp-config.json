@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "context-font-editor": {
+      "command": "node",
+      "args": [
+        "/ABSOLUTE/PATH/TO/context-font-editor/mcp-server/build/index.js"
+      ]
+    }
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "servers": {
+    "contextFontEditor": {
+      "type": "stdio",
+      "command": "node",
+      "args": ["${workspaceFolder}/mcp-server/build/index.js"]
+    }
+  }
+}

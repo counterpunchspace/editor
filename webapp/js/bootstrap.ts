@@ -1,5 +1,6 @@
 import './loading-animation.js';
 import './tab-lifecycle.js';
+import './mcp-transport';
 
 import './ai-assistant.js';
 import './api-docs-generator.js';

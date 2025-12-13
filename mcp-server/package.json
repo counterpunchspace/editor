@@ -1,0 +1,23 @@
+{
+  "name": "context-font-editor-mcp",
+  "version": "0.1.0",
+  "description": "MCP server for Context Font Editor development monitoring",
+  "type": "module",
+  "bin": {
+    "context-mcp": "./build/index.js"
+  },
+  "scripts": {
+    "build": "tsc && chmod +x build/index.js",
+    "watch": "tsc --watch",
+    "dev": "npm run build && node build/index.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.4",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.1",
+    "@types/ws": "^8.5.13",
+    "typescript": "^5.9.3"
+  }
+}

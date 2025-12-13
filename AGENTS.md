@@ -68,6 +68,89 @@ This is a WebAssembly-based font editor using Rust (fontc/babelfont) compiled to
 
 - After changes to the JavaScript object model in babelfont-model.ts, always run `npm run generate-docs` from the repo root folder to renew the API docs.
 
+## MCP Server for Development Monitoring
+
+An MCP (Model Context Protocol) server is available for AI-assisted debugging and development monitoring:
+
+**Automatic during development:**
+
+- The webapp automatically connects to the MCP server at `ws://localhost:9876` when running in development mode
+- All console logs are intercepted and forwarded to the MCP server with timestamps, prefixes, and stack traces
+- Only active when `window.isDevelopment()` returns true
+
+**Starting the MCP server:**
+
+```bash
+./start-mcp-server.sh
+# or manually:
+cd mcp-server && npm run dev
+```
+
+**Accessing the data:**
+As an AI assistant with MCP access, you can query the data using:
+
+- `query_logs` tool - Filter logs by level, prefix, search text, or time range
+  - Example: `query_logs({ level: "error", prefix: "FontCompilation", limit: 100 })`
+- `get_runtime_value` tool - Retrieve specific runtime data using dot notation
+  - Example: `get_runtime_value({ key: "fontManager.currentFont.name" })`
+- `clear_logs` tool - Clear all captured logs
+- `reload_webapp` tool - Reload the webapp page in the browser
+- `execute_javascript` tool - Execute JavaScript code in the webapp context
+  - Example: `execute_javascript({ code: "window.fontManager.currentFont.name" })`
+
+**Remote control of the webapp:**
+
+The MCP server enables full remote control of the webapp via the `execute_javascript` tool:
+
+- **Opening a font:**
+
+  ```javascript
+  window.openFont("/user/NestedComponents.babelfont");
+  ```
+
+- **Accessing the current font:**
+
+  ```javascript
+  window.currentFontModel; // The currently loaded font object
+  ```
+
+- **Switching layers/masters:**
+
+  ```javascript
+  // Check available masters
+  window.currentFontModel.masters.map((m) => m.name);
+
+  // Switch to a specific master (e.g., Bold)
+  // Implementation depends on the UI controls
+  ```
+
+- **Inspecting DOM and UI state:**
+
+  ```javascript
+  // Find UI elements
+  document.querySelectorAll(".some-selector");
+
+  // Trigger UI actions
+  document.querySelector("#some-button")?.click();
+  ```
+
+**MCP Resources:**
+
+- `context://logs/all` - All captured console logs (up to 1000)
+- `context://logs/recent` - Last 50 console logs
+- `context://runtime/data` - Current runtime state
+
+**Sending runtime data from webapp:**
+
+```javascript
+window.mcpTransport.sendRuntimeData({
+  currentFont: window.fontManager?.currentFont?.name,
+  customData: { ... }
+});
+```
+
+See `mcp-server/README.md` for complete documentation.
+
 ## Important Notes
 
 - CORS headers are required for SharedArrayBuffer (see \_headers and coi-serviceworker.js)

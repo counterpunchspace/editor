@@ -10,6 +10,7 @@ import MemoryMonitor from './memory-monitor.js';
 import ResizableViews from './resizer.js';
 import SaveButton from './save-button.js';
 import { Font } from './babelfont-model.js';
+import type MCPLogTransport from './mcp-transport.js';
 declare global {
     // Any property augmentation we make to the Window interface
     // should be declared here.
@@ -20,6 +21,9 @@ declare global {
         createHarfBuzz: any; // HarfBuzz.js
         hbjs: any; // HarfBuzz.js
         hbInit: () => Promise<void>; // HarfBuzz.js
+
+        // From mcp-transport.js
+        mcpTransport: MCPLogTransport;
 
         // From ai-assistant.js
         aiAssistant: AIAssistant;
