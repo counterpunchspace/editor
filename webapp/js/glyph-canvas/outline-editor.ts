@@ -2454,9 +2454,9 @@ export class OutlineEditor {
                 glyphX = (d * localX - c * localY) / det;
                 glyphY = (a * localY - b * localX) / det;
             }
-            console.log(
-                `transformMouseToComponentSpace: before inverse=(${glyphXBeforeInverse}, ${glyphYBeforeInverse}), after inverse=(${glyphX}, ${glyphY}), accumulated transform=[${compTransform}]`
-            );
+            // console.log(
+            //     `transformMouseToComponentSpace: before inverse=(${glyphXBeforeInverse}, ${glyphYBeforeInverse}), after inverse=(${glyphX}, ${glyphY}), accumulated transform=[${compTransform}]`
+            // );
         }
 
         return { glyphX, glyphY };
