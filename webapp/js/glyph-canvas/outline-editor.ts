@@ -1929,7 +1929,18 @@ export class OutlineEditor {
             return;
         }
 
-        const componentShape = this.layerData.shapes[componentIndex];
+        // During layer switch animation, use targetLayerData to get the correct component transform
+        // Otherwise the component will be positioned using the old layer's transform
+        const sourceLayerData =
+            this.isLayerSwitchAnimating && this.targetLayerData
+                ? this.targetLayerData
+                : this.layerData;
+
+        if (!sourceLayerData.shapes[componentIndex]) {
+            return;
+        }
+
+        const componentShape = sourceLayerData.shapes[componentIndex];
         if (
             !('Component' in componentShape) ||
             !componentShape.Component.reference
@@ -2012,10 +2023,11 @@ export class OutlineEditor {
         this.clearAllSelections();
 
         // Save state with the selections we just cleared (not the current empty ones)
+        // Use sourceLayerData (which accounts for layer switch animation state)
         this.componentStack.push({
             componentIndex,
             transform: this.getAccumulatedTransform(),
-            layerData: this.layerData,
+            layerData: sourceLayerData,
             selectedPoints: savedSelections.selectedPoints,
             selectedAnchors: savedSelections.selectedAnchors,
             selectedComponents: savedSelections.selectedComponents,
@@ -2035,6 +2047,18 @@ export class OutlineEditor {
         // So editingComponentIndex should be null
         this.editingComponentIndex = null;
         this.layerData = componentLayerData;
+
+        // Clear layer switch animation state when entering a new component level
+        // The animation was for the parent layer, entering a component means we're now at a new context
+        if (this.isLayerSwitchAnimating) {
+            this.isLayerSwitchAnimating = false;
+            this.targetLayerData = null;
+        }
+
+        // Clear interpolated component transform when entering a new component level
+        // Otherwise the renderer will use a stale interpolated transform from the parent level
+        this.interpolatedComponentTransform = null;
+
         // Clear isInterpolated flag since we're loading actual layer data
         if (this.layerData) {
             this.layerData.isInterpolated = false;
