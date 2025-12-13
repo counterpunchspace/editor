@@ -97,6 +97,47 @@ export class GlyphCanvasRenderer {
     }
 
     /**
+     * Apply inverse transform to cancel out accumulated component transformations.
+     * This is used to render UI elements (like nodes, labels) in normal aspect ratio
+     * even when they're inside transformed components.
+     * Only inverts the linear transformation (scaling, rotation, skewing) while
+     * preserving the translation (position).
+     * @returns {boolean} True if inverse transform was applied, false if determinant is too small
+     */
+    applyInverseComponentTransform(): boolean {
+        if (this.glyphCanvas.outlineEditor.componentStack.length === 0) {
+            return false;
+        }
+
+        // Get the accumulated transform
+        let transform: number[];
+        if (this.glyphCanvas.outlineEditor.interpolatedComponentTransform) {
+            transform =
+                this.glyphCanvas.outlineEditor.interpolatedComponentTransform;
+        } else {
+            transform =
+                this.glyphCanvas.outlineEditor.getAccumulatedTransform();
+        }
+
+        const [a, b, c, d, tx, ty] = transform;
+        const det = a * d - b * c;
+
+        if (Math.abs(det) > 0.0001) {
+            // Apply inverse of only the linear transformation (a, b, c, d)
+            // to cancel out scaling/rotation/skewing, but keep translation at 0
+            // since we translate to the point position separately
+            const invA = d / det;
+            const invB = -b / det;
+            const invC = -c / det;
+            const invD = a / det;
+            this.ctx.transform(invA, invB, invC, invD, 0, 0);
+            return true;
+        }
+
+        return false;
+    }
+
+    /**
      * Calculate glow parameters (color and stroke width) based on zoom level.
      * @param {string} baseColor - The base color to apply hue shift to
      * @param {number} invScale - Inverse of viewport scale (1/scale)
@@ -931,9 +972,10 @@ export class GlyphCanvasRenderer {
                     this.ctx.arc(0, 0, markerSize, 0, Math.PI * 2);
                     this.ctx.stroke();
 
-                    // Draw component reference name
+                    // Draw component reference name with inverse transform for normal aspect
                     const fontSize = 12 * invScale;
                     this.ctx.save();
+                    this.applyInverseComponentTransform(); // Cancel out component transform
                     this.ctx.scale(1, -1); // Flip Y axis
                     this.ctx.font = `${fontSize}px monospace`;
                     this.ctx.fillStyle = isDarkTheme
@@ -1009,9 +1051,10 @@ export class GlyphCanvasRenderer {
                             index
                         );
 
-                    // Draw anchor as diamond
+                    // Draw anchor as diamond with inverse transform for normal aspect ratio
                     this.ctx.save();
                     this.ctx.translate(x, y);
+                    this.applyInverseComponentTransform(); // Cancel out component transform
                     this.ctx.rotate(Math.PI / 4); // Rotate 45 degrees to make diamond
 
                     const colors = isDarkTheme
@@ -1043,6 +1086,7 @@ export class GlyphCanvasRenderer {
                     if (name && this.viewportManager.scale > minZoomForLabels) {
                         this.ctx.save();
                         this.ctx.translate(x, y);
+                        this.applyInverseComponentTransform(); // Cancel out component transform
                         this.ctx.scale(1, -1); // Flip Y axis to fix upside-down text
                         this.ctx.font = `${fontSize}px monospace`;
                         this.ctx.fillStyle = isDarkTheme
@@ -1329,13 +1373,18 @@ export class GlyphCanvasRenderer {
                             (nodeSizeMax - nodeSizeMin) * zoomFactor) *
                         invScale;
                 }
+                // Draw nodes with inverse transform to maintain normal aspect ratio
+                this.ctx.save();
+                this.ctx.translate(x, y);
+                this.applyInverseComponentTransform(); // Cancel out component transform
+
                 if (type === 'o') {
                     // Off-curve point (cubic bezier control point) - draw as circle
                     const colors = isDarkTheme
                         ? APP_SETTINGS.OUTLINE_EDITOR.COLORS_DARK
                         : APP_SETTINGS.OUTLINE_EDITOR.COLORS_LIGHT;
                     this.ctx.beginPath();
-                    this.ctx.arc(x, y, pointSize, 0, Math.PI * 2);
+                    this.ctx.arc(0, 0, pointSize, 0, Math.PI * 2);
                     let fillColor = isSelected
                         ? colors.CONTROL_POINT_SELECTED
                         : isHovered
@@ -1368,8 +1417,8 @@ export class GlyphCanvasRenderer {
 
                     this.ctx.fillStyle = fillColor;
                     this.ctx.fillRect(
-                        x - pointSize,
-                        y - pointSize,
+                        -pointSize,
+                        -pointSize,
                         pointSize * 2,
                         pointSize * 2
                     );
@@ -1386,10 +1435,12 @@ export class GlyphCanvasRenderer {
                     }
 
                     this.ctx.beginPath();
-                    this.ctx.arc(x, y, pointSize * 0.4, 0, Math.PI * 2);
+                    this.ctx.arc(0, 0, pointSize * 0.4, 0, Math.PI * 2);
                     this.ctx.fillStyle = smoothColor;
                     this.ctx.fill();
                 }
+
+                this.ctx.restore();
             }
         );
     }
