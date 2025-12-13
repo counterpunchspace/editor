@@ -480,4 +480,90 @@ describe('Babelfont Object Model', () => {
             expect(json.width).toBeDefined();
         });
     });
+
+    describe('Layer.getMatchingLayerOnGlyph()', () => {
+        test('should find matching layers across glyphs by master ID', () => {
+            const glyphA = font.findGlyph('A');
+            const glyphB = font.findGlyph('B');
+
+            expect(glyphA).toBeDefined();
+            expect(glyphB).toBeDefined();
+
+            // Both glyphs should have layers
+            expect(glyphA.layers).toBeDefined();
+            expect(glyphB.layers).toBeDefined();
+            expect(glyphA.layers.length).toBeGreaterThan(0);
+            expect(glyphB.layers.length).toBeGreaterThan(0);
+
+            // For each layer in A, find matching layer in B
+            for (const layerA of glyphA.layers) {
+                const matchingLayerB = layerA.getMatchingLayerOnGlyph('B');
+                expect(matchingLayerB).toBeDefined();
+
+                // The matching layer should have the same master ID
+                expect(layerA.master).toEqual(matchingLayerB.master);
+            }
+        });
+
+        test('round-trip: A->B->A should return the same layers', () => {
+            const glyphA = font.findGlyph('A');
+            const glyphB = font.findGlyph('B');
+
+            expect(glyphA).toBeDefined();
+            expect(glyphB).toBeDefined();
+            expect(glyphA.layers).toBeDefined();
+            expect(glyphB.layers).toBeDefined();
+
+            // For each layer in A:
+            // 1. Find matching layer in B
+            // 2. From that B layer, find matching layer back in A
+            // 3. Should get a layer with the same master as the original
+            const layersA = glyphA.layers; // Cache to avoid recreating wrappers
+            for (let i = 0; i < layersA.length; i++) {
+                const originalLayerA = layersA[i];
+                const matchingLayerB =
+                    originalLayerA.getMatchingLayerOnGlyph('B');
+                expect(matchingLayerB).toBeDefined();
+
+                const roundTripLayerA =
+                    matchingLayerB.getMatchingLayerOnGlyph('A');
+                expect(roundTripLayerA).toBeDefined();
+
+                // Should have the same master (compare underlying data, not object identity)
+                expect(roundTripLayerA.master).toEqual(originalLayerA.master);
+
+                // Should reference the same underlying layer data
+                expect(roundTripLayerA.toJSON()).toBe(originalLayerA.toJSON());
+            }
+        });
+
+        test('should return undefined for non-existent glyph', () => {
+            const glyphA = font.findGlyph('A');
+            expect(glyphA).toBeDefined();
+            expect(glyphA.layers).toBeDefined();
+
+            const layer = glyphA.layers[0];
+            const matchingLayer =
+                layer.getMatchingLayerOnGlyph('NonExistentGlyph');
+            expect(matchingLayer).toBeUndefined();
+        });
+
+        test('should return undefined if target glyph has no matching master', () => {
+            const glyphA = font.findGlyph('A');
+            expect(glyphA).toBeDefined();
+            expect(glyphA.layers).toBeDefined();
+
+            // Create a test glyph with a single layer but different master
+            const testGlyph = font.addGlyph('TestGlyph', 'Base');
+            const testLayer = testGlyph.addLayer(500);
+            testLayer.master = { DefaultForMaster: 'non-existent-master-id' };
+
+            const layer = glyphA.layers[0];
+            const matchingLayer = layer.getMatchingLayerOnGlyph('TestGlyph');
+            expect(matchingLayer).toBeUndefined();
+
+            // Clean up
+            font.removeGlyph('TestGlyph');
+        });
+    });
 });

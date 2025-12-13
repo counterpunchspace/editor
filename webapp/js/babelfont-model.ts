@@ -991,6 +991,60 @@ export class Layer extends ArrayElementBase {
         return Layer.calculateBoundingBox(this.data, includeAnchors);
     }
 
+    /**
+     * Find the matching layer on another glyph that represents the same master
+     * @param glyphName - The name of the glyph to find the matching layer on
+     * @returns The matching layer on the specified glyph, or undefined if not found
+     */
+    getMatchingLayerOnGlyph(glyphName: string): Layer | undefined {
+        // Get the master ID of this layer
+        let thisMasterId: string | undefined;
+        if (typeof this.master === 'object') {
+            if ('DefaultForMaster' in this.master) {
+                thisMasterId = this.master.DefaultForMaster;
+            } else if ('AssociatedWithMaster' in this.master) {
+                thisMasterId = this.master.AssociatedWithMaster;
+            }
+        } else {
+            thisMasterId = this.master;
+        }
+
+        if (!thisMasterId) {
+            return undefined;
+        }
+
+        // Navigate up to get the Font object
+        const glyph = this.parent() as Glyph;
+        if (!glyph) return undefined;
+
+        const font = glyph.parent() as Font;
+        if (!font) return undefined;
+
+        // Find the target glyph
+        const targetGlyph = font.findGlyph(glyphName);
+        if (!targetGlyph || !targetGlyph.layers) return undefined;
+
+        // Find the layer on the target glyph with the same master ID
+        for (const layer of targetGlyph.layers) {
+            let layerMasterId: string | undefined;
+            if (typeof layer.master === 'object') {
+                if ('DefaultForMaster' in layer.master) {
+                    layerMasterId = layer.master.DefaultForMaster;
+                } else if ('AssociatedWithMaster' in layer.master) {
+                    layerMasterId = layer.master.AssociatedWithMaster;
+                }
+            } else {
+                layerMasterId = layer.master;
+            }
+
+            if (layerMasterId === thisMasterId) {
+                return layer;
+            }
+        }
+
+        return undefined;
+    }
+
     toString(): string {
         let masterId: string;
         if (typeof this.master === 'object') {

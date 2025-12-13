@@ -348,14 +348,33 @@ def get_layer_class_docs():
             'example': (
                 'bbox = layer.getBoundingBox()\n'
                 'if bbox:\n'
-                '    print(f"Bounds: {bbox[\\\'width\\\']} x '
-                '{bbox[\\\'height\\\']}")\n'
-                '    print(f"Position: ({bbox[\\\'minX\\\']}, '
-                '{bbox[\\\'minY\\\']}")\n'
+                '    print(f"Bounds: {bbox[\\\'width\\\']} x {bbox[\\\'height\\\']}")\n'
+                '    print(f"Position: ({bbox[\\\'minX\\\']}, {bbox[\\\'minY\\\']}")\n'
                 '\n'
                 '# Include anchors in bounds calculation\n'
-                'bbox_with_anchors = layer.getBoundingBox('
-                'includeAnchors=True)'
+                'bbox_with_anchors = layer.getBoundingBox(includeAnchors=True)'
+            )
+        },
+        'getMatchingLayerOnGlyph': {
+            'signature': (
+                'getMatchingLayerOnGlyph(glyphName: str) -> [`Layer`](#layer) | None'
+            ),
+            'description': (
+                'Find the matching layer on another glyph that represents '
+                'the same master.'
+            ),
+            'params': [
+                '- `glyphName` (str): The name of the glyph to search'
+            ],
+            'returns': (
+                'The matching layer on the specified glyph, or `None` if '
+                'not found.'
+            ),
+            'example': (
+                '# Get the layer for "A" that matches the current layer\'s master\n'
+                'a_layer = layer.getMatchingLayerOnGlyph("A")\n'
+                'if a_layer:\n'
+                '    print(f"Found matching layer on A: {a_layer.width}")'
             )
         }
     }

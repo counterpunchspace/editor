@@ -1,5 +1,6 @@
 # Font Object Model API Documentation
-*Auto-generated from JavaScript object model via Pyodide*
+
+_Auto-generated from JavaScript object model via Pyodide_
 
 ## Table of Contents
 
@@ -41,6 +42,7 @@ All objects in the hierarchy have a `parent()` method that returns their parent 
 allowing navigation up the object tree to the root Font object.
 
 **Example:**
+
 ```python
 # Navigate from node up to font
 node = font.glyphs[0].layers[0].shapes[0].asPath().nodes[0]
@@ -60,6 +62,7 @@ font = glyph.parent()     # Font object
 The main font class representing a complete font.
 
 **Access:**
+
 ```python
 # fonteditor module is pre-loaded
 font = CurrentFont()
@@ -92,9 +95,11 @@ font = CurrentFont()
 ### Methods
 
 #### `findGlyph(name: str) -> `[`Glyph`](#glyph)` | None`
+
 Find a glyph by name.
 
 **Example:**
+
 ```python
 glyph = font.findGlyph("A")
 if glyph:
@@ -102,42 +107,53 @@ if glyph:
 ```
 
 #### `findGlyphByCodepoint(codepoint: int) -> `[`Glyph`](#glyph)` | None`
+
 Find a glyph by Unicode codepoint.
 
 **Example:**
+
 ```python
 glyph = font.findGlyphByCodepoint(0x0041)  # Find 'A'
 ```
 
 #### `findAxis(id: str) -> `[`Axis`](#axis)` | None`
+
 Find an axis by ID.
 
 #### `findAxisByTag(tag: str) -> `[`Axis`](#axis)` | None`
+
 Find an axis by 4-character tag.
 
 **Example:**
+
 ```python
 weight_axis = font.findAxisByTag("wght")
 ```
 
 #### `findMaster(id: str) -> `[`Master`](#master)` | None`
+
 Find a master by ID.
 
 #### `addGlyph(name: str, category: str = "Base") -> `[`Glyph`](#glyph)
+
 Add a new glyph to the font.
 
 **Example:**
+
 ```python
 new_glyph = font.addGlyph("myGlyph", "Base")
 ```
 
 #### `removeGlyph(name: str) -> bool`
+
 Remove a glyph by name. Returns True if successful.
 
 #### `toJSONString() -> str`
+
 Serialize the font to JSON string.
 
 #### `toJSON() -> dict`
+
 Get the underlying JSON data structure.
 
 ---
@@ -147,6 +163,7 @@ Get the underlying JSON data structure.
 Represents a glyph in the font.
 
 **Access:**
+
 ```python
 glyph = font.glyphs[0]
 # or
@@ -174,25 +191,31 @@ glyph = font.findGlyph("A")
 ### Methods
 
 #### `addLayer(width: float, master: dict | None = None) -> `[`Layer`](#layer)
+
 Add a new layer to the glyph.
 
 **Example:**
+
 ```python
 layer = glyph.addLayer(600)
 ```
 
 #### `removeLayer(index: int) -> None`
+
 Remove a layer at the specified index.
 
 #### `findLayerById(id: str) -> `[`Layer`](#layer)` | None`
+
 Find a layer by its ID.
 
 **Example:**
+
 ```python
 layer = glyph.findLayerById("layer-uuid")
 ```
 
 #### `findLayerByMasterId(master_id: str) -> `[`Layer`](#layer)` | None`
+
 Find a layer associated with a specific master.
 
 ---
@@ -202,6 +225,7 @@ Find a layer associated with a specific master.
 Represents a layer in a glyph (one drawing per master/location).
 
 **Access:**
+
 ```python
 layer = glyph.layers[0]
 # or
@@ -234,17 +258,21 @@ layer = glyph.findLayerById("layer-id")
 ### Methods
 
 #### `addAnchor(x: float, y: float, name: str | None = None) -> [`Anchor`](#anchor)`
+
 Add a new anchor point.
 
 **Example:**
+
 ```python
 anchor = layer.addAnchor(250, 700, "top")
 ```
 
 #### `addComponent(reference: str, transform: list[float] | None = None) -> [`Component`](#component)`
+
 Add a new component reference to the layer.
 
 **Example:**
+
 ```python
 component = layer.addComponent("A")
 # With transformation: [xx, xy, yx, yy, x, y]
@@ -252,26 +280,32 @@ component = layer.addComponent("A", [1, 0, 0, 1, 100, 0])
 ```
 
 #### `addPath(closed: bool = True) -> [`Path`](#path)`
+
 Add a new path to the layer.
 
 **Example:**
+
 ```python
 path = layer.addPath(closed=True)
 ```
 
 #### `addShape(shape_data: dict) -> [`Shape`](#shape)`
+
 Add a new shape (component or path) to the layer.
 
 #### `getBoundingBox(includeAnchors: bool = False) -> dict | None`
+
 Calculate the bounding box for this layer, respecting nested components and their transformation matrices.
 
 **Parameters:**
+
 - `includeAnchors` (bool): If True, include anchors in the bounding box calculation (default: False)
 
 **Returns:**
 Dictionary with keys: `minX`, `minY`, `maxX`, `maxY`, `width`, `height`, or `None` if no geometry.
 
 **Example:**
+
 ```python
 bbox = layer.getBoundingBox()
 if bbox:
@@ -282,10 +316,32 @@ if bbox:
 bbox_with_anchors = layer.getBoundingBox(includeAnchors=True)
 ```
 
+#### `getMatchingLayerOnGlyph(glyphName: str) -> [`Layer`](#layer) | None`
+
+Find the matching layer on another glyph that represents the same master.
+
+**Parameters:**
+
+- `glyphName` (str): The name of the glyph to search
+
+**Returns:**
+The matching layer on the specified glyph, or `None` if not found.
+
+**Example:**
+
+```python
+# Get the layer for "A" that matches the current layer's master
+a_layer = layer.getMatchingLayerOnGlyph("A")
+if a_layer:
+    print(f"Found matching layer on A: {a_layer.width}")
+```
+
 #### `removeAnchor(index: int) -> None`
+
 Remove an anchor at the specified index.
 
 #### `removeShape(index: int) -> None`
+
 Remove a shape at the specified index.
 
 ---
@@ -295,6 +351,7 @@ Remove a shape at the specified index.
 Wrapper for a shape union type (either a Component or a Path).
 
 **Access:**
+
 ```python
 shape = layer.shapes[0]
 ```
@@ -302,15 +359,19 @@ shape = layer.shapes[0]
 ### Methods
 
 #### `isComponent() -> bool`
+
 Check if this shape is a component.
 
 #### `isPath() -> bool`
+
 Check if this shape is a path.
 
 #### `asComponent() -> `[`Component`](#component)
+
 Get as Component. Raises error if not a component.
 
 **Example:**
+
 ```python
 if shape.isComponent():
     component = shape.asComponent()
@@ -318,9 +379,11 @@ if shape.isComponent():
 ```
 
 #### `asPath() -> `[`Path`](#path)
+
 Get as Path. Raises error if not a path.
 
 **Example:**
+
 ```python
 if shape.isPath():
     path = shape.asPath()
@@ -334,6 +397,7 @@ if shape.isPath():
 Represents a path (contour) in a layer.
 
 **Access:**
+
 ```python
 shape = layer.shapes[0]
 if shape.isPath():
@@ -354,23 +418,28 @@ if shape.isPath():
 ### Methods
 
 #### `insertNode(index: int, x: float, y: float, nodetype: str = "Line", smooth: bool | None = None) -> `[`Node`](#node)
+
 Insert a node at the specified index.
 
 **Node Types:** "Move", "Line", "Curve", "QCurve", "OffCurve"
 
 **Example:**
+
 ```python
 node = path.insertNode(0, 100, 200, "Line")
 node = path.insertNode(1, 150, 250, "Curve", smooth=True)
 ```
 
 #### `removeNode(index: int) -> None`
+
 Remove a node at the specified index.
 
 #### `appendNode(x: float, y: float, nodetype: str = "Line", smooth: bool | None = None) -> `[`Node`](#node)
+
 Append a node to the end of the path.
 
 **Example:**
+
 ```python
 path.appendNode(300, 400, "Line")
 ```
@@ -382,6 +451,7 @@ path.appendNode(300, 400, "Line")
 Represents a point in a path.
 
 **Access:**
+
 ```python
 node = path.nodes[0]
 ```
@@ -396,6 +466,7 @@ All properties are read/write:
 - **`smooth`** (bool | None): Whether the node is smooth
 
 **Example:**
+
 ```python
 node.x = 100
 node.y = 200
@@ -410,6 +481,7 @@ node.smooth = True
 Represents a component reference in a layer.
 
 **Access:**
+
 ```python
 shape = layer.shapes[0]
 if shape.isComponent():
@@ -425,6 +497,7 @@ All properties are read/write:
 - **`format_specific`** (dict | None): Format-specific data
 
 **Example:**
+
 ```python
 component.reference = "B"
 component.transform = [1, 0, 0, 1, 50, 0]  # Translate by (50, 0)
@@ -437,6 +510,7 @@ component.transform = [1, 0, 0, 1, 50, 0]  # Translate by (50, 0)
 Represents an anchor point in a layer.
 
 **Access:**
+
 ```python
 anchor = layer.anchors[0]
 ```
@@ -451,6 +525,7 @@ All properties are read/write:
 - **`format_specific`** (dict | None): Format-specific data
 
 **Example:**
+
 ```python
 anchor.x = 250
 anchor.y = 700
@@ -464,6 +539,7 @@ anchor.name = "top"
 Represents a guideline in a layer or master.
 
 **Access:**
+
 ```python
 guide = layer.guides[0]
 # or
@@ -480,6 +556,7 @@ All properties are read/write:
 - **`format_specific`** (dict | None): Format-specific data
 
 **Example:**
+
 ```python
 guide.pos = {"x": 100, "y": 0, "angle": 0}
 guide.name = "baseline"
@@ -492,6 +569,7 @@ guide.name = "baseline"
 Represents a variation axis in a variable font.
 
 **Access:**
+
 ```python
 axis = font.axes[0]
 # or
@@ -514,6 +592,7 @@ All properties are read/write:
 - **`formatspecific`** (dict | None): Format-specific data
 
 **Example:**
+
 ```python
 axis.tag = "wght"
 axis.min = 400
@@ -528,6 +607,7 @@ axis.default = 400
 Represents a master/source in a design space.
 
 **Access:**
+
 ```python
 master = font.masters[0]
 # or
@@ -551,6 +631,7 @@ master = font.findMaster("master-id")
 - **`guides`** (list[[Guide](#guide)] | None): Global guidelines for this master
 
 **Example:**
+
 ```python
 master.location = {"wght": 700}
 master.metrics["ascender"] = 800
@@ -564,6 +645,7 @@ master.kerning["A"] = {"V": -50}
 Represents a named instance in a variable font.
 
 **Access:**
+
 ```python
 instance = font.instances[0]
 ```
@@ -581,6 +663,7 @@ All properties are read/write:
 - **`format_specific`** (dict | None): Format-specific data
 
 **Example:**
+
 ```python
 instance.name = {"en": "Bold"}
 instance.location = {"wght": 700}
@@ -791,6 +874,7 @@ if layer and layer.shapes:
 **Q: Why does `glyph.layers[0].shapes[0].asPath().nodes` fail?**
 
 A: Optional properties may be `None`. Use safe access:
+
 ```python
 # Check each step
 if glyph.layers and len(glyph.layers) > 0:
@@ -805,6 +889,7 @@ if glyph.layers and len(glyph.layers) > 0:
 **Q: How do I know if a shape is a path or component?**
 
 A: Always check with `isPath()` or `isComponent()` before calling `asPath()` or `asComponent()`:
+
 ```python
 for shape in layer.shapes:
     if shape.isPath():
@@ -815,4 +900,4 @@ for shape in layer.shapes:
 
 ---
 
-*Generated by `generate_api_docs.py`*
+_Generated by `generate_api_docs.py`_
