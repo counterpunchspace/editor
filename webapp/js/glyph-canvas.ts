@@ -76,6 +76,7 @@ class GlyphCanvas {
 
     // Internal state properties not in constructor
     cmdKeyPressed: boolean = false;
+    altKeyPressed: boolean = false;
     isDraggingCanvas: boolean = false;
     lastMouseX: number = 0;
     lastMouseY: number = 0;
@@ -197,6 +198,11 @@ class GlyphCanvas {
                 this.cmdKeyPressed = true;
                 this.updateCursorStyle(e);
             }
+            // Track Alt key for measurement tool
+            if (e.altKey || e.key === 'Alt') {
+                this.altKeyPressed = true;
+                this.render();
+            }
             this.onKeyDown(e);
         });
         this.canvas!.addEventListener('keyup', (e) => {
@@ -224,6 +230,12 @@ class GlyphCanvas {
                 this.updateCursorStyle(e);
             }
 
+            // Track Alt key release
+            if (e.key === 'Alt') {
+                this.altKeyPressed = false;
+                this.render();
+            }
+
             // Track Space key release
             if (e.code === 'Space') {
                 console.log('  -> Releasing Space key');
@@ -234,6 +246,7 @@ class GlyphCanvas {
         // Reset key states when window loses focus (e.g., Cmd+Tab to switch apps)
         window.addEventListener('blur', () => {
             this.cmdKeyPressed = false;
+            this.altKeyPressed = false;
             this.isDraggingCanvas = false;
             this.outlineEditor.onBlur();
             if (this.canvas) {
@@ -246,6 +259,7 @@ class GlyphCanvas {
         // Also reset when canvas loses focus
         this.canvas!.addEventListener('blur', () => {
             this.cmdKeyPressed = false;
+            this.altKeyPressed = false;
             this.outlineEditor.spaceKeyPressed = false;
             this.isDraggingCanvas = false;
             // Don't exit preview mode when canvas loses focus to sidebar elements
@@ -629,9 +643,20 @@ class GlyphCanvas {
         this.updateHoveredGlyph();
         // Update cursor style based on position (after updating hover states)
         this.updateCursorStyle(e);
+
+        // Re-render when alt key is pressed to update crosshair position
+        if (this.altKeyPressed) {
+            this.render();
+        }
     }
 
     updateCursorStyle(e: MouseEvent | KeyboardEvent): void {
+        // Alt key pressed in editing mode = crosshair cursor for measurement tool
+        if (this.altKeyPressed && this.outlineEditor.active) {
+            this.canvas!.style.cursor = 'crosshair';
+            return;
+        }
+
         // Cmd key pressed = always show grab cursor for panning
         if (this.cmdKeyPressed) {
             this.canvas!.style.cursor = this.isDraggingCanvas

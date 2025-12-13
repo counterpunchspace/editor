@@ -116,7 +116,10 @@ const APP_SETTINGS = {
             COMPONENT_STROKE: '#000000',
             COMPONENT_FILL_NORMAL: 'rgba(0, 153, 204, 0.15)',
             COMPONENT_FILL_HOVERED: 'rgba(204, 102, 204, 0.2)',
-            COMPONENT_FILL_SELECTED: 'rgba(204, 0, 204, 0.25)'
+            COMPONENT_FILL_SELECTED: 'rgba(204, 0, 204, 0.25)',
+
+            // Measurement tool
+            MEASUREMENT_TOOL_INTERSECTION: '#ffffff'
         },
 
         // Colors - Dark Theme
@@ -160,7 +163,10 @@ const APP_SETTINGS = {
             COMPONENT_STROKE: '#ffffff',
             COMPONENT_FILL_NORMAL: 'rgba(0, 255, 255, 0.15)',
             COMPONENT_FILL_HOVERED: 'rgba(255, 136, 255, 0.2)',
-            COMPONENT_FILL_SELECTED: 'rgba(255, 0, 255, 0.3)'
+            COMPONENT_FILL_SELECTED: 'rgba(255, 0, 255, 0.3)',
+
+            // Measurement tool
+            MEASUREMENT_TOOL_INTERSECTION: '#ffffff'
         }
     }
 

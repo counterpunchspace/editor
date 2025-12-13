@@ -1,5 +1,6 @@
 import { adjustColorHueAndLightness, desaturateColor } from '../design';
 import APP_SETTINGS from '../settings';
+import { Layer } from '../babelfont-model';
 
 import type { ViewportManager } from './viewport';
 import type { TextRunEditor } from './textrun';
@@ -83,6 +84,9 @@ export class GlyphCanvasRenderer {
 
         // Draw outline editor (when layer is selected)
         this.drawOutlineEditor();
+
+        // Draw measurement tool intersections (in transformed space)
+        this.drawMeasurementIntersections();
 
         // Draw cursor
         this.drawCursor();
@@ -1549,6 +1553,269 @@ export class GlyphCanvasRenderer {
         // Draw zoom level (top left)
         const zoomText = `Zoom: ${(this.viewportManager.scale * 100).toFixed(1)}%`;
         this.ctx.fillText(zoomText, 10, 50);
+
+        // Draw crosshair when alt key is pressed in editing mode (in screen space at mouse position)
+        if (
+            this.glyphCanvas.altKeyPressed &&
+            this.glyphCanvas.outlineEditor.active
+        ) {
+            this.ctx.strokeStyle = 'rgba(255, 255, 255, 0.5)';
+            this.ctx.lineWidth = 1;
+            this.ctx.beginPath();
+            // Horizontal line across entire canvas
+            this.ctx.moveTo(0, this.glyphCanvas.mouseCanvasY);
+            this.ctx.lineTo(this.canvas.width, this.glyphCanvas.mouseCanvasY);
+            // Vertical line across entire canvas
+            this.ctx.moveTo(this.glyphCanvas.mouseCanvasX, 0);
+            this.ctx.lineTo(this.glyphCanvas.mouseCanvasX, this.canvas.height);
+            this.ctx.stroke();
+        }
+
+        this.ctx.restore();
+    }
+
+    drawMeasurementIntersections() {
+        // Only draw when alt key is pressed, in editing mode, and we have layer data
+        if (
+            !this.glyphCanvas.altKeyPressed ||
+            !this.glyphCanvas.outlineEditor.active ||
+            !this.glyphCanvas.outlineEditor.layerData
+        ) {
+            return;
+        }
+
+        // Get the selected glyph's position
+        if (
+            this.textRunEditor.selectedGlyphIndex < 0 ||
+            this.textRunEditor.selectedGlyphIndex >=
+                this.textRunEditor.shapedGlyphs.length
+        ) {
+            return;
+        }
+
+        // Use the same coordinate transformation as hit detection
+        // This accounts for component nesting via transformMouseToComponentSpace
+        const { glyphX: localX, glyphY: localY } =
+            this.glyphCanvas.outlineEditor.transformMouseToComponentSpace();
+
+        // Use the raw layerData from outlineEditor which has nested components properly populated
+        // via fontManager.fetchLayerData() - this is already at the correct nesting level
+        const layerData = this.glyphCanvas.outlineEditor.layerData;
+
+        // Create a temporary Layer wrapper to use getIntersectionsOnLine()
+        // Get the current glyph wrapper from the font model to enable component lookups
+        const glyphName = this.glyphCanvas.outlineEditor.currentGlyphName;
+        const glyphWrapper = glyphName
+            ? (window as any).currentFontModel.findGlyph(glyphName)
+            : null;
+        const tempLayer = new Layer([layerData], 0, glyphWrapper);
+
+        // Define line endpoints in component-local space
+        const largeDistance = 100000;
+
+        // Get intersections along horizontal line at crosshair Y (in component-local coords)
+        const horizontalP1 = { x: -largeDistance, y: localY };
+        const horizontalP2 = { x: largeDistance, y: localY };
+        const horizontalIntersections = tempLayer.getIntersectionsOnLine(
+            horizontalP1,
+            horizontalP2,
+            true // include nested components
+        );
+
+        // Get intersections along vertical line at crosshair X (in component-local coords)
+        const verticalP1 = { x: localX, y: -largeDistance };
+        const verticalP2 = { x: localX, y: largeDistance };
+        const verticalIntersections = tempLayer.getIntersectionsOnLine(
+            verticalP1,
+            verticalP2,
+            true // include nested components
+        );
+
+        // Get color from settings
+        const isDarkTheme =
+            document.documentElement.getAttribute('data-theme') !== 'light';
+        const colors = isDarkTheme
+            ? APP_SETTINGS.OUTLINE_EDITOR.COLORS_DARK
+            : APP_SETTINGS.OUTLINE_EDITOR.COLORS_LIGHT;
+
+        this.ctx.fillStyle = colors.MEASUREMENT_TOOL_INTERSECTION;
+
+        // Calculate dot radius in font units (inverse of scale to keep constant screen size)
+        const dotRadius = 5 / this.viewportManager.scale;
+
+        // Get glyph world position
+        let xPosition = 0;
+        for (let i = 0; i < this.textRunEditor.selectedGlyphIndex; i++) {
+            xPosition += this.textRunEditor.shapedGlyphs[i].ax || 0;
+        }
+
+        const glyph =
+            this.textRunEditor.shapedGlyphs[
+                this.textRunEditor.selectedGlyphIndex
+            ];
+        const xOffset = glyph.dx || 0;
+        const yOffset = glyph.dy || 0;
+        const glyphWorldX = xPosition + xOffset;
+        const glyphWorldY = yOffset;
+
+        // If we're in component editing mode, apply the accumulated component transform
+        // to convert from component-local coords to glyph-local coords
+        const isInComponentMode =
+            this.glyphCanvas.outlineEditor.componentStack.length > 0;
+        let accumulatedTransform: number[] | null = null;
+
+        if (isInComponentMode) {
+            accumulatedTransform =
+                this.glyphCanvas.outlineEditor.getAccumulatedTransform();
+        }
+
+        // Helper function to transform a point from component-local to world coords
+        const transformToWorld = (point: { x: number; y: number }) => {
+            let x = point.x;
+            let y = point.y;
+
+            // Apply accumulated component transform if in component mode
+            if (accumulatedTransform) {
+                const [a, b, c, d, tx, ty] = accumulatedTransform;
+                const transformedX = a * x + c * y + tx;
+                const transformedY = b * x + d * y + ty;
+                x = transformedX;
+                y = transformedY;
+            }
+
+            // Convert from glyph-local to world coords
+            return {
+                x: x + glyphWorldX,
+                y: y + glyphWorldY
+            };
+        };
+
+        // Draw horizontal measurements
+        this.ctx.strokeStyle = colors.MEASUREMENT_TOOL_INTERSECTION;
+        this.ctx.lineWidth = 1 / this.viewportManager.scale;
+
+        for (let i = 0; i < horizontalIntersections.length - 1; i++) {
+            const p1 = transformToWorld(horizontalIntersections[i]);
+            const p2 = transformToWorld(horizontalIntersections[i + 1]);
+
+            // Draw line between consecutive intersection points
+            this.ctx.beginPath();
+            this.ctx.moveTo(p1.x, p1.y);
+            this.ctx.lineTo(p2.x, p2.y);
+            this.ctx.stroke();
+
+            // Calculate distance and midpoint
+            const distance = Math.abs(p2.x - p1.x);
+            const midX = (p1.x + p2.x) / 2;
+            const midY = (p1.y + p2.y) / 2;
+
+            // Draw distance label
+            this.drawMeasurementLabel(midX, midY, distance, 'horizontal');
+        }
+
+        // Draw vertical measurements
+        for (let i = 0; i < verticalIntersections.length - 1; i++) {
+            const p1 = transformToWorld(verticalIntersections[i]);
+            const p2 = transformToWorld(verticalIntersections[i + 1]);
+
+            // Draw line between consecutive intersection points
+            this.ctx.beginPath();
+            this.ctx.moveTo(p1.x, p1.y);
+            this.ctx.lineTo(p2.x, p2.y);
+            this.ctx.stroke();
+
+            // Calculate distance and midpoint
+            const distance = Math.abs(p2.y - p1.y);
+            const midX = (p1.x + p2.x) / 2;
+            const midY = (p1.y + p2.y) / 2;
+
+            // Draw distance label
+            this.drawMeasurementLabel(midX, midY, distance, 'vertical');
+        }
+
+        // Draw intersection dots in world coordinates
+        this.ctx.fillStyle = colors.MEASUREMENT_TOOL_INTERSECTION;
+        for (const intersection of horizontalIntersections) {
+            const worldPos = transformToWorld(intersection);
+            this.ctx.beginPath();
+            this.ctx.arc(worldPos.x, worldPos.y, dotRadius, 0, Math.PI * 2);
+            this.ctx.fill();
+        }
+
+        for (const intersection of verticalIntersections) {
+            const worldPos = transformToWorld(intersection);
+            this.ctx.beginPath();
+            this.ctx.arc(worldPos.x, worldPos.y, dotRadius, 0, Math.PI * 2);
+            this.ctx.fill();
+        }
+    }
+
+    /**
+     * Draw a measurement label at the specified position
+     */
+    private drawMeasurementLabel(
+        x: number,
+        y: number,
+        distance: number,
+        orientation: 'horizontal' | 'vertical'
+    ) {
+        const isDarkTheme =
+            document.documentElement.getAttribute('data-theme') !== 'light';
+        const colors = isDarkTheme
+            ? APP_SETTINGS.OUTLINE_EDITOR.COLORS_DARK
+            : APP_SETTINGS.OUTLINE_EDITOR.COLORS_LIGHT;
+
+        // Format distance to 1 decimal place
+        const distanceText = distance.toFixed(1);
+
+        // Font size in world units (to maintain constant screen size)
+        const invScale = 1 / this.viewportManager.scale;
+        const fontSize = 12 * invScale;
+
+        this.ctx.save();
+
+        // Translate to world position and flip Y to make text readable
+        this.ctx.translate(x, y);
+        this.ctx.scale(1, -1);
+
+        this.ctx.font = `${fontSize}px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`;
+        this.ctx.textAlign = 'center';
+        this.ctx.textBaseline = 'middle';
+
+        // Measure text dimensions
+        const metrics = this.ctx.measureText(distanceText);
+        const textWidth = metrics.width;
+        const textHeight = fontSize * 1.2;
+
+        // Calculate background padding
+        const padding = 4 * invScale;
+        const bgWidth = textWidth + padding * 2;
+        const bgHeight = textHeight + padding;
+
+        // Offset label position based on orientation
+        let offsetX = 0;
+        let offsetY = 0;
+
+        if (orientation === 'horizontal') {
+            // Place label slightly above the line
+            offsetY = -bgHeight / 2 - 8 * invScale;
+        } else {
+            // Place label slightly to the right of the line
+            offsetX = bgWidth / 2 + 8 * invScale;
+        }
+
+        // Draw background rectangle
+        this.ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+        this.ctx.fillRect(
+            offsetX - bgWidth / 2,
+            offsetY - bgHeight / 2,
+            bgWidth,
+            bgHeight
+        );
+
+        // Draw text
+        this.ctx.fillStyle = colors.MEASUREMENT_TOOL_INTERSECTION;
+        this.ctx.fillText(distanceText, offsetX, offsetY);
 
         this.ctx.restore();
     }

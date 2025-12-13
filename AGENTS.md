@@ -24,6 +24,7 @@ This is a WebAssembly-based font editor using Rust (fontc/babelfont) compiled to
 - To prevent DOM flickering when updating content: build new content in a temporary off-screen container first, then use `requestAnimationFrame` to clear and swap in the new content in a single paint cycle
 - All console.log statements MUST be prefixed with a [Descriptor] tag that identifies the code section (e.g., `console.log('[FontCompilation]', ...)`). Use descriptive prefixes like [GlyphCanvas], [PythonExec], [FileManager], etc. to enable efficient filtering and debugging
 - Decide intelligently in which JavaScript file to place new code. Infer target files from each file name or comments at the file header and only create new files if a topic is entirely new.
+- The font object is available under `window.currentFontModel`
 
 ### Rust
 
