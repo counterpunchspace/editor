@@ -27,7 +27,7 @@ const APP_SETTINGS = {
         MIN_ZOOM_FOR_GRID: 9.0, // grid is fully visible at this zoom
 
         // Node (point) sizes
-        NODE_SIZE_AT_MIN_ZOOM: 3, // px - node size at min zoom
+        NODE_SIZE_AT_MIN_ZOOM: 2, // px - node size at min zoom
         NODE_SIZE_AT_MAX_ZOOM: 7, // px - node size at max zoom
         NODE_SIZE_INTERPOLATION_MIN: 0.2, // zoom level where min size starts
         NODE_SIZE_INTERPOLATION_MAX: 3.0, // zoom level where max size is reached
@@ -72,7 +72,7 @@ const APP_SETTINGS = {
         PAN_SPEED_MOUSE_HORIZONTAL: 1.5, // mouse wheel horizontal pan speed (Shift+scroll)
 
         // Debug/development
-        SHOW_BOUNDING_BOX: true, // Show calculated bounding box in editing mode
+        SHOW_BOUNDING_BOX: false, // Show calculated bounding box in editing mode
         INTERPOLATION_ANIMATION_DELAY: 0, // ms - delay between animation frames for debugging (0 = no delay)
 
         // Colors - Light Theme
@@ -119,7 +119,7 @@ const APP_SETTINGS = {
             COMPONENT_FILL_SELECTED: 'rgba(204, 0, 204, 0.25)',
 
             // Measurement tool
-            MEASUREMENT_TOOL_INTERSECTION: '#ffffff'
+            MEASUREMENT_TOOL_INTERSECTION: '#000000ff'
         },
 
         // Colors - Dark Theme
