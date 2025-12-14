@@ -92,6 +92,9 @@ class GlyphCanvas {
     // Auto-pan anchor for text mode (cursor position)
     textModeAutoPanAnchorScreen: { x: number; y: number } | null = null;
 
+    // Flag to suppress rendering during critical operations (e.g., layer data swap)
+    renderSuppressed: boolean = false;
+
     constructor(containerId: string) {
         this.container = document.getElementById(containerId)!;
         if (!this.container) {
@@ -1397,6 +1400,10 @@ class GlyphCanvas {
     }
 
     render(): void {
+        // Skip rendering if suppressed (during critical operations)
+        if (this.renderSuppressed) {
+            return;
+        }
         this.renderer!.render();
     }
 

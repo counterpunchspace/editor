@@ -241,7 +241,11 @@ export class AxesManager {
 
         // Update sliders during animation
         this.updateAxisSliders();
-        this.call('animationInProgress');
+        // Skip rendering on frame 1 (just after setup) to prevent jitter
+        // Frame 1 would show the target layer at near-start position which causes a flash
+        if (this.animationCurrentFrame > 1) {
+            this.call('animationInProgress');
+        }
 
         if (progress < 1.0) {
             const delay =

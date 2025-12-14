@@ -1558,24 +1558,34 @@ export class OutlineEditor {
         // Store current layer data before fetching new one (for animation)
         const oldLayerData = this.layerData;
 
-        // Fetch layer data now and store as target for animation
-        // This ensures new outlines are ready before animation starts
-        // Skip rendering to prevent flicker - animation will handle first render
-        await this.fetchLayerData(true);
+        // CRITICAL SECTION: Suppress all renders during layer data fetch and swap
+        // This prevents the target layer from flashing before animation starts
+        this.glyphCanvas.renderSuppressed = true;
 
-        // If we're in edit mode, set up animation state
-        // Move the NEW layer data to targetLayerData and restore OLD layer data
-        // so the animation interpolates FROM old TO new
-        if (this.active && this.layerData) {
-            this.targetLayerData = this.layerData;
-            this.layerData = oldLayerData;
-            this.isLayerSwitchAnimating = true;
-            console.log(
-                'Starting layer switch animation - old layer in layerData, new layer in targetLayerData'
-            );
+        try {
+            // Fetch layer data now and store as target for animation
+            // This ensures new outlines are ready before animation starts
+            await this.fetchLayerData(true);
+
+            // Immediately swap layer data to prevent flash
+            // If we're in edit mode, set up animation state
+            // Move the NEW layer data to targetLayerData and restore OLD layer data
+            // so the animation interpolates FROM old TO new
+            if (this.active && this.layerData) {
+                this.targetLayerData = this.layerData;
+                this.layerData = oldLayerData;
+                this.isLayerSwitchAnimating = true;
+                console.log(
+                    'Starting layer switch animation - old layer in layerData, new layer in targetLayerData'
+                );
+            }
+
+            // Perform mouse hit detection after swap (uses layerData)
+            this.performHitDetection(null);
+        } finally {
+            // Always re-enable rendering after critical section
+            this.glyphCanvas.renderSuppressed = false;
         }
-        // Perform mouse hit detection after layer data is loaded
-        this.performHitDetection(null);
 
         // Find the master for this layer
         const master = masters.find((m) => m.id === layer._master);
