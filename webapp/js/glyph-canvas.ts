@@ -1041,23 +1041,25 @@ class GlyphCanvas {
 
         this.propertiesSection!.appendChild(layersList);
 
-        // Add glyph_stack debug label
-        const stackLabel = document.createElement('div');
-        stackLabel.className = 'glyph-stack-debug';
-        stackLabel.style.cssText = `
-            margin-top: 8px;
-            padding: 8px;
-            background: rgba(255, 255, 255, 0.05);
-            border-radius: 4px;
-            font-family: 'IBM Plex Sans', monospace;
-            font-size: 11px;
-            color: rgba(255, 255, 255, 0.6);
-            word-break: break-all;
-            line-height: 1.4;
-        `;
-        stackLabel.textContent = `Stack: ${this.outlineEditor.glyphStack || '(none)'}`;
-        this.glyphStackLabel = stackLabel; // Store reference for updates
-        this.propertiesSection!.appendChild(stackLabel);
+        // Add glyph_stack debug label (development mode only)
+        if (window.isDevelopment?.()) {
+            const stackLabel = document.createElement('div');
+            stackLabel.className = 'glyph-stack-debug';
+            stackLabel.style.cssText = `
+                margin-top: 8px;
+                padding: 8px;
+                background: rgba(255, 255, 255, 0.05);
+                border-radius: 4px;
+                font-family: 'IBM Plex Sans', monospace;
+                font-size: 11px;
+                color: rgba(255, 255, 255, 0.6);
+                word-break: break-all;
+                line-height: 1.4;
+            `;
+            stackLabel.textContent = `Stack: ${this.outlineEditor.glyphStack || '(none)'}`;
+            this.glyphStackLabel = stackLabel; // Store reference for updates
+            this.propertiesSection!.appendChild(stackLabel);
+        }
 
         // Auto-select layer if current axis values match a layer's master location
         await this.outlineEditor.autoSelectMatchingLayer();
@@ -1433,16 +1435,18 @@ class GlyphCanvas {
             return;
         }
 
-        // Update glyph_stack label if it exists
-        // If we don't have a reference, try to find it in the DOM (in case it was created asynchronously)
-        if (!this.glyphStackLabel) {
-            this.glyphStackLabel = this.propertiesSection?.querySelector(
-                '.glyph-stack-debug'
-            ) as HTMLElement | null;
-        }
+        // Update glyph_stack label if it exists (development mode only)
+        if (window.isDevelopment?.()) {
+            // If we don't have a reference, try to find it in the DOM (in case it was created asynchronously)
+            if (!this.glyphStackLabel) {
+                this.glyphStackLabel = this.propertiesSection?.querySelector(
+                    '.glyph-stack-debug'
+                ) as HTMLElement | null;
+            }
 
-        if (this.glyphStackLabel) {
-            this.glyphStackLabel.textContent = `Stack: ${this.outlineEditor.glyphStack || '(none)'}`;
+            if (this.glyphStackLabel) {
+                this.glyphStackLabel.textContent = `Stack: ${this.outlineEditor.glyphStack || '(none)'}`;
+            }
         }
 
         this.renderer!.render();

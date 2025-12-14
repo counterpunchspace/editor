@@ -2039,10 +2039,26 @@ export class OutlineEditor {
                 this.layerData
             );
 
-            // TODO: Implement proper component-to-definition saving
-            // Currently disabled because saving component.layerData directly causes corruption
-            // Need to properly extract only the edited properties (shapes, anchors, guides)
-            // and merge them with fresh layer data from the component glyph
+            // If editing a nested component, also save changes to the component glyph definition
+            if (this.isEditingComponent()) {
+                const currentLayerData = this.getCurrentLayerDataFromStack();
+                if (currentLayerData) {
+                    // Get the component glyph name from the stack
+                    const componentGlyphName =
+                        parsed[parsed.length - 1].glyphName;
+
+                    console.log(
+                        `[SaveLayerData] Also saving component glyph definition "${componentGlyphName}" with layer: ${this.selectedLayerId}`
+                    );
+
+                    // Save the component's layer data to its own glyph definition
+                    await fontManager!.saveLayerData(
+                        componentGlyphName,
+                        this.selectedLayerId,
+                        currentLayerData
+                    );
+                }
+            }
 
             console.log('Layer data saved successfully');
         } catch (error) {
