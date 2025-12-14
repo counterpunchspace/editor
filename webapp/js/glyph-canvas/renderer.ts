@@ -852,7 +852,7 @@ export class GlyphCanvasRenderer {
                                         : colors.COMPONENT_NORMAL;
 
                                     // For hover, make it 20% darker
-                                    const strokeColor = isHovered
+                                    let strokeColor = isHovered
                                         ? adjustColorHueAndLightness(
                                               baseStrokeColor,
                                               0,
@@ -866,13 +866,20 @@ export class GlyphCanvasRenderer {
                                         : colors.COMPONENT_FILL_NORMAL;
 
                                     // For hover, make it 20% darker
-                                    const fillColor = isHovered
+                                    let fillColor = isHovered
                                         ? adjustColorHueAndLightness(
                                               baseFillColor,
                                               0,
                                               50
                                           )
                                         : baseFillColor;
+
+                                    // Apply monochrome for interpolated data
+                                    if (isInterpolated) {
+                                        strokeColor =
+                                            desaturateColor(strokeColor);
+                                        fillColor = desaturateColor(fillColor);
+                                    }
 
                                     // Apply glow effect only in dark theme
                                     if (isDarkTheme) {
@@ -958,9 +965,14 @@ export class GlyphCanvasRenderer {
                         : colors.COMPONENT_NORMAL;
 
                     // For hover, make it 20% darker
-                    const markerStrokeColor = isHovered
+                    let markerStrokeColor = isHovered
                         ? adjustColorHueAndLightness(baseMarkerColor, 0, -20)
                         : baseMarkerColor;
+
+                    // Apply monochrome for interpolated data
+                    if (isInterpolated) {
+                        markerStrokeColor = desaturateColor(markerStrokeColor);
+                    }
 
                     this.ctx.strokeStyle = markerStrokeColor;
                     this.ctx.lineWidth = 2 * invScale;
