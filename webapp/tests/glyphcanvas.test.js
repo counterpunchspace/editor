@@ -725,14 +725,14 @@ describe('GlyphCanvas component editing stack', () => {
         canvas.destroy();
     });
 
-    test('should initialize with empty component stack', () => {
-        expect(canvas.outlineEditor.componentStack).toEqual([]);
+    test('should initialize with empty glyphStack', () => {
+        expect(canvas.outlineEditor.glyphStack).toBe('');
     });
 
-    test('should exit component editing when stack is empty', () => {
+    test('should exit component editing when not in component mode', () => {
         const result = canvas.outlineEditor.exitComponentEditing();
         expect(result).toBe(false);
-        expect(canvas.outlineEditor.componentStack).toEqual([]);
+        expect(canvas.outlineEditor.isEditingComponent()).toBe(false);
     });
 });
 
