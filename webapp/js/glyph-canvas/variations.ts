@@ -258,7 +258,11 @@ export class AxesManager {
         } else {
             // Ensure we end exactly at target values
             this.variationSettings = { ...this.animationTargetValues };
-            this.isAnimating = false;
+            // Only clear isAnimating if slider is not actively being dragged
+            // During slider drag, keep isAnimating=true to prevent auto-pan jitter
+            if (!this.isSliderActive) {
+                this.isAnimating = false;
+            }
             this.updateAxisSliders(); // Update slider UI to match final values
             this.call('animationComplete');
         }

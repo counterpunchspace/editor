@@ -339,18 +339,23 @@ class GlyphCanvas {
             }
         });
         this.axesManager!.on('animationInProgress', () => {
-            this.textRunEditor!.shapeText();
-            this.outlineEditor.animationInProgress();
-            // Apply auto-pan for text mode cursor
+            // In text mode, reshape with HarfBuzz and apply auto-pan together (skip render in shapeText)
             if (!this.outlineEditor.active) {
+                this.textRunEditor!.shapeText(true); // Skip render - we'll render after auto-pan
                 this.applyTextModeAutoPanAdjustment();
+                this.render(); // Single render after both HarfBuzz and auto-pan are updated
             }
+            // In editing mode, don't reshape HarfBuzz here - wait for interpolated data
+            // The outlineEditor will handle HarfBuzz update when interpolation completes
+            this.outlineEditor.animationInProgress();
         });
         this.axesManager!.on('animationComplete', async () => {
             // Skip layer matching during manual slider interpolation
             // It will be handled properly in sliderMouseUp
             if (this.outlineEditor.isInterpolating) {
-                this.textRunEditor!.shapeText();
+                // Don't call shapeText() here - it's already been called in the interpolation callback
+                // with auto-pan adjustment. Calling it again would render without auto-pan causing jitter.
+
                 // Only clear flags if slider is not currently active (dragging)
                 // If still dragging, keep flags set so auto-pan continues
                 if (!this.axesManager!.isSliderActive) {

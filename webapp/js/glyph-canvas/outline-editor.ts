@@ -284,7 +284,15 @@ export class OutlineEditor {
                     layerId: this.previousSelectedLayerId,
                     settings: this.previousVariationSettings
                 });
-                await this.fetchLayerData();
+
+                // Fetch layer data but skip render - we'll render after clearing flags
+                await this.fetchLayerData(true);
+
+                // Clear interpolating flag immediately since we're now on an exact layer
+                // This ensures that if the user switches glyphs, the new glyph will properly
+                // fetch its layer data in autoSelectMatchingLayer
+                this.isInterpolating = false;
+                this.autoPanAnchorScreen = null;
             } else if (this.layerData && this.layerData.isInterpolated) {
                 // No exact layer match - keep interpolated data
                 // Only restore if shapes are empty/missing
@@ -294,13 +302,12 @@ export class OutlineEditor {
                 ) {
                     await LayerDataNormalizer.restoreExactLayer(this);
                 }
-            }
 
-            // Clear flags only if animation is already complete
-            // (If still animating, animationComplete handler will clear them)
-            if (!this.glyphCanvas.axesManager!.isAnimating) {
-                this.isInterpolating = false;
-                this.autoPanAnchorScreen = null;
+                // Still interpolating - only clear flags if animation is complete
+                if (!this.glyphCanvas.axesManager!.isAnimating) {
+                    this.isInterpolating = false;
+                    this.autoPanAnchorScreen = null;
+                }
             }
 
             // Always render to update colors after clearing isInterpolating flag
@@ -326,18 +333,18 @@ export class OutlineEditor {
                     layerId: this.previousSelectedLayerId,
                     settings: this.previousVariationSettings
                 });
-                await this.fetchLayerData();
-            }
 
-            // If no exact layer match, keep showing interpolated data
+                // Fetch layer data but skip render - we'll render after clearing flags
+                await this.fetchLayerData(true);
 
-            // Clear flags only if animation is already complete
-            // (If still animating, animationComplete handler will clear them)
-            if (!this.glyphCanvas.axesManager!.isAnimating) {
+                // Clear interpolating flag immediately since we're on an exact layer
                 this.isInterpolating = false;
                 this.autoPanAnchorScreen = null;
             }
 
+            // If no exact layer match, keep showing interpolated data
+
+            // Render with updated data and cleared flags
             this.glyphCanvas.render();
             // Restore focus to canvas
             setTimeout(() => this.canvas!.focus(), 0);
@@ -1332,8 +1339,24 @@ export class OutlineEditor {
                 this.layerData?.width
             );
 
-            // Apply auto-pan adjustment to keep glyph centered after interpolation updates bbox
-            this.applyAutoPanAdjustment();
+            // In editing mode, update HarfBuzz and auto-pan together to keep them in sync
+            if (
+                interpolatedLayer._interpolationLocation &&
+                this.autoPanAnchorScreen !== null
+            ) {
+                // Update the axes manager's variation settings to match the interpolated location
+                // This ensures HarfBuzz renders at the same location as the interpolated outline
+                this.glyphCanvas.axesManager!.variationSettings = {
+                    ...interpolatedLayer._interpolationLocation
+                };
+
+                // Update HarfBuzz font with the new variation settings (updates text width)
+                // Skip render here - we'll render after auto-pan adjustment
+                this.glyphCanvas.textRunEditor!.shapeText(true);
+
+                // Apply auto-pan adjustment now that text width is updated
+                this.applyAutoPanAdjustment();
+            }
 
             // Render with the new interpolated data
             console.log(
@@ -1682,15 +1705,13 @@ export class OutlineEditor {
                         }
                     }
                 } else {
-                    // During interpolation (sliderMouseUp), we still need to render
-                    // to update colors after isInterpolated flag is cleared
-                    // Clear the isInterpolated flag since we're on an exact layer now
+                    // During interpolation (sliderMouseUp), don't render here
+                    // The caller will fetch actual layer data and render afterward
+                    // Just clear the isInterpolated flag on the current data
                     if (this.layerData) {
                         this.layerData.isInterpolated = false;
                     }
-                    if (this.active) {
-                        this.glyphCanvas.render();
-                    }
+                    // Don't render here - let onSliderMouseUp handle it after fetchLayerData
                 }
                 this.updateLayerSelection();
                 console.log(

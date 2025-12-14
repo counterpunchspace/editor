@@ -1428,7 +1428,7 @@ export class TextRunEditor {
         window.fontManager?.setFormatSpecific(key, escapedText);
     }
 
-    shapeText() {
+    shapeText(skipRender: boolean = false) {
         if (!this.hb || !this.hbFont || !this.textBuffer) {
             this.shapedGlyphs = [];
             this.bidiRuns = [];
@@ -1454,8 +1454,11 @@ export class TextRunEditor {
                 console.log('BiDi runs:', this.bidiRuns);
             }
 
-            // Render the result
-            this.call('render');
+            // Render the result (unless explicitly skipped)
+            // Only skip render during interpolation callback when auto-pan will be applied
+            if (!skipRender) {
+                this.call('render');
+            }
         } catch (error) {
             console.error('Error shaping text:', error);
             this.shapedGlyphs = [];

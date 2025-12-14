@@ -204,7 +204,21 @@ pub fn interpolate_glyph(glyph_name: &str, location_json: &str) -> Result<String
         &design_location
     ).map_err(|e| JsValue::from_str(&format!("Serialization error: {}", e)))?;
     
-    Ok(layer_json_with_components)
+    // Parse the layer JSON to add location data
+    let mut result: serde_json::Value = serde_json::from_str(&layer_json_with_components)
+        .map_err(|e| JsValue::from_str(&format!("Failed to parse layer JSON: {}", e)))?;
+    
+    // Add the location (user space) to the result
+    if let Some(obj) = result.as_object_mut() {
+        obj.insert("_interpolationLocation".to_string(), serde_json::to_value(&location_map)
+            .map_err(|e| JsValue::from_str(&format!("Failed to serialize location: {}", e)))?);
+    }
+    
+    // Serialize back to string
+    let result_json = serde_json::to_string(&result)
+        .map_err(|e| JsValue::from_str(&format!("Failed to serialize result: {}", e)))?;
+    
+    Ok(result_json)
 }
 
 /// Manually interpolate a layer that contains components, preserving their transforms
