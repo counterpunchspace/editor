@@ -1321,6 +1321,15 @@ export class OutlineEditor {
                 myInterpolationId
             );
 
+            // Don't apply interpolated data if we're no longer in an interpolating state
+            // This can happen if a layer switch animation completes while an interpolation is in flight
+            if (!this.isInterpolating && !this.isLayerSwitchAnimating && !force) {
+                console.log(
+                    '[OutlineEditor] 🚫 Skipping applyInterpolatedLayer - no longer interpolating'
+                );
+                return;
+            }
+
             // Apply interpolated data using normalizer
             console.log(
                 '[OutlineEditor] Calling LayerDataNormalizer.applyInterpolatedLayer...'

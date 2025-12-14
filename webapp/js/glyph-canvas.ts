@@ -374,9 +374,8 @@ class GlyphCanvas {
                 this.outlineEditor.restoreTargetLayerDataAfterAnimating();
                 this.outlineEditor.isLayerSwitchAnimating = false;
 
-                // Auto-select the matching layer to ensure proper layer state
-                // and trigger fetchLayerData which will save changes and recompile font
-                await this.outlineEditor.autoSelectMatchingLayer();
+                // NOTE: autoSelectMatchingLayer() is already called inside restoreTargetLayerDataAfterAnimating()
+                // so we don't need to call it again here
 
                 // Clear auto-pan anchor now that animation is complete
                 this.outlineEditor.autoPanAnchorScreen = null;
