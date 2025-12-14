@@ -73,7 +73,6 @@ export class OutlineEditor {
 
     layerDataDirty: boolean = false;
     componentStack: ComponentStackItem[] = [];
-    interpolatedComponentTransform: number[] | null = null; // Interpolated transform when in component editing mode
     previousSelectedLayerId: string | null = null;
     previousVariationSettings: Record<string, number> | null = null;
     layerData: PythonBabelfont.Layer | null = null;
@@ -90,8 +89,167 @@ export class OutlineEditor {
     autoPanAnchorScreen: { x: number; y: number } | null = null; // Screen coordinates of bbox center before animation
     autoPanEnabled: boolean = true; // Can be toggled by user preference
 
+    // New glyph_stack: Single source of truth for glyph/layer/component navigation
+    // Format: {glyph_name}@{layer_ID}>{component_index}:{glyph_name}@{layer_ID}>{component_index}:{glyph_name}@{layer_ID}
+    glyphStack: string = '';
+
     constructor(glyphCanvas: GlyphCanvas) {
         this.glyphCanvas = glyphCanvas;
+    }
+
+    /**
+     * Parse glyph_stack into structured components
+     * @returns Array of stack items, each with glyphName, layerId, and componentIndex
+     */
+    parseGlyphStack(): Array<{
+        glyphName: string;
+        layerId: string;
+        componentIndex?: number;
+    }> {
+        if (!this.glyphStack) return [];
+
+        const segments = this.glyphStack.split('>');
+        const result: Array<{
+            glyphName: string;
+            layerId: string;
+            componentIndex?: number;
+        }> = [];
+
+        for (let i = 0; i < segments.length; i++) {
+            const segment = segments[i];
+            let glyphAndLayer: string;
+            let componentIndex: number | undefined;
+
+            // Check if this segment has a component index (format: componentIndex:glyphName@layerId)
+            if (segment.includes(':')) {
+                const parts = segment.split(':');
+                componentIndex = parseInt(parts[0], 10);
+                glyphAndLayer = parts[1];
+            } else {
+                glyphAndLayer = segment;
+            }
+
+            // Split glyphName@layerId
+            const [glyphName, layerId] = glyphAndLayer.split('@');
+
+            result.push({
+                glyphName,
+                layerId,
+                componentIndex
+            });
+        }
+
+        return result;
+    }
+
+    /**
+     * Check if currently editing a nested component
+     * @returns true if inside one or more nested components
+     */
+    isEditingComponent(): boolean {
+        const parsed = this.parseGlyphStack();
+        return parsed.length > 1; // More than just root means we're in a component
+    }
+
+    /**
+     * Get component nesting depth from glyphStack
+     * @returns Number of nested component levels (0 = root, 1 = one level deep, etc.)
+     */
+    getComponentDepth(): number {
+        const parsed = this.parseGlyphStack();
+        return Math.max(0, parsed.length - 1); // Subtract 1 for root
+    }
+
+    /**
+     * Build glyph_stack string from current state
+     * @param rootGlyphName - Name of the root glyph
+     * @param layerId - Current layer ID
+     * @param componentPath - Array of component indices representing the nesting path
+     */
+    buildGlyphStack(
+        rootGlyphName: string,
+        layerId: string,
+        componentPath: number[] = []
+    ): void {
+        let stack = `${rootGlyphName}@${layerId}`;
+
+        // Add each nested component to the stack
+        let currentLayerData = this.layerData;
+        for (let i = 0; i < componentPath.length; i++) {
+            const compIndex = componentPath[i];
+
+            if (
+                !currentLayerData ||
+                !currentLayerData.shapes ||
+                !currentLayerData.shapes[compIndex]
+            ) {
+                console.error(
+                    '[GlyphStack] Invalid component path at index',
+                    i,
+                    compIndex
+                );
+                break;
+            }
+
+            const shape = currentLayerData.shapes[compIndex];
+            if (!('Component' in shape)) {
+                console.error(
+                    '[GlyphStack] Shape at index',
+                    compIndex,
+                    'is not a component'
+                );
+                break;
+            }
+
+            const componentGlyphName = shape.Component.reference;
+            stack += `>${compIndex}:${componentGlyphName}@${layerId}`;
+
+            // Move to the nested component's layer data for the next iteration
+            currentLayerData = shape.Component.layerData || null;
+        }
+
+        this.glyphStack = stack;
+        console.log('[GlyphStack] Built stack:', this.glyphStack);
+    }
+
+    /**
+     * Rebuild glyph_stack with new layer IDs when switching layers
+     * This method does NOT depend on this.layerData, so it works even when layer data hasn't been fetched yet
+     * Preserves the component navigation path
+     */
+    rebuildGlyphStackWithNewLayer(newLayerId: string): void {
+        if (!this.glyphStack) return;
+
+        // Simply replace all layer IDs in the stack with the new one
+        // Stack format: "glyphA@layerID1>0:glyphB@layerID1>1:glyphC@layerID1"
+        // We want: "glyphA@newLayerID>0:glyphB@newLayerID>1:glyphC@newLayerID"
+
+        // Split by '>' to get segments
+        const segments = this.glyphStack.split('>');
+        const newSegments = segments.map((segment) => {
+            // Each segment is either "glyphName@layerID" or "compIndex:glyphName@layerID"
+            if (segment.includes(':')) {
+                // Format: "compIndex:glyphName@layerID"
+                const colonIndex = segment.indexOf(':');
+                const beforeColon = segment.substring(0, colonIndex);
+                const afterColon = segment.substring(colonIndex + 1);
+                // afterColon is "glyphName@layerID", replace layer ID
+                const atIndex = afterColon.lastIndexOf('@');
+                const glyphName = afterColon.substring(0, atIndex);
+                return `${beforeColon}:${glyphName}@${newLayerId}`;
+            } else {
+                // Format: "glyphName@layerID"
+                const atIndex = segment.lastIndexOf('@');
+                const glyphName = segment.substring(0, atIndex);
+                return `${glyphName}@${newLayerId}`;
+            }
+        });
+
+        this.glyphStack = newSegments.join('>');
+        console.log(
+            '[GlyphStack] Rebuilt stack with new layer ID:',
+            this.glyphStack
+        );
     }
 
     clearState() {
@@ -217,7 +375,7 @@ export class OutlineEditor {
         }
 
         // Priority 2: Check if we're in component editing mode
-        if (this.componentStack.length > 0) {
+        if (this.isEditingComponent()) {
             // Exit one level of component editing
             this.exitComponentEditing();
             return;
@@ -622,7 +780,8 @@ export class OutlineEditor {
     }
 
     _updateDraggedPoints(deltaX: number, deltaY: number): void {
-        if (!this.layerData) return;
+        const currentLayerData = this.getCurrentLayerDataFromStack();
+        if (!currentLayerData || !currentLayerData.shapes) return;
 
         // Build a set of selected point identifiers to avoid moving them twice
         const selectedPointKeys = new Set(
@@ -633,7 +792,7 @@ export class OutlineEditor {
 
         // Process each selected point
         for (const { contourIndex, nodeIndex } of this.selectedPoints) {
-            const contour = this.layerData.shapes[contourIndex];
+            const contour = currentLayerData.shapes[contourIndex];
             if (!contour || !('nodes' in contour)) continue;
 
             const nodes = contour.nodes;
@@ -661,7 +820,7 @@ export class OutlineEditor {
             const key = `${contourIndex}:${nodeIndex}`;
             if (!selectedPointKeys.has(key)) continue; // Skip if removed above
 
-            const contour = this.layerData.shapes[contourIndex];
+            const contour = currentLayerData.shapes[contourIndex];
             if (!contour || !('nodes' in contour)) continue;
 
             const nodes = contour.nodes;
@@ -692,7 +851,7 @@ export class OutlineEditor {
         // Handle smooth curve constraint for single offcurve dragging
         if (this.selectedPoints.length === 1) {
             const { contourIndex, nodeIndex } = this.selectedPoints[0];
-            const contour = this.layerData.shapes[contourIndex];
+            const contour = currentLayerData.shapes[contourIndex];
             if (contour && 'nodes' in contour) {
                 const nodes = contour.nodes;
                 const offcurve = nodes[nodeIndex];
@@ -749,7 +908,10 @@ export class OutlineEditor {
     }
 
     _updateDraggedAnchors(deltaX: number, deltaY: number): void {
-        let anchors = this.layerData!.anchors || [];
+        const currentLayerData = this.getCurrentLayerDataFromStack();
+        if (!currentLayerData) return;
+
+        let anchors = currentLayerData.anchors || [];
         for (const anchorIndex of this.selectedAnchors) {
             const anchor = anchors[anchorIndex];
             if (anchor) {
@@ -760,8 +922,11 @@ export class OutlineEditor {
     }
 
     _updateDraggedComponents(deltaX: number, deltaY: number): void {
+        const currentLayerData = this.getCurrentLayerDataFromStack();
+        if (!currentLayerData || !currentLayerData.shapes) return;
+
         for (const compIndex of this.selectedComponents) {
-            const shape = this.layerData!.shapes[compIndex];
+            const shape = currentLayerData.shapes[compIndex];
             if (shape && 'Component' in shape) {
                 if (!shape.Component.transform) {
                     // Initialize transform if it doesn't exist
@@ -1065,9 +1230,10 @@ export class OutlineEditor {
 
     moveSelectedPoints(deltaX: number, deltaY: number): void {
         // Move all selected points by the given delta
+        const currentLayerData = this.getCurrentLayerDataFromStack();
         if (
-            !this.layerData ||
-            !this.layerData.shapes ||
+            !currentLayerData ||
+            !currentLayerData.shapes ||
             this.selectedPoints.length === 0
         ) {
             return;
@@ -1075,7 +1241,7 @@ export class OutlineEditor {
 
         for (const point of this.selectedPoints) {
             const { contourIndex, nodeIndex } = point;
-            const shape = this.layerData.shapes[contourIndex];
+            const shape = currentLayerData.shapes[contourIndex];
             if (shape && 'nodes' in shape && shape.nodes[nodeIndex]) {
                 shape.nodes[nodeIndex].x += deltaX;
                 shape.nodes[nodeIndex].y += deltaY;
@@ -1089,16 +1255,17 @@ export class OutlineEditor {
 
     moveSelectedAnchors(deltaX: number, deltaY: number): void {
         // Move all selected anchors by the given delta
+        const currentLayerData = this.getCurrentLayerDataFromStack();
         if (
-            !this.layerData ||
-            !this.layerData.anchors ||
+            !currentLayerData ||
+            !currentLayerData.anchors ||
             this.selectedAnchors.length === 0
         ) {
             return;
         }
 
         for (const anchorIndex of this.selectedAnchors) {
-            const anchor = this.layerData.anchors[anchorIndex];
+            const anchor = currentLayerData.anchors[anchorIndex];
             if (anchor) {
                 anchor.x += deltaX;
                 anchor.y += deltaY;
@@ -1141,12 +1308,13 @@ export class OutlineEditor {
 
     togglePointSmooth(pointIndex: Point): void {
         // Toggle smooth state of a point
-        if (!this.layerData || !this.layerData.shapes) {
+        const currentLayerData = this.getCurrentLayerDataFromStack();
+        if (!currentLayerData || !currentLayerData.shapes) {
             return;
         }
 
         const { contourIndex, nodeIndex } = pointIndex;
-        const shape = this.layerData.shapes[contourIndex];
+        const shape = currentLayerData.shapes[contourIndex];
 
         if (!shape || !('nodes' in shape) || !shape.nodes[nodeIndex]) {
             return;
@@ -1237,71 +1405,26 @@ export class OutlineEditor {
 
         try {
             const location = this.glyphCanvas.axesManager!.variationSettings;
-            let interpolatedLayer;
 
-            // When in component editing mode, interpolate the component and extract its transform from the parent
-            if (this.componentStack.length > 0) {
-                // Interpolate the component itself (gives us the shapes)
-                interpolatedLayer = await fontInterpolation.interpolateGlyph(
-                    this.currentGlyphName,
-                    location
+            // ALWAYS interpolate the root glyph (with full component tree)
+            // This matches the architecture where layerData always contains the root glyph
+            // and we navigate to nested components using glyphStack
+            const rootGlyphName = this.glyphCanvas.getCurrentGlyphName();
+            const interpolatedLayer = await fontInterpolation.interpolateGlyph(
+                rootGlyphName,
+                location
+            );
+
+            // Check if we've been superseded by a newer interpolation call
+            if (myInterpolationId !== this.currentInterpolationId) {
+                console.log(
+                    '[OutlineEditor] 🚫 Aborting stale interpolation',
+                    myInterpolationId,
+                    '(current is',
+                    this.currentInterpolationId,
+                    ')'
                 );
-
-                // Check if we've been superseded by a newer interpolation call
-                if (myInterpolationId !== this.currentInterpolationId) {
-                    console.log(
-                        '[OutlineEditor] 🚫 Aborting stale interpolation',
-                        myInterpolationId,
-                        '(current is',
-                        this.currentInterpolationId,
-                        ')'
-                    );
-                    return;
-                }
-
-                // Also interpolate the parent to get the interpolated component reference transform
-                const rootGlyphName = this.glyphCanvas.getCurrentGlyphName();
-                const parentLayer = await fontInterpolation.interpolateGlyph(
-                    rootGlyphName,
-                    location
-                );
-
-                // Check again after second await
-                if (myInterpolationId !== this.currentInterpolationId) {
-                    console.log(
-                        '[OutlineEditor] 🚫 Aborting stale interpolation',
-                        myInterpolationId,
-                        '(current is',
-                        this.currentInterpolationId,
-                        ')'
-                    );
-                    return;
-                }
-
-                // Extract the interpolated transform for this component
-                this.interpolatedComponentTransform =
-                    this.extractComponentTransformFromInterpolatedLayer(
-                        parentLayer,
-                        this.componentStack
-                    );
-            } else {
-                // Not in component mode - interpolate directly
-                interpolatedLayer = await fontInterpolation.interpolateGlyph(
-                    this.currentGlyphName,
-                    location
-                );
-
-                // Check if we've been superseded by a newer interpolation call
-                if (myInterpolationId !== this.currentInterpolationId) {
-                    console.log(
-                        '[OutlineEditor] 🚫 Aborting stale interpolation',
-                        myInterpolationId,
-                        '(current is',
-                        this.currentInterpolationId,
-                        ')'
-                    );
-                    return;
-                }
+                return;
             }
 
             // Final check before rendering
@@ -1323,7 +1446,11 @@ export class OutlineEditor {
 
             // Don't apply interpolated data if we're no longer in an interpolating state
             // This can happen if a layer switch animation completes while an interpolation is in flight
-            if (!this.isInterpolating && !this.isLayerSwitchAnimating && !force) {
+            if (
+                !this.isInterpolating &&
+                !this.isLayerSwitchAnimating &&
+                !force
+            ) {
                 console.log(
                     '[OutlineEditor] 🚫 Skipping applyInterpolatedLayer - no longer interpolating'
                 );
@@ -1414,10 +1541,10 @@ export class OutlineEditor {
 
         // Handle Cmd+Left/Right to navigate through glyphs in logical order
         // Only when in glyph edit mode but NOT in nested component mode
-        if ((e.metaKey || e.ctrlKey) && this.componentStack.length === 0) {
+        if ((e.metaKey || e.ctrlKey) && !this.isEditingComponent()) {
             if (e.key === 'ArrowLeft') {
                 e.preventDefault();
-                if (this.active && this.componentStack.length == 0) {
+                if (this.active && !this.isEditingComponent()) {
                     this.glyphCanvas.textRunEditor!.navigateToPreviousGlyphLogical();
                 }
                 return;
@@ -1549,6 +1676,15 @@ export class OutlineEditor {
             `id: ${layer.id}, _master: ${layer._master}`
         );
         this.selectedLayerId = layer.id!;
+
+        // Rebuild glyph_stack with new layer ID (preserves component path)
+        if (this.glyphStack && this.glyphStack !== '') {
+            this.rebuildGlyphStackWithNewLayer(layer.id!);
+        } else {
+            // Initial selection - build stack from scratch at root level
+            const rootGlyphName = this.glyphCanvas.getCurrentGlyphName();
+            this.buildGlyphStack(rootGlyphName, layer.id!, []);
+        }
 
         // Capture anchor point before layer switch animation begins
         this.captureAutoPanAnchor();
@@ -1693,6 +1829,15 @@ export class OutlineEditor {
                 // Found a matching layer - select it
                 this.selectedLayerId = layer.id;
 
+                // Build or rebuild glyph_stack with new layer ID
+                if (this.glyphStack && this.glyphStack !== '') {
+                    // If stack exists, rebuild with new layer (preserves component path)
+                    this.rebuildGlyphStackWithNewLayer(layer.id!);
+                } else {
+                    // If stack is empty, build initial stack for root glyph
+                    this.buildGlyphStack(this.currentGlyphName!, layer.id!, []);
+                }
+
                 // Don't clear previous state during slider use - allow Escape to restore
                 // Only clear when explicitly selecting a layer or on initial load
                 // We can detect slider use by checking if previousSelectedLayerId is set
@@ -1710,18 +1855,17 @@ export class OutlineEditor {
                 // Only fetch layer data if we're not currently interpolating
                 // During interpolation, the next interpolateCurrentGlyph() call will handle the data
                 if (!this.isInterpolating) {
-                    // Only fetch layer data if we're not currently editing a component
-                    // If editing a component, the layer switch will be handled by refreshComponentStack
-                    if (this.componentStack.length === 0) {
-                        await this.fetchLayerData(); // Fetch layer data for outline editor
+                    // Fetch layer data for the new layer
+                    // This works correctly for both root glyphs and nested components
+                    // because fetchLayerData always fetches the root glyph with full component tree
+                    await this.fetchLayerData(); // Fetch layer data for outline editor
 
-                        // Perform mouse hit detection after layer data is loaded
-                        this.performHitDetection(null);
+                    // Perform mouse hit detection after layer data is loaded
+                    this.performHitDetection(null);
 
-                        // Render to display the new outlines
-                        if (this.active) {
-                            this.glyphCanvas.render();
-                        }
+                    // Render to display the new outlines
+                    if (this.active) {
+                        this.glyphCanvas.render();
                     }
                 } else {
                     // During interpolation (sliderMouseUp), don't render here
@@ -1766,36 +1910,93 @@ export class OutlineEditor {
         }
     }
 
-    async fetchLayerData(skipRender: boolean = false): Promise<void> {
-        // Clear interpolated transform when switching to exact layer
-        this.interpolatedComponentTransform = null;
+    /**
+     * Get the layer data for the current position in glyph_stack
+     * Always starts from root layerData and navigates through components
+     * @returns The layer data at the current glyph_stack position
+     */
+    getCurrentLayerDataFromStack(): PythonBabelfont.Layer | null {
+        if (!this.layerData || !this.glyphStack) {
+            return this.layerData;
+        }
 
+        const parsed = this.parseGlyphStack();
+        if (parsed.length === 0) {
+            return this.layerData;
+        }
+
+        // Start with root layer data
+        let currentLayerData: PythonBabelfont.Layer | null = this.layerData;
+
+        // Navigate through each component in the stack (skip the first root item)
+        for (let i = 0; i < parsed.length; i++) {
+            const item = parsed[i];
+
+            // Skip root item (has no componentIndex)
+            if (item.componentIndex === undefined) {
+                continue;
+            }
+
+            // Navigate to the component
+            if (
+                !currentLayerData ||
+                !currentLayerData.shapes ||
+                !currentLayerData.shapes[item.componentIndex]
+            ) {
+                console.error(
+                    '[GlyphStack] Invalid navigation at index',
+                    i,
+                    'componentIndex:',
+                    item.componentIndex
+                );
+                return null;
+            }
+
+            const shape: PythonBabelfont.Shape =
+                currentLayerData.shapes[item.componentIndex];
+            if (!('Component' in shape)) {
+                console.error(
+                    '[GlyphStack] Shape at index',
+                    item.componentIndex,
+                    'is not a component'
+                );
+                return null;
+            }
+
+            // Move to the component's layer data
+            currentLayerData = shape.Component.layerData || null;
+            if (!currentLayerData) {
+                console.error(
+                    '[GlyphStack] Component at index',
+                    item.componentIndex,
+                    'has no layerData'
+                );
+                return null;
+            }
+        }
+
+        return currentLayerData;
+    }
+
+    async fetchLayerData(skipRender: boolean = false): Promise<void> {
         // Reset interpolation request tracking since we're loading exact layer data
         fontInterpolation.resetRequestTracking();
 
-        // If we're editing a component, refresh the component's layer data for the new layer
-        if (this.componentStack.length > 0) {
-            console.log('Refreshing component layer data for new layer');
-            await this.refreshComponentStack();
-            return;
-        }
-
-        // Fetch full layer data including shapes using to_dict()
+        // ALWAYS fetch root glyph layer data (with nested components)
+        // Never fetch layer data for a component separately
         if (!window.pyodide || !this.selectedLayerId) {
             this.layerData = null;
             return;
         }
 
         try {
-            // const glyphId =
-            //     this.textRunEditor!.shapedGlyphs[
-            //         this.textRunEditor!.selectedGlyphIndex
-            //     ].g;
+            // Always fetch root glyph name - never component reference
             let glyphName = this.glyphCanvas.getCurrentGlyphName();
             console.log(
-                `🔍 Fetching layer data for glyph: "${glyphName}" ( production name), layer: ${this.selectedLayerId}`
+                `🔍 Fetching ROOT layer data for glyph: "${glyphName}", layer: ${this.selectedLayerId}`
             );
 
+            // Fetch root layer data with all nested components
             this.layerData = await fontManager!.fetchLayerData(
                 glyphName,
                 this.selectedLayerId
@@ -1806,17 +2007,25 @@ export class OutlineEditor {
                 this.layerData.isInterpolated = false;
             }
 
-            // Only update currentGlyphName if we're NOT in component editing mode
-            // When in component editing, currentGlyphName should stay set to the component reference
-            if (this.componentStack.length === 0) {
-                this.currentGlyphName = glyphName; // Store for interpolation
-            }
-
+            // Parse all component nodes in the entire tree
             if (this.layerData && this.layerData.shapes) {
                 parseComponentNodes(this.layerData.shapes);
             }
 
-            console.log('Fetched layer data:', this.layerData);
+            // Update currentGlyphName based on glyph_stack position
+            // If we're in a nested component, extract the component name from the stack
+            const parsed = this.parseGlyphStack();
+            if (parsed.length > 1) {
+                // We're in a nested component - use the last glyph name in the stack
+                this.currentGlyphName = parsed[parsed.length - 1].glyphName;
+            } else {
+                // We're at root level
+                this.currentGlyphName = glyphName;
+            }
+
+            console.log('Fetched ROOT layer data:', this.layerData);
+            console.log('Current position in stack:', this.glyphStack);
+
             if (!skipRender) {
                 this.glyphCanvas.render();
             }
@@ -1846,24 +2055,27 @@ export class OutlineEditor {
         }
 
         try {
-            // Determine which glyph to save to
-            let glyphName;
+            const parsed = this.parseGlyphStack();
+            const rootGlyphName =
+                parsed.length > 0
+                    ? parsed[0].glyphName
+                    : this.glyphCanvas.getCurrentGlyphName();
 
-            if (this.componentStack.length > 0) {
-                // We're editing a component - save to the component's glyph
-                // Get the editingGlyphName from the top of the stack
-                const currentState =
-                    this.componentStack[this.componentStack.length - 1];
-                glyphName = currentState.editingGlyphName;
-            } else {
-                glyphName = this.glyphCanvas.getCurrentGlyphName();
-            }
-
+            // ALWAYS save to ROOT glyph (contains full component tree)
+            // Component modifications are saved as part of the root glyph's component references
+            console.log(
+                `[SaveLayerData] Saving ROOT glyph "${rootGlyphName}" with stack: ${this.glyphStack}`
+            );
             await fontManager!.saveLayerData(
-                glyphName,
+                rootGlyphName,
                 this.selectedLayerId,
                 this.layerData
             );
+
+            // TODO: Implement proper component-to-definition saving
+            // Currently disabled because saving component.layerData directly causes corruption
+            // Need to properly extract only the edited properties (shapes, anchors, guides)
+            // and merge them with fresh layer data from the component glyph
 
             console.log('Layer data saved successfully');
         } catch (error) {
@@ -1902,9 +2114,6 @@ export class OutlineEditor {
             'Refreshing component stack for new layer, stack depth:',
             this.componentStack.length
         );
-
-        // Clear interpolated transform when switching layers
-        this.interpolatedComponentTransform = null;
 
         // Save the path of component indices from the stack
         const componentPath: number[] = [];
@@ -1960,6 +2169,8 @@ export class OutlineEditor {
         mouseEvent: MouseEvent | null = null
     ): Promise<void> {
         // Enter editing mode for a component
+        // With glyph_stack approach: we DON'T swap layerData, we just update the stack
+        // layerData ALWAYS remains the root glyph's data
         // skipUIUpdate: if true, skip UI updates (useful when rebuilding component stack)
         if (
             !this.layerData ||
@@ -1969,18 +2180,18 @@ export class OutlineEditor {
             return;
         }
 
-        // During layer switch animation, use targetLayerData to get the correct component transform
-        // Otherwise the component will be positioned using the old layer's transform
-        const sourceLayerData =
-            this.isLayerSwitchAnimating && this.targetLayerData
-                ? this.targetLayerData
-                : this.layerData;
+        // Get the component shape from current position in stack
+        const currentLayerData =
+            this.getCurrentLayerDataFromStack() || this.layerData;
 
-        if (!sourceLayerData.shapes[componentIndex]) {
+        if (
+            !currentLayerData.shapes ||
+            !currentLayerData.shapes[componentIndex]
+        ) {
             return;
         }
 
-        const componentShape = sourceLayerData.shapes[componentIndex];
+        const componentShape = currentLayerData.shapes[componentIndex];
         if (
             !('Component' in componentShape) ||
             !componentShape.Component.reference
@@ -1989,30 +2200,8 @@ export class OutlineEditor {
             return;
         }
 
-        // Fetch the component's layer data
-        const componentLayerData = fontManager!.fetchLayerData(
-            componentShape.Component.reference,
-            this.selectedLayerId
-        );
-        if (!componentLayerData) {
-            console.error(
-                'Failed to fetch component layer data for:',
-                componentShape.Component.reference
-            );
-            return;
-        }
-
-        console.log('Fetched component layer data:', componentLayerData);
-
-        if (componentLayerData.shapes) {
-            parseComponentNodes(componentLayerData.shapes);
-        }
-
         console.log(
-            'About to set layerData to component data. Current shapes:',
-            this.layerData?.shapes?.length,
-            '-> New shapes:',
-            componentLayerData.shapes?.length
+            `[EnterComponent] Entering component: ${componentShape.Component.reference}, index: ${componentIndex}`
         );
 
         // Get component transform
@@ -2021,40 +2210,20 @@ export class OutlineEditor {
         ];
 
         // Get current glyph name (for breadcrumb trail)
-        // This is the name of the context we're currently in (before entering the new component)
         let currentGlyphName: string;
-        if (this.componentStack.length > 0) {
-            // We're already in a component, so get its reference name
-            // Use the componentIndex stored in the parent state (not this.editingComponentIndex)
-            const parentState =
-                this.componentStack[this.componentStack.length - 1];
-            if (
-                parentState &&
-                parentState.layerData &&
-                parentState.layerData.shapes &&
-                parentState.componentIndex !== null &&
-                parentState.componentIndex !== undefined
-            ) {
-                const currentComponent =
-                    parentState.layerData.shapes[parentState.componentIndex];
-                if (currentComponent && 'Component' in currentComponent) {
-                    currentGlyphName = currentComponent.Component.reference;
-                } else {
-                    currentGlyphName = 'Unknown';
-                }
-            } else {
-                currentGlyphName = 'Unknown';
-            }
+        const parsed = this.parseGlyphStack();
+        if (parsed.length > 0) {
+            // Get the last glyph name from the stack
+            currentGlyphName = parsed[parsed.length - 1].glyphName;
         } else {
             currentGlyphName = this.glyphCanvas.getCurrentGlyphName();
         }
 
-        // Push current state onto stack (before changing this.layerData)
-        // Store the component we're about to enter (componentIndex), not the old editingComponentIndex
-        // editingGlyphName is the reference of the component we're entering (for save operations)
         const editingGlyphName = componentShape.Component.reference;
 
-        // Clear selections BEFORE saving state to avoid saving stale selections
+        // Save state for exit
+        // Note: we're NOT saving layerData anymore since it always stays as root
+        // We're just saving selection state and component index
         const savedSelections = {
             selectedPoints: this.selectedPoints,
             selectedAnchors: this.selectedAnchors,
@@ -2062,12 +2231,10 @@ export class OutlineEditor {
         };
         this.clearAllSelections();
 
-        // Save state with the selections we just cleared (not the current empty ones)
-        // Use sourceLayerData (which accounts for layer switch animation state)
         this.componentStack.push({
             componentIndex,
             transform: this.getAccumulatedTransform(),
-            layerData: sourceLayerData,
+            layerData: this.layerData, // Still save for compatibility, but we won't swap it
             selectedPoints: savedSelections.selectedPoints,
             selectedAnchors: savedSelections.selectedAnchors,
             selectedComponents: savedSelections.selectedComponents,
@@ -2079,49 +2246,37 @@ export class OutlineEditor {
             `Pushed to stack. Stack depth: ${this.componentStack.length}, storing glyphName: ${currentGlyphName}`
         );
 
+        // Update glyph_stack by adding this component to the navigation path
+        const componentPath: number[] = [];
+        // Extract existing component path
+        for (let i = 0; i < parsed.length; i++) {
+            if (parsed[i].componentIndex !== undefined) {
+                componentPath.push(parsed[i].componentIndex!);
+            }
+        }
+        // Add the new component index
+        componentPath.push(componentIndex);
+        // Rebuild with updated path
+        const rootGlyphName = this.glyphCanvas.getCurrentGlyphName();
+        this.buildGlyphStack(
+            rootGlyphName,
+            this.selectedLayerId,
+            componentPath
+        );
+
         // Update currentGlyphName for interpolation to target the component we're entering
         this.currentGlyphName = editingGlyphName;
 
-        // Set the component as the current editing context
-        // After entering, we're no longer "editing" a component reference - we're inside it
-        // So editingComponentIndex should be null
-        this.editingComponentIndex = null;
-        this.layerData = componentLayerData;
+        // We're now inside a component
+        this.editingComponentIndex = null; // Not "editing" a component ref, we're inside it
 
-        // Clear layer switch animation state when entering a new component level
-        // The animation was for the parent layer, entering a component means we're now at a new context
-        if (this.isLayerSwitchAnimating) {
-            this.isLayerSwitchAnimating = false;
-            this.targetLayerData = null;
-        }
-
-        // Clear interpolated component transform when entering a new component level
-        // Otherwise the renderer will use a stale interpolated transform from the parent level
-        this.interpolatedComponentTransform = null;
-
-        // Clear isInterpolated flag since we're loading actual layer data
-        if (this.layerData) {
-            this.layerData.isInterpolated = false;
-        }
+        // DON'T set layerData to component data - keep it as root!
+        // The renderer will use getCurrentLayerDataFromStack() to get the right data
 
         console.log(
-            'Set layerData to component. this.layerData.shapes.length:',
-            this.layerData?.shapes?.length
+            `[EnterComponent] Entered component: ${editingGlyphName}, stack depth: ${this.componentStack.length}`
         );
-
-        console.log(
-            '[OutlineEditor] After clearAllSelections:',
-            'selectedComponents:',
-            this.selectedComponents,
-            'selectedPoints:',
-            this.selectedPoints,
-            'selectedAnchors:',
-            this.selectedAnchors
-        );
-
-        console.log(
-            `Entered component editing: ${componentShape.Component.reference}, stack depth: ${this.componentStack.length}`
-        );
+        console.log(`[EnterComponent] Updated glyph_stack: ${this.glyphStack}`);
 
         if (!skipUIUpdate) {
             // Update UI and perform hit detection to update hover states
@@ -2130,25 +2285,17 @@ export class OutlineEditor {
             this.glyphCanvas.render();
 
             // Perform hit detection immediately if we have a mouse event
-            // This ensures nested components are detectable without mouse movement
             if (mouseEvent) {
                 this.performHitDetection(mouseEvent);
-                // Re-render to show the updated hover state
                 this.glyphCanvas.render();
             }
-
-            console.log(
-                '[OutlineEditor] After UI update with hit detection:',
-                'selectedComponents:',
-                this.selectedComponents,
-                'hoveredComponentIndex:',
-                this.hoveredComponentIndex
-            );
         }
     }
 
     exitComponentEditing(skipUIUpdate: boolean = false): boolean {
         // Exit current component editing level
+        // With glyph_stack: we DON'T restore layerData, we just update the stack
+        // layerData ALWAYS remains the root glyph's data
         // skipUIUpdate: if true, skip UI updates (useful when exiting multiple levels)
         console.log(
             '[EXIT] exitComponentEditing called, current stack depth:',
@@ -2159,121 +2306,53 @@ export class OutlineEditor {
             return false; // No component stack to exit from
         }
 
-        // Clear interpolated transform when exiting - it was calculated for the deeper nesting level
-        this.interpolatedComponentTransform = null;
-
         const previousState = this.componentStack.pop()!;
 
-        // Restore previous state
-        this.editingComponentIndex = previousState.componentIndex;
-        this.layerData = previousState.layerData;
-
-        // DEBUG: Log what layer ID we're restoring
-        console.log(
-            '[EXIT] Restoring layerData with ID:',
-            this.layerData?.id,
-            'master:',
-            this.layerData?._master
-        );
-        if (
-            this.layerData &&
-            this.layerData.shapes &&
-            previousState.componentIndex !== null
-        ) {
-            const comp = this.layerData.shapes[previousState.componentIndex];
-            if (comp && 'Component' in comp) {
-                console.log(
-                    '[EXIT] Component transform in restored data:',
-                    comp.Component.transform
-                );
-                console.log(
-                    '[EXIT] Component.layerData.id:',
-                    comp.Component.layerData?.id
-                );
-                console.log(
-                    '[EXIT] Component.layerData._master:',
-                    comp.Component.layerData?._master
-                );
-                // Check nested component data
-                if (comp.Component.layerData?.shapes) {
-                    console.log(
-                        '[EXIT] Component has',
-                        comp.Component.layerData.shapes.length,
-                        'shapes'
-                    );
-                    comp.Component.layerData.shapes.forEach(
-                        (shape: any, idx: number) => {
-                            if ('Component' in shape) {
-                                console.log(
-                                    `[EXIT]   Shape ${idx}: Component "${shape.Component.reference}", transform:`,
-                                    shape.Component.transform
-                                );
-                                // Check if this nested component also has layerData
-                                if (shape.Component.layerData) {
-                                    console.log(
-                                        `[EXIT]     Nested component layerData.id:`,
-                                        shape.Component.layerData.id
-                                    );
-                                    console.log(
-                                        `[EXIT]     Nested component layerData._master:`,
-                                        shape.Component.layerData._master
-                                    );
-                                }
-                            }
-                        }
-                    );
-                }
+        // Update glyph_stack by removing the last component
+        const parsed = this.parseGlyphStack();
+        const componentPath: number[] = [];
+        // Extract component path (excluding the last one we're exiting)
+        for (let i = 0; i < parsed.length; i++) {
+            if (
+                parsed[i].componentIndex !== undefined &&
+                i < parsed.length - 1
+            ) {
+                componentPath.push(parsed[i].componentIndex!);
             }
         }
-
-        // Clear isInterpolated flag since we're restoring actual layer data
-        if (this.layerData) {
-            this.layerData.isInterpolated = false;
+        // Rebuild with reduced path
+        const rootGlyphName = this.glyphCanvas.getCurrentGlyphName();
+        if (this.selectedLayerId) {
+            this.buildGlyphStack(
+                rootGlyphName,
+                this.selectedLayerId,
+                componentPath
+            );
         }
+
+        // Restore selection state (but NOT layerData)
+        this.editingComponentIndex = previousState.componentIndex;
         this.popState(previousState);
 
-        // Clear hover states since they refer to child layer indices that no longer apply
-        this.hoveredPointIndex = null;
-        this.hoveredAnchorIndex = null;
-        this.hoveredComponentIndex = null;
-
-        // Restore currentGlyphName for interpolation
-        // If still in nested component, use parent's editingGlyphName
-        // Otherwise use top-level glyph name
-        if (this.componentStack.length > 0) {
-            const parentState =
-                this.componentStack[this.componentStack.length - 1];
-            this.currentGlyphName = parentState.editingGlyphName;
+        // Update currentGlyphName based on new stack position
+        const newParsed = this.parseGlyphStack();
+        if (newParsed.length > 1) {
+            // Still in a nested component
+            this.currentGlyphName = newParsed[newParsed.length - 1].glyphName;
         } else {
+            // Back to root level
             this.currentGlyphName = this.glyphCanvas.getCurrentGlyphName();
         }
 
         console.log(
-            `Exited component editing, stack depth: ${this.componentStack.length}`
+            `[EXIT] Exited component editing, stack depth: ${this.componentStack.length}`
         );
+        console.log(`[EXIT] Updated glyph_stack: ${this.glyphStack}`);
 
         if (!skipUIUpdate) {
-            // DEBUG: Log what we're about to render
-            console.log(
-                '[EXIT] About to render after exit. layerData.id:',
-                this.layerData?.id
-            );
-            console.log(
-                '[EXIT] layerData has',
-                this.layerData?.shapes?.length,
-                'shapes'
-            );
-            if (this.layerData?.shapes) {
-                this.layerData.shapes.forEach((shape: any, idx: number) => {
-                    if ('Component' in shape) {
-                        console.log(
-                            `[EXIT] RENDER Shape ${idx}: Component "${shape.Component.reference}", transform:`,
-                            shape.Component.transform
-                        );
-                    }
-                });
-            }
-            this.glyphCanvas.doUIUpdate();
+            this.glyphCanvas.updateComponentBreadcrumb();
+            this.glyphCanvas.updatePropertiesUI();
+            this.glyphCanvas.render();
         }
 
         return true;
@@ -2587,7 +2666,114 @@ export class OutlineEditor {
         return currentLayer;
     }
 
+    /**
+     * Get accumulated transform from glyphStack by navigating through root layerData
+     * This replaces the old componentStack-based approach
+     */
+    getAccumulatedTransformFromStack(): number[] {
+        let a = 1,
+            b = 0,
+            c = 0,
+            d = 1,
+            tx = 0,
+            ty = 0;
+
+        if (!this.layerData || !this.glyphStack) {
+            return [a, b, c, d, tx, ty];
+        }
+
+        const parsed = this.parseGlyphStack();
+        console.log(
+            `[getAccumulatedTransformFromStack] Stack: ${this.glyphStack}`
+        );
+        console.log(
+            `[getAccumulatedTransformFromStack] Parsed depth: ${parsed.length - 1}`,
+            parsed
+        );
+
+        // Start at root and navigate through components
+        let currentLayerData: PythonBabelfont.Layer | null = this.layerData;
+
+        for (let i = 0; i < parsed.length; i++) {
+            const item = parsed[i];
+
+            // Skip root (no transform to apply)
+            if (item.componentIndex === undefined) {
+                continue;
+            }
+
+            // Get the component shape
+            if (
+                !currentLayerData ||
+                !currentLayerData.shapes ||
+                !currentLayerData.shapes[item.componentIndex]
+            ) {
+                console.error(
+                    '[getAccumulatedTransformFromStack] Invalid navigation at index',
+                    i,
+                    'componentIndex:',
+                    item.componentIndex
+                );
+                break;
+            }
+
+            const shape: PythonBabelfont.Shape =
+                currentLayerData.shapes[item.componentIndex];
+            if (!('Component' in shape)) {
+                console.error(
+                    '[getAccumulatedTransformFromStack] Shape at index',
+                    item.componentIndex,
+                    'is not a component'
+                );
+                break;
+            }
+
+            const comp: PythonBabelfont.Component = shape.Component;
+            console.log(
+                `[getAccumulatedTransformFromStack] Level ${i}: component "${comp.reference}", transform:`,
+                comp.transform
+            );
+
+            // Apply this component's transform
+            if (comp.transform) {
+                const t = comp.transform;
+                const newA = a * t[0] + c * t[1];
+                const newB = b * t[0] + d * t[1];
+                const newC = a * t[2] + c * t[3];
+                const newD = b * t[2] + d * t[3];
+                const newTx = a * t[4] + c * t[5] + tx;
+                const newTy = b * t[4] + d * t[5] + ty;
+                a = newA;
+                b = newB;
+                c = newC;
+                d = newD;
+                tx = newTx;
+                ty = newTy;
+            }
+
+            // Move to next level
+            currentLayerData = comp.layerData || null;
+        }
+
+        const result = [a, b, c, d, tx, ty];
+        console.log('[getAccumulatedTransformFromStack] Result:', result);
+        return result;
+    }
+
+    /**
+     * @deprecated Use getAccumulatedTransformFromStack() instead
+     * Legacy method kept for backward compatibility during migration
+     */
     getAccumulatedTransform(): number[] {
+        // For now, delegate to new implementation
+        return this.getAccumulatedTransformFromStack();
+    }
+
+    /**
+     * Old implementation for reference - TO BE REMOVED
+     * @deprecated
+     */
+    getAccumulatedTransform_OLD(): number[] {
         // Get the accumulated transform matrix from all component levels
         // Walk through the component stack and read transforms from the saved layer data
         // The stack is refreshed with current layer data when switching layers via refreshComponentStack()
@@ -2669,7 +2855,7 @@ export class OutlineEditor {
         );
 
         // Apply inverse component transform if editing a component
-        if (this.componentStack.length > 0) {
+        if (this.isEditingComponent()) {
             const glyphXBeforeInverse = glyphX;
             const glyphYBeforeInverse = glyphY;
             const compTransform = this.getAccumulatedTransform();
@@ -2683,9 +2869,9 @@ export class OutlineEditor {
                 glyphX = (d * localX - c * localY) / det;
                 glyphY = (a * localY - b * localX) / det;
             }
-            // console.log(
-            //     `transformMouseToComponentSpace: before inverse=(${glyphXBeforeInverse}, ${glyphYBeforeInverse}), after inverse=(${glyphX}, ${glyphY}), accumulated transform=[${compTransform}]`
-            // );
+            console.log(
+                `[transformMouseToComponentSpace] before inverse=(${glyphXBeforeInverse}, ${glyphYBeforeInverse}), after inverse=(${glyphX}, ${glyphY}), accumulated transform=[${compTransform}], det=${det}`
+            );
         }
 
         return { glyphX, glyphY };
@@ -2732,9 +2918,7 @@ export class OutlineEditor {
 
         // If editing a component, apply the component's transform to the local center
         if (this.componentStack.length > 0) {
-            const transform =
-                this.interpolatedComponentTransform ||
-                this.getAccumulatedTransform();
+            const transform = this.getAccumulatedTransform();
             const [a, b, c, d, tx, ty] = transform;
             const transformedX = a * localCenterX + c * localCenterY + tx;
             const transformedY = b * localCenterX + d * localCenterY + ty;
@@ -2790,9 +2974,7 @@ export class OutlineEditor {
 
         // If editing a component, apply the component's transform to the local center
         if (this.componentStack.length > 0) {
-            const transform =
-                this.interpolatedComponentTransform ||
-                this.getAccumulatedTransform();
+            const transform = this.getAccumulatedTransform();
             const [a, b, c, d, tx, ty] = transform;
             const transformedX = a * localCenterX + c * localCenterY + tx;
             const transformedY = b * localCenterX + d * localCenterY + ty;
@@ -2829,33 +3011,35 @@ export class OutlineEditor {
         width: number;
         height: number;
     } | null {
-        // Calculate bounding box for the currently selected glyph in outline editing mode
+        // Calculate bounding box for the currently edited glyph
+        // When editing a component, this returns the bbox of the component, not the root glyph
         // Returns {minX, minY, maxX, maxY, width, height} in glyph-local coordinates
         // Returns null if no glyph is selected or no layer data is available
-
-        console.log(
-            '[OutlineEditor]',
-            'calculateGlyphBoundingBox: isGlyphEditMode=',
-            this.active,
-            'layerData=',
-            this.layerData
-        );
 
         if (!this.active || !this.layerData) {
             return null;
         }
 
+        // Get the layer data for the current editing position
+        // If editing a component, this navigates to the component's layer data
+        const currentLayerData = this.getCurrentLayerDataFromStack();
+        if (!currentLayerData) {
+            return null;
+        }
+
         console.log(
             '[OutlineEditor]',
-            'calculateGlyphBoundingBox: layerData.shapes=',
-            this.layerData.shapes,
-            'layerData.width=',
-            this.layerData.width
+            'calculateGlyphBoundingBox: currentLayerData.shapes=',
+            currentLayerData.shapes,
+            'currentLayerData.width=',
+            currentLayerData.width,
+            'isEditingComponent=',
+            this.isEditingComponent()
         );
 
         // Use the Layer.calculateBoundingBox static method with includeAnchors=true
         // to match the old behavior of including anchors
-        const bbox = Layer.calculateBoundingBox(this.layerData, true);
+        const bbox = Layer.calculateBoundingBox(currentLayerData, true);
 
         if (bbox) {
             console.log(

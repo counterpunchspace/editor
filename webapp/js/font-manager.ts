@@ -863,6 +863,11 @@ class FontManager {
             ...(layerData.location && { location: { ...layerData.location } }),
             ...(layerData.format_specific && {
                 format_specific: layerData.format_specific
+            }),
+            // Preserve the master property which contains DefaultForMaster
+            // This is crucial for the layer to be recognized as a default layer
+            ...((layerData as any).master && {
+                master: (layerData as any).master
             })
         };
 

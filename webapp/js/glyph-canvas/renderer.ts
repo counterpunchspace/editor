@@ -109,19 +109,13 @@ export class GlyphCanvasRenderer {
      * @returns {boolean} True if inverse transform was applied, false if determinant is too small
      */
     applyInverseComponentTransform(): boolean {
-        if (this.glyphCanvas.outlineEditor.componentStack.length === 0) {
+        if (!this.glyphCanvas.outlineEditor.isEditingComponent()) {
             return false;
         }
 
-        // Get the accumulated transform
-        let transform: number[];
-        if (this.glyphCanvas.outlineEditor.interpolatedComponentTransform) {
-            transform =
-                this.glyphCanvas.outlineEditor.interpolatedComponentTransform;
-        } else {
-            transform =
-                this.glyphCanvas.outlineEditor.getAccumulatedTransform();
-        }
+        // Get the accumulated transform from the current layerData (which may be interpolated)
+        const transform =
+            this.glyphCanvas.outlineEditor.getAccumulatedTransform();
 
         const [a, b, c, d, tx, ty] = transform;
         const det = a * d - b * c;
@@ -476,13 +470,23 @@ export class GlyphCanvasRenderer {
             return;
         }
 
+        // Get the layer data at the current position in glyph_stack
+        // This will return the root glyph data if not in component editing,
+        // or the nested component data if we've entered components
+        const currentLayerData =
+            this.glyphCanvas.outlineEditor.getCurrentLayerDataFromStack();
+
         // Skip rendering if layer data is invalid (empty shapes array)
         // This prevents flicker when interpolation hasn't completed yet
         if (
-            !this.glyphCanvas.outlineEditor.layerData.shapes ||
-            this.glyphCanvas.outlineEditor.layerData.shapes.length === 0
+            !currentLayerData ||
+            !currentLayerData.shapes ||
+            currentLayerData.shapes.length === 0
         ) {
-            console.log('[Renderer]', 'Skipping drawOutlineEditor: no shapes');
+            console.log(
+                '[Renderer]',
+                'Skipping drawOutlineEditor: no shapes at current stack position'
+            );
             return;
         }
 
@@ -518,25 +522,11 @@ export class GlyphCanvasRenderer {
 
         // Apply accumulated component transform if editing a component
         // This positions the editor at the component's location in the parent
-        // Use interpolated transform if available (during slider interpolation),
-        // otherwise use the static transform from the component stack
-        let transform: number[];
-        if (
-            this.glyphCanvas.outlineEditor.componentStack.length > 0 &&
-            this.glyphCanvas.outlineEditor.interpolatedComponentTransform
-        ) {
-            // Use interpolated transform during slider movement
-            console.log('[Renderer] Using interpolated transform');
-            transform =
-                this.glyphCanvas.outlineEditor.interpolatedComponentTransform;
-        } else {
-            // Use static transform from component stack
-            console.log('[Renderer] Using static accumulated transform');
-            transform =
-                this.glyphCanvas.outlineEditor.getAccumulatedTransform();
-        }
+        // Get the accumulated transform from the current layerData (which may be interpolated)
+        const transform =
+            this.glyphCanvas.outlineEditor.getAccumulatedTransform();
 
-        if (this.glyphCanvas.outlineEditor.componentStack.length > 0) {
+        if (this.glyphCanvas.outlineEditor.isEditingComponent()) {
             console.log(
                 '[Renderer] Applying accumulated transform:',
                 transform
@@ -556,7 +546,7 @@ export class GlyphCanvasRenderer {
             document.documentElement.getAttribute('data-theme') !== 'light';
 
         // Draw parent glyph outlines in background if editing a component
-        if (this.glyphCanvas.outlineEditor.componentStack.length > 0) {
+        if (this.glyphCanvas.outlineEditor.isEditingComponent()) {
             this.ctx.save();
 
             // Apply inverse transform to draw parent in original (untransformed) position
@@ -635,25 +625,20 @@ export class GlyphCanvasRenderer {
                 minY = -200,
                 maxY = 1000; // Default bounds
 
-            if (
-                this.glyphCanvas.outlineEditor.layerData &&
-                this.glyphCanvas.outlineEditor.layerData.shapes
-            ) {
+            if (currentLayerData && currentLayerData.shapes) {
                 // Calculate bounds from all contours
-                this.glyphCanvas.outlineEditor.layerData.shapes.forEach(
-                    (shape) => {
-                        if ('nodes' in shape && shape.nodes.length > 0) {
-                            shape.nodes.forEach(
-                                ({ x, y }: { x: number; y: number }) => {
-                                    minX = Math.min(minX, x);
-                                    maxX = Math.max(maxX, x);
-                                    minY = Math.min(minY, y);
-                                    maxY = Math.max(maxY, y);
-                                }
-                            );
-                        }
+                currentLayerData.shapes.forEach((shape) => {
+                    if ('nodes' in shape && shape.nodes.length > 0) {
+                        shape.nodes.forEach(
+                            ({ x, y }: { x: number; y: number }) => {
+                                minX = Math.min(minX, x);
+                                maxX = Math.max(maxX, x);
+                                minY = Math.min(minY, y);
+                                maxY = Math.max(maxY, y);
+                            }
+                        );
                     }
-                );
+                });
                 // Add padding
                 minX = Math.floor(minX - 50);
                 maxX = Math.ceil(maxX + 50);
@@ -706,308 +691,298 @@ export class GlyphCanvasRenderer {
         console.log(
             '[Renderer]',
             'Drawing shapes. Component stack depth:',
-            this.glyphCanvas.outlineEditor.componentStack.length,
-            'layerData.shapes.length:',
-            this.glyphCanvas.outlineEditor.layerData?.shapes?.length
+            this.glyphCanvas.outlineEditor.getComponentDepth(),
+            'currentLayerData.shapes.length:',
+            currentLayerData?.shapes?.length
         );
 
         // Only draw shapes if they exist (empty glyphs like space won't have shapes)
-        if (
-            this.glyphCanvas.outlineEditor.layerData.shapes &&
-            Array.isArray(this.glyphCanvas.outlineEditor.layerData.shapes)
-        ) {
+        if (currentLayerData.shapes && Array.isArray(currentLayerData.shapes)) {
             // Apply monochrome during manual slider interpolation OR when not on an exact layer
             // Don't apply monochrome during layer switch animations
             const isInterpolated =
                 this.glyphCanvas.outlineEditor.isInterpolating ||
                 (this.glyphCanvas.outlineEditor.selectedLayerId === null &&
-                    this.glyphCanvas.outlineEditor.layerData?.isInterpolated);
+                    currentLayerData?.isInterpolated);
 
-            this.glyphCanvas.outlineEditor.layerData.shapes.forEach(
-                (shape, contourIndex: number) =>
-                    this.drawShape(shape, contourIndex, isInterpolated)
+            currentLayerData.shapes.forEach((shape, contourIndex: number) =>
+                this.drawShape(shape, contourIndex, isInterpolated)
             );
 
             // Draw components
-            this.glyphCanvas.outlineEditor.layerData.shapes.forEach(
-                (shape, index: number) => {
-                    if (!('Component' in shape)) {
-                        return; // Not a component
-                    }
+            currentLayerData.shapes.forEach((shape, index: number) => {
+                if (!('Component' in shape)) {
+                    return; // Not a component
+                }
 
-                    console.log(
-                        '[Renderer]',
-                        `Component ${index}: reference="${shape.Component.reference}"`
+                console.log(
+                    '[Renderer]',
+                    `Component ${index}: reference="${shape.Component.reference}"`
+                );
+
+                // Disable selection/hover highlighting for interpolated data
+                const isInterpolated =
+                    this.glyphCanvas.outlineEditor.isInterpolating ||
+                    (this.glyphCanvas.outlineEditor.selectedLayerId === null &&
+                        this.glyphCanvas.outlineEditor.layerData
+                            ?.isInterpolated);
+                const isHovered =
+                    !isInterpolated &&
+                    this.glyphCanvas.outlineEditor.hoveredComponentIndex ===
+                        index;
+                const isSelected =
+                    !isInterpolated &&
+                    this.glyphCanvas.outlineEditor.selectedComponents.includes(
+                        index
                     );
 
-                    // Disable selection/hover highlighting for interpolated data
-                    const isInterpolated =
-                        this.glyphCanvas.outlineEditor.isInterpolating ||
-                        (this.glyphCanvas.outlineEditor.selectedLayerId ===
-                            null &&
-                            this.glyphCanvas.outlineEditor.layerData
-                                ?.isInterpolated);
-                    const isHovered =
-                        !isInterpolated &&
-                        this.glyphCanvas.outlineEditor.hoveredComponentIndex ===
-                            index;
-                    const isSelected =
-                        !isInterpolated &&
-                        this.glyphCanvas.outlineEditor.selectedComponents.includes(
-                            index
-                        );
+                // Get full transform matrix [a, b, c, d, tx, ty]
+                let a = 1,
+                    b = 0,
+                    c = 0,
+                    d = 1,
+                    tx = 0,
+                    ty = 0;
+                if (
+                    'Component' in shape &&
+                    Array.isArray(shape.Component.transform)
+                ) {
+                    a = shape.Component.transform[0] || 1;
+                    b = shape.Component.transform[1] || 0;
+                    c = shape.Component.transform[2] || 0;
+                    d = shape.Component.transform[3] || 1;
+                    tx = shape.Component.transform[4] || 0;
+                    ty = shape.Component.transform[5] || 0;
+                }
 
-                    // Get full transform matrix [a, b, c, d, tx, ty]
-                    let a = 1,
-                        b = 0,
-                        c = 0,
-                        d = 1,
-                        tx = 0,
-                        ty = 0;
-                    if (
-                        'Component' in shape &&
-                        Array.isArray(shape.Component.transform)
-                    ) {
-                        a = shape.Component.transform[0] || 1;
-                        b = shape.Component.transform[1] || 0;
-                        c = shape.Component.transform[2] || 0;
-                        d = shape.Component.transform[3] || 1;
-                        tx = shape.Component.transform[4] || 0;
-                        ty = shape.Component.transform[5] || 0;
-                    }
+                this.ctx.save();
 
-                    this.ctx.save();
+                // Apply component transform
+                console.log('[Renderer] Applying component shape transform:', [
+                    a,
+                    b,
+                    c,
+                    d,
+                    tx,
+                    ty
+                ]);
+                this.ctx.transform(a, b, c, d, tx, ty);
 
-                    // Apply component transform
-                    console.log(
-                        '[Renderer] Applying component shape transform:',
-                        [a, b, c, d, tx, ty]
-                    );
-                    this.ctx.transform(a, b, c, d, tx, ty);
+                // Draw the component's outline shapes if they were fetched
+                if (
+                    'Component' in shape &&
+                    shape.Component.layerData &&
+                    shape.Component.layerData.shapes
+                ) {
+                    // Recursively render all shapes in the component (including nested components)
+                    const renderComponentShapes = (shapes: any[]) => {
+                        shapes.forEach((componentShape) => {
+                            // Handle nested components
+                            if ('Component' in componentShape) {
+                                // Save context for nested component transform
+                                this.ctx.save();
 
-                    // Draw the component's outline shapes if they were fetched
-                    if (
-                        'Component' in shape &&
-                        shape.Component.layerData &&
-                        shape.Component.layerData.shapes
-                    ) {
-                        // Recursively render all shapes in the component (including nested components)
-                        const renderComponentShapes = (shapes: any[]) => {
-                            shapes.forEach((componentShape) => {
-                                // Handle nested components
-                                if ('Component' in componentShape) {
-                                    // Save context for nested component transform
-                                    this.ctx.save();
-
-                                    // Apply nested component's transform
-                                    if (
-                                        componentShape.Component.transform &&
-                                        Array.isArray(
-                                            componentShape.Component.transform
-                                        )
-                                    ) {
-                                        const t =
-                                            componentShape.Component.transform;
-                                        this.ctx.transform(
-                                            t[0] || 1,
-                                            t[1] || 0,
-                                            t[2] || 0,
-                                            t[3] || 1,
-                                            t[4] || 0,
-                                            t[5] || 0
-                                        );
-                                    }
-
-                                    // Recursively render nested component's shapes
-                                    if (
-                                        componentShape.Component.layerData &&
-                                        componentShape.Component.layerData
-                                            .shapes
-                                    ) {
-                                        renderComponentShapes(
-                                            componentShape.Component.layerData
-                                                .shapes
-                                        );
-                                    }
-
-                                    this.ctx.restore();
-                                    return;
+                                // Apply nested component's transform
+                                if (
+                                    componentShape.Component.transform &&
+                                    Array.isArray(
+                                        componentShape.Component.transform
+                                    )
+                                ) {
+                                    const t =
+                                        componentShape.Component.transform;
+                                    this.ctx.transform(
+                                        t[0] || 1,
+                                        t[1] || 0,
+                                        t[2] || 0,
+                                        t[3] || 1,
+                                        t[4] || 0,
+                                        t[5] || 0
+                                    );
                                 }
 
-                                // Handle outline shapes (with nodes)
+                                // Recursively render nested component's shapes
                                 if (
-                                    componentShape.nodes &&
-                                    componentShape.nodes.length > 0
+                                    componentShape.Component.layerData &&
+                                    componentShape.Component.layerData.shapes
                                 ) {
-                                    // Get colors
-                                    const colors = isDarkTheme
-                                        ? APP_SETTINGS.OUTLINE_EDITOR
-                                              .COLORS_DARK
-                                        : APP_SETTINGS.OUTLINE_EDITOR
-                                              .COLORS_LIGHT;
+                                    renderComponentShapes(
+                                        componentShape.Component.layerData
+                                            .shapes
+                                    );
+                                }
 
-                                    // Determine stroke color based on state
-                                    const baseStrokeColor = isSelected
-                                        ? colors.COMPONENT_SELECTED
-                                        : colors.COMPONENT_NORMAL;
+                                this.ctx.restore();
+                                return;
+                            }
 
-                                    // For hover, make it 20% darker
-                                    let strokeColor = isHovered
-                                        ? adjustColorHueAndLightness(
-                                              baseStrokeColor,
-                                              0,
-                                              50
-                                          )
-                                        : baseStrokeColor;
+                            // Handle outline shapes (with nodes)
+                            if (
+                                componentShape.nodes &&
+                                componentShape.nodes.length > 0
+                            ) {
+                                // Get colors
+                                const colors = isDarkTheme
+                                    ? APP_SETTINGS.OUTLINE_EDITOR.COLORS_DARK
+                                    : APP_SETTINGS.OUTLINE_EDITOR.COLORS_LIGHT;
 
-                                    // Determine fill color based on state
-                                    const baseFillColor = isSelected
-                                        ? colors.COMPONENT_FILL_SELECTED
-                                        : colors.COMPONENT_FILL_NORMAL;
+                                // Determine stroke color based on state
+                                const baseStrokeColor = isSelected
+                                    ? colors.COMPONENT_SELECTED
+                                    : colors.COMPONENT_NORMAL;
 
-                                    // For hover, make it 20% darker
-                                    let fillColor = isHovered
-                                        ? adjustColorHueAndLightness(
-                                              baseFillColor,
-                                              0,
-                                              50
-                                          )
-                                        : baseFillColor;
+                                // For hover, make it 20% darker
+                                let strokeColor = isHovered
+                                    ? adjustColorHueAndLightness(
+                                          baseStrokeColor,
+                                          0,
+                                          50
+                                      )
+                                    : baseStrokeColor;
 
-                                    // Apply monochrome for interpolated data
-                                    if (isInterpolated) {
-                                        strokeColor =
-                                            desaturateColor(strokeColor);
-                                        fillColor = desaturateColor(fillColor);
-                                    }
+                                // Determine fill color based on state
+                                const baseFillColor = isSelected
+                                    ? colors.COMPONENT_FILL_SELECTED
+                                    : colors.COMPONENT_FILL_NORMAL;
 
-                                    // Apply glow effect only in dark theme
-                                    if (isDarkTheme) {
-                                        const {
-                                            glowColor,
-                                            glowStrokeWidth,
-                                            glowBlur
-                                        } = this.calculateGlowParams(
-                                            strokeColor,
-                                            invScale,
-                                            1.0 // Full opacity for strong glow
-                                        );
+                                // For hover, make it 20% darker
+                                let fillColor = isHovered
+                                    ? adjustColorHueAndLightness(
+                                          baseFillColor,
+                                          0,
+                                          50
+                                      )
+                                    : baseFillColor;
 
-                                        // First pass: Draw glow on the outside by stroking with shadow
-                                        this.ctx.save();
-                                        this.ctx.shadowBlur = glowBlur;
-                                        this.ctx.shadowColor = glowColor;
-                                        this.ctx.shadowOffsetX = 0;
-                                        this.ctx.shadowOffsetY = 0;
-                                        this.ctx.strokeStyle = glowColor;
-                                        this.ctx.lineWidth = glowStrokeWidth;
+                                // Apply monochrome for interpolated data
+                                if (isInterpolated) {
+                                    strokeColor = desaturateColor(strokeColor);
+                                    fillColor = desaturateColor(fillColor);
+                                }
 
-                                        this.ctx.beginPath();
-                                        this.buildPathFromNodes(
-                                            componentShape.nodes
-                                        );
-                                        this.ctx.closePath();
-                                        this.ctx.stroke();
-                                        this.ctx.restore();
-                                    }
+                                // Apply glow effect only in dark theme
+                                if (isDarkTheme) {
+                                    const {
+                                        glowColor,
+                                        glowStrokeWidth,
+                                        glowBlur
+                                    } = this.calculateGlowParams(
+                                        strokeColor,
+                                        invScale,
+                                        1.0 // Full opacity for strong glow
+                                    );
 
-                                    // Second pass: Draw fill and stroke without shadow
-                                    this.ctx.shadowBlur = 0;
-                                    this.ctx.shadowColor = 'transparent';
+                                    // First pass: Draw glow on the outside by stroking with shadow
+                                    this.ctx.save();
+                                    this.ctx.shadowBlur = glowBlur;
+                                    this.ctx.shadowColor = glowColor;
+                                    this.ctx.shadowOffsetX = 0;
+                                    this.ctx.shadowOffsetY = 0;
+                                    this.ctx.strokeStyle = glowColor;
+                                    this.ctx.lineWidth = glowStrokeWidth;
 
                                     this.ctx.beginPath();
                                     this.buildPathFromNodes(
                                         componentShape.nodes
                                     );
                                     this.ctx.closePath();
-
-                                    this.ctx.fillStyle = fillColor;
-                                    this.ctx.fill();
-
-                                    // Stroke the outline
-                                    this.ctx.strokeStyle = strokeColor;
-                                    this.ctx.lineWidth = 1 * invScale;
                                     this.ctx.stroke();
+                                    this.ctx.restore();
                                 }
-                            });
-                        };
 
-                        // Start recursive rendering
-                        renderComponentShapes(shape.Component.layerData.shapes);
-                    }
+                                // Second pass: Draw fill and stroke without shadow
+                                this.ctx.shadowBlur = 0;
+                                this.ctx.shadowColor = 'transparent';
 
-                    // Draw component reference marker at origin
-                    // Skip drawing markers if disabled or if zoom is under minimum threshold
-                    if (
-                        !APP_SETTINGS.OUTLINE_EDITOR
-                            .SHOW_COMPONENT_ORIGIN_MARKERS
-                    ) {
-                        this.ctx.restore();
-                        return;
-                    }
-                    const minZoomForHandles =
-                        APP_SETTINGS.OUTLINE_EDITOR.MIN_ZOOM_FOR_HANDLES;
-                    if (this.viewportManager.scale < minZoomForHandles) {
-                        this.ctx.restore();
-                        return;
-                    }
+                                this.ctx.beginPath();
+                                this.buildPathFromNodes(componentShape.nodes);
+                                this.ctx.closePath();
 
-                    const markerSize =
-                        APP_SETTINGS.OUTLINE_EDITOR.COMPONENT_MARKER_SIZE *
-                        invScale; // Draw cross marker
-                    const colors = isDarkTheme
-                        ? APP_SETTINGS.OUTLINE_EDITOR.COLORS_DARK
-                        : APP_SETTINGS.OUTLINE_EDITOR.COLORS_LIGHT;
+                                this.ctx.fillStyle = fillColor;
+                                this.ctx.fill();
 
-                    // Determine marker stroke color based on state
-                    const baseMarkerColor = isSelected
-                        ? colors.COMPONENT_SELECTED
-                        : colors.COMPONENT_NORMAL;
+                                // Stroke the outline
+                                this.ctx.strokeStyle = strokeColor;
+                                this.ctx.lineWidth = 1 * invScale;
+                                this.ctx.stroke();
+                            }
+                        });
+                    };
 
-                    // For hover, make it 20% darker
-                    let markerStrokeColor = isHovered
-                        ? adjustColorHueAndLightness(baseMarkerColor, 0, -20)
-                        : baseMarkerColor;
-
-                    // Apply monochrome for interpolated data
-                    if (isInterpolated) {
-                        markerStrokeColor = desaturateColor(markerStrokeColor);
-                    }
-
-                    this.ctx.strokeStyle = markerStrokeColor;
-                    this.ctx.lineWidth = 2 * invScale;
-                    this.ctx.beginPath();
-                    this.ctx.moveTo(-markerSize, 0);
-                    this.ctx.lineTo(markerSize, 0);
-                    this.ctx.moveTo(0, -markerSize);
-                    this.ctx.lineTo(0, markerSize);
-                    this.ctx.stroke();
-
-                    // Draw circle around cross
-                    this.ctx.beginPath();
-                    this.ctx.arc(0, 0, markerSize, 0, Math.PI * 2);
-                    this.ctx.stroke();
-
-                    // Draw component reference name with inverse transform for normal aspect
-                    const fontSize = 12 * invScale;
-                    this.ctx.save();
-                    this.applyInverseComponentTransform(); // Cancel out component transform
-                    this.ctx.scale(1, -1); // Flip Y axis
-                    this.ctx.font = `${fontSize}px monospace`;
-                    this.ctx.fillStyle = isDarkTheme
-                        ? 'rgba(255, 255, 255, 0.8)'
-                        : 'rgba(0, 0, 0, 0.8)';
-                    this.ctx.fillText(
-                        ('Component' in shape && shape.Component.reference) ||
-                            'component',
-                        markerSize * 1.5,
-                        markerSize
-                    );
-                    this.ctx.restore();
-
-                    this.ctx.restore();
+                    // Start recursive rendering
+                    renderComponentShapes(shape.Component.layerData.shapes);
                 }
-            );
+
+                // Draw component reference marker at origin
+                // Skip drawing markers if disabled or if zoom is under minimum threshold
+                if (
+                    !APP_SETTINGS.OUTLINE_EDITOR.SHOW_COMPONENT_ORIGIN_MARKERS
+                ) {
+                    this.ctx.restore();
+                    return;
+                }
+                const minZoomForHandles =
+                    APP_SETTINGS.OUTLINE_EDITOR.MIN_ZOOM_FOR_HANDLES;
+                if (this.viewportManager.scale < minZoomForHandles) {
+                    this.ctx.restore();
+                    return;
+                }
+
+                const markerSize =
+                    APP_SETTINGS.OUTLINE_EDITOR.COMPONENT_MARKER_SIZE *
+                    invScale; // Draw cross marker
+                const colors = isDarkTheme
+                    ? APP_SETTINGS.OUTLINE_EDITOR.COLORS_DARK
+                    : APP_SETTINGS.OUTLINE_EDITOR.COLORS_LIGHT;
+
+                // Determine marker stroke color based on state
+                const baseMarkerColor = isSelected
+                    ? colors.COMPONENT_SELECTED
+                    : colors.COMPONENT_NORMAL;
+
+                // For hover, make it 20% darker
+                let markerStrokeColor = isHovered
+                    ? adjustColorHueAndLightness(baseMarkerColor, 0, -20)
+                    : baseMarkerColor;
+
+                // Apply monochrome for interpolated data
+                if (isInterpolated) {
+                    markerStrokeColor = desaturateColor(markerStrokeColor);
+                }
+
+                this.ctx.strokeStyle = markerStrokeColor;
+                this.ctx.lineWidth = 2 * invScale;
+                this.ctx.beginPath();
+                this.ctx.moveTo(-markerSize, 0);
+                this.ctx.lineTo(markerSize, 0);
+                this.ctx.moveTo(0, -markerSize);
+                this.ctx.lineTo(0, markerSize);
+                this.ctx.stroke();
+
+                // Draw circle around cross
+                this.ctx.beginPath();
+                this.ctx.arc(0, 0, markerSize, 0, Math.PI * 2);
+                this.ctx.stroke();
+
+                // Draw component reference name with inverse transform for normal aspect
+                const fontSize = 12 * invScale;
+                this.ctx.save();
+                this.applyInverseComponentTransform(); // Cancel out component transform
+                this.ctx.scale(1, -1); // Flip Y axis
+                this.ctx.font = `${fontSize}px monospace`;
+                this.ctx.fillStyle = isDarkTheme
+                    ? 'rgba(255, 255, 255, 0.8)'
+                    : 'rgba(0, 0, 0, 0.8)';
+                this.ctx.fillText(
+                    ('Component' in shape && shape.Component.reference) ||
+                        'component',
+                    markerSize * 1.5,
+                    markerSize
+                );
+                this.ctx.restore();
+
+                this.ctx.restore();
+            });
         } // End if (this.glyphCanvas.outlineEditor.layerData.shapes)
 
         // Draw anchors
@@ -1020,8 +995,8 @@ export class GlyphCanvasRenderer {
 
         if (
             this.viewportManager.scale >= minZoomForHandles &&
-            this.glyphCanvas.outlineEditor.layerData.anchors &&
-            this.glyphCanvas.outlineEditor.layerData.anchors.length > 0
+            currentLayerData.anchors &&
+            currentLayerData.anchors.length > 0
         ) {
             // Calculate anchor size based on zoom level
             const anchorSizeMax =
@@ -1048,71 +1023,66 @@ export class GlyphCanvasRenderer {
             }
             const fontSize = 12 * invScale;
 
-            this.glyphCanvas.outlineEditor.layerData.anchors.forEach(
-                (anchor: any, index: number) => {
-                    const { x, y, name } = anchor;
-                    const isInterpolated =
-                        this.glyphCanvas.outlineEditor.isInterpolating ||
-                        (this.glyphCanvas.outlineEditor.selectedLayerId ===
-                            null &&
-                            this.glyphCanvas.outlineEditor.layerData
-                                ?.isInterpolated);
-                    const isHovered =
-                        !isInterpolated &&
-                        this.glyphCanvas.outlineEditor.hoveredAnchorIndex ===
-                            index;
-                    const isSelected =
-                        !isInterpolated &&
-                        this.glyphCanvas.outlineEditor.selectedAnchors.includes(
-                            index
-                        );
+            currentLayerData.anchors.forEach((anchor: any, index: number) => {
+                const { x, y, name } = anchor;
+                const isInterpolated =
+                    this.glyphCanvas.outlineEditor.isInterpolating ||
+                    (this.glyphCanvas.outlineEditor.selectedLayerId === null &&
+                        currentLayerData?.isInterpolated);
+                const isHovered =
+                    !isInterpolated &&
+                    this.glyphCanvas.outlineEditor.hoveredAnchorIndex === index;
+                const isSelected =
+                    !isInterpolated &&
+                    this.glyphCanvas.outlineEditor.selectedAnchors.includes(
+                        index
+                    );
 
-                    // Draw anchor as diamond with inverse transform for normal aspect ratio
+                // Draw anchor as diamond with inverse transform for normal aspect ratio
+                this.ctx.save();
+                this.ctx.translate(x, y);
+                this.applyInverseComponentTransform(); // Cancel out component transform
+                this.ctx.rotate(Math.PI / 4); // Rotate 45 degrees to make diamond
+
+                const colors = isDarkTheme
+                    ? APP_SETTINGS.OUTLINE_EDITOR.COLORS_DARK
+                    : APP_SETTINGS.OUTLINE_EDITOR.COLORS_LIGHT;
+                let fillColor = isSelected
+                    ? colors.ANCHOR_SELECTED
+                    : isHovered
+                      ? colors.ANCHOR_HOVERED
+                      : colors.ANCHOR_NORMAL;
+
+                // Apply monochrome for interpolated data
+                if (isInterpolated) {
+                    fillColor = desaturateColor(fillColor);
+                }
+
+                this.ctx.fillStyle = fillColor;
+                this.ctx.fillRect(
+                    -anchorSize,
+                    -anchorSize,
+                    anchorSize * 2,
+                    anchorSize * 2
+                );
+                // Stroke permanently removed
+
+                this.ctx.restore();
+
+                // Draw anchor name only above minimum zoom threshold
+                if (name && this.viewportManager.scale > minZoomForLabels) {
                     this.ctx.save();
                     this.ctx.translate(x, y);
                     this.applyInverseComponentTransform(); // Cancel out component transform
-                    this.ctx.rotate(Math.PI / 4); // Rotate 45 degrees to make diamond
-
-                    const colors = isDarkTheme
-                        ? APP_SETTINGS.OUTLINE_EDITOR.COLORS_DARK
-                        : APP_SETTINGS.OUTLINE_EDITOR.COLORS_LIGHT;
-                    let fillColor = isSelected
-                        ? colors.ANCHOR_SELECTED
-                        : isHovered
-                          ? colors.ANCHOR_HOVERED
-                          : colors.ANCHOR_NORMAL;
-
-                    // Apply monochrome for interpolated data
-                    if (isInterpolated) {
-                        fillColor = desaturateColor(fillColor);
-                    }
-
-                    this.ctx.fillStyle = fillColor;
-                    this.ctx.fillRect(
-                        -anchorSize,
-                        -anchorSize,
-                        anchorSize * 2,
-                        anchorSize * 2
-                    );
-                    // Stroke permanently removed
-
+                    this.ctx.scale(1, -1); // Flip Y axis to fix upside-down text
+                    this.ctx.font = `${fontSize}px monospace`;
+                    this.ctx.fillStyle = isDarkTheme
+                        ? 'rgba(255, 255, 255, 0.8)'
+                        : 'rgba(0, 0, 0, 0.8)';
+                    this.ctx.fillText(name, anchorSize * 1.5, anchorSize);
                     this.ctx.restore();
-
-                    // Draw anchor name only above minimum zoom threshold
-                    if (name && this.viewportManager.scale > minZoomForLabels) {
-                        this.ctx.save();
-                        this.ctx.translate(x, y);
-                        this.applyInverseComponentTransform(); // Cancel out component transform
-                        this.ctx.scale(1, -1); // Flip Y axis to fix upside-down text
-                        this.ctx.font = `${fontSize}px monospace`;
-                        this.ctx.fillStyle = isDarkTheme
-                            ? 'rgba(255, 255, 255, 0.8)'
-                            : 'rgba(0, 0, 0, 0.8)';
-                        this.ctx.fillText(name, anchorSize * 1.5, anchorSize);
-                        this.ctx.restore();
-                    }
                 }
-            );
+            });
         }
 
         // Draw bounding box for testing
@@ -1710,7 +1680,7 @@ export class GlyphCanvasRenderer {
             let originLocalX = originGlyphX;
             let originLocalY = originGlyphY;
 
-            if (this.glyphCanvas.outlineEditor.componentStack.length > 0) {
+            if (this.glyphCanvas.outlineEditor.isEditingComponent()) {
                 const compTransform =
                     this.glyphCanvas.outlineEditor.getAccumulatedTransform();
                 const [a, b, c, d, tx, ty] = compTransform;
@@ -1788,7 +1758,7 @@ export class GlyphCanvasRenderer {
         // If we're in component editing mode, apply the accumulated component transform
         // to convert from component-local coords to glyph-local coords
         const isInComponentMode =
-            this.glyphCanvas.outlineEditor.componentStack.length > 0;
+            this.glyphCanvas.outlineEditor.isEditingComponent();
         let accumulatedTransform: number[] | null = null;
 
         if (isInComponentMode) {
