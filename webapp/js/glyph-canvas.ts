@@ -681,7 +681,7 @@ class GlyphCanvas {
             this.outlineEditor.performHitDetection(e);
             this.updateHoveredGlyph();
         }
-        
+
         // Update cursor style based on position (after updating hover states)
         this.updateCursorStyle(e);
 
