@@ -1483,6 +1483,24 @@ export class GlyphCanvasRenderer {
 
         this.ctx.setLineDash([]); // Reset to solid line
 
+        // Draw center point of bounding box
+        const centerX = bbox.minX + bbox.width / 2;
+        const centerY = bbox.minY + bbox.height / 2;
+        const crossSize = 10 * invScale;
+
+        this.ctx.strokeStyle = isDarkTheme
+            ? 'rgba(255, 0, 255, 1.0)' // Bright magenta for dark theme
+            : 'rgba(255, 0, 255, 1.0)'; // Bright magenta for light theme
+        this.ctx.lineWidth = 2 * invScale;
+
+        // Draw crosshair at center
+        this.ctx.beginPath();
+        this.ctx.moveTo(centerX - crossSize, centerY);
+        this.ctx.lineTo(centerX + crossSize, centerY);
+        this.ctx.moveTo(centerX, centerY - crossSize);
+        this.ctx.lineTo(centerX, centerY + crossSize);
+        this.ctx.stroke();
+
         // Draw bbox dimensions as text labels
         const fontSize = 12 * invScale;
         this.ctx.font = `${fontSize}px monospace`;

@@ -190,16 +190,18 @@ export class OutlineEditor {
                 // Restore previous layer selection and axis values
                 this.selectedLayerId = this.previousSelectedLayerId;
 
-                // Fetch layer data for the restored layer
-                this.fetchLayerData().then(() => {
-                    // Update layer selection UI
-                    this.updateLayerSelection();
+                // Mark as layer switch animating so onAnimationComplete handles layer loading
+                this.isLayerSwitchAnimating = true;
 
-                    // Render with restored layer data
-                    this.glyphCanvas.render();
-                });
+                // Clear interpolating flag since we're transitioning to a real layer
+                this.isInterpolating = false;
+
+                // Capture auto-pan anchor before animation starts
+                this.captureAutoPanAnchor();
 
                 // Restore axis values with animation
+                // When animation completes, onAnimationComplete will call autoSelectMatchingLayer
+                // which will fetch the layer data and update the selection
                 this.glyphCanvas.axesManager!._setupAnimation({
                     ...this.previousVariationSettings
                 });
@@ -359,10 +361,8 @@ export class OutlineEditor {
                 settings: this.previousVariationSettings
             });
             this.selectedLayerId = null; // Deselect layer
-            // Don't update layer selection UI during interpolation to avoid triggering render
-            if (!this.isInterpolating) {
-                this.updateLayerSelection();
-            }
+            // Always update layer selection UI when deselecting to show immediate visual feedback
+            this.updateLayerSelection();
         }
         if (
             this.active &&
@@ -389,9 +389,6 @@ export class OutlineEditor {
                     '[OutlineEditor] Calling interpolateCurrentGlyph from animationInProgress'
                 );
                 this.interpolateCurrentGlyph();
-
-                // Apply auto-pan adjustment to keep glyph centered
-                this.applyAutoPanAdjustment();
             }
         }
     }
@@ -1334,6 +1331,9 @@ export class OutlineEditor {
                 '[OutlineEditor] After applyInterpolatedLayer - layerData.width:',
                 this.layerData?.width
             );
+
+            // Apply auto-pan adjustment to keep glyph centered after interpolation updates bbox
+            this.applyAutoPanAdjustment();
 
             // Render with the new interpolated data
             console.log(
@@ -2687,8 +2687,20 @@ export class OutlineEditor {
         );
 
         // Calculate bbox center in glyph-local space
-        const localCenterX = bbox.minX + bbox.width / 2;
-        const localCenterY = bbox.minY + bbox.height / 2;
+        let localCenterX = bbox.minX + bbox.width / 2;
+        let localCenterY = bbox.minY + bbox.height / 2;
+
+        // If editing a component, apply the component's transform to the local center
+        if (this.componentStack.length > 0) {
+            const transform =
+                this.interpolatedComponentTransform ||
+                this.getAccumulatedTransform();
+            const [a, b, c, d, tx, ty] = transform;
+            const transformedX = a * localCenterX + c * localCenterY + tx;
+            const transformedY = b * localCenterX + d * localCenterY + ty;
+            localCenterX = transformedX;
+            localCenterY = transformedY;
+        }
 
         // Transform to world space (account for glyph position in text run)
         const worldCenterX =
@@ -2733,8 +2745,20 @@ export class OutlineEditor {
         );
 
         // Calculate new bbox center in glyph-local space
-        const localCenterX = bbox.minX + bbox.width / 2;
-        const localCenterY = bbox.minY + bbox.height / 2;
+        let localCenterX = bbox.minX + bbox.width / 2;
+        let localCenterY = bbox.minY + bbox.height / 2;
+
+        // If editing a component, apply the component's transform to the local center
+        if (this.componentStack.length > 0) {
+            const transform =
+                this.interpolatedComponentTransform ||
+                this.getAccumulatedTransform();
+            const [a, b, c, d, tx, ty] = transform;
+            const transformedX = a * localCenterX + c * localCenterY + tx;
+            const transformedY = b * localCenterX + d * localCenterY + ty;
+            localCenterX = transformedX;
+            localCenterY = transformedY;
+        }
 
         // Transform to world space (account for glyph position in text run)
         const worldCenterX =

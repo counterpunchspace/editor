@@ -370,6 +370,9 @@ class GlyphCanvas {
                 // and trigger fetchLayerData which will save changes and recompile font
                 await this.outlineEditor.autoSelectMatchingLayer();
 
+                // Clear auto-pan anchor now that animation is complete
+                this.outlineEditor.autoPanAnchorScreen = null;
+
                 this.textRunEditor!.shapeText();
                 this.textModeAutoPanAnchorScreen = null;
                 return;
