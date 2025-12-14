@@ -676,8 +676,12 @@ class GlyphCanvas {
         this.mouseCanvasX = (this.mouseX * this.canvas!.width) / rect.width;
         this.mouseCanvasY = (this.mouseY * this.canvas!.height) / rect.height;
 
-        this.outlineEditor.performHitDetection(e);
-        this.updateHoveredGlyph();
+        // Don't perform hit detection when measurement tool is active
+        if (!this.altKeyPressed && !this.isMeasurementDragging) {
+            this.outlineEditor.performHitDetection(e);
+            this.updateHoveredGlyph();
+        }
+        
         // Update cursor style based on position (after updating hover states)
         this.updateCursorStyle(e);
 
