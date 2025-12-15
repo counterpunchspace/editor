@@ -1792,9 +1792,17 @@ export class GlyphCanvasRenderer {
             };
         };
 
-        // Draw measurements
+        // Draw measurement lines and dots first, then labels on top
         this.ctx.strokeStyle = colors.MEASUREMENT_TOOL_LINE;
         this.ctx.lineWidth = 1 / this.viewportManager.scale;
+
+        // Collect label data to draw later (on top)
+        const labelsToRender: Array<{
+            x: number;
+            y: number;
+            distance: number;
+            orientation: 'horizontal' | 'vertical';
+        }> = [];
 
         if (
             this.glyphCanvas.isMeasurementDragging &&
@@ -1818,8 +1826,13 @@ export class GlyphCanvasRenderer {
                 const midX = (p1.x + p2.x) / 2;
                 const midY = (p1.y + p2.y) / 2;
 
-                // Draw distance label
-                this.drawMeasurementLabel(midX, midY, distance, 'horizontal');
+                // Store label data for later rendering
+                labelsToRender.push({
+                    x: midX,
+                    y: midY,
+                    distance,
+                    orientation: 'horizontal'
+                });
             }
         } else {
             // Crosshair mode: draw horizontal and vertical measurements separately
@@ -1838,8 +1851,13 @@ export class GlyphCanvasRenderer {
                 const midX = (p1.x + p2.x) / 2;
                 const midY = (p1.y + p2.y) / 2;
 
-                // Draw distance label
-                this.drawMeasurementLabel(midX, midY, distance, 'horizontal');
+                // Store label data for later rendering
+                labelsToRender.push({
+                    x: midX,
+                    y: midY,
+                    distance,
+                    orientation: 'horizontal'
+                });
             }
 
             // Draw vertical measurements
@@ -1858,8 +1876,13 @@ export class GlyphCanvasRenderer {
                 const midX = (p1.x + p2.x) / 2;
                 const midY = (p1.y + p2.y) / 2;
 
-                // Draw distance label
-                this.drawMeasurementLabel(midX, midY, distance, 'vertical');
+                // Store label data for later rendering
+                labelsToRender.push({
+                    x: midX,
+                    y: midY,
+                    distance,
+                    orientation: 'vertical'
+                });
             }
         }
 
@@ -1877,6 +1900,16 @@ export class GlyphCanvasRenderer {
             this.ctx.beginPath();
             this.ctx.arc(worldPos.x, worldPos.y, dotRadius, 0, Math.PI * 2);
             this.ctx.fill();
+        }
+
+        // Draw labels on top of everything
+        for (const label of labelsToRender) {
+            this.drawMeasurementLabel(
+                label.x,
+                label.y,
+                label.distance,
+                label.orientation
+            );
         }
     }
 
