@@ -1554,7 +1554,11 @@ export class TextRunEditor {
                 this.hb.shape(this.hbFont, buffer);
             }
             const glyphs = buffer.json();
-            console.log('[HarfBuzz]', `Glyph buffer for ${run.direction} run "${run.text}":`, glyphs);
+            console.log(
+                '[HarfBuzz]',
+                `Glyph buffer for ${run.direction} run "${run.text}":`,
+                glyphs
+            );
             buffer.destroy();
 
             // Adjust cluster values to be relative to the full string, not the run
