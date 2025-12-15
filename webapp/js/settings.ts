@@ -119,7 +119,11 @@ const APP_SETTINGS = {
             COMPONENT_FILL_SELECTED: 'rgba(204, 0, 204, 0.25)',
 
             // Measurement tool
-            MEASUREMENT_TOOL_INTERSECTION: '#000000ff'
+            MEASUREMENT_TOOL_LINE: '#000000',
+            MEASUREMENT_TOOL_DOT: '#000000',
+            MEASUREMENT_TOOL_LABEL_TEXT: '#ffffff',
+            MEASUREMENT_TOOL_LABEL_BG: 'rgba(0, 0, 0, 0.85)',
+            MEASUREMENT_TOOL_CROSSHAIR: 'rgba(0, 0, 0, 0.3)'
         },
 
         // Colors - Dark Theme
@@ -166,7 +170,11 @@ const APP_SETTINGS = {
             COMPONENT_FILL_SELECTED: 'rgba(255, 0, 255, 0.3)',
 
             // Measurement tool
-            MEASUREMENT_TOOL_INTERSECTION: '#ffffff'
+            MEASUREMENT_TOOL_LINE: '#ffffff',
+            MEASUREMENT_TOOL_DOT: '#ffffff',
+            MEASUREMENT_TOOL_LABEL_TEXT: '#000000',
+            MEASUREMENT_TOOL_LABEL_BG: 'rgba(255, 255, 255, 0.85)',
+            MEASUREMENT_TOOL_CROSSHAIR: 'rgba(255, 255, 255, 0.3)'
         }
     }
 

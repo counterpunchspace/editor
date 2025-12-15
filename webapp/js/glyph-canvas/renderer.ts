@@ -1559,7 +1559,12 @@ export class GlyphCanvasRenderer {
             this.glyphCanvas.altKeyPressed &&
             this.glyphCanvas.outlineEditor.active
         ) {
-            this.ctx.strokeStyle = 'rgba(255, 255, 255, 0.5)';
+            const isDarkTheme =
+                document.documentElement.getAttribute('data-theme') !== 'light';
+            const colors = isDarkTheme
+                ? APP_SETTINGS.OUTLINE_EDITOR.COLORS_DARK
+                : APP_SETTINGS.OUTLINE_EDITOR.COLORS_LIGHT;
+            this.ctx.strokeStyle = colors.MEASUREMENT_TOOL_CROSSHAIR;
             this.ctx.lineWidth = 1;
             this.ctx.beginPath();
 
@@ -1735,7 +1740,7 @@ export class GlyphCanvasRenderer {
             ? APP_SETTINGS.OUTLINE_EDITOR.COLORS_DARK
             : APP_SETTINGS.OUTLINE_EDITOR.COLORS_LIGHT;
 
-        this.ctx.fillStyle = colors.MEASUREMENT_TOOL_INTERSECTION;
+        this.ctx.fillStyle = colors.MEASUREMENT_TOOL_DOT;
 
         // Calculate dot radius in font units (inverse of scale to keep constant screen size)
         const dotRadius = 5 / this.viewportManager.scale;
@@ -1788,7 +1793,7 @@ export class GlyphCanvasRenderer {
         };
 
         // Draw measurements
-        this.ctx.strokeStyle = colors.MEASUREMENT_TOOL_INTERSECTION;
+        this.ctx.strokeStyle = colors.MEASUREMENT_TOOL_LINE;
         this.ctx.lineWidth = 1 / this.viewportManager.scale;
 
         if (
@@ -1859,7 +1864,7 @@ export class GlyphCanvasRenderer {
         }
 
         // Draw intersection dots in world coordinates
-        this.ctx.fillStyle = colors.MEASUREMENT_TOOL_INTERSECTION;
+        this.ctx.fillStyle = colors.MEASUREMENT_TOOL_DOT;
         for (const intersection of horizontalIntersections) {
             const worldPos = transformToWorld(intersection);
             this.ctx.beginPath();
@@ -1930,7 +1935,7 @@ export class GlyphCanvasRenderer {
         }
 
         // Draw background rectangle
-        this.ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+        this.ctx.fillStyle = colors.MEASUREMENT_TOOL_LABEL_BG;
         this.ctx.fillRect(
             offsetX - bgWidth / 2,
             offsetY - bgHeight / 2,
@@ -1939,7 +1944,7 @@ export class GlyphCanvasRenderer {
         );
 
         // Draw text
-        this.ctx.fillStyle = colors.MEASUREMENT_TOOL_INTERSECTION;
+        this.ctx.fillStyle = colors.MEASUREMENT_TOOL_LABEL_TEXT;
         this.ctx.fillText(distanceText, offsetX, offsetY);
 
         this.ctx.restore();
