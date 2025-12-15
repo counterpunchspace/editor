@@ -95,6 +95,22 @@ async function initFontEditor() {
             `);
         }
 
+        // Load the opentype Python module first (required by fonteditor)
+        if (window.updateLoadingStatus) {
+            window.updateLoadingStatus('Loading OpenType features...');
+        }
+        const opentypeModule = await fetch('./py/opentype.py');
+        const opentypeCode = await opentypeModule.text();
+        // Create a module and add it to sys.modules so it can be imported
+        await window.pyodide.runPython(`
+import sys
+import types
+opentype = types.ModuleType('opentype')
+sys.modules['opentype'] = opentype
+        `);
+        await window.pyodide.runPython(`exec('''${opentypeCode}''', __import__('sys').modules['opentype'].__dict__)`);
+        console.log('[FontEditor]', 'opentype.py module loaded');
+
         // Load the fonteditor Python module
         if (window.updateLoadingStatus) {
             window.updateLoadingStatus('Loading font editor...');
