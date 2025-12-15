@@ -162,6 +162,14 @@ pub fn open_font_file(filename: &str, contents: &str) -> Result<String, JsValue>
                 .map_err(|e| JsValue::from_str(&format!("Failed to load .glyphs file: {:?}", e)))?
         },
         
+        "vfj" => {
+            // Load FontLab VFJ format
+            let font_json: serde_json::Value = serde_json::from_str(contents)
+                .map_err(|e| JsValue::from_str(&format!("Failed to parse VFJ JSON: {}", e)))?;
+            babelfont::convertors::fontlab::load(path.clone())
+                .map_err(|e| JsValue::from_str(&format!("Failed to load .vfj file: {:?}", e)))?
+        },
+        
         "ufo" => {
             // Load UFO format - note: this requires file system access which may not work in WASM
             return Err(JsValue::from_str("UFO format requires file system access and is not yet supported in browser"));
@@ -174,7 +182,7 @@ pub fn open_font_file(filename: &str, contents: &str) -> Result<String, JsValue>
         
         _ => {
             return Err(JsValue::from_str(&format!(
-                "Unsupported file format: .{}. Supported formats: .babelfont, .glyphs",
+                "Unsupported file format: .{}. Supported formats: .babelfont, .glyphs, .vfj",
                 extension
             )));
         }

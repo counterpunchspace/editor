@@ -72,8 +72,10 @@ function isSupportedFontFormat(name: string, isDir: boolean): boolean {
     const supportedExtensions = [
         '.babelfont', // Native format
         '.glyphs', // Glyphs 2/3
-        '.ufo', // Unified Font Object
-        '.designspace' // DesignSpace
+        '.vfj' // FontLab VFJ
+        // Available after full file system support:
+        // '.ufo', // Unified Font Object
+        // '.designspace' // DesignSpace
     ];
 
     return supportedExtensions.some((ext) => name.endsWith(ext));
