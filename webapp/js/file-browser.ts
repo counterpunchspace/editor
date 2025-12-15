@@ -65,11 +65,18 @@ function getFileClass(filename: string, isDir: boolean): string {
 }
 
 function isSupportedFontFormat(name: string, isDir: boolean): boolean {
-    // Check if it's a .babelfont file (JSON format, not a folder)
-    if (!isDir && name.endsWith('.babelfont')) {
-        return true;
-    }
-    return false;
+    // Skip directories
+    if (isDir) return false;
+
+    // Check for supported font formats
+    const supportedExtensions = [
+        '.babelfont', // Native format
+        '.glyphs', // Glyphs 2/3
+        '.ufo', // Unified Font Object
+        '.designspace' // DesignSpace
+    ];
+
+    return supportedExtensions.some((ext) => name.endsWith(ext));
 }
 
 async function openFont(path: string) {
@@ -83,6 +90,72 @@ async function openFont(path: string) {
         console.log('[FileBrowser]', `Opening font: ${path}`);
         let fs = await getOPFSRoot();
         let contents = await fs.readFile(path);
+
+        // Ensure contents is a string
+        if (contents instanceof Uint8Array) {
+            contents = new TextDecoder().decode(contents);
+        }
+
+        // Determine file extension
+        const extension = path.split('.').pop()?.toLowerCase() || '';
+        let babelfontJson: string;
+
+        // For non-.babelfont files, use Rust loader to convert
+        if (extension !== 'babelfont') {
+            console.log(
+                '[FileBrowser]',
+                `Detected ${extension} format, converting via Rust...`
+            );
+
+            if (!window.fontCompilation?.worker) {
+                throw new Error('Font compilation worker not initialized');
+            }
+
+            // Send to worker for conversion
+            babelfontJson = await new Promise<string>((resolve, reject) => {
+                const id = Math.random().toString(36);
+                const timeout = setTimeout(() => {
+                    reject(
+                        new Error('Font conversion timeout after 30 seconds')
+                    );
+                }, 30000);
+
+                const handleMessage = (e: MessageEvent) => {
+                    if (e.data.id === id && e.data.type === 'openFont') {
+                        clearTimeout(timeout);
+                        window.fontCompilation!.worker!.removeEventListener(
+                            'message',
+                            handleMessage
+                        );
+
+                        if (e.data.error) {
+                            reject(new Error(e.data.error));
+                        } else {
+                            resolve(e.data.babelfontJson);
+                        }
+                    }
+                };
+
+                window.fontCompilation!.worker!.addEventListener(
+                    'message',
+                    handleMessage
+                );
+                window.fontCompilation!.worker!.postMessage({
+                    type: 'openFont',
+                    id,
+                    filename: path.split('/').pop() || path,
+                    contents
+                });
+            });
+
+            console.log(
+                '[FileBrowser]',
+                `Successfully converted ${extension} to babelfont format`
+            );
+        } else {
+            // For .babelfont files, use contents directly
+            babelfontJson = contents;
+        }
 
         const endTime = performance.now();
         const duration = ((endTime - startTime) / 1000).toFixed(2);
@@ -100,7 +173,7 @@ async function openFont(path: string) {
             new CustomEvent('fontLoaded', {
                 detail: {
                     path: path,
-                    babelfontJson: contents
+                    babelfontJson: babelfontJson
                 }
             })
         );

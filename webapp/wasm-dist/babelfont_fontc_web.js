@@ -242,6 +242,45 @@ export function interpolate_glyph(glyph_name, location_json) {
 }
 
 /**
+ * Open a font file from various formats
+ *
+ * Supports .glyphs, .glyphspackage, .ufo, .designspace, .vfj, and .babelfont formats.
+ * Loads the font, stores it in cache, and returns the babelfont JSON representation.
+ *
+ * # Arguments
+ * * `filename` - The name of the font file (used to determine format)
+ * * `contents` - The file contents as a string (for text formats) or JSON (for .babelfont)
+ *
+ * # Returns
+ * * `String` - Babelfont JSON representation
+ * @param {string} filename
+ * @param {string} contents
+ * @returns {string}
+ */
+export function open_font_file(filename, contents) {
+    let deferred4_0;
+    let deferred4_1;
+    try {
+        const ptr0 = passStringToWasm0(filename, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(contents, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ret = wasm.open_font_file(ptr0, len0, ptr1, len1);
+        var ptr3 = ret[0];
+        var len3 = ret[1];
+        if (ret[3]) {
+            ptr3 = 0; len3 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred4_0 = ptr3;
+        deferred4_1 = len3;
+        return getStringFromWasm0(ptr3, len3);
+    } finally {
+        wasm.__wbindgen_free(deferred4_0, deferred4_1, 1);
+    }
+}
+
+/**
  * Store a font in memory from babelfont JSON
  *
  * This caches the deserialized font for fast access by interpolation

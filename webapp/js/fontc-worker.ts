@@ -7,6 +7,7 @@ import init, {
     store_font,
     interpolate_glyph,
     clear_font_cache,
+    open_font_file,
     version
 } from '../wasm-dist/babelfont_fontc_web.js';
 
@@ -180,6 +181,46 @@ self.onmessage = async (event) => {
             console.error('[Fontc Worker] Error clearing cache:', e);
             self.postMessage({
                 type: 'clearCache',
+                error: e.toString()
+            });
+        }
+        return;
+    }
+
+    // Handle open font file request
+    if (data.type === 'openFont') {
+        const { id, filename, contents } = data;
+
+        if (!filename || !contents) {
+            self.postMessage({
+                id,
+                type: 'openFont',
+                error: 'Missing filename or contents'
+            });
+            return;
+        }
+
+        try {
+            console.log(`[Fontc Worker] Opening font file: ${filename}`);
+            const babelfontJson = open_font_file(filename, contents);
+            console.log(
+                `[Fontc Worker] Successfully converted to babelfont JSON (${babelfontJson.length} bytes)`
+            );
+
+            // Store in cache
+            store_font(babelfontJson);
+
+            self.postMessage({
+                id,
+                type: 'openFont',
+                babelfontJson,
+                filename
+            });
+        } catch (e: any) {
+            console.error(`[Fontc Worker] Error opening font:`, e);
+            self.postMessage({
+                id,
+                type: 'openFont',
                 error: e.toString()
             });
         }

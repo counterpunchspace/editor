@@ -7,6 +7,7 @@ export const compile_cached_font: (a: any) => [number, number, number, number];
 export const compile_glyphs: (a: number, b: number) => [number, number, number, number];
 export const init: () => void;
 export const interpolate_glyph: (a: number, b: number, c: number, d: number) => [number, number, number, number];
+export const open_font_file: (a: number, b: number, c: number, d: number) => [number, number, number, number];
 export const store_font: (a: number, b: number) => [number, number];
 export const version: () => [number, number];
 export const __wbindgen_malloc: (a: number, b: number) => number;

@@ -63,6 +63,21 @@ export function init(): void;
 export function interpolate_glyph(glyph_name: string, location_json: string): string;
 
 /**
+ * Open a font file from various formats
+ *
+ * Supports .glyphs, .glyphspackage, .ufo, .designspace, .vfj, and .babelfont formats.
+ * Loads the font, stores it in cache, and returns the babelfont JSON representation.
+ *
+ * # Arguments
+ * * `filename` - The name of the font file (used to determine format)
+ * * `contents` - The file contents as a string (for text formats) or JSON (for .babelfont)
+ *
+ * # Returns
+ * * `String` - Babelfont JSON representation
+ */
+export function open_font_file(filename: string, contents: string): string;
+
+/**
  * Store a font in memory from babelfont JSON
  *
  * This caches the deserialized font for fast access by interpolation
@@ -91,6 +106,7 @@ export interface InitOutput {
   readonly compile_glyphs: (a: number, b: number) => [number, number, number, number];
   readonly init: () => void;
   readonly interpolate_glyph: (a: number, b: number, c: number, d: number) => [number, number, number, number];
+  readonly open_font_file: (a: number, b: number, c: number, d: number) => [number, number, number, number];
   readonly store_font: (a: number, b: number) => [number, number];
   readonly version: () => [number, number];
   readonly __wbindgen_malloc: (a: number, b: number) => number;

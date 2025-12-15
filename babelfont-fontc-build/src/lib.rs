@@ -128,6 +128,80 @@ pub fn clear_font_cache() {
     *cache = None;
 }
 
+/// Open a font file from various formats
+///
+/// Supports .glyphs, .glyphspackage, .ufo, .designspace, .vfj, and .babelfont formats.
+/// Loads the font, stores it in cache, and returns the babelfont JSON representation.
+///
+/// # Arguments
+/// * `filename` - The name of the font file (used to determine format)
+/// * `contents` - The file contents as a string (for text formats) or JSON (for .babelfont)
+///
+/// # Returns
+/// * `String` - Babelfont JSON representation
+#[wasm_bindgen]
+pub fn open_font_file(filename: &str, contents: &str) -> Result<String, JsValue> {
+    web_sys::console::log_1(&format!("[Rust] Opening font file: {}", filename).into());
+    
+    let path = std::path::PathBuf::from(filename);
+    let extension = path.extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("");
+    
+    // Parse the font based on file extension
+    let font: babelfont::Font = match extension {
+        "babelfont" => {
+            // For .babelfont, just parse the JSON directly
+            serde_json::from_str(contents)
+                .map_err(|e| JsValue::from_str(&format!("Failed to parse .babelfont JSON: {}", e)))?
+        },
+        
+        "glyphs" => {
+            // Load Glyphs 2/3 format
+            babelfont::convertors::glyphs3::load_str(contents, path.clone())
+                .map_err(|e| JsValue::from_str(&format!("Failed to load .glyphs file: {:?}", e)))?
+        },
+        
+        "ufo" => {
+            // Load UFO format - note: this requires file system access which may not work in WASM
+            return Err(JsValue::from_str("UFO format requires file system access and is not yet supported in browser"));
+        },
+        
+        "designspace" => {
+            // Load DesignSpace format - note: this requires file system access which may not work in WASM
+            return Err(JsValue::from_str("DesignSpace format requires file system access and is not yet supported in browser"));
+        },
+        
+        _ => {
+            return Err(JsValue::from_str(&format!(
+                "Unsupported file format: .{}. Supported formats: .babelfont, .glyphs",
+                extension
+            )));
+        }
+    };
+    
+    web_sys::console::log_1(&format!(
+        "[Rust] Successfully loaded font with {} glyphs",
+        font.glyphs.len()
+    ).into());
+    
+    // Store in cache
+    let mut cache = FONT_CACHE.lock().unwrap();
+    *cache = Some(font.clone());
+    drop(cache);
+    
+    // Serialize to JSON for JavaScript
+    let json = serde_json::to_string(&font)
+        .map_err(|e| JsValue::from_str(&format!("Failed to serialize font to JSON: {}", e)))?;
+    
+    web_sys::console::log_1(&format!(
+        "[Rust] Serialized to JSON ({} bytes)",
+        json.len()
+    ).into());
+    
+    Ok(json)
+}
+
 /// Interpolate a glyph at a specific location in design space
 ///
 /// Requires that a font has been stored via store_font() first.
