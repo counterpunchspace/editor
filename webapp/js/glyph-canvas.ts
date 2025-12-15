@@ -11,7 +11,7 @@ import fontManager from './font-manager';
 import { OutlineEditor } from './glyph-canvas/outline-editor';
 import { Logger } from './logger';
 import APP_SETTINGS from './settings';
-import { designspaceToUserspace } from './locations';
+import { designspaceToUserspace, userspaceToDesignspace } from './locations';
 
 let console: Logger = new Logger('GlyphCanvas', true);
 
@@ -400,6 +400,16 @@ class GlyphCanvas {
         );
         // Auto-select or deselect master when slider changes in text mode
         this.axesManager!.on('onSliderChange', () => {
+            console.log(
+                '[GlyphCanvas] Slider changed, calling autoSelectMatchingMaster'
+            );
+            this.autoSelectMatchingMaster();
+        });
+        // Also check after animation completes to handle the final value
+        this.axesManager!.on('animationComplete', () => {
+            console.log(
+                '[GlyphCanvas] Animation complete, calling autoSelectMatchingMaster'
+            );
             this.autoSelectMatchingMaster();
         });
     }
@@ -963,6 +973,9 @@ class GlyphCanvas {
         // Clear outline editor state
         this.outlineEditor.clearState();
 
+        // Auto-select matching master based on current axis slider positions
+        this.autoSelectMatchingMaster();
+
         console.log(`Exited glyph edit mode - returned to text edit mode`);
         this.updatePropertiesUI();
         this.render();
@@ -1039,6 +1052,11 @@ class GlyphCanvas {
             // Click handler to select master and animate to its location
             masterItem.addEventListener('click', () => {
                 this.selectMaster(master.id!, master.location || {});
+                // Restore focus to canvas if editor view is active
+                const editorView = document.getElementById('view-editor');
+                if (editorView && editorView.classList.contains('focused')) {
+                    setTimeout(() => this.canvas!.focus(), 0);
+                }
             });
 
             mastersList.appendChild(masterItem);
@@ -1083,8 +1101,54 @@ class GlyphCanvas {
         // Update master list UI
         this.updateMasterSelection();
 
+        // Capture cursor position for auto-pan during animation
+        this.captureTextModeAutoPanAnchor();
+
         // Animate to master location (10 frames) using userspace coordinates
         await this.animateToLocation(userspaceLocation, 10);
+
+        // Clear auto-pan anchor after animation
+        this.textModeAutoPanAnchorScreen = null;
+    }
+
+    async cycleMasters(moveUp: boolean): Promise<void> {
+        // Cycle through masters with Cmd+Up (previous) or Cmd+Down (next) in text mode
+        const fontModel = fontManager.currentFont?.fontModel;
+        if (!fontModel?.masters || fontModel.masters.length === 0) {
+            return;
+        }
+
+        const masters = fontModel.masters;
+        const currentMasterId = this.textRunEditor!.selectedMasterId;
+
+        // Find current master index
+        let currentIndex = masters.findIndex((m) => m.id === currentMasterId);
+
+        // If no master selected or not found, select first master
+        if (currentIndex === -1) {
+            await this.selectMaster(masters[0].id!, masters[0].location || {});
+            return;
+        }
+
+        // Calculate next index (with wrapping)
+        let nextIndex;
+        if (moveUp) {
+            nextIndex = currentIndex - 1;
+            if (nextIndex < 0) {
+                nextIndex = masters.length - 1; // Wrap to last
+            }
+        } else {
+            nextIndex = currentIndex + 1;
+            if (nextIndex >= masters.length) {
+                nextIndex = 0; // Wrap to first
+            }
+        }
+
+        // Select the next master
+        await this.selectMaster(
+            masters[nextIndex].id!,
+            masters[nextIndex].location || {}
+        );
     }
 
     async displayLayersList(): Promise<void> {
@@ -1184,6 +1248,11 @@ class GlyphCanvas {
                     shapes: [],
                     isInterpolated: false
                 } as any);
+                // Restore focus to canvas if editor view is active
+                const editorView = document.getElementById('view-editor');
+                if (editorView && editorView.classList.contains('focused')) {
+                    setTimeout(() => this.canvas!.focus(), 0);
+                }
             });
 
             layersList.appendChild(layerItem);
@@ -1234,41 +1303,75 @@ class GlyphCanvas {
     autoSelectMatchingMaster(): void {
         // Check if current axis values match a master location
         // If so, select that master. If not, deselect current master.
-        if (!fontManager.currentFont?.fontModel) return;
-        if (this.outlineEditor.active) return; // Only for text mode
+        console.log('[GlyphCanvas] autoSelectMatchingMaster called');
+        if (!fontManager.currentFont?.fontModel) {
+            console.log('[GlyphCanvas] No font model, returning');
+            return;
+        }
+        if (this.outlineEditor.active) {
+            console.log('[GlyphCanvas] Outline editor active, returning');
+            return; // Only for text mode
+        }
 
         const fontModel = fontManager.currentFont.fontModel;
-        if (!fontModel.masters || !fontModel.axes) return;
+        if (!fontModel.masters || !fontModel.axes) {
+            console.log('[GlyphCanvas] No masters or axes, returning');
+            return;
+        }
 
-        const currentLocation: Record<string, number> = {};
+        const currentLocationUserspace: Record<string, number> = {};
 
         // Get current location from axes manager (userspace coordinates)
-        if (!this.axesManager) return;
+        if (!this.axesManager) {
+            console.log('[GlyphCanvas] No axes manager, returning');
+            return;
+        }
 
         const axes = this.axesManager.getVariationAxes();
         for (const axis of axes) {
-            currentLocation[axis.tag] =
+            currentLocationUserspace[axis.tag] =
                 this.axesManager.getAxisValue(axis.tag) || axis.defaultValue;
         }
+
+        // Convert to designspace for comparison with master.location (which is in designspace)
+        const currentLocation = userspaceToDesignspace(
+            currentLocationUserspace,
+            fontModel.axes as any
+        );
 
         // Check each master for a match (tolerance of 0.5)
         const tolerance = 0.5;
         let matchingMaster: any = null;
 
+        console.log(
+            '[GlyphCanvas] Checking masters. Current location (userspace):',
+            currentLocationUserspace,
+            '(designspace):',
+            currentLocation
+        );
+
         for (const master of fontModel.masters) {
             if (!master.location) continue;
 
-            // Convert master's design location to userspace for comparison
-            const userspaceLocation = designspaceToUserspace(
-                master.location,
-                fontModel.axes as any
+            // Compare in designspace - both are in designspace
+            const masterLocation = master.location;
+
+            console.log(
+                '[GlyphCanvas] Master',
+                master.id,
+                'location (designspace):',
+                masterLocation
             );
 
             // Check if all axes match within tolerance
             let allMatch = true;
-            for (const tag in userspaceLocation) {
-                const masterValue = userspaceLocation[tag];
+            for (const tag in masterLocation) {
+                const masterValue = masterLocation[tag];
                 const currentValue = currentLocation[tag];
+                const diff = Math.abs(masterValue - currentValue);
+                console.log(
+                    `[GlyphCanvas]   Axis ${tag}: master=${masterValue}, current=${currentValue}, diff=${diff}, match=${diff <= tolerance}`
+                );
                 if (
                     currentValue === undefined ||
                     Math.abs(masterValue - currentValue) > tolerance
@@ -1277,6 +1380,13 @@ class GlyphCanvas {
                     break;
                 }
             }
+
+            console.log(
+                '[GlyphCanvas] Master',
+                master.id,
+                'allMatch:',
+                allMatch
+            );
 
             if (allMatch) {
                 matchingMaster = master;
@@ -1344,14 +1454,10 @@ class GlyphCanvas {
             // Update axis sliders UI to show the animation
             this.axesManager!.updateAxisSliders();
 
-            // Shape text with HarfBuzz (skip render on intermediate frames)
-            if (frame < frames) {
-                this.textRunEditor!.shapeText(true); // Skip render
-                // Render manually for smooth animation
-                this.render();
-            } else {
-                this.textRunEditor!.shapeText(); // Final frame with render
-            }
+            // Shape text with HarfBuzz and apply auto-pan for all frames
+            this.textRunEditor!.shapeText(true); // Skip render - we'll render after auto-pan
+            this.applyTextModeAutoPanAdjustment();
+            this.render();
 
             // Wait for next frame
             if (frame < frames) {
@@ -1803,6 +1909,17 @@ class GlyphCanvas {
             e.preventDefault();
             const zoomIn = e.key === '=' || e.key === '+';
             this.startKeyboardZoom(zoomIn);
+            return;
+        }
+
+        // Handle Cmd+Up/Down to cycle through masters in text mode
+        if (
+            (e.metaKey || e.ctrlKey) &&
+            !this.outlineEditor.active &&
+            (e.key === 'ArrowUp' || e.key === 'ArrowDown')
+        ) {
+            e.preventDefault();
+            this.cycleMasters(e.key === 'ArrowUp');
             return;
         }
 

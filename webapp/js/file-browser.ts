@@ -109,6 +109,17 @@ async function openFont(path: string) {
         if (window.playSound) {
             window.playSound('done');
         }
+
+        // Restore focus to canvas if editor view is active
+        const editorView = document.getElementById('view-editor');
+        if (
+            editorView &&
+            editorView.classList.contains('focused') &&
+            window.glyphCanvas &&
+            window.glyphCanvas.canvas
+        ) {
+            setTimeout(() => window.glyphCanvas.canvas!.focus(), 0);
+        }
     } catch (error: any) {
         console.error('[FileBrowser]', 'Error opening font:', error);
         alert(`Error opening font: ${error.message}`);
