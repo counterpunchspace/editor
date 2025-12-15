@@ -108,7 +108,9 @@ import types
 opentype = types.ModuleType('opentype')
 sys.modules['opentype'] = opentype
         `);
-        await window.pyodide.runPython(`exec('''${opentypeCode}''', __import__('sys').modules['opentype'].__dict__)`);
+        await window.pyodide.runPython(
+            `exec('''${opentypeCode}''', __import__('sys').modules['opentype'].__dict__)`
+        );
         console.log('[FontEditor]', 'opentype.py module loaded');
 
         // Load the fonteditor Python module
