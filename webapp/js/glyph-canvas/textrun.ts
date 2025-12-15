@@ -46,6 +46,7 @@ export class TextRunEditor {
     selectionStart: number | null;
     selectionEnd: number | null;
     fontBlob: Uint8Array | null;
+    selectedMasterId: string | null; // Currently selected master ID for text mode rendering
 
     constructor(featuresManager: FeaturesManager, axesManager: AxesManager) {
         this.featuresManager = featuresManager;
@@ -81,6 +82,9 @@ export class TextRunEditor {
         // Selection state
         this.selectionStart = null; // Start of selection (null = no selection)
         this.selectionEnd = null; // End of selection
+
+        // Master selection for text mode
+        this.selectedMasterId = null; // No master selected by default
 
         this.callbacks = {}; // For notifying GlyphCanvas of updates
     }

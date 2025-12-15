@@ -11,6 +11,7 @@ import fontManager from './font-manager';
 import { OutlineEditor } from './glyph-canvas/outline-editor';
 import { Logger } from './logger';
 import APP_SETTINGS from './settings';
+import { designspaceToUserspace } from './locations';
 
 let console: Logger = new Logger('GlyphCanvas', true);
 
@@ -397,6 +398,10 @@ class GlyphCanvas {
             'onSliderChange',
             this.outlineEditor.onSliderChange.bind(this.outlineEditor)
         );
+        // Auto-select or deselect master when slider changes in text mode
+        this.axesManager!.on('onSliderChange', () => {
+            this.autoSelectMatchingMaster();
+        });
     }
 
     setupTextEditorEventHandlers(): void {
@@ -836,9 +841,31 @@ class GlyphCanvas {
                     console.log('Updated axes UI after font load');
 
                     // Update features UI (async, then shape text)
-                    this.featuresManager!.updateFeaturesUI().then(() => {
+                    this.featuresManager!.updateFeaturesUI().then(async () => {
                         // Shape text with new font after features are initialized
                         this.textRunEditor!.shapeText();
+
+                        // Update properties UI to show master list in text mode
+                        await this.updatePropertiesUI();
+
+                        // Auto-select first master on initial load
+                        if (
+                            !this.initialFontLoaded &&
+                            fontManager.currentFont?.fontModel?.masters
+                        ) {
+                            const firstMaster =
+                                fontManager.currentFont.fontModel.masters[0];
+                            if (
+                                firstMaster &&
+                                firstMaster.id &&
+                                firstMaster.location
+                            ) {
+                                await this.selectMaster(
+                                    firstMaster.id,
+                                    firstMaster.location
+                                );
+                            }
+                        }
 
                         // Zoom to fit the entire text in the canvas only on initial load
                         if (!this.initialFontLoaded) {
@@ -939,6 +966,125 @@ class GlyphCanvas {
         console.log(`Exited glyph edit mode - returned to text edit mode`);
         this.updatePropertiesUI();
         this.render();
+    }
+
+    async displayMastersList(): Promise<void> {
+        // Display masters list for text mode
+        console.log('[GlyphCanvas] displayMastersList called');
+
+        if (!fontManager.currentFont?.fontModel) {
+            console.log('[GlyphCanvas] No font model available');
+            return;
+        }
+
+        const fontModel = fontManager.currentFont.fontModel;
+        if (!fontModel.masters || fontModel.masters.length === 0) {
+            console.log('[GlyphCanvas] No masters found');
+            return;
+        }
+
+        console.log('[GlyphCanvas] Found', fontModel.masters.length, 'masters');
+
+        // Add masters section title
+        const mastersTitle = document.createElement('div');
+        mastersTitle.className = 'editor-section-title';
+        mastersTitle.textContent = 'Masters';
+        this.propertiesSection!.appendChild(mastersTitle);
+
+        // Create masters list
+        const mastersList = document.createElement('div');
+        mastersList.className = 'editor-layers-list'; // Reuse layer list styles
+
+        for (const master of fontModel.masters) {
+            const masterItem = document.createElement('div');
+            masterItem.className = 'editor-layer-item'; // Reuse layer item styles
+            masterItem.setAttribute('data-master-id', master.id!);
+
+            if (this.textRunEditor!.selectedMasterId === master.id) {
+                masterItem.classList.add('selected');
+            }
+
+            // Format axis values for display (e.g., "wght:400, wdth:100")
+            // Convert from design coordinates to userspace coordinates
+            let axisValues = '';
+            if (master.location && fontModel.axes) {
+                // Convert design location to userspace location
+                const userspaceLocation = designspaceToUserspace(
+                    master.location,
+                    fontModel.axes as any
+                );
+
+                const axesOrder =
+                    (fontModel as any).axesOrder ||
+                    Object.keys(userspaceLocation).sort();
+                const locationParts = axesOrder
+                    .filter((tag: string) => tag in userspaceLocation)
+                    .map(
+                        (tag: string) =>
+                            `${tag}:${Math.round(userspaceLocation[tag])}`
+                    )
+                    .join(', ');
+                axisValues = locationParts;
+            }
+
+            // Get master name, handling I18NDictionary
+            const masterName =
+                typeof master.name === 'string'
+                    ? master.name
+                    : master.name && 'en' in master.name
+                      ? master.name.en
+                      : null;
+            masterItem.textContent = axisValues || masterName || 'Default';
+
+            // Click handler to select master and animate to its location
+            masterItem.addEventListener('click', () => {
+                this.selectMaster(master.id!, master.location || {});
+            });
+
+            mastersList.appendChild(masterItem);
+        }
+
+        this.propertiesSection!.appendChild(mastersList);
+    }
+
+    async selectMaster(
+        masterId: string,
+        masterLocation: Record<string, number>
+    ): Promise<void> {
+        // Select a master and animate to its location
+        console.log(
+            '[GlyphCanvas] Selecting master:',
+            masterId,
+            'with design location:',
+            masterLocation
+        );
+
+        // Convert design location to userspace location
+        const fontModel = fontManager.currentFont?.fontModel;
+        if (!fontModel?.axes) {
+            console.warn(
+                '[GlyphCanvas] Cannot convert location: no axes available'
+            );
+            return;
+        }
+
+        const userspaceLocation = designspaceToUserspace(
+            masterLocation,
+            fontModel.axes as any
+        );
+        console.log(
+            '[GlyphCanvas] Converted to userspace location:',
+            userspaceLocation
+        );
+
+        // Store selected master ID
+        this.textRunEditor!.selectedMasterId = masterId;
+
+        // Update master list UI
+        this.updateMasterSelection();
+
+        // Animate to master location (10 frames) using userspace coordinates
+        await this.animateToLocation(userspaceLocation, 10);
     }
 
     async displayLayersList(): Promise<void> {
@@ -1067,6 +1213,151 @@ class GlyphCanvas {
 
         // Auto-select layer if current axis values match a layer's master location
         await this.outlineEditor.autoSelectMatchingLayer();
+    }
+
+    updateMasterSelection(): void {
+        // Update the visual selection highlight for master items
+        if (!this.propertiesSection) return;
+
+        const masterItems =
+            this.propertiesSection.querySelectorAll('[data-master-id]');
+        masterItems.forEach((item) => {
+            const masterId = item.getAttribute('data-master-id');
+            if (masterId === this.textRunEditor!.selectedMasterId) {
+                item.classList.add('selected');
+            } else {
+                item.classList.remove('selected');
+            }
+        });
+    }
+
+    autoSelectMatchingMaster(): void {
+        // Check if current axis values match a master location
+        // If so, select that master. If not, deselect current master.
+        if (!fontManager.currentFont?.fontModel) return;
+        if (this.outlineEditor.active) return; // Only for text mode
+
+        const fontModel = fontManager.currentFont.fontModel;
+        if (!fontModel.masters || !fontModel.axes) return;
+
+        const currentLocation: Record<string, number> = {};
+
+        // Get current location from axes manager (userspace coordinates)
+        if (!this.axesManager) return;
+
+        const axes = this.axesManager.getVariationAxes();
+        for (const axis of axes) {
+            currentLocation[axis.tag] =
+                this.axesManager.getAxisValue(axis.tag) || axis.defaultValue;
+        }
+
+        // Check each master for a match (tolerance of 0.5)
+        const tolerance = 0.5;
+        let matchingMaster: any = null;
+
+        for (const master of fontModel.masters) {
+            if (!master.location) continue;
+
+            // Convert master's design location to userspace for comparison
+            const userspaceLocation = designspaceToUserspace(
+                master.location,
+                fontModel.axes as any
+            );
+
+            // Check if all axes match within tolerance
+            let allMatch = true;
+            for (const tag in userspaceLocation) {
+                const masterValue = userspaceLocation[tag];
+                const currentValue = currentLocation[tag];
+                if (
+                    currentValue === undefined ||
+                    Math.abs(masterValue - currentValue) > tolerance
+                ) {
+                    allMatch = false;
+                    break;
+                }
+            }
+
+            if (allMatch) {
+                matchingMaster = master;
+                break;
+            }
+        }
+
+        // Update selection based on match
+        if (
+            matchingMaster &&
+            this.textRunEditor!.selectedMasterId !== matchingMaster.id
+        ) {
+            console.log(
+                '[GlyphCanvas] Auto-selecting master:',
+                matchingMaster.id
+            );
+            this.textRunEditor!.selectedMasterId = matchingMaster.id;
+            this.updateMasterSelection();
+        } else if (
+            !matchingMaster &&
+            this.textRunEditor!.selectedMasterId !== null
+        ) {
+            console.log('[GlyphCanvas] Deselecting master (no match)');
+            this.textRunEditor!.selectedMasterId = null;
+            this.updateMasterSelection();
+        }
+    }
+
+    async animateToLocation(
+        targetLocation: Record<string, number>,
+        frames: number
+    ): Promise<void> {
+        // Animate designspace location from current to target over specified frames
+        const startLocation: Record<string, number> = {};
+
+        // Get current location from axes manager
+        for (const tag in targetLocation) {
+            startLocation[tag] =
+                this.axesManager!.getAxisValue(tag) || targetLocation[tag];
+        }
+
+        console.log(
+            '[GlyphCanvas] Animating from',
+            startLocation,
+            'to',
+            targetLocation
+        );
+
+        // Animate over frames
+        for (let frame = 0; frame <= frames; frame++) {
+            const t = frame / frames; // 0 to 1
+            const currentLocation: Record<string, number> = {};
+
+            for (const tag in targetLocation) {
+                currentLocation[tag] =
+                    startLocation[tag] +
+                    (targetLocation[tag] - startLocation[tag]) * t;
+            }
+
+            // Update axes
+            for (const tag in currentLocation) {
+                this.axesManager!.setAxisValue(tag, currentLocation[tag]);
+            }
+
+            // Update axis sliders UI to show the animation
+            this.axesManager!.updateAxisSliders();
+
+            // Shape text with HarfBuzz (skip render on intermediate frames)
+            if (frame < frames) {
+                this.textRunEditor!.shapeText(true); // Skip render
+                // Render manually for smooth animation
+                this.render();
+            } else {
+                this.textRunEditor!.shapeText(); // Final frame with render
+            }
+
+            // Wait for next frame
+            if (frame < frames) {
+                await new Promise((resolve) => requestAnimationFrame(resolve));
+            }
+        }
     }
 
     getCurrentGlyphName(): string {
@@ -1307,11 +1598,23 @@ class GlyphCanvas {
         // Update editor title bar with glyph name
         this.outlineEditor.updateEditorTitleBar();
 
-        // Don't show properties if not in glyph edit mode
+        // In text mode, show master list
         if (!this.outlineEditor.active) {
+            // Build content off-screen first, then swap in one operation
+            const tempContainer = document.createElement('div');
+            const oldPropertiesSection = this.propertiesSection;
+            this.propertiesSection = tempContainer;
+
+            await this.displayMastersList();
+
             requestAnimationFrame(() => {
-                this.propertiesSection!.innerHTML = '';
+                oldPropertiesSection.innerHTML = '';
+                while (tempContainer.firstChild) {
+                    oldPropertiesSection.appendChild(tempContainer.firstChild);
+                }
             });
+
+            this.propertiesSection = oldPropertiesSection;
             return;
         }
 

@@ -88,6 +88,9 @@ export class GlyphCanvasRenderer {
         // Draw measurement tool intersections (in transformed space)
         this.drawMeasurementIntersections();
 
+        // Draw text mode measurement tool
+        this.drawTextModeMeasurements();
+
         // Draw cursor
         this.drawCursor();
 
@@ -1484,7 +1487,7 @@ export class GlyphCanvasRenderer {
         this.ctx.stroke();
 
         // Draw bbox dimensions as text labels
-        const fontSize = 12 * invScale;
+        const fontSize = 10 * invScale;
         this.ctx.font = `${fontSize}px monospace`;
         this.ctx.fillStyle = isDarkTheme
             ? 'rgba(255, 0, 255, 0.9)'
@@ -1920,7 +1923,8 @@ export class GlyphCanvasRenderer {
         x: number,
         y: number,
         distance: number,
-        orientation: 'horizontal' | 'vertical'
+        orientation: 'horizontal' | 'vertical',
+        placeBelow: boolean = false
     ) {
         const isDarkTheme =
             document.documentElement.getAttribute('data-theme') !== 'light';
@@ -1941,14 +1945,15 @@ export class GlyphCanvasRenderer {
         this.ctx.translate(x, y);
         this.ctx.scale(1, -1);
 
-        this.ctx.font = `${fontSize}px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`;
+        const labelFontSize = fontSize * 0.83;
+        this.ctx.font = `${labelFontSize}px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`;
         this.ctx.textAlign = 'center';
         this.ctx.textBaseline = 'middle';
 
         // Measure text dimensions
         const metrics = this.ctx.measureText(distanceText);
         const textWidth = metrics.width;
-        const textHeight = fontSize * 1.2;
+        const textHeight = labelFontSize * 1.2;
 
         // Calculate background padding
         const padding = 4 * invScale;
@@ -1960,8 +1965,12 @@ export class GlyphCanvasRenderer {
         let offsetY = 0;
 
         if (orientation === 'horizontal') {
-            // Place label slightly above the line
-            offsetY = -bgHeight / 2 - 8 * invScale;
+            // Place label above or below the line based on placeBelow parameter
+            if (placeBelow) {
+                offsetY = bgHeight / 2 + 8 * invScale;
+            } else {
+                offsetY = -bgHeight / 2 - 8 * invScale;
+            }
         } else {
             // Place label slightly to the right of the line
             offsetX = bgWidth / 2 + 8 * invScale;
@@ -2230,5 +2239,340 @@ export class GlyphCanvasRenderer {
         }
 
         console.log('[Renderer]', '========================');
+    }
+
+    /**
+     * Draw measurement tool for text mode
+     * Shows horizontal line at mouse Y position with distance measurements from glyph edges to outline intersections
+     */
+    drawTextModeMeasurements() {
+        // Only draw when alt key is pressed, in text mode, and we have a font
+        if (!this.glyphCanvas.altKeyPressed) return;
+
+        if (!this.glyphCanvas.altKeyPressed) return;
+
+        if (
+            this.glyphCanvas.outlineEditor.active ||
+            !this.textRunEditor.shapedGlyphs ||
+            this.textRunEditor.shapedGlyphs.length === 0 ||
+            !window.currentFontModel
+        ) {
+            return;
+        }
+
+        console.log(
+            '[TextMeasure] Drawing measurements, mouse at',
+            this.glyphCanvas.mouseX,
+            this.glyphCanvas.mouseY
+        );
+
+        const isDarkTheme =
+            document.documentElement.getAttribute('data-theme') !== 'light';
+        const colors = isDarkTheme
+            ? APP_SETTINGS.OUTLINE_EDITOR.COLORS_DARK
+            : APP_SETTINGS.OUTLINE_EDITOR.COLORS_LIGHT;
+
+        // Get mouse position in font space (using mouseX/mouseY which are in screen pixels)
+        const { x: mouseGlyphX, y: mouseGlyphY } =
+            this.viewportManager.getFontSpaceCoordinates(
+                this.glyphCanvas.mouseX,
+                this.glyphCanvas.mouseY
+            );
+
+        console.log(
+            '[TextMeasure] Mouse coordinates:',
+            'screen:',
+            { x: this.glyphCanvas.mouseX, y: this.glyphCanvas.mouseY },
+            'font space:',
+            { x: mouseGlyphX, y: mouseGlyphY },
+            'pan:',
+            { x: this.viewportManager.panX, y: this.viewportManager.panY },
+            'scale:',
+            this.viewportManager.scale
+        );
+
+        // Draw horizontal line across entire viewport at mouse Y position
+        // Style it like the edit mode crosshair (solid line, 1px canvas width)
+        this.ctx.save();
+
+        this.ctx.strokeStyle = colors.MEASUREMENT_TOOL_CROSSHAIR;
+        this.ctx.lineWidth = 1;
+
+        // Get viewport bounds in font space
+        const viewportLeft =
+            -this.viewportManager.panX / this.viewportManager.scale;
+        const viewportRight =
+            (this.canvas.width - this.viewportManager.panX) /
+            this.viewportManager.scale;
+
+        this.ctx.beginPath();
+        this.ctx.moveTo(viewportLeft, mouseGlyphY);
+        this.ctx.lineTo(viewportRight, mouseGlyphY);
+        this.ctx.stroke();
+
+        this.ctx.restore();
+
+        // Get current master ID for layer lookup
+        // Use the first master if available, or get it from the selected layer
+        const fontModel = window.currentFontModel;
+        if (!fontModel || !fontModel.masters || fontModel.masters.length === 0)
+            return;
+
+        // Try to get master from selectedLayerId, otherwise use first master
+        let masterId = fontModel.masters[0].id;
+        if (this.glyphCanvas.outlineEditor.selectedLayerId) {
+            // Find the master from the selected layer
+            const selectedLayer = fontModel.glyphs
+                .flatMap((g: any) => g.layers || [])
+                .find(
+                    (l: any) =>
+                        l.id === this.glyphCanvas.outlineEditor.selectedLayerId
+                );
+            if (selectedLayer && selectedLayer.master) {
+                masterId = selectedLayer.master.id;
+            }
+        }
+
+        // Process each glyph in the text line
+        let xPosition = 0;
+        const invScale = 1 / this.viewportManager.scale;
+
+        // Track previous right label position for overlap detection
+        let previousRightLabelEnd: number | null = null;
+
+        console.log(
+            '[TextMeasure] Processing',
+            this.textRunEditor.shapedGlyphs.length,
+            'glyphs, masterId=',
+            masterId
+        );
+
+        this.textRunEditor.shapedGlyphs.forEach(
+            (glyph: any, glyphIndex: number) => {
+                const glyphId = glyph.g;
+                const xOffset = glyph.dx || 0;
+                const yOffset = glyph.dy || 0;
+                const xAdvance = glyph.ax || 0;
+
+                // Glyph position in font space
+                const glyphX = xPosition + xOffset;
+                const glyphY = yOffset;
+
+                // Get glyph name from compiled OpenType font
+                let glyphName: string | undefined;
+                if (
+                    this.glyphCanvas.opentypeFont &&
+                    this.glyphCanvas.opentypeFont.glyphs.get(glyphId)
+                ) {
+                    const glyph =
+                        this.glyphCanvas.opentypeFont.glyphs.get(glyphId);
+                    glyphName = glyph.name || undefined;
+                }
+
+                console.log('[TextMeasure] Found glyph name:', glyphName);
+                if (!glyphName) {
+                    console.log('[TextMeasure] No glyph name, skipping');
+                    xPosition += xAdvance;
+                    return;
+                }
+
+                // Find the glyph in the font model
+                const fontModel = window.currentFontModel;
+                if (!fontModel) {
+                    console.log('[TextMeasure] No font model, skipping');
+                    xPosition += xAdvance;
+                    return;
+                }
+
+                const glyphWrapper = fontModel.findGlyph(glyphName);
+                console.log(
+                    '[TextMeasure] Glyph wrapper:',
+                    !!glyphWrapper,
+                    'layers:',
+                    glyphWrapper?.layers?.length
+                );
+                if (!glyphWrapper || !glyphWrapper.layers) {
+                    console.log(
+                        '[TextMeasure] No glyph wrapper or layers, skipping'
+                    );
+                    xPosition += xAdvance;
+                    return;
+                }
+
+                // Find the layer for the selected master
+                // Only proceed if a master is selected in text mode
+                const selectedMasterId = this.textRunEditor.selectedMasterId;
+                if (!selectedMasterId) {
+                    xPosition += xAdvance;
+                    return;
+                }
+
+                console.log(
+                    `[TextMeasure] ${glyphName}: Looking for master ${selectedMasterId}, available masters:`,
+                    glyphWrapper.layers.map((l: any) => ({
+                        master: (l.master as any)?.DefaultForMaster || 'none',
+                        hasShapes: !!l.shapes,
+                        shapeCount: l.shapes?.length || 0
+                    }))
+                );
+
+                const layer = glyphWrapper.layers.find(
+                    (l: any) =>
+                        l.master &&
+                        (l.master as any).DefaultForMaster === selectedMasterId
+                );
+
+                if (!layer) {
+                    console.log(
+                        `[TextMeasure] ${glyphName}: No matching layer found!`
+                    );
+                    xPosition += xAdvance;
+                    return;
+                }
+
+                console.log(
+                    `[TextMeasure] ${glyphName}: Found layer with ${(layer as any).shapes?.length || 0} shapes`
+                );
+
+                // Calculate measurement Y in glyph-local space
+                // mouseGlyphY is in font space (absolute Y), yOffset is the glyph's Y position
+                // To get the Y coordinate within the glyph's own coordinate system, subtract yOffset
+                const lineY = mouseGlyphY - yOffset;
+
+                console.log(
+                    `[TextMeasure] ${glyphName}: yOffset=${yOffset}, mouseGlyphY=${mouseGlyphY.toFixed(1)}, lineY=${lineY.toFixed(1)}, bbox=`,
+                    (layer as any).getBoundingBox(false)
+                );
+
+                // Use the Layer's sidebearing method to get measurements
+                const sidebearings = (layer as any).getSidebearingsAtHeight(
+                    lineY
+                );
+
+                console.log(
+                    `[TextMeasure] ${glyphName}: sidebearings=`,
+                    sidebearings
+                );
+
+                // Only draw if we have valid sidebearings (i.e., outline intersects the line)
+                if (sidebearings !== null) {
+                    const leftDistance = sidebearings.left;
+                    const rightDistance = sidebearings.right;
+
+                    // Calculate intersection points in glyph-local space
+                    const firstIntersectionX = leftDistance;
+                    const lastIntersectionX = xAdvance - rightDistance;
+
+                    // Transform to world space for drawing
+                    const firstWorldX = firstIntersectionX + glyphX;
+                    const firstWorldY = mouseGlyphY;
+                    const lastWorldX = lastIntersectionX + glyphX;
+                    const lastWorldY = mouseGlyphY;
+                    const glyphLeftX = glyphX;
+                    const glyphRightX = glyphX + xAdvance;
+
+                    this.ctx.save();
+
+                    // Draw dots at intersections
+                    this.ctx.fillStyle = colors.MEASUREMENT_TOOL_LINE;
+                    const dotRadius = 3 / this.viewportManager.scale;
+
+                    this.ctx.beginPath();
+                    this.ctx.arc(
+                        firstWorldX,
+                        firstWorldY,
+                        dotRadius,
+                        0,
+                        Math.PI * 2
+                    );
+                    this.ctx.fill();
+
+                    this.ctx.beginPath();
+                    this.ctx.arc(
+                        lastWorldX,
+                        lastWorldY,
+                        dotRadius,
+                        0,
+                        Math.PI * 2
+                    );
+                    this.ctx.fill();
+
+                    // Draw measurement lines from glyph edges to intersections
+                    this.ctx.strokeStyle = colors.MEASUREMENT_TOOL_LINE;
+                    this.ctx.lineWidth = 1 / this.viewportManager.scale;
+
+                    // Left measurement line
+                    this.ctx.beginPath();
+                    this.ctx.moveTo(glyphLeftX, mouseGlyphY);
+                    this.ctx.lineTo(firstWorldX, mouseGlyphY);
+                    this.ctx.stroke();
+
+                    // Right measurement line
+                    this.ctx.beginPath();
+                    this.ctx.moveTo(lastWorldX, mouseGlyphY);
+                    this.ctx.lineTo(glyphRightX, mouseGlyphY);
+                    this.ctx.stroke();
+
+                    // Draw vertical ticks at glyph edges
+                    const tickHeight = 20 * invScale;
+                    this.ctx.beginPath();
+                    this.ctx.moveTo(glyphLeftX, mouseGlyphY - tickHeight / 2);
+                    this.ctx.lineTo(glyphLeftX, mouseGlyphY + tickHeight / 2);
+                    this.ctx.stroke();
+
+                    this.ctx.beginPath();
+                    this.ctx.moveTo(glyphRightX, mouseGlyphY - tickHeight / 2);
+                    this.ctx.lineTo(glyphRightX, mouseGlyphY + tickHeight / 2);
+                    this.ctx.stroke();
+
+                    // Draw labels for the measurements
+                    const fontSize = 12 * invScale;
+                    const labelFontSize = fontSize * 0.83;
+
+                    // Calculate label positions and check for overlap
+                    const leftLabelX = (glyphLeftX + firstWorldX) / 2;
+                    const rightLabelX = (lastWorldX + glyphRightX) / 2;
+
+                    // Estimate label width (conservative estimate)
+                    const estimatedLabelWidth =
+                        leftDistance.toFixed(1).length * labelFontSize * 0.6 +
+                        16 * invScale;
+
+                    // Check if left label would overlap with previous right label
+                    const leftLabelStart = leftLabelX - estimatedLabelWidth / 2;
+                    const leftLabelPlaceBelow =
+                        previousRightLabelEnd !== null &&
+                        leftLabelStart < previousRightLabelEnd;
+
+                    // Left label
+                    this.drawMeasurementLabel(
+                        leftLabelX,
+                        mouseGlyphY,
+                        leftDistance,
+                        'horizontal',
+                        leftLabelPlaceBelow
+                    );
+
+                    // Right label (always above)
+                    this.drawMeasurementLabel(
+                        rightLabelX,
+                        mouseGlyphY,
+                        rightDistance,
+                        'horizontal',
+                        false
+                    );
+
+                    // Update previous right label end position for next iteration
+                    const rightLabelWidth =
+                        rightDistance.toFixed(1).length * labelFontSize * 0.6 +
+                        16 * invScale;
+                    previousRightLabelEnd = rightLabelX + rightLabelWidth / 2;
+
+                    this.ctx.restore();
+                }
+
+                xPosition += xAdvance;
+            }
+        );
     }
 }

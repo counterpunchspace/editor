@@ -955,7 +955,7 @@ export class Layer extends ArrayElementBase {
      * @param pathData - Path data with nodes array and closed flag
      * @returns Array of Bezier curve segments, each with {points, type}
      */
-    private static processPathSegments(pathData: {
+    public static processPathSegments(pathData: {
         nodes: any[];
         closed?: boolean;
     }): Array<{
@@ -1255,6 +1255,12 @@ export class Layer extends ArrayElementBase {
                 // Add direct path
                 const pathData = shape.asPath().toJSON();
                 if (pathData.nodes) {
+                    // Parse nodes if they're stored as a string
+                    if (typeof pathData.nodes === 'string') {
+                        pathData.nodes = LayerDataNormalizer.parseNodes(
+                            pathData.nodes
+                        );
+                    }
                     paths.push(pathData);
                 }
             } else if (shape.isComponent()) {
@@ -1563,6 +1569,44 @@ export class Layer extends ArrayElementBase {
         intersections.sort((a, b) => a.t - b.t);
 
         return intersections;
+    }
+
+    /**
+     * Calculate sidebearings at a given Y height by measuring distance from glyph edges to first/last outline intersections
+     * @param y - Y coordinate at which to measure
+     * @returns Object with left and right sidebearing distances, or null if no intersections found at this height. Negative values indicate outline extends beyond glyph edges.
+     */
+    private getSidebearingsAtHeight(y: number): {
+        left: number;
+        right: number;
+    } | null {
+        const glyphWidth = this.width;
+
+        // Define horizontal line extending far beyond glyph bounds
+        const lineP1 = { x: -10000, y: y };
+        const lineP2 = { x: glyphWidth + 10000, y: y };
+
+        // Use existing getIntersectionsOnLine method with components included
+        const intersections = this.getIntersectionsOnLine(lineP1, lineP2, true);
+
+        if (intersections.length === 0) {
+            return null;
+        }
+
+        // Sort by X coordinate
+        intersections.sort((a, b) => a.x - b.x);
+
+        const firstIntersection = intersections[0];
+        const lastIntersection = intersections[intersections.length - 1];
+
+        // Calculate distances from glyph edges
+        const leftSidebearing = firstIntersection.x - 0;
+        const rightSidebearing = glyphWidth - lastIntersection.x;
+
+        return {
+            left: leftSidebearing,
+            right: rightSidebearing
+        };
     }
 
     /**

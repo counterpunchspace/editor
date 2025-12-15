@@ -85,6 +85,15 @@ export class AxesManager {
         return this.opentypeFont.tables.fvar.axes || [];
     }
 
+    getAxisValue(axisTag: string): number | undefined {
+        return this.variationSettings[axisTag];
+    }
+
+    setAxisValue(axisTag: string, value: number): void {
+        this.variationSettings[axisTag] = value;
+        this.updateAxisSliders();
+    }
+
     updateAxesUI() {
         if (!this.axesSection) return;
 
