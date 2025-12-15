@@ -1052,11 +1052,11 @@ class GlyphCanvas {
             stackLabel.style.cssText = `
                 margin-top: 8px;
                 padding: 8px;
-                background: rgba(255, 255, 255, 0.05);
+                background: var(--input-bg);
                 border-radius: 4px;
                 font-family: 'IBM Plex Sans', monospace;
                 font-size: 11px;
-                color: rgba(255, 255, 255, 0.6);
+                color: var(--text-muted);
                 word-break: break-all;
                 line-height: 1.4;
             `;
