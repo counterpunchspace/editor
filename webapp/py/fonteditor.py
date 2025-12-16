@@ -19,6 +19,7 @@ Core functionality for font editing operations
 """
 
 import js
+import pyodide.ffi
 
 
 def CurrentFont():
@@ -35,7 +36,7 @@ def CurrentFont():
         >>> font = CurrentFont()
         >>> print(font.info.familyName)
     """
-    if js.window.currentFontModel is None:
+    if type(js.window.currentFontModel) is pyodide.ffi.JsNull:
         raise RuntimeError("No font is currently open")
     return js.window.currentFontModel
 
