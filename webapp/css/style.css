@@ -1624,8 +1624,7 @@ kbd + kbd {
     color: var(--accent-magenta);
     margin-bottom: 8px;
     font-weight: 500;
-    border-bottom: 1px solid var(--border-primary);
-    padding-bottom: 4px;
+    padding-bottom: 0;
 }
 
 /* File Browser Toolbar */
@@ -1633,8 +1632,7 @@ kbd + kbd {
     display: flex;
     gap: 6px;
     margin-bottom: 8px;
-    padding-bottom: 8px;
-    border-bottom: 1px solid var(--border-primary);
+    padding-bottom: 0;
     flex-wrap: wrap;
 }
 
@@ -1677,7 +1675,7 @@ kbd + kbd {
     padding: 6px 8px;
     cursor: pointer;
     border-radius: 3px;
-    margin: 2px 0;
+    margin: 1px 0;
     transition: all 0.2s ease;
     position: relative;
 }
