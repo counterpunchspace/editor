@@ -1560,6 +1560,7 @@ export class GlyphCanvasRenderer {
         // Draw crosshair or user-defined line when alt key is pressed in editing mode
         if (
             this.glyphCanvas.altKeyPressed &&
+            this.glyphCanvas.measurementToolVisible &&
             this.glyphCanvas.outlineEditor.active
         ) {
             const isDarkTheme =
@@ -1611,6 +1612,7 @@ export class GlyphCanvasRenderer {
         // Only draw when alt key is pressed, in editing mode, and we have layer data
         if (
             !this.glyphCanvas.altKeyPressed ||
+            !this.glyphCanvas.measurementToolVisible ||
             !this.glyphCanvas.outlineEditor.active ||
             !this.glyphCanvas.outlineEditor.layerData
         ) {
@@ -2255,7 +2257,7 @@ export class GlyphCanvasRenderer {
         // Only draw when alt key is pressed, in text mode, and we have a font
         if (!this.glyphCanvas.altKeyPressed) return;
 
-        if (!this.glyphCanvas.altKeyPressed) return;
+        if (!this.glyphCanvas.measurementToolVisible) return;
 
         if (
             this.glyphCanvas.outlineEditor.active ||

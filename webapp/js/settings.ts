@@ -78,6 +78,9 @@ const APP_SETTINGS = {
         SHOW_BOUNDING_BOX: false, // Show calculated bounding box in editing mode
         INTERPOLATION_ANIMATION_DELAY: 0, // ms - delay between animation frames for debugging (0 = no delay)
 
+        // Measurement tool
+        MEASUREMENT_TOOL_DISPLAY_DELAY: 600, // ms - delay before showing measurement tool when Alt key is pressed
+
         // Colors - Light Theme
         COLORS_LIGHT: {
             // Grid

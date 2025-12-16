@@ -90,6 +90,9 @@ class GlyphCanvas {
     isMeasurementDragging: boolean = false;
     measurementOriginX: number = 0;
     measurementOriginY: number = 0;
+    measurementToolDelayTimer: number | null = null; // Timer for delaying measurement tool display
+    measurementToolVisible: boolean = false; // Whether to actually show the measurement tool
+    measurementToolCancelledByZoom: boolean = false; // Prevent showing tool if user zoomed during delay
 
     // Auto-pan anchor for text mode (cursor position)
     textModeAutoPanAnchorScreen: { x: number; y: number } | null = null;
@@ -211,6 +214,8 @@ class GlyphCanvas {
             // Track Alt key for measurement tool
             if (e.altKey || e.key === 'Alt') {
                 this.altKeyPressed = true;
+                // Start delay timer before showing measurement tool
+                this.startMeasurementToolDelayTimer();
                 this.render();
             }
             this.onKeyDown(e);
@@ -243,6 +248,10 @@ class GlyphCanvas {
             // Track Alt key release
             if (e.key === 'Alt') {
                 this.altKeyPressed = false;
+                this.cancelMeasurementToolDelayTimer();
+                this.measurementToolVisible = false;
+                this.measurementToolCancelledByZoom = false;
+                this.updateCursorStyle(); // Update cursor immediately
                 this.render();
             }
 
@@ -619,6 +628,9 @@ class GlyphCanvas {
             const rect = this.canvas!.getBoundingClientRect();
             this.measurementOriginX = e.clientX - rect.left;
             this.measurementOriginY = e.clientY - rect.top;
+            // Show measurement tool immediately when dragging starts
+            this.showMeasurementToolImmediately();
+            this.updateCursorStyle(); // Update cursor immediately
             this.render();
             return;
         }
@@ -676,6 +688,14 @@ class GlyphCanvas {
     onWheel(e: WheelEvent): void {
         e.preventDefault();
 
+        // If Alt is pressed, turn off the measurement tool (cancel delay or hide if visible)
+        if (this.altKeyPressed) {
+            this.cancelMeasurementToolDelayTimer();
+            this.measurementToolVisible = false;
+            this.measurementToolCancelledByZoom = true;
+            this.updateCursorStyle(); // Update cursor immediately
+        }
+
         const rect = this.canvas!.getBoundingClientRect();
         this.viewportManager!.handleWheel(e, rect, this.render.bind(this));
     }
@@ -706,9 +726,13 @@ class GlyphCanvas {
         }
     }
 
-    updateCursorStyle(e: MouseEvent | KeyboardEvent): void {
-        // Alt key pressed in editing mode = crosshair cursor for measurement tool
-        if (this.altKeyPressed && this.outlineEditor.active) {
+    updateCursorStyle(e?: MouseEvent | KeyboardEvent): void {
+        // Alt key pressed in editing mode with measurement tool visible = crosshair cursor
+        if (
+            this.altKeyPressed &&
+            this.outlineEditor.active &&
+            this.measurementToolVisible
+        ) {
             this.canvas!.style.cursor = 'crosshair';
             return;
         }
@@ -2054,6 +2078,40 @@ class GlyphCanvas {
         );
 
         this.textModeAutoPanAnchorScreen = screenPos;
+    }
+
+    startMeasurementToolDelayTimer(): void {
+        // Cancel any existing timer
+        this.cancelMeasurementToolDelayTimer();
+
+        // Reset zoom cancellation flag when starting a new delay
+        this.measurementToolCancelledByZoom = false;
+
+        // Start delay timer
+        const delay =
+            APP_SETTINGS.OUTLINE_EDITOR.MEASUREMENT_TOOL_DISPLAY_DELAY;
+        this.measurementToolDelayTimer = window.setTimeout(() => {
+            // Only show if not cancelled by zooming
+            if (!this.measurementToolCancelledByZoom) {
+                this.measurementToolVisible = true;
+                this.updateCursorStyle(); // Update cursor immediately
+            }
+            this.measurementToolDelayTimer = null;
+            this.render();
+        }, delay);
+    }
+
+    cancelMeasurementToolDelayTimer(): void {
+        if (this.measurementToolDelayTimer !== null) {
+            window.clearTimeout(this.measurementToolDelayTimer);
+            this.measurementToolDelayTimer = null;
+        }
+    }
+
+    showMeasurementToolImmediately(): void {
+        // Cancel delay timer and show immediately
+        this.cancelMeasurementToolDelayTimer();
+        this.measurementToolVisible = true;
     }
 
     applyTextModeAutoPanAdjustment(): void {
