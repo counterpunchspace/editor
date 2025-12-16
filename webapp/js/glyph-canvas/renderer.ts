@@ -1558,11 +1558,7 @@ export class GlyphCanvasRenderer {
         this.ctx.fillText(zoomText, 10, 50);
 
         // Draw crosshair or user-defined line when alt key is pressed in editing mode
-        if (
-            this.glyphCanvas.altKeyPressed &&
-            this.glyphCanvas.measurementToolVisible &&
-            this.glyphCanvas.outlineEditor.active
-        ) {
+        if (this.glyphCanvas.measurementTool.shouldDrawVisuals()) {
             const isDarkTheme =
                 document.documentElement.getAttribute('data-theme') !== 'light';
             const colors = isDarkTheme
@@ -1572,13 +1568,15 @@ export class GlyphCanvasRenderer {
             this.ctx.lineWidth = 1;
             this.ctx.beginPath();
 
-            if (this.glyphCanvas.isMeasurementDragging) {
+            if (this.glyphCanvas.measurementTool.isDragging) {
                 // Draw user-defined line from origin to current mouse position
                 const originCanvasX =
-                    (this.glyphCanvas.measurementOriginX * this.canvas.width) /
+                    (this.glyphCanvas.measurementTool.originX *
+                        this.canvas.width) /
                     rect.width;
                 const originCanvasY =
-                    (this.glyphCanvas.measurementOriginY * this.canvas.height) /
+                    (this.glyphCanvas.measurementTool.originY *
+                        this.canvas.height) /
                     rect.height;
 
                 this.ctx.moveTo(originCanvasX, originCanvasY);
@@ -1611,9 +1609,7 @@ export class GlyphCanvasRenderer {
     drawMeasurementIntersections() {
         // Only draw when alt key is pressed, in editing mode, and we have layer data
         if (
-            !this.glyphCanvas.altKeyPressed ||
-            !this.glyphCanvas.measurementToolVisible ||
-            !this.glyphCanvas.outlineEditor.active ||
+            !this.glyphCanvas.measurementTool.shouldDrawVisuals() ||
             !this.glyphCanvas.outlineEditor.layerData
         ) {
             return;
@@ -1671,13 +1667,13 @@ export class GlyphCanvasRenderer {
         let verticalIntersections: Array<{ x: number; y: number; t: number }> =
             [];
 
-        if (this.glyphCanvas.isMeasurementDragging) {
+        if (this.glyphCanvas.measurementTool.isDragging) {
             // User-defined line: get intersections along the line from origin to current mouse
             // Transform origin CSS coordinates to glyph-local space using the same method as current mouse
             let { glyphX: originGlyphX, glyphY: originGlyphY } =
                 this.glyphCanvas.toGlyphLocal(
-                    this.glyphCanvas.measurementOriginX,
-                    this.glyphCanvas.measurementOriginY
+                    this.glyphCanvas.measurementTool.originX,
+                    this.glyphCanvas.measurementTool.originY
                 );
 
             // Transform current mouse position to component-local space
@@ -1810,7 +1806,7 @@ export class GlyphCanvasRenderer {
         }> = [];
 
         if (
-            this.glyphCanvas.isMeasurementDragging &&
+            this.glyphCanvas.measurementTool.isDragging &&
             horizontalIntersections.length > 0
         ) {
             // User-defined line: draw measurements along the line
@@ -2257,7 +2253,8 @@ export class GlyphCanvasRenderer {
         // Only draw when alt key is pressed, in text mode, and we have a font
         if (!this.glyphCanvas.altKeyPressed) return;
 
-        if (!this.glyphCanvas.measurementToolVisible) return;
+        if (!this.glyphCanvas.measurementTool.shouldDrawTextModeMeasurements())
+            return;
 
         if (
             this.glyphCanvas.outlineEditor.active ||
