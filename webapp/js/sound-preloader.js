@@ -6,7 +6,9 @@
 
     // Always update volume control visibility on DOM ready
     document.addEventListener('DOMContentLoaded', () => {
-        const volumeControlItem = document.querySelector('.volume-control-item');
+        const volumeControlItem = document.querySelector(
+            '.volume-control-item'
+        );
         if (volumeControlItem) {
             volumeControlItem.style.display = soundsEnabled ? 'block' : 'none';
         }
