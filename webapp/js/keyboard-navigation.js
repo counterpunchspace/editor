@@ -485,6 +485,47 @@
     }
 
     /**
+     * Check if element is a text input where Cmd+A should be allowed
+     */
+    function isTextInputElement(element) {
+        if (!element) return false;
+
+        const tagName = element.tagName?.toLowerCase();
+        const type = element.type?.toLowerCase();
+
+        // Allow in input fields (except non-text types)
+        if (tagName === 'input') {
+            const textInputTypes = [
+                'text',
+                'password',
+                'email',
+                'search',
+                'tel',
+                'url',
+                'number'
+            ];
+            return !type || textInputTypes.includes(type);
+        }
+
+        // Allow in textarea elements
+        if (tagName === 'textarea') {
+            return true;
+        }
+
+        // Allow in contenteditable elements (like Ace Editor)
+        if (element.isContentEditable || element.contentEditable === 'true') {
+            return true;
+        }
+
+        // Allow in elements within Ace Editor
+        if (element.closest('.ace_editor')) {
+            return true;
+        }
+
+        return false;
+    }
+
+    /**
      * Handle keyboard shortcuts
      */
     function handleKeyDown(event) {
@@ -492,6 +533,65 @@
         const cmdKey = isMac ? event.metaKey : event.ctrlKey;
         const shiftKey = event.shiftKey;
         const key = event.key.toLowerCase();
+
+        // Handle Cmd+A (select all) blocking
+        const isCmdA = cmdKey && key === 'a' && !shiftKey && !event.altKey;
+
+        if (isCmdA) {
+            const activeElement = document.activeElement;
+            const tagName = activeElement?.tagName?.toLowerCase();
+
+            console.log('[KeyboardNav]', 'Cmd+A detected - activeElement:', {
+                tagName,
+                id: activeElement?.id,
+                glyphCanvasExists: !!window.glyphCanvas,
+                outlineEditorActive: window.glyphCanvas?.outlineEditor?.active,
+                isGlyphCanvas: window.glyphCanvas?.canvas === activeElement
+            });
+
+            // Special case: Handle glyph canvas in text mode
+            if (
+                tagName === 'canvas' &&
+                window.glyphCanvas?.canvas === activeElement
+            ) {
+                const glyphCanvas = window.glyphCanvas;
+                if (glyphCanvas && !glyphCanvas.outlineEditor?.active) {
+                    // In text mode - handle select all ourselves
+                    console.log(
+                        '[KeyboardNav]',
+                        'Handling Cmd+A in canvas text mode'
+                    );
+                    event.preventDefault();
+                    event.stopPropagation();
+                    event.stopImmediatePropagation();
+                    glyphCanvas.textRunEditor?.selectAll();
+                    glyphCanvas.render();
+                    return;
+                }
+            }
+
+            // Allow Cmd+A in text input elements
+            if (isTextInputElement(activeElement)) {
+                console.log(
+                    '[KeyboardNav]',
+                    'Allowing Cmd+A in text input:',
+                    activeElement.tagName,
+                    activeElement.id || activeElement.className
+                );
+                return;
+            }
+
+            // Block Cmd+A everywhere else
+            console.log(
+                '[KeyboardNav]',
+                'Blocking Cmd+A outside text inputs',
+                activeElement?.tagName
+            );
+            event.preventDefault();
+            event.stopPropagation();
+            event.stopImmediatePropagation();
+            return;
+        }
 
         const settings = getViewSettings();
         if (!settings) return;
