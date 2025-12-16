@@ -1,5 +1,9 @@
 # Unreleased
 
+- **Add items here** for the next release (Replace this comment)
+
+# v0.1.2
+
 - **Multi-Format Font Loading**: Implemented opening of `.glyphs` and `.vfj` font format via Rust/WASM using babelfont-rs library. Added `open_font_file()` WASM function that detects file format by extension, loads via babelfont convertors, and returns babelfont JSON. File browser now automatically converts non-.babelfont files transparently, enabling direct import from Glyphs sources. Opening UFO/Designspace and `.glyphspackages` will have to wait until we have native file system access.
 - **Sidebearing Calculation API**: Refactored measurement tool to use new `Layer.getSidebearingsAtHeight(y?)` private method. Provides cleaner architecture where each glyph calculates its own sidebearings (left/right distances from glyph edges to outline intersections) at a given Y height, with negative values for overhangs. Measurement rendering now calls this method per-glyph instead of performing bulk intersection calculations.
 - **Text Mode Master Selection**: Added master list UI in text mode sidebar with animated location transitions and auto-selection. Click a master to animate HarfBuzz rendering to that master's location over 10 frames. Slider changes automatically select/deselect masters based on location match (0.5 tolerance). Measurement tool now requires master selection and uses selected master ID to match glyph layers.
