@@ -1,6 +1,6 @@
 # Font Object Model API Documentation
 
-**Version:** v0.1.2-p.4
+**Version:** v0.1.2-p.5
 
 *Auto-generated from JavaScript object model introspection*
 
