@@ -2121,6 +2121,12 @@ export class GlyphCanvasRenderer {
             return;
         }
 
+        // Don't draw selection background when in edit mode (outline editor active)
+        // Selection state is preserved, but background is hidden until we exit edit mode
+        if (this.glyphCanvas.outlineEditor.active) {
+            return;
+        }
+
         const range = this.textRunEditor.getSelectionRange();
         const invScale = 1 / this.viewportManager.scale;
 

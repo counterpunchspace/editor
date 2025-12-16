@@ -253,6 +253,10 @@ export class TextRunEditor {
 
         this.call('exitcomponentediting'); // Ensure any component editing is exited
 
+        // Clear text selection when entering edit mode
+        // Selection state is preserved but hidden until we exit edit mode
+        this.clearSelection();
+
         // Store the previous index to pass to the event handler
         const previousIndex = this.selectedGlyphIndex;
 
