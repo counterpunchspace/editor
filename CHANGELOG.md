@@ -2,11 +2,11 @@
 
 - **Add items here** for the next release (Replace this comment)
 
-# v0.1.2-p.2
+# v0.1.2-p.3
 
 - **Add items here** for the next release (Replace this comment)
 
-# v0.1.2-p.1
+# v0.1.2-p.2
 
 - **Debug Fonts** Don't emit debug fonts in production
 
