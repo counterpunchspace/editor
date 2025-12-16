@@ -333,8 +333,8 @@ async function deleteItem(itemPath: string, itemName: string, isDir: boolean) {
 
     try {
         const fs = await getOPFSRoot();
-        // Remove the item
-        await fs.remove(itemName, { recursive: isDir });
+        // Remove the item using the full path
+        await fs.remove(itemPath, { recursive: isDir });
 
         console.log('[FileBrowser]', `Deleted: ${itemPath}`);
 
@@ -402,33 +402,38 @@ async function buildFileTree(rootPath = '/') {
     const items = await scanDirectory(rootPath);
     let html = '';
 
+    // Parent directory button (if not at root)
+    const parentBtn =
+        rootPath !== '/'
+            ? (() => {
+                  const parentPath =
+                      rootPath.substring(0, rootPath.lastIndexOf('/')) || '/';
+                  return `<button onclick="navigateToPath('${parentPath}')" class="file-action-btn" title="Go to parent directory">
+                <span class="material-symbols-outlined">arrow_upward</span> Up
+            </button>`;
+              })()
+            : '';
+
     // Toolbar with actions
     html += `<div class="file-toolbar">
+        ${parentBtn}
         <button onclick="createFolder()" class="file-action-btn" title="Create new folder">
-            📁 New Folder
+            <span class="material-symbols-outlined">create_new_folder</span> New Folder
         </button>
         <button onclick="document.getElementById('file-upload-input').click()" class="file-action-btn" title="Upload files">
-            📤 Upload Files
+            <span class="material-symbols-outlined">upload_file</span> Upload Files
         </button>
         <button onclick="document.getElementById('folder-upload-input').click()" class="file-action-btn" title="Upload folder with structure">
-            📂 Upload Folder
+            <span class="material-symbols-outlined">drive_folder_upload</span> Upload Folder
         </button>
         <button onclick="refreshFileSystem()" class="file-action-btn" title="Refresh">
-            🔄 Refresh
+            <span class="material-symbols-outlined">refresh</span> Refresh
         </button>
     </div>
     <input type="file" id="file-upload-input" multiple style="display: none;" 
            onchange="handleFileUpload(event)">
     <input type="file" id="folder-upload-input" webkitdirectory directory multiple style="display: none;" 
            onchange="handleFileUpload(event)">`;
-
-    if (rootPath !== '/') {
-        const parentPath =
-            rootPath.substring(0, rootPath.lastIndexOf('/')) || '/';
-        html += `<div class="file-item directory" onclick="navigateToPath('${parentPath}')">
-            📁 .. (parent directory)
-        </div>`;
-    }
 
     // Sort: directories first, then files
     const sortedItems = Object.entries(items).sort(([a, aData], [b, bData]) => {
@@ -450,15 +455,15 @@ async function buildFileTree(rootPath = '/') {
 
         // Add download button for files
         const downloadBtn = !data.is_dir
-            ? `<button class="download-btn" onclick="event.stopPropagation(); downloadFile('${data.path}', '${name}')" title="Download">💾</button>`
+            ? `<button class="download-btn" onclick="event.stopPropagation(); downloadFile('${data.path}', '${name}')" title="Download"><span class="material-symbols-outlined">download</span></button>`
             : '';
 
-        const deleteBtn = `<button class="delete-btn" onclick="event.stopPropagation(); deleteItem('${data.path}', '${name}', ${data.is_dir})" title="Delete">🗑️</button>`;
+        const deleteBtn = `<button class="delete-btn" onclick="event.stopPropagation(); deleteItem('${data.path}', '${name}', ${data.is_dir})" title="Delete"><span class="material-symbols-outlined">delete</span></button>`;
 
         // Add "Open" button for supported font formats
         const isSupported = isSupportedFontFormat(name, data.is_dir);
         const openBtn = isSupported
-            ? `<button class="open-font-btn" onclick="event.stopPropagation(); openFont('${data.path}')" title="Open font">📂 Open</button>`
+            ? `<button class="open-font-btn" onclick="event.stopPropagation(); openFont('${data.path}')" title="Open font"><span class="material-symbols-outlined">folder_open</span> Open</button>`
             : '';
 
         html += `<div class="file-item ${fileClass}" onclick="${clickHandler}">
@@ -503,24 +508,35 @@ async function navigateToPath(path: string) {
 }
 
 function setupDragAndDrop() {
-    const fileTree = document.getElementById('file-tree')!;
+    const fileBrowser = document.getElementById('file-browser')!;
+    let dragCounter = 0;
 
-    fileTree.addEventListener('dragover', (e) => {
+    fileBrowser.addEventListener('dragenter', (e) => {
         e.preventDefault();
         e.stopPropagation();
-        fileTree.classList.add('drag-over');
+        dragCounter++;
+        fileBrowser.classList.add('drag-over');
     });
 
-    fileTree.addEventListener('dragleave', (e) => {
+    fileBrowser.addEventListener('dragover', (e) => {
         e.preventDefault();
         e.stopPropagation();
-        fileTree.classList.remove('drag-over');
     });
 
-    fileTree.addEventListener('drop', async (e) => {
+    fileBrowser.addEventListener('dragleave', (e) => {
         e.preventDefault();
         e.stopPropagation();
-        fileTree.classList.remove('drag-over');
+        dragCounter--;
+        if (dragCounter === 0) {
+            fileBrowser.classList.remove('drag-over');
+        }
+    });
+
+    fileBrowser.addEventListener('drop', async (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        dragCounter = 0;
+        fileBrowser.classList.remove('drag-over');
 
         const files = Array.from(e.dataTransfer!.files);
         if (files.length > 0) {

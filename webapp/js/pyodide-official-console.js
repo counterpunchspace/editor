@@ -485,6 +485,64 @@ async function initPyodideConsole() {
                 await pyodide.mountNativeFS(pyodideDirectory, directoryHandle);
             }
             globalThis.mountDirectory = mountDirectory;
+            window.mountDirectory = mountDirectory;
+
+            async function getMountedDirectoryInfo() {
+                const directoryKey = 'pyodide-directory-handle';
+                const directoryHandle = await get(directoryKey);
+
+                if (!directoryHandle) {
+                    return {
+                        mounted: false,
+                        message: 'No directory mounted'
+                    };
+                }
+
+                const permission = await directoryHandle.queryPermission({
+                    mode: 'readwrite'
+                });
+
+                return {
+                    mounted: true,
+                    folderName: directoryHandle.name,
+                    permission: permission,
+                    message: `Mounted: "${directoryHandle.name}" (${permission})`
+                };
+            }
+            globalThis.getMountedDirectoryInfo = getMountedDirectoryInfo;
+            window.getMountedDirectoryInfo = getMountedDirectoryInfo;
+
+            async function unmountDirectory() {
+                const directoryKey = 'pyodide-directory-handle';
+                const { del } = await import('idb-keyval');
+                await del(directoryKey);
+                console.log(
+                    '[PyodideConsole]',
+                    'Directory handle removed from IndexedDB. Reload page to take effect.'
+                );
+                return 'Directory unmounted. Please reload the page.';
+            }
+            globalThis.unmountDirectory = unmountDirectory;
+            window.unmountDirectory = unmountDirectory;
+        } else {
+            // Provide helpful error messages when File System Access API is not available
+            window.mountDirectory = () => {
+                throw new Error(
+                    'File System Access API not supported in this browser. Use Chrome or Edge.'
+                );
+            };
+            window.getMountedDirectoryInfo = () => {
+                return {
+                    mounted: false,
+                    message:
+                        'File System Access API not supported in this browser'
+                };
+            };
+            window.unmountDirectory = () => {
+                throw new Error(
+                    'File System Access API not supported in this browser. Use Chrome or Edge.'
+                );
+            };
         }
 
         // Hide loading spinner

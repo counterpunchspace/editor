@@ -654,6 +654,11 @@ kbd + kbd {
     flex: 1;
 }
 
+.view-files .view-content {
+    margin: 12px;
+    margin-top: 2px;
+}
+
 /* Hide scrollbar for view-content */
 .view-content::-webkit-scrollbar {
     width: 0;
@@ -1570,9 +1575,11 @@ kbd + kbd {
 }
 
 #file-browser {
-    max-height: calc(100vh - 120px);
+    height: 100%;
     overflow-y: auto;
-    margin-top: 7px;
+    position: relative;
+    display: flex;
+    flex-direction: column;
 }
 
 #file-tree {
@@ -1624,8 +1631,8 @@ kbd + kbd {
 /* File Browser Toolbar */
 .file-toolbar {
     display: flex;
-    gap: 8px;
-    margin-bottom: 12px;
+    gap: 6px;
+    margin-bottom: 8px;
     padding-bottom: 8px;
     border-bottom: 1px solid var(--border-primary);
     flex-wrap: wrap;
@@ -1635,13 +1642,20 @@ kbd + kbd {
     background: var(--button-bg);
     border: 1px solid var(--button-border);
     color: var(--button-text);
-    padding: 6px 12px;
+    padding: 6px 8px;
     border-radius: 4px;
     cursor: pointer;
     font-family: 'IBM Plex Sans', sans-serif;
     font-size: 12px;
     font-weight: 500;
     transition: all 0.2s ease;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.file-action-btn .material-symbols-outlined {
+    font-size: 18px;
 }
 
 .file-action-btn:hover {
@@ -1676,22 +1690,24 @@ kbd + kbd {
 }
 
 .file-item .open-font-btn {
-    opacity: 0;
     background: var(--accent-cyan);
     border: 1px solid var(--accent-cyan);
     color: var(--bg-primary);
     cursor: pointer;
-    padding: 3px 10px;
+    padding: 3px 8px;
     border-radius: 3px;
     font-size: 11px;
     font-weight: 600;
     transition: all 0.2s ease;
-    margin-left: 8px;
+    margin-left: 6px;
     font-family: 'IBM Plex Sans', sans-serif;
+    display: flex;
+    align-items: center;
+    gap: 3px;
 }
 
-.file-item:hover .open-font-btn {
-    opacity: 1;
+.file-item .open-font-btn .material-symbols-outlined {
+    font-size: 16px;
 }
 
 .file-item .open-font-btn:hover {
@@ -1701,34 +1717,37 @@ kbd + kbd {
 }
 
 .file-item .delete-btn {
-    opacity: 0;
     background: transparent;
     border: 1px solid transparent;
     color: var(--accent-red);
     cursor: pointer;
-    padding: 2px 6px;
+    padding: 2px 4px;
     border-radius: 3px;
-    font-size: 14px;
     transition: all 0.2s ease;
-    margin-left: 8px;
+    margin-left: 4px;
+    display: flex;
+    align-items: center;
+}
+
+.file-item .delete-btn .material-symbols-outlined {
+    font-size: 18px;
 }
 
 .file-item .download-btn {
-    opacity: 0;
     background: transparent;
     border: 1px solid transparent;
     color: var(--accent-cyan);
     cursor: pointer;
-    padding: 2px 6px;
+    padding: 2px 4px;
     border-radius: 3px;
-    font-size: 14px;
     transition: all 0.2s ease;
-    margin-left: 4px;
+    margin-left: 2px;
+    display: flex;
+    align-items: center;
 }
 
-.file-item:hover .delete-btn,
-.file-item:hover .download-btn {
-    opacity: 1;
+.file-item .download-btn .material-symbols-outlined {
+    font-size: 18px;
 }
 
 .file-item .delete-btn:hover {
@@ -1744,28 +1763,47 @@ kbd + kbd {
 }
 
 /* Drag and Drop Styling */
-#file-tree.drag-over {
+#file-browser.drag-over {
     background-color: var(--input-bg);
     border: 2px dashed var(--accent-cyan);
     border-radius: 8px;
 }
 
-#file-tree.drag-over::after {
-    content: '📤 Drop files here to upload';
+#file-browser.drag-over::after {
+    content: 'upload_file';
+    font-family: 'Material Symbols Outlined';
+    font-size: 48px;
     display: flex;
+    flex-direction: column;
     align-items: center;
     justify-content: center;
+    gap: 12px;
     position: absolute;
     top: 0;
     left: 0;
     right: 0;
     bottom: 0;
-    background: var(--input-bg);
+    background: color-mix(in srgb, var(--bg-primary) 80%, transparent);
     color: var(--accent-cyan);
-    font-size: 18px;
-    font-weight: 500;
-    pointer-events: none;
     z-index: 10;
+    font-weight: 400;
+    pointer-events: none;
+}
+
+#file-browser.drag-over::before {
+    content: 'Drop files here\ASupported: .babelfont, .glyphs, .vfj';
+    white-space: pre;
+    text-align: center;
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, calc(-50% + 50px));
+    color: var(--accent-cyan);
+    font-size: 16px;
+    font-weight: 500;
+    z-index: 11;
+    pointer-events: none;
+    line-height: 1.6;
 }
 
 /* AI Assistant Styles - Terminal Style */
