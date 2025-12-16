@@ -3,7 +3,7 @@
 let coepCredentialless = false;
 
 // PWA Cache configuration
-const VERSION = 'v0.1.2-p.2';
+const VERSION = 'v0.1.2-p.3';
 const CACHE_NAME = 'contxt-pwa-' + VERSION;
 const CDN_CACHE_NAME = 'contxt-cdn-cache-' + VERSION;
 const OFFLINE_URL = '/index.html';
