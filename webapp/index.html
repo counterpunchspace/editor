@@ -504,6 +504,15 @@
                                     >arrow_upward</span
                                 >S</span
                             >
+                            <button
+                                id="script-api-docs-btn"
+                                class="ai-info-button"
+                                title="View API Documentation"
+                            >
+                                <span class="material-symbols-outlined"
+                                    >help</span
+                                >
+                            </button>
                         </div>
                         <button
                             id="run-script-btn"
@@ -593,6 +602,47 @@
                             ></span
                         >
                     </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- API Documentation Modal -->
+        <div
+            class="info-popup-overlay"
+            id="api-docs-modal"
+            style="display: none"
+        >
+            <div class="info-popup">
+                <div class="info-popup-header">
+                    <h3>Python API Documentation</h3>
+                    <button
+                        class="info-popup-close"
+                        id="api-docs-modal-close-btn"
+                    >
+                        <span class="material-symbols-outlined">close</span>
+                    </button>
+                </div>
+                <div class="info-popup-content">
+                    <div class="ai-info-section">
+                        <p>
+                            View the complete Python API documentation for the
+                            Font Object Model:
+                        </p>
+                        <p style="margin-top: 15px">
+                            <a
+                                href="https://github.com/yanone/context/blob/main/API.md"
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                style="
+                                    color: var(--accent-blue);
+                                    text-decoration: none;
+                                    font-weight: 500;
+                                "
+                            >
+                                📖 Open API Documentation on GitHub
+                            </a>
+                        </p>
+                    </div>
                 </div>
             </div>
         </div>

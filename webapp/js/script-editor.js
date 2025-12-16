@@ -335,6 +335,56 @@
         init();
     }
 
+    // API Documentation modal handlers
+    function initAPIDocsModal() {
+        const apiDocsBtn = document.getElementById('script-api-docs-btn');
+        const apiDocsModal = document.getElementById('api-docs-modal');
+        const apiDocsCloseBtn = document.getElementById(
+            'api-docs-modal-close-btn'
+        );
+
+        if (apiDocsBtn && apiDocsModal && apiDocsCloseBtn) {
+            // Open modal
+            apiDocsBtn.addEventListener('click', (event) => {
+                event.stopPropagation();
+                apiDocsModal.style.display = 'flex';
+            });
+
+            // Close modal
+            const closeModal = () => {
+                apiDocsModal.style.display = 'none';
+            };
+
+            apiDocsCloseBtn.addEventListener('click', closeModal);
+
+            // Close on backdrop click
+            apiDocsModal.addEventListener('click', (e) => {
+                if (e.target === apiDocsModal) {
+                    closeModal();
+                }
+            });
+
+            // Close on Escape key
+            document.addEventListener('keydown', (e) => {
+                if (
+                    e.key === 'Escape' &&
+                    apiDocsModal.style.display === 'flex'
+                ) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    closeModal();
+                }
+            });
+        }
+    }
+
+    // Initialize API docs modal
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', initAPIDocsModal);
+    } else {
+        initAPIDocsModal();
+    }
+
     // Expose scriptEditor API globally for other scripts
     window.scriptEditor = {
         get editor() {
