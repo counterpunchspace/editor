@@ -10,7 +10,7 @@ const APP_SETTINGS = {
 
     // Font Manager settings
     FONT_MANAGER: {
-        SAVE_DEBUG_FONTS: false // Set to true to save typing/editing fonts to file system for inspection
+        SAVE_DEBUG_FONTS: true // Set to true to save typing/editing fonts to file system for inspection
     },
 
     // Text display settings
@@ -187,6 +187,9 @@ const PRODUCTION_OVERRIDES = {
     OUTLINE_EDITOR: {
         SHOW_BOUNDING_BOX: false, // Hide bounding box in production
         SHOW_COMPONENT_ORIGIN_MARKERS: false // Hide component origin markers in production
+    },
+    FONT_MANAGER: {
+        SAVE_DEBUG_FONTS: true // Set to true to save typing/editing fonts to file system for inspection
     }
 };
 
