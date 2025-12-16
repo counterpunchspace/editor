@@ -96,6 +96,9 @@ class GlyphCanvas {
     // Flag to suppress rendering during critical operations (e.g., layer data swap)
     renderSuppressed: boolean = false;
 
+    // Flag to prevent overlapping updatePropertiesUI calls
+    isUpdatingPropertiesUI: boolean = false;
+
     constructor(containerId: string) {
         this.container = document.getElementById(containerId)!;
         if (!this.container) {
@@ -1737,58 +1740,58 @@ class GlyphCanvas {
     async updatePropertiesUI(): Promise<void> {
         if (!this.propertiesSection) return;
 
-        // Update editor title bar with glyph name
-        this.outlineEditor.updateEditorTitleBar();
-
-        // In text mode, show master list
-        if (!this.outlineEditor.active) {
-            // Build content off-screen first, then swap in one operation
-            const tempContainer = document.createElement('div');
-            const oldPropertiesSection = this.propertiesSection;
-            this.propertiesSection = tempContainer;
-
-            await this.displayMastersList();
-
-            requestAnimationFrame(() => {
-                oldPropertiesSection.innerHTML = '';
-                while (tempContainer.firstChild) {
-                    oldPropertiesSection.appendChild(tempContainer.firstChild);
-                }
-            });
-
-            this.propertiesSection = oldPropertiesSection;
+        // Prevent overlapping calls
+        if (this.isUpdatingPropertiesUI) {
+            console.log(
+                '[GlyphCanvas] updatePropertiesUI already in progress, skipping'
+            );
             return;
         }
 
-        if (
-            this.textRunEditor!.selectedGlyphIndex >= 0 &&
-            this.textRunEditor!.selectedGlyphIndex <
-                this.textRunEditor!.shapedGlyphs.length
-        ) {
-            // Build content off-screen first, then swap in one operation
-            const tempContainer = document.createElement('div');
-            const oldPropertiesSection = this.propertiesSection;
-            this.propertiesSection = tempContainer;
+        this.isUpdatingPropertiesUI = true;
 
-            await this.displayLayersList();
-
-            requestAnimationFrame(() => {
-                oldPropertiesSection.innerHTML = '';
-                while (tempContainer.firstChild) {
-                    oldPropertiesSection.appendChild(tempContainer.firstChild);
+        try {
+            // Check if propertiesSection is still in the DOM
+            if (!this.propertiesSection.parentElement) {
+                const leftSidebar = document.getElementById(
+                    'glyph-properties-sidebar'
+                );
+                if (leftSidebar) {
+                    this.propertiesSection.innerHTML = '';
+                    leftSidebar.appendChild(this.propertiesSection);
+                } else {
+                    return;
                 }
-            });
+            }
 
-            this.propertiesSection = oldPropertiesSection;
-        } else {
-            // No glyph selected
-            requestAnimationFrame(() => {
-                this.propertiesSection!.innerHTML = '';
+            // Update editor title bar with glyph name
+            this.outlineEditor.updateEditorTitleBar();
+
+            // In text mode, show master list
+            if (!this.outlineEditor.active) {
+                this.propertiesSection.innerHTML = '';
+                await this.displayMastersList();
+                this.isUpdatingPropertiesUI = false;
+                return;
+            }
+
+            if (
+                this.textRunEditor!.selectedGlyphIndex >= 0 &&
+                this.textRunEditor!.selectedGlyphIndex <
+                    this.textRunEditor!.shapedGlyphs.length
+            ) {
+                this.propertiesSection.innerHTML = '';
+                await this.displayLayersList();
+            } else {
+                // No glyph selected
+                this.propertiesSection.innerHTML = '';
                 const emptyMessage = document.createElement('div');
                 emptyMessage.className = 'editor-empty-message';
                 emptyMessage.textContent = 'No glyph selected';
-                this.propertiesSection!.appendChild(emptyMessage);
-            });
+                this.propertiesSection.appendChild(emptyMessage);
+            }
+        } finally {
+            this.isUpdatingPropertiesUI = false;
         }
     }
 

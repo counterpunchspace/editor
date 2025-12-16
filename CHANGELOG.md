@@ -2,11 +2,11 @@
 
 - **Add items here** for the next release (Replace this comment)
 
+# v0.1.2-p.4
+
+- **Layer and master lists** Fixed appearance of layer and master list UI in editing and text mode
+
 # v0.1.2-p.3
-
-- **Add items here** for the next release (Replace this comment)
-
-# v0.1.2-p.2
 
 - **Debug Fonts** Don't emit debug fonts in production
 
