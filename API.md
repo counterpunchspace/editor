@@ -203,6 +203,14 @@ Find a layer by ID
 #### `findLayerByMasterId(masterId: str) -> [Layer](#layer) | None`
 Find a layer by master ID
 
+#### `duplicate(newName: str) -> [Glyph](#glyph)`
+Duplicate this glyph with a new name
+
+**Example:**
+```python
+new_glyph = glyph.duplicate("A.alt")
+```
+
 #### `toString() -> str`
 ---
 
