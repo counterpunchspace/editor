@@ -1209,7 +1209,7 @@ kbd + kbd {
     border-radius: 4px;
     padding: 12px 16px;
     margin: 12px 16px;
-    color: rgba(255, 255, 255, 0.9);
+    color: var(--text-primary);
     font-size: 12px;
     line-height: 1.6;
 }
