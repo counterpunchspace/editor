@@ -361,6 +361,19 @@ class GlyphCanvas {
             this.outlineEditor.animationInProgress();
         });
         this.axesManager!.on('animationComplete', async () => {
+            try {
+                console.log('[GlyphCanvas] animationComplete event triggered', {
+                    isInterpolating: this.outlineEditor.isInterpolating,
+                    isLayerSwitchAnimating:
+                        this.outlineEditor.isLayerSwitchAnimating,
+                    isSliderActive: this.axesManager!.isSliderActive
+                });
+            } catch (e) {
+                console.error(
+                    '[GlyphCanvas] ERROR in animationComplete initial logging:',
+                    e
+                );
+            }
             // Skip layer matching during manual slider interpolation
             // It will be handled properly in sliderMouseUp
             if (this.outlineEditor.isInterpolating) {
@@ -379,8 +392,14 @@ class GlyphCanvas {
 
             // If we were animating a layer switch, restore the target layer data
             if (this.outlineEditor.isLayerSwitchAnimating) {
+                console.log(
+                    '[GlyphCanvas] Animation complete - calling restoreTargetLayerDataAfterAnimating()'
+                );
                 this.outlineEditor.restoreTargetLayerDataAfterAnimating();
                 this.outlineEditor.isLayerSwitchAnimating = false;
+                console.log(
+                    '[GlyphCanvas] Layer switch animation restoration complete'
+                );
 
                 // NOTE: autoSelectMatchingLayer() is already called inside restoreTargetLayerDataAfterAnimating()
                 // so we don't need to call it again here
@@ -413,6 +432,13 @@ class GlyphCanvas {
         });
         // Also check after animation completes to handle the final value
         this.axesManager!.on('animationComplete', () => {
+            // Skip during layer switch animations - layer restoration will handle it
+            if (this.outlineEditor.isLayerSwitchAnimating) {
+                console.log(
+                    '[GlyphCanvas] Animation complete during layer switch - skipping autoSelectMatchingMaster'
+                );
+                return;
+            }
             console.log(
                 '[GlyphCanvas] Animation complete, calling autoSelectMatchingMaster'
             );

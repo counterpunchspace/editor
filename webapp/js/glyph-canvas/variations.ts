@@ -11,7 +11,7 @@ export class AxesManager {
     animationTargetValues: Record<string, number>;
     animationCurrentFrame: number;
     opentypeFont: Font | null;
-    callbacks: Record<string, Function>;
+    callbacks: Record<string, Function[]>; // Support multiple callbacks per event
     isSliderActive: boolean;
 
     constructor() {
@@ -29,16 +29,28 @@ export class AxesManager {
         this.isSliderActive = false;
 
         this.opentypeFont = null; // To be set externally
-        this.callbacks = {}; // Optional callbacks for interaction with GlyphCanvas
+        this.callbacks = {}; // Array of callbacks for each event
     }
 
     on(event: string, callback: Function) {
-        this.callbacks[event] = callback;
+        if (!this.callbacks[event]) {
+            this.callbacks[event] = [];
+        }
+        this.callbacks[event].push(callback);
     }
 
-    call(event: string, ...args: any[]) {
+    async call(event: string, ...args: any[]) {
         if (this.callbacks[event]) {
-            this.callbacks[event](...args);
+            for (const callback of this.callbacks[event]) {
+                try {
+                    await callback(...args);
+                } catch (error) {
+                    console.error(
+                        `[AxesManager] Error in ${event} callback:`,
+                        error
+                    );
+                }
+            }
         }
     }
 

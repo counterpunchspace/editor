@@ -1724,14 +1724,26 @@ export class OutlineEditor {
     }
 
     async onAnimationComplete() {
-        // Clear layer switch animation flag and reset request tracking
-        this.isLayerSwitchAnimating = false;
-        fontInterpolation.resetRequestTracking();
+        // Don't clear isLayerSwitchAnimating here - it's cleared in glyph-canvas.ts
+        // after calling restoreTargetLayerDataAfterAnimating()
+
+        // Don't handle interpolation slider resets here when layer switching
+        // The layer switch logic in glyph-canvas.ts will handle everything
+        if (!this.isLayerSwitchAnimating) {
+            fontInterpolation.resetRequestTracking();
+        }
 
         // Clear auto-pan anchor since animation is complete
         this.autoPanAnchorScreen = null;
 
-        // Check if new variation settings match any layer
+        // Only handle interpolation mode here, not layer switches
+        // Layer switches are handled in restoreTargetLayerDataAfterAnimating()
+        if (this.isLayerSwitchAnimating) {
+            // Layer switch animation - don't handle here
+            return;
+        }
+
+        // Check if new variation settings match any layer (interpolation mode only)
         if (this.active && this.glyphCanvas.fontData) {
             await this.autoSelectMatchingLayer();
 
