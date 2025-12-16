@@ -62,7 +62,7 @@
             showPrintMargin: false,
             highlightActiveLine: true,
             enableBasicAutocompletion: true,
-            enableLiveAutocompletion: false,
+            enableLiveAutocompletion: true,
             tabSize: 4,
             useSoftTabs: true, // Use spaces instead of tabs
             wrap: false

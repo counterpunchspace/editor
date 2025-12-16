@@ -5,9 +5,7 @@
         {
             "source": "examples/Fustat.babelfont",
             "destination": "/user/Fustat.babelfont"
-        }
-    ],
-    [
+        },
         {
             "source": "examples/NestedComponents.babelfont",
             "destination": "/user/NestedComponents.babelfont"
