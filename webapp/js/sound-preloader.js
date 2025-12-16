@@ -1,5 +1,33 @@
 // Sound Preloader - Preloads all sound files for faster playback
 (function () {
+    // Check if sounds are enabled
+    const soundsEnabled =
+        window.APP_SETTINGS && window.APP_SETTINGS.SOUND_ENABLED;
+
+    // Always update volume control visibility on DOM ready
+    document.addEventListener('DOMContentLoaded', () => {
+        const volumeControlItem = document.querySelector('.volume-control-item');
+        if (volumeControlItem) {
+            volumeControlItem.style.display = soundsEnabled ? 'block' : 'none';
+        }
+    });
+
+    if (!soundsEnabled) {
+        console.log(
+            '[SoundPreloader]',
+            'Sound effects disabled in settings - skipping preload'
+        );
+
+        // Register no-op functions when disabled
+        window.preloadedSounds = {};
+        window.playSound = function () {};
+        window.setVolume = function () {};
+        window.getVolume = function () {
+            return 0;
+        };
+        return;
+    }
+
     // List of all sound files to preload
     const soundFiles = [
         'assets/sounds/error.wav',

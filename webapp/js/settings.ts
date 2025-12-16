@@ -8,6 +8,9 @@ const APP_SETTINGS = {
     // Compilation settings
     COMPILE_DEBOUNCE_DELAY: 150, // ms - delay before auto-compile triggers after changes
 
+    // Sound settings
+    SOUND_ENABLED: false, // Set to true to enable sound effects
+
     // Font Manager settings
     FONT_MANAGER: {
         SAVE_DEBUG_FONTS: true // Set to true to save typing/editing fonts to file system for inspection
