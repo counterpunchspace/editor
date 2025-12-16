@@ -2,6 +2,10 @@
 
 - **Add items here** for the next release (Replace this comment)
 
+# v0.1.2-p.1
+
+- **Debug Fonts** Don't emit debug fonts in production
+
 # v0.1.2
 
 - **Multi-Format Font Loading**: Implemented opening of `.glyphs` and `.vfj` font format via Rust/WASM using babelfont-rs library. Added `open_font_file()` WASM function that detects file format by extension, loads via babelfont convertors, and returns babelfont JSON. File browser now automatically converts non-.babelfont files transparently, enabling direct import from Glyphs sources. Opening UFO/Designspace and `.glyphspackages` will have to wait until we have native file system access.
