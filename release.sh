@@ -17,6 +17,7 @@ VERSION_TAG="$1"
 SERVICE_WORKER_FILE="webapp/coi-serviceworker.js"
 CHANGELOG_FILE="CHANGELOG.md"
 RELEASE_NOTES_FILE="release-notes.md"
+API_MD_FILE="API.md"
 
 # Validate version tag format (v followed by number)
 if ! echo "$VERSION_TAG" | grep -qE '^v[0-9]+'; then
@@ -53,6 +54,18 @@ else
 fi
 
 echo "✅ Version updated in $SERVICE_WORKER_FILE"
+
+# Update API.md with version
+echo "Updating version in $API_MD_FILE..."
+node generate-api-docs.mjs "$VERSION_TAG"
+echo "✅ API documentation regenerated with version $VERSION_TAG"
+
+# Commit the version updates to API.md and service worker separately
+echo "Committing API.md and service worker version updates..."
+git add "$SERVICE_WORKER_FILE" "$API_MD_FILE"
+git commit -m "Update version to $VERSION_TAG in API docs and service worker"
+echo "✅ Version files committed"
+echo ""
 
 # Check if CHANGELOG already has this version (from previous failed attempt)
 CHANGELOG_ALREADY_UPDATED=false
@@ -159,19 +172,13 @@ if git rev-parse "$VERSION_TAG" >/dev/null 2>&1; then
     fi
 fi
 
-# Commit the version change
-echo ""
-echo "Committing version update..."
-git add "$SERVICE_WORKER_FILE"
-
-# Only add CHANGELOG if we updated it (not already updated from previous attempt)
+# Commit the CHANGELOG update if needed
 if [ "$CHANGELOG_UPDATED" = true ]; then
+    echo ""
+    echo "Committing CHANGELOG update..."
     git add "$CHANGELOG_FILE"
-    git commit -m "Release $VERSION_TAG"
-elif git diff --cached --quiet; then
-    echo "  No changes to commit (files already up to date)"
-else
-    git commit -m "Release $VERSION_TAG (CHANGELOG already updated)"
+    git commit -m "Update CHANGELOG for release $VERSION_TAG"
+    echo "✅ CHANGELOG committed"
 fi
 
 # Create and push tag

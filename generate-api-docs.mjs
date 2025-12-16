@@ -355,7 +355,7 @@ function generateClassDocs(classInfo) {
 /**
  * Generate the complete API documentation
  */
-function generateAPIDocs() {
+function generateAPIDocs(version = null) {
   console.log("📄 Parsing babelfont-model.ts...");
 
   const modelPath = join(__dirname, "webapp", "js", "babelfont-model.ts");
@@ -389,6 +389,9 @@ function generateAPIDocs() {
 
   // Header
   lines.push("# Font Object Model API Documentation\n");
+  if (version) {
+    lines.push(`**Version:** ${version}\n`);
+  }
   lines.push("*Auto-generated from JavaScript object model introspection*\n");
   lines.push("");
 
@@ -708,4 +711,6 @@ for shape in layer.shapes:
 }
 
 // Run the generator
-generateAPIDocs();
+// Accept version from command line: node generate-api-docs.mjs [version]
+const version = process.argv[2] || null;
+generateAPIDocs(version);

@@ -65,10 +65,6 @@ This is a WebAssembly-based font editor using Rust (fontc/babelfont) compiled to
 - Run the command only once
 - After changes to Javascript/Typescript files, see if there are relevant unit tests in `tests/` that need to be run selectively.
 
-## Babelfont object model
-
-- After changes to the JavaScript object model in babelfont-model.ts, always run `npm run generate-docs` from the repo root folder to renew the API docs.
-
 ## MCP Server for Development Monitoring
 
 An MCP (Model Context Protocol) server is available for AI-assisted debugging and development monitoring:
