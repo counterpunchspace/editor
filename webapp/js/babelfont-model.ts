@@ -1919,65 +1919,6 @@ export class Glyph extends ArrayElementBase {
         return index >= 0 ? layers[index] : undefined;
     }
 
-    /**
-     * Duplicate this glyph with a new name
-     * @example
-     * new_glyph = glyph.duplicate("A.alt")
-     */
-    duplicate(newName: string): Glyph {
-        // Get parent font to check for duplicate names and add the new glyph
-        const font = this.parent() as Font;
-        if (!font) {
-            throw new Error('Cannot duplicate glyph: no parent font');
-        }
-
-        // Check if glyph with newName already exists
-        if (font.findGlyph(newName)) {
-            throw new Error(`Glyph "${newName}" already exists in the font`);
-        }
-
-        // Deep clone the glyph data
-        const clonedData = JSON.parse(JSON.stringify(this.data));
-
-        // Set the new name
-        clonedData.name = newName;
-
-        // Generate new unique IDs for all layers
-        if (clonedData.layers) {
-            const allExistingLayerIds = new Set<string>();
-
-            // Collect all existing layer IDs from all glyphs in the font
-            for (const glyph of font.glyphs) {
-                if (glyph.layers) {
-                    for (const layer of glyph.layers) {
-                        if (layer.id) {
-                            allExistingLayerIds.add(layer.id);
-                        }
-                    }
-                }
-            }
-
-            // Generate new unique IDs for each cloned layer
-            for (const layer of clonedData.layers) {
-                if (layer.id) {
-                    let newId: string;
-                    do {
-                        newId = crypto.randomUUID();
-                    } while (allExistingLayerIds.has(newId));
-                    layer.id = newId;
-                    allExistingLayerIds.add(newId);
-                }
-            }
-        }
-
-        // Add the cloned glyph to the font
-        font._data.glyphs.push(clonedData);
-        font._glyphWrappers = null; // Invalidate cache
-
-        // Return the newly created glyph
-        return new Glyph(font._data.glyphs, font._data.glyphs.length - 1, font);
-    }
-
     toString(): string {
         const codepoints =
             this.codepoints
@@ -2433,6 +2374,68 @@ export class Font extends ModelBase {
             (g: any) => g.codepoints && g.codepoints.includes(codepoint)
         );
         return index >= 0 ? this.glyphs[index] : undefined;
+    }
+
+    /**
+     * Duplicate a glyph with a new name
+     * @example
+     * new_glyph = font.duplicateGlyph(glyph, "A.alt")
+     */
+    duplicateGlyph(glyph: Glyph, newName: string): Glyph {
+        // Check if glyph with newName already exists
+        if (this.findGlyph(newName)) {
+            throw new Error(`Glyph "${newName}" already exists in the font`);
+        }
+
+        // Get the source glyph data - access through the internal _data array
+        const sourceGlyphIndex = this._data.glyphs.findIndex(
+            (g: any) => g.name === glyph.name
+        );
+        if (sourceGlyphIndex < 0) {
+            throw new Error(`Source glyph "${glyph.name}" not found in font`);
+        }
+
+        // Deep clone the glyph data
+        const clonedData = JSON.parse(
+            JSON.stringify(this._data.glyphs[sourceGlyphIndex])
+        );
+
+        // Set the new name
+        clonedData.name = newName;
+
+        // Generate new unique IDs for all layers
+        if (clonedData.layers) {
+            // Collect all layer IDs from the entire font to avoid duplicates
+            const allExistingLayerIds = new Set<string>();
+            for (const g of this.glyphs) {
+                if (g.layers) {
+                    for (const layer of g.layers) {
+                        if (layer.id) {
+                            allExistingLayerIds.add(layer.id);
+                        }
+                    }
+                }
+            }
+
+            // Generate new unique IDs for each cloned layer
+            for (const layer of clonedData.layers) {
+                if (layer.id) {
+                    let newId: string;
+                    do {
+                        newId = crypto.randomUUID();
+                    } while (allExistingLayerIds.has(newId));
+                    layer.id = newId;
+                    allExistingLayerIds.add(newId);
+                }
+            }
+        }
+
+        // Add the cloned glyph to the font
+        this._data.glyphs.push(clonedData);
+        this._glyphWrappers = null; // Invalidate cache
+
+        // Return the newly created glyph
+        return new Glyph(this._data.glyphs, this._data.glyphs.length - 1, this);
     }
 
     /**

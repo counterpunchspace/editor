@@ -114,6 +114,14 @@ Find a glyph by codepoint
 glyph = font.findGlyphByCodepoint(0x0041)  # Find 'A'
 ```
 
+#### `duplicateGlyph(glyph: [Glyph](#glyph), newName: str) -> [Glyph](#glyph)`
+Duplicate a glyph with a new name
+
+**Example:**
+```python
+new_glyph = font.duplicateGlyph(glyph, "A.alt")
+```
+
 #### `findAxis(id: str) -> [Axis](#axis) | None`
 Find an axis by ID
 
@@ -202,14 +210,6 @@ Find a layer by ID
 
 #### `findLayerByMasterId(masterId: str) -> [Layer](#layer) | None`
 Find a layer by master ID
-
-#### `duplicate(newName: str) -> [Glyph](#glyph)`
-Duplicate this glyph with a new name
-
-**Example:**
-```python
-new_glyph = glyph.duplicate("A.alt")
-```
 
 #### `toString() -> str`
 ---
