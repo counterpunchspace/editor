@@ -88,7 +88,7 @@ abstract class ArrayElementBase extends ModelBase {
 }
 
 /**
- * A node in a glyph outline
+ * Point in a path
  */
 export class Node extends ArrayElementBase {
     get x(): number {
@@ -134,7 +134,7 @@ export class Node extends ArrayElementBase {
 }
 
 /**
- * A path in a glyph
+ * Path (contour) in a layer
  */
 export class Path extends ArrayElementBase {
     private _nodeWrappers: Node[] | null = null;
@@ -301,6 +301,8 @@ export class Path extends ArrayElementBase {
 
     /**
      * Insert a node at the specified index
+     * @example
+     * path.insertNode(1, 150, 250, "Line")  # Insert at index 1
      */
     insertNode(
         index: number,
@@ -321,6 +323,8 @@ export class Path extends ArrayElementBase {
 
     /**
      * Remove a node at the specified index
+     * @example
+     * path.removeNode(0)  # Remove first node
      */
     removeNode(index: number): void {
         this.data.nodes.splice(index, 1);
@@ -329,6 +333,9 @@ export class Path extends ArrayElementBase {
 
     /**
      * Append a node to the end of the path
+     * @example
+     * path.appendNode(100, 200, "Line")
+     * path.appendNode(300, 400, "Curve", smooth=True)
      */
     appendNode(
         x: number,
@@ -349,7 +356,7 @@ export class Path extends ArrayElementBase {
 }
 
 /**
- * A component in a glyph
+ * Component reference to another glyph
  */
 export class Component extends ArrayElementBase {
     get reference(): string {
@@ -502,7 +509,7 @@ export class Component extends ArrayElementBase {
 }
 
 /**
- * An anchor point in a glyph
+ * Anchor point in a layer
  */
 export class Anchor extends ArrayElementBase {
     get x(): number {
@@ -544,7 +551,7 @@ export class Anchor extends ArrayElementBase {
 }
 
 /**
- * A guideline
+ * Guideline in a layer or master
  */
 export class Guide extends ArrayElementBase {
     get pos(): Babelfont.Position {
@@ -586,7 +593,7 @@ export class Guide extends ArrayElementBase {
 }
 
 /**
- * Wrapper for Shape union type (Component or Path)
+ * Shape wrapper that can contain either a Component or a Path
  */
 export class Shape extends ArrayElementBase {
     /**
@@ -650,7 +657,7 @@ export class Shape extends ArrayElementBase {
 }
 
 /**
- * A layer of a glyph in a font
+ * Layer in a glyph representing a master or intermediate design
  */
 export class Layer extends ArrayElementBase {
     private _shapeWrappers: Shape[] | null = null;
@@ -885,6 +892,8 @@ export class Layer extends ArrayElementBase {
 
     /**
      * Add a new path to the layer
+     * @example
+     * path = layer.addPath(closed=True)
      */
     addPath(closed: boolean = true): Path {
         const pathData: Babelfont.Path = {
@@ -898,6 +907,10 @@ export class Layer extends ArrayElementBase {
 
     /**
      * Add a new component to the layer
+     * @example
+     * component = layer.addComponent("A")
+     * # With transformation
+     * component = layer.addComponent("acutecomb", [1, 0, 0, 1, 250, 500])
      */
     addComponent(reference: string, transform?: number[]): Component {
         const componentData: Babelfont.Component = { reference };
@@ -921,6 +934,8 @@ export class Layer extends ArrayElementBase {
 
     /**
      * Add a new anchor to the layer
+     * @example
+     * anchor = layer.addAnchor(250, 700, "top")
      */
     addAnchor(x: number, y: number, name?: string): Anchor {
         if (!this.data.anchors) {
@@ -1682,7 +1697,7 @@ export class Layer extends ArrayElementBase {
 }
 
 /**
- * A glyph in the font
+ * Glyph in the font
  */
 export class Glyph extends ArrayElementBase {
     private _layerWrappers: Layer[] | null = null;
@@ -1838,12 +1853,24 @@ export class Glyph extends ArrayElementBase {
 
     /**
      * Add a new layer to the glyph
+     * @example
+     * layer = glyph.addLayer(500)  # 500 units wide
      */
     addLayer(width: number, master?: Babelfont.LayerType): Layer {
         if (!this.data.layers) {
             this.data.layers = [];
         }
-        const layerData: Babelfont.Layer = { width };
+
+        // Generate a unique ID for the layer
+        let layerId: string;
+        const existingIds = new Set(
+            this.data.layers.map((l: any) => l.id).filter((id: any) => id)
+        );
+        do {
+            layerId = crypto.randomUUID();
+        } while (existingIds.has(layerId));
+
+        const layerData: Babelfont.Layer = { width, id: layerId };
         if (master) {
             layerData.master = master;
         }
@@ -1906,7 +1933,7 @@ export class Glyph extends ArrayElementBase {
 }
 
 /**
- * An axis in a variable font
+ * Variation axis in a variable font
  */
 export class Axis extends ArrayElementBase {
     get name(): Babelfont.I18NDictionary {
@@ -2002,7 +2029,7 @@ export class Axis extends ArrayElementBase {
 }
 
 /**
- * A master/source font in a design space
+ * Master/source in a design space
  */
 export class Master extends ArrayElementBase {
     private _guideWrappers: Guide[] | null = null;
@@ -2089,7 +2116,7 @@ export class Master extends ArrayElementBase {
 }
 
 /**
- * A font instance
+ * Named instance in a variable font
  */
 export class Instance extends ArrayElementBase {
     get id(): string {
@@ -2161,7 +2188,7 @@ export class Instance extends ArrayElementBase {
 }
 
 /**
- * The main Font class representing a complete font
+ * The main font class representing a complete font
  */
 export class Font extends ModelBase {
     private _glyphWrappers: Glyph[] | null = null;
@@ -2327,6 +2354,10 @@ export class Font extends ModelBase {
 
     /**
      * Find a glyph by name
+     * @example
+     * glyph = font.findGlyph("A")
+     * if glyph:
+     *     print(glyph.name)
      */
     findGlyph(name: string): Glyph | undefined {
         const index = this._data.glyphs.findIndex((g: any) => g.name === name);
@@ -2335,6 +2366,8 @@ export class Font extends ModelBase {
 
     /**
      * Find a glyph by codepoint
+     * @example
+     * glyph = font.findGlyphByCodepoint(0x0041)  # Find 'A'
      */
     findGlyphByCodepoint(codepoint: number): Glyph | undefined {
         const index = this._data.glyphs.findIndex(
@@ -2355,6 +2388,8 @@ export class Font extends ModelBase {
 
     /**
      * Find an axis by tag
+     * @example
+     * weight_axis = font.findAxisByTag("wght")
      */
     findAxisByTag(tag: string): Axis | undefined {
         const axes = this.axes;
@@ -2375,6 +2410,8 @@ export class Font extends ModelBase {
 
     /**
      * Add a new glyph to the font
+     * @example
+     * glyph = font.addGlyph("myGlyph", "Base")
      */
     addGlyph(name: string, category: Babelfont.GlyphCategory = 'Base'): Glyph {
         const glyphData: Babelfont.Glyph = {
@@ -2389,6 +2426,8 @@ export class Font extends ModelBase {
 
     /**
      * Remove a glyph by name
+     * @example
+     * font.removeGlyph("oldGlyph")
      */
     removeGlyph(name: string): boolean {
         const index = this._data.glyphs.findIndex((g: any) => g.name === name);
