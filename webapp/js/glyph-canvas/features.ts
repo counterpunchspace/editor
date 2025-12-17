@@ -48,7 +48,11 @@ export class FeaturesManager {
         if (!gsub.features) return [];
 
         // Get feature info from Python
-        let featureInfo = null;
+        let featureInfo: {
+            default_on: string[];
+            default_off: string[];
+            descriptions: Record<string, string>;
+        } | null = null;
         try {
             const pyResult = await window.pyodide.runPythonAsync(
                 `GetOpentypeFeatureInfo()`
@@ -63,25 +67,38 @@ export class FeaturesManager {
             return [];
         }
 
-        const defaultOnFeatures = new Set(featureInfo.get('default_on'));
-        const defaultOffFeatures = new Set(featureInfo.get('default_off'));
+        if (!featureInfo) {
+            return [];
+        }
+
+        const defaultOnFeatures = new Set(
+            featureInfo['default_on'] as string[]
+        );
+        const defaultOffFeatures = new Set(
+            featureInfo['default_off'] as string[]
+        );
         const allDiscretionary = new Set([
             ...defaultOnFeatures,
             ...defaultOffFeatures
         ]);
-        const descriptions = featureInfo.get('descriptions');
+        const descriptions = featureInfo['descriptions'] as Record<
+            string,
+            string
+        >;
 
         // Get features present in the font (deduplicate using Set)
-        const fontFeatures = [...new Set(gsub.features.map((f: any) => f.tag))];
-        const discretionaryInFont = fontFeatures.filter((tag) =>
-            allDiscretionary.has(tag)
+        const fontFeatures: string[] = [
+            ...new Set<string>(gsub.features.map((f: any) => f.tag as string))
+        ];
+        const discretionaryInFont: string[] = fontFeatures.filter(
+            (tag: string) => allDiscretionary.has(tag)
         );
 
         // Build feature list with metadata
-        return discretionaryInFont.map((tag) => ({
+        return discretionaryInFont.map((tag: string) => ({
             tag: tag,
             defaultOn: defaultOnFeatures.has(tag),
-            description: descriptions.get(tag) || tag
+            description: descriptions[tag] || tag
         }));
     }
 

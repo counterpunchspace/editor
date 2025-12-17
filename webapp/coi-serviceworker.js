@@ -57,7 +57,7 @@ const PRECACHE_ASSETS = [
 // CDN resources to precache for offline support
 const CDN_PRECACHE = [
     // Critical CDN resources for offline functionality
-    'https://cdn.jsdelivr.net/pyodide/v0.28.3/full/pyodide.js',
+    'https://cdn.jsdelivr.net/pyodide/v0.29.0/full/pyodide.js',
     'https://cdn.jsdelivr.net/npm/jquery',
     'https://cdn.jsdelivr.net/npm/jquery.terminal@2.35.2/js/jquery.terminal.min.js',
     'https://cdn.jsdelivr.net/npm/jquery.terminal@2.35.2/js/unix_formatting.min.js',
