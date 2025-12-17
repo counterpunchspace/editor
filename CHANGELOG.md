@@ -4,10 +4,6 @@
 
 # v0.1.2-p.5
 
-- **Add items here** for the next release (Replace this comment)
-
-# v0.1.2-p.4
-
 - **Layer and master lists** Fixed appearance of layer and master list UI in editing and text mode
 
 # v0.1.2-p.3
