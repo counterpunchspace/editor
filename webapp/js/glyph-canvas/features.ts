@@ -1,4 +1,5 @@
 import { Font } from 'opentype.js';
+import { getOpentypeFeatureInfo } from '../opentype-features';
 
 export class FeaturesManager {
     featureSettings: Record<string, boolean>;
@@ -47,44 +48,16 @@ export class FeaturesManager {
         const gsub = this.opentypeFont.tables.gsub;
         if (!gsub.features) return [];
 
-        // Get feature info from Python
-        let featureInfo: {
-            default_on: string[];
-            default_off: string[];
-            descriptions: Record<string, string>;
-        } | null = null;
-        try {
-            const pyResult = await window.pyodide.runPythonAsync(
-                `GetOpentypeFeatureInfo()`
-            );
-            featureInfo = pyResult.toJs();
-        } catch (error) {
-            console.error(
-                '[Features]',
-                'Error getting feature info from Python:',
-                error
-            );
-            return [];
-        }
+        // Get feature info from JavaScript module
+        const featureInfo = getOpentypeFeatureInfo();
 
-        if (!featureInfo) {
-            return [];
-        }
-
-        const defaultOnFeatures = new Set(
-            featureInfo['default_on'] as string[]
-        );
-        const defaultOffFeatures = new Set(
-            featureInfo['default_off'] as string[]
-        );
+        const defaultOnFeatures = new Set(featureInfo.default_on);
+        const defaultOffFeatures = new Set(featureInfo.default_off);
         const allDiscretionary = new Set([
             ...defaultOnFeatures,
             ...defaultOffFeatures
         ]);
-        const descriptions = featureInfo['descriptions'] as Record<
-            string,
-            string
-        >;
+        const descriptions = featureInfo.descriptions;
 
         // Get features present in the font (deduplicate using Set)
         const fontFeatures: string[] = [

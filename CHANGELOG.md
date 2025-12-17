@@ -1,6 +1,6 @@
 # Unreleased
 
-- **Add items here** for the next release (Replace this comment)
+- **OpenType Features Refactoring**: Migrated OpenType feature information (default-on/default-off features, descriptions) from Python (`webapp/py/opentype.py`) to JavaScript/TypeScript (`webapp/js/opentype-features.ts`). Features UI now uses native JS module instead of calling Python via Pyodide, improving performance and reducing Python dependencies.
 
 # v0.1.2-p.5
 

@@ -48,14 +48,6 @@ if (typeof createHarfBuzz === 'undefined') {
 if (typeof window.pyodide === 'undefined') {
     window.pyodide = {
         runPythonAsync: async (code) => {
-            if (code.includes('GetOpentypeFeatureInfo')) {
-                const map = new Map([
-                    ['default_on', new Set()],
-                    ['default_off', new Set()],
-                    ['descriptions', new Map()]
-                ]);
-                return { toJs: () => map };
-            }
             return '{}';
         }
     };
