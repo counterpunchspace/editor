@@ -39,3 +39,4 @@ def CurrentFont():
     if type(js.window.currentFontModel) is pyodide.ffi.JsNull:
         raise RuntimeError("No font is currently open")
     return js.window.currentFontModel
+

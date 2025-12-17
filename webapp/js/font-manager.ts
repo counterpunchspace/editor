@@ -13,6 +13,7 @@ import { designspaceToUserspace, userspaceToDesignspace } from './locations';
 import type { DesignspaceLocation } from './locations';
 import { Font, Path } from './babelfont-model';
 import { ensureWasmInitialized } from './wasm-init';
+import { sidebarErrorDisplay } from './sidebar-error-display';
 
 export type GlyphData = {
     glyphName: string;
@@ -399,6 +400,9 @@ class FontManager {
                 `✅ Typing font compiled in ${duration}ms (${this.typingFont.length} bytes)`
             );
 
+            // Hide any error messages in sidebar
+            sidebarErrorDisplay.hideError();
+
             // Save to file system for review
             this.saveTypingFontToFileSystem();
         } catch (error) {
@@ -407,6 +411,9 @@ class FontManager {
                 '❌ Failed to compile typing font:',
                 error
             );
+            const errorMessage =
+                error instanceof Error ? error.message : String(error);
+            sidebarErrorDisplay.showError(errorMessage);
             throw error;
         }
     }
@@ -466,6 +473,9 @@ class FontManager {
                 `✅ Editing font compiled in ${duration}ms (${this.editingFont.length} bytes)`
             );
 
+            // Hide any error messages in sidebar
+            sidebarErrorDisplay.hideError();
+
             // Save to file system for review
             this.saveEditingFontToFileSystem();
 
@@ -486,6 +496,9 @@ class FontManager {
                 '❌ Failed to compile editing font:',
                 error
             );
+            const errorMessage =
+                error instanceof Error ? error.message : String(error);
+            sidebarErrorDisplay.showError(errorMessage);
             throw error;
         }
     }
@@ -1009,6 +1022,8 @@ window.addEventListener('fontLoaded', async (event: Event) => {
             error instanceof Error ? error.stack : 'No stack'
         );
         console.error('[FontManager]', 'Raw error object:', error);
+
+        // Error will be shown in sidebar by the error handlers above
     }
 });
 

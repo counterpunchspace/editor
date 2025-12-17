@@ -290,9 +290,12 @@ self.onmessage = async (event) => {
             });
         } catch (e: any) {
             console.error('[Fontc Worker] Compilation error:', e);
+            const errorMessage = e.toString();
+
             self.postMessage({
                 id,
-                error: e.toString()
+                error: errorMessage,
+                userMessage: `Font compilation failed: ${errorMessage}`
             });
         }
         return;
