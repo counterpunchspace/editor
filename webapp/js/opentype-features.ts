@@ -302,13 +302,15 @@ export const FEATURE_DESCRIPTIONS: Record<string, string> = {
 // Add descriptions for character variant features
 for (let i = 1; i <= 99; i++) {
     const cvTag = `cv${i.toString().padStart(2, '0')}`;
-    FEATURE_DESCRIPTIONS[cvTag] = `Character Variant ${i} - Provides glyph variants for specific characters`;
+    FEATURE_DESCRIPTIONS[cvTag] =
+        `Character Variant ${i} - Provides glyph variants for specific characters`;
 }
 
 // Add descriptions for stylistic set features
 for (let i = 1; i <= 20; i++) {
     const ssTag = `ss${i.toString().padStart(2, '0')}`;
-    FEATURE_DESCRIPTIONS[ssTag] = `Stylistic Set ${i} - Applies stylistic variant glyphs as a set`;
+    FEATURE_DESCRIPTIONS[ssTag] =
+        `Stylistic Set ${i} - Applies stylistic variant glyphs as a set`;
 }
 
 /**
