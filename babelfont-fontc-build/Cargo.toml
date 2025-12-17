@@ -18,6 +18,9 @@ js-sys = "0.3.83"
 # Use the same fontdrasil version as fontc for compatibility
 fontdrasil = { git = "https://github.com/googlefonts/fontc", branch = "paths-all-optional" }
 write-fonts = "0.44"
+# For font parsing and reading OpenType metadata
+read-fonts = "0.36"
+skrifa = "0.28"
 
 [dependencies.web-sys]
 version = "0.3"

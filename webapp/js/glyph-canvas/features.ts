@@ -1,10 +1,14 @@
-import { Font } from 'opentype.js';
+import {
+    get_font_features,
+    get_stylistic_set_names
+} from '../../wasm-dist/babelfont_fontc_web';
 import { getOpentypeFeatureInfo } from '../opentype-features';
+import { ensureWasmInitialized } from '../wasm-init';
 
 export class FeaturesManager {
     featureSettings: Record<string, boolean>;
     defaultFeatureSettings: Record<string, boolean>;
-    opentypeFont: Font | null;
+    fontBytes: Uint8Array | null;
     featuresSection: HTMLElement | null;
     featureResetButton: HTMLButtonElement | null;
     callbacks: Record<string, Function>;
@@ -12,7 +16,7 @@ export class FeaturesManager {
     constructor() {
         this.featureSettings = {}; // Store OpenType feature on/off states
         this.defaultFeatureSettings = {}; // Store default states for reset
-        this.opentypeFont = null; // To be set to the compiled font
+        this.fontBytes = null; // To be set to the compiled font bytes
         this.featuresSection = null;
         this.featureResetButton = null;
         this.callbacks = {}; // Optional callbacks for interaction with GlyphCanvas
@@ -41,38 +45,60 @@ export class FeaturesManager {
 
     async getDiscretionaryFeatures() {
         // Get discretionary features from the compiled font
-        if (!this.opentypeFont || !this.opentypeFont.tables.gsub) {
+        if (!this.fontBytes) {
+            console.log('[Features]', 'No fontBytes available');
             return [];
         }
 
-        const gsub = this.opentypeFont.tables.gsub;
-        if (!gsub.features) return [];
+        try {
+            console.log(
+                '[Features]',
+                'Getting features from WASM, fontBytes length:',
+                this.fontBytes.length
+            );
+            // Ensure WASM is initialized
+            await ensureWasmInitialized();
+            // Get all features from the font using WASM
+            const featuresJson = get_font_features(this.fontBytes);
+            console.log('[Features]', 'Features JSON:', featuresJson);
+            const fontFeatures: string[] = JSON.parse(featuresJson);
 
-        // Get feature info from JavaScript module
-        const featureInfo = getOpentypeFeatureInfo();
+            // Get stylistic set names
+            const ssNamesJson = get_stylistic_set_names(this.fontBytes);
+            console.log('[Features]', 'Stylistic set names JSON:', ssNamesJson);
+            const ssNames: Record<string, string> = JSON.parse(ssNamesJson);
 
-        const defaultOnFeatures = new Set(featureInfo.default_on);
-        const defaultOffFeatures = new Set(featureInfo.default_off);
-        const allDiscretionary = new Set([
-            ...defaultOnFeatures,
-            ...defaultOffFeatures
-        ]);
-        const descriptions = featureInfo.descriptions;
+            // Get feature info from JavaScript module
+            const featureInfo = getOpentypeFeatureInfo();
 
-        // Get features present in the font (deduplicate using Set)
-        const fontFeatures: string[] = [
-            ...new Set<string>(gsub.features.map((f: any) => f.tag as string))
-        ];
-        const discretionaryInFont: string[] = fontFeatures.filter(
-            (tag: string) => allDiscretionary.has(tag)
-        );
+            const defaultOnFeatures = new Set(featureInfo.default_on);
+            const defaultOffFeatures = new Set(featureInfo.default_off);
+            const allDiscretionary = new Set([
+                ...defaultOnFeatures,
+                ...defaultOffFeatures
+            ]);
+            const descriptions = featureInfo.descriptions;
 
-        // Build feature list with metadata
-        return discretionaryInFont.map((tag: string) => ({
-            tag: tag,
-            defaultOn: defaultOnFeatures.has(tag),
-            description: descriptions[tag] || tag
-        }));
+            // Filter to only discretionary features
+            const discretionaryInFont: string[] = fontFeatures.filter(
+                (tag: string) => allDiscretionary.has(tag)
+            );
+
+            // Build feature list with metadata
+            return discretionaryInFont.map((tag: string) => {
+                // Use stylistic set name if available, otherwise fall back to description
+                const description = ssNames[tag] || descriptions[tag] || tag;
+
+                return {
+                    tag: tag,
+                    defaultOn: defaultOnFeatures.has(tag),
+                    description: description
+                };
+            });
+        } catch (error) {
+            console.error('[Features]', 'Failed to get features:', error);
+            return [];
+        }
     }
 
     async updateFeaturesUI() {

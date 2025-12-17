@@ -13,7 +13,7 @@ const APP_SETTINGS = {
 
     // Font Manager settings
     FONT_MANAGER: {
-        SAVE_DEBUG_FONTS: false // Set to true to save typing/editing fonts to file system for inspection
+        SAVE_DEBUG_FONTS: true // Set to true to save typing/editing fonts to file system for inspection
     },
 
     // Text display settings

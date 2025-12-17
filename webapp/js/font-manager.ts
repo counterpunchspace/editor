@@ -7,11 +7,12 @@
 
 import APP_SETTINGS from './settings';
 import { fontCompilation } from './font-compilation';
-import * as opentype from 'opentype.js';
+import { get_glyph_order } from '../wasm-dist/babelfont_fontc_web';
 import { PythonBabelfont } from './pythonbabelfont';
 import { designspaceToUserspace, userspaceToDesignspace } from './locations';
 import type { DesignspaceLocation } from './locations';
 import { Font, Path } from './babelfont-model';
+import { ensureWasmInitialized } from './wasm-init';
 
 export type GlyphData = {
     glyphName: string;
@@ -350,6 +351,11 @@ class FontManager {
         this.editingFont = null;
         this.glyphOrderCache = null; // Clear cache for new font
 
+        // Reset initialFontLoaded flag in glyphCanvas when new font is loaded
+        if (window.glyphCanvas) {
+            window.glyphCanvas.initialFontLoaded = false;
+        }
+
         // Compile typing font immediately
         await this.compileTypingFont();
 
@@ -364,6 +370,9 @@ class FontManager {
      * This font is used for glyph name extraction only
      */
     async compileTypingFont() {
+        // Ensure WASM is initialized before doing anything
+        await ensureWasmInitialized();
+
         if (!this.currentFont) {
             throw new Error('No font loaded');
         }
@@ -572,19 +581,10 @@ class FontManager {
             return this.glyphOrderCache;
         }
 
-        // Extract from compiled typing font using opentype.js
+        // Extract from compiled typing font using WASM
         if (this.typingFont) {
             try {
-                const font = opentype.parse(this.typingFont.buffer);
-                const glyphOrder = [];
-                for (let i = 0; i < font.numGlyphs; i++) {
-                    const glyph = font.glyphs.get(i);
-                    if (glyph && glyph.name) {
-                        glyphOrder.push(glyph.name);
-                    } else {
-                        glyphOrder.push(`.notdef`);
-                    }
-                }
+                const glyphOrder = get_glyph_order(this.typingFont);
                 // Cache the result
                 this.glyphOrderCache = glyphOrder;
                 return glyphOrder;
@@ -997,11 +997,18 @@ window.addEventListener('fontLoaded', async (event: Event) => {
         // Compile initial editing font
         await fontManager!.compileEditingFont();
     } catch (error) {
+        console.error('[FontManager]', 'Failed to initialize font manager:');
         console.error(
             '[FontManager]',
-            'Failed to initialize font manager:',
-            error
+            'Error message:',
+            error instanceof Error ? error.message : String(error)
         );
+        console.error(
+            '[FontManager]',
+            'Error stack:',
+            error instanceof Error ? error.stack : 'No stack'
+        );
+        console.error('[FontManager]', 'Raw error object:', error);
     }
 });
 

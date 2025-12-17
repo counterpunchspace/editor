@@ -46,6 +46,84 @@ export function compile_cached_font(options: any): Uint8Array;
  */
 export function compile_glyphs(_glyphs_json: string): Uint8Array;
 
+/**
+ * Get variation axes from compiled font bytes
+ *
+ * Returns a JSON array of axis objects:
+ * ```json
+ * [
+ *   { "tag": "wght", "name": "Weight", "min": 100, "max": 900, "default": 400 },
+ *   { "tag": "wdth", "name": "Width", "min": 75, "max": 125, "default": 100 }
+ * ]
+ * ```
+ *
+ * # Arguments
+ * * `font_bytes` - Compiled TTF/OTF font bytes
+ *
+ * # Returns
+ * * `String` - JSON array of axis objects
+ */
+export function get_font_axes(font_bytes: Uint8Array): string;
+
+/**
+ * Get all available features from compiled font bytes
+ *
+ * Returns a JSON array of feature tags:
+ * ```json
+ * ["liga", "kern", "ss01", "ss02", "calt", ...]
+ * ```
+ *
+ * # Arguments
+ * * `font_bytes` - Compiled TTF/OTF font bytes
+ *
+ * # Returns
+ * * `String` - JSON array of feature tag strings
+ */
+export function get_font_features(font_bytes: Uint8Array): string;
+
+/**
+ * Get glyph name by ID from compiled font bytes
+ *
+ * # Arguments
+ * * `font_bytes` - Compiled TTF/OTF font bytes
+ * * `glyph_id` - The glyph ID to look up
+ *
+ * # Returns
+ * * `String` - The glyph name, or ".notdef" if not found
+ */
+export function get_glyph_name(font_bytes: Uint8Array, glyph_id: number): string;
+
+/**
+ * Get glyph order (array of all glyph names) from compiled font bytes
+ *
+ * # Arguments
+ * * `font_bytes` - Compiled TTF/OTF font bytes
+ *
+ * # Returns
+ * * `Vec<String>` - Array of glyph names in glyph order
+ */
+export function get_glyph_order(font_bytes: Uint8Array): string[];
+
+/**
+ * Get stylistic set names from compiled font bytes
+ *
+ * Returns a JSON string with structure:
+ * ```json
+ * {
+ *   "ss01": "Alternate a",
+ *   "ss02": "Swash capitals",
+ *   ...
+ * }
+ * ```
+ *
+ * # Arguments
+ * * `font_bytes` - Compiled TTF/OTF font bytes
+ *
+ * # Returns
+ * * `String` - JSON object mapping feature tags to their UI names
+ */
+export function get_stylistic_set_names(font_bytes: Uint8Array): string;
+
 export function init(): void;
 
 /**
@@ -109,6 +187,11 @@ export interface InitOutput {
   readonly open_font_file: (a: number, b: number, c: number, d: number) => [number, number, number, number];
   readonly store_font: (a: number, b: number) => [number, number];
   readonly version: () => [number, number];
+  readonly get_font_axes: (a: number, b: number) => [number, number, number, number];
+  readonly get_font_features: (a: number, b: number) => [number, number, number, number];
+  readonly get_glyph_name: (a: number, b: number, c: number) => [number, number, number, number];
+  readonly get_glyph_order: (a: number, b: number) => [number, number, number, number];
+  readonly get_stylistic_set_names: (a: number, b: number) => [number, number, number, number];
   readonly __wbindgen_malloc: (a: number, b: number) => number;
   readonly __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;
   readonly __wbindgen_free: (a: number, b: number, c: number) => void;
@@ -116,6 +199,7 @@ export interface InitOutput {
   readonly __externref_table_alloc: () => number;
   readonly __wbindgen_externrefs: WebAssembly.Table;
   readonly __externref_table_dealloc: (a: number) => void;
+  readonly __externref_drop_slice: (a: number, b: number) => void;
   readonly __wbindgen_start: () => void;
 }
 

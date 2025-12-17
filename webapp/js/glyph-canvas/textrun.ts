@@ -5,7 +5,6 @@
 // - cursor movement
 // - selection handling
 
-import { Font } from 'opentype.js';
 import { Logger } from '../logger';
 import type { FeaturesManager } from './features';
 import type { AxesManager } from './variations';
@@ -32,7 +31,6 @@ export class TextRunEditor {
     hbFont: any;
     hbFace: any;
     hbBlob: any;
-    opentypeFont: Font | null;
     bidi: any;
     bidiRuns: any[];
     selectedGlyphIndex: number;
@@ -61,8 +59,6 @@ export class TextRunEditor {
         this.hbFace = null;
         this.hbBlob = null;
         this.fontBlob = null;
-
-        this.opentypeFont = null; // OpenType.js font instance
 
         // Bidirectional text support
         this.bidi = bidiFactory();
@@ -1040,18 +1036,16 @@ export class TextRunEditor {
                 const glyphId = glyph.g;
                 let glyphName = `GID${glyphId}`;
 
-                // Get glyph name from font manager (source font) instead of compiled font
+                // Get glyph name from font manager (source font)
                 if (
                     window.fontManager &&
                     window.fontManager.currentFont?.babelfontData
                 ) {
-                    glyphName = window.fontManager.getGlyphName(glyphId);
-                } else if (
-                    this.opentypeFont &&
-                    this.opentypeFont.glyphs.get(glyphId)
-                ) {
-                    glyphName =
-                        this.opentypeFont.glyphs.get(glyphId).name || glyphName;
+                    try {
+                        glyphName = window.fontManager.getGlyphName(glyphId);
+                    } catch (error) {
+                        // WASM not ready, keep fallback
+                    }
                 }
                 glyphNames.push(glyphName);
             }
@@ -1299,11 +1293,13 @@ export class TextRunEditor {
         }
     }
 
-    async setFont(fontData: Uint8Array) {
+    async setFont(fontData: Uint8Array, isInitialLoad: boolean = false) {
         console.log(
             '[TextRun]',
             '🔵 TextRunEditor.setFont() called, current textBuffer:',
-            this.textBuffer
+            this.textBuffer,
+            'isInitialLoad:',
+            isInitialLoad
         );
 
         // Store font blob
@@ -1315,8 +1311,10 @@ export class TextRunEditor {
 
         console.log('Font loaded into HarfBuzz');
 
-        // Load display string from font if available
-        await this.loadTextBufferFromFont();
+        // Load display string from font only on initial load, not during recompilation
+        if (isInitialLoad) {
+            await this.loadTextBufferFromFont();
+        }
 
         console.log(
             '[TextRun]',

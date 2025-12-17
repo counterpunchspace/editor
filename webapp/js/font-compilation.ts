@@ -17,7 +17,7 @@
 // Direct .babelfont JSON → TTF compilation (zero file system)
 // Based on: DIRECT_PYTHON_RUST_INTEGRATION.md
 
-import * as opentype from 'opentype.js';
+import { get_glyph_name } from '../wasm-dist/babelfont_fontc_web';
 import { fontInterpolation } from './font-interpolation';
 
 interface CompilationOptions {
@@ -82,10 +82,6 @@ async function shapeTextWithFont(
     fontBytes: Uint8Array,
     inputString: string
 ): Promise<Array<string>> {
-    // Parse the compiled font with opentype.js
-    const fontBuffer = new Uint8Array(fontBytes);
-    const opentypeFont = opentype.parse(fontBuffer.buffer);
-
     // Initialize HarfBuzz
     let hbModule;
     if (typeof window.createHarfBuzz !== 'undefined') {
@@ -101,7 +97,7 @@ async function shapeTextWithFont(
     }
 
     // Create HarfBuzz blob and font
-    const blob = hbModule.createBlob(fontBuffer);
+    const blob = hbModule.createBlob(fontBytes);
     const face = hbModule.createFace(blob, 0);
     const hbFont = hbModule.createFont(face);
 
@@ -116,15 +112,20 @@ async function shapeTextWithFont(
     // Get shaped glyphs (contains glyph IDs)
     const shapedGlyphs = buffer.json();
 
-    // Map glyph IDs to glyph names using opentype.js
+    // Map glyph IDs to glyph names using WASM get_glyph_name
     const glyphNames: Set<string> = new Set();
     for (const shapedGlyph of shapedGlyphs) {
         const glyphId = shapedGlyph.g;
-        if (opentypeFont && opentypeFont.glyphs.get(glyphId)) {
-            const glyph = opentypeFont.glyphs.get(glyphId);
-            if (glyph.name && glyph.name !== '.notdef') {
-                glyphNames.add(glyph.name);
+        try {
+            const glyphName = get_glyph_name(fontBytes, glyphId);
+            if (glyphName && glyphName !== '.notdef') {
+                glyphNames.add(glyphName);
             }
+        } catch (e) {
+            console.warn(
+                `[FontCompilation] Failed to get name for glyph ${glyphId}:`,
+                e
+            );
         }
     }
 

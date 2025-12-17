@@ -11,6 +11,10 @@ use write_fonts::types::Tag;
 use std::str::FromStr;
 use serde_json::Value as JsonValue;
 
+// Font reading module (using read-fonts/skrifa)
+mod font_reader;
+pub use font_reader::{get_font_axes, get_font_features, get_glyph_name, get_glyph_order, get_stylistic_set_names};
+
 // Global storage for cached fonts
 // Use a Mutex to allow safe mutable access from multiple calls
 static FONT_CACHE: Mutex<Option<babelfont::Font>> = Mutex::new(None);

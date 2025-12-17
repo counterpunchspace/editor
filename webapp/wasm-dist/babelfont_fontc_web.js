@@ -6,6 +6,17 @@ function addToExternrefTable0(obj) {
     return idx;
 }
 
+function getArrayJsValueFromWasm0(ptr, len) {
+    ptr = ptr >>> 0;
+    const mem = getDataViewMemory0();
+    const result = [];
+    for (let i = ptr; i < ptr + 4 * len; i += 4) {
+        result.push(wasm.__wbindgen_externrefs.get(mem.getUint32(i, true)));
+    }
+    wasm.__externref_drop_slice(ptr, len);
+    return result;
+}
+
 function getArrayU8FromWasm0(ptr, len) {
     ptr = ptr >>> 0;
     return getUint8ArrayMemory0().subarray(ptr / 1, ptr / 1 + len);
@@ -43,6 +54,13 @@ function handleError(f, args) {
 
 function isLikeNone(x) {
     return x === undefined || x === null;
+}
+
+function passArray8ToWasm0(arg, malloc) {
+    const ptr = malloc(arg.length * 1, 1) >>> 0;
+    getUint8ArrayMemory0().set(arg, ptr / 1);
+    WASM_VECTOR_LEN = arg.length;
+    return ptr;
 }
 
 function passStringToWasm0(arg, malloc, realloc) {
@@ -197,6 +215,181 @@ export function compile_glyphs(_glyphs_json) {
     var v2 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
     wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
     return v2;
+}
+
+/**
+ * Get variation axes from compiled font bytes
+ *
+ * Returns a JSON array of axis objects:
+ * ```json
+ * [
+ *   { "tag": "wght", "name": "Weight", "min": 100, "max": 900, "default": 400 },
+ *   { "tag": "wdth", "name": "Width", "min": 75, "max": 125, "default": 100 }
+ * ]
+ * ```
+ *
+ * # Arguments
+ * * `font_bytes` - Compiled TTF/OTF font bytes
+ *
+ * # Returns
+ * * `String` - JSON array of axis objects
+ * @param {Uint8Array} font_bytes
+ * @returns {string}
+ */
+export function get_font_axes(font_bytes) {
+    let deferred3_0;
+    let deferred3_1;
+    try {
+        const ptr0 = passArray8ToWasm0(font_bytes, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.get_font_axes(ptr0, len0);
+        var ptr2 = ret[0];
+        var len2 = ret[1];
+        if (ret[3]) {
+            ptr2 = 0; len2 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred3_0 = ptr2;
+        deferred3_1 = len2;
+        return getStringFromWasm0(ptr2, len2);
+    } finally {
+        wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+    }
+}
+
+/**
+ * Get all available features from compiled font bytes
+ *
+ * Returns a JSON array of feature tags:
+ * ```json
+ * ["liga", "kern", "ss01", "ss02", "calt", ...]
+ * ```
+ *
+ * # Arguments
+ * * `font_bytes` - Compiled TTF/OTF font bytes
+ *
+ * # Returns
+ * * `String` - JSON array of feature tag strings
+ * @param {Uint8Array} font_bytes
+ * @returns {string}
+ */
+export function get_font_features(font_bytes) {
+    let deferred3_0;
+    let deferred3_1;
+    try {
+        const ptr0 = passArray8ToWasm0(font_bytes, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.get_font_features(ptr0, len0);
+        var ptr2 = ret[0];
+        var len2 = ret[1];
+        if (ret[3]) {
+            ptr2 = 0; len2 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred3_0 = ptr2;
+        deferred3_1 = len2;
+        return getStringFromWasm0(ptr2, len2);
+    } finally {
+        wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+    }
+}
+
+/**
+ * Get glyph name by ID from compiled font bytes
+ *
+ * # Arguments
+ * * `font_bytes` - Compiled TTF/OTF font bytes
+ * * `glyph_id` - The glyph ID to look up
+ *
+ * # Returns
+ * * `String` - The glyph name, or ".notdef" if not found
+ * @param {Uint8Array} font_bytes
+ * @param {number} glyph_id
+ * @returns {string}
+ */
+export function get_glyph_name(font_bytes, glyph_id) {
+    let deferred3_0;
+    let deferred3_1;
+    try {
+        const ptr0 = passArray8ToWasm0(font_bytes, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.get_glyph_name(ptr0, len0, glyph_id);
+        var ptr2 = ret[0];
+        var len2 = ret[1];
+        if (ret[3]) {
+            ptr2 = 0; len2 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred3_0 = ptr2;
+        deferred3_1 = len2;
+        return getStringFromWasm0(ptr2, len2);
+    } finally {
+        wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+    }
+}
+
+/**
+ * Get glyph order (array of all glyph names) from compiled font bytes
+ *
+ * # Arguments
+ * * `font_bytes` - Compiled TTF/OTF font bytes
+ *
+ * # Returns
+ * * `Vec<String>` - Array of glyph names in glyph order
+ * @param {Uint8Array} font_bytes
+ * @returns {string[]}
+ */
+export function get_glyph_order(font_bytes) {
+    const ptr0 = passArray8ToWasm0(font_bytes, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.get_glyph_order(ptr0, len0);
+    if (ret[3]) {
+        throw takeFromExternrefTable0(ret[2]);
+    }
+    var v2 = getArrayJsValueFromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+    return v2;
+}
+
+/**
+ * Get stylistic set names from compiled font bytes
+ *
+ * Returns a JSON string with structure:
+ * ```json
+ * {
+ *   "ss01": "Alternate a",
+ *   "ss02": "Swash capitals",
+ *   ...
+ * }
+ * ```
+ *
+ * # Arguments
+ * * `font_bytes` - Compiled TTF/OTF font bytes
+ *
+ * # Returns
+ * * `String` - JSON object mapping feature tags to their UI names
+ * @param {Uint8Array} font_bytes
+ * @returns {string}
+ */
+export function get_stylistic_set_names(font_bytes) {
+    let deferred3_0;
+    let deferred3_1;
+    try {
+        const ptr0 = passArray8ToWasm0(font_bytes, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.get_stylistic_set_names(ptr0, len0);
+        var ptr2 = ret[0];
+        var len2 = ret[1];
+        if (ret[3]) {
+            ptr2 = 0; len2 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred3_0 = ptr2;
+        deferred3_1 = len2;
+        return getStringFromWasm0(ptr2, len2);
+    } finally {
+        wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+    }
 }
 
 export function init() {

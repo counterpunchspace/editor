@@ -7,7 +7,7 @@ import { TextRunEditor } from './glyph-canvas/textrun';
 import { ViewportManager } from './glyph-canvas/viewport';
 import { GlyphCanvasRenderer } from './glyph-canvas/renderer';
 import { MeasurementTool } from './glyph-canvas/measurement-tool';
-import * as opentype from 'opentype.js';
+import { get_glyph_name } from '../wasm-dist/babelfont_fontc_web';
 import fontManager from './font-manager';
 import { OutlineEditor } from './glyph-canvas/outline-editor';
 import { Logger } from './logger';
@@ -32,7 +32,7 @@ class GlyphCanvas {
 
     currentFont: any = null;
     fontBlob: Blob | null = null;
-    opentypeFont: opentype.Font | null = null;
+    fontBytes: Uint8Array | null = null;
     sourceGlyphNames: { [gid: number]: string } = {};
 
     isFocused: boolean = false;
@@ -867,68 +867,66 @@ class GlyphCanvas {
                 ...this.axesManager!.variationSettings
             };
 
-            // Parse with opentype.js for glyph path extraction
-            this.opentypeFont = opentype.parse(fontArrayBuffer);
-            this.axesManager!.opentypeFont = this.opentypeFont;
-            this.featuresManager!.opentypeFont = this.opentypeFont;
-            this.textRunEditor!.opentypeFont = this.opentypeFont;
-            console.log(
-                'Font parsed with opentype.js:',
-                this.opentypeFont!.names.fontFamily.en
-            );
+            // Store font bytes for feature/axis managers
+            const fontBytesArray = new Uint8Array(fontArrayBuffer);
+            this.fontBytes = fontBytesArray;
+            this.axesManager!.fontBytes = fontBytesArray;
+            this.featuresManager!.fontBytes = fontBytesArray;
+            console.log('[GlyphCanvas]', 'Font bytes stored for managers');
 
             // Create HarfBuzz blob, face, and font if HarfBuzz is loaded
-            this.textRunEditor!.setFont(new Uint8Array(fontArrayBuffer)).then(
-                (hbFont) => {
-                    // Restore previous variation settings before updating UI
-                    // This ensures the sliders show the previous values
-                    this.axesManager!.variationSettings =
-                        previousVariationSettings;
+            // Pass initialFontLoaded flag to only load text from font on first load
+            this.textRunEditor!.setFont(
+                fontBytesArray,
+                !this.initialFontLoaded
+            ).then(async (hbFont) => {
+                // Restore previous variation settings before updating UI
+                // This ensures the sliders show the previous values
+                this.axesManager!.variationSettings = previousVariationSettings;
 
-                    // Update axes UI (will restore slider positions from variationSettings)
-                    this.axesManager!.updateAxesUI();
-                    console.log('Updated axes UI after font load');
+                // Update axes UI (will restore slider positions from variationSettings)
+                await this.axesManager!.updateAxesUI();
+                console.log('Updated axes UI after font load');
 
-                    // Update features UI (async, then shape text)
-                    this.featuresManager!.updateFeaturesUI().then(async () => {
-                        // Shape text with new font after features are initialized
-                        this.textRunEditor!.shapeText();
+                // Update features UI (async, then shape text)
+                this.featuresManager!.updateFeaturesUI().then(async () => {
+                    // Shape text with new font after features are initialized
+                    this.textRunEditor!.shapeText();
 
-                        // Update properties UI to show master list in text mode
-                        await this.updatePropertiesUI();
+                    // Update properties UI to show master list in text mode
+                    await this.updatePropertiesUI();
 
-                        // Auto-select first master on initial load
+                    // Auto-select first master on initial load
+                    if (
+                        !this.initialFontLoaded &&
+                        fontManager.currentFont?.fontModel?.masters
+                    ) {
+                        const firstMaster =
+                            fontManager.currentFont.fontModel.masters[0];
                         if (
-                            !this.initialFontLoaded &&
-                            fontManager.currentFont?.fontModel?.masters
+                            firstMaster &&
+                            firstMaster.id &&
+                            firstMaster.location
                         ) {
-                            const firstMaster =
-                                fontManager.currentFont.fontModel.masters[0];
-                            if (
-                                firstMaster &&
-                                firstMaster.id &&
+                            await this.selectMaster(
+                                firstMaster.id,
                                 firstMaster.location
-                            ) {
-                                await this.selectMaster(
-                                    firstMaster.id,
-                                    firstMaster.location
-                                );
-                            }
-                        }
-
-                        // Zoom to fit the entire text in the canvas only on initial load
-                        if (!this.initialFontLoaded) {
-                            const rect = this.canvas!.getBoundingClientRect();
-                            this.viewportManager!.zoomToFitText(
-                                this.textRunEditor!.shapedGlyphs,
-                                rect,
-                                this.render.bind(this)
                             );
-                            this.initialFontLoaded = true;
                         }
-                    });
-                }
-            );
+                    }
+
+                    // Zoom to fit the entire text in the canvas only on initial load
+                    if (!this.initialFontLoaded) {
+                        const rect = this.canvas!.getBoundingClientRect();
+                        this.viewportManager!.zoomToFitText(
+                            this.textRunEditor!.shapedGlyphs,
+                            rect,
+                            this.render.bind(this)
+                        );
+                        this.initialFontLoaded = true;
+                    }
+                });
+            });
         } catch (error) {
             console.error('Error setting font:', error);
         }
@@ -1339,7 +1337,7 @@ class GlyphCanvas {
         });
     }
 
-    autoSelectMatchingMaster(): void {
+    async autoSelectMatchingMaster(): Promise<void> {
         // Check if current axis values match a master location
         // If so, select that master. If not, deselect current master.
         console.log('[GlyphCanvas] autoSelectMatchingMaster called');
@@ -1366,10 +1364,10 @@ class GlyphCanvas {
             return;
         }
 
-        const axes = this.axesManager.getVariationAxes();
+        const axes = await this.axesManager.getVariationAxes();
         for (const axis of axes) {
             currentLocationUserspace[axis.tag] =
-                this.axesManager.getAxisValue(axis.tag) || axis.defaultValue;
+                this.axesManager.getAxisValue(axis.tag) || axis.default;
         }
 
         // Convert to designspace for comparison with master.location (which is in designspace)
@@ -1516,11 +1514,15 @@ class GlyphCanvas {
         // Get glyph name from font manager (source font) instead of compiled font
         if (fontManager && fontManager.currentFont) {
             glyphName = fontManager.getGlyphName(glyphId);
-        } else if (this.opentypeFont && this.opentypeFont.glyphs.get(glyphId)) {
-            // Fallback to compiled font name (will be production name like glyph00001)
-            const glyph = this.opentypeFont.glyphs.get(glyphId);
-            if (glyph.name) {
-                glyphName = glyph.name;
+        } else if (this.fontBytes) {
+            // Fallback to compiled font name using WASM
+            try {
+                glyphName = get_glyph_name(this.fontBytes, glyphId);
+            } catch (e) {
+                console.warn(
+                    `[GlyphCanvas] Failed to get glyph name for ${glyphId}:`,
+                    e
+                );
             }
         }
         return glyphName;

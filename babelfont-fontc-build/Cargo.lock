@@ -143,7 +143,9 @@ dependencies = [
  "fontdrasil 0.4.0 (git+https://github.com/googlefonts/fontc?branch=paths-all-optional)",
  "js-sys",
  "kurbo 0.12.0",
+ "read-fonts 0.36.0",
  "serde_json",
+ "skrifa",
  "tempfile",
  "wasm-bindgen",
  "web-sys",
@@ -553,7 +555,7 @@ dependencies = [
  "indexmap 2.12.1",
  "itertools",
  "log",
- "read-fonts",
+ "read-fonts 0.36.0",
  "smol_str",
  "thiserror 2.0.17",
 ]
@@ -569,6 +571,15 @@ name = "fnv"
 version = "1.0.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3f9eec918d3f24069decb9af1554cad7c880e2da24a9afd88aca000531ab82c1"
+
+[[package]]
+name = "font-types"
+version = "0.8.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1fa6a5e5a77b5f3f7f9e32879f484aa5b3632ddfbe568a16266c904a6f32cdaf"
+dependencies = [
+ "bytemuck",
+]
 
 [[package]]
 name = "font-types"
@@ -1248,12 +1259,22 @@ dependencies = [
 
 [[package]]
 name = "read-fonts"
+version = "0.27.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f14974c88fb4fd0a7203719f98020209248c9dbebaf9d10d860337797a905097"
+dependencies = [
+ "bytemuck",
+ "font-types 0.8.4",
+]
+
+[[package]]
+name = "read-fonts"
 version = "0.36.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5eaa2941a4c05443ee3a7b26ab076a553c343ad5995230cc2b1d3e993bdc6345"
 dependencies = [
  "bytemuck",
- "font-types",
+ "font-types 0.10.1",
  "serde",
 ]
 
@@ -1522,6 +1543,16 @@ name = "shlex"
 version = "1.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0fda2ff0d084019ba4d7c6f371c95d8fd75ce3524c3cb8fb653a3023f6323e64"
+
+[[package]]
+name = "skrifa"
+version = "0.28.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "16e7936ca3627fdb516e97aca3c8ab5103f94ae32fe5ce80a0a02edcbacb7b53"
+dependencies = [
+ "bytemuck",
+ "read-fonts 0.27.5",
+]
 
 [[package]]
 name = "smallvec"
@@ -1940,11 +1971,11 @@ version = "0.44.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "187aca250ee00f9d9ad3a1ebc9ed65c9c921fdd4690b095ca6e5a8df7246d871"
 dependencies = [
- "font-types",
+ "font-types 0.10.1",
  "indexmap 2.12.1",
  "kurbo 0.12.0",
  "log",
- "read-fonts",
+ "read-fonts 0.36.0",
  "serde",
 ]
 

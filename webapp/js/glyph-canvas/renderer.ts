@@ -363,15 +363,12 @@ export class GlyphCanvasRenderer {
                 ].g;
             let glyphName = `GID ${glyphId}`;
 
-            // Get glyph name from compiled font via OpenType.js
+            // Get glyph name from font manager
             if (
-                this.glyphCanvas.opentypeFont &&
-                this.glyphCanvas.opentypeFont.glyphs.get(glyphId)
+                window.fontManager &&
+                window.fontManager.currentFont?.babelfontData
             ) {
-                const glyph = this.glyphCanvas.opentypeFont.glyphs.get(glyphId);
-                if (glyph.name) {
-                    glyphName = glyph.name;
-                }
+                glyphName = window.fontManager.getGlyphName(glyphId);
             }
 
             // Get glyph position and advance from shaped data
@@ -386,16 +383,8 @@ export class GlyphCanvasRenderer {
             const glyphWidth = shapedGlyph.ax || 0;
             const glyphYOffset = shapedGlyph.dy || 0; // Y offset from HarfBuzz shaping
 
-            // Get glyph bounding box to find bottom edge
-            let glyphYMin = 0;
-            if (
-                this.glyphCanvas.opentypeFont &&
-                this.glyphCanvas.opentypeFont.glyphs.get(glyphId)
-            ) {
-                const glyph = this.glyphCanvas.opentypeFont.glyphs.get(glyphId);
-                const bbox = glyph.getBoundingBox();
-                glyphYMin = bbox.y1; // y1 is the minimum Y (bottom edge)
-            }
+            // Use glyph bounds for Y position (no longer need OpenType.js bounding box)
+            let glyphYMin = glyphBounds ? glyphBounds.y1 : 0;
 
             // Position tooltip centered under the glyph
             // In font coordinates: Y increases upward, so negative Y is below baseline
@@ -2363,15 +2352,18 @@ export class GlyphCanvasRenderer {
                 const glyphX = xPosition + xOffset;
                 const glyphY = yOffset;
 
-                // Get glyph name from compiled OpenType font
+                // Get glyph name from font manager
                 let glyphName: string | undefined;
                 if (
-                    this.glyphCanvas.opentypeFont &&
-                    this.glyphCanvas.opentypeFont.glyphs.get(glyphId)
+                    window.fontManager &&
+                    window.fontManager.currentFont?.babelfontData
                 ) {
-                    const glyph =
-                        this.glyphCanvas.opentypeFont.glyphs.get(glyphId);
-                    glyphName = glyph.name || undefined;
+                    try {
+                        glyphName = window.fontManager.getGlyphName(glyphId);
+                    } catch (error) {
+                        // WASM not ready, use fallback
+                        glyphName = undefined;
+                    }
                 }
 
                 console.log('[TextMeasure] Found glyph name:', glyphName);

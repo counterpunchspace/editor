@@ -1,5 +1,14 @@
-import { Font } from 'opentype.js';
+import { get_font_axes } from '../../wasm-dist/babelfont_fontc_web';
 import Babelfont from '../babelfont';
+import { ensureWasmInitialized } from '../wasm-init';
+
+interface VariationAxis {
+    tag: string;
+    name: string;
+    min: number;
+    max: number;
+    default: number;
+}
 
 export class AxesManager {
     variationSettings: Record<string, number>;
@@ -10,7 +19,7 @@ export class AxesManager {
     animationStartValues: Record<string, number>;
     animationTargetValues: Record<string, number>;
     animationCurrentFrame: number;
-    opentypeFont: Font | null;
+    fontBytes: Uint8Array | null;
     callbacks: Record<string, Function[]>; // Support multiple callbacks per event
     isSliderActive: boolean;
 
@@ -28,7 +37,7 @@ export class AxesManager {
         this.animationCurrentFrame = 0;
         this.isSliderActive = false;
 
-        this.opentypeFont = null; // To be set externally
+        this.fontBytes = null; // To be set externally
         this.callbacks = {}; // Array of callbacks for each event
     }
 
@@ -90,11 +99,26 @@ export class AxesManager {
         });
     }
 
-    getVariationAxes() {
-        if (!this.opentypeFont || !this.opentypeFont.tables.fvar) {
+    async getVariationAxes(): Promise<VariationAxis[]> {
+        if (!this.fontBytes) {
+            console.log('[AxesManager]', 'No fontBytes available');
             return [];
         }
-        return this.opentypeFont.tables.fvar.axes || [];
+
+        try {
+            console.log(
+                '[AxesManager]',
+                'Getting axes from WASM, fontBytes length:',
+                this.fontBytes.length
+            );
+            await ensureWasmInitialized();
+            const axesJson = get_font_axes(this.fontBytes);
+            console.log('[AxesManager]', 'Axes JSON:', axesJson);
+            return JSON.parse(axesJson);
+        } catch (error) {
+            console.error('[AxesManager]', 'Failed to get font axes:', error);
+            return [];
+        }
     }
 
     getAxisValue(axisTag: string): number | undefined {
@@ -106,10 +130,10 @@ export class AxesManager {
         this.updateAxisSliders();
     }
 
-    updateAxesUI() {
+    async updateAxesUI() {
         if (!this.axesSection) return;
 
-        const axes = this.getVariationAxes();
+        const axes = await this.getVariationAxes();
 
         if (axes.length === 0) {
             requestAnimationFrame(() => {
@@ -128,7 +152,7 @@ export class AxesManager {
         tempContainer.appendChild(title);
 
         // Create slider for each axis
-        axes.forEach((axis: any) => {
+        axes.forEach((axis: VariationAxis) => {
             const axisContainer = document.createElement('div');
             axisContainer.className = 'editor-axis-container';
 
@@ -138,11 +162,11 @@ export class AxesManager {
 
             const axisLabel = document.createElement('span');
             axisLabel.className = 'editor-axis-name';
-            axisLabel.textContent = axis.name.en || axis.tag;
+            axisLabel.textContent = axis.name || axis.tag;
 
             const valueLabel = document.createElement('span');
             valueLabel.className = 'editor-axis-value';
-            valueLabel.textContent = axis.defaultValue.toFixed(0);
+            valueLabel.textContent = axis.default.toFixed(0);
             valueLabel.setAttribute('data-axis-tag', axis.tag); // Add identifier for programmatic updates
 
             labelRow.appendChild(axisLabel);
@@ -152,18 +176,18 @@ export class AxesManager {
             const slider = document.createElement('input');
             slider.type = 'range';
             slider.className = 'editor-axis-slider';
-            slider.min = axis.minValue;
-            slider.max = axis.maxValue;
+            slider.min = axis.min.toString();
+            slider.max = axis.max.toString();
             slider.step = '1';
             slider.setAttribute('data-axis-tag', axis.tag); // Add identifier for programmatic updates
 
-            // Restore 7 value if it exists, otherwise use default
+            // Restore value if it exists, otherwise use default
             const initialValue =
                 this.variationSettings[axis.tag] !== undefined
                     ? this.variationSettings[axis.tag]
-                    : axis.defaultValue;
+                    : axis.default;
 
-            slider.value = initialValue;
+            slider.value = initialValue.toString();
             valueLabel.textContent = initialValue.toFixed(0);
 
             // Initialize variation setting
