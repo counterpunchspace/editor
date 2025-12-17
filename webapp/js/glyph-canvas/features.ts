@@ -87,12 +87,14 @@ export class FeaturesManager {
             // Build feature list with metadata
             return discretionaryInFont.map((tag: string) => {
                 // Use stylistic set name if available, otherwise fall back to description
+                const hasCustomName = !!ssNames[tag];
                 const description = ssNames[tag] || descriptions[tag] || tag;
 
                 return {
                     tag: tag,
                     defaultOn: defaultOnFeatures.has(tag),
-                    description: description
+                    description: description,
+                    hasCustomName: hasCustomName
                 };
             });
         } catch (error) {
@@ -198,6 +200,9 @@ export class FeaturesManager {
 
             const descSpan = document.createElement('span');
             descSpan.className = 'editor-feature-description';
+            if (feature.hasCustomName) {
+                descSpan.classList.add('custom-name');
+            }
             descSpan.style.opacity = '0.7';
             descSpan.style.fontSize = '11px';
             descSpan.style.flex = '1';

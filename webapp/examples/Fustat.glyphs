@@ -1,5 +1,5 @@
 {
-.appVersion = "3343";
+.appVersion = "3434";
 .formatVersion = 3;
 axes = (
 {
@@ -1181,8 +1181,12 @@ value = "Geometric a g";
 tag = ss03;
 },
 {
-automatic = 1;
-code = "sub a by a.ss04;
+code = "  featureNames {
+    name 1 \"Tailed a g l y\";
+    name 3 \"Tailed a g l y\";
+  };
+
+sub a by a.ss04;
 sub aacute by aacute.ss04;
 sub abreve by abreve.ss04;
 sub acircumflex by acircumflex.ss04;
