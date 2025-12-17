@@ -5,5 +5,10 @@
       "command": "node",
       "args": ["${workspaceFolder}/mcp-server/build/index.js"]
     }
+    // "chrome-devtools": {
+    //   "command": "npx",
+    //   "args": ["chrome-devtools-mcp@latest"],
+    //   "type": "stdio"
+    // }
   }
 }
