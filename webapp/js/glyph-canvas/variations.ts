@@ -94,7 +94,8 @@ export class AxesManager {
         valueLabels.forEach((label) => {
             const axisTag: string | null = label.getAttribute('data-axis-tag');
             if (axisTag && this.variationSettings[axisTag] !== undefined) {
-                (label as HTMLInputElement).value = this.variationSettings[axisTag].toFixed(0);
+                (label as HTMLInputElement).value =
+                    this.variationSettings[axisTag].toFixed(0);
             }
         });
     }
@@ -170,7 +171,7 @@ export class AxesManager {
             valueLabel.value = axis.default.toFixed(0);
             valueLabel.setAttribute('data-axis-tag', axis.tag); // Add identifier for programmatic updates
             valueLabel.setAttribute('inputmode', 'numeric');
-            
+
             labelRow.appendChild(axisLabel);
             labelRow.appendChild(valueLabel);
 
@@ -206,14 +207,14 @@ export class AxesManager {
             valueLabel.addEventListener('change', (e) => {
                 // @ts-ignore
                 let value = parseFloat(e.target.value);
-                
+
                 // Clamp value to axis bounds
                 if (isNaN(value)) {
                     value = initialValue;
                 } else {
                     value = Math.max(axis.min, Math.min(axis.max, value));
                 }
-                
+
                 // @ts-ignore
                 e.target.value = value.toFixed(0);
                 this.call('onSliderChange', axis.tag, value);
