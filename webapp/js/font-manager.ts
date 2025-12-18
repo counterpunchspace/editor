@@ -325,11 +325,6 @@ class FontManager {
         if (window.saveButton) {
             window.saveButton.updateButtonState();
         }
-
-        // Update compile button state
-        if (window.compileFontButton) {
-            window.compileFontButton.updateState();
-        }
     }
     async onClosed() {
         await this.onOpened(); // same thing

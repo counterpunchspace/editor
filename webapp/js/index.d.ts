@@ -50,12 +50,6 @@ declare global {
         cacheManager: CacheManager;
         cacheStats: () => { size: number; itemCount: number };
 
-        // From compile-button.js
-        compileFontButton: {
-            compile: () => void;
-            updateState: () => void;
-        };
-
         // From file-browser.js
         _trackingInitPromise: Promise<void> | null;
         navigateToPath: (path: string) => Promise<void>;

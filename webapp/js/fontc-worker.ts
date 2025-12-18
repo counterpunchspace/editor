@@ -66,7 +66,7 @@ self.onmessage = async (event) => {
         })
     );
 
-    // Protocol 1: Type-based messages (from compile-button.js)
+    // Protocol 1: Type-based messages
     if (data.type === 'init') {
         try {
             const ver: string = await initializeWasm();
