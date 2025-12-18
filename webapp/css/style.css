@@ -3564,6 +3564,24 @@ kbd + kbd {
     color: var(--text-secondary);
     font-family: var(--font-mono);
     font-size: 10px;
+    background: transparent;
+    border: 1px solid transparent;
+    padding: 1px 3px;
+    border-radius: 2px;
+    text-align: right;
+    width: 40px;
+    transition: all 0.15s ease;
+}
+
+.editor-axis-value:hover {
+    border-color: var(--border-secondary);
+    background: var(--bg-secondary);
+}
+
+.editor-axis-value:focus {
+    outline: none;
+    border-color: var(--accent-primary);
+    background: var(--bg-primary);
 }
 
 .editor-axis-slider {

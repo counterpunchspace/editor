@@ -89,12 +89,12 @@ export class AxesManager {
 
         // Update all value labels
         const valueLabels = this.axesSection.querySelectorAll(
-            'span[data-axis-tag]'
+            'input[data-axis-tag].editor-axis-value'
         );
         valueLabels.forEach((label) => {
             const axisTag: string | null = label.getAttribute('data-axis-tag');
             if (axisTag && this.variationSettings[axisTag] !== undefined) {
-                label.textContent = this.variationSettings[axisTag].toFixed(0);
+                (label as HTMLInputElement).value = this.variationSettings[axisTag].toFixed(0);
             }
         });
     }
@@ -164,11 +164,13 @@ export class AxesManager {
             axisLabel.className = 'editor-axis-name';
             axisLabel.textContent = axis.name || axis.tag;
 
-            const valueLabel = document.createElement('span');
+            const valueLabel = document.createElement('input');
+            valueLabel.type = 'text';
             valueLabel.className = 'editor-axis-value';
-            valueLabel.textContent = axis.default.toFixed(0);
+            valueLabel.value = axis.default.toFixed(0);
             valueLabel.setAttribute('data-axis-tag', axis.tag); // Add identifier for programmatic updates
-
+            valueLabel.setAttribute('inputmode', 'numeric');
+            
             labelRow.appendChild(axisLabel);
             labelRow.appendChild(valueLabel);
 
@@ -188,10 +190,42 @@ export class AxesManager {
                     : axis.default;
 
             slider.value = initialValue.toString();
-            valueLabel.textContent = initialValue.toFixed(0);
+            valueLabel.value = initialValue.toFixed(0);
 
             // Initialize variation setting
             this.variationSettings[axis.tag] = initialValue;
+
+            // Handle value input changes
+            valueLabel.addEventListener('input', (e) => {
+                // @ts-ignore
+                let inputValue = e.target.value.replace(/[^0-9.-]/g, '');
+                // @ts-ignore
+                e.target.value = inputValue;
+            });
+
+            valueLabel.addEventListener('change', (e) => {
+                // @ts-ignore
+                let value = parseFloat(e.target.value);
+                
+                // Clamp value to axis bounds
+                if (isNaN(value)) {
+                    value = initialValue;
+                } else {
+                    value = Math.max(axis.min, Math.min(axis.max, value));
+                }
+                
+                // @ts-ignore
+                e.target.value = value.toFixed(0);
+                this.call('onSliderChange', axis.tag, value);
+                this.setVariation(axis.tag, value);
+            });
+
+            valueLabel.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') {
+                    // @ts-ignore
+                    e.target.blur();
+                }
+            });
 
             // Enter preview mode on mousedown
             slider.addEventListener('mousedown', () => {
@@ -209,7 +243,7 @@ export class AxesManager {
             slider.addEventListener('input', (e) => {
                 // @ts-ignore
                 const value = parseFloat(e.target.value);
-                valueLabel.textContent = value.toFixed(0);
+                valueLabel.value = value.toFixed(0);
                 this.call('onSliderChange', axis.tag, value);
 
                 this.setVariation(axis.tag, value);
