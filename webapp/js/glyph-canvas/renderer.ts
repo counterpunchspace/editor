@@ -14,6 +14,13 @@ export class GlyphCanvasRenderer {
     glyphCanvas: GlyphCanvas;
     viewportManager: ViewportManager;
     textRunEditor: TextRunEditor;
+
+    // FPS tracking - measure actual frame render rate
+    private frameCount: number = 0;
+    private fpsStartTime: number = 0;
+    private fps: number = 0;
+    private readonly FPS_UPDATE_INTERVAL = 500; // Update FPS display every 500ms
+
     /**
      *
      * @param {HTMLCanvasElement} canvas
@@ -35,6 +42,25 @@ export class GlyphCanvasRenderer {
     }
     render() {
         if (!this.ctx || !this.canvas) return;
+
+        // Track FPS by counting frames over time intervals
+        const now = performance.now();
+
+        // Initialize FPS tracking on first render
+        if (this.fpsStartTime === 0) {
+            this.fpsStartTime = now;
+            this.frameCount = 0;
+        }
+
+        this.frameCount++;
+
+        // Update FPS calculation every FPS_UPDATE_INTERVAL ms
+        const elapsed = now - this.fpsStartTime;
+        if (elapsed >= this.FPS_UPDATE_INTERVAL) {
+            this.fps = (this.frameCount / elapsed) * 1000;
+            this.frameCount = 0;
+            this.fpsStartTime = now;
+        }
 
         // Clear canvas
         this.ctx.save();
@@ -1545,6 +1571,12 @@ export class GlyphCanvasRenderer {
         // Draw zoom level (top left)
         const zoomText = `Zoom: ${(this.viewportManager.scale * 100).toFixed(1)}%`;
         this.ctx.fillText(zoomText, 10, 50);
+
+        // Draw FPS (top left)
+        if (this.fps > 0) {
+            const fpsText = `FPS: ${Math.round(this.fps)}`;
+            this.ctx.fillText(fpsText, 10, 65);
+        }
 
         // Draw crosshair or user-defined line when alt key is pressed in editing mode
         if (this.glyphCanvas.measurementTool.shouldDrawVisuals()) {
