@@ -322,7 +322,8 @@ class GlyphCanvas {
         const rightSidebar = document.getElementById('glyph-editor-sidebar');
 
         const restoreFocus = (e: MouseEvent) => {
-            this.outlineEditor.restoreFocus();
+            // Always restore focus to canvas when clicking sidebar
+            setTimeout(() => this.canvas!.focus(), 0);
         };
 
         if (leftSidebar) {
