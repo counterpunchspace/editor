@@ -137,6 +137,10 @@ The MCP server enables full remote control of the webapp via the `execute_javasc
 - `context://logs/recent` - Last 50 console logs
 - `context://runtime/data` - Current runtime state
 
+**Wait for user input**
+
+- Don't just run reload the web app and execute javascript. In most cases, ask the user to perform an action and confirm with "Done", then poll the logs yourself.
+
 **Sending runtime data from webapp:**
 
 ```javascript
