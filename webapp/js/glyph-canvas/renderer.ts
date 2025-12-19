@@ -533,6 +533,78 @@ export class GlyphCanvasRenderer {
         }
     }
 
+    /**
+     * Helper method to get bounding box of component shapes
+     */
+    private getComponentBounds(shapes: any[]): {
+        minX: number;
+        minY: number;
+        maxX: number;
+        maxY: number;
+        hasPoints: boolean;
+    } {
+        let minX = Infinity;
+        let minY = Infinity;
+        let maxX = -Infinity;
+        let maxY = -Infinity;
+        let hasPoints = false;
+
+        const expandBounds = (x: number, y: number) => {
+            minX = Math.min(minX, x);
+            minY = Math.min(minY, y);
+            maxX = Math.max(maxX, x);
+            maxY = Math.max(maxY, y);
+            hasPoints = true;
+        };
+
+        shapes.forEach((shape: any) => {
+            // Handle direct node shapes (most common in components)
+            if (shape.nodes) {
+                shape.nodes.forEach((node: any) => {
+                    expandBounds(node.x, node.y);
+                });
+            }
+            // Also handle Contour-wrapped shapes
+            else if ('Contour' in shape && shape.Contour.nodes) {
+                shape.Contour.nodes.forEach((node: any) => {
+                    expandBounds(node.x, node.y);
+                });
+            }
+            // Handle nested components recursively
+            else if (
+                'Component' in shape &&
+                shape.Component.layerData?.shapes
+            ) {
+                const nestedBounds = this.getComponentBounds(
+                    shape.Component.layerData.shapes
+                );
+                if (nestedBounds.hasPoints) {
+                    // Apply the nested component's transform to its bounds
+                    const transform = shape.Component.transform || [
+                        1, 0, 0, 1, 0, 0
+                    ];
+                    const [a, b, c, d, tx, ty] = transform;
+
+                    // Transform all four corners of the bounding box
+                    const corners = [
+                        { x: nestedBounds.minX, y: nestedBounds.minY },
+                        { x: nestedBounds.maxX, y: nestedBounds.minY },
+                        { x: nestedBounds.minX, y: nestedBounds.maxY },
+                        { x: nestedBounds.maxX, y: nestedBounds.maxY }
+                    ];
+
+                    corners.forEach((corner) => {
+                        const transformedX = a * corner.x + c * corner.y + tx;
+                        const transformedY = b * corner.x + d * corner.y + ty;
+                        expandBounds(transformedX, transformedY);
+                    });
+                }
+            }
+        });
+
+        return { minX, minY, maxX, maxY, hasPoints };
+    }
+
     drawOutlineEditor() {
         // Validate APP_SETTINGS is available
         if (
@@ -781,6 +853,19 @@ export class GlyphCanvasRenderer {
             currentLayerData?.shapes?.length
         );
 
+        // Collect component labels to draw at the end (on top of everything)
+        const componentLabels: Array<{
+            componentName: string;
+            bounds: {
+                minX: number;
+                minY: number;
+                maxX: number;
+                maxY: number;
+                hasPoints: boolean;
+            };
+            transform: number[];
+        }> = [];
+
         // Only draw shapes if they exist (empty glyphs like space won't have shapes)
         if (currentLayerData.shapes && Array.isArray(currentLayerData.shapes)) {
             // Apply monochrome during manual slider interpolation OR when not on an exact layer
@@ -996,6 +1081,23 @@ export class GlyphCanvasRenderer {
 
                     // Start recursive rendering
                     renderComponentShapes(shape.Component.layerData.shapes);
+
+                    // Collect component label data for later drawing (on top of everything)
+                    // Only show on hover
+                    if (isHovered) {
+                        const componentName =
+                            shape.Component.reference || 'component';
+                        const bounds = this.getComponentBounds(
+                            shape.Component.layerData.shapes
+                        );
+                        if (bounds.hasPoints) {
+                            componentLabels.push({
+                                componentName,
+                                bounds,
+                                transform: [a, b, c, d, tx, ty]
+                            });
+                        }
+                    }
                 }
 
                 // Draw component reference marker at origin
@@ -1169,6 +1271,53 @@ export class GlyphCanvasRenderer {
                 }
             });
         }
+
+        // Draw component labels on top of everything
+        componentLabels.forEach(({ componentName, bounds, transform }) => {
+            const [a, b, c, d, tx, ty] = transform;
+            const centerX = (bounds.minX + bounds.maxX) / 2;
+            const labelY = bounds.minY - 100; // 100 units below bottom in local space
+
+            this.ctx.save();
+            this.ctx.transform(a, b, c, d, tx, ty); // Apply component transform
+            this.ctx.translate(centerX, labelY);
+            this.ctx.scale(1, -1); // Flip Y to make text right-side up
+
+            const fontSize = 16 * invScale;
+            this.ctx.font = `${fontSize}px IBM Plex Mono`;
+            const metrics = this.ctx.measureText(componentName);
+            const padding = 10 * invScale;
+            const bgWidth = metrics.width + padding * 2;
+            const bgHeight = fontSize * 1.8;
+
+            const bgX = -bgWidth / 2;
+            const bgY = 0;
+
+            // Draw background
+            this.ctx.fillStyle = isDarkTheme
+                ? 'rgba(40, 40, 40, 0.95)'
+                : 'rgba(255, 255, 255, 0.95)';
+            this.ctx.fillRect(bgX, bgY, bgWidth, bgHeight);
+
+            // Draw border
+            this.ctx.strokeStyle = isDarkTheme
+                ? 'rgba(255, 255, 255, 0.3)'
+                : 'rgba(0, 0, 0, 0.3)';
+            this.ctx.lineWidth = 2 * invScale;
+            this.ctx.strokeRect(bgX, bgY, bgWidth, bgHeight);
+
+            // Draw text
+            this.ctx.fillStyle = isDarkTheme
+                ? 'rgba(255, 255, 255, 0.9)'
+                : 'rgba(0, 0, 0, 0.9)';
+            this.ctx.fillText(
+                componentName,
+                bgX + padding,
+                bgY + fontSize * 0.85 + padding / 2 + 4
+            );
+
+            this.ctx.restore();
+        });
 
         // Draw bounding box for testing
         this.drawBoundingBox();
