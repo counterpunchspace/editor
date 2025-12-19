@@ -3595,7 +3595,7 @@ kbd + kbd {
 
 /* Individual master/layer item */
 .editor-layer-item {
-    padding: 8px 12px;
+    padding: 5px 12px;
     border-radius: 0;
     cursor: pointer;
     font-size: 11px;
@@ -3642,6 +3642,20 @@ kbd + kbd {
 
 :root[data-theme='light'] .editor-layer-item.inactive:hover {
     background-color: transparent;
+}
+
+/* Master/Layer item content */
+.master-item-name {
+    font-family: var(--font-sans);
+    font-size: 11px;
+    color: var(--text-primary);
+}
+
+.master-item-location {
+    font-family: var(--font-mono);
+    font-size: 9px;
+    color: var(--text-muted);
+    margin-top: 2px;
 }
 
 /* Axis controls container */

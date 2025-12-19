@@ -1172,10 +1172,24 @@ class GlyphCanvas {
             const masterName =
                 typeof master.name === 'string'
                     ? master.name
-                    : master.name && 'en' in master.name
-                      ? master.name.en
-                      : null;
-            masterItem.textContent = axisValues || masterName || 'Default';
+                    : master.name && 'dflt' in master.name
+                      ? master.name.dflt
+                      : master.name && 'en' in master.name
+                        ? master.name.en
+                        : null;
+
+            // Create display with master name and axis values
+            const nameSpan = document.createElement('div');
+            nameSpan.className = 'master-item-name';
+            nameSpan.textContent = masterName || 'Default';
+            masterItem.appendChild(nameSpan);
+
+            if (axisValues) {
+                const axisSpan = document.createElement('div');
+                axisSpan.className = 'master-item-location';
+                axisSpan.textContent = axisValues;
+                masterItem.appendChild(axisSpan);
+            }
 
             // Click handler - different behavior based on mode
             masterItem.addEventListener('click', () => {
