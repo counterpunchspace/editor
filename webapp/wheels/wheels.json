@@ -1,3 +1,5 @@
 {
-    "wheels": []
+    "wheels": [
+        "example_canvas_plugin-0.1.0-py3-none-any.whl"
+    ]
 }

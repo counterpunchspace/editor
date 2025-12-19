@@ -116,6 +116,23 @@ async function initFontEditor() {
 
         console.log('[FontEditor]', 'FontEditor initialized successfully');
 
+        // Discover canvas plugins
+        if (window.updateLoadingStatus) {
+            window.updateLoadingStatus('Loading canvas plugins...');
+        }
+        if (window.canvasPluginManager) {
+            try {
+                await window.canvasPluginManager.discoverPlugins();
+            } catch (error) {
+                console.error(
+                    '[FontEditor]',
+                    'Failed to discover canvas plugins:',
+                    error
+                );
+                // Continue anyway - plugins are optional
+            }
+        }
+
         // Load example fonts into /user folder
         if (window.loadExampleFonts) {
             try {

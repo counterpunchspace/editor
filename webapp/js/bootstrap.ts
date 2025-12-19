@@ -7,6 +7,8 @@ import './ai-assistant.js';
 import './api-docs-generator.js';
 import './auto-compile-manager';
 import './cache-manager.js';
+import './canvas-plugin-manager';
+import './editor-plugins-ui.js';
 import './example-loader.js';
 import './file-browser';
 import './font-interpolation';

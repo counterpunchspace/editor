@@ -50,6 +50,35 @@ declare global {
         cacheManager: CacheManager;
         cacheStats: () => { size: number; itemCount: number };
 
+        // From canvas-plugin-manager.ts
+        canvasPluginManager: {
+            discoverPlugins: () => Promise<void>;
+            drawPluginsAbove: (
+                layerData: any,
+                glyphName: string,
+                ctx: CanvasRenderingContext2D,
+                viewportManager: any
+            ) => Promise<void>;
+            drawPluginsBelow: (
+                layerData: any,
+                glyphName: string,
+                ctx: CanvasRenderingContext2D,
+                viewportManager: any
+            ) => Promise<void>;
+            getPluginInstance: (entryPoint: string) => any;
+            getPlugins: () => any[];
+            isLoaded: () => boolean;
+            isPluginEnabled: (entryPoint: string) => boolean;
+            enablePlugin: (entryPoint: string) => void;
+            disablePlugin: (entryPoint: string) => void;
+            togglePlugin: (entryPoint: string) => boolean;
+        };
+
+        // From editor-plugins-ui.js
+        editorPluginsUI: {
+            updatePluginList: () => void;
+        };
+
         // From file-browser.js
         _trackingInitPromise: Promise<void> | null;
         navigateToPath: (path: string) => Promise<void>;

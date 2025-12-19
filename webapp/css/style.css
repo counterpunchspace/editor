@@ -94,6 +94,9 @@
 
     /* Font Families */
     --font-mono: 'IBM Plex Mono', 'Courier New', Courier, monospace;
+    --font-sans:
+        'IBM Plex Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
+        sans-serif;
 }
 
 /* Light Theme */
@@ -997,6 +1000,92 @@ kbd + kbd {
 .ai-context-btn:hover:not(.active) {
     background-color: var(--input-bg);
     border-left-color: var(--text-primary);
+}
+
+/* Editor Plugins Toggle */
+.editor-plugins-toggle {
+    display: flex;
+    align-items: stretch;
+    gap: 0;
+    /* border-right: 4px solid var(--border-primary); */
+    height: 100%;
+    margin-left: auto;
+    position: relative;
+}
+
+.editor-plugins-dropdown-btn {
+    background-color: transparent;
+    border: none;
+    border-left: 1px solid var(--border-primary);
+    color: var(--text-primary);
+    padding: 0 8px;
+    border-radius: 0;
+    cursor: pointer;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    font-weight: normal;
+    transition: all 0.2s ease;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    gap: 3px;
+}
+
+.editor-plugins-dropdown-btn:hover {
+    background-color: var(--input-bg);
+    border-left-color: var(--text-primary);
+}
+
+.editor-plugins-dropdown-btn .material-symbols-outlined {
+    font-size: 14px;
+}
+
+.editor-plugins-dropdown {
+    position: absolute;
+    top: 100%;
+    right: 0;
+    background-color: var(--bg-primary);
+    border: 1px solid var(--border-primary);
+    border-right: none;
+    min-width: 300px;
+    overflow-y: auto;
+    z-index: 1000;
+    font-family: var(--font-sans);
+}
+
+.editor-plugins-dropdown-item {
+    display: flex;
+    align-items: center;
+    padding: 8px 12px;
+    cursor: pointer;
+    border-bottom: 1px solid var(--border-primary);
+    transition: background-color 0.15s ease;
+}
+
+.editor-plugins-dropdown-item:last-child {
+    border-bottom: none;
+}
+
+.editor-plugins-dropdown-item:hover {
+    background-color: var(--input-bg);
+}
+
+/* Plugin tags use the general tag-button style */
+.editor-plugins-dropdown-item .plugin-tag {
+    /* Inherits from .tag-button via class in HTML */
+}
+
+.editor-plugins-dropdown-item .plugin-name {
+    margin-left: 8px;
+    /* Inherits from .tag-description */
+}
+
+.editor-plugins-dropdown-empty {
+    padding: 12px;
+    text-align: center;
+    color: var(--text-faint);
+    font-family: var(--font-mono);
+    font-size: 10px;
 }
 
 /* AI Info Button */
@@ -3595,6 +3684,64 @@ kbd + kbd {
     font-style: italic;
 }
 
+/* General Tag Button Style (used by OpenType features and plugins) */
+.tag-button {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 600;
+    padding: 3px 6px;
+    border: 1px solid var(--border-primary);
+    border-radius: 3px;
+    background: transparent;
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: all 0.15s ease;
+    flex-shrink: 0;
+    min-width: 42px;
+    text-align: center;
+}
+
+.tag-button:hover {
+    background: var(--button-hover);
+    border-color: var(--border-hover);
+}
+
+.tag-button.enabled {
+    background: rgba(255, 255, 255, 0.12);
+    color: var(--text-primary);
+    border-color: var(--border-hover);
+}
+
+.tag-button.enabled:hover {
+    background: rgba(255, 255, 255, 0.18);
+    border-color: var(--border-hover);
+}
+
+/* Light theme adjustments */
+:root[data-theme='light'] .tag-button.enabled {
+    background: rgba(0, 0, 0, 0.08);
+    color: var(--text-primary);
+}
+
+:root[data-theme='light'] .tag-button.enabled:hover {
+    background: rgba(0, 0, 0, 0.12);
+}
+
+/* General Tag Description Style (used by OpenType features and plugins) */
+.tag-description {
+    opacity: 0.7;
+    font-size: 11px;
+    flex: 1;
+    user-select: none;
+}
+
+.tag-description.custom-name {
+    background: var(--bg-custom-name-highlight);
+    padding: 4px 6px;
+    border-radius: 3px;
+    margin-left: -2px;
+}
+
 /* OpenType Features Section */
 .editor-section-header {
     display: flex;
@@ -3632,58 +3779,11 @@ kbd + kbd {
     padding: 2px 0;
 }
 
+/* OpenType feature tag buttons use the general tag-button style */
 .editor-feature-tag-button {
-    font-family: var(--font-mono);
-    font-size: 11px;
-    font-weight: 600;
-    padding: 3px 6px;
-    border: 1px solid var(--border-primary);
-    border-radius: 3px;
-    background: transparent;
-    color: var(--text-secondary);
-    cursor: pointer;
-    transition: all 0.15s ease;
-    flex-shrink: 0;
-    min-width: 42px;
-    text-align: center;
-}
-
-.editor-feature-tag-button:hover {
-    background: var(--button-hover);
-    border-color: var(--border-hover);
-}
-
-.editor-feature-tag-button.enabled {
-    background: rgba(255, 255, 255, 0.12);
-    color: var(--text-primary);
-    border-color: var(--border-hover);
-}
-
-.editor-feature-tag-button.enabled:hover {
-    background: rgba(255, 255, 255, 0.18);
-    border-color: var(--border-hover);
-}
-
-/* Light theme adjustments */
-:root[data-theme='light'] .editor-feature-tag-button.enabled {
-    background: rgba(0, 0, 0, 0.08);
-    color: var(--text-primary);
-}
-
-:root[data-theme='light'] .editor-feature-tag-button.enabled:hover {
-    background: rgba(0, 0, 0, 0.12);
+    /* Inherits from .tag-button */
 }
 
 .editor-feature-description {
-    opacity: 0.7;
-    font-size: 11px;
-    flex: 1;
-    user-select: none;
-}
-
-.editor-feature-description.custom-name {
-    background: var(--bg-custom-name-highlight);
-    padding: 4px 6px;
-    border-radius: 3px;
-    margin-left: -2px;
+    /* Inherits from .tag-description */
 }

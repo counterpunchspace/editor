@@ -179,7 +179,7 @@ export class FeaturesManager {
             featureRow.style.padding = '2px 0';
 
             const tagButton = document.createElement('button');
-            tagButton.className = 'editor-feature-tag-button';
+            tagButton.className = 'editor-feature-tag-button tag-button';
             tagButton.setAttribute('data-feature-tag', feature.tag);
             tagButton.textContent = feature.tag;
 
@@ -199,13 +199,10 @@ export class FeaturesManager {
             });
 
             const descSpan = document.createElement('span');
-            descSpan.className = 'editor-feature-description';
+            descSpan.className = 'editor-feature-description tag-description';
             if (feature.hasCustomName) {
                 descSpan.classList.add('custom-name');
             }
-            descSpan.style.opacity = '0.7';
-            descSpan.style.fontSize = '11px';
-            descSpan.style.flex = '1';
             // Extract just the feature name (before the dash)
             const shortDesc = feature.description.split(' - ')[0];
             descSpan.textContent = shortDesc;

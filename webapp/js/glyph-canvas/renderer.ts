@@ -8,6 +8,54 @@ import { GlyphCanvas } from '../glyph-canvas';
 import { LayerDataNormalizer } from '../layer-data-normalizer';
 import { PythonBabelfont } from '../pythonbabelfont';
 
+/**
+ * Calculate bounding box from SVG path data
+ * Parses M, L, C, Q, Z commands to find min/max x and y coordinates
+ */
+function calculatePathBounds(pathData: string): {
+    minX: number;
+    minY: number;
+    maxX: number;
+    maxY: number;
+} | null {
+    if (!pathData) return null;
+
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+
+    // Parse SVG path commands
+    const commands = pathData.match(/[MLCQZ][^MLCQZ]*/gi);
+    if (!commands) return null;
+
+    for (const cmd of commands) {
+        const type = cmd[0];
+        const coords = cmd
+            .slice(1)
+            .trim()
+            .split(/[\s,]+/)
+            .map(parseFloat)
+            .filter((n) => !isNaN(n));
+
+        // Process coordinates based on command type
+        for (let i = 0; i < coords.length; i += 2) {
+            const x = coords[i];
+            const y = coords[i + 1];
+            if (x !== undefined && y !== undefined) {
+                minX = Math.min(minX, x);
+                maxX = Math.max(maxX, x);
+                minY = Math.min(minY, y);
+                maxY = Math.max(maxY, y);
+            }
+        }
+    }
+
+    if (!isFinite(minX)) return null;
+
+    return { minX, minY, maxX, maxY };
+}
+
 export class GlyphCanvasRenderer {
     canvas: HTMLCanvasElement;
     ctx: CanvasRenderingContext2D;
@@ -108,8 +156,14 @@ export class GlyphCanvasRenderer {
         // Draw shaped glyphs
         this.drawShapedGlyphs();
 
+        // Draw canvas plugins below outline editor
+        this.drawCanvasPluginsBelow();
+
         // Draw outline editor (when layer is selected)
         this.drawOutlineEditor();
+
+        // Draw canvas plugins above outline editor
+        this.drawCanvasPluginsAbove();
 
         // Draw measurement tool intersections (in transformed space)
         this.drawMeasurementIntersections();
@@ -256,12 +310,24 @@ export class GlyphCanvasRenderer {
                 const x = xPosition + xOffset;
                 const y = yOffset;
 
-                // Store bounds for hit testing (approximate with advance width)
+                // Get glyph outline from HarfBuzz to calculate actual bounds
+                const glyphData =
+                    this.textRunEditor.hbFont.glyphToPath(glyphId);
+                const pathBounds = glyphData
+                    ? calculatePathBounds(glyphData)
+                    : null;
+
+                // Store bounds for hit testing and tooltip positioning
                 this.glyphCanvas.glyphBounds.push({
                     x: x,
                     y: y,
                     width: xAdvance,
-                    height: 1000 // Font units height approximation
+                    height: 1000, // Font units height approximation for hit testing
+                    // Visual bounds from actual glyph path
+                    x1: pathBounds ? pathBounds.minX : 0,
+                    y1: pathBounds ? pathBounds.minY : 0,
+                    x2: pathBounds ? pathBounds.maxX : xAdvance,
+                    y2: pathBounds ? pathBounds.maxY : 1000
                 });
 
                 // Set color based on hover, selection state, and edit mode
@@ -409,14 +475,15 @@ export class GlyphCanvasRenderer {
             const glyphWidth = shapedGlyph.ax || 0;
             const glyphYOffset = shapedGlyph.dy || 0; // Y offset from HarfBuzz shaping
 
-            // Use glyph bounds for Y position (no longer need OpenType.js bounding box)
-            let glyphYMin = glyphBounds ? glyphBounds.y1 : 0;
+            // Use visual bounding box for positioning
+            const visualMinX = glyphBounds?.x1 || 0;
+            const visualMaxX = glyphBounds?.x2 || glyphWidth;
+            const visualMinY = glyphBounds?.y1 || 0;
 
-            // Position tooltip centered under the glyph
+            // Position tooltip centered under the glyph's visual bounding box
             // In font coordinates: Y increases upward, so negative Y is below baseline
-            // Note: glyphBounds.x already includes dx offset from HarfBuzz
-            const tooltipX = glyphBounds.x + glyphWidth / 2;
-            const tooltipY = glyphYOffset + glyphYMin - 100; // 100 units below bottom of bounding box, including HB Y offset
+            const tooltipX = glyphBounds.x + (visualMinX + visualMaxX) / 2;
+            const tooltipY = glyphYOffset + visualMinY - 100; // 100 units below bottom of visual bounding box
 
             const invScale = 1 / this.viewportManager.scale;
             const isDarkTheme =
@@ -1624,6 +1691,143 @@ export class GlyphCanvasRenderer {
             this.ctx.stroke();
         }
 
+        this.ctx.restore();
+    }
+
+    /**
+     * Draw canvas plugins above the outline editor.
+     * Calls the draw_above() method of each loaded plugin.
+     */
+    drawCanvasPluginsAbove() {
+        this._drawCanvasPlugins('above');
+    }
+
+    /**
+     * Draw canvas plugins below the outline editor.
+     * Calls the draw_below() method of each loaded plugin.
+     */
+    drawCanvasPluginsBelow() {
+        this._drawCanvasPlugins('below');
+    }
+
+    /**
+     * Internal method to draw canvas plugins at a specific position.
+     */
+    private _drawCanvasPlugins(position: 'above' | 'below') {
+        console.log(
+            `[Renderer] drawCanvasPlugins${position === 'above' ? 'Above' : 'Below'} called`
+        );
+
+        // Skip plugins in preview mode
+        if (this.glyphCanvas.outlineEditor.isPreviewMode) {
+            console.log('[Renderer] Skipping plugins - preview mode active');
+            return;
+        }
+
+        // Only draw plugins when we have an active outline editor with layer data
+        if (
+            !this.glyphCanvas.outlineEditor.layerData ||
+            !window.canvasPluginManager ||
+            !window.canvasPluginManager.isLoaded()
+        ) {
+            console.log('[Renderer] Early return:', {
+                hasLayerData: !!this.glyphCanvas.outlineEditor.layerData,
+                hasPluginManager: !!window.canvasPluginManager,
+                isLoaded: window.canvasPluginManager?.isLoaded()
+            });
+            return;
+        }
+
+        // Get the current glyph name
+        const selectedGlyphIndex = this.textRunEditor.selectedGlyphIndex;
+        if (
+            selectedGlyphIndex < 0 ||
+            selectedGlyphIndex >= this.textRunEditor.shapedGlyphs.length
+        ) {
+            console.log('[Renderer] Invalid glyph index:', selectedGlyphIndex);
+            return;
+        }
+
+        const glyphId = this.textRunEditor.shapedGlyphs[selectedGlyphIndex].g;
+
+        // Get glyph name from font manager (same way as tooltip does)
+        let glyphName = '';
+        if (window.fontManager?.currentFont?.babelfontData) {
+            try {
+                glyphName = window.fontManager.getGlyphName(glyphId);
+            } catch (error) {
+                console.warn('[Renderer] Failed to get glyph name:', error);
+            }
+        }
+
+        // Get the current layer data
+        const layerData =
+            this.glyphCanvas.outlineEditor.getCurrentLayerDataFromStack();
+
+        if (!layerData) {
+            console.log('[Renderer] No layer data from stack');
+            return;
+        }
+
+        console.log(
+            `[Renderer] Calling ${position} plugins for glyph:`,
+            glyphName
+        );
+
+        // Calculate glyph position in text run (same as drawOutlineEditor does)
+        let xPosition = 0;
+        for (let i = 0; i < selectedGlyphIndex; i++) {
+            xPosition += this.textRunEditor.shapedGlyphs[i].ax || 0;
+        }
+
+        const glyph = this.textRunEditor.shapedGlyphs[selectedGlyphIndex];
+        const xOffset = glyph.dx || 0;
+        const yOffset = glyph.dy || 0;
+        const x = xPosition + xOffset;
+        const y = yOffset;
+
+        // Save context and translate to glyph position
+        this.ctx.save();
+        this.ctx.translate(x, y);
+
+        // Apply accumulated component transform if editing a component
+        const transform =
+            this.glyphCanvas.outlineEditor.getAccumulatedTransform();
+        if (this.glyphCanvas.outlineEditor.isEditingComponent()) {
+            this.ctx.transform(
+                transform[0],
+                transform[1],
+                transform[2],
+                transform[3],
+                transform[4],
+                transform[5]
+            );
+        }
+
+        // Call plugins (the actual drawing is synchronous, just the wrapper returns a promise)
+        // We catch errors but don't wait for the promise - restore context immediately
+        const pluginMethod =
+            position === 'above'
+                ? window.canvasPluginManager.drawPluginsAbove.bind(
+                      window.canvasPluginManager
+                  )
+                : window.canvasPluginManager.drawPluginsBelow.bind(
+                      window.canvasPluginManager
+                  );
+
+        pluginMethod(
+            layerData,
+            glyphName,
+            this.ctx,
+            this.viewportManager
+        ).catch((error: any) => {
+            console.error(
+                `[Renderer] Error drawing canvas plugins (${position}):`,
+                error
+            );
+        });
+
+        // Restore context immediately after calling plugins (synchronous)
         this.ctx.restore();
     }
 
