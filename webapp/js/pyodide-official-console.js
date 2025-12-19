@@ -565,7 +565,7 @@ async function initPyodideConsole() {
             showCriticalError(
                 'Memory Allocation Error',
                 'The application cannot allocate enough memory to run.',
-                'Please close <em>all</em> browser tabs of the editor and reopen the application from scratch.'
+                'Please close all browser tabs of the editor and reopen the application from scratch.'
             );
         } else {
             // Show regular error message for other errors
