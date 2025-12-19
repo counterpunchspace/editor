@@ -3787,3 +3787,117 @@ kbd + kbd {
 .editor-feature-description {
     /* Inherits from .tag-description */
 }
+
+/* Critical Error Overlay */
+#critical-error-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.95);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 999999;
+    backdrop-filter: blur(10px);
+    animation: fadeIn 0.3s ease-in-out;
+}
+
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+    }
+    to {
+        opacity: 1;
+    }
+}
+
+.critical-error-content {
+    background: var(--bg-secondary);
+    border: 2px solid var(--accent-red);
+    border-radius: 12px;
+    padding: 40px;
+    max-width: 600px;
+    text-align: center;
+    box-shadow: 0 20px 60px rgba(255, 51, 0, 0.3);
+    animation: slideIn 0.3s ease-out;
+}
+
+@keyframes slideIn {
+    from {
+        transform: translateY(-50px);
+        opacity: 0;
+    }
+    to {
+        transform: translateY(0);
+        opacity: 1;
+    }
+}
+
+.critical-error-icon {
+    font-size: 64px;
+    margin-bottom: 20px;
+    animation: pulse 2s ease-in-out infinite;
+}
+
+@keyframes pulse {
+    0%,
+    100% {
+        transform: scale(1);
+    }
+    50% {
+        transform: scale(1.1);
+    }
+}
+
+.critical-error-title {
+    color: var(--accent-red);
+    font-size: 28px;
+    font-weight: bold;
+    margin: 0 0 20px 0;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+}
+
+.critical-error-message {
+    color: var(--text-primary);
+    font-size: 16px;
+    margin: 0 0 30px 0;
+    line-height: 1.6;
+}
+
+.critical-error-instructions {
+    background: rgba(255, 51, 0, 0.1);
+    border: 1px solid var(--accent-red);
+    border-radius: 8px;
+    padding: 20px;
+    margin: 0 0 20px 0;
+}
+
+.critical-error-instructions p {
+    color: var(--text-primary);
+    font-size: 14px;
+    margin: 8px 0;
+    line-height: 1.6;
+}
+
+.critical-error-instructions strong {
+    color: var(--accent-red);
+    font-weight: bold;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+}
+
+.critical-error-details {
+    border-top: 1px solid var(--border-primary);
+    padding-top: 20px;
+    margin-top: 20px;
+}
+
+.critical-error-details p {
+    color: var(--text-secondary);
+    font-size: 13px;
+    margin: 8px 0;
+    line-height: 1.5;
+}

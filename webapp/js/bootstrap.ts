@@ -2,6 +2,7 @@ import './wasm-init'; // Initialize WASM module
 import './loading-animation.js';
 import './tab-lifecycle.js';
 import './mcp-transport';
+import './critical-error-handler';
 
 import './ai-assistant.js';
 import './api-docs-generator.js';

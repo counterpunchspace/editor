@@ -50,6 +50,14 @@ declare global {
         cacheManager: CacheManager;
         cacheStats: () => { size: number; itemCount: number };
 
+        // From critical-error-handler.ts
+        showCriticalError: (
+            title: string,
+            message: string,
+            instructions: string
+        ) => void;
+        isWebAssemblyMemoryError: (error: Error) => boolean;
+
         // From canvas-plugin-manager.ts
         canvasPluginManager: {
             discoverPlugins: () => Promise<void>;

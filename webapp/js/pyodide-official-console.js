@@ -1,14 +1,17 @@
 // Official Pyodide Console integration
 // Based on https://github.com/pyodide/pyodide/blob/main/src/templates/console.html
 
-const { get, set } = import('idb-keyval');
-
 function sleep(s) {
     return new Promise((resolve) => setTimeout(resolve, s));
 }
 
 async function initPyodideConsole() {
     'use strict';
+
+    // Import dependencies
+    const { get, set } = await import('idb-keyval');
+    const { showCriticalError, isWebAssemblyMemoryError } =
+        await import('./critical-error-handler');
 
     let term;
     let pyodide;
@@ -556,11 +559,22 @@ async function initPyodideConsole() {
             'Error initializing Pyodide console:',
             error
         );
-        document.getElementById('loading').innerHTML = `
+
+        // Check if this is a WebAssembly memory error
+        if (isWebAssemblyMemoryError(error)) {
+            showCriticalError(
+                'Memory Allocation Error',
+                'The application cannot allocate enough memory to run.',
+                'Please close <em>all</em> browser tabs of the editor and reopen the application from scratch.'
+            );
+        } else {
+            // Show regular error message for other errors
+            document.getElementById('loading').innerHTML = `
       <div style="color: red; padding: 20px;">
         Error loading Python console: ${error.message}
       </div>
     `;
+        }
     }
 }
 
