@@ -13,6 +13,7 @@ import { OutlineEditor } from './glyph-canvas/outline-editor';
 import { Logger } from './logger';
 import APP_SETTINGS from './settings';
 import { designspaceToUserspace, userspaceToDesignspace } from './locations';
+import { Glyph, Layer } from './babelfont-model';
 
 let console: Logger = new Logger('GlyphCanvas', true);
 
@@ -1019,7 +1020,11 @@ class GlyphCanvas {
     }
 
     async displayMastersList(): Promise<void> {
-        // Display masters list for text mode
+        // Display unified masters/layers list
+        // In text mode: show all masters, click selects master location
+        // In edit mode: show all masters, check if glyph has corresponding layers
+        //   - if layer exists: show active, click loads layer
+        //   - if layer missing: show inactive/disabled
         console.log('[GlyphCanvas] displayMastersList called');
 
         if (!fontManager.currentFont?.fontModel) {
@@ -1033,32 +1038,118 @@ class GlyphCanvas {
             return;
         }
 
-        console.log('[GlyphCanvas] Found', fontModel.masters.length, 'masters');
+        const isEditMode = this.outlineEditor.active;
+        console.log(
+            '[GlyphCanvas] Found',
+            fontModel.masters.length,
+            'masters, mode:',
+            isEditMode ? 'edit' : 'text'
+        );
 
-        // Add masters section title
-        const mastersTitle = document.createElement('div');
-        mastersTitle.className = 'editor-section-title';
-        mastersTitle.textContent = 'Masters';
-        this.propertiesSection!.appendChild(mastersTitle);
+        // In edit mode, get current glyph and its layers
+        let glyph: Glyph | undefined;
+        let glyphLayers: Layer[] = [];
+        if (isEditMode) {
+            // Fetch glyph data (needed for interpolation and layer management)
+            this.fontData = await fontManager.fetchGlyphData(
+                this.getCurrentGlyphName()
+            );
 
-        // Create masters list
+            if (
+                !this.fontData ||
+                !this.fontData.layers ||
+                this.fontData.layers.length === 0
+            ) {
+                console.log('[GlyphCanvas] No font data or layers found');
+                return;
+            }
+
+            // Store glyph name for interpolation (needed even when not on a layer)
+            // But only if we're NOT in component editing mode
+            if (
+                this.fontData.glyphName &&
+                !this.outlineEditor.isEditingComponent()
+            ) {
+                this.outlineEditor.currentGlyphName = this.fontData.glyphName;
+                console.log(
+                    '[GlyphCanvas]',
+                    'Set currentGlyphName from fontData:',
+                    this.outlineEditor.currentGlyphName
+                );
+            }
+
+            const glyphName = this.getCurrentGlyphName();
+            glyph = fontModel.glyphs.find((g) => g.name === glyphName);
+            glyphLayers = glyph?.layers || [];
+            console.log(
+                '[GlyphCanvas] Edit mode: glyph',
+                glyphName,
+                'has',
+                glyphLayers.length,
+                'layers'
+            );
+        }
+
+        // Add section title
+        const sectionTitle = document.createElement('div');
+        sectionTitle.className = 'editor-section-title';
+        sectionTitle.textContent = isEditMode ? 'Layers' : 'Masters';
+        this.propertiesSection!.appendChild(sectionTitle);
+
+        // Create masters/layers list
         const mastersList = document.createElement('div');
-        mastersList.className = 'editor-layers-list'; // Reuse layer list styles
+        mastersList.className = 'editor-layers-list';
 
         for (const master of fontModel.masters) {
             const masterItem = document.createElement('div');
-            masterItem.className = 'editor-layer-item'; // Reuse layer item styles
+            masterItem.className = 'editor-layer-item';
             masterItem.setAttribute('data-master-id', master.id!);
 
-            if (this.textRunEditor!.selectedMasterId === master.id) {
-                masterItem.classList.add('selected');
+            // In edit mode, find corresponding layer for this master
+            let correspondingLayer: Layer | undefined;
+            if (isEditMode) {
+                correspondingLayer = glyphLayers.find((layer) => {
+                    const layerMaster = layer.master;
+                    if (
+                        layerMaster &&
+                        typeof layerMaster === 'object' &&
+                        'DefaultForMaster' in layerMaster
+                    ) {
+                        return layerMaster.DefaultForMaster === master.id;
+                    }
+                    return false;
+                });
+
+                // If no layer exists for this master, mark as inactive
+                if (!correspondingLayer) {
+                    masterItem.classList.add('inactive');
+                } else {
+                    // Store layer id for selection updates
+                    masterItem.setAttribute(
+                        'data-layer-id',
+                        correspondingLayer.id!
+                    );
+                }
+            }
+
+            // Check if this master/layer is selected
+            if (isEditMode) {
+                if (
+                    correspondingLayer &&
+                    this.outlineEditor.selectedLayerId === correspondingLayer.id
+                ) {
+                    masterItem.classList.add('selected');
+                }
+            } else {
+                if (this.textRunEditor!.selectedMasterId === master.id) {
+                    masterItem.classList.add('selected');
+                }
             }
 
             // Format axis values for display (e.g., "wght:400, wdth:100")
             // Convert from design coordinates to userspace coordinates
             let axisValues = '';
             if (master.location && fontModel.axes) {
-                // Convert design location to userspace location
                 const userspaceLocation = designspaceToUserspace(
                     master.location,
                     fontModel.axes as any
@@ -1086,9 +1177,37 @@ class GlyphCanvas {
                       : null;
             masterItem.textContent = axisValues || masterName || 'Default';
 
-            // Click handler to select master and animate to its location
+            // Click handler - different behavior based on mode
             masterItem.addEventListener('click', () => {
-                this.selectMaster(master.id!, master.location || {});
+                if (isEditMode) {
+                    // Edit mode: load layer if it exists
+                    if (correspondingLayer) {
+                        // Extract master ID from layer
+                        const layerMaster = correspondingLayer.master;
+                        let masterId = correspondingLayer.id;
+                        if (
+                            layerMaster &&
+                            typeof layerMaster === 'object' &&
+                            'DefaultForMaster' in layerMaster
+                        ) {
+                            masterId = layerMaster.DefaultForMaster;
+                        }
+
+                        // Create minimal layer object for selectLayer
+                        this.outlineEditor.selectLayer({
+                            id: correspondingLayer.id,
+                            name: correspondingLayer.name,
+                            _master: masterId,
+                            shapes: [],
+                            isInterpolated: false
+                        } as any);
+                    }
+                    // If no layer, do nothing (inactive state)
+                } else {
+                    // Text mode: select master and animate to its location
+                    this.selectMaster(master.id!, master.location || {});
+                }
+
                 // Restore focus to canvas if editor view is active
                 const editorView = document.getElementById('view-editor');
                 if (editorView && editorView.classList.contains('focused')) {
@@ -1100,6 +1219,31 @@ class GlyphCanvas {
         }
 
         this.propertiesSection!.appendChild(mastersList);
+
+        // In edit mode, add glyph_stack debug label (development mode only)
+        if (isEditMode && window.isDevelopment?.()) {
+            const stackLabel = document.createElement('div');
+            stackLabel.className = 'glyph-stack-debug';
+            stackLabel.style.cssText = `
+                margin-top: 8px;
+                padding: 8px;
+                background: var(--input-bg);
+                border-radius: 4px;
+                font-family: 'IBM Plex Sans', monospace;
+                font-size: 11px;
+                color: var(--text-muted);
+                word-break: break-all;
+                line-height: 1.4;
+            `;
+            stackLabel.textContent = `Stack: ${this.outlineEditor.glyphStack || '(none)'}`;
+            this.glyphStackLabel = stackLabel;
+            this.propertiesSection!.appendChild(stackLabel);
+        }
+
+        // In edit mode, auto-select layer if current axis values match a layer's master location
+        if (isEditMode) {
+            await this.outlineEditor.autoSelectMatchingLayer();
+        }
     }
 
     async selectMaster(
@@ -1186,139 +1330,6 @@ class GlyphCanvas {
             masters[nextIndex].id!,
             masters[nextIndex].location || {}
         );
-    }
-
-    async displayLayersList(): Promise<void> {
-        // Fetch and display layers list
-        this.fontData = await fontManager.fetchGlyphData(
-            this.getCurrentGlyphName()
-        );
-
-        if (
-            !this.fontData ||
-            !this.fontData.layers ||
-            this.fontData.layers.length === 0
-        ) {
-            return;
-        }
-
-        // Store glyph name for interpolation (needed even when not on a layer)
-        // But only if we're NOT in component editing mode - when editing a component,
-        // currentGlyphName should stay set to the component reference
-        if (
-            this.fontData.glyphName &&
-            !this.outlineEditor.isEditingComponent()
-        ) {
-            this.outlineEditor.currentGlyphName = this.fontData.glyphName;
-            console.log(
-                '[GlyphCanvas]',
-                'Set currentGlyphName from fontData:',
-                this.outlineEditor.currentGlyphName
-            );
-        }
-
-        // Add layers section title
-        const layersTitle = document.createElement('div');
-        layersTitle.className = 'editor-section-title';
-        layersTitle.textContent = 'Foreground Layers';
-        this.propertiesSection!.appendChild(layersTitle);
-
-        // Get filtered and sorted layers from the object model
-        // This uses Glyph.layers which filters out background layers and copies,
-        // and sorts by master order
-        const glyphName = this.getCurrentGlyphName();
-        const fontModel = fontManager.currentFont?.fontModel;
-        const glyph = fontModel?.glyphs.find((g) => g.name === glyphName);
-        const filteredLayers = glyph?.layers || [];
-
-        // Create layers list
-        const layersList = document.createElement('div');
-        layersList.className = 'editor-layers-list';
-
-        for (const layer of filteredLayers) {
-            const layerItem = document.createElement('div');
-            layerItem.className = 'editor-layer-item';
-            if (this.outlineEditor.selectedLayerId === layer.id) {
-                layerItem.classList.add('selected');
-            }
-            layerItem.setAttribute('data-layer-id', layer.id!); // Add data attribute for selection updates
-
-            // Extract master ID from layer
-            const masterId =
-                layer.master &&
-                typeof layer.master === 'object' &&
-                'DefaultForMaster' in layer.master
-                    ? layer.master.DefaultForMaster
-                    : layer.id;
-
-            // Find the master for this layer
-            const master = this.fontData.masters.find(
-                (m: any) => m.id === masterId
-            );
-
-            // Format axis values for display (e.g., "wght:400, wdth:100")
-            // Display axes in the order they are defined in font.axes
-            let axisValues = '';
-            if (master && master.location) {
-                // Sort axis tags according to font.axes order
-                const axesOrder =
-                    this.fontData.axesOrder ||
-                    Object.keys(master.location).sort();
-                const locationParts = axesOrder
-                    .filter((tag: string) => tag in master.location)
-                    .map(
-                        (tag: string) =>
-                            `${tag}:${Math.round(master.location[tag])}`
-                    )
-                    .join(', ');
-                axisValues = locationParts;
-            }
-
-            layerItem.textContent = axisValues || layer.name || 'Default';
-
-            // Click handler - create minimal layer object with required properties
-            layerItem.addEventListener('click', () => {
-                this.outlineEditor.selectLayer({
-                    id: layer.id,
-                    name: layer.name,
-                    _master: masterId, // Use the masterId we extracted above
-                    shapes: [],
-                    isInterpolated: false
-                } as any);
-                // Restore focus to canvas if editor view is active
-                const editorView = document.getElementById('view-editor');
-                if (editorView && editorView.classList.contains('focused')) {
-                    setTimeout(() => this.canvas!.focus(), 0);
-                }
-            });
-
-            layersList.appendChild(layerItem);
-        }
-
-        this.propertiesSection!.appendChild(layersList);
-
-        // Add glyph_stack debug label (development mode only)
-        if (window.isDevelopment?.()) {
-            const stackLabel = document.createElement('div');
-            stackLabel.className = 'glyph-stack-debug';
-            stackLabel.style.cssText = `
-                margin-top: 8px;
-                padding: 8px;
-                background: var(--input-bg);
-                border-radius: 4px;
-                font-family: 'IBM Plex Sans', monospace;
-                font-size: 11px;
-                color: var(--text-muted);
-                word-break: break-all;
-                line-height: 1.4;
-            `;
-            stackLabel.textContent = `Stack: ${this.outlineEditor.glyphStack || '(none)'}`;
-            this.glyphStackLabel = stackLabel; // Store reference for updates
-            this.propertiesSection!.appendChild(stackLabel);
-        }
-
-        // Auto-select layer if current axis values match a layer's master location
-        await this.outlineEditor.autoSelectMatchingLayer();
     }
 
     updateMasterSelection(): void {
@@ -1558,7 +1569,7 @@ class GlyphCanvas {
             return [];
         }
 
-        // Get sorted layers (same as in displayLayersList)
+        // Get sorted layers by master order
         // Sort layers by master order (order in which masters are defined in font.masters)
         const sortedLayers = [...this.fontData.layers].sort((a, b) => {
             const masterIndexA = this.fontData.masters.findIndex(
@@ -1769,21 +1780,23 @@ class GlyphCanvas {
             // Update editor title bar with glyph name
             this.outlineEditor.updateEditorTitleBar();
 
-            // In text mode, show master list
+            // Show unified master/layer list for both text and edit modes
             if (!this.outlineEditor.active) {
+                // Text mode
                 this.propertiesSection.innerHTML = '';
                 await this.displayMastersList();
                 this.isUpdatingPropertiesUI = false;
                 return;
             }
 
+            // Edit mode
             if (
                 this.textRunEditor!.selectedGlyphIndex >= 0 &&
                 this.textRunEditor!.selectedGlyphIndex <
                     this.textRunEditor!.shapedGlyphs.length
             ) {
                 this.propertiesSection.innerHTML = '';
-                await this.displayLayersList();
+                await this.displayMastersList(); // Unified function now handles both modes
             } else {
                 // No glyph selected
                 this.propertiesSection.innerHTML = '';

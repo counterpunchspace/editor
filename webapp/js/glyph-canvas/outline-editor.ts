@@ -2082,12 +2082,13 @@ export class OutlineEditor {
         // Update the visual selection highlight for layer items without rebuilding
         if (!this.glyphCanvas.propertiesSection) return;
 
-        // Find all layer items and update their selected class
-        const layerItems =
+        // Find all master/layer items and update their selected class
+        // Items now have data-master-id, and optionally data-layer-id if layer exists
+        const masterItems =
             this.glyphCanvas.propertiesSection.querySelectorAll(
-                '[data-layer-id]'
+                '[data-master-id]'
             );
-        layerItems.forEach((item) => {
+        masterItems.forEach((item) => {
             const layerId = item.getAttribute('data-layer-id');
             if (layerId === this.selectedLayerId) {
                 item.classList.add('selected');

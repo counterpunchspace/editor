@@ -3576,15 +3576,15 @@ kbd + kbd {
     color: var(--text-secondary);
     text-transform: uppercase;
     letter-spacing: 0.5px;
-    margin-top: 12px;
-    margin-bottom: 6px;
+    /* margin-top: 12px;
+    margin-bottom: 6px; */
 }
 
 .editor-section-title:first-child {
-    margin-top: 6px;
+    margin-top: 0px;
 }
 
-/* Layer list container */
+/* Masters/Layers list container (unified widget for both modes) */
 .editor-layers-list {
     display: flex;
     flex-direction: column;
@@ -3593,7 +3593,7 @@ kbd + kbd {
     /* Extend to edges of sidebar */
 }
 
-/* Individual layer item */
+/* Individual master/layer item */
 .editor-layer-item {
     padding: 8px 12px;
     border-radius: 0;
@@ -3628,6 +3628,20 @@ kbd + kbd {
 
 :root[data-theme='light'] .editor-layer-item.selected {
     background-color: rgba(0, 0, 0, 0.075);
+}
+
+/* Inactive layer items (master without corresponding layer) */
+.editor-layer-item.inactive {
+    opacity: 0.4;
+    cursor: default;
+}
+
+:root:not([data-theme='light']) .editor-layer-item.inactive:hover {
+    background-color: transparent;
+}
+
+:root[data-theme='light'] .editor-layer-item.inactive:hover {
+    background-color: transparent;
 }
 
 /* Axis controls container */
