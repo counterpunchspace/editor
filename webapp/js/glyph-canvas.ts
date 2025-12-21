@@ -377,7 +377,11 @@ class GlyphCanvas {
             }
         });
         this.axesManager!.on('sliderMouseUp', async () => {
+            console.log('[GlyphCanvas] sliderMouseUp event triggered');
             if (this.outlineEditor.active) {
+                console.log(
+                    '[GlyphCanvas] Calling outlineEditor.onSliderMouseUp()'
+                );
                 this.outlineEditor.onSliderMouseUp();
             } else {
                 // In text editing mode, restore focus to canvas
@@ -471,12 +475,21 @@ class GlyphCanvas {
             'onSliderChange',
             this.outlineEditor.onSliderChange.bind(this.outlineEditor)
         );
-        // Auto-select or deselect master when slider changes in text mode
+        // Auto-select or deselect master/layer when slider changes
         this.axesManager!.on('onSliderChange', () => {
-            console.log(
-                '[GlyphCanvas] Slider changed, calling autoSelectMatchingMaster'
-            );
-            this.autoSelectMatchingMaster();
+            if (this.outlineEditor.active) {
+                // In edit mode, auto-select matching layer during slider drag
+                console.log(
+                    '[GlyphCanvas] Slider changed in edit mode, calling autoSelectMatchingLayer'
+                );
+                this.outlineEditor.autoSelectMatchingLayer();
+            } else {
+                // In text mode, auto-select matching master
+                console.log(
+                    '[GlyphCanvas] Slider changed, calling autoSelectMatchingMaster'
+                );
+                this.autoSelectMatchingMaster();
+            }
         });
         // Also check after animation completes to handle the final value
         this.axesManager!.on('animationComplete', () => {

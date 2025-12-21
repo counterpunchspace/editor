@@ -374,6 +374,12 @@ export class OutlineEditor {
     }
 
     async onSliderMouseUp() {
+        console.log('[OutlineEditor] onSliderMouseUp called', {
+            active: this.active,
+            isPreviewMode: this.isPreviewMode,
+            isInterpolating: this.isInterpolating,
+            selectedLayerId: this.selectedLayerId
+        });
         if (this.active && this.isPreviewMode) {
             // Only exit preview mode if we entered it via slider
             // If it was already on (from keyboard), keep it on
@@ -433,7 +439,14 @@ export class OutlineEditor {
             this.isPreviewMode = false;
 
             // Check if we're on an exact layer
+            console.log(
+                '[OutlineEditor] About to call autoSelectMatchingLayer from onSliderMouseUp (non-preview mode)'
+            );
             await this.autoSelectMatchingLayer();
+            console.log(
+                '[OutlineEditor] After autoSelectMatchingLayer, selectedLayerId:',
+                this.selectedLayerId
+            );
 
             // Note: Don't clear isInterpolating here - let it stay true until animation completes
             // so auto-panning continues working. It will be cleared in animationComplete handler.
@@ -471,20 +484,40 @@ export class OutlineEditor {
     // Real-time interpolation during slider movement
     // Skip interpolation if in preview mode (HarfBuzz handles interpolation)
     onSliderChange(axisTag: string, value: number) {
+        console.log('[OutlineEditor] onSliderChange called', {
+            axisTag,
+            value,
+            selectedLayerId: this.selectedLayerId,
+            isInterpolating: this.isInterpolating,
+            active: this.active
+        });
+
         // Save current state before manual adjustment (only once per manual session)
-        if (
-            this.selectedLayerId !== null &&
-            this.previousSelectedLayerId === null
-        ) {
-            this.previousSelectedLayerId = this.selectedLayerId;
-            this.previousVariationSettings = {
-                ...this.glyphCanvas.axesManager!.variationSettings
-            };
-            console.log('Saved previous state for Escape:', {
-                layerId: this.previousSelectedLayerId,
-                settings: this.previousVariationSettings
-            });
+        // When starting a new slider drag from a selected layer, save that layer
+        // and deselect to enable interpolation mode
+        if (this.selectedLayerId !== null) {
+            // Only update previous state if we're starting a new drag session
+            // (not continuing an existing interpolation session)
+            if (
+                this.previousSelectedLayerId === null ||
+                this.previousSelectedLayerId !== this.selectedLayerId
+            ) {
+                this.previousSelectedLayerId = this.selectedLayerId;
+                this.previousVariationSettings = {
+                    ...this.glyphCanvas.axesManager!.variationSettings
+                };
+                console.log(
+                    '[OutlineEditor] Saved previous state for Escape:',
+                    {
+                        layerId: this.previousSelectedLayerId,
+                        settings: this.previousVariationSettings
+                    }
+                );
+            }
             this.selectedLayerId = null; // Deselect layer
+            console.log(
+                '[OutlineEditor] Deselected layer, selectedLayerId is now null'
+            );
             // Always update layer selection UI when deselecting to show immediate visual feedback
             this.updateLayerSelection();
         }
@@ -494,6 +527,9 @@ export class OutlineEditor {
             !this.isPreviewMode &&
             this.currentGlyphName
         ) {
+            console.log(
+                '[OutlineEditor] Calling interpolateCurrentGlyph from onSliderChange'
+            );
             this.interpolateCurrentGlyph();
         }
     }
@@ -1760,11 +1796,20 @@ export class OutlineEditor {
     }
 
     async autoSelectMatchingLayer(): Promise<void> {
+        console.log('[OutlineEditor] autoSelectMatchingLayer called', {
+            active: this.active,
+            isInterpolating: this.isInterpolating,
+            selectedLayerId: this.selectedLayerId
+        });
+
         // Check if current variation settings match any layer's master location
         let layers = this.glyphCanvas.fontData?.layers;
         let masters: PythonBabelfont.Master[] =
             this.glyphCanvas.fontData?.masters;
         if (!layers || !masters) {
+            console.log(
+                '[OutlineEditor] No layers or masters found, returning'
+            );
             return;
         }
 
@@ -1831,30 +1876,21 @@ export class OutlineEditor {
                     console.log('Keeping previous state (during slider use)');
                 }
 
-                // Only fetch layer data if we're not currently interpolating
-                // During interpolation, the next interpolateCurrentGlyph() call will handle the data
-                if (!this.isInterpolating) {
-                    // Fetch layer data for the new layer
-                    // This works correctly for both root glyphs and nested components
-                    // because fetchLayerData always fetches the root glyph with full component tree
-                    await this.fetchLayerData(); // Fetch layer data for outline editor
+                // Fetch layer data immediately when we find a match
+                // This ensures the layer is loaded even during slider dragging
+                await this.fetchLayerData(); // Fetch layer data for outline editor
 
-                    // Perform mouse hit detection after layer data is loaded
-                    this.performHitDetection(null);
+                // Perform mouse hit detection after layer data is loaded
+                this.performHitDetection(null);
 
-                    // Render to display the new outlines
-                    if (this.active) {
-                        this.glyphCanvas.render();
-                    }
-                } else {
-                    // During interpolation (sliderMouseUp), don't render here
-                    // The caller will fetch actual layer data and render afterward
-                    // Just clear the isInterpolated flag on the current data
-                    if (this.layerData) {
-                        this.layerData.isInterpolated = false;
-                    }
-                    // Don't render here - let onSliderMouseUp handle it after fetchLayerData
+                // Clear the interpolating flag and render to display the new outlines
+                this.isInterpolating = false;
+                this.autoPanAnchorScreen = null;
+
+                if (this.active) {
+                    this.glyphCanvas.render();
                 }
+
                 this.updateLayerSelection();
                 console.log(
                     `Auto-selected layer: ${layer.name || 'Default'} (${layer.id})`

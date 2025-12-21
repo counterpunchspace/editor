@@ -24,6 +24,7 @@ export class AxesManager {
     isSliderActive: boolean;
     isTextFieldChange: boolean;
     pendingSliderMouseUp: boolean;
+    lastSliderReleaseTime: number;
 
     constructor() {
         this.variationSettings = {}; // Current variation settings
@@ -40,6 +41,7 @@ export class AxesManager {
         this.isSliderActive = false;
         this.isTextFieldChange = false;
         this.pendingSliderMouseUp = false;
+        this.lastSliderReleaseTime = 0;
 
         this.fontBytes = null; // To be set externally
         this.callbacks = {}; // Array of callbacks for each event
@@ -252,38 +254,78 @@ export class AxesManager {
                 this.call('sliderMouseDown');
             });
 
-            // Exit preview mode and restore focus on mouseup
-            slider.addEventListener('mouseup', () => {
+            // Handle both mouseup (for clicks) and change (for drags)
+            const handleSliderRelease = () => {
+                const now = Date.now();
+                // Prevent duplicate calls within 50ms
+                if (now - this.lastSliderReleaseTime < 50) {
+                    console.log(
+                        '[Variations] Ignoring duplicate slider release event'
+                    );
+                    return;
+                }
+                this.lastSliderReleaseTime = now;
+
+                console.log('[Variations] slider release handler called', {
+                    isSliderActive: this.isSliderActive,
+                    isAnimating: this.isAnimating
+                });
+
                 this.isSliderActive = false;
+
                 // If animation is still running, defer sliderMouseUp until it completes
                 if (this.isAnimating) {
+                    console.log(
+                        '[Variations] Animation still running, deferring sliderMouseUp'
+                    );
                     this.pendingSliderMouseUp = true;
                 } else {
+                    console.log(
+                        '[Variations] Calling sliderMouseUp immediately'
+                    );
                     this.call('sliderMouseUp');
                 }
-            });
+            };
+
+            // mouseup fires for clicks, change fires after drag ends
+            slider.addEventListener('mouseup', handleSliderRelease);
+            slider.addEventListener('change', handleSliderRelease);
 
             // Update on change
             slider.addEventListener('input', (e) => {
                 // @ts-ignore
                 const value = parseFloat(e.target.value);
                 valueLabel.value = value.toFixed(0);
+                console.log(
+                    '[Variations] Slider input event, calling onSliderChange',
+                    axis.tag,
+                    value
+                );
                 this.call('onSliderChange', axis.tag, value);
 
                 this.setVariation(axis.tag, value);
             });
+            console.log(
+                '[Variations] Attached input listener to slider for axis:',
+                axis.tag
+            );
 
             axisContainer.appendChild(labelRow);
             axisContainer.appendChild(slider);
             tempContainer.appendChild(axisContainer);
         });
 
+        console.log(
+            '[Variations] About to swap DOM content in requestAnimationFrame'
+        );
         // Swap content in one frame to prevent flicker
         requestAnimationFrame(() => {
+            console.log('[Variations] Swapping DOM content now');
             this.axesSection!.innerHTML = '';
             while (tempContainer.firstChild) {
                 this.axesSection!.appendChild(tempContainer.firstChild);
             }
+            console.log('[Variations] DOM swap complete');
         });
 
         console.log(
@@ -294,12 +336,22 @@ export class AxesManager {
         // Global mouseup handler to exit preview mode if slider was active
         // This catches cases where mouse is released outside the slider element
         document.addEventListener('mouseup', () => {
+            console.log(
+                '[Variations] Global mouseup event, isSliderActive:',
+                this.isSliderActive
+            );
             if (this.isSliderActive) {
                 this.isSliderActive = false;
                 // If animation is still running, defer sliderMouseUp until it completes
                 if (this.isAnimating) {
+                    console.log(
+                        '[Variations] Global mouseup: Animation still running, deferring'
+                    );
                     this.pendingSliderMouseUp = true;
                 } else {
+                    console.log(
+                        '[Variations] Global mouseup: Calling sliderMouseUp'
+                    );
                     this.call('sliderMouseUp');
                 }
             }
@@ -370,11 +422,6 @@ export class AxesManager {
         } else {
             // Ensure we end exactly at target values
             this.variationSettings = { ...this.animationTargetValues };
-            // Only clear isAnimating if slider is not actively being dragged
-            // During slider drag, keep isAnimating=true to prevent auto-pan jitter
-            if (!this.isSliderActive) {
-                this.isAnimating = false;
-            }
             this.updateAxisSliders(); // Update slider UI to match final values
 
             // If this was a text field change, trigger layer selection now
@@ -385,11 +432,19 @@ export class AxesManager {
 
             // If slider was released during animation, trigger sliderMouseUp now
             if (this.pendingSliderMouseUp) {
+                console.log(
+                    '[Variations] Animation complete, triggering deferred sliderMouseUp'
+                );
                 this.pendingSliderMouseUp = false;
                 this.call('sliderMouseUp');
             }
 
             this.call('animationComplete');
+
+            // Clear isAnimating AFTER deferred sliderMouseUp and animationComplete
+            // Always clear isAnimating when animation completes, regardless of isSliderActive state
+            // The isSliderActive flag is managed separately by mousedown/mouseup handlers
+            this.isAnimating = false;
         }
     }
 }
