@@ -644,9 +644,6 @@ class GlyphCanvas {
                         );
                         return;
                     }
-
-                    // Now render with the loaded data
-                    this.render();
                 }
 
                 this.outlineEditor.onGlyphSelected();
@@ -1616,8 +1613,13 @@ class GlyphCanvas {
     doUIUpdate(): void {
         this.updateComponentBreadcrumb();
         this.updatePropertiesUI();
-        this.render();
-        this.outlineEditor.performHitDetection(null);
+
+        // Only render if we're on a layer (not interpolating)
+        // If interpolating, render will be called after interpolation completes
+        if (this.outlineEditor.selectedLayerId !== null) {
+            this.render();
+            this.outlineEditor.performHitDetection(null);
+        }
     }
 
     async doUIUpdateAsync(): Promise<void> {
