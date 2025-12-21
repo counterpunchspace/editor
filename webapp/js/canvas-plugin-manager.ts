@@ -155,6 +155,31 @@ export class CanvasPluginManager {
                 this.plugins = [];
             }
 
+            // Get UI elements for each plugin
+            for (const plugin of this.plugins) {
+                try {
+                    const instance = plugin.instance;
+                    if (instance && instance.get_ui_elements) {
+                        const elementsResult = instance.get_ui_elements();
+                        if (elementsResult && elementsResult.toJs) {
+                            plugin.ui_elements = elementsResult.toJs({
+                                dict_converter: Object.fromEntries
+                            });
+                        } else {
+                            plugin.ui_elements = [];
+                        }
+                    } else {
+                        plugin.ui_elements = [];
+                    }
+                } catch (error) {
+                    console.error(
+                        `Error getting UI elements for ${plugin.name}:`,
+                        error
+                    );
+                    plugin.ui_elements = [];
+                }
+            }
+
             console.log(
                 `Discovered ${this.plugins.length} canvas plugin(s):`,
                 this.plugins
@@ -319,6 +344,49 @@ export class CanvasPluginManager {
      */
     isLoaded(): boolean {
         return this.loaded;
+    }
+
+    /**
+     * Set a parameter value for a plugin.
+     *
+     * @param entryPoint - The plugin's entry point name
+     * @param paramId - The parameter ID
+     * @param value - The new value
+     */
+    setPluginParameter(entryPoint: string, paramId: string, value: any): void {
+        const plugin = this.plugins.find((p) => p.entry_point === entryPoint);
+        if (plugin && plugin.instance && plugin.instance.set_parameter) {
+            try {
+                plugin.instance.set_parameter(paramId, value);
+            } catch (error) {
+                console.error(
+                    `Error setting parameter ${paramId} for ${plugin.name}:`,
+                    error
+                );
+            }
+        }
+    }
+
+    /**
+     * Get a parameter value from a plugin.
+     *
+     * @param entryPoint - The plugin's entry point name
+     * @param paramId - The parameter ID
+     * @returns The parameter value
+     */
+    getPluginParameter(entryPoint: string, paramId: string): any {
+        const plugin = this.plugins.find((p) => p.entry_point === entryPoint);
+        if (plugin && plugin.instance && plugin.instance.get_parameter) {
+            try {
+                return plugin.instance.get_parameter(paramId);
+            } catch (error) {
+                console.error(
+                    `Error getting parameter ${paramId} from ${plugin.name}:`,
+                    error
+                );
+            }
+        }
+        return null;
     }
 }
 

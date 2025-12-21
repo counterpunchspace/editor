@@ -34,6 +34,56 @@ class BaseCanvasPlugin:
     name = "Base Canvas Plugin"
     version = "0.1.0"
     
+    def get_ui_elements(self):
+        """
+        Return a list of UI elements for this plugin.
+        
+        Each element is a dictionary with:
+        - type: 'slider', 'checkbox', 'color-picker', etc.
+        - id: unique identifier for this element
+        - label: human-readable label
+        - ... type-specific properties
+        
+        Example:
+        return [
+            {
+                'type': 'slider',
+                'id': 'example_param',
+                'label': 'Example Parameter',
+                'min': 0,
+                'max': 100,
+                'step': 1,
+                'default': 50
+            }
+        ]
+        
+        Returns:
+            List of UI element dictionaries
+        """
+        return []
+    
+    def set_parameter(self, param_id, value):
+        """
+        Set a parameter value from the UI.
+        
+        Args:
+            param_id: The parameter identifier (from UI element 'id')
+            value: The new value
+        """
+        pass
+    
+    def get_parameter(self, param_id):
+        """
+        Get a parameter value.
+        
+        Args:
+            param_id: The parameter identifier
+            
+        Returns:
+            The current parameter value, or None if not found
+        """
+        return None
+    
     def draw_below(self, layer_data, glyph_name, ctx, viewport_manager):
         """
         Draw below the glyph outline (first layer).

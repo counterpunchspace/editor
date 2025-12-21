@@ -1070,6 +1070,10 @@ kbd + kbd {
     background-color: var(--input-bg);
 }
 
+.editor-plugins-dropdown-item:has(+ .plugin-ui-elements) {
+    border-bottom: none;
+}
+
 /* Plugin tags use the general tag-button style */
 .editor-plugins-dropdown-item .plugin-tag {
     /* Inherits from .tag-button via class in HTML */
@@ -1086,6 +1090,66 @@ kbd + kbd {
     color: var(--text-faint);
     font-family: var(--font-mono);
     font-size: 10px;
+}
+
+/* Plugin UI Elements */
+.plugin-ui-elements {
+    padding: 8px 12px 8px 48px;
+    border-bottom: 1px solid var(--border-primary);
+}
+
+.plugin-ui-slider {
+    display: grid;
+    grid-template-columns: 1fr 2fr auto;
+    gap: 8px;
+    align-items: center;
+    margin-bottom: 8px;
+}
+
+.plugin-ui-slider:last-child {
+    margin-bottom: 0;
+}
+
+.plugin-ui-label {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--text-secondary);
+}
+
+.plugin-ui-slider input[type='range'] {
+    width: 100%;
+    height: 4px;
+    background: var(--border-primary);
+    border-radius: 2px;
+    outline: none;
+    -webkit-appearance: none;
+}
+
+.plugin-ui-slider input[type='range']::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 12px;
+    height: 12px;
+    background: var(--text-primary);
+    cursor: pointer;
+    border-radius: 50%;
+}
+
+.plugin-ui-slider input[type='range']::-moz-range-thumb {
+    width: 12px;
+    height: 12px;
+    background: var(--text-primary);
+    cursor: pointer;
+    border-radius: 50%;
+    border: none;
+}
+
+.plugin-ui-value {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--text-primary);
+    min-width: 40px;
+    text-align: right;
 }
 
 /* AI Info Button */

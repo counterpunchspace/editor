@@ -43,6 +43,22 @@ class EditorPluginsUI {
                 this.closeDropdown();
             }
         });
+
+        // Close dropdown with Escape key
+        document.addEventListener(
+            'keydown',
+            (e) => {
+                if (this.isOpen && e.key === 'Escape') {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    this.closeDropdown();
+
+                    // Restore focus to canvas if editor view is active
+                    this.restoreFocusToCanvas();
+                }
+            },
+            true
+        ); // Use capture phase to intercept before other handlers
     }
 
     toggleDropdown() {
@@ -62,6 +78,18 @@ class EditorPluginsUI {
     closeDropdown() {
         this.dropdown.style.display = 'none';
         this.isOpen = false;
+    }
+
+    restoreFocusToCanvas() {
+        const editorView = document.getElementById('view-editor');
+        if (
+            editorView &&
+            editorView.classList.contains('focused') &&
+            window.glyphCanvas &&
+            window.glyphCanvas.canvas
+        ) {
+            setTimeout(() => window.glyphCanvas.canvas.focus(), 0);
+        }
     }
 
     updatePluginList() {
@@ -116,26 +144,111 @@ class EditorPluginsUI {
             // Toggle on click
             item.addEventListener('click', (e) => {
                 e.stopPropagation();
+
+                // Don't toggle if clicking on UI elements
+                if (e.target.closest('.plugin-ui-elements')) {
+                    return;
+                }
+
                 const newState = window.canvasPluginManager.togglePlugin(
                     plugin.entry_point
                 );
 
-                if (newState) {
-                    item.classList.add('enabled');
-                    tag.classList.add('enabled');
-                } else {
-                    item.classList.remove('enabled');
-                    tag.classList.remove('enabled');
-                }
+                // Update the entire dropdown to show/hide UI elements
+                this.updatePluginList();
 
                 // Trigger canvas redraw
                 if (window.glyphCanvas && window.glyphCanvas.renderer) {
                     window.glyphCanvas.renderer.render();
                 }
+
+                // Restore focus to canvas if editor view is active
+                this.restoreFocusToCanvas();
             });
 
             this.dropdown.appendChild(item);
+
+            // Add UI elements if plugin is enabled and has UI elements
+            if (
+                isEnabled &&
+                plugin.ui_elements &&
+                plugin.ui_elements.length > 0
+            ) {
+                const uiContainer = document.createElement('div');
+                uiContainer.className = 'plugin-ui-elements';
+
+                plugin.ui_elements.forEach((element) => {
+                    const uiElement = this.createUIElement(element, plugin);
+                    if (uiElement) {
+                        uiContainer.appendChild(uiElement);
+                    }
+                });
+
+                this.dropdown.appendChild(uiContainer);
+            }
         });
+    }
+
+    createUIElement(element, plugin) {
+        if (element.type === 'slider') {
+            return this.createSlider(element, plugin);
+        }
+        // Future: support other element types (checkbox, color-picker, etc.)
+        return null;
+    }
+
+    createSlider(element, plugin) {
+        const container = document.createElement('div');
+        container.className = 'plugin-ui-slider';
+
+        const label = document.createElement('label');
+        label.textContent = element.label || element.id;
+        label.className = 'plugin-ui-label';
+
+        const valueDisplay = document.createElement('span');
+        valueDisplay.className = 'plugin-ui-value';
+
+        const slider = document.createElement('input');
+        slider.type = 'range';
+        slider.min = element.min || 0;
+        slider.max = element.max || 100;
+        slider.step = element.step || 1;
+
+        // Get current value or use default
+        let currentValue = window.canvasPluginManager.getPluginParameter(
+            plugin.entry_point,
+            element.id
+        );
+        if (currentValue === null || currentValue === undefined) {
+            currentValue = element.default || element.min || 0;
+        }
+        slider.value = currentValue;
+        valueDisplay.textContent = currentValue;
+
+        slider.addEventListener('input', (e) => {
+            e.stopPropagation();
+            const value = parseFloat(e.target.value);
+            valueDisplay.textContent = value;
+            window.canvasPluginManager.setPluginParameter(
+                plugin.entry_point,
+                element.id,
+                value
+            );
+
+            // Trigger canvas redraw
+            if (window.glyphCanvas && window.glyphCanvas.renderer) {
+                window.glyphCanvas.renderer.render();
+            }
+
+            // Restore focus to canvas if editor view is active
+            this.restoreFocusToCanvas();
+        });
+
+        container.appendChild(label);
+        container.appendChild(slider);
+        container.appendChild(valueDisplay);
+
+        return container;
     }
 }
 

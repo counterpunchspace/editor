@@ -41,7 +41,7 @@ def draw_below(self, layer_data, glyph_name, ctx, viewport_manager):
 def draw_above(self, layer_data, glyph_name, ctx, viewport_manager):
     """
     Draw above everything on the canvas.
-    
+
     Args: Same as draw_below
     """
     pass
