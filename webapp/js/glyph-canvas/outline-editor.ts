@@ -303,33 +303,35 @@ export class OutlineEditor {
                 this.previousVariationSettings = null;
                 // Don't return - fall through to exit component or edit mode
             } else {
-                console.log('Restoring previous layer state');
-                // Restore previous layer selection and axis values
-                this.selectedLayerId = this.previousSelectedLayerId;
-
-                // Mark as layer switch animating so onAnimationComplete handles layer loading
-                this.isLayerSwitchAnimating = true;
-
-                // Clear interpolating flag since we're transitioning to a real layer
-                this.isInterpolating = false;
-
-                // Capture auto-pan anchor before animation starts
-                this.captureAutoPanAnchor();
-
-                // Restore axis values with animation
-                // When animation completes, onAnimationComplete will call autoSelectMatchingLayer
-                // which will fetch the layer data and update the selection
-                this.glyphCanvas.axesManager!._setupAnimation({
-                    ...this.previousVariationSettings
-                });
-
-                // Clear previous state
+                console.log('Restoring previous layer by selecting it');
+                
+                // Find the previous layer object
+                const layers = this.glyphCanvas.fontData?.layers;
+                if (layers) {
+                    const previousLayer = layers.find(
+                        (l: PythonBabelfont.Layer) => l.id === this.previousSelectedLayerId
+                    );
+                    
+                    if (previousLayer) {
+                        // Clear interpolating flag since we're transitioning to a real layer
+                        this.isInterpolating = false;
+                        
+                        // Clear previous state before calling selectLayer
+                        // (selectLayer will also clear these, but we do it here to be explicit)
+                        this.previousSelectedLayerId = null;
+                        this.previousVariationSettings = null;
+                        
+                        // Imitate clicking on the layer in the list by calling selectLayer
+                        // This will handle everything: fetch data, animate sliders, update UI
+                        this.selectLayer(previousLayer);
+                        return;
+                    }
+                }
+                
+                // Fallback if layer not found - just clear state
+                console.warn('Previous layer not found, clearing state');
                 this.previousSelectedLayerId = null;
                 this.previousVariationSettings = null;
-
-                // Return focus to canvas
-                this.canvas!.focus();
-                return;
             }
         }
 
@@ -562,7 +564,16 @@ export class OutlineEditor {
             'hoveredComponentIndex:',
             this.hoveredComponentIndex
         );
+
+        // Double-click on other glyph - switch to that glyph
+        // Check this FIRST, before checking selectedLayerId, so it works even when interpolating
+        if (this.hoveredGlyphIndex >= 0) {
+            this.glyphCanvas.doubleClickOnGlyph(this.hoveredGlyphIndex);
+            return true; // Event handled - skip single-click
+        }
+
         if (!this.active || !this.selectedLayerId) return false;
+
         // Double-click on component - enter component editing (without selecting it)
         if (this.hoveredComponentIndex !== null) {
             console.log(
@@ -586,11 +597,7 @@ export class OutlineEditor {
             }
             return true; // Event handled - skip single-click
         }
-        // Double-click on other glyph - switch to that glyph
-        if (this.hoveredGlyphIndex >= 0) {
-            this.glyphCanvas.doubleClickOnGlyph(this.hoveredGlyphIndex);
-            return true; // Event handled - skip single-click
-        }
+
         return false; // Event not handled
     }
 
