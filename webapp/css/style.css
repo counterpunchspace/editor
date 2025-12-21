@@ -1100,7 +1100,7 @@ kbd + kbd {
 
 .plugin-ui-slider {
     display: grid;
-    grid-template-columns: 1fr 2fr auto;
+    grid-template-columns: auto 1fr auto;
     gap: 8px;
     align-items: center;
     margin-bottom: 8px;
@@ -1148,8 +1148,24 @@ kbd + kbd {
     font-family: var(--font-mono);
     font-size: 10px;
     color: var(--text-primary);
-    min-width: 40px;
+    width: 40px;
     text-align: right;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 2px;
+    padding: 1px 3px;
+    outline: none;
+    transition: all 0.15s ease;
+}
+
+.plugin-ui-value:hover {
+    border-color: var(--border-secondary);
+    background: var(--bg-secondary);
+}
+
+.plugin-ui-value:focus {
+    border-color: var(--accent-primary);
+    background: var(--bg-primary);
 }
 
 /* AI Info Button */

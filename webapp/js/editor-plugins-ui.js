@@ -205,8 +205,9 @@ class EditorPluginsUI {
         label.textContent = element.label || element.id;
         label.className = 'plugin-ui-label';
 
-        const valueDisplay = document.createElement('span');
-        valueDisplay.className = 'plugin-ui-value';
+        const valueInput = document.createElement('input');
+        valueInput.type = 'text';
+        valueInput.className = 'plugin-ui-value';
 
         const slider = document.createElement('input');
         slider.type = 'range';
@@ -223,12 +224,13 @@ class EditorPluginsUI {
             currentValue = element.default || element.min || 0;
         }
         slider.value = currentValue;
-        valueDisplay.textContent = currentValue;
+        valueInput.value = currentValue;
 
+        // Update from slider
         slider.addEventListener('input', (e) => {
             e.stopPropagation();
             const value = parseFloat(e.target.value);
-            valueDisplay.textContent = value;
+            valueInput.value = value;
             window.canvasPluginManager.setPluginParameter(
                 plugin.entry_point,
                 element.id,
@@ -244,9 +246,59 @@ class EditorPluginsUI {
             this.restoreFocusToCanvas();
         });
 
+        // Update from text input
+        valueInput.addEventListener('input', (e) => {
+            e.stopPropagation();
+            const value = parseFloat(e.target.value);
+            if (!isNaN(value)) {
+                // Clamp to min/max
+                const clampedValue = Math.max(
+                    element.min || 0,
+                    Math.min(element.max || 100, value)
+                );
+                slider.value = clampedValue;
+                window.canvasPluginManager.setPluginParameter(
+                    plugin.entry_point,
+                    element.id,
+                    clampedValue
+                );
+
+                // Trigger canvas redraw
+                if (window.glyphCanvas && window.glyphCanvas.renderer) {
+                    window.glyphCanvas.renderer.render();
+                }
+            }
+        });
+
+        // Validate and format on blur
+        valueInput.addEventListener('blur', (e) => {
+            const value = parseFloat(e.target.value);
+            if (isNaN(value)) {
+                valueInput.value = slider.value;
+            } else {
+                const clampedValue = Math.max(
+                    element.min || 0,
+                    Math.min(element.max || 100, value)
+                );
+                valueInput.value = clampedValue;
+                slider.value = clampedValue;
+            }
+
+            // Restore focus to canvas if editor view is active
+            this.restoreFocusToCanvas();
+        });
+
+        // Handle Enter key
+        valueInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                valueInput.blur();
+            }
+        });
+
         container.appendChild(label);
         container.appendChild(slider);
-        container.appendChild(valueDisplay);
+        container.appendChild(valueInput);
 
         return container;
     }
