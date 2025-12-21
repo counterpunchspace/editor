@@ -22,6 +22,8 @@ export class AxesManager {
     fontBytes: Uint8Array | null;
     callbacks: Record<string, Function[]>; // Support multiple callbacks per event
     isSliderActive: boolean;
+    isTextFieldChange: boolean;
+    pendingSliderMouseUp: boolean;
 
     constructor() {
         this.variationSettings = {}; // Current variation settings
@@ -36,6 +38,8 @@ export class AxesManager {
         this.animationTargetValues = {};
         this.animationCurrentFrame = 0;
         this.isSliderActive = false;
+        this.isTextFieldChange = false;
+        this.pendingSliderMouseUp = false;
 
         this.fontBytes = null; // To be set externally
         this.callbacks = {}; // Array of callbacks for each event
@@ -204,7 +208,7 @@ export class AxesManager {
                 e.target.value = inputValue;
             });
 
-            valueLabel.addEventListener('change', (e) => {
+            valueLabel.addEventListener('change', async (e) => {
                 // @ts-ignore
                 let value = parseFloat(e.target.value);
 
@@ -217,8 +221,22 @@ export class AxesManager {
 
                 // @ts-ignore
                 e.target.value = value.toFixed(0);
+
+                // Update the slider position to match
+                slider.value = value.toString();
+
+                // Mark this as a text field change
+                this.isTextFieldChange = true;
+
+                // Execute the same sequence as slider interaction:
+                // 1. Mouse down to start interpolation
+                await this.call('sliderMouseDown');
+
+                // 2. Change the value and trigger animation
                 this.call('onSliderChange', axis.tag, value);
                 this.setVariation(axis.tag, value);
+
+                // Note: Layer selection will be handled when animation completes
             });
 
             valueLabel.addEventListener('keydown', (e) => {
@@ -237,7 +255,12 @@ export class AxesManager {
             // Exit preview mode and restore focus on mouseup
             slider.addEventListener('mouseup', () => {
                 this.isSliderActive = false;
-                this.call('sliderMouseUp');
+                // If animation is still running, defer sliderMouseUp until it completes
+                if (this.isAnimating) {
+                    this.pendingSliderMouseUp = true;
+                } else {
+                    this.call('sliderMouseUp');
+                }
             });
 
             // Update on change
@@ -273,7 +296,12 @@ export class AxesManager {
         document.addEventListener('mouseup', () => {
             if (this.isSliderActive) {
                 this.isSliderActive = false;
-                this.call('sliderMouseUp');
+                // If animation is still running, defer sliderMouseUp until it completes
+                if (this.isAnimating) {
+                    this.pendingSliderMouseUp = true;
+                } else {
+                    this.call('sliderMouseUp');
+                }
             }
         });
     }
@@ -348,6 +376,19 @@ export class AxesManager {
                 this.isAnimating = false;
             }
             this.updateAxisSliders(); // Update slider UI to match final values
+
+            // If this was a text field change, trigger layer selection now
+            if (this.isTextFieldChange) {
+                this.isTextFieldChange = false;
+                this.call('textFieldAnimationComplete');
+            }
+
+            // If slider was released during animation, trigger sliderMouseUp now
+            if (this.pendingSliderMouseUp) {
+                this.pendingSliderMouseUp = false;
+                this.call('sliderMouseUp');
+            }
+
             this.call('animationComplete');
         }
     }

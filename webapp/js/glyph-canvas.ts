@@ -322,6 +322,12 @@ class GlyphCanvas {
         const rightSidebar = document.getElementById('glyph-editor-sidebar');
 
         const restoreFocus = (e: MouseEvent) => {
+            // Don't restore focus if clicking on text input fields
+            const target = e.target as HTMLElement;
+            if (target && this.isTextInputElement(target)) {
+                return;
+            }
+
             // Always restore focus to canvas when clicking sidebar
             setTimeout(() => this.canvas!.focus(), 0);
         };
@@ -333,6 +339,34 @@ class GlyphCanvas {
         if (rightSidebar) {
             rightSidebar.addEventListener('mousedown', restoreFocus);
         }
+    }
+
+    isTextInputElement(element: HTMLElement): boolean {
+        if (!element) return false;
+
+        const tagName = element.tagName?.toLowerCase();
+        const type = (element as HTMLInputElement).type?.toLowerCase();
+
+        // Check if it's a text input type
+        if (tagName === 'input') {
+            const textInputTypes = [
+                'text',
+                'password',
+                'email',
+                'search',
+                'tel',
+                'url',
+                'number'
+            ];
+            return !type || textInputTypes.includes(type);
+        }
+
+        // Check if it's a textarea
+        if (tagName === 'textarea') {
+            return true;
+        }
+
+        return false;
     }
     setupAxesManagerEventHandlers(): void {
         this.axesManager!.on('sliderMouseDown', () => {
@@ -352,6 +386,15 @@ class GlyphCanvas {
                     this.textModeAutoPanAnchorScreen = null;
                 }
                 setTimeout(() => this.canvas!.focus(), 0);
+            }
+        });
+        this.axesManager!.on('textFieldAnimationComplete', async () => {
+            // Handle layer selection after text field change animation completes
+            if (this.outlineEditor.active) {
+                await this.outlineEditor.autoSelectMatchingLayer();
+                this.outlineEditor.isInterpolating = false;
+                this.outlineEditor.autoPanAnchorScreen = null;
+                this.render();
             }
         });
         this.axesManager!.on('animationInProgress', () => {
