@@ -304,30 +304,31 @@ export class OutlineEditor {
                 // Don't return - fall through to exit component or edit mode
             } else {
                 console.log('Restoring previous layer by selecting it');
-                
+
                 // Find the previous layer object
                 const layers = this.glyphCanvas.fontData?.layers;
                 if (layers) {
                     const previousLayer = layers.find(
-                        (l: PythonBabelfont.Layer) => l.id === this.previousSelectedLayerId
+                        (l: PythonBabelfont.Layer) =>
+                            l.id === this.previousSelectedLayerId
                     );
-                    
+
                     if (previousLayer) {
                         // Clear interpolating flag since we're transitioning to a real layer
                         this.isInterpolating = false;
-                        
+
                         // Clear previous state before calling selectLayer
                         // (selectLayer will also clear these, but we do it here to be explicit)
                         this.previousSelectedLayerId = null;
                         this.previousVariationSettings = null;
-                        
+
                         // Imitate clicking on the layer in the list by calling selectLayer
                         // This will handle everything: fetch data, animate sliders, update UI
                         this.selectLayer(previousLayer);
                         return;
                     }
                 }
-                
+
                 // Fallback if layer not found - just clear state
                 console.warn('Previous layer not found, clearing state');
                 this.previousSelectedLayerId = null;
