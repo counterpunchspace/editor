@@ -1930,6 +1930,18 @@ export class OutlineEditor {
                 'Interpolating at current position after entering edit mode'
             );
             await this.interpolateCurrentGlyph(true); // force=true to bypass guard
+
+            // Pan to glyph after interpolation completes (when switching glyphs via keyboard)
+            // This ensures we have the correct interpolated bounds for panning
+            if (
+                this.glyphCanvas.textRunEditor!.selectedGlyphIndex >= 0 &&
+                this.glyphCanvas.textRunEditor!.selectedGlyphIndex <
+                    this.glyphCanvas.textRunEditor!.shapedGlyphs.length
+            ) {
+                this.glyphCanvas.panToGlyph(
+                    this.glyphCanvas.textRunEditor!.selectedGlyphIndex
+                );
+            }
         }
     }
 

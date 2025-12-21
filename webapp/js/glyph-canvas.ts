@@ -627,8 +627,11 @@ class GlyphCanvas {
                         return;
                     }
 
-                    // Layer data should be loaded now, safe to pan
-                    this.panToGlyph(ix);
+                    // Only pan if we're on a layer (not interpolating)
+                    // If interpolating, panToGlyph will be called after interpolation completes
+                    if (this.outlineEditor.selectedLayerId !== null) {
+                        this.panToGlyph(ix);
+                    }
                 } else {
                     // Not panning, just do regular UI update
                     this.doUIUpdate();
@@ -1621,8 +1624,13 @@ class GlyphCanvas {
         // Async version that waits for layer data to be loaded
         this.updateComponentBreadcrumb();
         await this.updatePropertiesUI();
-        this.render();
-        this.outlineEditor.performHitDetection(null);
+
+        // Only render if we're on a layer (not interpolating)
+        // If interpolating, render will be called after interpolation completes
+        if (this.outlineEditor.selectedLayerId !== null) {
+            this.render();
+            this.outlineEditor.performHitDetection(null);
+        }
     }
 
     updateComponentBreadcrumb(): void {
