@@ -20,8 +20,10 @@ Draws the outline filled in black and the glyph's name centered underneath.
 
 import js
 
+from base_canvas_plugin.plugin import BaseCanvasPlugin
 
-class ExampleCanvasPlugin:
+
+class ExampleCanvasPlugin(BaseCanvasPlugin):
     """
     Example canvas plugin that draws a filled outline and glyph name.
     
@@ -32,6 +34,10 @@ class ExampleCanvasPlugin:
     
     name = "Example Canvas Plugin"
     version = "0.1.0"
+    
+    def visible(self):
+        """This plugin should be visible in the plugin list."""
+        return True
     
     def draw_below(self, layer_data, glyph_name, ctx, viewport_manager):
         """

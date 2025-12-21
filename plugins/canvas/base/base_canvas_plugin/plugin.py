@@ -34,9 +34,108 @@ class BaseCanvasPlugin:
     name = "Base Canvas Plugin"
     version = "0.1.0"
     
+    def __init__(self):
+        """
+        Initialize plugin and automatically load parameters from storage.
+        
+        This will call get_ui_elements() and load saved values or defaults
+        for each UI element into self._parameters dictionary.
+        """
+        self._parameters = {}
+        
+        # Get UI element definitions
+        ui_elements = self.get_ui_elements()
+        
+        # Load each parameter from storage or use default
+        for element in ui_elements:
+            param_id = element.get('id')
+            if param_id:
+                # Try to load from storage
+                loaded_value = self._load_parameter_from_storage(param_id, element)
+                
+                # Use loaded value or fall back to default
+                if loaded_value is not None:
+                    self._parameters[param_id] = loaded_value
+                else:
+                    default_value = element.get('default', 0)
+                    self._parameters[param_id] = default_value
+    
+    def visible(self):
+        """
+        Whether this plugin should be visible in the plugin list.
+        
+        Returns:
+            Boolean - True to show in list, False to hide
+        """
+        return False
+    
+    def _get_storage_key(self, param_id):
+        """
+        Get the localStorage key for a parameter.
+        
+        Args:
+            param_id: Parameter identifier
+            
+        Returns:
+            Storage key string
+        """
+        # Use plugin class name to create unique keys
+        plugin_name = self.__class__.__name__
+        return f"canvasPlugin.{plugin_name}.{param_id}"
+    
+    def _load_parameter_from_storage(self, param_id, element_def):
+        """
+        Load a parameter value from localStorage.
+        
+        Args:
+            param_id: Parameter identifier
+            element_def: UI element definition dict with min/max/default
+            
+        Returns:
+            Stored value (clamped to min/max) or None if not found
+        """
+        try:
+            import js
+            storage_key = self._get_storage_key(param_id)
+            stored_value = js.localStorage.getItem(storage_key)
+            
+            if stored_value is not None:
+                value = float(stored_value)
+                
+                # Clamp to valid range if min/max are defined
+                min_val = element_def.get('min')
+                max_val = element_def.get('max')
+                
+                if min_val is not None and value < min_val:
+                    value = min_val
+                if max_val is not None and value > max_val:
+                    value = max_val
+                
+                return value
+        except Exception:
+            pass
+        
+        return None
+    
+    def _save_parameter_to_storage(self, param_id, value):
+        """
+        Save a parameter value to localStorage.
+        
+        Args:
+            param_id: Parameter identifier
+            value: Value to store
+        """
+        try:
+            import js
+            storage_key = self._get_storage_key(param_id)
+            js.localStorage.setItem(storage_key, str(value))
+        except Exception:
+            pass
+    
     def get_ui_elements(self):
         """
         Return a list of UI elements for this plugin.
+        Override this in subclasses to define UI controls.
         
         Each element is a dictionary with:
         - type: 'slider', 'checkbox', 'color-picker', etc.
@@ -62,16 +161,6 @@ class BaseCanvasPlugin:
         """
         return []
     
-    def set_parameter(self, param_id, value):
-        """
-        Set a parameter value from the UI.
-        
-        Args:
-            param_id: The parameter identifier (from UI element 'id')
-            value: The new value
-        """
-        pass
-    
     def get_parameter(self, param_id):
         """
         Get a parameter value.
@@ -82,7 +171,18 @@ class BaseCanvasPlugin:
         Returns:
             The current parameter value, or None if not found
         """
-        return None
+        return self._parameters.get(param_id)
+    
+    def set_parameter(self, param_id, value):
+        """
+        Set a parameter value and automatically save to storage.
+        
+        Args:
+            param_id: The parameter identifier
+            value: The new value
+        """
+        self._parameters[param_id] = float(value)
+        self._save_parameter_to_storage(param_id, value)
     
     def draw_below(self, layer_data, glyph_name, ctx, viewport_manager):
         """

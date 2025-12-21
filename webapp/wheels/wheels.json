@@ -1,6 +1,7 @@
 {
-  "wheels": [
-    "curvature_comb_plugin-0.1.0-py3-none-any.whl",
-    "example_canvas_plugin-0.1.0-py3-none-any.whl"
-  ]
+    "wheels": [
+        "base_canvas_plugin-0.1.0-py3-none-any.whl",
+        "curvature_comb_plugin-0.1.0-py3-none-any.whl",
+        "example_canvas_plugin-0.1.0-py3-none-any.whl"
+    ]
 }

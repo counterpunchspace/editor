@@ -1064,6 +1064,7 @@ kbd + kbd {
 
 .editor-plugins-dropdown-item:last-child {
     border-bottom: none;
+    /* padding-bottom: 0px; */
 }
 
 .editor-plugins-dropdown-item:hover {
@@ -1094,13 +1095,13 @@ kbd + kbd {
 
 /* Plugin UI Elements */
 .plugin-ui-elements {
-    padding: 8px 12px 8px 48px;
+    padding: 2px 12px 11px 20px;
     border-bottom: 1px solid var(--border-primary);
 }
 
 .plugin-ui-slider {
     display: grid;
-    grid-template-columns: auto 1fr auto;
+    grid-template-columns: 70px 1fr 40px;
     gap: 8px;
     align-items: center;
     margin-bottom: 8px;

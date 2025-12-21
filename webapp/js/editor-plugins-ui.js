@@ -115,6 +115,21 @@ class EditorPluginsUI {
 
         // Create plugin items
         plugins.forEach((plugin) => {
+            // Skip plugins that have visible() method returning false
+            if (plugin.instance && plugin.instance.visible) {
+                try {
+                    const isVisible = plugin.instance.visible();
+                    if (!isVisible) {
+                        return; // Skip this plugin
+                    }
+                } catch (e) {
+                    console.error(
+                        `Error checking visibility for plugin ${plugin.name}:`,
+                        e
+                    );
+                }
+            }
+
             const item = document.createElement('div');
             item.className = 'editor-plugins-dropdown-item';
 

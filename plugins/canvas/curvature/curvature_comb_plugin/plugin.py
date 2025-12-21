@@ -20,8 +20,21 @@ Draws a curvature comb visualization on bezier curves to show curvature distribu
 
 import math
 
+from base_canvas_plugin.plugin import BaseCanvasPlugin
 
-class CurvatureCombPlugin:
+# Import JavaScript console for logging
+try:
+    import js
+    console = js.console
+except ImportError:
+    # Fallback for testing outside of Pyodide
+    class FakeConsole:
+        def log(self, *args):
+            print(*args)
+    console = FakeConsole()
+
+
+class CurvatureCombPlugin(BaseCanvasPlugin):
     """
     Curvature comb plugin that visualizes curve curvature.
     
@@ -37,14 +50,14 @@ class CurvatureCombPlugin:
     OPACITY = 0.4           # Opacity of comb teeth
     DEBUG = False           # Enable debug logging
     
-    def __init__(self):
-        """Initialize plugin with default parameters."""
-        self._scale_factor = 50  # Default scale factor
+    def visible(self):
+        """This plugin should be visible in the plugin list."""
+        return True
     
     @property
     def SCALE_FACTOR(self):
         """Get the current scale factor."""
-        return 2000 + self._scale_factor * 250
+        return 2000 + self.get_parameter('scale_factor') * 250
     
     def get_ui_elements(self):
         """
@@ -62,33 +75,17 @@ class CurvatureCombPlugin:
                 'max': 100,
                 'step': 1,
                 'default': 50
+            },
+            {
+                'type': 'slider',
+                'id': 'exponent',
+                'label': 'Exponent',
+                'min': 1,
+                'max': 5,
+                'step': .1,
+                'default': 1
             }
         ]
-    
-    def set_parameter(self, param_id, value):
-        """
-        Set a parameter value from the UI.
-        
-        Args:
-            param_id: The parameter identifier
-            value: The new value
-        """
-        if param_id == 'scale_factor':
-            self._scale_factor = float(value)
-    
-    def get_parameter(self, param_id):
-        """
-        Get a parameter value.
-        
-        Args:
-            param_id: The parameter identifier
-            
-        Returns:
-            The current parameter value, or None if not found
-        """
-        if param_id == 'scale_factor':
-            return self._scale_factor
-        return None
     
     def draw_below(self, layer_data, glyph_name, ctx, viewport_manager):
         """
@@ -101,21 +98,21 @@ class CurvatureCombPlugin:
             viewport_manager: Viewport manager for coordinate transformations
         """
         if self.DEBUG:
-            print(f"[CurvatureComb] draw_above called for glyph: {glyph_name}")
+            console.log(f"[CurvatureComb] draw_below called for glyph: {glyph_name}")
         
         if not layer_data:
             if self.DEBUG:
-                print(f"[CurvatureComb] No layer_data provided")
+                console.log(f"[CurvatureComb] No layer_data provided")
             return
             
         shapes = layer_data.get('shapes', [])
         if not shapes:
             if self.DEBUG:
-                print(f"[CurvatureComb] No shapes in layer_data")
+                console.log(f"[CurvatureComb] No shapes in layer_data")
             return
         
         if self.DEBUG:
-            print(f"[CurvatureComb] Processing {len(shapes)} shapes")
+            console.log(f"[CurvatureComb] Processing {len(shapes)} shapes")
         
         ctx.save()
         
@@ -132,7 +129,7 @@ class CurvatureCombPlugin:
                 # Find min/max curvature for this path
                 path_curvatures = []
                 for curve_data in curve_data_list:
-                    path_curvatures.extend([abs(cv) for _, _, cv in curve_data['samples']])
+                    path_curvatures.extend([abs_cv for _, _, _, abs_cv in curve_data['samples']])
                 
                 if not path_curvatures:
                     continue
@@ -141,7 +138,7 @@ class CurvatureCombPlugin:
                 max_curvature = max(path_curvatures)
                 
                 if self.DEBUG:
-                    print(f"[CurvatureComb] Path {i} curvature range: {min_curvature} to {max_curvature}")
+                    console.log(f"[CurvatureComb] Path {i} curvature range: {min_curvature} to {max_curvature}")
                 
                 # Draw this path's curves with its own color range
                 for curve_data in curve_data_list:
@@ -149,7 +146,7 @@ class CurvatureCombPlugin:
                     total_curve_count += 1
         
         if self.DEBUG:
-            print(f"[CurvatureComb] Total cubic curves processed: {total_curve_count}")
+            console.log(f"[CurvatureComb] Total cubic curves processed: {total_curve_count}")
         ctx.restore()
     
     def _collect_curve_data(self, shape):
@@ -214,7 +211,7 @@ class CurvatureCombPlugin:
                     continue
             except Exception as e:
                 if self.DEBUG:
-                    print(f"[CurvatureComb] Error collecting data at node {i}: {e}")
+                    console.log(f"[CurvatureComb] Error collecting data at node {i}: {e}")
                 i += 1
                 continue
             
@@ -238,14 +235,14 @@ class CurvatureCombPlugin:
             nodes = shape['Path'].get('nodes', [])
         
         if self.DEBUG:
-            print(f"[CurvatureComb] Nodes found: {len(nodes) if nodes else 0}")
+            console.log(f"[CurvatureComb] Nodes found: {len(nodes) if nodes else 0}")
             if nodes and len(nodes) > 0:
-                print(f"[CurvatureComb] First node: {nodes[0]}")
-                print(f"[CurvatureComb] Node types: {[n.get('type', '?') for n in nodes[:5]]}")
+                console.log(f"[CurvatureComb] First node: {nodes[0]}")
+                console.log(f"[CurvatureComb] Node types: {[n.get('type', '?') for n in nodes[:5]]}")
         
         if not nodes or len(nodes) < 2:
             if self.DEBUG:
-                print(f"[CurvatureComb] Not enough nodes to process")
+                console.log(f"[CurvatureComb] Not enough nodes to process")
             return 0
         
         # Process nodes to find cubic bezier segments
@@ -285,7 +282,7 @@ class CurvatureCombPlugin:
                         continue
                     
                     if self.DEBUG:
-                        print(f"[CurvatureComb] Found cubic curve at node {i}")
+                        console.log(f"[CurvatureComb] Found cubic curve at node {i}")
                     
                     # Draw curvature comb for this cubic bezier
                     p0 = (float(node['x']), float(node['y']))
@@ -294,18 +291,18 @@ class CurvatureCombPlugin:
                     p3 = (float(next3['x']), float(next3['y']))
                     
                     if self.DEBUG:
-                        print(f"[CurvatureComb] Curve points: {p0} -> {p1}, {p2} -> {p3}")
+                        console.log(f"[CurvatureComb] Curve points: {p0} -> {p1}, {p2} -> {p3}")
                     
                     shapes_drawn = self._draw_cubic_curvature_comb(p0, p1, p2, p3, ctx)
                     if self.DEBUG:
-                        print(f"[CurvatureComb] Drew {shapes_drawn} shapes")
+                        console.log(f"[CurvatureComb] Drew {shapes_drawn} shapes")
                     curve_count += 1
                     
                     i += 3  # Skip the control points and endpoint
                     continue
             except Exception as e:
                 if self.DEBUG:
-                    print(f"[CurvatureComb] Error processing node {i}: {e}")
+                    console.log(f"[CurvatureComb] Error processing node {i}: {e}")
                 i += 1
                 continue
             
@@ -343,19 +340,13 @@ class CurvatureCombPlugin:
                     
                     tangent_norm = (tangent[0] / tangent_length, tangent[1] / tangent_length)
                     perp = (-tangent_norm[1], tangent_norm[0])
-                    tooth_length = -curvature * self.SCALE_FACTOR
                     
-                    if abs(tooth_length) > 10000:
-                        continue
-                    
-                    end_x = point[0] + perp[0] * tooth_length
-                    end_y = point[1] + perp[1] * tooth_length
-                    
-                    if all(math.isfinite(v) for v in [point[0], point[1], end_x, end_y]):
-                        samples.append((point, (end_x, end_y), abs(curvature)))
+                    if math.isfinite(point[0]) and math.isfinite(point[1]):
+                        # Store: point, perpendicular direction, raw curvature value
+                        samples.append((point, perp, -curvature, abs(curvature)))
                 except Exception as e:
                     if self.DEBUG:
-                        print(f"[CurvatureComb] Error sampling: {e}")
+                        console.log(f"[CurvatureComb] Error sampling: {e}")
                     continue
             
             if len(samples) >= 2:
@@ -363,7 +354,7 @@ class CurvatureCombPlugin:
             return None
         except Exception as e:
             if self.DEBUG:
-                print(f"[CurvatureComb] Error in sampling: {e}")
+                console.log(f"[CurvatureComb] Error in sampling: {e}")
             return None
     
     def _draw_curve_data(self, curve_data, ctx, min_curvature, max_curvature):
@@ -381,11 +372,36 @@ class CurvatureCombPlugin:
             
             for i in range(len(samples) - 1):
                 try:
-                    point_i, tooth_end_i, curv_i = samples[i]
-                    point_next, tooth_end_next, curv_next = samples[i + 1]
+                    point_i, perp_i, signed_curv_i, abs_curv_i = samples[i]
+                    point_next, perp_next, signed_curv_next, abs_curv_next = samples[i + 1]
                     
                     # Calculate average curvature for this segment
-                    avg_curvature = (curv_i + curv_next) / 2
+                    avg_curvature = (abs_curv_i + abs_curv_next) / 2
+                    
+                    # Normalize curvature to 0-1 range
+                    if max_curvature - min_curvature < 1e-10:
+                        t_i = 0
+                        t_next = 0
+                    else:
+                        t_i = (abs_curv_i - min_curvature) / (max_curvature - min_curvature)
+                        t_next = (abs_curv_next - min_curvature) / (max_curvature - min_curvature)
+                    
+                    # Clamp to 0-1
+                    t_i = max(0, min(1, t_i))
+                    t_next = max(0, min(1, t_next))
+                    
+                    # Use raw curvature for tooth length (no exponent applied)
+                    # Use signed curvature direction with original magnitude
+                    tooth_length_i = (signed_curv_i / abs_curv_i if abs_curv_i > 0 else 0) * abs_curv_i * self.SCALE_FACTOR
+                    tooth_length_next = (signed_curv_next / abs_curv_next if abs_curv_next > 0 else 0) * abs_curv_next * self.SCALE_FACTOR
+                    
+                    # Skip extreme values
+                    if abs(tooth_length_i) > 10000 or abs(tooth_length_next) > 10000:
+                        continue
+                    
+                    # Calculate tooth endpoints
+                    tooth_end_i = (point_i[0] + perp_i[0] * tooth_length_i, point_i[1] + perp_i[1] * tooth_length_i)
+                    tooth_end_next = (point_next[0] + perp_next[0] * tooth_length_next, point_next[1] + perp_next[1] * tooth_length_next)
                     
                     # Map curvature to color: gray → yellow → red
                     color = self._get_curvature_color(avg_curvature, min_curvature, max_curvature)
@@ -400,11 +416,11 @@ class CurvatureCombPlugin:
                     ctx.fill()
                 except Exception as e:
                     if self.DEBUG:
-                        print(f"[CurvatureComb] Error drawing segment {i}: {e}")
+                        console.log(f"[CurvatureComb] Error drawing segment {i}: {e}")
                     continue
         except Exception as e:
             if self.DEBUG:
-                print(f"[CurvatureComb] Error drawing curve data: {e}")
+                console.log(f"[CurvatureComb] Error drawing curve data: {e}")
     
     def _get_curvature_color(self, curvature, min_curv, max_curv):
         """
@@ -426,6 +442,9 @@ class CurvatureCombPlugin:
         
         # Clamp to 0-1
         t = max(0, min(1, t))
+        
+        # Apply exponent for more expressive contrast
+        t = pow(t, self.get_parameter('exponent'))
         
         # Color gradient: gray (128,128,128) → yellow (255,255,0) → red (255,0,0)
         if t < 0.5:

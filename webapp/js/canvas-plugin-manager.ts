@@ -258,11 +258,19 @@ export class CanvasPluginManager {
         ctx: CanvasRenderingContext2D,
         viewportManager: any
     ): Promise<void> {
+        console.log(
+            `[CanvasPluginManager] _drawPlugins called with hookName: ${hookName}`
+        );
+        console.log(
+            `[CanvasPluginManager] loaded: ${this.loaded}, plugins.length: ${this.plugins.length}`
+        );
+
         if (!this.loaded || this.plugins.length === 0) {
             return;
         }
 
         if (!window.pyodide) {
+            console.log('[CanvasPluginManager] Pyodide not available');
             return;
         }
 
@@ -275,6 +283,9 @@ export class CanvasPluginManager {
 
             // Call each plugin
             for (const plugin of this.plugins) {
+                console.log(
+                    `[CanvasPluginManager] Checking plugin: ${plugin.name}, entry_point: ${plugin.entry_point}, enabled: ${this.isPluginEnabled(plugin.entry_point)}`
+                );
                 try {
                     // Skip if plugin is not enabled
                     if (!this.isPluginEnabled(plugin.entry_point)) {
@@ -286,8 +297,15 @@ export class CanvasPluginManager {
 
                     // Check if the plugin has this hook
                     if (!pluginPy[hookName]) {
+                        console.log(
+                            `[CanvasPluginManager] Plugin ${plugin.name} does not have ${hookName} method`
+                        );
                         continue;
                     }
+
+                    console.log(
+                        `[CanvasPluginManager] Calling ${hookName} on ${plugin.name}`
+                    );
 
                     // Convert JS objects to Python
                     const layerDataPy = window.pyodide.toPy(layerData);
