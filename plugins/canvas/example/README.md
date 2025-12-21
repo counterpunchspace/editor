@@ -23,18 +23,26 @@ This will:
 
 ## Plugin API
 
-Canvas plugins must implement a `draw_on_top()` method with the following signature:
+Canvas plugins can implement `draw_below()` and/or `draw_above()` methods:
 
 ```python
-def draw_on_top(self, layer_data, glyph_name, ctx, viewport_manager):
+def draw_below(self, layer_data, glyph_name, ctx, viewport_manager):
     """
-    Draw on top of the canvas.
+    Draw below the glyph outline.
 
     Args:
         layer_data: Dictionary with layer data including shapes, width, anchors, etc.
         glyph_name: String with the name of the current glyph
         ctx: Canvas 2D rendering context (CanvasRenderingContext2D)
         viewport_manager: Viewport manager for coordinate transformations
+    """
+    pass
+
+def draw_above(self, layer_data, glyph_name, ctx, viewport_manager):
+    """
+    Draw above everything on the canvas.
+    
+    Args: Same as draw_below
     """
     pass
 ```
