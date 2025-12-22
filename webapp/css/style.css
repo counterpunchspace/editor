@@ -1117,7 +1117,9 @@ kbd + kbd {
     color: var(--text-secondary);
 }
 
-.plugin-ui-slider input[type='range'] {
+/* Shared slider styles for both plugin UI and axes sliders */
+.plugin-ui-slider input[type='range'],
+.editor-axis-slider {
     width: 100%;
     height: 4px;
     background: var(--border-primary);
@@ -1126,7 +1128,37 @@ kbd + kbd {
     -webkit-appearance: none;
 }
 
-.plugin-ui-slider input[type='range']::-webkit-slider-thumb {
+.plugin-ui-slider input[type='range']::-webkit-slider-runnable-track,
+.editor-axis-slider::-webkit-slider-runnable-track {
+    width: 100%;
+    height: 4px;
+    background: linear-gradient(
+        to right,
+        var(--text-secondary) 0%,
+        var(--text-secondary) var(--value-percent, 50%),
+        var(--border-primary) var(--value-percent, 50%),
+        var(--border-primary) 100%
+    );
+    border-radius: 2px;
+}
+
+.plugin-ui-slider input[type='range']::-moz-range-track,
+.editor-axis-slider::-moz-range-track {
+    width: 100%;
+    height: 4px;
+    background: var(--border-primary);
+    border-radius: 2px;
+}
+
+.plugin-ui-slider input[type='range']::-moz-range-progress,
+.editor-axis-slider::-moz-range-progress {
+    height: 4px;
+    background: var(--text-secondary);
+    border-radius: 2px;
+}
+
+.plugin-ui-slider input[type='range']::-webkit-slider-thumb,
+.editor-axis-slider::-webkit-slider-thumb {
     -webkit-appearance: none;
     appearance: none;
     width: 12px;
@@ -1134,9 +1166,11 @@ kbd + kbd {
     background: var(--text-primary);
     cursor: pointer;
     border-radius: 50%;
+    margin-top: -4px;
 }
 
-.plugin-ui-slider input[type='range']::-moz-range-thumb {
+.plugin-ui-slider input[type='range']::-moz-range-thumb,
+.editor-axis-slider::-moz-range-thumb {
     width: 12px;
     height: 12px;
     background: var(--text-primary);
@@ -1205,6 +1239,10 @@ kbd + kbd {
 
 /* Checkbox */
 .plugin-ui-checkbox {
+    display: grid;
+    grid-template-columns: 70px 1fr;
+    gap: 8px;
+    align-items: center;
     margin-bottom: 8px;
 }
 
@@ -1212,25 +1250,20 @@ kbd + kbd {
     margin-bottom: 0;
 }
 
-.plugin-ui-checkbox-label {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    cursor: pointer;
-    font-family: var(--font-mono);
-    font-size: 10px;
-    color: var(--text-secondary);
-}
-
 .plugin-ui-checkbox-input {
     width: 14px;
     height: 14px;
     cursor: pointer;
     margin: 0;
+    filter: saturate(0);
 }
 
 /* Radio Group */
 .plugin-ui-radio-group {
+    display: grid;
+    grid-template-columns: 70px 1fr;
+    gap: 8px;
+    align-items: center;
     margin-bottom: 8px;
 }
 
@@ -1238,22 +1271,16 @@ kbd + kbd {
     margin-bottom: 0;
 }
 
-.plugin-ui-radio-group .plugin-ui-label {
-    margin-bottom: 6px;
-    display: block;
-}
-
 .plugin-ui-radio-options {
     display: flex;
     flex-wrap: wrap;
     gap: 8px 12px;
-    padding-left: 10px;
 }
 
 .plugin-ui-radio-label {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 6px;
     cursor: pointer;
     font-family: var(--font-mono);
     font-size: 10px;
@@ -1265,6 +1292,7 @@ kbd + kbd {
     height: 12px;
     cursor: pointer;
     margin: 0;
+    filter: saturate(0);
 }
 
 /* Color Picker */
@@ -3876,6 +3904,7 @@ kbd + kbd {
     justify-content: space-between;
     align-items: center;
     font-size: 11px;
+    margin-bottom: 4px;
 }
 
 .editor-axis-name {

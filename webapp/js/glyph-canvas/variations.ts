@@ -90,6 +90,13 @@ export class AxesManager {
             const axisTag: string | null = slider.getAttribute('data-axis-tag');
             if (axisTag && this.variationSettings[axisTag] !== undefined) {
                 slider.value = this.variationSettings[axisTag].toString();
+
+                // Update slider fill
+                const min = parseFloat(slider.min);
+                const max = parseFloat(slider.max);
+                const value = parseFloat(slider.value);
+                const percent = ((value - min) / (max - min)) * 100;
+                slider.style.setProperty('--value-percent', `${percent}%`);
             }
         });
 
@@ -202,6 +209,18 @@ export class AxesManager {
             // Initialize variation setting
             this.variationSettings[axis.tag] = initialValue;
 
+            // Function to update slider fill
+            const updateSliderFill = () => {
+                const min = parseFloat(slider.min);
+                const max = parseFloat(slider.max);
+                const value = parseFloat(slider.value);
+                const percent = ((value - min) / (max - min)) * 100;
+                slider.style.setProperty('--value-percent', `${percent}%`);
+            };
+
+            // Set initial fill
+            updateSliderFill();
+
             // Handle value input changes
             valueLabel.addEventListener('input', (e) => {
                 // @ts-ignore
@@ -226,6 +245,9 @@ export class AxesManager {
 
                 // Update the slider position to match
                 slider.value = value.toString();
+
+                // Update slider fill
+                updateSliderFill();
 
                 // Mark this as a text field change
                 this.isTextFieldChange = true;
@@ -296,6 +318,10 @@ export class AxesManager {
                 // @ts-ignore
                 const value = parseFloat(e.target.value);
                 valueLabel.value = value.toFixed(0);
+
+                // Update slider fill
+                updateSliderFill();
+
                 console.log(
                     '[Variations] Slider input event, calling onSliderChange',
                     axis.tag,

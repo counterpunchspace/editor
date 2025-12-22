@@ -248,11 +248,24 @@ class EditorPluginsUI {
         slider.value = currentValue;
         valueInput.value = currentValue;
 
+        // Function to update slider fill
+        const updateSliderFill = () => {
+            const min = parseFloat(slider.min);
+            const max = parseFloat(slider.max);
+            const value = parseFloat(slider.value);
+            const percent = ((value - min) / (max - min)) * 100;
+            slider.style.setProperty('--value-percent', `${percent}%`);
+        };
+
+        // Set initial fill
+        updateSliderFill();
+
         // Update from slider
         slider.addEventListener('input', (e) => {
             e.stopPropagation();
             const value = parseFloat(e.target.value);
             valueInput.value = value;
+            updateSliderFill();
             window.canvasPluginManager.setPluginParameter(
                 plugin.entry_point,
                 element.id,
@@ -279,6 +292,7 @@ class EditorPluginsUI {
                     Math.min(element.max || 100, value)
                 );
                 slider.value = clampedValue;
+                updateSliderFill();
                 window.canvasPluginManager.setPluginParameter(
                     plugin.entry_point,
                     element.id,
@@ -304,6 +318,7 @@ class EditorPluginsUI {
                 );
                 valueInput.value = clampedValue;
                 slider.value = clampedValue;
+                updateSliderFill();
             }
 
             // Restore focus to canvas if editor view is active
@@ -388,7 +403,8 @@ class EditorPluginsUI {
         container.className = 'plugin-ui-checkbox';
 
         const label = document.createElement('label');
-        label.className = 'plugin-ui-checkbox-label';
+        label.textContent = element.label || element.id;
+        label.className = 'plugin-ui-label';
 
         const input = document.createElement('input');
         input.type = 'checkbox';
@@ -404,9 +420,6 @@ class EditorPluginsUI {
                 element.default !== undefined ? element.default : false;
         }
         input.checked = currentValue;
-
-        const labelText = document.createElement('span');
-        labelText.textContent = element.label || element.id;
 
         // Update on change
         input.addEventListener('change', (e) => {
@@ -427,9 +440,8 @@ class EditorPluginsUI {
             this.restoreFocusToCanvas();
         });
 
-        label.appendChild(input);
-        label.appendChild(labelText);
         container.appendChild(label);
+        container.appendChild(input);
 
         return container;
     }
