@@ -534,6 +534,80 @@
         const shiftKey = event.shiftKey;
         const key = event.key.toLowerCase();
 
+        // Prevent browser back navigation shortcuts to avoid accidentally closing the app
+        const activeElement = document.activeElement;
+        const isInTextInput = isTextInputElement(activeElement);
+
+        // Backspace - browser back (when not in text input)
+        if (key === 'backspace' && !isInTextInput) {
+            console.log(
+                '[KeyboardNav]',
+                'Blocking Backspace browser navigation'
+            );
+            event.preventDefault();
+            return;
+        }
+
+        // Alt+Left Arrow - browser back (Windows/Linux)
+        if (event.altKey && key === 'arrowleft') {
+            console.log(
+                '[KeyboardNav]',
+                'Blocking Alt+Left browser navigation'
+            );
+            event.preventDefault();
+            return;
+        }
+
+        // Cmd+[ - browser back (macOS)
+        if (isMac && cmdKey && key === '[') {
+            console.log('[KeyboardNav]', 'Blocking Cmd+[ browser navigation');
+            event.preventDefault();
+            return;
+        }
+
+        // Cmd+Left Arrow - browser back (some browsers on macOS)
+        if (
+            isMac &&
+            cmdKey &&
+            key === 'arrowleft' &&
+            !shiftKey &&
+            !event.altKey
+        ) {
+            console.log(
+                '[KeyboardNav]',
+                'Blocking Cmd+Left browser navigation'
+            );
+            event.preventDefault();
+            return;
+        }
+
+        // Prevent page reload shortcuts in production (allow in development)
+        if (!window.isDevelopment?.()) {
+            // Cmd+R (macOS) or Ctrl+R (Windows/Linux)
+            if (
+                (cmdKey || event.ctrlKey) &&
+                key === 'r' &&
+                !shiftKey &&
+                !event.altKey
+            ) {
+                console.log(
+                    '[KeyboardNav]',
+                    'Blocking page reload shortcut (Cmd/Ctrl+R) in production'
+                );
+                event.preventDefault();
+                return;
+            }
+            // F5 - reload page
+            if (key === 'f5') {
+                console.log(
+                    '[KeyboardNav]',
+                    'Blocking page reload shortcut (F5) in production'
+                );
+                event.preventDefault();
+                return;
+            }
+        }
+
         // Handle Cmd+A (select all) blocking
         const isCmdA = cmdKey && key === 'a' && !shiftKey && !event.altKey;
 
