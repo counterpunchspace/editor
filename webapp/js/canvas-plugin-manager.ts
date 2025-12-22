@@ -137,7 +137,6 @@ export class CanvasPluginManager {
                             'entry_point': ep.name,
                             'instance': plugin_instance
                         })
-                        print(f"[CanvasPluginManager] Loaded plugin: {ep.name}")
                     except Exception as e:
                         print(f"[CanvasPluginManager] Error loading plugin {ep.name}: {e}")
                         import traceback
