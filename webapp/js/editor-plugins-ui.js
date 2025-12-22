@@ -207,8 +207,15 @@ class EditorPluginsUI {
     createUIElement(element, plugin) {
         if (element.type === 'slider') {
             return this.createSlider(element, plugin);
+        } else if (element.type === 'textfield') {
+            return this.createTextField(element, plugin);
+        } else if (element.type === 'checkbox') {
+            return this.createCheckbox(element, plugin);
+        } else if (element.type === 'radio') {
+            return this.createRadioGroup(element, plugin);
+        } else if (element.type === 'color') {
+            return this.createColorPicker(element, plugin);
         }
-        // Future: support other element types (checkbox, color-picker, etc.)
         return null;
     }
 
@@ -314,6 +321,229 @@ class EditorPluginsUI {
         container.appendChild(label);
         container.appendChild(slider);
         container.appendChild(valueInput);
+
+        return container;
+    }
+
+    createTextField(element, plugin) {
+        const container = document.createElement('div');
+        container.className = 'plugin-ui-textfield';
+
+        const label = document.createElement('label');
+        label.textContent = element.label || element.id;
+        label.className = 'plugin-ui-label';
+
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.className = 'plugin-ui-text-input';
+        input.placeholder = element.placeholder || '';
+
+        // Get current value or use default
+        let currentValue = window.canvasPluginManager.getPluginParameter(
+            plugin.entry_point,
+            element.id
+        );
+        if (currentValue === null || currentValue === undefined) {
+            currentValue = element.default || '';
+        }
+        input.value = currentValue;
+
+        // Update on input
+        input.addEventListener('input', (e) => {
+            e.stopPropagation();
+            const value = e.target.value;
+            window.canvasPluginManager.setPluginParameter(
+                plugin.entry_point,
+                element.id,
+                value
+            );
+
+            // Trigger canvas redraw
+            if (window.glyphCanvas && window.glyphCanvas.renderer) {
+                window.glyphCanvas.renderer.render();
+            }
+        });
+
+        // Handle Enter key
+        input.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                input.blur();
+            }
+        });
+
+        // Restore focus on blur
+        input.addEventListener('blur', () => {
+            this.restoreFocusToCanvas();
+        });
+
+        container.appendChild(label);
+        container.appendChild(input);
+
+        return container;
+    }
+
+    createCheckbox(element, plugin) {
+        const container = document.createElement('div');
+        container.className = 'plugin-ui-checkbox';
+
+        const label = document.createElement('label');
+        label.className = 'plugin-ui-checkbox-label';
+
+        const input = document.createElement('input');
+        input.type = 'checkbox';
+        input.className = 'plugin-ui-checkbox-input';
+
+        // Get current value or use default
+        let currentValue = window.canvasPluginManager.getPluginParameter(
+            plugin.entry_point,
+            element.id
+        );
+        if (currentValue === null || currentValue === undefined) {
+            currentValue =
+                element.default !== undefined ? element.default : false;
+        }
+        input.checked = currentValue;
+
+        const labelText = document.createElement('span');
+        labelText.textContent = element.label || element.id;
+
+        // Update on change
+        input.addEventListener('change', (e) => {
+            e.stopPropagation();
+            const value = e.target.checked;
+            window.canvasPluginManager.setPluginParameter(
+                plugin.entry_point,
+                element.id,
+                value
+            );
+
+            // Trigger canvas redraw
+            if (window.glyphCanvas && window.glyphCanvas.renderer) {
+                window.glyphCanvas.renderer.render();
+            }
+
+            // Restore focus to canvas if editor view is active
+            this.restoreFocusToCanvas();
+        });
+
+        label.appendChild(input);
+        label.appendChild(labelText);
+        container.appendChild(label);
+
+        return container;
+    }
+
+    createRadioGroup(element, plugin) {
+        const container = document.createElement('div');
+        container.className = 'plugin-ui-radio-group';
+
+        const groupLabel = document.createElement('div');
+        groupLabel.textContent = element.label || element.id;
+        groupLabel.className = 'plugin-ui-label';
+        container.appendChild(groupLabel);
+
+        // Get current value or use default
+        let currentValue = window.canvasPluginManager.getPluginParameter(
+            plugin.entry_point,
+            element.id
+        );
+        if (currentValue === null || currentValue === undefined) {
+            currentValue =
+                element.default ||
+                (element.options && element.options[0]?.value) ||
+                '';
+        }
+
+        const optionsContainer = document.createElement('div');
+        optionsContainer.className = 'plugin-ui-radio-options';
+
+        // Create radio buttons for each option
+        (element.options || []).forEach((option, index) => {
+            const optionLabel = document.createElement('label');
+            optionLabel.className = 'plugin-ui-radio-label';
+
+            const input = document.createElement('input');
+            input.type = 'radio';
+            input.name = `${plugin.entry_point}_${element.id}`;
+            input.value = option.value;
+            input.className = 'plugin-ui-radio-input';
+            input.checked = option.value === currentValue;
+
+            const labelText = document.createElement('span');
+            labelText.textContent = option.label || option.value;
+
+            // Update on change
+            input.addEventListener('change', (e) => {
+                e.stopPropagation();
+                if (e.target.checked) {
+                    const value = e.target.value;
+                    window.canvasPluginManager.setPluginParameter(
+                        plugin.entry_point,
+                        element.id,
+                        value
+                    );
+
+                    // Trigger canvas redraw
+                    if (window.glyphCanvas && window.glyphCanvas.renderer) {
+                        window.glyphCanvas.renderer.render();
+                    }
+
+                    // Restore focus to canvas if editor view is active
+                    this.restoreFocusToCanvas();
+                }
+            });
+
+            optionLabel.appendChild(input);
+            optionLabel.appendChild(labelText);
+            optionsContainer.appendChild(optionLabel);
+        });
+
+        container.appendChild(optionsContainer);
+
+        return container;
+    }
+
+    createColorPicker(element, plugin) {
+        const container = document.createElement('div');
+        container.className = 'plugin-ui-color';
+
+        const label = document.createElement('label');
+        label.textContent = element.label || element.id;
+        label.className = 'plugin-ui-label';
+
+        const input = document.createElement('input');
+        input.type = 'color';
+        input.className = 'plugin-ui-color-input';
+
+        // Get current value or use default
+        let currentValue = window.canvasPluginManager.getPluginParameter(
+            plugin.entry_point,
+            element.id
+        );
+        if (currentValue === null || currentValue === undefined) {
+            currentValue = element.default || '#000000';
+        }
+        input.value = currentValue;
+
+        // Update on change
+        input.addEventListener('input', (e) => {
+            e.stopPropagation();
+            const value = e.target.value;
+            window.canvasPluginManager.setPluginParameter(
+                plugin.entry_point,
+                element.id,
+                value
+            );
+
+            // Trigger canvas redraw
+            if (window.glyphCanvas && window.glyphCanvas.renderer) {
+                window.glyphCanvas.renderer.render();
+            }
+        });
+
+        container.appendChild(label);
+        container.appendChild(input);
 
         return container;
     }

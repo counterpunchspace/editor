@@ -57,7 +57,18 @@ class BaseCanvasPlugin:
                 if loaded_value is not None:
                     self._parameters[param_id] = loaded_value
                 else:
-                    default_value = element.get('default', 0)
+                    # Get appropriate default based on type
+                    element_type = element.get('type', 'slider')
+                    if element_type == 'checkbox':
+                        default_value = element.get('default', False)
+                    elif element_type == 'textfield':
+                        default_value = element.get('default', '')
+                    elif element_type == 'radio':
+                        default_value = element.get('default', '')
+                    elif element_type == 'color':
+                        default_value = element.get('default', '#000000')
+                    else:  # slider or numeric
+                        default_value = element.get('default', 0)
                     self._parameters[param_id] = default_value
     
     def visible(self):
@@ -92,7 +103,7 @@ class BaseCanvasPlugin:
             element_def: UI element definition dict with min/max/default
             
         Returns:
-            Stored value (clamped to min/max) or None if not found
+            Stored value (clamped to min/max for numbers) or None if not found
         """
         try:
             import js
@@ -100,18 +111,26 @@ class BaseCanvasPlugin:
             stored_value = js.localStorage.getItem(storage_key)
             
             if stored_value is not None:
-                value = float(stored_value)
+                element_type = element_def.get('type', 'slider')
                 
-                # Clamp to valid range if min/max are defined
-                min_val = element_def.get('min')
-                max_val = element_def.get('max')
-                
-                if min_val is not None and value < min_val:
-                    value = min_val
-                if max_val is not None and value > max_val:
-                    value = max_val
-                
-                return value
+                # Handle different types
+                if element_type == 'checkbox':
+                    return stored_value.lower() == 'true'
+                elif element_type == 'textfield' or element_type == 'radio' or element_type == 'color':
+                    return stored_value
+                else:  # slider or numeric
+                    value = float(stored_value)
+                    
+                    # Clamp to valid range if min/max are defined
+                    min_val = element_def.get('min')
+                    max_val = element_def.get('max')
+                    
+                    if min_val is not None and value < min_val:
+                        value = min_val
+                    if max_val is not None and value > max_val:
+                        value = max_val
+                    
+                    return value
         except Exception:
             pass
         
@@ -138,23 +157,61 @@ class BaseCanvasPlugin:
         Override this in subclasses to define UI controls.
         
         Each element is a dictionary with:
-        - type: 'slider', 'checkbox', 'color-picker', etc.
+        - type: 'slider', 'textfield', 'checkbox', 'radio', etc.
         - id: unique identifier for this element
         - label: human-readable label
         - ... type-specific properties
         
-        Example:
-        return [
-            {
-                'type': 'slider',
-                'id': 'example_param',
-                'label': 'Example Parameter',
-                'min': 0,
-                'max': 100,
-                'step': 1,
-                'default': 50
-            }
-        ]
+        Supported UI element types:
+        
+        Slider:
+        {
+            'type': 'slider',
+            'id': 'size_param',
+            'label': 'Size',
+            'min': 0,
+            'max': 100,
+            'step': 1,
+            'default': 50
+        }
+        
+        Text Field:
+        {
+            'type': 'textfield',
+            'id': 'text_param',
+            'label': 'Label Text',
+            'default': 'Hello',
+            'placeholder': 'Enter text...'  # Optional
+        }
+        
+        Checkbox:
+        {
+            'type': 'checkbox',
+            'id': 'show_param',
+            'label': 'Show Overlay',
+            'default': True
+        }
+        
+        Radio Button Group:
+        {
+            'type': 'radio',
+            'id': 'mode_param',
+            'label': 'Display Mode',
+            'options': [
+                {'value': 'normal', 'label': 'Normal'},
+                {'value': 'outline', 'label': 'Outline'},
+                {'value': 'filled', 'label': 'Filled'}
+            ],
+            'default': 'normal'
+        }
+        
+        Color Picker:
+        {
+            'type': 'color',
+            'id': 'color_param',
+            'label': 'Fill Color',
+            'default': '#0000ff'  # Hex color string
+        }
         
         Returns:
             List of UI element dictionaries
@@ -179,9 +236,9 @@ class BaseCanvasPlugin:
         
         Args:
             param_id: The parameter identifier
-            value: The new value
+            value: The new value (can be float, str, bool depending on UI element type)
         """
-        self._parameters[param_id] = float(value)
+        self._parameters[param_id] = value
         self._save_parameter_to_storage(param_id, value)
     
     def draw_below(self, layer_data, glyph_name, ctx, viewport_manager):

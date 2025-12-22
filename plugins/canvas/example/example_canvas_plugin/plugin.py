@@ -30,6 +30,7 @@ class ExampleCanvasPlugin(BaseCanvasPlugin):
     This plugin demonstrates the canvas plugin API by:
     - Drawing the outline filled in 50% transparent blue
     - Drawing the glyph's name in 20px text centered underneath the glyph's bbox
+    - Demonstrating all UI element types (slider, textfield, checkbox, radio)
     """
     
     name = "Example Canvas Plugin"
@@ -38,6 +39,52 @@ class ExampleCanvasPlugin(BaseCanvasPlugin):
     def visible(self):
         """This plugin should be visible in the plugin list."""
         return True
+    
+    def get_ui_elements(self):
+        """
+        Define UI elements for this plugin, demonstrating all available types.
+        """
+        return [
+            {
+                'type': 'slider',
+                'id': 'opacity',
+                'label': 'Opacity',
+                'min': 0,
+                'max': 100,
+                'step': 5,
+                'default': 50
+            },
+            {
+                'type': 'textfield',
+                'id': 'label_text',
+                'label': 'Label',
+                'default': 'Custom',
+                'placeholder': 'Enter text...'
+            },
+            {
+                'type': 'checkbox',
+                'id': 'show_info',
+                'label': 'Show Info',
+                'default': True
+            },
+            {
+                'type': 'radio',
+                'id': 'display_mode',
+                'label': 'Mode',
+                'options': [
+                    {'value': 'normal', 'label': 'Normal'},
+                    {'value': 'outline', 'label': 'Outline'},
+                    {'value': 'filled', 'label': 'Filled'}
+                ],
+                'default': 'normal'
+            },
+            {
+                'type': 'color',
+                'id': 'fill_color',
+                'label': 'Color',
+                'default': '#0000ff'
+            }
+        ]
     
     def draw_below(self, layer_data, glyph_name, ctx, viewport_manager):
         """
@@ -54,6 +101,28 @@ class ExampleCanvasPlugin(BaseCanvasPlugin):
             print(f"[ExamplePlugin] Early return - no layer_data or shapes")
             return
         
+        # Get UI parameter values
+        opacity = self.get_parameter('opacity')
+        if opacity is None:
+            opacity = 50
+        opacity_alpha = opacity / 100.0
+        
+        label_text = self.get_parameter('label_text')
+        if label_text is None:
+            label_text = 'Custom'
+        
+        show_info = self.get_parameter('show_info')
+        if show_info is None:
+            show_info = True
+        
+        display_mode = self.get_parameter('display_mode')
+        if display_mode is None:
+            display_mode = 'normal'
+        
+        fill_color = self.get_parameter('fill_color')
+        if fill_color is None:
+            fill_color = '#0000ff'
+        
         # Calculate bounding box of all shapes
         bbox = self._calculate_bbox(layer_data['shapes'])
         if not bbox:
@@ -61,17 +130,24 @@ class ExampleCanvasPlugin(BaseCanvasPlugin):
         
         min_x, min_y, max_x, max_y = bbox
         
-        # Save context state
-        ctx.save()
+        # Note: The renderer already saves/restores the context around plugin calls,
+        # so we don't need to do it here at the top level
         
-        # Draw filled outline in black
-        self._draw_filled_outline(ctx, layer_data['shapes'])
+        # Draw filled outline based on display mode (skip in normal mode)
+        if display_mode != 'normal':
+            self._draw_filled_outline(ctx, layer_data['shapes'], display_mode, opacity_alpha, fill_color)
         
-        # Draw glyph name centered underneath bbox
-        self._draw_glyph_name(ctx, glyph_name, min_x, max_x, min_y, viewport_manager)
-        
-        # Restore context state
-        ctx.restore()
+        # Draw glyph info if enabled
+        if show_info:
+            # Build info text from all UI parameters
+            info_parts = [glyph_name]
+            info_parts.append(label_text)
+            info_parts.append(f"{int(opacity)}%")
+            info_parts.append(display_mode)
+            info_parts.append(fill_color)
+            info_text = " | ".join(info_parts)
+            
+            self._draw_glyph_name(ctx, info_text, min_x, max_x, min_y, viewport_manager)
     
     def _calculate_bbox(self, shapes):
         """
@@ -144,17 +220,35 @@ class ExampleCanvasPlugin(BaseCanvasPlugin):
         
         return nodes
     
-    def _draw_filled_outline(self, ctx, shapes):
+    def _draw_filled_outline(self, ctx, shapes, display_mode='normal', opacity_alpha=0.5, fill_color='#0000ff'):
         """
-        Draw all paths filled in 50% transparent blue. All contours are added to a single path
+        Draw all paths based on the display mode. All contours are added to a single path
         before filling, which allows the canvas to properly handle counters
         (holes in glyphs) using the nonzero winding rule.
         
         Args:
             ctx: Canvas 2D rendering context
             shapes: List of shape dictionaries
+            display_mode: Drawing mode ('normal', 'outline', 'filled')
+            opacity_alpha: Opacity value (0.0 to 1.0)
+            fill_color: Hex color string (e.g., '#0000ff')
         """
-        ctx.fillStyle = 'rgba(0, 0, 255, 0.5)'
+        # Convert hex color to RGB components
+        # Remove '#' if present
+        color = fill_color.lstrip('#')
+        # Parse hex to RGB
+        r = int(color[0:2], 16)
+        g = int(color[2:4], 16)
+        b = int(color[4:6], 16)
+        
+        # Set style based on mode
+        if display_mode == 'outline':
+            ctx.strokeStyle = f'rgba({r}, {g}, {b}, {opacity_alpha})'
+            ctx.lineWidth = 10
+        elif display_mode == 'filled':
+            ctx.fillStyle = f'rgba({r}, {g}, {b}, {opacity_alpha})'
+        else:  # normal
+            ctx.fillStyle = f'rgba({r}, {g}, {b}, {opacity_alpha})'
         
         # Begin a single path for all contours - this allows counters to work correctly
         ctx.beginPath()
@@ -217,9 +311,13 @@ class ExampleCanvasPlugin(BaseCanvasPlugin):
             # Close this subpath (but don't fill yet)
             ctx.closePath()
         
-        # Fill all contours at once - the canvas uses the nonzero winding rule
-        # to automatically create counters (holes) where paths have opposite directions
-        ctx.fill()
+        # Fill or stroke all contours at once based on mode
+        if display_mode == 'outline':
+            ctx.stroke()
+        else:
+            # Fill all contours - the canvas uses the nonzero winding rule
+            # to automatically create counters (holes) where paths have opposite directions
+            ctx.fill()
         
     
     def _draw_glyph_name(self, ctx, glyph_name, min_x, max_x, min_y, viewport_manager):
@@ -255,7 +353,9 @@ class ExampleCanvasPlugin(BaseCanvasPlugin):
         ctx.textAlign = 'center'
         ctx.textBaseline = 'top'
         
-        # Save and transform for text (flip y-axis for proper text orientation)
+        # Draw text at position
+        # The canvas context is already in font coordinate space with Y-axis flipped by viewport.
+        # Text renders correctly without additional transformation.
         ctx.save()
         ctx.translate(center_x, text_y)
         ctx.scale(1, -1)  # Flip y-axis so text appears upright

@@ -1169,6 +1169,131 @@ kbd + kbd {
     background: var(--bg-primary);
 }
 
+/* Text Field */
+.plugin-ui-textfield {
+    display: grid;
+    grid-template-columns: 70px 1fr;
+    gap: 8px;
+    align-items: center;
+    margin-bottom: 8px;
+}
+
+.plugin-ui-textfield:last-child {
+    margin-bottom: 0;
+}
+
+.plugin-ui-text-input {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--text-primary);
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-primary);
+    border-radius: 2px;
+    padding: 4px 6px;
+    outline: none;
+    transition: all 0.15s ease;
+}
+
+.plugin-ui-text-input:hover {
+    border-color: var(--border-secondary);
+}
+
+.plugin-ui-text-input:focus {
+    border-color: var(--accent-primary);
+    background: var(--bg-primary);
+}
+
+/* Checkbox */
+.plugin-ui-checkbox {
+    margin-bottom: 8px;
+}
+
+.plugin-ui-checkbox:last-child {
+    margin-bottom: 0;
+}
+
+.plugin-ui-checkbox-label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--text-secondary);
+}
+
+.plugin-ui-checkbox-input {
+    width: 14px;
+    height: 14px;
+    cursor: pointer;
+    margin: 0;
+}
+
+/* Radio Group */
+.plugin-ui-radio-group {
+    margin-bottom: 8px;
+}
+
+.plugin-ui-radio-group:last-child {
+    margin-bottom: 0;
+}
+
+.plugin-ui-radio-group .plugin-ui-label {
+    margin-bottom: 6px;
+    display: block;
+}
+
+.plugin-ui-radio-options {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 12px;
+    padding-left: 10px;
+}
+
+.plugin-ui-radio-label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--text-secondary);
+}
+
+.plugin-ui-radio-input {
+    width: 12px;
+    height: 12px;
+    cursor: pointer;
+    margin: 0;
+}
+
+/* Color Picker */
+.plugin-ui-color {
+    display: grid;
+    grid-template-columns: 70px 1fr;
+    gap: 8px;
+    align-items: center;
+    margin-bottom: 8px;
+}
+
+.plugin-ui-color:last-child {
+    margin-bottom: 0;
+}
+
+.plugin-ui-color-input {
+    width: 50px;
+    height: 24px;
+    border: 1px solid var(--border-primary);
+    border-radius: 2px;
+    cursor: pointer;
+    padding: 0;
+    background: transparent;
+}
+
+.plugin-ui-color-input:hover {
+    border-color: var(--border-secondary);
+}
+
 /* AI Info Button */
 .ai-info-button {
     margin-left: 0px;
