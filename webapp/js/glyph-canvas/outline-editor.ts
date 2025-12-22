@@ -6,6 +6,7 @@ import { PythonBabelfont } from '../pythonbabelfont';
 import { Transform } from '../basictypes';
 import { Logger } from '../logger';
 import { Layer } from '../babelfont-model';
+import APP_SETTINGS from '../settings';
 
 let console: Logger = new Logger('OutlineEditor', true);
 
@@ -558,44 +559,56 @@ export class OutlineEditor {
 
     onDoubleClick(e: MouseEvent): boolean {
         console.log(
-            'Double-click detected. isGlyphEditMode:',
+            '[OutlineEditor] Double-click detected. isGlyphEditMode:',
             this.active,
             'selectedLayerId:',
             this.selectedLayerId,
+            'hoveredGlyphIndex:',
+            this.hoveredGlyphIndex,
             'hoveredComponentIndex:',
             this.hoveredComponentIndex
         );
 
-        // Double-click on other glyph - switch to that glyph
-        // Check this FIRST, before checking selectedLayerId, so it works even when interpolating
-        if (this.hoveredGlyphIndex >= 0) {
-            this.glyphCanvas.doubleClickOnGlyph(this.hoveredGlyphIndex);
-            return true; // Event handled - skip single-click
-        }
-
-        if (!this.active || !this.selectedLayerId) return false;
-
-        // Double-click on component - enter component editing (without selecting it)
-        if (this.hoveredComponentIndex !== null) {
-            console.log(
-                'Entering component editing for index:',
-                this.hoveredComponentIndex
-            );
-            // Clear component selection before entering
-            this.selectedComponents = [];
-            this.enterComponentEditing(this.hoveredComponentIndex, false, e);
-            return true; // Event handled - skip single-click
-        }
-        // Double-click on point - toggle smooth for all selected points
-        if (this.hoveredPointIndex) {
-            if (this.selectedPoints.length > 0) {
-                // Toggle smooth for all selected points
-                for (const point of this.selectedPoints) {
-                    this.togglePointSmooth(point);
-                }
-            } else {
-                this.togglePointSmooth(this.hoveredPointIndex);
+        // If in edit mode with a component/point/anchor hovered, prioritize that over glyph switching
+        if (this.active && this.selectedLayerId) {
+            // Double-click on component - enter component editing (without selecting it)
+            if (this.hoveredComponentIndex !== null) {
+                console.log(
+                    '[OutlineEditor] Entering component editing for index:',
+                    this.hoveredComponentIndex
+                );
+                // Clear component selection before entering
+                this.selectedComponents = [];
+                this.enterComponentEditing(
+                    this.hoveredComponentIndex,
+                    false,
+                    e
+                );
+                return true; // Event handled - skip single-click
             }
+            // Double-click on point - toggle smooth for all selected points
+            if (this.hoveredPointIndex) {
+                if (this.selectedPoints.length > 0) {
+                    // Toggle smooth for all selected points
+                    for (const point of this.selectedPoints) {
+                        this.togglePointSmooth(point);
+                    }
+                } else {
+                    this.togglePointSmooth(this.hoveredPointIndex);
+                }
+                return true; // Event handled - skip single-click
+            }
+        }
+
+        // Double-click on other glyph - switch to that glyph
+        // Check this after edit mode interactions, but before checking selectedLayerId,
+        // so it works even when interpolating
+        if (this.hoveredGlyphIndex >= 0) {
+            console.log(
+                '[OutlineEditor] Double-clicking on glyph:',
+                this.hoveredGlyphIndex
+            );
+            this.glyphCanvas.doubleClickOnGlyph(this.hoveredGlyphIndex);
             return true; // Event handled - skip single-click
         }
 
@@ -1090,6 +1103,10 @@ export class OutlineEditor {
         glyphX: number,
         glyphY: number
     ): boolean {
+        if (!('Component' in shape)) {
+            return false;
+        }
+
         const transform =
             'Component' in shape && shape.Component.transform
                 ? shape.Component.transform
@@ -1102,10 +1119,17 @@ export class OutlineEditor {
                 : [1, 0, 0, 1, 0, 0]
         ) as Transform;
 
-        const checkShapesRecursive = (
+        // Collect all outline shapes with their accumulated transforms
+        // This allows proper counter detection via nonzero winding rule
+        const collectOutlineShapes = (
             shapes: PythonBabelfont.Shape[],
             parentTransform: Transform = [1, 0, 0, 1, 0, 0]
-        ): boolean => {
+        ): Array<{ nodes: any[]; transform: Transform }> => {
+            const outlineShapes: Array<{
+                nodes: any[];
+                transform: Transform;
+            }> = [];
+
             for (const componentShape of shapes) {
                 if ('Component' in componentShape) {
                     const nestedTransform = componentShape.Component
@@ -1116,6 +1140,8 @@ export class OutlineEditor {
                             ? nestedTransform
                             : [1, 0, 0, 1, 0, 0]
                     ) as Transform;
+
+                    // Multiply matrices to combine transforms
                     const combinedTransform: Transform = [
                         parentTransform[0] * nestedTransformArray[0] +
                             parentTransform[2] * nestedTransformArray[1],
@@ -1135,39 +1161,95 @@ export class OutlineEditor {
 
                     if (
                         componentShape.Component.layerData &&
-                        componentShape.Component.layerData.shapes &&
-                        checkShapesRecursive(
-                            componentShape.Component.layerData.shapes,
-                            combinedTransform
-                        )
+                        componentShape.Component.layerData.shapes
                     ) {
-                        return true;
+                        outlineShapes.push(
+                            ...collectOutlineShapes(
+                                componentShape.Component.layerData.shapes,
+                                combinedTransform
+                            )
+                        );
                     }
-                    continue;
-                }
-
-                if (
+                } else if (
                     'nodes' in componentShape &&
                     componentShape.nodes.length > 0
                 ) {
-                    const isInPath = this.glyphCanvas.isPointInComponent(
-                        componentShape,
-                        transformArray,
-                        parentTransform,
-                        glyphX,
-                        glyphY
-                    );
-                    if (isInPath) return true;
+                    outlineShapes.push({
+                        nodes: componentShape.nodes,
+                        transform: parentTransform
+                    });
                 }
             }
-            return false;
+
+            return outlineShapes;
         };
 
-        if (!('Component' in shape)) {
+        // Collect all shapes from the component hierarchy
+        const outlineShapes = collectOutlineShapes(
+            shape.Component.layerData!.shapes
+        );
+
+        if (outlineShapes.length === 0) {
             return false;
         }
 
-        return checkShapesRecursive(shape.Component.layerData!.shapes);
+        // Build a single combined path with all contours
+        // This allows the canvas nonzero winding rule to properly handle counters
+        const combinedPath = new Path2D();
+
+        for (const { nodes, transform: nestedTransform } of outlineShapes) {
+            // Create a path for this shape
+            const shapePath = new Path2D();
+            this.glyphCanvas.renderer!.buildPathFromNodes(nodes, shapePath);
+            shapePath.closePath();
+
+            // Apply the accumulated transform to this shape's path
+            const matrix = new DOMMatrix([
+                nestedTransform[0],
+                nestedTransform[1],
+                nestedTransform[2],
+                nestedTransform[3],
+                nestedTransform[4],
+                nestedTransform[5]
+            ]);
+
+            // Add the transformed path to the combined path
+            combinedPath.addPath(shapePath, matrix);
+        }
+
+        // Now do a single hit test on the combined path with the component's transform
+        this.glyphCanvas.ctx!.save();
+        this.glyphCanvas.ctx!.setTransform(1, 0, 0, 1, 0, 0);
+        this.glyphCanvas.ctx!.transform(
+            transformArray[0],
+            transformArray[1],
+            transformArray[2],
+            transformArray[3],
+            transformArray[4],
+            transformArray[5]
+        );
+
+        // Calculate scale for hit tolerance
+        const scaleX = Math.sqrt(
+            transformArray[0] * transformArray[0] +
+                transformArray[1] * transformArray[1]
+        );
+        const scaleY = Math.sqrt(
+            transformArray[2] * transformArray[2] +
+                transformArray[3] * transformArray[3]
+        );
+        const scale = Math.max(scaleX, scaleY);
+        const totalScale = this.glyphCanvas.viewportManager!.scale * scale;
+        this.glyphCanvas.ctx!.lineWidth =
+            APP_SETTINGS.OUTLINE_EDITOR.HIT_TOLERANCE / totalScale;
+
+        // Use both fill and stroke for hit detection
+        const isInPath =
+            this.glyphCanvas.ctx!.isPointInPath(combinedPath, glyphX, glyphY) ||
+            this.glyphCanvas.ctx!.isPointInStroke(combinedPath, glyphX, glyphY);
+
+        this.glyphCanvas.ctx!.restore();
+        return isInPath;
     }
 
     updateHoveredAnchor(): void {

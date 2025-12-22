@@ -944,15 +944,22 @@ export class GlyphCanvasRenderer {
                     shape.Component.layerData &&
                     shape.Component.layerData.shapes
                 ) {
-                    // Recursively render all shapes in the component (including nested components)
-                    const renderComponentShapes = (shapes: any[]) => {
+                    // Collect all outline shapes (non-component shapes with nodes) at each nesting level
+                    // for combined path rendering to properly handle counters via winding rule
+                    const collectOutlineShapes = (
+                        shapes: any[],
+                        transform: number[] | null = null
+                    ): Array<{ nodes: any[]; transform: number[] | null }> => {
+                        const outlineShapes: Array<{
+                            nodes: any[];
+                            transform: number[] | null;
+                        }> = [];
+
                         shapes.forEach((componentShape) => {
                             // Handle nested components
                             if ('Component' in componentShape) {
-                                // Save context for nested component transform
-                                this.ctx.save();
-
-                                // Apply nested component's transform
+                                // Calculate combined transform
+                                let nestedTransform = transform;
                                 if (
                                     componentShape.Component.transform &&
                                     Array.isArray(
@@ -961,126 +968,198 @@ export class GlyphCanvasRenderer {
                                 ) {
                                     const t =
                                         componentShape.Component.transform;
-                                    this.ctx.transform(
-                                        t[0] || 1,
-                                        t[1] || 0,
-                                        t[2] || 0,
-                                        t[3] || 1,
-                                        t[4] || 0,
-                                        t[5] || 0
-                                    );
+                                    if (transform) {
+                                        // Combine transforms (multiply matrices)
+                                        const [a1, b1, c1, d1, tx1, ty1] =
+                                            transform;
+                                        const [a2, b2, c2, d2, tx2, ty2] = [
+                                            t[0] || 1,
+                                            t[1] || 0,
+                                            t[2] || 0,
+                                            t[3] || 1,
+                                            t[4] || 0,
+                                            t[5] || 0
+                                        ];
+                                        nestedTransform = [
+                                            a1 * a2 + b1 * c2,
+                                            a1 * b2 + b1 * d2,
+                                            c1 * a2 + d1 * c2,
+                                            c1 * b2 + d1 * d2,
+                                            a1 * tx2 + c1 * ty2 + tx1,
+                                            b1 * tx2 + d1 * ty2 + ty1
+                                        ];
+                                    } else {
+                                        nestedTransform = [
+                                            t[0] || 1,
+                                            t[1] || 0,
+                                            t[2] || 0,
+                                            t[3] || 1,
+                                            t[4] || 0,
+                                            t[5] || 0
+                                        ];
+                                    }
                                 }
 
-                                // Recursively render nested component's shapes
+                                // Recursively collect nested component's shapes
                                 if (
                                     componentShape.Component.layerData &&
                                     componentShape.Component.layerData.shapes
                                 ) {
-                                    renderComponentShapes(
-                                        componentShape.Component.layerData
-                                            .shapes
+                                    outlineShapes.push(
+                                        ...collectOutlineShapes(
+                                            componentShape.Component.layerData
+                                                .shapes,
+                                            nestedTransform
+                                        )
                                     );
                                 }
-
-                                this.ctx.restore();
-                                return;
                             }
-
                             // Handle outline shapes (with nodes)
-                            if (
+                            else if (
                                 componentShape.nodes &&
                                 componentShape.nodes.length > 0
                             ) {
-                                // Get colors
-                                const colors = isDarkTheme
-                                    ? APP_SETTINGS.OUTLINE_EDITOR.COLORS_DARK
-                                    : APP_SETTINGS.OUTLINE_EDITOR.COLORS_LIGHT;
-
-                                // Determine stroke color based on state
-                                const baseStrokeColor = isSelected
-                                    ? colors.COMPONENT_SELECTED
-                                    : colors.COMPONENT_NORMAL;
-
-                                // For hover, make it 20% darker
-                                let strokeColor = isHovered
-                                    ? adjustColorHueAndLightness(
-                                          baseStrokeColor,
-                                          0,
-                                          50
-                                      )
-                                    : baseStrokeColor;
-
-                                // Determine fill color based on state
-                                const baseFillColor = isSelected
-                                    ? colors.COMPONENT_FILL_SELECTED
-                                    : colors.COMPONENT_FILL_NORMAL;
-
-                                // For hover, make it 20% darker
-                                let fillColor = isHovered
-                                    ? adjustColorHueAndLightness(
-                                          baseFillColor,
-                                          0,
-                                          50
-                                      )
-                                    : baseFillColor;
-
-                                // Apply monochrome for interpolated data
-                                if (isInterpolated) {
-                                    strokeColor = desaturateColor(strokeColor);
-                                    fillColor = desaturateColor(fillColor);
-                                }
-
-                                // Apply glow effect only in dark theme
-                                if (isDarkTheme) {
-                                    const {
-                                        glowColor,
-                                        glowStrokeWidth,
-                                        glowBlur
-                                    } = this.calculateGlowParams(
-                                        strokeColor,
-                                        invScale,
-                                        1.0 // Full opacity for strong glow
-                                    );
-
-                                    // First pass: Draw glow on the outside by stroking with shadow
-                                    this.ctx.save();
-                                    this.ctx.shadowBlur = glowBlur;
-                                    this.ctx.shadowColor = glowColor;
-                                    this.ctx.shadowOffsetX = 0;
-                                    this.ctx.shadowOffsetY = 0;
-                                    this.ctx.strokeStyle = glowColor;
-                                    this.ctx.lineWidth = glowStrokeWidth;
-
-                                    this.ctx.beginPath();
-                                    this.buildPathFromNodes(
-                                        componentShape.nodes
-                                    );
-                                    this.ctx.closePath();
-                                    this.ctx.stroke();
-                                    this.ctx.restore();
-                                }
-
-                                // Second pass: Draw fill and stroke without shadow
-                                this.ctx.shadowBlur = 0;
-                                this.ctx.shadowColor = 'transparent';
-
-                                this.ctx.beginPath();
-                                this.buildPathFromNodes(componentShape.nodes);
-                                this.ctx.closePath();
-
-                                this.ctx.fillStyle = fillColor;
-                                this.ctx.fill();
-
-                                // Stroke the outline
-                                this.ctx.strokeStyle = strokeColor;
-                                this.ctx.lineWidth = 1 * invScale;
-                                this.ctx.stroke();
+                                outlineShapes.push({
+                                    nodes: componentShape.nodes,
+                                    transform: transform
+                                });
                             }
                         });
+
+                        return outlineShapes;
                     };
 
-                    // Start recursive rendering
-                    renderComponentShapes(shape.Component.layerData.shapes);
+                    // Collect all outline shapes from the component hierarchy
+                    const outlineShapes = collectOutlineShapes(
+                        shape.Component.layerData.shapes
+                    );
+
+                    if (outlineShapes.length > 0) {
+                        // Get colors
+                        const colors = isDarkTheme
+                            ? APP_SETTINGS.OUTLINE_EDITOR.COLORS_DARK
+                            : APP_SETTINGS.OUTLINE_EDITOR.COLORS_LIGHT;
+
+                        // Determine stroke color based on state
+                        const baseStrokeColor = isSelected
+                            ? colors.COMPONENT_SELECTED
+                            : colors.COMPONENT_NORMAL;
+
+                        // For hover, make it 20% darker
+                        let strokeColor = isHovered
+                            ? adjustColorHueAndLightness(baseStrokeColor, 0, 50)
+                            : baseStrokeColor;
+
+                        // Determine fill color based on state
+                        const baseFillColor = isSelected
+                            ? colors.COMPONENT_FILL_SELECTED
+                            : colors.COMPONENT_FILL_NORMAL;
+
+                        // For hover, make it 20% darker
+                        let fillColor = isHovered
+                            ? adjustColorHueAndLightness(baseFillColor, 0, 50)
+                            : baseFillColor;
+
+                        // Apply monochrome for interpolated data
+                        if (isInterpolated) {
+                            strokeColor = desaturateColor(strokeColor);
+                            fillColor = desaturateColor(fillColor);
+                        }
+
+                        // Apply glow effect only in dark theme
+                        if (isDarkTheme) {
+                            const { glowColor, glowStrokeWidth, glowBlur } =
+                                this.calculateGlowParams(
+                                    strokeColor,
+                                    invScale,
+                                    1.0 // Full opacity for strong glow
+                                );
+
+                            // First pass: Draw glow - build combined path for all shapes
+                            this.ctx.save();
+                            this.ctx.shadowBlur = glowBlur;
+                            this.ctx.shadowColor = glowColor;
+                            this.ctx.shadowOffsetX = 0;
+                            this.ctx.shadowOffsetY = 0;
+                            this.ctx.strokeStyle = glowColor;
+                            this.ctx.lineWidth = glowStrokeWidth;
+
+                            this.ctx.beginPath();
+                            outlineShapes.forEach(({ nodes, transform }) => {
+                                if (transform) {
+                                    this.ctx.save();
+                                    this.ctx.transform(
+                                        transform[0],
+                                        transform[1],
+                                        transform[2],
+                                        transform[3],
+                                        transform[4],
+                                        transform[5]
+                                    );
+                                }
+                                this.buildPathFromNodes(nodes);
+                                this.ctx.closePath();
+                                if (transform) {
+                                    this.ctx.restore();
+                                }
+                            });
+                            this.ctx.stroke();
+                            this.ctx.restore();
+                        }
+
+                        // Second pass: Draw fill and stroke - build combined path for all shapes
+                        // This allows paths with opposite directions to create counters (holes)
+                        // using the canvas nonzero winding rule
+                        this.ctx.shadowBlur = 0;
+                        this.ctx.shadowColor = 'transparent';
+
+                        this.ctx.beginPath();
+                        outlineShapes.forEach(({ nodes, transform }) => {
+                            if (transform) {
+                                this.ctx.save();
+                                this.ctx.transform(
+                                    transform[0],
+                                    transform[1],
+                                    transform[2],
+                                    transform[3],
+                                    transform[4],
+                                    transform[5]
+                                );
+                            }
+                            this.buildPathFromNodes(nodes);
+                            this.ctx.closePath();
+                            if (transform) {
+                                this.ctx.restore();
+                            }
+                        });
+
+                        this.ctx.fillStyle = fillColor;
+                        this.ctx.fill();
+
+                        // Stroke all paths
+                        this.ctx.beginPath();
+                        outlineShapes.forEach(({ nodes, transform }) => {
+                            if (transform) {
+                                this.ctx.save();
+                                this.ctx.transform(
+                                    transform[0],
+                                    transform[1],
+                                    transform[2],
+                                    transform[3],
+                                    transform[4],
+                                    transform[5]
+                                );
+                            }
+                            this.buildPathFromNodes(nodes);
+                            this.ctx.closePath();
+                            if (transform) {
+                                this.ctx.restore();
+                            }
+                        });
+                        this.ctx.strokeStyle = strokeColor;
+                        this.ctx.lineWidth = 1 * invScale;
+                        this.ctx.stroke();
+                    }
 
                     // Collect component label data for later drawing (on top of everything)
                     // Only show on hover
