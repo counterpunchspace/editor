@@ -310,8 +310,47 @@ class GlyphCanvas {
         // Sidebar click handlers to restore canvas focus in editor mode
         this.setupSidebarFocusHandlers();
         this.setupAxesManagerEventHandlers();
-        this.featuresManager!.on('change', () => {
-            this.textRunEditor!.shapeText();
+        this.featuresManager!.on('change', async () => {
+            // Capture anchor before reshaping (cursor in text mode, bbox in editing mode)
+            if (
+                this.outlineEditor.active &&
+                this.outlineEditor.selectedLayerId
+            ) {
+                // Editing mode: capture bbox center before reshaping
+                this.outlineEditor.captureAutoPanAnchor();
+            } else {
+                // Text mode: capture cursor position before reshaping
+                this.captureTextModeAutoPanAnchor();
+            }
+
+            // Reshape text with new features (skip render in text mode)
+            this.textRunEditor!.shapeText(!this.outlineEditor.active);
+
+            if (
+                this.outlineEditor.active &&
+                this.outlineEditor.selectedLayerId
+            ) {
+                // Editing mode: fetch new layer data for potentially substituted glyph
+                await this.outlineEditor.fetchLayerData(true); // Skip render
+
+                // Rebuild glyph stack with the new glyph name after substitution
+                const newGlyphName = this.getCurrentGlyphName();
+                this.outlineEditor.buildGlyphStack(
+                    newGlyphName,
+                    this.outlineEditor.selectedLayerId!,
+                    []
+                );
+
+                this.outlineEditor.applyAutoPanAdjustment();
+                this.outlineEditor.autoPanAnchorScreen = null;
+                this.updateComponentBreadcrumb(); // Update breadcrumb/glyph stack for substituted glyph
+                this.render(); // Render after auto-pan is applied
+            } else {
+                // Text mode: apply auto-pan to keep cursor centered
+                this.applyTextModeAutoPanAdjustment();
+                this.textModeAutoPanAnchorScreen = null;
+                this.render();
+            }
         });
         this.setupTextEditorEventHandlers();
     }
