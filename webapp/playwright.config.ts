@@ -29,7 +29,9 @@ export default defineConfig({
     // Shared settings for all projects
     use: {
         // Base URL for navigation
-        baseURL: 'https://localhost:8000',
+        baseURL: process.env.CI
+            ? 'http://localhost:8000'
+            : 'https://localhost:8000',
 
         // Collect trace when retrying the failed test
         trace: 'on-first-retry',
@@ -76,8 +78,10 @@ export default defineConfig({
 
     // Run your local dev server before starting the tests
     webServer: {
-        command: 'npm run serve',
-        url: 'https://localhost:8000',
+        command: process.env.CI ? 'npm run serve:ci' : 'npm run serve',
+        url: process.env.CI
+            ? 'http://localhost:8000'
+            : 'https://localhost:8000',
         reuseExistingServer: !process.env.CI,
         timeout: 120000, // 2 minutes to start dev server
         ignoreHTTPSErrors: true // Self-signed cert for dev server

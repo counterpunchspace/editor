@@ -16,7 +16,8 @@
         "prepare": "husky",
         "dev": "webpack serve",
         "build": "webpack",
-        "serve": "webpack serve --mode development"
+        "serve": "webpack serve --mode development",
+        "serve:ci": "npx http-server build -p 8000"
     },
     "devDependencies": {
         "@babel/core": "^7.28.5",

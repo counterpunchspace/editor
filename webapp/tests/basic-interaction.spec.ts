@@ -31,7 +31,7 @@ test.describe('Font Editor Basic Workflow', () => {
         // Navigate to your local dev server
         // Adjust URL if your dev server runs on a different port
         // Add ?test=true to enable test mode (hides FPS, etc.)
-        await page.goto('https://localhost:8000?test=true');
+        await page.goto('/?test=true');
 
         // Wait for app to be ready
         await waitForCanvasReady(page);
