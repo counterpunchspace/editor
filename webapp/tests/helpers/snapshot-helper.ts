@@ -18,10 +18,6 @@ export interface AppSnapshot {
     isInterpolating: boolean;
     isAnimating: boolean;
 
-    // Canvas state (pan/zoom only - screenshots handled separately)
-    canvasPan: { x: number; y: number };
-    canvasZoom: number;
-
     // Text mode
     cursorPosition: number | null;
     textModeActive: boolean;
@@ -89,15 +85,6 @@ export async function captureSnapshot(
             isInterpolating:
                 glyphCanvas?.outlineEditor?.isInterpolating || false,
             isAnimating: glyphCanvas?.outlineEditor?.isAnimating || false,
-
-            // Canvas state (pan/zoom only - screenshots handled separately)
-            canvasPan: viewportManager
-                ? {
-                      x: viewportManager.panX,
-                      y: viewportManager.panY
-                  }
-                : { x: 0, y: 0 },
-            canvasZoom: viewportManager?.scale || 1,
 
             // Text mode
             cursorPosition: textRunEditor?.cursorPosition ?? null,

@@ -28,11 +28,6 @@
   "glyphStack": "alef-ar.short.fina@3114FB65-9464-41A5-B67E-A8F9F43C0EF1",
   "isInterpolating": false,
   "isAnimating": false,
-  "canvasPan": {
-    "x": 50,
-    "y": 217.5
-  },
-  "canvasZoom": 0.08333333333333333,
   "cursorPosition": 12,
   "textModeActive": false,
   "activeGlyph": "alef-ar.short.fina",

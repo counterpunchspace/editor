@@ -28,11 +28,6 @@
   "glyphStack": "fathatan-ar@3114FB65-9464-41A5-B67E-A8F9F43C0EF1",
   "isInterpolating": false,
   "isAnimating": false,
-  "canvasPan": {
-    "x": -3419.25,
-    "y": 1369.25
-  },
-  "canvasZoom": 1.5,
   "cursorPosition": 12,
   "textModeActive": false,
   "activeGlyph": "fathatan-ar",

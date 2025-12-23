@@ -5,11 +5,6 @@
   "glyphStack": null,
   "isInterpolating": false,
   "isAnimating": false,
-  "canvasPan": {
-    "x": 100,
-    "y": 250
-  },
-  "canvasZoom": 0.2,
   "cursorPosition": 0,
   "textModeActive": false,
   "activeGlyph": null,

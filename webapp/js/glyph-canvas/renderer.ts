@@ -1859,13 +1859,14 @@ export class GlyphCanvasRenderer {
             this.ctx.fillText(textInfo, 10, 20);
         }
 
-        // Draw pan position (top left)
-        const panText = `Pan: (${Math.round(this.viewportManager.panX)}, ${Math.round(this.viewportManager.panY)})`;
-        this.ctx.fillText(panText, 10, 35);
+        // Draw pan/zoom info (top left) - skip in test mode to prevent screenshot diffs
+        if (!window.isTestMode?.()) {
+            const panText = `Pan: (${Math.round(this.viewportManager.panX)}, ${Math.round(this.viewportManager.panY)})`;
+            this.ctx.fillText(panText, 10, 35);
 
-        // Draw zoom level (top left)
-        const zoomText = `Zoom: ${(this.viewportManager.scale * 100).toFixed(1)}%`;
-        this.ctx.fillText(zoomText, 10, 50);
+            const zoomText = `Zoom: ${(this.viewportManager.scale * 100).toFixed(1)}%`;
+            this.ctx.fillText(zoomText, 10, 50);
+        }
 
         // Draw FPS (top left) - skip in test mode to prevent screenshot diffs
         if (this.fps > 0 && !window.isTestMode?.()) {

@@ -36,6 +36,13 @@ test.describe('Font Editor Basic Workflow', () => {
         // Wait for app to be ready
         await waitForCanvasReady(page);
 
+        // Move mouse to top-left corner of canvas to keep it out of the way
+        const canvas = page.locator('#glyph-canvas-container canvas');
+        const box = await canvas.boundingBox();
+        if (box) {
+            await page.mouse.move(box.x + 5, box.y + 5);
+        }
+
         // Wait for rendering to complete
         await page.waitForTimeout(500);
     });

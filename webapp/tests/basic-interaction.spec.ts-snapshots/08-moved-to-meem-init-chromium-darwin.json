@@ -28,11 +28,6 @@
   "glyphStack": "meem-ar.init@3114FB65-9464-41A5-B67E-A8F9F43C0EF1",
   "isInterpolating": false,
   "isAnimating": false,
-  "canvasPan": {
-    "x": -615.9128919860626,
-    "y": 261.5156794425087
-  },
-  "canvasZoom": 0.24825783972125434,
   "cursorPosition": 6,
   "textModeActive": false,
   "activeGlyph": "meem-ar.init",
