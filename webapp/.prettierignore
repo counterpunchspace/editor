@@ -7,3 +7,6 @@ wasm-dist/
 wheels/
 # Ignore webpack build output
 build/
+# Ignore Playwright test artifacts
+test-results/
+playwright-report/
