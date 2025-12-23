@@ -47,6 +47,11 @@
             window.isProduction = function () {
                 return !window.isDevelopment();
             };
+            window.isTestMode = function () {
+                // Detect test mode via URL parameter
+                const urlParams = new URLSearchParams(window.location.search);
+                return urlParams.has('test');
+            };
         </script>
         <!-- COI Service Worker for GitHub Pages (adds COOP/COEP headers) -->
         <!-- In development (localhost:8000), skip service worker - webpack provides headers -->

@@ -136,12 +136,12 @@ class GlyphCanvas {
         // Set up HiDPI canvas
         this.setupHiDPI();
 
-        // Set initial scale and position
-        const rect = this.canvas.getBoundingClientRect();
+        // Set initial scale and position with deterministic values
+        // Using fixed values instead of getBoundingClientRect() for consistency
         this.viewportManager = new ViewportManager(
             this.initialScale,
-            rect.width / 4, // Start a bit to the left
-            rect.height / 2 // Center vertically
+            100, // Fixed horizontal pan
+            250 // Fixed vertical pan
         );
         this.renderer = new GlyphCanvasRenderer(
             this.canvas,

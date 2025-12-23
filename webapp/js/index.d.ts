@@ -193,6 +193,7 @@ declare global {
         // From index.html (inline script)
         isDevelopment: () => boolean;
         isProduction: () => boolean;
+        isTestMode: () => boolean;
 
         // From settings.js
         APP_SETTINGS: Record<string, any>;

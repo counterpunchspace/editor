@@ -1867,8 +1867,8 @@ export class GlyphCanvasRenderer {
         const zoomText = `Zoom: ${(this.viewportManager.scale * 100).toFixed(1)}%`;
         this.ctx.fillText(zoomText, 10, 50);
 
-        // Draw FPS (top left)
-        if (this.fps > 0) {
+        // Draw FPS (top left) - skip in test mode to prevent screenshot diffs
+        if (this.fps > 0 && !window.isTestMode?.()) {
             const fpsText = `FPS: ${Math.round(this.fps)}`;
             this.ctx.fillText(fpsText, 10, 65);
         }

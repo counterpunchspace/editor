@@ -1,0 +1,41 @@
+{
+  "label": "cursor-moved",
+  "appliedFeatures": {
+    "aalt": false,
+    "case": false,
+    "dlig": false,
+    "frac": false,
+    "kern": true,
+    "liga": true,
+    "locl": true,
+    "ordn": false,
+    "pnum": false,
+    "sinf": false,
+    "ss01": false,
+    "ss02": false,
+    "ss03": false,
+    "ss04": false,
+    "ss05": false,
+    "ss06": false,
+    "subs": false,
+    "sups": false,
+    "tnum": false,
+    "zero": false
+  },
+  "axisLocations": {
+    "wght": 200
+  },
+  "glyphStack": null,
+  "isInterpolating": false,
+  "isAnimating": false,
+  "canvasPan": {
+    "x": 50,
+    "y": 217.5
+  },
+  "canvasZoom": 0.08333333333333333,
+  "cursorPosition": 12,
+  "textModeActive": false,
+  "activeGlyph": null,
+  "editingMode": false,
+  "displayedText": "hello مَرحَباً"
+}

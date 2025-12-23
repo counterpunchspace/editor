@@ -4,16 +4,25 @@
     "type": "commonjs",
     "main": "coi-serviceworker.js",
     "scripts": {
-        "test": "jest --verbose tests/",
+        "test": "playwright test",
+        "test:ui": "playwright test --ui",
+        "test:record": "playwright codegen --ignore-https-errors https://localhost:8000",
+        "test:debug": "playwright test --debug",
+        "test:headed": "playwright test --headed",
+        "test:report": "playwright show-report",
+        "test:update-snapshots": "playwright test --update-snapshots",
+        "test:jest": "jest --verbose tests/",
         "format": "prettier --write .",
         "prepare": "husky",
         "dev": "webpack serve",
-        "build": "webpack"
+        "build": "webpack",
+        "serve": "webpack serve --mode development"
     },
     "devDependencies": {
         "@babel/core": "^7.28.5",
         "@babel/preset-env": "^7.28.5",
         "@babel/preset-typescript": "^7.28.5",
+        "@playwright/test": "^1.57.0",
         "@types/bezier-js": "^4.1.3",
         "babel-jest": "^30.2.0",
         "copy-webpack-plugin": "^13.0.1",

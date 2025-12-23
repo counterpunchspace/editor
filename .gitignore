@@ -29,6 +29,11 @@ package-lock.json
 # Compilation test outputs
 webapp/compilation-test/output/
 
+# Playwright test artifacts
+test-results/
+playwright-report/
+.last-run.json
+
 # Logs
 *.log
 npm-debug.log*

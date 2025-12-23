@@ -1,0 +1,41 @@
+{
+  "label": "cmd-0-on-fatha-tanween",
+  "appliedFeatures": {
+    "aalt": false,
+    "case": false,
+    "dlig": false,
+    "frac": false,
+    "kern": true,
+    "liga": true,
+    "locl": true,
+    "ordn": false,
+    "pnum": false,
+    "sinf": false,
+    "ss01": false,
+    "ss02": false,
+    "ss03": false,
+    "ss04": false,
+    "ss05": false,
+    "ss06": false,
+    "subs": false,
+    "sups": false,
+    "tnum": false,
+    "zero": false
+  },
+  "axisLocations": {
+    "wght": 200
+  },
+  "glyphStack": "fathatan-ar@3114FB65-9464-41A5-B67E-A8F9F43C0EF1",
+  "isInterpolating": false,
+  "isAnimating": false,
+  "canvasPan": {
+    "x": -3419.25,
+    "y": 1369.25
+  },
+  "canvasZoom": 1.5,
+  "cursorPosition": 12,
+  "textModeActive": false,
+  "activeGlyph": "fathatan-ar",
+  "editingMode": true,
+  "displayedText": "hello مَرحَباً"
+}

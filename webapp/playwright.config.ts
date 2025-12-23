@@ -1,0 +1,85 @@
+import { defineConfig, devices } from '@playwright/test';
+
+/**
+ * Playwright Configuration for Context Font Editor
+ *
+ * See https://playwright.dev/docs/test-configuration
+ */
+export default defineConfig({
+    testDir: './tests',
+
+    // Only run Playwright spec files, not Jest test files
+    testMatch: '**/*.spec.ts',
+
+    // Maximum time one test can run (5 minutes for complex interactions)
+    timeout: 300000,
+
+    // Run tests in parallel
+    fullyParallel: true,
+
+    // Fail the build on CI if you accidentally left test.only
+    forbidOnly: !!process.env.CI,
+
+    // Retry on CI only
+    retries: process.env.CI ? 2 : 0,
+
+    // Reporter to use
+    reporter: [['html'], ['list']],
+
+    // Shared settings for all projects
+    use: {
+        // Base URL for navigation
+        baseURL: 'https://localhost:8000',
+
+        // Collect trace when retrying the failed test
+        trace: 'on-first-retry',
+
+        // Screenshot on failure
+        screenshot: 'only-on-failure',
+
+        // Video on failure
+        video: 'retain-on-failure',
+
+        // Accept self-signed certificates for dev server
+        ignoreHTTPSErrors: true,
+
+        // Set consistent viewport size for tests
+        // Using larger size to account for browser chrome during recording
+        viewport: { width: 1680, height: 1050 }
+
+        // Slow down actions (helpful for debugging)
+        // actionTimeout: 0,
+        // navigationTimeout: 30000,
+    },
+
+    // Configure projects for major browsers
+    projects: [
+        {
+            name: 'chromium',
+            use: {
+                ...devices['Desktop Chrome'],
+                // Enable SharedArrayBuffer (required for your WASM/Pyodide)
+                launchOptions: {
+                    args: ['--enable-features=SharedArrayBuffer']
+                }
+            }
+        }
+
+        // {
+        //     name: 'webkit',
+        //     use: {
+        //         ...devices['Desktop Safari']
+        //     },
+        //     timeout: 600000 // 10 minutes for WebKit (slower initialization)
+        // }
+    ],
+
+    // Run your local dev server before starting the tests
+    webServer: {
+        command: 'npm run serve',
+        url: 'https://localhost:8000',
+        reuseExistingServer: !process.env.CI,
+        timeout: 120000, // 2 minutes to start dev server
+        ignoreHTTPSErrors: true // Self-signed cert for dev server
+    }
+});
