@@ -2,47 +2,63 @@
 
 ## Executive Summary
 
-This document outlines the architecture for implementing undo/redo functionality and live collaboration in the Context Font Editor. The design uses **Yjs (CRDT)** as the source of truth for collaboration and undo, while maintaining a **babelfont-ts class instance** as the rich domain model for the Python API and application logic.
+This document outlines the architecture for implementing undo/redo functionality and live collaboration in the Context Font Editor. The design uses **Yjs (CRDT)** as the source of truth for collaboration and undo, while maintaining the existing **babelfont-model.ts classes** (Font, Glyph, Layer, Path, Node, etc.) as the rich domain model for the Python API and application logic.
+
+> **Current State:** The existing codebase already has a working object model (`babelfont-model.ts`) with getters/setters that mark fonts dirty, Python execution hooks (`beforePythonExecution`/`afterPythonExecution`), and a font manager. This architecture builds upon these foundations.
 
 ## Core Requirements
 
 1. **Clean Python API**: Users write normal Python code to manipulate font data
 2. **Live Collaboration**: Multiple users can edit the same font simultaneously
 3. **Local Undo/Redo**: Per-user undo stack that respects collaborative changes
-4. **Rich Domain Model**: TypeScript class-based model (babelfont-ts) with methods and validation
+4. **Rich Domain Model**: TypeScript class-based model with methods and validation
 5. **Performance**: No significant overhead during normal editing operations
+
+## Existing Infrastructure to Leverage
+
+The codebase already provides several building blocks:
+
+| Component                                        | Location                      | Current Function                  | Undo/Collab Role                  |
+| ------------------------------------------------ | ----------------------------- | --------------------------------- | --------------------------------- |
+| `Font`, `Glyph`, `Layer`, `Path`, `Node` classes | `babelfont-model.ts`          | Object model with getters/setters | Will become the materialized view |
+| `markFontDirty()`                                | `babelfont-model.ts`          | Marks font as modified            | Hook point for change tracking    |
+| `beforePythonExecution` / `afterPythonExecution` | `python-execution-wrapper.js` | Hooks around Python execution     | Transaction boundaries            |
+| `OpenedFont.dirty`                               | `font-manager.ts`             | Tracks unsaved changes            | Can be derived from Yjs state     |
+| `OpenedFont.syncJsonFromModel()`                 | `font-manager.ts`             | Syncs object model to JSON        | Integrate with Yjs sync           |
 
 ## Architecture Overview
 
 ```
 ┌─────────────────────────────────────────────────────┐
 │              Yjs Document (Y.Map)                   │
-│         SOURCE OF TRUTH FOR STATE                   │
+│         SOURCE OF TRUTH FOR STATE (NEW)             │
 │  - Handles conflict resolution (CRDT)               │
 │  - Manages undo/redo stacks                         │
 │  - Broadcasts changes to collaborators              │
 │  - Persists to IndexedDB                            │
 └──────────────┬──────────────────────────────────────┘
                │
-               │ observeDeep() → materializes view
+               │ observeDeep() → updates underlying JSON
                ↓
 ┌─────────────────────────────────────────────────────┐
-│         BabelfontFont Class Instance                │
-│         RICH DOMAIN MODEL (CACHED)                  │
-│  - Convenience methods (scale, normalize, etc.)     │
-│  - Validation logic                                 │
-│  - Python-friendly toString(), getters              │
-│  - Computed properties                              │
+│    babelfont-model.ts Classes (EXISTING)            │
+│    Font, Glyph, Layer, Path, Node, Component        │
+│  - Getters/setters wrapping babelfontData JSON      │
+│  - markFontDirty() → hook for change tracking       │
+│  - Python-friendly toString() on all classes        │
+│  - Path.nodesToString() for serialization           │
 └──────────────┬──────────────────────────────────────┘
                │
                ↓
-      window.currentFont
+    window.currentFontModel (via fontManager.currentFont.fontModel)
                │
         ┌──────┴─────────┬──────────┬─────────┐
         │                │          │         │
      Python            UI       Canvas     File I/O
-  (snapshot)      (direct Yjs)  (reads)  (toJSON/fromJSON)
+  (snapshot)     (modify model) (reads)  (syncJsonFromModel)
 ```
+
+> **Key Insight:** The existing `babelfont-model.ts` classes are thin wrappers around `babelfontData` JSON. We can intercept `markFontDirty()` calls to sync changes to Yjs, rather than replacing the entire model.
 
 ## Data Flow Patterns
 
@@ -84,15 +100,72 @@ movePoint(glyphId, layerId, pathIdx, pointIdx, x, y) {
 - ✓ Automatic collaboration sync
 - ✓ Single source of truth
 
+### Integration with Existing markFontDirty()
+
+The existing `markFontDirty()` function in `babelfont-model.ts` is called by every setter. We can hook into this for Yjs sync:
+
+```typescript
+// In babelfont-model.ts, modify markFontDirty():
+function markFontDirty(): void {
+  if (window.fontManager?.currentFont) {
+    window.fontManager.currentFont.dirty = true;
+
+    // NEW: Notify state manager of change
+    if (window.stateManager && !window.stateManager.inPythonTransaction) {
+      // Queue a microtask to batch rapid changes
+      window.stateManager.scheduleYjsSync();
+    }
+  }
+}
+```
+
+**Alternative: Debounced Sync Strategy**
+
+For better performance, especially during drag operations:
+
+```typescript
+class StateManager {
+  private syncDebounceTimer: number | null = null;
+  private pendingChanges: Set<string> = new Set(); // Track changed paths
+
+  scheduleYjsSync(changedPath?: string) {
+    if (changedPath) this.pendingChanges.add(changedPath);
+
+    if (this.syncDebounceTimer) clearTimeout(this.syncDebounceTimer);
+    this.syncDebounceTimer = window.setTimeout(() => {
+      this.flushChangesToYjs();
+    }, 16); // ~1 frame
+  }
+
+  flushChangesToYjs() {
+    this.ydoc.transact(() => {
+      // Sync only changed portions
+      for (const path of this.pendingChanges) {
+        this.syncPathToYjs(path);
+      }
+    });
+    this.pendingChanges.clear();
+  }
+}
+```
+
 ### 2. Python Script Execution
 
-**Path: Python → BabelfontFont → Snapshot Diff → Yjs**
+**Path: Python → Font Model → Snapshot Diff → Yjs**
+
+The existing `python-execution-wrapper.js` already provides `beforePythonExecution` and `afterPythonExecution` hooks. We leverage these:
 
 ```javascript
-// Before Python execution
-stateManager.beginPythonTransaction('Scale all glyphs');
+// In python-execution-wrapper.js, hooks are already called:
+window.beforePythonExecution = () => {
+  stateManager.beginPythonTransaction();
+};
 
-// Python executes (fast, no overhead)
+window.afterPythonExecution = () => {
+  stateManager.endPythonTransaction();
+};
+
+// Python executes normally (fast, no overhead)
 await pyodide.runPythonAsync(`
 font = currentFont
 for glyph in font.glyphs.values():
@@ -103,36 +176,31 @@ for glyph in font.glyphs.values():
                 node.x *= 1.1
 `);
 
-// After Python execution
-stateManager.endPythonTransaction();
-
-// Implementation:
+// Implementation in StateManager:
 beginPythonTransaction(description = 'Python script') {
-  // Take snapshot of Yjs state
+  // Temporarily disable per-property Yjs sync
+  this.inPythonTransaction = true;
+
+  // Take snapshot of current state
   this.pythonSnapshot = {
     description,
-    before: this.font.toJSON(),  // BabelfontFont serializes current state
+    before: JSON.parse(JSON.stringify(this.fontManager.currentFont.babelfontData)),
     timestamp: Date.now()
   };
-
-  // Python manipulates window.currentFont directly (BabelfontFont instance)
-  // No proxies, no interception - full speed
 }
 
 endPythonTransaction() {
+  // Re-enable per-property sync
+  this.inPythonTransaction = false;
+
   // Get state after Python modifications
-  const after = this.font.toJSON();
+  const after = this.fontManager.currentFont.babelfontData;
   const before = this.pythonSnapshot.before;
 
   // Calculate delta and apply to Yjs as single transaction
   this.ydoc.transact(() => {
     this.syncDeltaToYjs(before, after, this.yfont);
   }, 'python-script');  // Origin tag for undo tracking
-
-  // Result:
-  // - Single undo entry (entire script is one action)
-  // - All changes broadcast to collaborators atomically
-  // - BabelfontFont instance already updated (Python modified it)
 
   this.pythonSnapshot = null;
 }
@@ -751,70 +819,76 @@ syncDeltaToYjs(before: any, after: any) {
 
 ## Implementation Phases
 
-### Phase 1: Foundation (Week 1)
+Given the existing infrastructure (`babelfont-model.ts`, Python execution hooks, `font-manager.ts`), phases are reorganized to leverage what's already built:
 
-**Goal:** State manager with Yjs, no collaboration yet
+### Phase 1: Simple Undo/Redo (3-4 days)
+
+**Goal:** Basic undo/redo without Yjs, using JSON patches
+
+- [ ] Install `fast-json-patch` or `jsondiffpatch`
+- [ ] Create `undo-manager.ts` with simple stack-based undo
+- [ ] Hook into existing `beforePythonExecution`/`afterPythonExecution`
+- [ ] Add transaction wrappers for UI operations (point drag, etc.)
+- [ ] Add keyboard shortcuts (Cmd+Z, Cmd+Shift+Z)
+- [ ] Add undo/redo buttons with stack depth indicator
+
+**Files to modify:**
+
+- `python-execution-wrapper.js` - Connect to undo manager
+- `glyph-canvas.ts` - Wrap edit operations in transactions
+- `keyboard-navigation.js` - Add undo/redo shortcuts
+
+**Deliverable:** Working undo/redo for all editing operations
+
+### Phase 2: Transaction Granularity (2-3 days)
+
+**Goal:** Proper grouping of related operations
+
+- [ ] Batch rapid changes (e.g., 60fps point dragging → 1 undo entry)
+- [ ] Handle "begin drag" / "end drag" semantics in canvas
+- [ ] Python scripts as single undo entries (already have hooks!)
+- [ ] Add transaction descriptions for undo UI
+
+**Key insight:** The existing `afterPythonExecution` hook is perfect for ending Python transactions. Just need to capture the "before" state.
+
+**Deliverable:** Intuitive undo behavior matching user expectations
+
+### Phase 3: Add Yjs Infrastructure (3-4 days)
+
+**Goal:** Introduce Yjs as shadow state (non-blocking)
 
 - [ ] Install Yjs dependencies
-- [ ] Create `state-manager.ts` with basic structure
-- [ ] Implement Yjs ↔ plain object conversion
-- [ ] Set up IndexedDB persistence
-- [ ] Implement basic undo/redo
-- [ ] Add placeholder for babelfont-ts integration
+- [ ] Create `state-manager.ts` that wraps the undo manager
+- [ ] Mirror `babelfontData` to Yjs on changes (async, debounced)
+- [ ] Set up IndexedDB persistence via `y-indexeddb`
+- [ ] Migrate undo from JSON patches to Yjs UndoManager
 
-**Deliverable:** Can load font, modify via state manager, undo/redo works locally
+**Deliverable:** Yjs running in parallel, no user-visible changes
 
-### Phase 2: UI Integration (Week 2)
+### Phase 4: Collaboration Foundation (1 week)
 
-**Goal:** Migrate existing UI code to use state manager
+**Goal:** Enable multi-user editing
 
-- [ ] Implement all UI operation methods (movePoint, addPath, etc.)
-- [ ] Update glyph canvas to use state manager
-- [ ] Update component editing to use state manager
-- [ ] Add keyboard shortcuts (Cmd+Z, Cmd+Shift+Z)
-- [ ] Update UI to show undo/redo state
-- [ ] Verify no direct mutations of font data remain
+- [ ] Set up PartyKit or y-websocket server
+- [ ] Implement "Share" button that enables collaboration
+- [ ] Add connection status UI (connected/disconnected/syncing)
+- [ ] Handle offline → online transitions
+- [ ] Add basic awareness (who else is viewing)
 
-**Deliverable:** Full UI editing with working undo/redo
+**Deliverable:** Two users can edit the same font
 
-### Phase 3: Python Integration (Week 3)
+### Phase 5: Collaboration Polish (1 week+)
 
-**Goal:** Python scripts can modify font with undo support
+**Goal:** Production-quality collaboration
 
-- [ ] Implement beginPythonTransaction/endPythonTransaction
-- [ ] Wrap Python console execution
-- [ ] Wrap Python script execution
-- [ ] Test snapshot diffing performance
-- [ ] Add error handling (cancelPythonTransaction)
-- [ ] Document Python API patterns
+- [ ] Show remote user cursors/selections on canvas
+- [ ] Add user presence list
+- [ ] Handle conflict visualization (optional)
+- [ ] Room management and sharing links
+- [ ] Rate limiting and security
+- [ ] Authentication integration
 
-**Deliverable:** Python scripts work, create single undo entries
-
-### Phase 4: BabelfontFont Integration (Week 4)
-
-**Goal:** Replace plain object with babelfont-ts class
-
-- [ ] Integrate babelfont-ts package
-- [ ] Create ExtendedBabelfontFont class
-- [ ] Implement toJSON/fromJSON adapters
-- [ ] Add Python toString() and convenience methods
-- [ ] Update state manager to use BabelfontFont
-- [ ] Performance testing and caching optimization
-
-**Deliverable:** Rich domain model with methods available in Python
-
-### Phase 5: Collaboration (Week 5+)
-
-**Goal:** Enable live multi-user editing
-
-- [ ] Set up WebSocket sync server (or use y-websocket cloud)
-- [ ] Implement collaboration enable/disable
-- [ ] Add awareness (user cursors, selections)
-- [ ] Add connection status UI
-- [ ] Test conflict resolution scenarios
-- [ ] Add user authentication/room management
-
-**Deliverable:** Live collaboration between multiple users
+**Deliverable:** Full collaborative editing experience
 
 ## Technology Stack
 
@@ -823,40 +897,94 @@ syncDeltaToYjs(before: any, after: any) {
 ```json
 {
   "dependencies": {
-    "yjs": "^13.6.10",
+    "yjs": "^13.6.15",
     "y-indexeddb": "^9.0.12",
-    "babelfont-ts": "^1.0.0" // When available
-  },
-  "devDependencies": {
-    "@types/yjs": "^13.0.0"
+    "immer": "^10.0.3",
+    "fast-json-patch": "^3.1.1"
   },
   "optionalDependencies": {
-    "y-websocket": "^1.5.0", // For collaboration
-    "y-webrtc": "^10.2.5", // For P2P collaboration
-    "lib0": "^0.2.89" // Yjs utilities
+    "y-websocket": "^2.0.0",
+    "y-webrtc": "^10.3.0",
+    "lib0": "^0.2.94",
+    "y-partykit": "^0.0.25"
   }
 }
 ```
 
+> **Note:** The existing codebase already uses `idb-keyval` for IndexedDB. Consider whether to migrate to `y-indexeddb` or use both.
+
+### Alternative to Yjs: Simpler Undo-Only Approach
+
+If collaboration is not an immediate priority, a simpler command-pattern approach could be faster to implement:
+
+```typescript
+// Simple undo stack without Yjs
+interface UndoEntry {
+  description: string;
+  patches: JsonPatch[]; // From fast-json-patch
+  timestamp: number;
+}
+
+class SimpleUndoManager {
+  private undoStack: UndoEntry[] = [];
+  private redoStack: UndoEntry[] = [];
+  private snapshotBefore: any = null;
+
+  beginTransaction(description: string) {
+    this.snapshotBefore = JSON.parse(JSON.stringify(currentData));
+  }
+
+  endTransaction(description: string) {
+    const patches = jsonpatch.compare(this.snapshotBefore, currentData);
+    if (patches.length > 0) {
+      this.undoStack.push({ description, patches, timestamp: Date.now() });
+      this.redoStack = []; // Clear redo on new action
+    }
+  }
+
+  undo() {
+    const entry = this.undoStack.pop();
+    if (entry) {
+      const reversePatches = jsonpatch.compare(
+        currentData,
+        this.applyPatches(entry.patches, true)
+      );
+      this.redoStack.push({ ...entry, patches: reversePatches });
+    }
+  }
+}
+```
+
+This can later be upgraded to Yjs for collaboration.
+
+````
+
 ### Collaboration Server Options
 
-**Option 1:** Use hosted service
+**Option 1: PartyKit (Recommended for MVP)**
 
-- y-sweet.dev (Jamsocket) - managed Yjs server
-- No server management required
-- Pay-per-usage
+- `y-partykit` - Serverless Yjs on Cloudflare's edge
+- Free tier available, scales automatically
+- Integrates with existing Cloudflare setup (see `cloudflare-worker.js`)
+- Example: `partykit.io/party/context-font-editor`
 
-**Option 2:** Self-hosted
+**Option 2: Hosted Services**
 
-- Deploy y-websocket server (Node.js)
-- Simple Express server (example provided by Yjs)
-- Can run on Cloudflare Workers
+- **Liveblocks** - Full-featured, React-focused but works with vanilla JS
+- **y-sweet (Jamsocket)** - Managed Yjs, pay-per-usage
+- **Hocuspocus** - Self-hostable with good defaults
 
-**Option 3:** P2P (y-webrtc)
+**Option 3: Self-hosted on Existing Infrastructure**
 
-- No server needed
-- Uses WebRTC for direct peer-to-peer
-- Bootstrap via public signaling server
+- Deploy `y-websocket` server alongside existing backend
+- Can run on Cloudflare Workers (already have `cloudflare-worker.js`)
+- ~50 lines of code for basic sync
+
+**Option 4: P2P (y-webrtc)**
+
+- No server for data sync (only signaling)
+- Good for local/offline-first scenarios
+- May have NAT traversal issues in some networks
 
 ## Testing Strategy
 
@@ -890,7 +1018,7 @@ describe("StateManager", () => {
     });
   });
 });
-```
+````
 
 ### Integration Tests
 
@@ -932,33 +1060,112 @@ describe("Collaboration", () => {
 
 ## Open Questions
 
-### BabelfontFont Integration
+### Integration Decisions (Answered from Codebase Analysis)
 
-1. **Does BabelfontFont use getters/setters?**
+1. **Does the object model use getters/setters?**
 
-   - If yes: Can potentially intercept changes automatically
-   - If no: Must use snapshot-based detection
+   - ✅ **YES**: `babelfont-model.ts` uses getters/setters on all classes
+   - Every setter calls `markFontDirty()` - perfect hook point!
 
-2. **How expensive is fromJSON/toJSON?**
+2. **How expensive is serialization?**
 
-   - Affects caching strategy
-   - May need incremental update support
+   - The model wraps `babelfontData` directly (no copying)
+   - `syncJsonFromModel()` in `font-manager.ts` handles Path nodes → string conversion
+   - Need to profile: JSON.stringify on 1000-glyph font
 
 3. **Does it support incremental updates?**
 
-   - updateGlyph(id, data) vs full reconstruction
-   - Would improve performance
+   - Currently: No - full JSON is regenerated
+   - Recommendation: Track changed glyph IDs, only sync those to Yjs
 
 4. **What's the data structure?**
-   - Map vs plain object for glyphs
-   - Affects iteration in Python
+   - Glyphs: Array with name lookup via `Font.glyphs.get(name)`
+   - Python iteration via `font.glyphs.values()` works
+
+### Remaining Questions
+
+1. **Python execution granularity**
+
+   - Should individual console commands (REPL) also be undoable?
+   - Or only full script executions?
+
+2. **Undo scope during glyph editing**
+
+   - Should switching glyphs commit the current undo group?
+   - What about switching masters/layers?
+
+3. **Conflict resolution UI**
+   - What happens when collaborative edits conflict?
+   - Yjs handles merging, but should we show users what changed?
 
 ### Performance Targets
 
-- **UI responsiveness:** < 16ms per operation (60fps)
-- **Python snapshot diff:** < 100ms for typical script
-- **Font instantiation:** < 50ms for average font
-- **Collaboration latency:** < 200ms for remote change to appear
+- **UI responsiveness:** < 16ms per operation (60fps during drag)
+- **Python snapshot diff:** < 50ms for typical script (use `fast-json-patch` or `jsondiffpatch`)
+- **Yjs sync:** < 5ms for single glyph change
+- **Full font serialization:** < 200ms for 1000-glyph font (profile `syncJsonFromModel()`)
+- **Collaboration latency:** < 300ms for remote change to appear (includes network)
+- **Undo/Redo:** < 10ms (operation-based, not snapshot restore)
+
+### Profiling Recommendations
+
+Add performance marks to critical paths:
+
+```javascript
+performance.mark("sync-start");
+syncJsonFromModel();
+performance.mark("sync-end");
+performance.measure("syncJsonFromModel", "sync-start", "sync-end");
+console.log(
+  "[Performance]",
+  performance.getEntriesByName("syncJsonFromModel")[0].duration
+);
+```
+
+## Incremental Migration Strategy
+
+Rather than a big-bang rewrite, integrate Yjs incrementally:
+
+### Step 1: Undo-Only (No Yjs Yet)
+
+```typescript
+// Extend existing hooks in python-execution-wrapper.js
+window.beforePythonExecution = () => {
+  undoManager.beginTransaction("Python script");
+};
+
+window.afterPythonExecution = () => {
+  undoManager.endTransaction();
+};
+```
+
+### Step 2: Add Yjs as Shadow State
+
+```typescript
+// Yjs runs in parallel, doesn't block UI
+class StateManager {
+  private ydoc = new Y.Doc();
+  private yfont = this.ydoc.getMap("font");
+
+  // Mirror changes to Yjs without blocking
+  scheduleYjsSync = debounce(() => {
+    requestIdleCallback(() => {
+      this.syncToYjs();
+    });
+  }, 100);
+}
+```
+
+### Step 3: Enable Collaboration
+
+```typescript
+// Only when user clicks "Share"
+enableCollaboration() {
+  this.wsProvider = new WebsocketProvider(...);
+  // Now Yjs is the authority, not just a mirror
+  this.yfont.observeDeep(() => this.syncFromYjs());
+}
+```
 
 ## Future Enhancements
 
