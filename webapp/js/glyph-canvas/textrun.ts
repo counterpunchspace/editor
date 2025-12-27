@@ -8,6 +8,7 @@
 import { Logger } from '../logger';
 import type { FeaturesManager } from './features';
 import type { AxesManager } from './variations';
+import APP_SETTINGS from '../settings';
 
 import bidiFactory from 'bidi-js';
 
@@ -45,6 +46,10 @@ export class TextRunEditor {
     selectionEnd: number | null;
     fontBlob: Uint8Array | null;
     selectedMasterId: string | null; // Currently selected master ID for text mode rendering
+    spaceKeyTimer: number | null; // Timer for space key delay
+    spaceKeyPressTime: number | null; // Timestamp when space was pressed
+    spaceActivatedPreview: boolean; // Whether space key activated preview mode
+    cursorStyleBeforePreview: string | null; // Cursor style before entering preview mode
 
     constructor(featuresManager: FeaturesManager, axesManager: AxesManager) {
         this.featuresManager = featuresManager;
@@ -80,6 +85,12 @@ export class TextRunEditor {
         this.selectionEnd = null; // End of selection
 
         // Master selection for text mode
+        // Space key delay for preview mode in text mode
+        this.spaceKeyTimer = null;
+        this.spaceKeyPressTime = null;
+        this.spaceActivatedPreview = false;
+        this.cursorStyleBeforePreview = null;
+
         this.selectedMasterId = null; // No master selected by default
 
         this.callbacks = {}; // For notifying GlyphCanvas of updates
@@ -1176,6 +1187,30 @@ export class TextRunEditor {
     }
 
     handleKeyDown(e: KeyboardEvent) {
+        // Space bar - start timer to distinguish between typing space and activating preview mode
+        if (e.code === 'Space' && !e.metaKey && !e.ctrlKey) {
+            e.preventDefault();
+
+            // Ignore key repeats - only handle the first press
+            if (this.spaceKeyTimer !== null) {
+                return;
+            }
+
+            // Record press time
+            this.spaceKeyPressTime = Date.now();
+
+            // Start timer for preview mode activation
+            const delay = APP_SETTINGS.OUTLINE_EDITOR.PREVIEW_MODE_DELAY;
+            this.spaceActivatedPreview = false;
+            this.spaceKeyTimer = window.setTimeout(() => {
+                // Timer expired - activate preview mode via outline editor
+                this.spaceActivatedPreview = true;
+                this.call('activatePreviewMode');
+            }, delay);
+
+            return;
+        }
+
         // Cmd+A / Ctrl+A - Select All
         if ((e.metaKey || e.ctrlKey) && e.key === 'a') {
             e.preventDefault();
@@ -1275,6 +1310,42 @@ export class TextRunEditor {
         }
 
         // Don't prevent default for unhandled keys - let browser shortcuts work
+    }
+
+    handleKeyUp(e: KeyboardEvent) {
+        // Space bar release - either insert space or exit preview mode
+        if (e.code === 'Space') {
+            e.preventDefault();
+            console.log(
+                '[TextRun] Space key released, spaceActivatedPreview:',
+                this.spaceActivatedPreview
+            );
+
+            // Clear the timer if it hasn't fired yet
+            if (this.spaceKeyTimer !== null) {
+                clearTimeout(this.spaceKeyTimer);
+                this.spaceKeyTimer = null;
+            }
+
+            this.spaceKeyPressTime = null;
+
+            // Check if preview mode was activated
+            if (this.spaceActivatedPreview) {
+                // Long press - deactivate preview mode
+                console.log('[TextRun] Long press - deactivating preview mode');
+                this.call('deactivatePreviewMode');
+                // Reset flag after a short delay to ensure it doesn't get inserted
+                setTimeout(() => {
+                    this.spaceActivatedPreview = false;
+                }, 10);
+            } else {
+                // Quick press - insert space character
+                console.log('[TextRun] Quick press - inserting space');
+                this.insertText(' ');
+            }
+
+            return;
+        }
     }
 
     destroyHarfbuzz() {

@@ -79,7 +79,6 @@ class GlyphCanvas {
     };
 
     // Internal state properties not in constructor
-    cmdKeyPressed: boolean = false;
     altKeyPressed: boolean = false;
     isDraggingCanvas: boolean = false;
     lastMouseX: number = 0;
@@ -204,16 +203,9 @@ class GlyphCanvas {
                 e.code,
                 'metaKey:',
                 e.metaKey,
-                'cmdKeyPressed:',
-                this.cmdKeyPressed,
                 'spaceKeyPressed:',
                 this.outlineEditor.spaceKeyPressed
             );
-            // Track Cmd key for panning
-            if (e.metaKey || e.key === 'Meta') {
-                this.cmdKeyPressed = true;
-                this.updateCursorStyle(e);
-            }
             // Track Alt key for measurement tool
             if (e.altKey || e.key === 'Alt') {
                 this.altKeyPressed = true;
@@ -231,22 +223,8 @@ class GlyphCanvas {
                 'metaKey:',
                 e.metaKey,
                 'spaceKeyPressed:',
-                this.outlineEditor.spaceKeyPressed,
-                'cmdKeyPressed:',
-                this.cmdKeyPressed
+                this.outlineEditor.spaceKeyPressed
             );
-
-            // Track Cmd key release
-            if (e.key === 'Meta') {
-                console.log('  -> Releasing Cmd key');
-                this.cmdKeyPressed = false;
-                // Stop panning if it was active
-                if (this.isDraggingCanvas) {
-                    this.isDraggingCanvas = false;
-                }
-                this.outlineEditor.onMetaKeyReleased();
-                this.updateCursorStyle(e);
-            }
 
             // Track Alt key release
             if (e.key === 'Alt') {
@@ -258,14 +236,23 @@ class GlyphCanvas {
 
             // Track Space key release
             if (e.code === 'Space') {
-                console.log('  -> Releasing Space key');
-                this.outlineEditor.onSpaceKeyReleased();
+                console.log(
+                    '  -> Releasing Space key, active:',
+                    this.outlineEditor.active
+                );
+                if (this.outlineEditor.active) {
+                    // In edit mode, handle space as preview mode toggle
+                    this.outlineEditor.onSpaceKeyReleased();
+                } else {
+                    // In text mode, handle space with delay logic
+                    console.log('  -> Calling textRunEditor.handleKeyUp');
+                    this.textRunEditor!.handleKeyUp(e);
+                }
             }
         });
 
         // Reset key states when window loses focus (e.g., Cmd+Tab to switch apps)
         window.addEventListener('blur', () => {
-            this.cmdKeyPressed = false;
             this.altKeyPressed = false;
             this.isDraggingCanvas = false;
             this.outlineEditor.onBlur();
@@ -278,10 +265,11 @@ class GlyphCanvas {
 
         // Also reset when canvas loses focus
         this.canvas!.addEventListener('blur', () => {
-            this.cmdKeyPressed = false;
             this.altKeyPressed = false;
-            this.outlineEditor.spaceKeyPressed = false;
             this.isDraggingCanvas = false;
+            // Note: Don't reset spaceKeyPressed here - it should be handled by the keyup event
+            // Resetting it here causes preview mode to malfunction because the keyup handler
+            // can't tell if preview mode was activated
             // Don't exit preview mode when canvas loses focus to sidebar elements
             // (e.g., clicking sliders). Preview mode will be managed by slider events.
             // Only exit preview mode on true blur events (window blur, etc.)
@@ -560,6 +548,45 @@ class GlyphCanvas {
         this.textRunEditor!.on('exitcomponentediting', () => {
             this.outlineEditor.exitAllComponentEditing();
         });
+        this.textRunEditor!.on('activatePreviewMode', () => {
+            // Activate preview mode when space key timer expires in text mode
+            this.outlineEditor.spaceKeyPressed = true;
+            this.outlineEditor.isPreviewMode = true;
+            // Store current cursor style and switch to grab cursor
+            this.textRunEditor!.cursorStyleBeforePreview =
+                this.canvas!.style.cursor;
+            this.canvas!.style.cursor = 'grab';
+            this.render();
+        });
+        this.textRunEditor!.on('deactivatePreviewMode', () => {
+            // Deactivate preview mode when space key is released after long press
+            console.log(
+                '[GlyphCanvas] Deactivating preview mode, current state:',
+                {
+                    spaceKeyPressed: this.outlineEditor.spaceKeyPressed,
+                    isPreviewMode: this.outlineEditor.isPreviewMode
+                }
+            );
+            this.outlineEditor.spaceKeyPressed = false;
+            this.outlineEditor.isPreviewMode = false;
+            // Restore previous cursor style
+            if (this.textRunEditor!.cursorStyleBeforePreview) {
+                this.canvas!.style.cursor =
+                    this.textRunEditor!.cursorStyleBeforePreview;
+                this.textRunEditor!.cursorStyleBeforePreview = null;
+            } else {
+                // Fallback to text cursor
+                this.canvas!.style.cursor = 'text';
+            }
+            // Ensure text cursor is visible
+            this.cursorVisible = true;
+            console.log('[GlyphCanvas] After deactivation:', {
+                spaceKeyPressed: this.outlineEditor.spaceKeyPressed,
+                isPreviewMode: this.outlineEditor.isPreviewMode,
+                cursorVisible: this.cursorVisible
+            });
+            this.render();
+        });
         this.textRunEditor!.on(
             'glyphselected',
             async (
@@ -694,8 +721,8 @@ class GlyphCanvas {
         // Focus the canvas when clicked
         this.canvas!.focus();
 
-        // Priority: If Cmd key is pressed, start canvas panning immediately
-        if (this.cmdKeyPressed) {
+        // Priority: If Space key is pressed, start canvas panning immediately
+        if (this.outlineEditor.spaceKeyPressed) {
             this.isDraggingCanvas = true;
             this.lastMouseX = e.clientX;
             this.lastMouseY = e.clientY;
@@ -753,11 +780,11 @@ class GlyphCanvas {
             return;
         }
 
-        // Start canvas panning when Cmd key is pressed
-        if (this.cmdKeyPressed) {
+        // Start canvas panning when Space key is pressed
+        if (this.outlineEditor.spaceKeyPressed) {
             console.log(
-                'Starting canvas panning, cmdKeyPressed:',
-                this.cmdKeyPressed
+                'Starting canvas panning, spaceKeyPressed:',
+                this.outlineEditor.spaceKeyPressed
             );
             this.isDraggingCanvas = true;
             this.lastMouseX = e.clientX;
@@ -765,8 +792,8 @@ class GlyphCanvas {
             this.canvas!.style.cursor = 'grabbing';
         } else {
             console.log(
-                'Not starting panning, cmdKeyPressed:',
-                this.cmdKeyPressed
+                'Not starting panning, spaceKeyPressed:',
+                this.outlineEditor.spaceKeyPressed
             );
         }
     }
@@ -849,8 +876,9 @@ class GlyphCanvas {
             return;
         }
 
-        // Cmd key pressed = always show grab cursor for panning
-        if (this.cmdKeyPressed) {
+        // Space key pressed in edit mode = show grab cursor for panning
+        // In text mode preview = show grab cursor for panning
+        if (this.outlineEditor.spaceKeyPressed) {
             this.canvas!.style.cursor = this.isDraggingCanvas
                 ? 'grabbing'
                 : 'grab';

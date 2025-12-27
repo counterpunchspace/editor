@@ -45,6 +45,7 @@ export class OutlineEditor {
     isPreviewMode: boolean = false;
     previewModeBeforeSlider: boolean = false;
     spaceKeyPressed: boolean = false;
+    cursorStyleBeforePreview: string | null = null; // Store cursor before preview mode
     isDraggingPoint: boolean = false;
     isDraggingComponent: boolean = false;
     isDraggingAnchor: boolean = false;
@@ -258,16 +259,6 @@ export class OutlineEditor {
         this.hoveredGlyphIndex = -1;
     }
 
-    onMetaKeyReleased() {
-        // Exit preview mode when Cmd is released if we're in preview mode
-        // This handles the case where Space keyup doesn't fire due to browser/OS issues
-
-        if (!this.active) return;
-        console.log('  -> Exiting preview mode on Cmd release');
-        this.isPreviewMode = false;
-        this.spaceKeyPressed = false; // Also reset Space state since keyup might not fire
-        this.glyphCanvas.render();
-    }
     onEscapeKey(e: KeyboardEvent) {
         if (!this.active) return;
 
@@ -1442,6 +1433,13 @@ export class OutlineEditor {
         console.log('  -> Exiting preview mode from Space release');
         this.isPreviewMode = false;
 
+        // Restore cursor style
+        if (this.glyphCanvas.canvas && this.cursorStyleBeforePreview) {
+            this.glyphCanvas.canvas.style.cursor =
+                this.cursorStyleBeforePreview;
+            this.cursorStyleBeforePreview = null;
+        }
+
         // Check if current axis position matches an exact layer
         this.autoSelectMatchingLayer().then(async () => {
             if (this.selectedLayerId !== null) {
@@ -1467,6 +1465,10 @@ export class OutlineEditor {
         // Exit preview mode if active
         if (this.isPreviewMode) {
             this.isPreviewMode = false;
+            // Restore cursor visibility in text mode
+            if (!this.active) {
+                this.glyphCanvas.cursorVisible = true;
+            }
             this.glyphCanvas.render();
         }
     }
@@ -1620,13 +1622,19 @@ export class OutlineEditor {
 
     onKeyDown(e: KeyboardEvent) {
         if (!this.active) return;
-        // Handle space bar press to enter preview mode
+        // Handle space bar press to enter preview mode and enable panning
         if (e.code === 'Space') {
             e.preventDefault();
             this.spaceKeyPressed = true;
             // Only enter preview mode if not already in it (prevents key repeat from re-entering)
             if (!this.isPreviewMode) {
                 this.isPreviewMode = true;
+                // Store current cursor and change to grab cursor
+                if (this.glyphCanvas.canvas) {
+                    this.cursorStyleBeforePreview =
+                        this.glyphCanvas.canvas.style.cursor;
+                    this.glyphCanvas.canvas.style.cursor = 'grab';
+                }
                 this.glyphCanvas.render();
             }
             return;

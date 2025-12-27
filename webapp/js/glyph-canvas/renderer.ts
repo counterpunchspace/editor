@@ -370,7 +370,11 @@ export class GlyphCanvasRenderer {
                         this.ctx.fillStyle = colors.GLYPH_NORMAL;
                     } else {
                         // Text edit mode: normal coloring
-                        if (isHovered) {
+                        // Don't show hover effects in preview mode
+                        if (
+                            isHovered &&
+                            !this.glyphCanvas.outlineEditor.isPreviewMode
+                        ) {
                             this.ctx.fillStyle = colors.GLYPH_HOVERED;
                         } else if (isSelected) {
                             this.ctx.fillStyle = colors.GLYPH_SELECTED;
@@ -391,9 +395,11 @@ export class GlyphCanvasRenderer {
                         const path = new Path2D(glyphData);
 
                         // Apply glow effect for hovered glyph in text mode (dark theme only)
+                        // Skip glow in preview mode
                         if (
                             isDarkTheme &&
                             !this.glyphCanvas.outlineEditor.active &&
+                            !this.glyphCanvas.outlineEditor.isPreviewMode &&
                             isHovered
                         ) {
                             const { glowColor, glowBlur } =
@@ -435,7 +441,9 @@ export class GlyphCanvasRenderer {
     drawGlyphTooltip() {
         // Draw glyph name tooltip on hover (in font coordinate space)
         // Don't show tooltip for the selected glyph in glyph edit mode
+        // Don't show tooltip in preview mode
         if (
+            !this.glyphCanvas.outlineEditor.isPreviewMode &&
             this.glyphCanvas.outlineEditor.hoveredGlyphIndex >= 0 &&
             this.glyphCanvas.outlineEditor.hoveredGlyphIndex <
                 this.textRunEditor.shapedGlyphs.length
@@ -2535,10 +2543,11 @@ export class GlyphCanvasRenderer {
 
     drawCursor() {
         // Draw the text cursor at the current position
-        // Don't draw cursor if not visible or in glyph edit mode
+        // Don't draw cursor if not visible, in glyph edit mode, or in preview mode
         if (
             !this.glyphCanvas.cursorVisible ||
-            this.glyphCanvas.outlineEditor.active
+            this.glyphCanvas.outlineEditor.active ||
+            this.glyphCanvas.outlineEditor.isPreviewMode
         ) {
             return;
         }
