@@ -82,7 +82,7 @@ const APP_SETTINGS = {
         MEASUREMENT_TOOL_DISPLAY_DELAY: 600, // ms - delay before showing measurement tool when Alt key is pressed
 
         // Preview mode
-        PREVIEW_MODE_DELAY: 300, // ms - delay before activating preview mode with Space bar in text mode (below this delay, types a space character)
+        PREVIEW_MODE_DELAY: 200, // ms - delay before activating preview mode with Space bar in text mode (below this delay, types a space character)
 
         // Colors - Light Theme
         COLORS_LIGHT: {
