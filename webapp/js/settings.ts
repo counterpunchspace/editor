@@ -79,7 +79,7 @@ const APP_SETTINGS = {
         INTERPOLATION_ANIMATION_DELAY: 0, // ms - delay between animation frames for debugging (0 = no delay)
 
         // Measurement tool
-        MEASUREMENT_TOOL_DISPLAY_DELAY: 600, // ms - delay before showing measurement tool when Alt key is pressed
+        MEASUREMENT_TOOL_DISPLAY_DELAY: 400, // ms - delay before showing measurement tool when Shift key is pressed
 
         // Preview mode
         PREVIEW_MODE_DELAY: 200, // ms - delay before activating preview mode with Space bar in text mode (below this delay, types a space character)

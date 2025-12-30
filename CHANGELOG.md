@@ -1,5 +1,6 @@
 # Unreleased
 
+- **Measurement Tool Improvements**: Changed activation key from Alt to Shift (keeps delay). Added coordinate labels: y-coordinate on left edge in both modes, x-coordinate at top in editing mode (relative to glyph origin).
 - **Preview and Panning on Space Key**: Instead of splitting panning to Cmd and preview to space key, both are now on space key. In text mode, preview mode kicks in after 200ms of pressing space, while shorter inserts the space character.
 - **OpenType Feature Layer Data Refresh**: After applying OpenType features in editing mode, layer data is now refreshed to reflect potential glyph substitutions (e.g., ligatures, alternates), and the viewport maintains the glyph's bounding box center at the same screen position using the auto-pan system.
 - **Component Counter Rendering and Hit Detection**: Components with paths in opposite directions now correctly render as open countershapes (holes) using the canvas nonzero winding rule. Both rendering and hit detection now combine all component paths (including nested components) into a single canvas path before filling/testing, allowing proper counter handling. Fixed double-click priority so component/point interactions in edit mode take precedence over glyph switching.

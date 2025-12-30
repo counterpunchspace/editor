@@ -1926,6 +1926,71 @@ export class GlyphCanvasRenderer {
             }
 
             this.ctx.stroke();
+
+            // Draw coordinate labels for crosshair (not for custom drag line)
+            if (!this.glyphCanvas.measurementTool.isDragging) {
+                // Get mouse position in font space
+                const { x: mouseFontX, y: mouseFontY } =
+                    this.viewportManager.getFontSpaceCoordinates(
+                        this.glyphCanvas.mouseX,
+                        this.glyphCanvas.mouseY
+                    );
+
+                // Calculate glyph origin position to make x coordinate relative
+                let glyphOriginX = 0;
+                if (
+                    this.textRunEditor.selectedGlyphIndex >= 0 &&
+                    this.textRunEditor.selectedGlyphIndex <
+                        this.textRunEditor.shapedGlyphs.length
+                ) {
+                    // Accumulate advance widths up to selected glyph
+                    for (
+                        let i = 0;
+                        i < this.textRunEditor.selectedGlyphIndex;
+                        i++
+                    ) {
+                        glyphOriginX +=
+                            this.textRunEditor.shapedGlyphs[i].ax || 0;
+                    }
+                    // Add the selected glyph's offset
+                    const glyph =
+                        this.textRunEditor.shapedGlyphs[
+                            this.textRunEditor.selectedGlyphIndex
+                        ];
+                    glyphOriginX += glyph.dx || 0;
+                }
+
+                this.ctx.save();
+                // Use screen space for labels
+                this.ctx.resetTransform();
+                const labelColor = isDarkTheme ? '#FFFFFF' : '#000000';
+                this.ctx.fillStyle = labelColor;
+                this.ctx.font = '14px system-ui, -apple-system, sans-serif';
+                const labelPadding = 6;
+
+                // Y-coordinate label on left edge
+                this.ctx.textBaseline = 'bottom';
+                this.ctx.textAlign = 'left';
+                const yLabel = `y=${Math.round(mouseFontY)}`;
+                this.ctx.fillText(
+                    yLabel,
+                    labelPadding,
+                    this.glyphCanvas.mouseCanvasY - labelPadding
+                );
+
+                // X-coordinate label at top (relative to glyph origin)
+                this.ctx.textBaseline = 'top';
+                this.ctx.textAlign = 'left';
+                const relativeX = mouseFontX - glyphOriginX;
+                const xLabel = `x=${Math.round(relativeX)}`;
+                this.ctx.fillText(
+                    xLabel,
+                    this.glyphCanvas.mouseCanvasX + labelPadding,
+                    labelPadding
+                );
+
+                this.ctx.restore();
+            }
         }
 
         this.ctx.restore();
@@ -2543,11 +2608,12 @@ export class GlyphCanvasRenderer {
 
     drawCursor() {
         // Draw the text cursor at the current position
-        // Don't draw cursor if not visible, in glyph edit mode, or in preview mode
+        // Don't draw cursor if not visible, in glyph edit mode, in preview mode, or when measurement tool is active in text mode
         if (
             !this.glyphCanvas.cursorVisible ||
             this.glyphCanvas.outlineEditor.active ||
-            this.glyphCanvas.outlineEditor.isPreviewMode
+            this.glyphCanvas.outlineEditor.isPreviewMode ||
+            this.glyphCanvas.measurementTool.shouldDrawTextModeMeasurements()
         ) {
             return;
         }
@@ -2714,7 +2780,7 @@ export class GlyphCanvasRenderer {
      */
     drawTextModeMeasurements() {
         // Only draw when alt key is pressed, in text mode, and we have a font
-        if (!this.glyphCanvas.altKeyPressed) return;
+        if (!this.glyphCanvas.shiftKeyPressed) return;
 
         if (!this.glyphCanvas.measurementTool.shouldDrawTextModeMeasurements())
             return;
@@ -2778,6 +2844,22 @@ export class GlyphCanvasRenderer {
         this.ctx.lineTo(viewportRight, mouseGlyphY);
         this.ctx.stroke();
 
+        this.ctx.restore();
+
+        // Draw y-coordinate label on left viewport edge (in screen space to avoid y-flip)
+        this.ctx.save();
+        this.ctx.resetTransform();
+        this.ctx.fillStyle = isDarkTheme ? '#FFFFFF' : '#000000';
+        this.ctx.font = '14px system-ui, -apple-system, sans-serif';
+        this.ctx.textBaseline = 'bottom';
+        this.ctx.textAlign = 'left';
+        const yLabel = `y=${Math.round(mouseGlyphY)}`;
+        const labelPadding = 6;
+        this.ctx.fillText(
+            yLabel,
+            labelPadding,
+            this.glyphCanvas.mouseCanvasY - labelPadding
+        );
         this.ctx.restore();
 
         // Get current master ID for layer lookup

@@ -1,5 +1,5 @@
 // Measurement tool for measuring distances in glyph canvas
-// Activated by holding Alt key in text mode or editing mode
+// Activated by holding Shift key in text mode or editing mode
 
 import APP_SETTINGS from '../settings';
 import type { GlyphCanvas } from '../glyph-canvas';
@@ -16,26 +16,28 @@ export class MeasurementTool {
     private delayTimer: number | null = null;
     visible: boolean = false;
     private cancelledByZoom: boolean = false;
+    private disabledForTyping: boolean = false;
 
     constructor(glyphCanvas: GlyphCanvas) {
         this.glyphCanvas = glyphCanvas;
     }
 
     /**
-     * Handle Alt key press - start delay timer
+     * Handle Shift key press - start delay timer
      */
-    handleAltKeyPress(): void {
+    handleShiftKeyPress(): void {
         this.startDelayTimer();
     }
 
     /**
-     * Handle Alt key release - reset all state
+     * Handle Shift key release - reset all state
      */
-    handleAltKeyRelease(): void {
+    handleShiftKeyRelease(): void {
         this.cancelDelayTimer();
         this.visible = false;
         this.cancelledByZoom = false;
         this.isDragging = false;
+        this.disabledForTyping = false;
     }
 
     /**
@@ -48,6 +50,15 @@ export class MeasurementTool {
     }
 
     /**
+     * Handle typing while Shift is held - disable measurement until Shift is released
+     */
+    handleTypingWithShift(): void {
+        this.cancelDelayTimer();
+        this.visible = false;
+        this.disabledForTyping = true;
+    }
+
+    /**
      * Handle mouse down to start dragging measurement line
      */
     handleMouseDown(
@@ -56,7 +67,7 @@ export class MeasurementTool {
         canvasRect: DOMRect
     ): boolean {
         if (
-            !this.glyphCanvas.altKeyPressed ||
+            !this.glyphCanvas.shiftKeyPressed ||
             !this.glyphCanvas.outlineEditor.active
         ) {
             return false;
@@ -80,7 +91,10 @@ export class MeasurementTool {
      * Check if measurement tool should block hit detection
      */
     shouldBlockHitDetection(): boolean {
-        return this.glyphCanvas.altKeyPressed || this.isDragging;
+        return (
+            (this.glyphCanvas.shiftKeyPressed && !this.disabledForTyping) ||
+            this.isDragging
+        );
     }
 
     /**
@@ -88,9 +102,10 @@ export class MeasurementTool {
      */
     shouldShowCrosshair(): boolean {
         return (
-            this.glyphCanvas.altKeyPressed &&
+            this.glyphCanvas.shiftKeyPressed &&
             this.glyphCanvas.outlineEditor.active &&
-            this.visible
+            this.visible &&
+            !this.disabledForTyping
         );
     }
 
@@ -99,9 +114,10 @@ export class MeasurementTool {
      */
     shouldDrawVisuals(): boolean {
         return (
-            this.glyphCanvas.altKeyPressed &&
+            this.glyphCanvas.shiftKeyPressed &&
             this.visible &&
-            this.glyphCanvas.outlineEditor.active
+            this.glyphCanvas.outlineEditor.active &&
+            !this.disabledForTyping
         );
     }
 
@@ -110,9 +126,10 @@ export class MeasurementTool {
      */
     shouldDrawTextModeMeasurements(): boolean {
         return (
-            this.glyphCanvas.altKeyPressed &&
+            this.glyphCanvas.shiftKeyPressed &&
             this.visible &&
-            !this.glyphCanvas.outlineEditor.active
+            !this.glyphCanvas.outlineEditor.active &&
+            !this.disabledForTyping
         );
     }
 
@@ -126,7 +143,7 @@ export class MeasurementTool {
         const delay =
             APP_SETTINGS.OUTLINE_EDITOR.MEASUREMENT_TOOL_DISPLAY_DELAY;
         this.delayTimer = window.setTimeout(() => {
-            if (!this.cancelledByZoom) {
+            if (!this.cancelledByZoom && !this.disabledForTyping) {
                 this.visible = true;
                 this.glyphCanvas.updateCursorStyle();
             }

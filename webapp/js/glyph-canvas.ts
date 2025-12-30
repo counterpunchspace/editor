@@ -79,7 +79,7 @@ class GlyphCanvas {
     };
 
     // Internal state properties not in constructor
-    altKeyPressed: boolean = false;
+    shiftKeyPressed: boolean = false;
     isDraggingCanvas: boolean = false;
     lastMouseX: number = 0;
     lastMouseY: number = 0;
@@ -206,11 +206,19 @@ class GlyphCanvas {
                 'spaceKeyPressed:',
                 this.outlineEditor.spaceKeyPressed
             );
-            // Track Alt key for measurement tool
-            if (e.altKey || e.key === 'Alt') {
-                this.altKeyPressed = true;
+            // Track Shift key for measurement tool
+            if (e.key === 'Shift' && !e.repeat) {
+                // Only Shift key pressed (not combined with another key)
+                this.shiftKeyPressed = true;
                 // Start delay timer before showing measurement tool
-                this.measurementTool.handleAltKeyPress();
+                this.measurementTool.handleShiftKeyPress();
+                this.render();
+            } else if (e.shiftKey && e.key !== 'Shift') {
+                // Another key pressed while Shift is held (user is typing capital letters)
+                // This catches both: typing after Shift is held, and Shift+Key pressed simultaneously
+                this.shiftKeyPressed = true; // Ensure shift state is tracked
+                this.measurementTool.handleTypingWithShift();
+                this.updateCursorStyle();
                 this.render();
             }
             this.onKeyDown(e);
@@ -226,10 +234,10 @@ class GlyphCanvas {
                 this.outlineEditor.spaceKeyPressed
             );
 
-            // Track Alt key release
-            if (e.key === 'Alt') {
-                this.altKeyPressed = false;
-                this.measurementTool.handleAltKeyRelease();
+            // Track Shift key release
+            if (e.key === 'Shift') {
+                this.shiftKeyPressed = false;
+                this.measurementTool.handleShiftKeyRelease();
                 this.updateCursorStyle(); // Update cursor immediately
                 this.render();
             }
@@ -253,7 +261,7 @@ class GlyphCanvas {
 
         // Reset key states when window loses focus (e.g., Cmd+Tab to switch apps)
         window.addEventListener('blur', () => {
-            this.altKeyPressed = false;
+            this.shiftKeyPressed = false;
             this.isDraggingCanvas = false;
             this.outlineEditor.onBlur();
             if (this.canvas) {
@@ -265,7 +273,7 @@ class GlyphCanvas {
 
         // Also reset when canvas loses focus
         this.canvas!.addEventListener('blur', () => {
-            this.altKeyPressed = false;
+            this.shiftKeyPressed = false;
             this.isDraggingCanvas = false;
             // Note: Don't reset spaceKeyPressed here - it should be handled by the keyup event
             // Resetting it here causes preview mode to malfunction because the keyup handler
@@ -772,7 +780,7 @@ class GlyphCanvas {
             }
         }
 
-        // Start measurement drag when Alt key is pressed in editing mode
+        // Start measurement drag when Shift key is pressed in editing mode
         const rect = this.canvas!.getBoundingClientRect();
         if (this.measurementTool.handleMouseDown(e.clientX, e.clientY, rect)) {
             this.updateCursorStyle(); // Update cursor immediately
@@ -833,8 +841,8 @@ class GlyphCanvas {
     onWheel(e: WheelEvent): void {
         e.preventDefault();
 
-        // If Alt is pressed, turn off the measurement tool (cancel delay or hide if visible)
-        if (this.altKeyPressed) {
+        // If Shift is pressed, turn off the measurement tool (cancel delay or hide if visible)
+        if (this.shiftKeyPressed) {
             this.measurementTool.handleWheel();
             this.updateCursorStyle(); // Update cursor immediately
         }
@@ -863,14 +871,14 @@ class GlyphCanvas {
         // Update cursor style based on position (after updating hover states)
         this.updateCursorStyle(e);
 
-        // Re-render when alt key is pressed to update crosshair position
-        if (this.altKeyPressed) {
+        // Re-render when shift key is pressed to update crosshair position
+        if (this.shiftKeyPressed) {
             this.render();
         }
     }
 
     updateCursorStyle(e?: MouseEvent | KeyboardEvent): void {
-        // Alt key pressed in editing mode with measurement tool visible = crosshair cursor
+        // Shift key pressed in editing mode with measurement tool visible = crosshair cursor
         if (this.measurementTool.shouldShowCrosshair()) {
             this.canvas!.style.cursor = 'crosshair';
             return;
