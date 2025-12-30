@@ -821,6 +821,22 @@ class GlyphCanvas {
             const deltaY = e.clientY - this.lastMouseY;
 
             this.viewportManager!.pan(deltaX, deltaY);
+
+            // Update mouse position for hit-testing during pan
+            const rect = this.canvas!.getBoundingClientRect();
+            this.mouseX = e.clientX - rect.left;
+            this.mouseY = e.clientY - rect.top;
+            this.mouseCanvasX = (this.mouseX * this.canvas!.width) / rect.width;
+            this.mouseCanvasY =
+                (this.mouseY * this.canvas!.height) / rect.height;
+
+            // Perform hit-testing during panning (both text mode and editing mode)
+            if (!this.measurementTool.shouldBlockHitDetection()) {
+                this.outlineEditor.performHitDetection(e);
+                this.updateHoveredGlyph();
+                this.updateCursorStyle(e); // Update cursor after hit-testing
+            }
+
             this.render();
 
             this.lastMouseX = e.clientX;
@@ -848,7 +864,23 @@ class GlyphCanvas {
         }
 
         const rect = this.canvas!.getBoundingClientRect();
-        this.viewportManager!.handleWheel(e, rect, this.render.bind(this));
+
+        // Update mouse position from wheel event (mouse doesn't move during trackpad pan)
+        this.mouseX = e.clientX - rect.left;
+        this.mouseY = e.clientY - rect.top;
+        this.mouseCanvasX = (this.mouseX * this.canvas!.width) / rect.width;
+        this.mouseCanvasY = (this.mouseY * this.canvas!.height) / rect.height;
+
+        // Perform viewport pan/zoom (will call render callback)
+        this.viewportManager!.handleWheel(e, rect, () => {
+            // After pan/zoom, perform hit-testing since content moved under static cursor
+            if (!this.measurementTool.shouldBlockHitDetection()) {
+                this.outlineEditor.performHitDetection(e as any);
+                this.updateHoveredGlyph();
+                this.updateCursorStyle(e as any); // Update cursor after hit-testing
+            }
+            this.render();
+        });
     }
 
     onMouseMoveHover(e: MouseEvent): void {

@@ -993,6 +993,9 @@ export class OutlineEditor {
                 this.hoveredAnchorIndex !== null)
         ) {
             this.canvas!.style.cursor = 'pointer';
+        } else if (this.hoveredGlyphIndex !== -1) {
+            // Hovering over another glyph in editing mode
+            this.canvas!.style.cursor = 'pointer';
         } else {
             this.canvas!.style.cursor = 'default';
         }
