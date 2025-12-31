@@ -33,20 +33,37 @@ export class MeasurementTool {
      * Handle Shift key release - reset all state
      */
     handleShiftKeyRelease(): void {
+        const wasVisible = this.visible;
         this.cancelDelayTimer();
         this.visible = false;
         this.cancelledByZoom = false;
         this.isDragging = false;
         this.disabledForTyping = false;
+
+        // Perform hit-testing when measurement tool turns off
+        if (wasVisible) {
+            this.glyphCanvas.outlineEditor.performHitDetection(null);
+            this.glyphCanvas.updateHoveredGlyph();
+            this.glyphCanvas.updateCursorStyle();
+            this.glyphCanvas.render();
+        }
     }
 
     /**
      * Handle mouse wheel/zoom - cancel or hide tool
      */
     handleWheel(): void {
+        const wasVisible = this.visible;
         this.cancelDelayTimer();
         this.visible = false;
         this.cancelledByZoom = true;
+
+        // Perform hit-testing when measurement tool turns off
+        if (wasVisible) {
+            this.glyphCanvas.outlineEditor.performHitDetection(null);
+            this.glyphCanvas.updateHoveredGlyph();
+            this.glyphCanvas.updateCursorStyle();
+        }
     }
 
     /**
@@ -145,6 +162,11 @@ export class MeasurementTool {
         this.delayTimer = window.setTimeout(() => {
             if (!this.cancelledByZoom && !this.disabledForTyping) {
                 this.visible = true;
+                // Clear hover states when measurement tool turns on
+                this.glyphCanvas.outlineEditor.hoveredGlyphIndex = -1;
+                this.glyphCanvas.outlineEditor.hoveredComponentIndex = null;
+                this.glyphCanvas.outlineEditor.hoveredPointIndex = null;
+                this.glyphCanvas.outlineEditor.hoveredAnchorIndex = null;
                 this.glyphCanvas.updateCursorStyle();
             }
             this.delayTimer = null;
@@ -168,5 +190,10 @@ export class MeasurementTool {
     private showImmediately(): void {
         this.cancelDelayTimer();
         this.visible = true;
+        // Clear hover states when measurement tool turns on
+        this.glyphCanvas.outlineEditor.hoveredGlyphIndex = -1;
+        this.glyphCanvas.outlineEditor.hoveredComponentIndex = null;
+        this.glyphCanvas.outlineEditor.hoveredPointIndex = null;
+        this.glyphCanvas.outlineEditor.hoveredAnchorIndex = null;
     }
 }
