@@ -3,16 +3,8 @@
 
 /* Global tokens (theme-independent) */
 :root {
-    --letter-spacing-body: 0.02em;
-    --letter-spacing-icon: 0em;
     --font-mono: 'IBM Plex Mono';
     --font-sans: 'IBM Plex Sans';
-    --font-size-icon: 20px;
-    --font-size-body: 14px;
-    --font-size-small: 11px;
-    --border-radius-sm: 3px;
-    --spacing-xs: 2px;
-    --spacing-sm: 6px;
 }
 
 /* Dark theme (default) */
@@ -77,10 +69,7 @@
     --view-files: #be1e2d;
     --view-scripts: #f7941d;
     --view-fontinfo: #662d91;
-    --view-overview: #1c75bc;
     --code-bg: #1f1f1f;
-    --code-selection: rgba(153, 0, 255, 0.3);
-    --code-line-highlight: rgba(255, 0, 255, 0.08);
     --button-text: #e0e0e0;
     --button-hover-bg: #333333;
     --button-border: #555555;
@@ -151,10 +140,7 @@
     --view-files: #be1e2d;
     --view-scripts: #f7941d;
     --view-fontinfo: #662d91;
-    --view-overview: #1c75bc;
     --code-bg: #f8f8f8;
-    --code-selection: rgba(120, 0, 200, 0.15);
-    --code-line-highlight: rgba(200, 0, 200, 0.04);
     --button-text: #1a1a1a;
     --button-hover-bg: #e0e0e0;
     --button-border: #b0b0b0;

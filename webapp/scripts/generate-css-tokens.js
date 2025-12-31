@@ -102,7 +102,6 @@ const tokenToCssVarMap = {
     'view-console': 'view-console',
     'view-scripts': 'view-scripts',
     'view-assistant': 'view-assistant',
-    'view-overview': 'view-overview',
 
     // Button colors
     'button-bg': 'button-bg',
@@ -134,8 +133,6 @@ const tokenToCssVarMap = {
 
     // Code colors
     'code-bg': 'code-bg',
-    'code-selection': 'code-selection',
-    'code-line-highlight': 'code-line-highlight',
 
     // Autorun colors
     'autorun-disabled-border': 'autorun-disabled-border',
@@ -162,14 +159,6 @@ const tokenToCssVarMap = {
     // Typography
     'font-families-mono': 'font-mono',
     'font-families-sans': 'font-sans',
-    'font-size-body': 'font-size-body',
-    'font-size-small': 'font-size-small',
-    'font-size-icon': 'font-size-icon',
-    'letter-spacing-body': 'letter-spacing-body',
-    'letter-spacing-icon': 'letter-spacing-icon',
-    'border-radius-sm': 'border-radius-sm',
-    'spacing-xs': 'spacing-xs',
-    'spacing-sm': 'spacing-sm'
 };
 
 /**
