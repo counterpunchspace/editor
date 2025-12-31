@@ -271,6 +271,13 @@ export class OutlineEditor {
             return; // Don't handle Escape if editor view is not focused
         }
 
+        // Priority 0: Stop any active loop animations (play button sine waves)
+        if (this.glyphCanvas.axesManager?.isLoopAnimating) {
+            e.preventDefault();
+            this.glyphCanvas.axesManager.stopAllLoopAnimations();
+            return;
+        }
+
         e.preventDefault();
 
         console.log('Escape pressed. Previous state:', {

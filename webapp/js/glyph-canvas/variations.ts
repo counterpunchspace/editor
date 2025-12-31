@@ -25,6 +25,8 @@ export class AxesManager {
     isTextFieldChange: boolean;
     pendingSliderMouseUp: boolean;
     lastSliderReleaseTime: number;
+    isLoopAnimating: boolean;
+    loopAnimationStopCallbacks: (() => void)[];
 
     constructor() {
         this.variationSettings = {}; // Current variation settings
@@ -42,9 +44,28 @@ export class AxesManager {
         this.isTextFieldChange = false;
         this.pendingSliderMouseUp = false;
         this.lastSliderReleaseTime = 0;
+        this.isLoopAnimating = false;
+        this.loopAnimationStopCallbacks = [];
 
         this.fontBytes = null; // To be set externally
         this.callbacks = {}; // Array of callbacks for each event
+    }
+
+    stopAllLoopAnimations() {
+        if (this.loopAnimationStopCallbacks.length > 0) {
+            console.log('[AxesManager] Stopping all loop animations');
+            // Call all stop callbacks
+            this.loopAnimationStopCallbacks.forEach((stop) => stop());
+            this.loopAnimationStopCallbacks = [];
+            this.isLoopAnimating = false;
+            // Trigger sliderMouseUp to finalize
+            this.isSliderActive = false;
+            if (this.isAnimating) {
+                this.pendingSliderMouseUp = true;
+            } else {
+                this.call('sliderMouseUp');
+            }
+        }
     }
 
     on(event: string, callback: Function) {
@@ -185,7 +206,120 @@ export class AxesManager {
             valueLabel.setAttribute('data-axis-tag', axis.tag); // Add identifier for programmatic updates
             valueLabel.setAttribute('inputmode', 'numeric');
 
+            // Play/pause button for animation
+            const playButton = document.createElement('button');
+            playButton.className = 'editor-axis-play-button';
+            playButton.innerHTML =
+                '<span class="material-symbols-rounded">play_arrow</span>';
+            playButton.title = 'Animate axis';
+
+            let animationActive = false;
+            let animationStartTime = 0;
+            let animationFrameId: number | null = null;
+            let animationStartValue = 0;
+
+            const animateAxis = () => {
+                if (!animationActive) return;
+
+                const now = performance.now();
+                const elapsed = now - animationStartTime;
+                const wavelength =
+                    (window as any).APP_SETTINGS?.AXIS_ANIMATION_WAVELENGTH ||
+                    5000;
+
+                // Calculate phase offset so animation starts from current value
+                const midpoint = (axis.min + axis.max) / 2;
+                const amplitude = (axis.max - axis.min) / 2;
+                // Find the phase that corresponds to the start value: sin(phase) = (startValue - midpoint) / amplitude
+                const normalizedStart =
+                    (animationStartValue - midpoint) / amplitude;
+                const startPhase = Math.asin(
+                    Math.max(-1, Math.min(1, normalizedStart))
+                );
+
+                // Sine wave oscillation starting from the calculated phase
+                const sineValue = Math.sin(
+                    startPhase + (elapsed / wavelength) * 2 * Math.PI
+                );
+                // Map sine (-1 to 1) to axis range (min to max)
+                const value = midpoint + sineValue * amplitude;
+
+                // Update slider and value label
+                slider.value = value.toString();
+                valueLabel.value = value.toFixed(0);
+                updateSliderFill();
+
+                // Trigger the same callbacks as manual slider interaction
+                this.call('onSliderChange', axis.tag, value);
+                this.setVariation(axis.tag, value);
+
+                animationFrameId = requestAnimationFrame(animateAxis);
+            };
+
+            // Function to stop this animation (called by stopAllLoopAnimations or click)
+            const stopAnimation = () => {
+                animationActive = false;
+                playButton.innerHTML =
+                    '<span class="material-symbols-rounded">play_arrow</span>';
+                playButton.classList.remove('playing');
+                if (animationFrameId !== null) {
+                    cancelAnimationFrame(animationFrameId);
+                    animationFrameId = null;
+                }
+            };
+
+            playButton.addEventListener('click', async () => {
+                // Toggle: if was active, we're stopping; if was inactive, we're starting
+                const wasActive = animationActive;
+
+                if (!wasActive) {
+                    // Start animation
+                    animationActive = true;
+                    playButton.innerHTML =
+                        '<span class="material-symbols-rounded">pause</span>';
+                    playButton.classList.add('playing');
+                    animationStartTime = performance.now();
+                    animationStartValue = parseFloat(slider.value);
+
+                    // Mark as loop animating to suppress layer selection
+                    this.isLoopAnimating = true;
+
+                    // Register stop callback
+                    this.loopAnimationStopCallbacks.push(stopAnimation);
+
+                    // Enter preview mode (same as slider mousedown)
+                    this.isSliderActive = true;
+                    await this.call('sliderMouseDown');
+
+                    animateAxis();
+                } else {
+                    // Stop animation
+                    stopAnimation();
+
+                    // Remove from callbacks list
+                    const index =
+                        this.loopAnimationStopCallbacks.indexOf(stopAnimation);
+                    if (index > -1) {
+                        this.loopAnimationStopCallbacks.splice(index, 1);
+                    }
+
+                    // Clear loop animating flag if no more animations
+                    if (this.loopAnimationStopCallbacks.length === 0) {
+                        this.isLoopAnimating = false;
+                    }
+
+                    // Exit preview mode (same as slider mouseup)
+                    this.isSliderActive = false;
+                    if (this.isAnimating) {
+                        this.pendingSliderMouseUp = true;
+                    } else {
+                        this.call('sliderMouseUp');
+                    }
+                }
+            });
+
             labelRow.appendChild(axisLabel);
+            labelRow.appendChild(playButton);
             labelRow.appendChild(valueLabel);
 
             // Slider

@@ -8,6 +8,9 @@ const APP_SETTINGS = {
     // Compilation settings
     COMPILE_DEBOUNCE_DELAY: 150, // ms - delay before auto-compile triggers after changes
 
+    // Axis animation settings
+    AXIS_ANIMATION_WAVELENGTH: 5000, // ms - wavelength of sine wave for axis animation
+
     // Sound settings
     SOUND_ENABLED: false, // Set to true to enable sound effects
 

@@ -17,18 +17,191 @@
     }
 
     /**
-     * Resize a view to its configured minimum size
+     * Update collapsed states on views after resize
+     */
+    function updateCollapsedStates() {
+        if (
+            window.resizableViews &&
+            window.resizableViews.updateCollapsedStates
+        ) {
+            window.resizableViews.updateCollapsedStates();
+        }
+    }
+
+    /**
+     * Expand view on activation if it's below threshold
+     * Returns true if expansion was performed
+     */
+    function expandViewOnActivation(viewId) {
+        const settings = getViewSettings();
+        if (!settings || !settings.activation) return false;
+
+        const view = document.getElementById(viewId);
+        if (!view) return false;
+
+        const container = document.querySelector('.container');
+        const containerWidth = container.offsetWidth;
+        const containerHeight = container.offsetHeight;
+        const horizontalDividerHeight = 4;
+        const availableHeight = containerHeight - horizontalDividerHeight;
+
+        const isTopRow = view.closest('.top-row') !== null;
+        const isBottomRow = view.closest('.bottom-row') !== null;
+
+        // Enable transitions if configured
+        if (settings.animation && settings.animation.enabled) {
+            enableTransitions(
+                settings.animation.duration,
+                settings.animation.easing
+            );
+        }
+
+        let expanded = false;
+
+        if (viewId === 'view-editor') {
+            // Editor view - expand if below threshold
+            const config = settings.activation.editor;
+            const topRow = view.closest('.top-row');
+            const topRowViews = Array.from(topRow.querySelectorAll('.view'));
+            const viewIndex = topRowViews.indexOf(view);
+
+            const currentWidth = view.offsetWidth;
+            const currentHeight = topRow.offsetHeight;
+            const widthRatio = currentWidth / containerWidth;
+            const heightRatio = currentHeight / availableHeight;
+
+            console.log('[KeyboardNav]', 'Editor activation check:', {
+                currentWidth,
+                currentHeight,
+                containerWidth,
+                availableHeight,
+                widthRatio: widthRatio.toFixed(3),
+                heightRatio: heightRatio.toFixed(3),
+                widthThreshold: config.widthThreshold,
+                heightThreshold: config.heightThreshold
+            });
+
+            if (widthRatio < config.widthThreshold) {
+                // Expand width
+                const targetWidth = containerWidth * config.widthTarget;
+                const otherView = topRowViews[1 - viewIndex];
+                const otherWidth = containerWidth - targetWidth;
+
+                console.log('[KeyboardNav]', 'Expanding editor width:', {
+                    targetWidth,
+                    otherWidth
+                });
+
+                if (otherWidth >= 24) {
+                    const totalWidth = targetWidth + otherWidth;
+                    view.style.flex = `${targetWidth / totalWidth}`;
+                    otherView.style.flex = `${otherWidth / totalWidth}`;
+                    expanded = true;
+                }
+            }
+
+            if (heightRatio < config.heightThreshold) {
+                // Expand height
+                const targetHeight = availableHeight * config.heightTarget;
+                const bottomRow = document.querySelector('.bottom-row');
+                const bottomHeight = availableHeight - targetHeight;
+
+                console.log('[KeyboardNav]', 'Expanding editor height:', {
+                    targetHeight,
+                    bottomHeight,
+                    topFlex: (targetHeight / availableHeight).toFixed(3),
+                    bottomFlex: (bottomHeight / availableHeight).toFixed(3)
+                });
+
+                if (bottomHeight >= 24) {
+                    topRow.style.flex = `${targetHeight / availableHeight}`;
+                    bottomRow.style.flex = `${bottomHeight / availableHeight}`;
+                    expanded = true;
+                }
+            }
+        } else if (viewId === 'view-fontinfo') {
+            // Font info view - expand by width if below threshold
+            const config = settings.activation.fontinfo;
+            const topRow = view.closest('.top-row');
+            const topRowViews = Array.from(topRow.querySelectorAll('.view'));
+            const viewIndex = topRowViews.indexOf(view);
+
+            const currentWidth = view.offsetWidth;
+            const widthRatio = currentWidth / containerWidth;
+
+            if (widthRatio < config.widthThreshold) {
+                // Expand width
+                const targetWidth = containerWidth * config.widthTarget;
+                const otherView = topRowViews[1 - viewIndex];
+                const otherWidth = containerWidth - targetWidth;
+
+                if (otherWidth >= 200) {
+                    // Ensure editor keeps min size
+                    const totalWidth = targetWidth + otherWidth;
+                    view.style.flex = `${targetWidth / totalWidth}`;
+                    otherView.style.flex = `${otherWidth / totalWidth}`;
+                    expanded = true;
+                }
+            }
+        } else if (isBottomRow) {
+            // Secondary views in bottom row - expand by height if below threshold
+            const config = settings.activation.secondary;
+            const bottomRow = view.closest('.bottom-row');
+            const topRow = document.querySelector('.top-row');
+
+            const currentHeight = bottomRow.offsetHeight;
+            const heightRatio = currentHeight / availableHeight;
+
+            if (heightRatio < config.heightThreshold) {
+                // Expand height
+                const targetHeight = availableHeight * config.heightTarget;
+                const topHeight = availableHeight - targetHeight;
+
+                if (topHeight >= 200) {
+                    // Ensure top row keeps editor min size
+                    topRow.style.flex = `${topHeight / availableHeight}`;
+                    bottomRow.style.flex = `${targetHeight / availableHeight}`;
+                    expanded = true;
+                }
+            }
+        }
+
+        // Disable transitions and update collapsed states after animation
+        if (settings.animation && settings.animation.enabled) {
+            setTimeout(() => {
+                disableTransitions();
+                updateCollapsedStates();
+                if (window.resizableViews) {
+                    window.resizableViews.saveLayout();
+                }
+            }, settings.animation.duration);
+        } else {
+            updateCollapsedStates();
+            if (window.resizableViews) {
+                window.resizableViews.saveLayout();
+            }
+        }
+
+        return expanded;
+    }
+
+    /**
+     * Resize a view based on secondary shortcut behavior
+     * - 'maximize': Resize to maximize values (for editor)
+     * - 'expandToTarget': Expand to activation target if smaller (for secondary views)
      */
     function resizeView(viewId) {
         const settings = getViewSettings();
         if (!settings) return;
 
-        const resizeConfig = settings.resize[viewId];
+        const shortcutConfig = settings.shortcuts[viewId];
+        if (!shortcutConfig) return;
 
-        if (!resizeConfig) {
-            console.warn(
+        const secondaryBehavior = shortcutConfig.secondaryBehavior;
+        if (!secondaryBehavior) {
+            console.log(
                 '[KeyboardNav]',
-                'No resize configuration for view:',
+                'No secondary behavior for view:',
                 viewId
             );
             return;
@@ -40,6 +213,8 @@
         const container = document.querySelector('.container');
         const containerWidth = container.offsetWidth;
         const containerHeight = container.offsetHeight;
+        const horizontalDividerHeight = 4;
+        const availableHeight = containerHeight - horizontalDividerHeight;
 
         // Enable transitions if configured
         if (settings.animation && settings.animation.enabled) {
@@ -49,38 +224,135 @@
             );
         }
 
-        // Determine if view is in top or bottom row
         const isTopRow = view.closest('.top-row') !== null;
         const isBottomRow = view.closest('.bottom-row') !== null;
 
-        if (isTopRow) {
-            resizeTopRowView(
+        // Title bar size constant (matches resizer.js)
+        const TITLE_BAR_SIZE = 24;
+
+        if (secondaryBehavior === 'maximize') {
+            // Maximize behavior (for editor)
+            // Calculate dynamic resize config: full size minus title bar for collapsed secondary views
+            const resizeConfig = {
+                // Width: full container minus title bar width for font info (collapsed sideways)
+                width: (containerWidth - TITLE_BAR_SIZE) / containerWidth,
+                // Height: full available height minus title bar height for bottom row
+                height: (availableHeight - TITLE_BAR_SIZE) / availableHeight
+            };
+
+            console.log(
+                '[KeyboardNav]',
+                'Maximize behavior for:',
                 viewId,
-                view,
-                resizeConfig,
-                containerWidth,
-                containerHeight
+                resizeConfig
             );
-        } else if (isBottomRow) {
-            resizeBottomRowView(
-                viewId,
-                view,
-                resizeConfig,
-                containerWidth,
-                containerHeight
-            );
+
+            if (isTopRow) {
+                resizeTopRowView(
+                    viewId,
+                    view,
+                    resizeConfig,
+                    containerWidth,
+                    containerHeight,
+                    true // forceResize
+                );
+            } else if (isBottomRow) {
+                resizeBottomRowView(
+                    viewId,
+                    view,
+                    resizeConfig,
+                    containerWidth,
+                    containerHeight,
+                    true // forceResize
+                );
+            }
+        } else if (secondaryBehavior === 'expandToTarget') {
+            // Expand to activation target if smaller (for secondary views)
+            if (viewId === 'view-fontinfo') {
+                // Font info - expand width to target if smaller
+                const config = settings.activation.fontinfo;
+                const topRow = view.closest('.top-row');
+                const topRowViews = Array.from(
+                    topRow.querySelectorAll('.view')
+                );
+                const viewIndex = topRowViews.indexOf(view);
+                const currentWidth = view.offsetWidth;
+                const targetWidth = containerWidth * config.widthTarget;
+
+                if (currentWidth < targetWidth) {
+                    const otherView = topRowViews[1 - viewIndex];
+                    const otherWidth = containerWidth - targetWidth;
+
+                    if (otherWidth >= 200) {
+                        const totalWidth = targetWidth + otherWidth;
+                        view.style.flex = `${targetWidth / totalWidth}`;
+                        otherView.style.flex = `${otherWidth / totalWidth}`;
+                    }
+                }
+            } else if (isBottomRow) {
+                // Bottom row secondary views - expand height and width to target if smaller
+                const config = settings.activation.secondary;
+                const bottomRow = view.closest('.bottom-row');
+                const topRow = document.querySelector('.top-row');
+                const views = Array.from(bottomRow.querySelectorAll('.view'));
+                const viewIndex = views.indexOf(view);
+
+                // Expand height if smaller than target
+                const currentHeight = bottomRow.offsetHeight;
+                const targetHeight = availableHeight * config.heightTarget;
+
+                if (currentHeight < targetHeight) {
+                    const topHeight = availableHeight - targetHeight;
+
+                    if (topHeight >= 200) {
+                        topRow.style.flex = `${topHeight / availableHeight}`;
+                        bottomRow.style.flex = `${targetHeight / availableHeight}`;
+                    }
+                }
+
+                // Expand width if smaller than target
+                const currentWidth = view.offsetWidth;
+                const targetWidth = containerWidth * config.widthTarget;
+
+                if (currentWidth < targetWidth && views.length > 1) {
+                    const remainingWidth = containerWidth - targetWidth;
+                    const otherViewsCount = views.length - 1;
+                    const remainingWidthPerView =
+                        remainingWidth / otherViewsCount;
+
+                    if (remainingWidthPerView >= 100) {
+                        const widths = {};
+                        views.forEach((v, i) => {
+                            widths[i] =
+                                i === viewIndex
+                                    ? targetWidth
+                                    : remainingWidthPerView;
+                        });
+
+                        const totalWidth = Object.values(widths).reduce(
+                            (sum, w) => sum + w,
+                            0
+                        );
+                        views.forEach((v, i) => {
+                            v.style.flex = `${widths[i] / totalWidth}`;
+                        });
+                    }
+                }
+            }
         }
 
-        // Disable transitions after animation completes
+        // Disable transitions and update collapsed states after animation completes
         if (settings.animation && settings.animation.enabled) {
             setTimeout(() => {
                 disableTransitions();
+                updateCollapsedStates();
                 // Save layout after resize completes
                 if (window.resizableViews) {
                     window.resizableViews.saveLayout();
                 }
             }, settings.animation.duration);
         } else {
+            updateCollapsedStates();
             // Save immediately if no animation
             if (window.resizableViews) {
                 window.resizableViews.saveLayout();
@@ -115,13 +387,15 @@
 
     /**
      * Resize a view in the top row
+     * @param {boolean} forceResize - If true, resize even if target is smaller than current
      */
     function resizeTopRowView(
         viewId,
         view,
         resizeConfig,
         containerWidth,
-        containerHeight
+        containerHeight,
+        forceResize = false
     ) {
         const topRow = view.closest('.top-row');
         const views = Array.from(topRow.querySelectorAll('.view'));
@@ -139,17 +413,29 @@
         const currentWidth = view.offsetWidth;
         const currentHeight = topRow.offsetHeight;
 
-        // Only resize if target is larger than current (minimum values)
-        const shouldResizeWidth = targetViewWidth > currentWidth;
-        const shouldResizeHeight = targetViewHeight > currentHeight;
+        // Resize if target is larger than current, or if forceResize is true
+        const shouldResizeWidth = forceResize || targetViewWidth > currentWidth;
+        const shouldResizeHeight =
+            forceResize || targetViewHeight > currentHeight;
+
+        console.log('[KeyboardNav]', 'resizeTopRowView:', {
+            viewId,
+            forceResize,
+            currentWidth,
+            targetViewWidth,
+            shouldResizeWidth,
+            currentHeight,
+            targetViewHeight,
+            shouldResizeHeight
+        });
 
         // Handle width resizing
         if (shouldResizeWidth && views.length > 1) {
             const otherView = views[1 - viewIndex]; // Get the other view in top row
             const otherTargetWidth = containerWidth - targetViewWidth;
 
-            if (otherTargetWidth >= 100) {
-                // Ensure minimum width for other view
+            if (otherTargetWidth >= 24) {
+                // Allow collapse to min width
                 const totalWidth = targetViewWidth + otherTargetWidth;
                 const viewFlex = targetViewWidth / totalWidth;
                 const otherFlex = otherTargetWidth / totalWidth;
@@ -164,8 +450,8 @@
             const bottomRow = document.querySelector('.bottom-row');
             const bottomTargetHeight = availableHeight - targetViewHeight;
 
-            if (bottomTargetHeight >= 100) {
-                // Ensure minimum height for bottom row
+            if (bottomTargetHeight >= 24) {
+                // Allow collapse to min height
                 const topFlex = targetViewHeight / availableHeight;
                 const bottomFlex = bottomTargetHeight / availableHeight;
 
@@ -178,12 +464,17 @@
     /**
      * Resize a view in the bottom row
      */
+    /**
+     * Resize a view in the bottom row
+     * @param {boolean} forceResize - If true, resize even if target is smaller than current
+     */
     function resizeBottomRowView(
         viewId,
         view,
         resizeConfig,
         containerWidth,
-        containerHeight
+        containerHeight,
+        forceResize = false
     ) {
         const bottomRow = view.closest('.bottom-row');
         const topRow = document.querySelector('.top-row');
@@ -202,16 +493,17 @@
         const currentBottomHeight = bottomRow.offsetHeight;
         const currentWidth = view.offsetWidth;
 
-        // Only resize if target is larger than current (minimum values)
-        const shouldResizeHeight = targetBottomHeight > currentBottomHeight;
-        const shouldResizeWidth = targetViewWidth > currentWidth;
+        // Resize if target is larger than current, or if forceResize is true
+        const shouldResizeHeight =
+            forceResize || targetBottomHeight > currentBottomHeight;
+        const shouldResizeWidth = forceResize || targetViewWidth > currentWidth;
 
         // Handle height resizing (affects top/bottom split)
         if (shouldResizeHeight) {
             const topTargetHeight = availableHeight - targetBottomHeight;
 
-            if (topTargetHeight >= 100) {
-                // Ensure minimum height for top row
+            if (topTargetHeight >= 200) {
+                // Ensure minimum height for top row (editor)
                 const topFlex = topTargetHeight / availableHeight;
                 const bottomFlex = targetBottomHeight / availableHeight;
 
@@ -380,6 +672,9 @@
 
             // Save the last active view to localStorage
             localStorage.setItem('last_active_view', viewId);
+
+            // Expand view if below threshold (auto-expand on activation)
+            expandViewOnActivation(viewId);
 
             // Determine if we're focusing a top view (editor or fontinfo)
             const isTopView =

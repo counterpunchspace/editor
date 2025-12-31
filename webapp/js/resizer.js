@@ -1,6 +1,15 @@
 console.log('[Resizer]', 'resizer.js loaded');
 
 class ResizableViews {
+    // Minimum sizes for different view types
+    static TITLE_BAR_HEIGHT = 24;
+    static PRIMARY_MIN_WIDTH = 200;
+    static PRIMARY_MIN_HEIGHT = 200;
+    static SECONDARY_MIN_WIDTH = 100;
+    static SECONDARY_MIN_HEIGHT = 24; // Title bar only
+    static FONTINFO_MIN_WIDTH = 24; // Title bar width when rotated
+    static FONTINFO_MIN_HEIGHT = 100;
+
     constructor() {
         console.log('[Resizer]', 'ResizableViews constructor called');
         this.isResizing = false;
@@ -11,6 +20,61 @@ class ResizableViews {
         this.startHeights = {};
 
         this.init();
+    }
+
+    /**
+     * Get the minimum width for a view based on its type
+     */
+    getMinWidth(view) {
+        if (view.classList.contains('view-editor')) {
+            return ResizableViews.PRIMARY_MIN_WIDTH;
+        }
+        if (view.classList.contains('view-fontinfo')) {
+            return ResizableViews.FONTINFO_MIN_WIDTH;
+        }
+        return ResizableViews.SECONDARY_MIN_WIDTH;
+    }
+
+    /**
+     * Get the minimum height for a view based on its type
+     */
+    getMinHeight(view) {
+        if (view.classList.contains('view-editor')) {
+            return ResizableViews.PRIMARY_MIN_HEIGHT;
+        }
+        if (view.classList.contains('view-fontinfo')) {
+            return ResizableViews.FONTINFO_MIN_HEIGHT;
+        }
+        return ResizableViews.SECONDARY_MIN_HEIGHT;
+    }
+
+    /**
+     * Update collapsed state classes based on current view dimensions
+     */
+    updateCollapsedStates() {
+        const views = document.querySelectorAll('.view');
+        views.forEach((view) => {
+            // Skip the editor (primary view)
+            if (view.classList.contains('view-editor')) return;
+
+            const rect = view.getBoundingClientRect();
+            const titleBarHeight = ResizableViews.TITLE_BAR_HEIGHT;
+            const threshold = 5; // Tolerance for float comparison
+
+            if (view.classList.contains('view-fontinfo')) {
+                // Font info collapses by width
+                const isWidthCollapsed =
+                    rect.width <= ResizableViews.FONTINFO_MIN_WIDTH + threshold;
+                view.classList.toggle('collapsed-width', isWidthCollapsed);
+                view.classList.remove('collapsed');
+            } else {
+                // Other secondary views collapse by height
+                const isHeightCollapsed =
+                    rect.height <= titleBarHeight + threshold;
+                view.classList.toggle('collapsed', isHeightCollapsed);
+                view.classList.remove('collapsed-width');
+            }
+        });
     }
 
     init() {
@@ -208,8 +272,6 @@ class ResizableViews {
         const dividerIndex = dividers.indexOf(this.currentDivider);
         if (dividerIndex === -1) return;
 
-        const minWidth = 100;
-
         // Determine which side to resize based on drag direction
         if (deltaX < 0) {
             // Dragging left - resize left views proportionally, only the immediate right view changes
@@ -228,11 +290,16 @@ class ResizableViews {
             const newLeftTotalWidth = leftTotalWidth + deltaX;
             const newRightWidth = rightStartWidth - deltaX;
 
-            // Check minimums
-            const minLeftTotalWidth = minWidth * leftViews.length;
+            // Check minimums using dynamic min widths
+            let minLeftTotalWidth = 0;
+            leftViews.forEach((view) => {
+                minLeftTotalWidth += this.getMinWidth(view);
+            });
+            const rightMinWidth = this.getMinWidth(rightView);
+
             if (
                 newLeftTotalWidth >= minLeftTotalWidth &&
-                newRightWidth >= minWidth
+                newRightWidth >= rightMinWidth
             ) {
                 // Scale left views proportionally
                 const leftScale = newLeftTotalWidth / leftTotalWidth;
@@ -257,6 +324,9 @@ class ResizableViews {
                 views.forEach((view, index) => {
                     view.style.flex = `${newWidths[index] / totalWidth}`;
                 });
+
+                // Update collapsed states
+                this.updateCollapsedStates();
             }
         } else if (deltaX > 0) {
             // Dragging right - resize right views proportionally, only the immediate left view changes
@@ -276,10 +346,15 @@ class ResizableViews {
             const newLeftWidth = leftStartWidth + deltaX;
             const newRightTotalWidth = rightTotalWidth - deltaX;
 
-            // Check minimums
-            const minRightTotalWidth = minWidth * rightViews.length;
+            // Check minimums using dynamic min widths
+            const leftMinWidth = this.getMinWidth(leftView);
+            let minRightTotalWidth = 0;
+            rightViews.forEach((view) => {
+                minRightTotalWidth += this.getMinWidth(view);
+            });
+
             if (
-                newLeftWidth >= minWidth &&
+                newLeftWidth >= leftMinWidth &&
                 newRightTotalWidth >= minRightTotalWidth
             ) {
                 // Scale right views proportionally
@@ -308,6 +383,9 @@ class ResizableViews {
                 views.forEach((view, index) => {
                     view.style.flex = `${newWidths[index] / totalWidth}`;
                 });
+
+                // Update collapsed states
+                this.updateCollapsedStates();
             }
         }
     }
@@ -328,9 +406,16 @@ class ResizableViews {
         const newTopHeight = topStartHeight + deltaY;
         const newBottomHeight = bottomStartHeight - deltaY;
 
-        // Enforce minimum heights
-        const minHeight = 100;
-        if (newTopHeight >= minHeight && newBottomHeight >= minHeight) {
+        // Calculate minimum heights based on views in each row
+        // Top row contains fontinfo and editor - use editor's min height
+        const topMinHeight = ResizableViews.PRIMARY_MIN_HEIGHT;
+        // Bottom row contains secondary views - use title bar height
+        const bottomMinHeight = ResizableViews.SECONDARY_MIN_HEIGHT;
+
+        if (
+            newTopHeight >= topMinHeight &&
+            newBottomHeight >= bottomMinHeight
+        ) {
             // Calculate flex-grow values based on the ratio of each row
             const totalHeight = newTopHeight + newBottomHeight;
             const topFlex = newTopHeight / totalHeight;
@@ -338,6 +423,9 @@ class ResizableViews {
 
             topRow.style.flex = `${topFlex}`;
             bottomRow.style.flex = `${bottomFlex}`;
+
+            // Update collapsed states
+            this.updateCollapsedStates();
         }
     }
 
@@ -355,6 +443,9 @@ class ResizableViews {
         document.body.style.cursor = 'default';
         document.body.style.userSelect = 'auto';
 
+        // Final update of collapsed states
+        this.updateCollapsedStates();
+
         // Save layout after resize
         this.saveLayout();
     }
@@ -364,6 +455,10 @@ class ResizableViews {
 function initResizableViews() {
     console.log('[Resizer]', 'Initializing ResizableViews...');
     window.resizableViews = new ResizableViews();
+    // Update collapsed states after layout is loaded
+    setTimeout(() => {
+        window.resizableViews.updateCollapsedStates();
+    }, 150);
     console.log('[Resizer]', 'ResizableViews initialized');
 }
 
@@ -375,8 +470,9 @@ if (document.readyState === 'loading') {
     initResizableViews();
 }
 
-// Handle window resize to maintain proportions
+// Handle window resize to maintain proportions and collapsed states
 window.addEventListener('resize', () => {
-    // Optional: Add logic to maintain view proportions on window resize
-    // This is a good place to recalculate flex values if needed
+    if (window.resizableViews) {
+        window.resizableViews.updateCollapsedStates();
+    }
 });

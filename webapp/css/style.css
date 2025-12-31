@@ -385,14 +385,14 @@ kbd + kbd {
     display: flex;
     flex: 1.61;
     /* 63% of total height */
-    min-height: 100px;
+    min-height: 200px; /* Primary view (editor) minimum */
 }
 
 .bottom-row {
     display: flex;
     flex: 1;
     /* 37% of total height */
-    min-height: 100px;
+    min-height: 24px; /* Secondary views can collapse to title bar */
 }
 
 .view {
@@ -400,6 +400,7 @@ kbd + kbd {
     border: 1px solid var(--border-primary);
     overflow: hidden;
     min-width: 100px;
+    min-height: 24px; /* Title bar height - allows secondary views to collapse */
     flex: 1;
     position: relative;
     color: var(--text-secondary);
@@ -410,9 +411,79 @@ kbd + kbd {
     flex-direction: column;
 }
 
+/* Primary view (editor) - larger minimum size */
+.view.view-editor {
+    min-width: 200px;
+    min-height: 200px;
+}
+
+/* Secondary views - can collapse to title bar only */
+.view:not(.view-editor) {
+    min-height: 24px;
+}
+
+/* Font info view special case - collapses to width instead of height */
+.view-fontinfo {
+    min-width: 24px;
+    min-height: 100px;
+}
+
 .view.focused {
     background-color: var(--background-primary);
     color: var(--text-primary);
+}
+
+/* Collapsed secondary views (height collapsed to title bar) */
+.view:not(.view-editor).collapsed {
+    overflow: hidden;
+}
+
+.view:not(.view-editor).collapsed .view-content,
+.view:not(.view-editor).collapsed #console-container,
+.view:not(.view-editor).collapsed #script-editor,
+.view:not(.view-editor).collapsed #ai-chat-container,
+.view:not(.view-editor).collapsed #file-browser {
+    display: none;
+}
+
+/* Hide non-essential title bar elements when collapsed */
+.view:not(.view-editor).collapsed .view-title-bar .view-title-button,
+.view:not(.view-editor).collapsed .view-title-bar .ai-context-toggle,
+.view:not(.view-editor).collapsed .view-title-bar .ai-info-button,
+.view:not(.view-editor).collapsed .view-title-bar .editor-plugins-toggle {
+    display: none;
+}
+
+/* Font info view - rotated title bar when collapsed to minimum width */
+.view-fontinfo.collapsed-width {
+    overflow: hidden;
+}
+
+.view-fontinfo.collapsed-width .view-content {
+    display: none;
+}
+
+.view-fontinfo.collapsed-width .view-title-bar {
+    writing-mode: vertical-rl;
+    text-orientation: mixed;
+    transform: rotate(180deg);
+    height: 100%;
+    width: 24px;
+    border-bottom: none;
+    border-right: 1px solid var(--border-primary);
+    padding: 8px 0 0 0;
+    justify-content: flex-end; /* Align to top when rotated (flex-end because of 180deg rotation) */
+}
+
+.view-fontinfo.collapsed-width .view-title-bar .view-title-left {
+    flex-direction: row; /* Keep title and shortcut on same line */
+    gap: 6px;
+    white-space: nowrap;
+}
+
+.view-fontinfo.collapsed-width .view-title-bar .view-title-button,
+.view-fontinfo.collapsed-width .view-title-bar .ai-info-button {
+    display: none;
 }
 
 /* View Title Bar */
@@ -3717,7 +3788,6 @@ kbd + kbd {
 
 .editor-axis-label-row {
     display: flex;
-    justify-content: space-between;
     align-items: center;
     font-size: 11px;
     margin-bottom: 4px;
@@ -3726,6 +3796,41 @@ kbd + kbd {
 .editor-axis-name {
     color: var(--text-primary);
     font-weight: 500;
+}
+
+.editor-axis-value {
+    margin-left: auto;
+}
+
+.editor-axis-play-button {
+    background: transparent;
+    border: none;
+    padding: 0;
+    margin-left: 4px;
+    cursor: pointer;
+    color: var(--text-secondary);
+    opacity: 0.6;
+    transition:
+        opacity 0.15s ease,
+        color 0.15s ease;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+}
+
+.editor-axis-play-button .material-symbols-rounded {
+    font-size: 14px;
+}
+
+.editor-axis-play-button:hover {
+    opacity: 1;
+}
+
+.editor-axis-play-button.playing {
+    color: var(--accent-primary);
+    opacity: 1;
 }
 
 .editor-axis-value {

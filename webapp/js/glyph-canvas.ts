@@ -428,6 +428,10 @@ class GlyphCanvas {
             }
         });
         this.axesManager!.on('textFieldAnimationComplete', async () => {
+            // Skip layer selection during loop animation (play button)
+            if (this.axesManager!.isLoopAnimating) {
+                return;
+            }
             // Handle layer selection after text field change animation completes
             if (this.outlineEditor.active) {
                 await this.outlineEditor.autoSelectMatchingLayer();
@@ -512,6 +516,10 @@ class GlyphCanvas {
         );
         // Auto-select or deselect master/layer when slider changes
         this.axesManager!.on('onSliderChange', () => {
+            // Skip layer selection during loop animation (play button)
+            if (this.axesManager!.isLoopAnimating) {
+                return;
+            }
             if (this.outlineEditor.active) {
                 // In edit mode, auto-select matching layer during slider drag
                 console.log(
@@ -528,6 +536,10 @@ class GlyphCanvas {
         });
         // Also check after animation completes to handle the final value
         this.axesManager!.on('animationComplete', () => {
+            // Skip during loop animation (play button)
+            if (this.axesManager!.isLoopAnimating) {
+                return;
+            }
             // Skip during layer switch animations - layer restoration will handle it
             if (this.outlineEditor.isLayerSwitchAnimating) {
                 console.log(
