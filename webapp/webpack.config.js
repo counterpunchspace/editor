@@ -1,23 +1,24 @@
 const path = require('path');
 const HtmlWebpackPlugin = require('html-webpack-plugin');
 const CopyWebpackPlugin = require('copy-webpack-plugin');
+const { execSync } = require('child_process');
 
 module.exports = {
     mode: 'development',
     entry: {
-        'bootstrap': './js/bootstrap.ts',
-        'fontc-worker': './js/fontc-worker.ts'
+        bootstrap: './js/bootstrap.ts',
+        'fontc-worker': './js/fontc-worker.ts',
     },
     output: {
         path: path.resolve(__dirname, 'build'),
         filename: 'js/[name].js',
-        clean: true
+        clean: true,
     },
     plugins: [
         new HtmlWebpackPlugin({
             template: './index.html',
             inject: 'body',
-            chunks: ['bootstrap']
+            chunks: ['bootstrap'],
         }),
         new CopyWebpackPlugin({
             patterns: [
@@ -29,31 +30,31 @@ module.exports = {
                 { from: 'examples', to: 'examples' },
                 { from: 'py', to: 'py' },
                 { from: 'wheels', to: 'wheels' },
-                { from: '_headers', to: '_headers' }
-            ]
-        })
+                { from: '_headers', to: '_headers' },
+            ],
+        }),
     ],
     module: {
         rules: [
             {
                 test: /\.tsx?$/,
                 use: 'ts-loader',
-                exclude: /node_modules/
-            }
-        ]
+                exclude: /node_modules/,
+            },
+        ],
     },
     resolve: {
-        extensions: ['.tsx', '.ts', '.js']
+        extensions: ['.tsx', '.ts', '.js'],
     },
     devServer: {
         static: [
             {
-                directory: path.join(__dirname, 'build')
+                directory: path.join(__dirname, 'build'),
             },
             {
                 directory: __dirname,
-                publicPath: '/'
-            }
+                publicPath: '/',
+            },
         ],
         port: 8000,
         server: 'https',
@@ -62,10 +63,26 @@ module.exports = {
         headers: {
             'Cross-Origin-Embedder-Policy': 'require-corp',
             'Cross-Origin-Opener-Policy': 'same-origin',
-            'Cross-Origin-Resource-Policy': 'cross-origin'
+            'Cross-Origin-Resource-Policy': 'cross-origin',
         },
         devMiddleware: {
-            writeToDisk: true
-        }
-    }
+            writeToDisk: true,
+        },
+        onBeforeSetupMiddleware: function () {
+            // Watch tokens.json and regenerate tokens.css on change
+            const chokidar = require('chokidar');
+            const tokensPath = path.join(__dirname, 'css/tokens.json');
+            chokidar.watch(tokensPath).on('change', () => {
+                console.log('[Tokens] tokens.json changed, regenerating...');
+                try {
+                    execSync('node scripts/generate-css-tokens.js', {
+                        cwd: __dirname,
+                        stdio: 'inherit',
+                    });
+                } catch (e) {
+                    console.error('[Tokens] Failed to regenerate:', e.message);
+                }
+            });
+        },
+    },
 };
