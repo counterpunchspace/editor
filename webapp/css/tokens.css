@@ -3,8 +3,8 @@
 
 /* Global tokens (theme-independent) */
 :root {
-    --font-mono: 'IBM Plex Mono';
-    --font-sans: 'IBM Plex Sans';
+    --font-families-mono: 'IBM Plex Mono';
+    --font-families-sans: 'IBM Plex Sans';
 }
 
 /* Dark theme (default) */
@@ -55,13 +55,14 @@
     --script-context-focused-bg: #9900ff;
     --script-context-text: rgba(255, 255, 255, 0.8);
     --script-context-focused-text: #1a1a1a;
-    --bg-tertiary: #252525;
-    --bg-loading: #000000;
-    --bg-primary: #181818;
-    --bg-secondary: #2a2a2a;
-    --bg-custom-name-highlight: rgba(255, 255, 255, 0.1);
-    --bg-hover: #333333;
-    --bg-editor-sidebar: #202020;
+    --background-tertiary: #252525;
+    --background-loading: #000000;
+    --background-primary: #181818;
+    --background-secondary: #2a2a2a;
+    --background-active: #333333;
+    --background-custom-name-highlight: rgba(255, 255, 255, 0.1);
+    --background-hover: #333333;
+    --background-editor-sidebar: #202020;
     --view-editor: #00aeef;
     --view-assistant: #ef4136;
     --view-console: #fbc540;
@@ -124,14 +125,15 @@
     --script-context-focused-bg: #9900ff;
     --script-context-text: #330066;
     --script-context-focused-text: #ffffff;
-    --bg-tertiary: #f0f0f0;
-    --bg-loading: #ffffff;
-    --bg-primary: #ffffff;
-    --bg-secondary: rgb(234, 234, 234);
+    --background-tertiary: #f0f0f0;
+    --background-loading: #ffffff;
+    --background-primary: #ffffff;
+    --background-secondary: rgb(234, 234, 234);
+    --background-active: #d8d8d8;
     --background-inactive: #e8e8e8;
-    --bg-custom-name-highlight: rgba(0, 0, 0, 0.1);
-    --bg-hover: #d8d8d8;
-    --bg-editor-sidebar: #f5f5f5;
+    --background-custom-name-highlight: rgba(0, 0, 0, 0.1);
+    --background-hover: #d8d8d8;
+    --background-editor-sidebar: #f5f5f5;
     --view-editor: #00aeef;
     --view-assistant: #ef4136;
     --view-console: #fbc540;

@@ -2447,7 +2447,7 @@ export class OutlineEditor {
             glyphNameElement.style.cssText = `
                 margin-left: 12px;
                 margin-top: -2px;
-                font-family: var(--font-mono);
+                font-family: var(--font-families-mono);
                 font-size: 13px;
                 color: var(--text-secondary);
                 display: flex;

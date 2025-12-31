@@ -51,7 +51,7 @@ Use semantic names that describe the purpose, not the color:
 ### ✅ Good Names
 
 - `--text-primary`, `--text-secondary`, `--text-muted`
-- `--bg-primary`, `--bg-hover`, `--bg-active`
+- `--background-primary`, `--background-hover`, `--background-active`
 - `--border-primary`, `--border-active`
 - `--accent-green`, `--accent-magenta` (for consistent brand colors)
 - `--button-hover-bg`, `--input-focus-border`
@@ -147,7 +147,7 @@ If element has `id="my-element"`, the ID selector wins.
 
 Refer to these existing categories when adding new variables:
 
-- **Background Colors**: `--bg-*`
+- **Background Colors**: `--background-*`
 - **Text Colors**: `--text-*`
 - **Border Colors**: `--border-*`
 - **Accent Colors**: `--accent-*`

@@ -4,8 +4,8 @@
 /* Additional CSS variable overrides not in tokens */
 :root {
     /* Font family fallbacks (tokens only has primary font) */
-    --font-mono: 'IBM Plex Mono', 'Courier New', Courier, monospace;
-    --font-sans:
+    --font-families-mono: 'IBM Plex Mono', 'Courier New', Courier, monospace;
+    --font-families-sans:
         'IBM Plex Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
         sans-serif;
 }
@@ -24,7 +24,7 @@ body {
         'Segoe UI',
         Roboto,
         sans-serif;
-    background-color: var(--bg-primary);
+    background-color: var(--background-primary);
     color: var(--text-primary);
     height: 100vh;
     overflow: hidden;
@@ -54,11 +54,11 @@ body {
 kbd {
     display: inline-block;
     padding: 2px 6px;
-    font-family: var(--font-mono);
+    font-family: var(--font-families-mono);
     font-size: 11px;
     line-height: 1.4;
     color: var(--text-primary);
-    background-color: var(--bg-secondary);
+    background-color: var(--background-secondary);
     border: 1px solid var(--border-primary);
     border-radius: 3px;
     box-shadow: 0 1px 0 var(--border-primary);
@@ -86,7 +86,7 @@ kbd + kbd {
     left: 0;
     width: 100%;
     height: 100%;
-    background-color: var(--bg-loading);
+    background-color: var(--background-loading);
     z-index: 999999;
     display: flex;
     align-items: center;
@@ -121,7 +121,7 @@ kbd + kbd {
     right: 0;
     margin-top: 150px;
     text-align: center;
-    font-family: var(--font-mono);
+    font-family: var(--font-families-mono);
     font-size: 18px;
     color: var(--text-muted);
     z-index: 2;
@@ -133,7 +133,7 @@ kbd + kbd {
 }
 
 .loading-logo {
-    font-family: var(--font-mono);
+    font-family: var(--font-families-mono);
     font-size: 150px;
     font-weight: 400;
     color: var(--text-primary);
@@ -158,7 +158,7 @@ kbd + kbd {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    background-color: var(--bg-tertiary);
+    background-color: var(--background-tertiary);
     border-bottom: 2px solid var(--border-primary);
     padding: 12px 20px;
     padding-left: 9px;
@@ -173,7 +173,7 @@ kbd + kbd {
 }
 
 .app-name {
-    font-family: var(--font-mono);
+    font-family: var(--font-families-mono);
     font-size: 24px;
     font-weight: 400;
     position: relative;
@@ -257,7 +257,7 @@ kbd + kbd {
     color: var(--button-text);
     padding: 6px 16px;
     border-radius: 4px;
-    font-family: var(--font-mono);
+    font-family: var(--font-families-mono);
     font-size: 13px;
     cursor: pointer;
     transition: all 0.2s ease;
@@ -296,7 +296,7 @@ kbd + kbd {
 
 .update-button:hover {
     background-color: var(--accent-orange);
-    color: var(--bg-primary);
+    color: var(--background-primary);
 }
 
 .update-button .material-symbols-rounded {
@@ -310,7 +310,7 @@ kbd + kbd {
     padding: 4px 8px;
     border-radius: 4px;
     font-size: 13px;
-    font-family: var(--font-mono);
+    font-family: var(--font-families-mono);
     transition: all 0.2s ease;
     display: none;
     align-items: center;
@@ -351,7 +351,7 @@ kbd + kbd {
     color: var(--button-text);
     padding: 6px 12px 6px 28px;
     border-radius: 4px;
-    font-family: var(--font-mono);
+    font-family: var(--font-families-mono);
     font-size: 13px;
     cursor: pointer;
     min-width: 200px;
@@ -396,7 +396,7 @@ kbd + kbd {
 }
 
 .view {
-    background-color: var(--bg-secondary);
+    background-color: var(--background-secondary);
     border: 1px solid var(--border-primary);
     overflow: hidden;
     min-width: 100px;
@@ -411,7 +411,7 @@ kbd + kbd {
 }
 
 .view.focused {
-    background-color: var(--bg-active);
+    background-color: var(--background-primary);
     color: var(--text-primary);
 }
 
@@ -424,7 +424,7 @@ kbd + kbd {
     justify-content: space-between;
     padding: 0 0 0 8px;
     border-bottom: 1px solid var(--border-primary);
-    font-family: var(--font-mono);
+    font-family: var(--font-families-mono);
     font-size: 11px;
     background-color: inherit;
     flex-shrink: 0;
@@ -573,7 +573,7 @@ kbd + kbd {
     padding: 0 8px;
     border-radius: 0;
     cursor: pointer;
-    font-family: var(--font-mono);
+    font-family: var(--font-families-mono);
     font-size: 10px;
     font-weight: normal;
     transition: all 0.2s ease;
@@ -776,7 +776,7 @@ kbd + kbd {
 
 /* AI Context Label */
 .ai-context-label {
-    font-family: var(--font-mono);
+    font-family: var(--font-families-mono);
     font-size: 10px;
     font-weight: normal;
     margin-left: auto;
@@ -803,7 +803,7 @@ kbd + kbd {
     padding: 0 8px;
     border-radius: 0;
     cursor: pointer;
-    font-family: var(--font-mono);
+    font-family: var(--font-families-mono);
     font-size: 10px;
     font-weight: normal;
     transition: all 0.2s ease;
@@ -837,7 +837,7 @@ kbd + kbd {
     padding: 0 8px;
     border-radius: 0;
     cursor: pointer;
-    font-family: var(--font-mono);
+    font-family: var(--font-families-mono);
     font-size: 10px;
     font-weight: normal;
     transition: all 0.2s ease;
@@ -860,13 +860,13 @@ kbd + kbd {
     position: absolute;
     top: 100%;
     right: 0;
-    background-color: var(--bg-primary);
+    background-color: var(--background-primary);
     border: 1px solid var(--border-primary);
     border-right: none;
     min-width: 300px;
     overflow-y: auto;
     z-index: 1000;
-    font-family: var(--font-sans);
+    font-family: var(--font-families-sans);
 }
 
 .editor-plugins-dropdown-item {
@@ -905,7 +905,7 @@ kbd + kbd {
     padding: 12px;
     text-align: center;
     color: var(--text-faint);
-    font-family: var(--font-mono);
+    font-family: var(--font-families-mono);
     font-size: 10px;
 }
 
@@ -928,7 +928,7 @@ kbd + kbd {
 }
 
 .plugin-ui-label {
-    font-family: var(--font-mono);
+    font-family: var(--font-families-mono);
     font-size: 10px;
     color: var(--text-secondary);
 }
@@ -996,7 +996,7 @@ kbd + kbd {
 }
 
 .plugin-ui-value {
-    font-family: var(--font-mono);
+    font-family: var(--font-families-mono);
     font-size: 10px;
     color: var(--text-primary);
     width: 40px;
@@ -1011,12 +1011,12 @@ kbd + kbd {
 
 .plugin-ui-value:hover {
     border-color: var(--border-secondary);
-    background: var(--bg-secondary);
+    background: var(--background-secondary);
 }
 
 .plugin-ui-value:focus {
     border-color: var(--accent-primary);
-    background: var(--bg-primary);
+    background: var(--background-primary);
 }
 
 /* Text Field */
@@ -1033,10 +1033,10 @@ kbd + kbd {
 }
 
 .plugin-ui-text-input {
-    font-family: var(--font-mono);
+    font-family: var(--font-families-mono);
     font-size: 10px;
     color: var(--text-primary);
-    background: var(--bg-secondary);
+    background: var(--background-secondary);
     border: 1px solid var(--border-primary);
     border-radius: 2px;
     padding: 4px 6px;
@@ -1050,7 +1050,7 @@ kbd + kbd {
 
 .plugin-ui-text-input:focus {
     border-color: var(--accent-primary);
-    background: var(--bg-primary);
+    background: var(--background-primary);
 }
 
 /* Checkbox */
@@ -1098,7 +1098,7 @@ kbd + kbd {
     align-items: center;
     gap: 6px;
     cursor: pointer;
-    font-family: var(--font-mono);
+    font-family: var(--font-families-mono);
     font-size: 10px;
     color: var(--text-secondary);
 }
@@ -1180,7 +1180,7 @@ kbd + kbd {
     border: 1px solid var(--input-border);
     border-radius: 4px;
     color: var(--text-tertiary);
-    font-family: var(--font-mono);
+    font-family: var(--font-families-mono);
     font-size: 12px;
     margin: 8px 0;
 }
@@ -1321,7 +1321,7 @@ kbd + kbd {
     border: 1px solid var(--input-border);
     border-radius: 4px;
     color: var(--text-tertiary);
-    font-family: var(--font-mono);
+    font-family: var(--font-families-mono);
     font-size: 12px;
     margin-top: 8px;
 }
@@ -1370,7 +1370,7 @@ kbd + kbd {
 
 /* Ace Editor customizations */
 #script-editor .ace_editor {
-    font-family: var(--font-mono);
+    font-family: var(--font-families-mono);
     font-size: calc(var(--size, 1) * (12px / var(--pixel-density, 1)));
     line-height: 1.6;
 }
@@ -1385,11 +1385,11 @@ kbd + kbd {
 
 /* Background color based on view focus state */
 .view-scripts.focused #script-editor {
-    background-color: var(--bg-active);
+    background-color: var(--background-primary);
 }
 
 .view-scripts:not(.focused) #script-editor {
-    background-color: var(--bg-secondary);
+    background-color: var(--background-secondary);
 }
 
 /* Cyberpunk Syntax Highlighting */
@@ -1584,7 +1584,7 @@ kbd + kbd {
     .terminal-output > :not(.raw) div,
     .terminal-output > :not(.raw) span {
         font-size: calc(var(--size, 1) * (12px / var(--pixel-density, 1)));
-        font-family: var(--font-mono) !important;
+        font-family: var(--font-families-mono) !important;
         color: var(--text-primary) !important;
     }
 }
@@ -1599,18 +1599,18 @@ kbd + kbd {
     flex: 1;
     position: relative;
     overflow: hidden;
-    background-color: var(--bg-secondary);
+    background-color: var(--background-secondary);
     transition: background-color 0.2s ease;
 }
 
 .view.focused #console-container {
-    background-color: var(--bg-active);
+    background-color: var(--background-primary);
 }
 
 #console-container .terminal {
     --size: 1.2;
     --color: var(--text-tertiary);
-    font-family: var(--font-mono) !important;
+    font-family: var(--font-families-mono) !important;
     background-color: transparent !important;
     height: 100% !important;
     border: none !important;
@@ -1697,7 +1697,7 @@ kbd + kbd {
 #refresh-files-btn {
     background: var(--accent-cyan);
     border: 1px solid var(--accent-cyan);
-    color: var(--bg-primary);
+    color: var(--background-primary);
     padding: 8px 16px;
     margin-bottom: 15px;
     border-radius: 4px;
@@ -1724,7 +1724,7 @@ kbd + kbd {
 }
 
 #file-tree {
-    font-family: var(--font-mono);
+    font-family: var(--font-families-mono);
     font-size: 13px;
     line-height: 1.4;
 }
@@ -1831,7 +1831,7 @@ kbd + kbd {
 .file-item .open-font-btn {
     background: var(--accent-cyan);
     border: 1px solid var(--accent-cyan);
-    color: var(--bg-primary);
+    color: var(--background-primary);
     cursor: pointer;
     padding: 3px 8px;
     border-radius: 3px;
@@ -1922,7 +1922,7 @@ kbd + kbd {
     left: 0;
     right: 0;
     bottom: 0;
-    background: color-mix(in srgb, var(--bg-primary) 80%, transparent);
+    background: color-mix(in srgb, var(--background-primary) 80%, transparent);
     color: var(--accent-cyan);
     z-index: 10;
     font-weight: 400;
@@ -1956,7 +1956,7 @@ kbd + kbd {
     border: none;
     padding: 0 15px;
     margin-bottom: 15px;
-    font-family: var(--font-mono);
+    font-family: var(--font-families-mono);
     font-size: calc(var(--size, 1) * (12px / var(--pixel-density, 1)));
     line-height: calc(
         var(--size) * (16px / var(--pixel-density, 1)) + 1px /
@@ -2015,7 +2015,7 @@ kbd + kbd {
     color: var(--accent-green);
     font-style: italic;
     font-size: calc(var(--size, 1) * (11px / var(--pixel-density, 1)));
-    font-family: var(--font-mono);
+    font-family: var(--font-families-mono);
     display: flex;
     align-items: center;
     margin-left: 4px;
@@ -2027,7 +2027,7 @@ kbd + kbd {
     background-color: transparent;
     margin-bottom: 11px;
     display: none;
-    font-family: var(--font-mono);
+    font-family: var(--font-families-mono);
 }
 
 .ai-message {
@@ -2195,7 +2195,7 @@ kbd + kbd {
     background-color: transparent;
     border: 1px solid var(--accent-orange);
     color: var(--text-tertiary);
-    font-family: var(--font-mono);
+    font-family: var(--font-families-mono);
     font-size: calc(var(--size, 1) * (12px / var(--pixel-density, 1)));
     cursor: pointer;
     transition: all 0.2s;
@@ -2222,7 +2222,7 @@ kbd + kbd {
     background-color: transparent;
     border: 1px solid var(--ai-user-text);
     color: var(--ai-user-text);
-    font-family: var(--font-mono);
+    font-family: var(--font-families-mono);
     font-size: calc(var(--size, 1) * (11px / var(--pixel-density, 1)));
     cursor: pointer;
     transition: all 0.2s;
@@ -2240,7 +2240,7 @@ kbd + kbd {
     background-color: transparent;
     border: 1px solid var(--ai-user-text);
     color: var(--ai-user-text);
-    font-family: var(--font-mono);
+    font-family: var(--font-families-mono);
     font-size: calc(var(--size, 1) * (11px / var(--pixel-density, 1)));
     cursor: pointer;
     transition: all 0.2s;
@@ -2285,19 +2285,19 @@ kbd + kbd {
     border-radius: 3px;
     font-size: calc(var(--size, 1) * (10px / var(--pixel-density, 1)));
     font-weight: 600;
-    font-family: var(--font-mono);
+    font-family: var(--font-families-mono);
     text-transform: uppercase;
     letter-spacing: 0.5px;
 }
 
 .ai-context-tag-script {
     background-color: var(--accent-purple);
-    color: var(--bg-primary);
+    color: var(--background-primary);
 }
 
 .ai-context-tag-font {
     background-color: var(--accent-magenta);
-    color: var(--bg-primary);
+    color: var(--background-primary);
 }
 
 .ai-code-toggle-link {
@@ -2313,7 +2313,7 @@ kbd + kbd {
 }
 
 .ai-message-content {
-    font-family: var(--font-mono);
+    font-family: var(--font-families-mono);
     font-size: calc(var(--size, 1) * (12px / var(--pixel-density, 1)));
     line-height: 1.6;
     white-space: pre-wrap;
@@ -2338,7 +2338,7 @@ kbd + kbd {
     background-color: var(--code-bg);
     padding: 8px;
     overflow-x: auto;
-    font-family: var(--font-mono);
+    font-family: var(--font-families-mono);
     font-size: calc(var(--size, 1) * (12px / var(--pixel-density, 1)));
     line-height: 1.6;
     border: none;
@@ -2373,7 +2373,7 @@ kbd + kbd {
 .ai-markdown-explanation h1,
 .ai-markdown-explanation h2,
 .ai-markdown-explanation h3 {
-    font-family: var(--font-mono);
+    font-family: var(--font-families-mono);
     color: var(--text-primary);
     margin: 12px 0 8px 0;
     font-weight: bold;
@@ -2404,7 +2404,7 @@ kbd + kbd {
 }
 
 .ai-markdown-explanation code {
-    font-family: var(--font-mono);
+    font-family: var(--font-families-mono);
     background-color: var(--code-bg);
     padding: 2px 6px;
     border-radius: 3px;
@@ -2505,7 +2505,7 @@ kbd + kbd {
     background-color: var(--code-bg);
     padding: 8px;
     margin-top: 4px;
-    font-family: var(--font-mono);
+    font-family: var(--font-families-mono);
     font-size: calc(var(--size, 1) * (12px / var(--pixel-density, 1)));
     line-height: 1.6;
     color: var(--text-tertiary);
@@ -2532,7 +2532,7 @@ kbd + kbd {
     padding: 6px 12px;
     border-radius: 0;
     cursor: pointer;
-    font-family: var(--font-mono);
+    font-family: var(--font-families-mono);
     font-size: calc(var(--size, 1) * (12px / var(--pixel-density, 1)));
     font-weight: normal;
     transition: all 0.2s ease;
@@ -2590,7 +2590,7 @@ kbd + kbd {
     border: 1px solid var(--border-tertiary);
     border-radius: 0;
     color: var(--text-tertiary);
-    font-family: var(--font-mono);
+    font-family: var(--font-families-mono);
     font-size: calc(var(--size, 1) * (12px / var(--pixel-density, 1)));
 }
 
@@ -2599,7 +2599,7 @@ kbd + kbd {
 }
 
 #ai-prompt-label {
-    font-family: var(--font-mono);
+    font-family: var(--font-families-mono);
     font-size: calc(var(--size, 1) * (12px / var(--pixel-density, 1)));
     color: var(--text-subtle);
     margin-bottom: 6px;
@@ -2607,7 +2607,7 @@ kbd + kbd {
 }
 
 #ai-context-label-line {
-    font-family: var(--font-mono);
+    font-family: var(--font-families-mono);
     font-size: calc(var(--size, 1) * (12px / var(--pixel-density, 1)));
     color: var(--text-subtle);
     margin-bottom: 0;
@@ -2628,7 +2628,7 @@ kbd + kbd {
 }
 
 #ai-prompt-prefix {
-    font-family: var(--font-mono);
+    font-family: var(--font-families-mono);
     font-size: calc(var(--size, 1) * (12px / var(--pixel-density, 1)));
     line-height: 1.6;
     pointer-events: none;
@@ -2649,7 +2649,7 @@ kbd + kbd {
     border-radius: 0;
     color: var(--text-tertiary);
     caret-color: transparent;
-    font-family: var(--font-mono);
+    font-family: var(--font-families-mono);
     font-size: calc(var(--size, 1) * (12px / var(--pixel-density, 1)));
     min-height: 0;
     max-height: none;
@@ -2677,7 +2677,7 @@ kbd + kbd {
     background: transparent;
     border: none;
     color: var(--text-subtle);
-    font-family: var(--font-mono);
+    font-family: var(--font-families-mono);
     font-size: calc(var(--size, 1) * (12px / var(--pixel-density, 1)));
     font-weight: normal;
     font-style: italic;
@@ -2738,7 +2738,7 @@ kbd + kbd {
 }
 
 .diff-modal-content {
-    background-color: var(--bg-primary);
+    background-color: var(--background-primary);
     border: 2px solid var(--border-tertiary);
     width: 90%;
     max-width: 1400px;
@@ -2754,12 +2754,12 @@ kbd + kbd {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    background-color: var(--bg-tertiary);
+    background-color: var(--background-tertiary);
 }
 
 .diff-modal-header h2 {
     margin: 0;
-    font-family: var(--font-mono);
+    font-family: var(--font-families-mono);
     font-size: calc(var(--size, 1) * (16px / var(--pixel-density, 1)));
     font-weight: bold;
     color: var(--text-tertiary);
@@ -2778,7 +2778,7 @@ kbd + kbd {
     justify-content: center;
     padding: 0;
     transition: all 0.2s ease;
-    font-family: var(--font-mono);
+    font-family: var(--font-families-mono);
     line-height: 1;
 }
 
@@ -2791,7 +2791,7 @@ kbd + kbd {
     flex: 1;
     overflow: auto;
     padding: 16px;
-    background-color: var(--bg-secondary);
+    background-color: var(--background-secondary);
 }
 
 /* Settings Panel */
@@ -2857,7 +2857,7 @@ kbd + kbd {
     right: -350px;
     width: 350px;
     height: calc(100vh - 50px);
-    background-color: var(--bg-secondary);
+    background-color: var(--background-secondary);
     border-left: 3px solid var(--border-primary);
     transition: right 0.3s cubic-bezier(0.4, 0, 0.2, 1);
     z-index: 9999;
@@ -2935,7 +2935,7 @@ kbd + kbd {
 }
 
 .theme-option.active {
-    background-color: var(--bg-active);
+    background-color: var(--background-active);
     color: var(--text-primary);
     border-color: var(--border-secondary);
 }
@@ -3010,7 +3010,7 @@ kbd + kbd {
 }
 
 .volume-value {
-    font-family: var(--font-mono);
+    font-family: var(--font-families-mono);
     font-size: 13px;
     color: var(--text-primary);
     min-width: 40px;
@@ -3028,7 +3028,7 @@ kbd + kbd {
 .memory-bar-container {
     flex: 1;
     height: 8px;
-    background-color: var(--bg-active);
+    background-color: var(--background-primary);
     border: 1px solid var(--border-primary);
     border-radius: 4px;
     overflow: hidden;
@@ -3051,7 +3051,7 @@ kbd + kbd {
 }
 
 .memory-percentage {
-    font-family: var(--font-mono);
+    font-family: var(--font-families-mono);
     font-size: 13px;
     color: var(--text-primary);
     min-width: 45px;
@@ -3060,7 +3060,7 @@ kbd + kbd {
 }
 
 .memory-details {
-    font-family: var(--font-mono);
+    font-family: var(--font-families-mono);
     font-size: 11px;
     color: var(--text-secondary);
     margin-top: 6px;
@@ -3152,12 +3152,12 @@ kbd + kbd {
     justify-content: space-between;
     padding: 16px 20px;
     border-bottom: 1px solid var(--border-primary);
-    background-color: var(--bg-secondary);
+    background-color: var(--background-secondary);
 }
 
 .info-popup-header h3 {
     margin: 0;
-    font-family: var(--font-mono);
+    font-family: var(--font-families-mono);
     font-size: 16px;
     font-weight: 600;
     color: var(--text-primary);
@@ -3180,7 +3180,7 @@ kbd + kbd {
 
 .info-popup-close:hover {
     color: var(--text-primary);
-    background-color: var(--bg-hover);
+    background-color: var(--background-hover);
     transform: scale(1.1);
 }
 
@@ -3199,7 +3199,7 @@ kbd + kbd {
 
 .info-popup-content h4 {
     margin: 16px 0 8px 0;
-    font-family: var(--font-mono);
+    font-family: var(--font-families-mono);
     font-size: 13px;
     font-weight: 600;
     color: var(--text-primary);
@@ -3288,7 +3288,7 @@ kbd + kbd {
 .diff-explanation h1,
 .diff-explanation h2,
 .diff-explanation h3 {
-    font-family: var(--font-mono);
+    font-family: var(--font-families-mono);
     color: var(--text-primary);
     margin: 12px 0 8px 0;
     font-weight: bold;
@@ -3319,7 +3319,7 @@ kbd + kbd {
 }
 
 .diff-explanation code {
-    font-family: var(--font-mono);
+    font-family: var(--font-families-mono);
     background-color: var(--code-bg);
     padding: 2px 6px;
     border-radius: 3px;
@@ -3422,12 +3422,12 @@ kbd + kbd {
     display: flex;
     justify-content: flex-end;
     gap: 12px;
-    background-color: var(--bg-tertiary);
+    background-color: var(--background-tertiary);
 }
 
 .diff-modal-button {
     padding: 10px 24px;
-    font-family: var(--font-mono);
+    font-family: var(--font-families-mono);
     font-size: calc(var(--size, 1) * (12px / var(--pixel-density, 1)));
     border: 2px solid;
     background-color: var(--input-bg);
@@ -3465,7 +3465,7 @@ kbd + kbd {
 
 #diff-container,
 #diff-container * {
-    font-family: var(--font-mono) !important;
+    font-family: var(--font-families-mono) !important;
 }
 
 #diff-container .d2h-file-header {
@@ -3512,7 +3512,7 @@ kbd + kbd {
 }
 
 #diff-container .d2h-file-header {
-    background-color: var(--bg-primary);
+    background-color: var(--background-primary);
     border-color: var(--border-tertiary);
 }
 
@@ -3522,7 +3522,7 @@ kbd + kbd {
 
 #diff-container .d2h-code-side-linenumber,
 #diff-container .d2h-code-linenumber {
-    background-color: var(--bg-tertiary);
+    background-color: var(--background-tertiary);
     border-color: var(--border-primary);
     color: var(--text-faint);
     position: static !important;
@@ -3575,7 +3575,7 @@ kbd + kbd {
 }
 
 #glyph-text-input {
-    font-family: var(--font-mono);
+    font-family: var(--font-families-mono);
     background-color: var(--input-bg);
     color: var(--text-primary);
     border: 1px solid var(--border-secondary);
@@ -3696,13 +3696,13 @@ kbd + kbd {
 
 /* Master/Layer item content */
 .master-item-name {
-    font-family: var(--font-sans);
+    font-family: var(--font-families-sans);
     font-size: 11px;
     color: var(--text-primary);
 }
 
 .master-item-location {
-    font-family: var(--font-mono);
+    font-family: var(--font-families-mono);
     font-size: 9px;
     color: var(--text-muted);
     margin-top: 2px;
@@ -3730,7 +3730,7 @@ kbd + kbd {
 
 .editor-axis-value {
     color: var(--text-secondary);
-    font-family: var(--font-mono);
+    font-family: var(--font-families-mono);
     font-size: 10px;
     background: transparent;
     border: 1px solid transparent;
@@ -3743,13 +3743,13 @@ kbd + kbd {
 
 .editor-axis-value:hover {
     border-color: var(--border-secondary);
-    background: var(--bg-secondary);
+    background: var(--background-secondary);
 }
 
 .editor-axis-value:focus {
     outline: none;
     border-color: var(--accent-primary);
-    background: var(--bg-primary);
+    background: var(--background-primary);
 }
 
 .editor-axis-slider {
@@ -3765,7 +3765,7 @@ kbd + kbd {
 
 /* General Tag Button Style (used by OpenType features and plugins) */
 .tag-button {
-    font-family: var(--font-mono);
+    font-family: var(--font-families-mono);
     font-size: 11px;
     font-weight: 600;
     padding: 3px 6px;
@@ -3815,7 +3815,7 @@ kbd + kbd {
 }
 
 .tag-description.custom-name {
-    background: var(--bg-custom-name-highlight);
+    background: var(--background-custom-name-highlight);
     padding: 4px 6px;
     border-radius: 3px;
     margin-left: -2px;
@@ -3893,7 +3893,7 @@ kbd + kbd {
 }
 
 .critical-error-content {
-    background: var(--bg-secondary);
+    background: var(--background-secondary);
     border: 2px solid var(--accent-red);
     border-radius: 12px;
     padding: 40px;

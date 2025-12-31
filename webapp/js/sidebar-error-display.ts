@@ -77,7 +77,7 @@ export class SidebarErrorDisplay {
                     width: 64px;
                     height: 64px;
                     border-radius: 50%;
-                    background-color: var(--bg-secondary);
+                    background-color: var(--background-secondary);
                     border: 2px solid var(--border-primary);
                     display: flex;
                     align-items: center;

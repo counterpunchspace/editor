@@ -2357,7 +2357,7 @@ function initCanvas() {
         leftSidebar.style.width = '200px';
         leftSidebar.style.minWidth = '200px';
         leftSidebar.style.height = '100%';
-        leftSidebar.style.backgroundColor = 'var(--bg-editor-sidebar)';
+        leftSidebar.style.backgroundColor = 'var(--background-editor-sidebar)';
         leftSidebar.style.borderRight = '1px solid var(--border-primary)';
         leftSidebar.style.padding = '12px';
         leftSidebar.style.overflowY = 'auto';
@@ -2371,7 +2371,7 @@ function initCanvas() {
         rightSidebar.style.width = '200px';
         rightSidebar.style.minWidth = '200px';
         rightSidebar.style.height = '100%';
-        rightSidebar.style.backgroundColor = 'var(--bg-editor-sidebar)';
+        rightSidebar.style.backgroundColor = 'var(--background-editor-sidebar)';
         rightSidebar.style.borderLeft = '1px solid var(--border-primary)';
         rightSidebar.style.padding = '12px';
         rightSidebar.style.overflowY = 'auto';
@@ -2424,8 +2424,8 @@ function initCanvas() {
             const updateSidebarStyles = () => {
                 const isFocused = editorView.classList.contains('focused');
                 const bgColor = isFocused
-                    ? 'var(--bg-editor-sidebar)'
-                    : 'var(--bg-secondary)';
+                    ? 'var(--background-editor-sidebar)'
+                    : 'var(--background-secondary)';
                 leftSidebar.style.backgroundColor = bgColor;
                 rightSidebar.style.backgroundColor = bgColor;
             };
