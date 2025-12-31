@@ -127,7 +127,7 @@ export class GlyphCanvasRenderer {
         if (isViewFocused) {
             // Active/focused background (same as .view.focused)
             this.ctx.fillStyle = computedStyle
-                .getPropertyValue('--bg-active')
+                .getPropertyValue('--bg-primary')
                 .trim();
         } else {
             // Inactive background (same as .view)

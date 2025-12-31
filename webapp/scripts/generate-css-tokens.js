@@ -66,7 +66,6 @@ const tokenToCssVarMap = {
     'background-secondary': 'bg-secondary',
     'background-tertiary': 'bg-tertiary',
     'background-hover': 'bg-hover',
-    'background-active': 'bg-active',
     'background-loading': 'bg-loading',
     'background-editor-sidebar': 'bg-editor-sidebar',
     'background-custom-name-highlight': 'bg-custom-name-highlight',
