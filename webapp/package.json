@@ -18,7 +18,7 @@
         "dev": "npm run tokens && webpack serve",
         "build": "npm run tokens && webpack",
         "serve": "npm run tokens && webpack serve --mode development",
-        "serve:ci": "npx http-server build -p 8000"
+        "serve:ci": "npx http-server build -p 9000"
     },
     "devDependencies": {
         "@babel/core": "^7.28.5",

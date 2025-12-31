@@ -30,7 +30,7 @@ export default defineConfig({
     use: {
         // Base URL for navigation
         baseURL: process.env.CI
-            ? 'http://localhost:8000'
+            ? 'http://localhost:9000'
             : 'https://localhost:8000',
 
         // Collect trace when retrying the failed test
@@ -80,7 +80,7 @@ export default defineConfig({
     webServer: {
         command: process.env.CI ? 'npm run serve:ci' : 'npm run serve',
         url: process.env.CI
-            ? 'http://localhost:8000'
+            ? 'http://localhost:9000'
             : 'https://localhost:8000',
         reuseExistingServer: !process.env.CI,
         timeout: 120000, // 2 minutes to start dev server
