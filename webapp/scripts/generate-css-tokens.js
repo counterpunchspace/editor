@@ -158,7 +158,7 @@ const tokenToCssVarMap = {
 
     // Typography
     'font-families-mono': 'font-mono',
-    'font-families-sans': 'font-sans',
+    'font-families-sans': 'font-sans'
 };
 
 /**

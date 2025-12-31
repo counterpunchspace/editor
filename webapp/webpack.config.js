@@ -68,7 +68,7 @@ module.exports = {
         devMiddleware: {
             writeToDisk: true
         },
-        onBeforeSetupMiddleware: function () {
+        setupMiddlewares: (middlewares, devServer) => {
             // Watch tokens.json and regenerate tokens.css on change
             const chokidar = require('chokidar');
             const tokensPath = path.join(__dirname, 'css/tokens.json');
@@ -83,6 +83,7 @@ module.exports = {
                     console.error('[Tokens] Failed to regenerate:', e.message);
                 }
             });
+            return middlewares;
         }
     }
 };
