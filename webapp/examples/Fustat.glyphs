@@ -1129,8 +1129,12 @@ sub zero.tf by zero.tf.zero;
 tag = zero;
 },
 {
-automatic = 1;
-code = "sub meem-ar by meem-ar.ss01;
+code = "  featureNames {
+    name 1 \"Alternate meem\";
+    name 3 \"Alternate meem\";
+  };
+
+sub meem-ar by meem-ar.ss01;
 sub meem-ar.fina by meem-ar.fina.ss01;
 ";
 labels = (
@@ -1142,8 +1146,12 @@ value = "Alternate meem";
 tag = ss01;
 },
 {
-automatic = 1;
-code = "sub lam_alef-ar.fina by lam_alef-ar.fina.ss02;
+code = "  featureNames {
+    name 1 \"Alternate lam-alef\";
+    name 3 \"Alternate lam-alef\";
+  };
+
+sub lam_alef-ar.fina by lam_alef-ar.fina.ss02;
 ";
 labels = (
 {
@@ -1154,8 +1162,12 @@ value = "Alternate lam-alef";
 tag = ss02;
 },
 {
-automatic = 1;
-code = "sub a by a.ss03;
+code = "  featureNames {
+    name 1 \"Geometric a g\";
+    name 3 \"Geometric a g\";
+  };
+
+sub a by a.ss03;
 sub aacute by aacute.ss03;
 sub abreve by abreve.ss03;
 sub acaron by acaron.ss03;
@@ -1222,8 +1234,11 @@ value = "Tailed a g l y";
 tag = ss04;
 },
 {
-automatic = 1;
-code = "sub six by six.ss05;
+code = "  featureNames {
+    name 1 \"Alt numbers\";
+    name 3 \"Alt numbers\";
+  };
+sub six by six.ss05;
 sub nine by nine.ss05;
 sub six.tf by six.tf.ss05;
 sub nine.tf by nine.tf.ss05;
