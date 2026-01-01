@@ -2040,10 +2040,63 @@ class GlyphCanvas {
             ? settings.ZOOM_KEYBOARD_FACTOR
             : 1 / settings.ZOOM_KEYBOARD_FACTOR;
 
-        // Get canvas center for zoom
         const rect = this.canvas!.getBoundingClientRect();
-        const centerX = rect.width / 2;
-        const centerY = rect.height / 2;
+        let centerX: number;
+        let centerY: number;
+
+        // Determine zoom center based on mode
+        if (this.outlineEditor.active) {
+            // Editing mode: zoom towards bbox center
+            const bounds = this.outlineEditor.calculateGlyphBoundingBox();
+            if (bounds) {
+                // Get bbox center in glyph coordinates
+                const bboxCenterX = (bounds.minX + bounds.maxX) / 2;
+                const bboxCenterY = (bounds.minY + bounds.maxY) / 2;
+
+                // Get glyph position in text run
+                const glyphPosition = this.textRunEditor!._getGlyphPosition(
+                    this.textRunEditor!.selectedGlyphIndex
+                );
+
+                // If editing inside a component, transform bbox center to glyph space
+                let glyphSpaceX = bboxCenterX;
+                let glyphSpaceY = bboxCenterY;
+                if (this.outlineEditor.isEditingComponent()) {
+                    const transform =
+                        this.outlineEditor.getAccumulatedTransform();
+                    const [a, b, c, d, tx, ty] = transform;
+                    glyphSpaceX = a * bboxCenterX + c * bboxCenterY + tx;
+                    glyphSpaceY = b * bboxCenterX + d * bboxCenterY + ty;
+                }
+
+                // Convert to screen coordinates
+                const fontX =
+                    glyphSpaceX +
+                    glyphPosition.xPosition +
+                    glyphPosition.xOffset;
+                const fontY = glyphSpaceY + glyphPosition.yOffset;
+                const screenPoint =
+                    this.viewportManager!.fontToScreenCoordinates(fontX, fontY);
+                centerX = screenPoint.x;
+                centerY = screenPoint.y;
+            } else {
+                // Fallback to canvas center if no bounds
+                centerX = rect.width / 2;
+                centerY = rect.height / 2;
+            }
+        } else {
+            // Text mode: zoom towards cursor center
+            const cursorGlyphX = this.textRunEditor!.cursorX;
+            const cursorGlyphY = 0; // Cursor is at baseline
+
+            // Convert cursor position to screen coordinates
+            const screenPoint = this.viewportManager!.fontToScreenCoordinates(
+                cursorGlyphX,
+                cursorGlyphY
+            );
+            centerX = screenPoint.x;
+            centerY = screenPoint.y;
+        }
 
         // Set up animation
         this.zoomAnimation.active = true;

@@ -1,5 +1,6 @@
 # Unreleased
 
+- **Keyboard Zoom Center**: Keyboard zoom (Cmd +/-) now centers towards bbox center in editing mode or cursor position in text mode, instead of always zooming towards canvas center.
 - **Variable Axis Animation**: Added play/pause button next to each variable axis slider that animates the axis in a sine wave. Animation wavelength configurable via `AXIS_ANIMATION_WAVELENGTH` setting (default: 5 seconds). Animation starts from current slider position, suppresses layer/master selection during playback, and Escape key stops all active animations. Button uses Material Symbols play_arrow/pause icons.
 - **Measurement Tool Improvements**: Changed activation key from Alt to Shift (keeps delay). Added coordinate labels: y-coordinate on left edge in both modes, x-coordinate at top in editing mode (relative to glyph origin).
 - **Preview and Panning on Space Key**: Instead of splitting panning to Cmd and preview to space key, both are now on space key. In text mode, preview mode kicks in after 200ms of pressing space, while shorter inserts the space character.
