@@ -4,25 +4,87 @@
 
 ### Infrastructure
 
-- [ ] **Website/user account infrastructure**
+- [ ] **Cloudflare setup**
 
-  - User registration and login system
-  - Password reset and email verification
-  - User profile management
-  - Database schema for users
+  - Create Cloudflare account
+  - Set up Pages for font editor app (main domain)
+  - Set up Pages for user dashboard (account subdomain)
+  - Configure GitHub integration for automatic deployments
+  - Set up preview deployments for feature branches
+  - Configure custom domains
 
-- [ ] **Payment/subscription integration with Stripe**
+- [ ] **Cloudflare Workers - AI Assistant Relay**
 
-  - Stripe integration for AI assistant subscription
-  - Monthly billing setup
-  - Webhook handlers for payment events
-  - Subscription management UI
+  - Create Worker for /api/claude endpoint
+  - Implement streaming support for word-by-word typing effect
+  - Add token metering and cost calculation
+  - Implement rate limiting per user
+  - Add D1 bindings for usage logging
+  - Error handling and retry logic
+
+- [ ] **Cloudflare D1 Database**
+
+  - Create D1 database instance
+  - Set up schema: users, usage, sessions tables
+  - Add indexes for performance
+  - Set up Worker bindings to D1
+  - Create migration system
+
+- [ ] **Authentication system - Passwordless**
+
+  - Sign up for Resend email service
+  - Create Workers for /api/auth/request and /api/auth/verify
+  - Implement 6-digit code generation
+  - Set up KV for auth code storage (10min TTL)
+  - Email template for login codes
+  - Session token generation (JWT or simple token)
+  - Session storage in KV with expiry
+  - Rate limiting for login attempts
+  - Frontend login UI integration
+
+- [ ] **User account dashboard website**
+
+  - Build account.domain.com frontend (Cloudflare Pages)
+  - Login/logout UI
+  - Current usage display (read from D1)
+  - Monthly credit balance indicator
+  - Usage history table
+  - Billing history view
+  - Link to Stripe customer portal
+
+- [ ] **Stripe billing integration**
+
+  - Set up Stripe account
+  - Create products for metered billing
+  - Implement Stripe customer creation on signup
+  - Set up subscription with monthly credits
+  - Configure metered billing for AI usage
+  - Create Worker for /api/stripe/webhook
+  - Handle Stripe webhook events (payment success/failure)
+  - Update D1 on subscription changes
+
+- [ ] **Usage metering and billing sync**
+
+  - Fast D1 insert on each Claude API call (~5ms)
+  - Create hourly cron Worker for aggregation
+  - Aggregate usage per user from D1
+  - Sync aggregated usage to Stripe usage records
+  - Mark synced records in D1
+  - Handle sync failures and retries
+  - Dashboard endpoint for real-time usage display
+
+- [ ] **Cloudflare Analytics**
+
+  - Enable Cloudflare Web Analytics
+  - Configure privacy-focused tracking
+  - Set up basic metrics dashboard
 
 - [ ] **Legal documents**
   - Privacy policy
   - Terms of Service
   - Cookie policy
   - GDPR compliance
+  - AI usage terms and pricing disclosure
 
 ### Core Features
 
