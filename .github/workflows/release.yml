@@ -8,6 +8,7 @@ on:
 # Sets permissions
 permissions:
   contents: write
+  deployments: write
 
 jobs:
   release:
