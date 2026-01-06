@@ -171,20 +171,33 @@ export async function waitForFontLoaded(page: any) {
         { timeout: 15000 }
     );
 
-    // Also wait for features and axes to be initialized
+    // Wait for features and axes to be populated with actual data
     await page.waitForFunction(
         () => {
             const featuresManager = window.glyphCanvas?.featuresManager;
             const axesManager = window.glyphCanvas?.axesManager;
 
-            // Check if font has features/axes and managers are initialized
-            const hasFeatures = featuresManager?.featureSettings;
-            const hasAxes = axesManager?.variationSettings;
+            // Check if managers exist
+            if (!featuresManager || !axesManager) return false;
 
-            return hasFeatures !== undefined && hasAxes !== undefined;
+            const featureSettings = featuresManager.featureSettings;
+            const variationSettings = axesManager.variationSettings;
+
+            // Both should be objects (not null/undefined)
+            if (!featureSettings || !variationSettings) return false;
+
+            // For features: should have at least some feature keys defined
+            // For axes: should have actual axis values (or be empty if font has no axes)
+            const hasFeatureKeys = Object.keys(featureSettings).length > 0;
+            const hasAxesKeys = Object.keys(variationSettings).length >= 0; // Can be 0 if no variable font
+
+            return hasFeatureKeys;
         },
         { timeout: 10000 }
     );
+
+    // Extra stabilization time for async initialization
+    await page.waitForTimeout(200);
 }
 
 /**
