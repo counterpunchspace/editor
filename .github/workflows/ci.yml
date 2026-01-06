@@ -36,3 +36,14 @@ jobs:
 
       - name: Check code formatting with Prettier
         run: cd webapp && npx prettier -c .
+
+      - name: Deploy preview to Cloudflare Pages
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        uses: cloudflare/pages-action@v1
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          projectName: fonteditor-863
+          directory: ./webapp/build
+          gitHubToken: ${{ secrets.GITHUB_TOKEN }}
+          branch: preview

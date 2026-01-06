@@ -8,8 +8,6 @@ on:
 # Sets permissions
 permissions:
   contents: write
-  pages: write
-  id-token: write
 
 jobs:
   release:
@@ -75,20 +73,18 @@ jobs:
       - name: Build webapp with webpack
         run: npm run build --prefix webapp
 
-      - name: Setup Pages
-        uses: actions/configure-pages@v4
-
-      - name: Upload artifact
-        uses: actions/upload-pages-artifact@v3
+      - name: Deploy to Cloudflare Pages
+        uses: cloudflare/pages-action@v1
         with:
-          path: "./webapp/build"
-
-      - name: Deploy to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v4
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          projectName: fonteditor-863
+          directory: ./webapp/build
+          gitHubToken: ${{ secrets.GITHUB_TOKEN }}
+          branch: production
 
       - name: Deployment summary
         run: |
           echo "✅ Release ${{ steps.version.outputs.VERSION }} deployed successfully!"
           echo "📦 GitHub Release created"
-          echo "🚀 Deployed to GitHub Pages: ${{ steps.deployment.outputs.page_url }}"
+          echo "🚀 Deployed to Cloudflare Pages"
