@@ -170,6 +170,21 @@ export async function waitForFontLoaded(page: any) {
         },
         { timeout: 15000 }
     );
+
+    // Also wait for features and axes to be initialized
+    await page.waitForFunction(
+        () => {
+            const featuresManager = window.glyphCanvas?.featuresManager;
+            const axesManager = window.glyphCanvas?.axesManager;
+
+            // Check if font has features/axes and managers are initialized
+            const hasFeatures = featuresManager?.featureSettings;
+            const hasAxes = axesManager?.variationSettings;
+
+            return hasFeatures !== undefined && hasAxes !== undefined;
+        },
+        { timeout: 10000 }
+    );
 }
 
 /**
