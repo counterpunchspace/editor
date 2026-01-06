@@ -4,6 +4,10 @@
 
 Try the editor live at https://fonteditor-863.pages.dev
 
+## Develop
+
+Run the app locally with `cd webapp && npm run dev`
+
 ## Releasing a New Version
 
 To create and deploy a new release, run the release script from the repository root:
