@@ -76,7 +76,7 @@ class ExampleCanvasPlugin(BaseCanvasPlugin):
                     {'value': 'outline', 'label': 'Outline'},
                     {'value': 'filled', 'label': 'Filled'}
                 ],
-                'default': 'normal'
+                'default': 'filled'
             },
             {
                 'type': 'color',
@@ -103,24 +103,24 @@ class ExampleCanvasPlugin(BaseCanvasPlugin):
         
         # Get UI parameter values
         opacity = self.get_parameter('opacity')
-        if opacity is None:
+        if opacity is None or str(type(opacity)) == "<class 'pyodide.ffi.JsNull'>":
             opacity = 50
         opacity_alpha = opacity / 100.0
         
         label_text = self.get_parameter('label_text')
-        if label_text is None:
+        if label_text is None or str(type(label_text)) == "<class 'pyodide.ffi.JsNull'>":
             label_text = 'Custom'
         
         show_info = self.get_parameter('show_info')
-        if show_info is None:
+        if show_info is None or str(type(show_info)) == "<class 'pyodide.ffi.JsNull'>":
             show_info = True
         
         display_mode = self.get_parameter('display_mode')
-        if display_mode is None:
-            display_mode = 'normal'
+        if display_mode is None or str(type(display_mode)) == "<class 'pyodide.ffi.JsNull'>":
+            display_mode = 'filled'
         
         fill_color = self.get_parameter('fill_color')
-        if fill_color is None:
+        if fill_color is None or str(type(fill_color)) == "<class 'pyodide.ffi.JsNull'>":
             fill_color = '#0000ff'
         
         # Calculate bounding box of all shapes
