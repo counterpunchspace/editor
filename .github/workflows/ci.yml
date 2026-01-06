@@ -32,6 +32,15 @@ jobs:
         run: npx playwright install --with-deps chromium webkit
         working-directory: webapp
 
+      - name: Inject dynamic version for PWA cache busting
+        run: |
+          COMMIT_SHORT=$(git rev-parse --short HEAD)
+          DATE=$(date -u +"%Y%m%d-%H%M")
+          NEW_VERSION="preview-${DATE}-${COMMIT_SHORT}"
+          echo "Setting VERSION to: ${NEW_VERSION}"
+          sed -i.bak "s/const VERSION = '[^']*'/const VERSION = '${NEW_VERSION}'/" webapp/coi-serviceworker.js
+          rm webapp/coi-serviceworker.js.bak
+
       - name: Build webapp with webpack
         run: npm run build --prefix webapp
 

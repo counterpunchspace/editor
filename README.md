@@ -2,7 +2,10 @@
 
 ## Live App
 
-Try the editor live at https://fonteditor-863.pages.dev
+Try the editor live:
+
+- Latest official release (using `release.sh`): https://fonteditor-863.pages.dev
+- Latest preview (updated after each push): https://preview.fonteditor-863.pages.dev
 
 ## Develop
 
