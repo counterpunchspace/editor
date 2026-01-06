@@ -36,12 +36,14 @@ test.describe('Font Editor Basic Workflow', () => {
         // Wait for app to be ready
         await waitForCanvasReady(page);
 
-        // Move mouse to top-left corner of canvas to keep it out of the way
+        // Click on editor view to activate it (prevents popups in screenshots)
         const canvas = page.locator('#glyph-canvas-container canvas');
-        const box = await canvas.boundingBox();
-        if (box) {
-            await page.mouse.move(box.x + 5, box.y + 5);
-        }
+        await expect(canvas).toBeVisible();
+        await canvas.click();
+
+        // Move mouse far outside the viewport to avoid triggering any hover effects
+        await page.mouse.move(-100, -100);
+        await page.waitForTimeout(200);
 
         // Wait for rendering to complete
         await page.waitForTimeout(500);
@@ -65,12 +67,16 @@ test.describe('Font Editor Basic Workflow', () => {
             .click();
         await waitForFontLoaded(page);
 
+        // Cmd+0
+        await page.keyboard.press('Meta+0');
+        await page.waitForTimeout(300);
+
         // SNAPSHOT POINT 2: Font loaded
+        await page.mouse.move(-100, -100);
+        await page.waitForTimeout(100);
         const snapshot2 = await takeSnapshot(page, '02', 'font-loaded', expect);
 
-        // Type some text - use JavaScript for complex scripts like Arabic
-        await page.click('#glyph-canvas-container canvas');
-
+        // Type some text - use JavaScript (no need to click, just set via evaluate)
         // Set Arabic text directly (keyboard.type doesn't handle combining diacritics well)
         await page.evaluate(() => {
             if (window.glyphCanvas?.textRunEditor) {
@@ -83,10 +89,16 @@ test.describe('Font Editor Basic Workflow', () => {
             }
         });
 
+        // Cmd+0
+        await page.keyboard.press('Meta+0');
+        await page.waitForTimeout(300);
+
         // Wait for rendering to complete
         await page.waitForTimeout(500);
 
         // SNAPSHOT POINT 3: Text typed
+        await page.mouse.move(-100, -100);
+        await page.waitForTimeout(100);
         const snapshot3 = await takeSnapshot(page, '03', 'text-typed', expect);
         expect(snapshot3.displayedText).toContain('hello مَرحَباً');
 
@@ -130,7 +142,7 @@ test.describe('Font Editor Basic Workflow', () => {
             expect
         );
 
-        // Cmd+0 on fatha-tanween
+        // Cmd+0
         await page.keyboard.press('Meta+0');
         await page.waitForTimeout(300);
 
