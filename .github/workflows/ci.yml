@@ -36,7 +36,7 @@ jobs:
         run: |
           COMMIT_SHORT=$(git rev-parse --short HEAD)
           DATE=$(date -u +"%Y%m%d-%H%M")
-          NEW_VERSION="preview-${DATE}-${COMMIT_SHORT}"
+          NEW_VERSION="v0.0.0-preview-${DATE}-${COMMIT_SHORT}"
           echo "Setting VERSION to: ${NEW_VERSION}"
           sed -i.bak "s/const VERSION = '[^']*'/const VERSION = '${NEW_VERSION}'/" webapp/coi-serviceworker.js
           rm webapp/coi-serviceworker.js.bak
