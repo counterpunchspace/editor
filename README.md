@@ -4,7 +4,7 @@
 
 Try the editor live:
 
-- Latest official release (using `release.sh`): https://fonteditor-863.pages.dev
+- Latest official release (using `release.sh`): https://production.fonteditor-863.pages.dev
 - Latest preview (updated after each push): https://preview.fonteditor-863.pages.dev
 
 ## Develop
