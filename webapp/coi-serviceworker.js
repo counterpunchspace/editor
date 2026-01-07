@@ -4,8 +4,8 @@ let coepCredentialless = false;
 
 // PWA Cache configuration
 const VERSION = 'v0.1.3';
-const CACHE_NAME = 'contxt-pwa-' + VERSION;
-const CDN_CACHE_NAME = 'contxt-cdn-cache-' + VERSION;
+const CACHE_NAME = 'counterpunch-pwa-' + VERSION;
+const CDN_CACHE_NAME = 'counterpunch-cdn-cache-' + VERSION;
 const OFFLINE_URL = '/index.html';
 
 // Assets to cache on install

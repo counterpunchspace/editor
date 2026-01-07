@@ -1,4 +1,4 @@
-# contxt Font Editor
+# Counterpunch Font Editor
 
 ## Live App
 

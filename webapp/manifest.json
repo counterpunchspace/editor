@@ -1,6 +1,6 @@
 {
-    "name": "contxt - Font Editor",
-    "short_name": "contxt",
+    "name": "counterpunch - Font Editor",
+    "short_name": "counterpunch",
     "description": "Modern font editor for creating and editing fonts",
     "start_url": "./index.html",
     "scope": "./",
