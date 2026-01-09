@@ -52,12 +52,7 @@ class AIAssistant {
             return;
         }
 
-        // Check if user is authenticated
-        const user = await window.authManager.checkAuthStatus();
-        this.isAuthenticated = !!user;
-        this.updateAuthUI();
-
-        // Listen for auth state changes
+        // Listen for auth state changes first
         const originalCallback = window.authManager.onAuthStateChanged;
         window.authManager.onAuthStateChanged = (
             isAuthenticated,
@@ -76,6 +71,13 @@ class AIAssistant {
                 );
             }
         };
+
+        // Check if user is authenticated (this will trigger onAuthStateChanged)
+        const user = await window.authManager.checkAuthStatus();
+        this.isAuthenticated = !!user;
+        // Get subscription from authManager after check
+        this.subscription = window.authManager.subscription;
+        this.updateAuthUI();
     }
 
     updateAuthUI() {
@@ -369,17 +371,17 @@ class AIAssistant {
 
         // Update text content and context classes
         if (this.context === 'font') {
-            contextLabel.textContent = 'Font Context';
+            promptPrefix.textContent = '>>>';
+            contextLabel.innerHTML =
+                '<span id="ai-prompt-prefix">>>></span> Font Context';
             contextLabel.classList.add('font-context');
             contextLabel.classList.remove('script-context');
-            promptPrefix.classList.add('font-context');
-            promptPrefix.classList.remove('script-context');
         } else {
-            contextLabel.textContent = 'Script Context';
+            promptPrefix.textContent = '>>>';
+            contextLabel.innerHTML =
+                '<span id="ai-prompt-prefix">>>></span> Script Context';
             contextLabel.classList.add('script-context');
             contextLabel.classList.remove('font-context');
-            promptPrefix.classList.add('script-context');
-            promptPrefix.classList.remove('font-context');
         }
     }
 
@@ -1863,20 +1865,13 @@ if '_original_stdout' in dir():
             // Calculate character width (monospace font)
             const charWidth = fontSize * 0.6; // Approximate for IBM Plex Mono
 
-            // Get prefix width
-            const prefix = document.getElementById('ai-prompt-prefix');
-            const prefixWidth = prefix ? prefix.offsetWidth : 0;
-
             // Get textarea padding and margin
             const paddingLeft = parseFloat(style.paddingLeft) || 0;
             const marginLeft = parseFloat(style.marginLeft) || 0;
 
             // Calculate position
             const left =
-                prefixWidth +
-                paddingLeft +
-                marginLeft +
-                currentLineText.length * charWidth;
+                paddingLeft + marginLeft + currentLineText.length * charWidth;
             const top = currentLine * lineHeight;
 
             // Check if cursor position changed

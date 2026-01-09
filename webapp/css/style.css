@@ -2763,6 +2763,10 @@ kbd + kbd {
     font-weight: 500;
 }
 
+#ai-prompt-prefix {
+    font-weight: 500;
+}
+
 #ai-prompt-wrapper {
     position: relative;
     display: flex;
@@ -2775,13 +2779,11 @@ kbd + kbd {
     line-height: 1.6;
     pointer-events: none;
     user-select: none;
-    /* white-space: pre; */
     flex-shrink: 0;
-    padding: 2px 4px 2px 5px;
+    padding: 2px 6px;
     border-radius: 1px;
-    margin-right: 0px;
-    position: relative;
-    top: -2px;
+    font-style: normal;
+    font-weight: 500;
 }
 
 #ai-prompt {
@@ -2794,7 +2796,9 @@ kbd + kbd {
     font-family: var(--font-families-mono);
     font-size: calc(var(--size, 1) * (12px / var(--pixel-density, 1)));
     min-height: 0;
-    max-height: none;
+    max-height: calc(
+        var(--size, 1) * (12px / var(--pixel-density, 1)) * 1.6 * 6
+    );
     resize: none;
     letter-spacing: 0;
     line-height: 1.6;
