@@ -16,6 +16,13 @@
     box-sizing: border-box;
 }
 
+html,
+body {
+    /* Disable trackpad swipe navigation gestures */
+    overscroll-behavior-x: none;
+    overscroll-behavior-y: none;
+}
+
 body {
     font-family:
         'IBM Plex Sans',
