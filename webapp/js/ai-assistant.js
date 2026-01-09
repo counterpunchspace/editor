@@ -4,16 +4,15 @@
 
 class AIAssistant {
     constructor() {
-        this.apiKey = localStorage.getItem('anthropic_api_key') || '';
         this.messages = [];
         this.conversationHistory = [];
         this.maxRetries = 3;
-        this.cachedApiDocs = null; // Cache for context API documentation
         this.autoRun = localStorage.getItem('ai_auto_run') !== 'false'; // Default to true
         this.isShowingErrorFix = false; // Flag to prevent duplicate error fix messages
+        this.isAuthenticated = false; // Track authentication state
 
-        // Detect environment and set proxy URL
-        this.proxyUrl = this.getProxyUrl();
+        // Get website URL for API calls
+        this.websiteURL = this.getWebsiteURL();
 
         // Configure marked.js for markdown parsing
         if (typeof marked !== 'undefined') {
@@ -26,17 +25,88 @@ class AIAssistant {
         }
 
         this.initUI();
+        this.checkAuthenticationStatus();
     }
 
-    getProxyUrl() {
-        // Use Cloudflare Worker for both local and production
-        // TODO: Replace with your actual Cloudflare Worker URL after deployment
-        return 'https://late-firefly-13f5.post-adf.workers.dev';
+    getWebsiteURL() {
+        // Detect environment and return appropriate website URL
+        const hostname = window.location.hostname;
+
+        if (hostname === 'localhost' || hostname === '127.0.0.1') {
+            return 'http://localhost:8788'; // Local development
+        }
+
+        // Production font editor URL
+        if (hostname === 'production.fonteditor-863.pages.dev') {
+            return 'https://fonteditorwebsite.pages.dev';
+        }
+
+        // Default to production website
+        return 'https://fonteditorwebsite.pages.dev';
+    }
+
+    async checkAuthenticationStatus() {
+        // Wait for authManager to be available
+        if (!window.authManager) {
+            setTimeout(() => this.checkAuthenticationStatus(), 100);
+            return;
+        }
+
+        // Check if user is authenticated
+        const user = await window.authManager.checkAuthStatus();
+        this.isAuthenticated = !!user;
+        this.updateAuthUI();
+
+        // Listen for auth state changes
+        const originalCallback = window.authManager.onAuthStateChanged;
+        window.authManager.onAuthStateChanged = (
+            isAuthenticated,
+            user,
+            subscription
+        ) => {
+            this.isAuthenticated = isAuthenticated;
+            this.subscription = subscription;
+            this.updateAuthUI();
+            if (originalCallback) {
+                originalCallback.call(
+                    window.authManager,
+                    isAuthenticated,
+                    user,
+                    subscription
+                );
+            }
+        };
+    }
+
+    updateAuthUI() {
+        const chatContainer = document.getElementById('ai-chat-container');
+        const loginContainer = document.getElementById('ai-login-container');
+        const subscriptionContainer = document.getElementById(
+            'ai-subscription-container'
+        );
+
+        if (!chatContainer || !loginContainer || !subscriptionContainer) return;
+
+        if (!this.isAuthenticated) {
+            // Not logged in - show login
+            chatContainer.style.display = 'none';
+            loginContainer.style.display = 'flex';
+            subscriptionContainer.style.display = 'none';
+        } else if (!this.subscription || !this.subscription.isAdvanced) {
+            // Logged in but no Advanced subscription - show upgrade message
+            chatContainer.style.display = 'none';
+            loginContainer.style.display = 'none';
+            subscriptionContainer.style.display = 'flex';
+        } else {
+            // Logged in with Advanced subscription - show chat
+            chatContainer.style.display = 'flex';
+            loginContainer.style.display = 'none';
+            subscriptionContainer.style.display = 'none';
+        }
     }
 
     initUI() {
         // Get DOM elements
-        this.apiKeyInput = document.getElementById('ai-api-key'); // May be null (moved to modal)
         this.promptInput = document.getElementById('ai-prompt');
         this.sendButton = document.getElementById('ai-send-btn');
         this.messagesContainer = document.getElementById('ai-messages');
@@ -50,11 +120,6 @@ class AIAssistant {
         // Restore saved context or default to 'font'
         const savedContext = localStorage.getItem('ai_context');
         this.context = savedContext || 'font';
-
-        // Set saved API key (if old input exists)
-        if (this.apiKey && this.apiKeyInput) {
-            this.apiKeyInput.value = this.apiKey;
-        }
 
         // Set context button states based on restored context
         if (this.context === 'font') {
@@ -76,28 +141,7 @@ class AIAssistant {
         // Update context label
         this.updateContextLabel();
 
-        // Event listeners (only if old API key input exists)
-        if (this.apiKeyInput) {
-            this.apiKeyInput.addEventListener('change', () => {
-                this.apiKey = this.apiKeyInput.value;
-                localStorage.setItem('anthropic_api_key', this.apiKey);
-                this.updateApiKeyWarning();
-                // Sync with modal input
-                const modalInput = document.getElementById('ai-api-key-modal');
-                if (modalInput) modalInput.value = this.apiKey;
-            });
-
-            // Also save on input (immediate save while typing/pasting)
-            this.apiKeyInput.addEventListener('input', () => {
-                this.apiKey = this.apiKeyInput.value;
-                localStorage.setItem('anthropic_api_key', this.apiKey);
-                this.updateApiKeyWarning();
-                // Sync with modal input
-                const modalInput = document.getElementById('ai-api-key-modal');
-                if (modalInput) modalInput.value = this.apiKey;
-            });
-        }
-
+        // Event listeners
         this.sendButton.addEventListener('click', (event) => {
             event.stopPropagation(); // Prevent view focus
             this.sendPrompt();
@@ -149,8 +193,8 @@ class AIAssistant {
         // Setup info modal
         this.setupInfoModal();
 
-        // Update API key warning visibility
-        this.updateApiKeyWarning();
+        // Setup login button
+        this.setupLoginButton();
 
         // Add wider cursor styling for the prompt textarea
         this.addWideCursorStyle();
@@ -339,18 +383,40 @@ class AIAssistant {
         }
     }
 
+    setupLoginButton() {
+        const loginBtn = document.getElementById('ai-login-btn');
+        if (!loginBtn) return;
+
+        loginBtn.addEventListener('click', () => {
+            if (window.authManager) {
+                window.authManager.login();
+            } else {
+                console.error('[AIAssistant] AuthManager not available');
+            }
+        });
+
+        // Setup Account button for subscription required message
+        const accountBtn = document.getElementById('ai-account-btn');
+        if (accountBtn) {
+            accountBtn.addEventListener('click', () => {
+                if (window.authManager) {
+                    window.open(
+                        `${window.authManager.websiteURL}/account`,
+                        '_blank'
+                    );
+                } else {
+                    console.error('[AIAssistant] AuthManager not available');
+                }
+            });
+        }
+    }
+
     setupInfoModal() {
         const infoButton = document.getElementById('ai-info-btn');
         const modal = document.getElementById('ai-info-modal');
         const closeBtn = document.getElementById('ai-info-modal-close-btn');
-        const apiKeyModalInput = document.getElementById('ai-api-key-modal');
 
-        if (!infoButton || !modal || !closeBtn || !apiKeyModalInput) return;
-
-        // Set initial API key value in modal
-        if (this.apiKey) {
-            apiKeyModalInput.value = this.apiKey;
-        }
+        if (!infoButton || !modal || !closeBtn) return;
 
         // Open modal
         infoButton.addEventListener('click', (event) => {
@@ -397,24 +463,6 @@ class AIAssistant {
                 closeModal();
             }
         });
-
-        // Sync API key from modal to main storage
-        apiKeyModalInput.addEventListener('input', () => {
-            this.apiKey = apiKeyModalInput.value;
-            localStorage.setItem('anthropic_api_key', this.apiKey);
-            this.updateApiKeyWarning();
-        });
-    }
-
-    updateApiKeyWarning() {
-        const warning = document.getElementById('ai-api-key-warning');
-        if (!warning) return;
-
-        if (!this.apiKey || this.apiKey.trim() === '') {
-            warning.style.display = 'block';
-        } else {
-            warning.style.display = 'none';
-        }
     }
 
     updateContextButtons() {
@@ -1403,9 +1451,15 @@ ${errorTraceback}
             return;
         }
 
-        if (!this.apiKey) {
-            alert('Please enter your Anthropic API key');
-            this.apiKeyInput.focus();
+        // Check authentication
+        if (!window.authManager || !window.authManager.isAuthenticated()) {
+            if (
+                confirm(
+                    'You need to sign in to use the AI assistant. Sign in now?'
+                )
+            ) {
+                window.authManager.login();
+            }
             return;
         }
 
@@ -1532,205 +1586,108 @@ ${errorTraceback}
     }
 
     async callClaude(userPrompt, previousError = null, attemptNumber = 0) {
-        // Get API documentation from JavaScript object model (cached after first generation)
-        if (!this.cachedApiDocs) {
-            try {
-                // Fetch and load the generate_api_docs module
-                const response = await fetch('./py/generate_api_docs.py');
-                const code = await response.text();
-
-                // Execute the module code
-                await window.pyodide.runPython(code);
-
-                // Call generate_docs()
-                this.cachedApiDocs = await window.pyodide.runPythonAsync(`
-generate_docs()
-                `);
-                console.log(
-                    '[AIAssistant]',
-                    'Font Object Model API documentation generated and cached'
-                );
-            } catch (error) {
-                console.fail(
-                    'Could not generate API docs, using fallback:',
-                    error
-                );
-            }
-        }
-
-        const apiDocs = this.cachedApiDocs;
-
-        // Build context-specific instructions
-        const contextInstructions =
-            this.context === 'script'
-                ? `CONTEXT: SCRIPT EDITING MODE
-You are helping to improve and modify Python scripts that will be run inside the font editor using the context-py library. The user has an existing script open in their editor that they want to enhance or modify or fix, or the script may also be empty still.
-
-PRIMARY FOCUS:
-- Write Python scripts from scratch or improve existing ones
-- Add new functionality to scripts only when explicitly requested
-- Refactor and optimize code only when explicitly requested
-- Fix errors in existing scripts when provided with error tracebacks
-- Adapt code to context-py API changes (see API docs below)
-- Help write complete, reusable scripts
-- Scripts should be designed to work on fonts using the context-py library
-
-CRITICAL RULES FOR SCRIPT MODE:
-1. Generate complete, standalone Python scripts that can be saved and reused
-2. Get the main font object using \`font = CurrentFont()\` (raises error if no font is open). Note: The \`fonteditor\` module is already loaded, no import needed.
-3. Scripts should be self-contained and well-documented
-4. Include proper error handling and user feedback via print statements
-5. The context-py API documentation below is provided for reference when writing scripts
-6. Only refactor code when explicitly requested by the user. When fixing errors, only change the parts that are necessary to fix the error
-`
-                : `CONTEXT: FONT EDITING MODE
-You are working directly on the user's currently open font. Generate Python code that will be executed immediately on the active font using the context-py library.
-
-CRITICAL RULES FOR FONT MODE:
-1. Get the main font object using \`font = CurrentFont()\` (raises error if no font is open). Note: The \`fonteditor\` module is already loaded, no import needed.
-2. Only set data in the font object if there is a clear instruction to do so in the user prompt, otherwise just read or analyze data
-3. Code will be executed immediately - keep it focused and efficient
-4. Always include a summary print statement at the end indicating what was done`;
-
-        // Build the system prompt with API documentation
-        const systemPrompt = `You are a Python code generator for a font editor using the context-py library.
-
-${contextInstructions}
-
-GENERAL RULES (APPLY TO BOTH CONTEXTS):
-1. Python code MUST be wrapped in one single \`\`\`python code block
-2. You may include explanations in markdown format outside the code block
-3. Include print() statements in your code to show results to the user
-4. Handle errors gracefully within your code
-5. The font object is a context-py Font instance
-6. Annotate the code with comments
-7. Never return single-line Python comments. If you want to return just a comment, wrap it in a print statement anyway so the user gets to see it
-8. Always include a summary of the user prompt in the first line of the code as a comment (max 40 characters, pose as a command, not a question), followed by a line with the most important keywords describing the most important concepts touched in the code (line starts with "Keywords: ", see below list for eligible keywords), followed by an empty line, followed by one or several comment lines explaining briefly what the script does. Cap the description at 40 characters per line
-9. Always include an explanation of the code in markdown format outside the code block
-10. Answer in the language used in the user prompt in the Python code and the markdown explanation
-11. About the keywords line: Only use keywords that are actually relevant to the user prompt, not keywords of concepts that were used in the code as a means to get there or for filtering. Example: When a user wants to change anchors, only list "anchors" as a keyword while ignoring the keywords "glyphs" and "layers".
-12. matplotlib, numpy, pandas may be imported and used if needed for data analysis or visualization
-
-Example for file header:
-
-\`\`\`python
-# Make all glyphs 10 % wider
-# Keywords: metrics
-#
-# This script iterates through all glyphs in the current font
-# and increases their width by 10 %. It also adjusts the x
-# coordinates of all nodes in each layer accordingly.
-\`\`\`
-
-Eligible keyword are:
-glyphs, layers, paths, nodes, anchors, components, metrics, names, masters, unicode, kerning, groups, features, guidelines
-
-CONTEXT-PY API DOCUMENTATION:
-${apiDocs}
-
-CHANGELOG to API:
-Oct. 23rd 2025:
-- Layer.anchor_objects changed to Layer.anchors
-
-EXAMPLE OPERATIONS:
-${
-    this.context === 'font'
-        ? `# Make all glyphs 10% wider (FONT MODE)
-font = CurrentFont()
-for glyph in font.glyphs:
-    for layer in glyph.layers:
-        layer.width = layer.width * 1.1
-        for path in layer.paths:
-            for node in path.nodes:
-                node.x = node.x * 1.1
-print(f"Made {len(font.glyphs)} glyphs 10% wider")
-
-# List all glyph names (FONT MODE)
-font = CurrentFont()
-print(f"Font has {len(font.glyphs)} glyphs:")
-for glyph in font.glyphs:
-    print(f"  - {glyph.name}")`
-        : `# Example script for batch processing (SCRIPT MODE)
-import context
-
-def process_font(font_path):
-    font = context.load(font_path)
-    # Process the font
-    print(f"Processing {font.names.familyName}")
-    # Your modifications here
-    return font
-
-# This is a script that can be saved and reused`
-}
-
-Generate Python code for: ${userPrompt}`;
-
-        // Build conversation messages with full conversation history
-        const messages = [...this.conversationHistory];
-
-        // Add current prompt (or retry with error context) with context information
-        const contextPrefix = `[Context: ${this.context === 'script' ? 'Script Editing' : 'Font Editing'}]\n\n`;
-
-        // In script context, include the current script editor content
-        let fullPrompt = userPrompt;
+        // Get current script content if in script mode
+        let currentScript = null;
         if (
             this.context === 'script' &&
             window.scriptEditor &&
             window.scriptEditor.editor
         ) {
-            const currentScript = window.scriptEditor.editor.getValue();
-            if (currentScript && currentScript.trim()) {
-                fullPrompt = `Current script in editor:\n\`\`\`python\n${currentScript}\n\`\`\`\n\nUser request: ${userPrompt}`;
-            }
+            currentScript = window.scriptEditor.editor.getValue();
+        }
+
+        // Build prompt with error context if retrying
+        let fullPrompt = userPrompt;
+        if (currentScript && currentScript.trim()) {
+            fullPrompt = `Current script in editor:\n\`\`\`python\n${currentScript}\n\`\`\`\n\nUser request: ${userPrompt}`;
         }
 
         if (previousError && attemptNumber > 0) {
-            messages.push({
-                role: 'user',
-                content: `${contextPrefix}${fullPrompt}\n\nPrevious attempt ${attemptNumber} failed with error:\n${previousError}\n\nPlease fix the code and try again.`
-            });
-        } else {
-            messages.push({
-                role: 'user',
-                content: `${contextPrefix}${fullPrompt}`
-            });
+            fullPrompt = `${fullPrompt}\n\nPrevious attempt ${attemptNumber} failed with error:\n${previousError}\n\nPlease fix the code and try again.`;
         }
 
-        // Call Anthropic API through proxy (local or Cloudflare Worker)
-        const model = 'claude-sonnet-4-5-20250929';
-        const response = await fetch(this.proxyUrl, {
+        // Get session token for authentication
+        const sessionToken = window.authManager
+            ? window.authManager.getSessionToken()
+            : null;
+        const headers = {
+            'Content-Type': 'application/json'
+        };
+
+        if (sessionToken) {
+            headers['Authorization'] = `Bearer ${sessionToken}`;
+        }
+
+        // Call the website's AI API endpoint
+        const response = await fetch(`${this.websiteURL}/api/ai/assistant`, {
             method: 'POST',
-            headers: {
-                'x-api-key': this.apiKey,
-                'anthropic-version': '2023-06-01',
-                'content-type': 'application/json'
-            },
+            credentials: 'include', // Include cookies for authentication
+            headers: headers,
             body: JSON.stringify({
-                model: model,
-                max_tokens: 8192,
-                system: systemPrompt,
-                messages: messages
+                prompt: fullPrompt,
+                history: this.conversationHistory,
+                context: currentScript,
+                contextType: this.context
             })
         });
 
-        // Log the full prompt to console for debugging
-        console.group('👽 AI Prompt Sent to Claude');
-        console.log('[AIAssistant]', 'System Prompt:', systemPrompt);
-        console.log('[AIAssistant]', 'Messages:', messages);
-        console.log('[AIAssistant]', 'Model:', model);
+        // Log the request for debugging
+        console.group('👽 AI Prompt Sent to API');
+        console.log('[AIAssistant]', 'Prompt:', fullPrompt);
+        console.log('[AIAssistant]', 'Context Type:', this.context);
+        console.log(
+            '[AIAssistant]',
+            'History length:',
+            this.conversationHistory.length
+        );
         console.groupEnd();
 
         if (!response.ok) {
             const errorData = await response.json();
+
+            // Handle specific error cases
+            if (response.status === 401) {
+                // Not authenticated
+                if (
+                    confirm(
+                        'You need to sign in to use the AI assistant. Sign in now?'
+                    )
+                ) {
+                    window.authManager.login();
+                }
+                throw new Error('Authentication required');
+            } else if (response.status === 403) {
+                // Not subscribed
+                throw new Error(
+                    errorData.error || 'Active subscription required'
+                );
+            } else if (response.status === 402) {
+                // Insufficient credits
+                throw new Error(errorData.message || 'Insufficient credits');
+            } else if (response.status === 429) {
+                // Rate limited
+                throw new Error(`Rate limit exceeded. Please try again later.`);
+            }
+
             throw new Error(
-                `API error: ${errorData.error?.message || response.statusText}`
+                `API error: ${errorData.error || errorData.message || response.statusText}`
             );
         }
 
         const data = await response.json();
 
+        // Log usage information
+        if (data.usage) {
+            console.log('[AIAssistant]', 'Usage:', {
+                cost: `${data.usage.cost_eur_cents} EUR cents`,
+                tokens: `${data.usage.prompt_tokens + data.usage.completion_tokens} total`,
+                overage: data.usage.used_overage,
+                balance: `${data.usage.balance_after} EUR cents remaining`
+            });
+        }
+
         // Extract Python code and markdown from response
-        const fullResponse = data.content[0].text;
+        const fullResponse = data.response;
         let pythonCode = '';
         let markdownText = fullResponse;
 
@@ -1762,14 +1719,13 @@ Generate Python code for: ${userPrompt}`;
 
         // Add to conversation history (only if not a retry)
         if (!previousError || attemptNumber === 0) {
-            const contextPrefix = `[Context: ${this.context === 'script' ? 'Script Editing' : 'Font Editing'}]\n\n`;
             this.conversationHistory.push({
                 role: 'user',
-                content: `${contextPrefix}${userPrompt}`
+                content: fullPrompt
             });
             this.conversationHistory.push({
                 role: 'assistant',
-                content: data.content[0].text
+                content: fullResponse
             });
 
             // Keep conversation history manageable (last 10 exchanges = 20 messages)

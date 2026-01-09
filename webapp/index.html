@@ -11,7 +11,7 @@
         <meta name="apple-mobile-web-app-capable" content="yes" />
         <meta name="apple-mobile-web-app-status-bar-style" content="black" />
         <meta name="apple-mobile-web-app-title" content="counterpunch" />
-        <title>Counterpunch</title>
+        <title>Counterpunch Editor</title>
         <!-- Development/Production detection helper (matches settings.ts logic) -->
         <script>
             // Shared helper functions to detect development/production mode
@@ -444,24 +444,67 @@
                         </button>
                     </div>
                     <div class="view-content">
+                        <!-- Login prompt for unauthenticated users -->
+                        <div id="ai-login-container" style="display: none">
+                            <div class="ai-login-content">
+                                <span
+                                    class="material-symbols-outlined ai-login-icon"
+                                    >lock</span
+                                >
+                                <h2>Sign In Required</h2>
+                                <p>
+                                    You need to sign in with an active
+                                    subscription to use the AI assistant.
+                                </p>
+                                <button
+                                    id="ai-login-btn"
+                                    class="ai-login-button"
+                                >
+                                    <span class="material-symbols-outlined"
+                                        >login</span
+                                    >
+                                    Sign In
+                                </button>
+                                <p class="ai-login-note">
+                                    You'll be redirected to sign in and then
+                                    brought back here.
+                                </p>
+                            </div>
+                        </div>
+
+                        <!-- Subscription required message -->
+                        <div
+                            id="ai-subscription-container"
+                            style="display: none"
+                        >
+                            <div class="ai-login-content">
+                                <span
+                                    class="material-symbols-outlined ai-login-icon"
+                                    >workspace_premium</span
+                                >
+                                <h2>Advanced Subscription Required</h2>
+                                <p>
+                                    The assistant is available with an Advanced
+                                    subscription. We offer a 30-day free trial!
+                                </p>
+                                <button
+                                    id="ai-account-btn"
+                                    class="ai-login-button"
+                                >
+                                    <span class="material-symbols-outlined"
+                                        >manage_accounts</span
+                                    >
+                                    Manage Account
+                                </button>
+                                <p class="ai-login-note">
+                                    Upgrade to Advanced to access the assistant.
+                                </p>
+                            </div>
+                        </div>
+
+                        <!-- Chat interface for authenticated users -->
                         <div id="ai-chat-container">
                             <div id="ai-messages"></div>
-                            <div
-                                id="ai-api-key-warning"
-                                class="ai-api-key-warning"
-                                style="display: none"
-                            >
-                                ⚠️ <strong>API Key Missing:</strong> Click the
-                                <span
-                                    class="material-symbols-outlined"
-                                    style="
-                                        font-size: 14px;
-                                        vertical-align: middle;
-                                    "
-                                    >help</span
-                                >
-                                button to enter your Anthropic API key.
-                            </div>
                             <div id="ai-input-container">
                                 <div id="ai-prompt-label">
                                     I’m your assistant. How may I help?
@@ -952,6 +995,127 @@
         <div id="settings-panel" class="settings-panel">
             <div class="settings-panel-content">
                 <div class="settings-section">
+                    <div class="settings-item volume-control-item">
+                        <label class="settings-item-label" for="volume-slider"
+                            >Volume</label
+                        >
+                        <div class="volume-control-settings">
+                            <span class="material-symbols-rounded volume-icon"
+                                >volume_mute</span
+                            >
+                            <input
+                                type="range"
+                                id="volume-slider"
+                                class="volume-slider-settings"
+                                min="0"
+                                max="100"
+                                value="50"
+                            />
+                            <span class="material-symbols-rounded volume-icon"
+                                >volume_up</span
+                            >
+                            <span class="volume-value">50%</span>
+                        </div>
+                        <div class="settings-item-description">
+                            Adjust the volume for audio feedback
+                        </div>
+                    </div>
+                    <div class="settings-item">
+                        <label class="settings-item-label">Account</label>
+                        <div id="settings-login-section">
+                            <div id="settings-logged-in" style="display: none">
+                                <div
+                                    class="settings-item-description"
+                                    id="settings-user-email"
+                                    style="margin-bottom: 4px"
+                                >
+                                    <!-- Email will be inserted here -->
+                                </div>
+                                <div
+                                    class="settings-item-description"
+                                    id="settings-credits"
+                                    style="
+                                        margin-bottom: 12px;
+                                        font-size: 11px;
+                                        opacity: 0.7;
+                                    "
+                                >
+                                    <!-- Credits will be inserted here -->
+                                </div>
+                                <div style="display: flex; gap: 8px">
+                                    <button
+                                        id="settings-account-btn"
+                                        class="tag-button"
+                                        style="
+                                            flex: 1;
+                                            padding: 8px;
+                                            font-size: 12px;
+                                        "
+                                    >
+                                        <span
+                                            class="material-symbols-rounded"
+                                            style="
+                                                font-size: 16px;
+                                                vertical-align: middle;
+                                                margin-right: 4px;
+                                            "
+                                            >manage_accounts</span
+                                        >
+                                        Account
+                                    </button>
+                                    <button
+                                        id="settings-logout-btn"
+                                        class="tag-button"
+                                        style="
+                                            flex: 1;
+                                            padding: 8px;
+                                            font-size: 12px;
+                                        "
+                                    >
+                                        <span
+                                            class="material-symbols-rounded"
+                                            style="
+                                                font-size: 16px;
+                                                vertical-align: middle;
+                                                margin-right: 4px;
+                                            "
+                                            >logout</span
+                                        >
+                                        Logout
+                                    </button>
+                                </div>
+                            </div>
+                            <div id="settings-logged-out" style="display: none">
+                                <button
+                                    id="settings-login-btn"
+                                    class="tag-button"
+                                    style="
+                                        width: 100%;
+                                        padding: 8px;
+                                        font-size: 12px;
+                                    "
+                                >
+                                    <span
+                                        class="material-symbols-rounded"
+                                        style="
+                                            font-size: 16px;
+                                            vertical-align: middle;
+                                            margin-right: 4px;
+                                        "
+                                        >login</span
+                                    >
+                                    Login
+                                </button>
+                                <div
+                                    class="settings-item-description"
+                                    style="margin-top: 8px"
+                                >
+                                    Login with your Counterpunch account to use
+                                    the assistant
+                                </div>
+                            </div>
+                        </div>
+                    </div>
                     <div class="settings-item">
                         <label class="settings-item-label">Theme</label>
                         <div class="theme-switcher">
@@ -980,31 +1144,6 @@
                         <div class="settings-item-description">
                             Choose between light, dark, or automatic theme based
                             on your system preferences
-                        </div>
-                    </div>
-                    <div class="settings-item volume-control-item">
-                        <label class="settings-item-label" for="volume-slider"
-                            >Volume</label
-                        >
-                        <div class="volume-control-settings">
-                            <span class="material-symbols-rounded volume-icon"
-                                >volume_mute</span
-                            >
-                            <input
-                                type="range"
-                                id="volume-slider"
-                                class="volume-slider-settings"
-                                min="0"
-                                max="100"
-                                value="50"
-                            />
-                            <span class="material-symbols-rounded volume-icon"
-                                >volume_up</span
-                            >
-                            <span class="volume-value">50%</span>
-                        </div>
-                        <div class="settings-item-description">
-                            Adjust the volume for audio feedback
                         </div>
                     </div>
                     <div class="settings-item">

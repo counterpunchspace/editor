@@ -4,6 +4,7 @@ import './tab-lifecycle.js';
 import './mcp-transport';
 import './critical-error-handler';
 
+import './auth-manager.js'; // Authentication with fonteditorwebsite
 import './ai-assistant.js';
 import './api-docs-generator.js';
 import './auto-compile-manager';
