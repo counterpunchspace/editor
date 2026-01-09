@@ -1454,13 +1454,25 @@ ${errorTraceback}
         }
 
         // Check authentication
-        if (!window.authManager || !window.authManager.isAuthenticated()) {
+        if (!this.isAuthenticated) {
             if (
                 confirm(
                     'You need to sign in to use the AI assistant. Sign in now?'
                 )
             ) {
                 window.authManager.login();
+            }
+            return;
+        }
+
+        // Check subscription
+        if (!this.subscription || !this.subscription.isAdvanced) {
+            if (
+                confirm(
+                    'You need an Advanced subscription to use the AI assistant. Subscribe now?'
+                )
+            ) {
+                window.open(`${this.websiteURL}/pricing`, '_blank');
             }
             return;
         }
