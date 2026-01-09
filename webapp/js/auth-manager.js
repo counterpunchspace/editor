@@ -71,8 +71,11 @@ class AuthManager {
             return 'http://localhost:8788'; // Local development
         }
 
-        // Production font editor URL
-        if (hostname === 'production.fonteditor-863.pages.dev') {
+        // Production/preview font editor URLs
+        if (
+            hostname === 'production.fonteditor-863.pages.dev' ||
+            hostname === 'preview.fonteditor-863.pages.dev'
+        ) {
             return 'https://fonteditorwebsite.pages.dev';
         }
 
