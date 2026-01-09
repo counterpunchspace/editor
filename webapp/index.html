@@ -763,22 +763,6 @@
                 </div>
                 <div class="info-popup-content">
                     <div class="ai-info-section">
-                        <h4>API Key</h4>
-                        <p>
-                            Enter your Anthropic API key to use the assistant:
-                        </p>
-                        <input
-                            type="password"
-                            id="ai-api-key-modal"
-                            placeholder="Anthropic API Key"
-                            class="ai-api-key-modal-input"
-                        />
-                        <p class="ai-info-note">
-                            Your API key is stored locally in your browser and
-                            never sent anywhere except to Anthropic's API.
-                        </p>
-                    </div>
-                    <div class="ai-info-section">
                         <h4>About</h4>
                         <p>
                             Describe what you want to do with your font in your
@@ -788,32 +772,56 @@
                         </p>
                         <ul>
                             <li>
-                                🎯 <strong>Context matters:</strong> Work either
-                                on the font directly (Font Context), or on a
+                                <span
+                                    class="material-symbols-outlined ai-info-icon"
+                                    >adjust</span
+                                >
+                                <strong>Context matters:</strong> Work either on
+                                the font directly (Font Context), or on a
                                 user-made script in the script editor (Script
                                 Context)
                             </li>
                             <li>
-                                🔄 <strong>Auto-retry:</strong> If code fails,
-                                the assistant will fix and retry
+                                <span
+                                    class="material-symbols-outlined ai-info-icon"
+                                    >sync</span
+                                >
+                                <strong>Auto-retry:</strong> If code fails, the
+                                assistant will fix and retry
                             </li>
                             <li>
-                                🔑 <strong>Privacy:</strong> Your font data
-                                never leaves the browser. The assistant simply
+                                <span
+                                    class="material-symbols-outlined ai-info-icon"
+                                    >key</span
+                                >
+                                <strong>Privacy:</strong> Your font data never
+                                leaves the browser. The assistant simply
                                 generates Python code which is run locally like
                                 a user-made script.
                             </li>
                             <li>
-                                👁️ <strong>Transparent:</strong> Click "Show
-                                Code" to see what was generated
+                                <span
+                                    class="material-symbols-outlined ai-info-icon"
+                                    >visibility</span
+                                >
+                                <strong>Transparent:</strong> Click "Show Code"
+                                to see what was generated
                             </li>
                             <li>
-                                👁️ <strong>Auto-Run:</strong> Decide whether to
-                                run the generated code right away or wait and
-                                review before running
+                                <span
+                                    class="material-symbols-outlined ai-info-icon"
+                                    >bolt</span
+                                >
+                                <strong>Auto-Run:</strong> Decide whether to run
+                                the generated code right away or wait and review
+                                before running
                             </li>
                             <li>
-                                ⚠️ <strong>Warning:</strong> The assistant makes
+                                <span
+                                    class="material-symbols-outlined ai-info-icon"
+                                    >warning</span
+                                >
+                                <strong>Warning:</strong> The assistant makes
                                 mistakes both in handling your data as well as
                                 in generating code. Use at your own risk.
                             </li>

@@ -1244,24 +1244,6 @@ kbd + kbd {
     color: var(--accent-green);
 }
 
-.ai-api-key-modal-input {
-    width: 100%;
-    padding: 8px 12px;
-    background-color: var(--input-bg);
-    border: 1px solid var(--input-border);
-    border-radius: 4px;
-    color: var(--text-tertiary);
-    font-family: var(--font-families-mono);
-    font-size: 12px;
-    margin: 8px 0;
-}
-
-.ai-api-key-modal-input:focus {
-    outline: none;
-    border-color: var(--accent-green);
-    background-color: var(--input-bg);
-}
-
 .ai-info-note {
     font-size: 11px;
     color: var(--text-subtle);
@@ -1383,24 +1365,15 @@ kbd + kbd {
 .ai-info-section li {
     margin: 8px 0;
     line-height: 1.6;
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
 }
 
-.ai-api-key-modal-input {
-    width: 100%;
-    padding: 8px 12px;
-    background-color: var(--input-bg);
-    border: 1px solid var(--input-border);
-    border-radius: 4px;
-    color: var(--text-tertiary);
-    font-family: var(--font-families-mono);
-    font-size: 12px;
-    margin-top: 8px;
-}
-
-.ai-api-key-modal-input:focus {
-    outline: none;
-    border-color: var(--accent-green);
-    background-color: var(--input-bg);
+.ai-info-icon {
+    font-size: 18px !important;
+    flex-shrink: 0;
+    margin-top: 2px;
 }
 
 .ai-info-note {
@@ -1412,22 +1385,6 @@ kbd + kbd {
 
 .ai-examples {
     margin-top: 12px;
-}
-
-/* AI API Key Warning */
-.ai-api-key-warning {
-    background-color: rgba(255, 165, 0, 0.15);
-    border: 1px solid rgba(255, 165, 0, 0.4);
-    border-radius: 4px;
-    padding: 12px 16px;
-    margin: 12px 16px;
-    color: var(--text-primary);
-    font-size: 12px;
-    line-height: 1.6;
-}
-
-.ai-api-key-warning .material-symbols-outlined {
-    color: #0066ff;
 }
 
 /* Script Editor */
@@ -2140,13 +2097,6 @@ kbd + kbd {
     font-style: italic;
 }
 
-#ai-api-key-container {
-    display: flex;
-    flex-direction: column;
-    flex-shrink: 0;
-    margin: 0 15px 15px 15px;
-}
-
 #ai-button-container {
     display: flex;
     gap: 10px;
@@ -2433,12 +2383,12 @@ kbd + kbd {
 }
 
 .ai-context-tag-script {
-    background-color: var(--accent-purple);
+    background-color: var(--view-scripts);
     color: var(--background-primary);
 }
 
 .ai-context-tag-font {
-    background-color: var(--accent-magenta);
+    background-color: var(--view-editor);
     color: var(--background-primary);
 }
 
@@ -2726,20 +2676,6 @@ kbd + kbd {
     /* Don't shrink when content grows */
 }
 
-#ai-api-key {
-    padding: 8px 12px;
-    background-color: transparent;
-    border: 1px solid var(--border-tertiary);
-    border-radius: 0;
-    color: var(--text-tertiary);
-    font-family: var(--font-families-mono);
-    font-size: calc(var(--size, 1) * (12px / var(--pixel-density, 1)));
-}
-
-#ai-api-key::placeholder {
-    color: var(--text-faint);
-}
-
 #ai-prompt-label {
     font-family: var(--font-families-mono);
     font-size: calc(var(--size, 1) * (12px / var(--pixel-density, 1)));
@@ -2811,8 +2747,7 @@ kbd + kbd {
     color: var(--text-faint);
 }
 
-#ai-prompt:focus,
-#ai-api-key:focus {
+#ai-prompt:focus {
     outline: none;
     border-color: transparent;
     box-shadow: none;
