@@ -1624,6 +1624,11 @@ ${errorTraceback}
         const sessionToken = window.authManager
             ? window.authManager.getSessionToken()
             : null;
+        console.log(
+            '[AIAssistant] Session token for API call:',
+            sessionToken ? sessionToken.substring(0, 20) + '...' : 'NONE'
+        );
+
         const headers = {
             'Content-Type': 'application/json'
         };
