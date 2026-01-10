@@ -2147,6 +2147,11 @@ kbd + kbd {
     visibility: hidden;
 }
 
+/* Disable all button clicks when assistant view is not focused */
+.view-assistant:not(.focused) button {
+    pointer-events: none;
+}
+
 .ai-login-note {
     font-size: calc(var(--size, 1) * (11px / var(--pixel-density, 1)));
     color: var(--text-faint);
@@ -2686,7 +2691,7 @@ kbd + kbd {
 
 #ai-prompt {
     padding: 0;
-    background-color: transparent;
+    background-color: var(--input-bg);
     border: none;
     border-radius: 0;
     color: var(--text-tertiary);

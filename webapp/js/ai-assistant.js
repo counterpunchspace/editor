@@ -198,6 +198,9 @@ class AIAssistant {
         // Setup login button
         this.setupLoginButton();
 
+        // Add click handler for assistant view to focus text field when scrolled to bottom
+        this.setupAssistantViewClickHandler();
+
         // Add wider cursor styling for the prompt textarea
         this.addWideCursorStyle();
 
@@ -411,6 +414,37 @@ class AIAssistant {
                 }
             });
         }
+    }
+
+    setupAssistantViewClickHandler() {
+        const assistantView = document.getElementById('view-assistant');
+        if (!assistantView) return;
+
+        assistantView.addEventListener('click', (event) => {
+            // Don't activate if clicking on a button
+            if (event.target.closest('button')) {
+                return;
+            }
+
+            // Don't activate if clicking on the text field itself
+            if (event.target.id === 'ai-prompt') {
+                return;
+            }
+
+            // Check if scrolled to bottom
+            const viewContent = assistantView.querySelector('.view-content');
+            if (viewContent) {
+                const isAtBottom = 
+                    viewContent.scrollHeight - viewContent.scrollTop <= 
+                    viewContent.clientHeight + 5; // 5px threshold
+
+                // If at bottom, focus the text field
+                if (isAtBottom && this.promptInput) {
+                    this.promptInput.focus();
+                    this.promptInput.click();
+                }
+            }
+        });
     }
 
     setupInfoModal() {
