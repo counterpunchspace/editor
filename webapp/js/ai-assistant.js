@@ -561,7 +561,8 @@ class AIAssistant {
         allRunButtons.forEach((btn) => {
             const text = btn.textContent || btn.innerText;
             if (text.includes('Run in Console')) {
-                btn.innerHTML = 'Run in Console';
+                btn.innerHTML =
+                    '<span class="material-symbols-outlined">play_arrow</span>Run in Console';
             }
         });
 
@@ -571,9 +572,11 @@ class AIAssistant {
         allOpenButtons.forEach((btn) => {
             const text = btn.textContent || btn.innerText;
             if (text.includes('Open in Script Editor Without Review')) {
-                btn.innerHTML = 'Open in Script Editor Without Review';
+                btn.innerHTML =
+                    '<span class="material-symbols-outlined">edit_note</span>Open in Script Editor Without Review';
             } else if (text.includes('Open in Script Editor')) {
-                btn.innerHTML = 'Open in Script Editor';
+                btn.innerHTML =
+                    '<span class="material-symbols-outlined">edit_note</span>Open in Script Editor';
             }
         });
 
@@ -583,7 +586,8 @@ class AIAssistant {
         allReviewButtons.forEach((btn) => {
             const text = btn.textContent || btn.innerText;
             if (text.includes('Review Changes')) {
-                btn.innerHTML = 'Review Changes';
+                btn.innerHTML =
+                    '<span class="material-symbols-outlined">difference</span>Review Changes';
             }
         });
 
@@ -598,7 +602,7 @@ class AIAssistant {
         const runButton = lastMessage.querySelector('.ai-run-in-console-btn');
         if (runButton) {
             runButton.innerHTML =
-                'Run in Console <span class="ai-button-shortcut"><span class="material-symbols-outlined">keyboard_command_key</span><span class="material-symbols-outlined">keyboard_option_key</span>R</span>';
+                '<span class="material-symbols-outlined">play_arrow</span>Run in Console <span class="ai-btn-shortcut"><span class="material-symbols-outlined">keyboard_command_key</span><span class="material-symbols-outlined">keyboard_option_key</span>R</span>';
         }
 
         // Check for Review Changes button (script context)
@@ -607,7 +611,7 @@ class AIAssistant {
         );
         if (reviewButton) {
             reviewButton.innerHTML =
-                'Review Changes <span class="ai-button-shortcut"><span class="material-symbols-outlined">keyboard_command_key</span><span class="material-symbols-outlined">keyboard_option_key</span>R</span>';
+                '<span class="material-symbols-outlined">difference</span>Review Changes <span class="ai-btn-shortcut"><span class="material-symbols-outlined">keyboard_command_key</span><span class="material-symbols-outlined">keyboard_option_key</span>R</span>';
         }
 
         // Check for Open in Script Editor button
@@ -616,10 +620,10 @@ class AIAssistant {
             const text = openButton.textContent || openButton.innerText;
             if (text.includes('Open in Script Editor Without Review')) {
                 openButton.innerHTML =
-                    'Open in Script Editor Without Review <span class="ai-button-shortcut"><span class="material-symbols-outlined">keyboard_command_key</span><span class="material-symbols-outlined">keyboard_option_key</span>O</span>';
+                    '<span class="material-symbols-outlined">edit_note</span>Open in Script Editor Without Review <span class="ai-btn-shortcut"><span class="material-symbols-outlined">keyboard_command_key</span><span class="material-symbols-outlined">keyboard_option_key</span>O</span>';
             } else {
                 openButton.innerHTML =
-                    'Open in Script Editor <span class="ai-button-shortcut"><span class="material-symbols-outlined">keyboard_command_key</span><span class="material-symbols-outlined">keyboard_option_key</span>O</span>';
+                    '<span class="material-symbols-outlined">edit_note</span>Open in Script Editor <span class="ai-btn-shortcut"><span class="material-symbols-outlined">keyboard_command_key</span><span class="material-symbols-outlined">keyboard_option_key</span>O</span>';
             }
         }
     }
@@ -739,8 +743,8 @@ class AIAssistant {
             const buttonDiv = document.createElement('div');
             buttonDiv.className = 'ai-reuse-prompt-container';
             buttonDiv.innerHTML = `
-                <button class="ai-reuse-prompt-btn" id="${reuseId}">↻ Reuse prompt</button>
-                <button class="ai-copy-prompt-btn" id="${copyId}">📋 Copy prompt</button>
+                <button class="ai-btn ai-reuse-prompt-btn" id="${reuseId}"><span class="material-symbols-outlined">replay</span>Reuse prompt</button>
+                <button class="ai-btn ai-copy-prompt-btn" id="${copyId}"><span class="material-symbols-outlined">content_copy</span>Copy prompt</button>
             `;
 
             // Add buttons after the content
@@ -780,7 +784,8 @@ class AIAssistant {
 
                             // Show feedback
                             const originalText = copyBtn.innerHTML;
-                            copyBtn.innerHTML = '✓ Copied!';
+                            copyBtn.innerHTML =
+                                '<span class="material-symbols-outlined">check_circle</span>Copied!';
                             setTimeout(() => {
                                 copyBtn.innerHTML = originalText;
                             }, 2000);
@@ -795,9 +800,11 @@ class AIAssistant {
                                 'Failed to copy text:',
                                 err
                             );
-                            copyBtn.innerHTML = '✗ Failed';
+                            copyBtn.innerHTML =
+                                '<span class="material-symbols-outlined">error</span>Failed';
                             setTimeout(() => {
-                                copyBtn.innerHTML = '📋 Copy prompt';
+                                copyBtn.innerHTML =
+                                    '<span class="material-symbols-outlined">content_copy</span>Copy prompt';
                             }, 2000);
                         }
                     });
@@ -882,15 +889,15 @@ class AIAssistant {
                 Math.random().toString(36).substr(2, 9);
             buttonContainerHtml = `
                 <div class="ai-button-group">
-                    <button class="ai-review-changes-btn" id="${openBtnId}">Review Changes</button>
-                    <button class="ai-open-in-editor-btn" id="${directOpenBtnId}">Open in Script Editor Without Review</button>
+                    <button class="ai-btn ai-review-changes-btn" id="${openBtnId}"><span class="material-symbols-outlined">difference</span>Review Changes</button>
+                    <button class="ai-btn ai-open-in-editor-btn" id="${directOpenBtnId}"><span class="material-symbols-outlined">edit_note</span>Open in Script Editor Without Review</button>
                 </div>`;
         } else if (showRunButton) {
             // Font context: show both buttons
             buttonContainerHtml = `
                 <div class="ai-button-group">
-                    <button class="ai-open-in-editor-btn" id="${openBtnId}">Open in Script Editor</button>
-                    <button class="ai-run-in-console-btn" id="${runBtnId}">Run in Console</button>
+                    <button class="ai-btn ai-open-in-editor-btn" id="${openBtnId}"><span class="material-symbols-outlined">edit_note</span>Open in Script Editor</button>
+                    <button class="ai-btn ai-run-in-console-btn" id="${runBtnId}"><span class="material-symbols-outlined">play_arrow</span>Run in Console</button>
                 </div>`;
         }
 
@@ -956,12 +963,15 @@ class AIAssistant {
                 runBtn.addEventListener('click', async (event) => {
                     event.stopPropagation(); // Prevent view focus
                     runBtn.disabled = true;
-                    runBtn.innerHTML = 'Running...';
+                    runBtn.innerHTML =
+                        '<span class="material-symbols-outlined">hourglass_empty</span>Running...';
                     try {
                         await this.runCodeInConsole(code);
-                        runBtn.innerHTML = '✓ Executed';
+                        runBtn.innerHTML =
+                            '<span class="material-symbols-outlined">check_circle</span>Executed';
                         setTimeout(() => {
-                            runBtn.innerHTML = 'Run in Console';
+                            runBtn.innerHTML =
+                                '<span class="material-symbols-outlined">play_arrow</span>Run in Console';
                             this.updateButtonShortcuts();
                             runBtn.disabled = false;
                         }, 2000);
@@ -971,9 +981,11 @@ class AIAssistant {
                             'Error running code in console:',
                             error
                         );
-                        runBtn.innerHTML = '✗ Error';
+                        runBtn.innerHTML =
+                            '<span class="material-symbols-outlined">error</span>Error';
                         setTimeout(() => {
-                            runBtn.innerHTML = 'Run in Console';
+                            runBtn.innerHTML =
+                                '<span class="material-symbols-outlined">play_arrow</span>Run in Console';
                             this.updateButtonShortcuts();
                             runBtn.disabled = false;
                         }, 2000);
@@ -1272,7 +1284,7 @@ class AIAssistant {
                         <p><strong>An error occurred while running your script.</strong></p>
                         <p>Would you like me to analyze the error and suggest a fix?</p>
                     </div>
-                    <button class="ai-fix-code-btn" id="${fixBtnId}">Fix Code</button>
+                    <button class="ai-btn ai-fix-code-btn" id="${fixBtnId}"><span class="material-symbols-outlined">build</span>Fix Code</button>
                 </div>`;
 
             messageDiv.innerHTML = header + body;
@@ -2006,6 +2018,64 @@ if '_original_stdout' in dir():
             }, 0);
         }
     }
+
+    populateTestMessages() {
+        console.log(
+            '[AIAssistant]',
+            'Populating test messages for style testing'
+        );
+
+        // 1. User message
+        this.addMessage(
+            'user',
+            'Can you help me change the weight of glyph "A" to 700?'
+        );
+
+        // 2. Assistant response with code
+        const sampleCode = `# Change weight of glyph A
+font = currentFontModel
+glyph_a = font.glyphs['A']
+for layer in glyph_a.layers:
+    # Adjust all points
+    for path in layer.paths:
+        for node in path.nodes:
+            node.x *= 1.2
+            node.y *= 1.2`;
+
+        const markdownExplanation = `I'll help you increase the weight of glyph "A". Here's what the code does:
+
+1. **Gets the font and glyph**: Accesses the current font model and finds glyph "A"
+2. **Iterates through layers**: Processes all layers in the glyph
+3. **Scales the paths**: Increases the scale by 20% to make it bolder
+
+You can adjust the scale factor (currently 1.2) to make it more or less bold.`;
+
+        this.addOutputWithCode('', sampleCode, markdownExplanation, true);
+
+        // Add reuse buttons to user messages
+        this.addReuseButtonsToOldMessages();
+
+        // 3. Error message
+        this.addMessage(
+            'error',
+            'Execution error: NameError: name "currentFontModel" is not defined. Make sure a font is loaded.'
+        );
+
+        // 4. System/retry message
+        this.addMessage('system', 'Retrying (attempt 2/3)...');
+
+        // 5. Error fix message (simulate script editor error)
+        setTimeout(() => {
+            const sampleTraceback = `Traceback (most recent call last):
+  File "<exec>", line 3, in <module>
+    glyph_a = font.glyphs['A']
+KeyError: 'A'`;
+
+            this.addErrorFixMessage(sampleTraceback, sampleCode);
+        }, 100);
+
+        console.log('[AIAssistant]', 'Test messages populated');
+    }
 }
 
 // Initialize AI assistant when page loads
@@ -2015,6 +2085,18 @@ document.addEventListener('DOMContentLoaded', () => {
         if (window.pyodide) {
             window.aiAssistant = new AIAssistant();
             console.log('[AIAssistant]', 'AI Assistant initialized');
+
+            // Check for assistant_style_test URL parameter
+            const urlParams = new URLSearchParams(window.location.search);
+            if (urlParams.has('assistant_style_test')) {
+                console.log(
+                    '[AIAssistant]',
+                    'Style test mode enabled - populating test messages'
+                );
+                setTimeout(() => {
+                    window.aiAssistant.populateTestMessages();
+                }, 500);
+            }
         } else {
             setTimeout(initAI, 500);
         }

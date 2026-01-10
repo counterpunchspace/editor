@@ -11,6 +11,8 @@ Try the editor live:
 
 Run the app locally with `cd webapp && npm run dev`
 
+- Load assistant test conversation with `?assistant_style_test`
+
 ## Releasing a New Version
 
 To create and deploy a new release, run the release script from the repository root:

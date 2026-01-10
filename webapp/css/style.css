@@ -2098,6 +2098,55 @@ kbd + kbd {
     font-size: 14px;
 }
 
+/* Reusable AI Assistant Button Styles */
+.ai-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    font-family: var(--font-families-mono);
+    font-size: 11px;
+    font-weight: 600;
+    background: var(--input-bg);
+    color: var(--text-secondary);
+    border: 1px solid rgba(0, 0, 0, 0.7);
+    border-radius: 3px;
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+
+.ai-btn:hover {
+    background: var(--background-hover);
+}
+
+.ai-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.ai-btn .material-symbols-outlined {
+    font-size: 14px;
+}
+
+.ai-btn-shortcut {
+    font-family: var(--font-families-mono);
+    font-size: 10px;
+    color: var(--text-subtle);
+    margin-left: 4px;
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+}
+
+.ai-btn-shortcut .material-symbols-outlined {
+    font-size: 12px;
+}
+
+/* Hide shortcuts when assistant view is not focused, but reserve space */
+.view-assistant:not(.focused) .ai-message .ai-btn-shortcut {
+    visibility: hidden;
+}
+
 .ai-login-note {
     font-size: calc(var(--size, 1) * (11px / var(--pixel-density, 1)));
     color: var(--text-faint);
@@ -2183,7 +2232,7 @@ kbd + kbd {
 }
 
 .ai-message-error-fix {
-    color: rgba(255, 255, 255, 0.9);
+    color: var(--text-primary);
     background-color: rgba(255, 165, 0, 0.2);
     animation: error-blink 0.4s ease-in-out 3;
 }
@@ -2290,24 +2339,6 @@ kbd + kbd {
 
 .ai-fix-code-btn {
     align-self: flex-start;
-    padding: 8px 16px;
-    background-color: transparent;
-    border: 1px solid var(--accent-orange);
-    color: var(--text-tertiary);
-    font-family: var(--font-families-mono);
-    font-size: calc(var(--size, 1) * (12px / var(--pixel-density, 1)));
-    cursor: pointer;
-    transition: all 0.2s;
-}
-
-.ai-fix-code-btn:hover {
-    background-color: var(--ai-error-bg);
-    border-color: var(--accent-orange);
-}
-
-.ai-fix-code-btn:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
 }
 
 .ai-reuse-prompt-container {
@@ -2316,41 +2347,8 @@ kbd + kbd {
     justify-content: flex-start;
 }
 
-.ai-reuse-prompt-btn {
-    padding: 6px 12px;
-    background-color: transparent;
-    border: 1px solid var(--ai-user-text);
-    color: var(--ai-user-text);
-    font-family: var(--font-families-mono);
-    font-size: calc(var(--size, 1) * (11px / var(--pixel-density, 1)));
-    cursor: pointer;
-    transition: all 0.2s;
-    border-radius: 3px;
-}
-
-.ai-reuse-prompt-btn:hover {
-    background-color: var(--ai-user-bg);
-    border-color: var(--ai-user-text);
-    color: var(--ai-user-text);
-}
-
 .ai-copy-prompt-btn {
-    padding: 6px 12px;
-    background-color: transparent;
-    border: 1px solid var(--ai-user-text);
-    color: var(--ai-user-text);
-    font-family: var(--font-families-mono);
-    font-size: calc(var(--size, 1) * (11px / var(--pixel-density, 1)));
-    cursor: pointer;
-    transition: all 0.2s;
-    border-radius: 3px;
     margin-left: 8px;
-}
-
-.ai-copy-prompt-btn:hover {
-    background-color: var(--ai-user-bg);
-    border-color: var(--ai-user-text);
-    color: var(--ai-user-text);
 }
 
 .ai-message-output {
@@ -2442,6 +2440,10 @@ kbd + kbd {
     line-height: 1.6;
     border: none;
     color: var(--text-tertiary);
+}
+
+.view-assistant:not(.focused) .ai-code {
+    background-color: var(--background-secondary);
 }
 
 .ai-code code {
@@ -2622,54 +2624,7 @@ kbd + kbd {
     margin-top: 8px;
 }
 
-.ai-run-in-console-btn,
-.ai-open-in-editor-btn,
-.ai-review-changes-btn {
-    border: 2px solid;
-    background-color: var(--input-bg);
-    color: var(--text-tertiary);
-    padding: 6px 12px;
-    border-radius: 0;
-    cursor: pointer;
-    font-family: var(--font-families-mono);
-    font-size: calc(var(--size, 1) * (12px / var(--pixel-density, 1)));
-    font-weight: normal;
-    transition: all 0.2s ease;
-    flex: 1;
-}
-
-.ai-run-in-console-btn {
-    border-color: var(--accent-red);
-}
-
-.ai-open-in-editor-btn,
-.ai-review-changes-btn {
-    border-color: var(--accent-purple);
-}
-
-.ai-run-in-console-btn:hover,
-.ai-open-in-editor-btn:hover,
-.ai-review-changes-btn:hover {
-    filter: brightness(1.1);
-}
-
-.ai-run-in-console-btn:disabled,
-.ai-open-in-editor-btn:disabled,
-.ai-review-changes-btn:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-}
-
-.ai-button-shortcut {
-    color: var(--text-subtle);
-}
-
-/* Hide AI button shortcuts in messages when assistant view is not focused */
-.view-assistant:not(.focused) .ai-message .ai-button-shortcut {
-    display: none;
-}
-
-/* Hide AI button shortcuts in header buttons when assistant view is not focused */
+/* Keep header button shortcuts visible */
 .view-assistant:not(.focused) .view-title-bar .ai-button-shortcut {
     display: none;
 }
