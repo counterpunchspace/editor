@@ -140,11 +140,11 @@ kbd + kbd {
 }
 
 .loading-logo {
-    font-family: var(--font-families-mono);
-    font-size: 120px;
+    font-family: 'EB Garamond', serif;
+    font-size: 90px;
     font-weight: 400;
     color: var(--text-primary);
-    line-height: 0.9em;
+    line-height: 1;
     position: relative;
     top: -50px;
 }
