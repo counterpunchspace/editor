@@ -434,8 +434,8 @@ class AIAssistant {
             // Check if scrolled to bottom
             const viewContent = assistantView.querySelector('.view-content');
             if (viewContent) {
-                const isAtBottom = 
-                    viewContent.scrollHeight - viewContent.scrollTop <= 
+                const isAtBottom =
+                    viewContent.scrollHeight - viewContent.scrollTop <=
                     viewContent.clientHeight + 5; // 5px threshold
 
                 // If at bottom, focus the text field
