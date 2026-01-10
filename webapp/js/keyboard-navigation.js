@@ -676,7 +676,7 @@
             localStorage.setItem('last_active_view', viewId);
 
             // Expand view if below threshold (auto-expand on activation)
-            expandViewOnActivation(viewId);
+            const wasExpanded = expandViewOnActivation(viewId);
 
             // Determine if we're focusing a top view (editor or fontinfo)
             const isTopView =
@@ -741,9 +741,15 @@
 
             // If activating assistant, focus and scroll
             if (viewId === 'view-assistant') {
+                // Wait for expansion animation to complete before focusing
+                const settings = getViewSettings();
+                const delay = settings?.animation?.enabled
+                    ? settings.animation.duration + 50 // Wait for animation + small buffer
+                    : 100; // No animation, use short delay
+
                 setTimeout(() => {
-                    // Only focus text field when activated via keyboard
-                    if (viaKeyboard) {
+                    // Focus text field if activated via keyboard OR if view was expanded from collapsed state
+                    if (viaKeyboard || wasExpanded) {
                         const prompt = document.getElementById('ai-prompt');
                         if (prompt) {
                             prompt.focus();
@@ -758,7 +764,7 @@
                             viewContent.scrollTop = viewContent.scrollHeight;
                         }
                     }
-                }, 100);
+                }, delay);
             }
 
             // If activating editor, focus the canvas
