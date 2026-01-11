@@ -1,4 +1,4 @@
-# Context Font Editor - Coding Instructions
+# Counterpunch Font Editor - Coding Instructions
 
 ## Project Overview
 
