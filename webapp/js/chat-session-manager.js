@@ -400,11 +400,14 @@ class ChatSessionManager {
             );
 
             if (!response.ok) {
-                console.error('[ChatSession] Failed to load chat history');
+                console.error('[ChatSession] Failed to load chat history:', response.status, response.statusText);
+                const errorText = await response.text();
+                console.error('[ChatSession] Response:', errorText);
                 return;
             }
 
             const data = await response.json();
+            console.log('[ChatSession] Raw response data:', data);
             this.chatHistory = data.sessions || [];
 
             console.log(
@@ -444,7 +447,12 @@ class ChatSessionManager {
      */
     refreshHistoryMenu() {
         const listContainer = document.getElementById('ai-chat-history-list');
-        if (!listContainer) return;
+        if (!listContainer) {
+            console.error('[ChatSession] Chat history list container not found');
+            return;
+        }
+
+        console.log('[ChatSession] Refreshing history menu, items:', this.chatHistory?.length || 0);
 
         // Clear existing items
         listContainer.innerHTML = '';
@@ -457,6 +465,7 @@ class ChatSessionManager {
 
         // Create items for each chat session
         this.chatHistory.forEach((session) => {
+            console.log('[ChatSession] Processing session:', session);
             const item = document.createElement('div');
             item.className = 'ai-chat-history-item';
             if (session.id === this.currentChatId) {
@@ -465,9 +474,17 @@ class ChatSessionManager {
 
             const contextIcon =
                 session.contextType === 'font' ? 'font_download' : 'code';
-            const timeAgo = this.formatRelativeTime(
-                new Date(session.lastActivityAt).getTime()
-            );
+            
+            // Handle date parsing more robustly
+            let timeAgo = 'Unknown';
+            try {
+                const timestamp = new Date(session.lastActivityAt).getTime();
+                if (!isNaN(timestamp)) {
+                    timeAgo = this.formatRelativeTime(timestamp);
+                }
+            } catch (e) {
+                console.error('[ChatSession] Error parsing date:', session.lastActivityAt, e);
+            }
 
             item.innerHTML = `
                 <div class="ai-chat-history-item-icon">
