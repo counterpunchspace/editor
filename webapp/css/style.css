@@ -1430,7 +1430,7 @@ kbd + kbd {
 /* Cyberpunk Syntax Highlighting */
 /* Keywords - Neon Magenta */
 #script-editor .ace_keyword {
-    color: #ff00ff !important;
+    color: #ff0800 !important;
     font-weight: bold;
 }
 
@@ -1443,7 +1443,7 @@ kbd + kbd {
 /* Function names - Bright Yellow */
 #script-editor .ace_entity.ace_name.ace_function,
 #script-editor .ace_support.ace_function {
-    color: #ffff00 !important;
+    color: #ffc800 !important;
 }
 
 /* Class names - Neon Green */
@@ -1465,7 +1465,7 @@ kbd + kbd {
 
 /* Comments - Neutral Darker Gray */
 #script-editor .ace_comment {
-    color: #888888 !important;
+    color: #a1a1a1 !important;
     font-style: normal;
 }
 
