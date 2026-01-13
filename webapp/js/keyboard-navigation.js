@@ -988,25 +988,8 @@
 
                 // Check if this view is already focused
                 if (currentFocusedView === viewId) {
-                    // View is already focused
-                    // For assistant, focus text field instead of resizing
-                    if (viewId === 'view-assistant') {
-                        const prompt = document.getElementById('ai-prompt');
-                        if (prompt) {
-                            prompt.focus();
-                            prompt.click();
-                        }
-                        // Scroll to bottom
-                        const viewContent = document.querySelector(
-                            '#view-assistant .view-content'
-                        );
-                        if (viewContent) {
-                            viewContent.scrollTop = viewContent.scrollHeight;
-                        }
-                    } else {
-                        // For other views, trigger resize
-                        resizeView(viewId);
-                    }
+                    // View is already focused, trigger resize
+                    resizeView(viewId);
                 } else {
                     // View is not focused, just focus it
                     focusView(viewId, true); // Pass true for viaKeyboard
