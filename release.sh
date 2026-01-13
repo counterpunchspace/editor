@@ -63,8 +63,12 @@ echo "✅ API documentation regenerated with version $VERSION_TAG"
 # Commit the version updates to API.md and service worker separately
 echo "Committing API.md and service worker version updates..."
 git add "$SERVICE_WORKER_FILE" "$API_MD_FILE"
-git commit -m "Update version to $VERSION_TAG in API docs and service worker"
-echo "✅ Version files committed"
+if git diff --cached --quiet; then
+    echo "  No changes to commit (files already up to date)"
+else
+    git commit -m "Update version to $VERSION_TAG in API docs and service worker"
+    echo "✅ Version files committed"
+fi
 echo ""
 
 # Check if CHANGELOG already has this version (from previous failed attempt)
@@ -148,28 +152,13 @@ if ! git diff --quiet --exit-code -- . ':!webapp/coi-serviceworker.js' ':!CHANGE
     fi
 fi
 
-# Check if tag already exists
+# Check if tag already exists - auto-delete for re-release
 if git rev-parse "$VERSION_TAG" >/dev/null 2>&1; then
-    echo "Warning: Tag $VERSION_TAG already exists"
-    read -p "Do you want to delete and recreate it? (y/n) " -n 1 -r
-    echo
-    if [[ $REPLY =~ ^[Yy]$ ]]; then
-        echo "Deleting local tag..."
-        git tag -d "$VERSION_TAG"
-        echo "Deleting remote tag..."
-        git push origin ":refs/tags/$VERSION_TAG" 2>/dev/null || echo "Remote tag already deleted or doesn't exist"
-        echo "✅ Tag deleted, will recreate"
-    else
-        echo "Release cancelled."
-        # Revert version change
-        git checkout -- "$SERVICE_WORKER_FILE"
-        # Revert changelog only if we updated it
-        if [ "$CHANGELOG_UPDATED" = true ]; then
-            git checkout -- "$CHANGELOG_FILE"
-        fi
-        rm -f "$RELEASE_NOTES_FILE"
-        exit 1
-    fi
+    echo "Tag $VERSION_TAG already exists - deleting for re-release..."
+    git tag -d "$VERSION_TAG"
+    echo "Deleting remote tag..."
+    git push origin ":refs/tags/$VERSION_TAG" 2>/dev/null || echo "  Remote tag already deleted or doesn't exist"
+    echo "✅ Tag deleted, will recreate"
 fi
 
 # Commit the CHANGELOG update if needed
@@ -177,8 +166,12 @@ if [ "$CHANGELOG_UPDATED" = true ]; then
     echo ""
     echo "Committing CHANGELOG update..."
     git add "$CHANGELOG_FILE"
-    git commit -m "Update CHANGELOG for release $VERSION_TAG"
-    echo "✅ CHANGELOG committed"
+    if git diff --cached --quiet; then
+        echo "  No changes to commit (CHANGELOG already up to date)"
+    else
+        git commit -m "Update CHANGELOG for release $VERSION_TAG"
+        echo "✅ CHANGELOG committed"
+    fi
 fi
 
 # Create and push tag
