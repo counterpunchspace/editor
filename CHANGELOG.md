@@ -1,6 +1,6 @@
 # Unreleased
 
-- **Add items here** for the next release (Replace this comment)
+- **New Chat Experience** In line with other coding agents and assistants, users can now start new chats on different topics and return to old ones. Contexts (font or script) are chosen an locked per chat.
 
 # v0.1.3
 
