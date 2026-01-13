@@ -970,7 +970,62 @@ class AIAssistant {
                 body = `<pre class="ai-code"><code>${this.escapeHtml(content)}</code></pre>`;
             }
         } else {
-            body = `<div class="ai-message-content">${this.escapeHtml(content)}</div>`;
+            // For user messages, check if there's script context to show collapsibly
+            if (role === 'user') {
+                const scriptContextMatch = content.match(
+                    /Current script in editor:\s*```python\s*\n([\s\S]*?)```\s*\n\nUser request: ([\s\S]*)/
+                );
+                if (scriptContextMatch) {
+                    const scriptCode = scriptContextMatch[1];
+                    const userRequest = scriptContextMatch[2];
+                    const codeId =
+                        'code-' +
+                        Date.now() +
+                        Math.random().toString(36).substr(2, 9);
+                    const btnId =
+                        'btn-' +
+                        Date.now() +
+                        Math.random().toString(36).substr(2, 9);
+
+                    // Create toggle link for header
+                    const codeToggleHtml = `<span class="ai-code-toggle-link" id="${btnId}" onclick="
+                        const code = document.getElementById('${codeId}');
+                        const btn = document.getElementById('${btnId}');
+                        code.classList.toggle('collapsed');
+                        if (code.classList.contains('collapsed')) {
+                            btn.textContent = '▶ Show Origin Script';
+                        } else {
+                            btn.textContent = '▼ Hide Origin Script';
+                        }
+                    ">▶ Show Origin Script</span>`;
+
+                    // Recreate header with toggle link
+                    const headerWithToggle = this.createMessageHeader(role, {
+                        rightContent: codeToggleHtml
+                    });
+
+                    body = `
+                        <pre class="ai-code collapsed" id="${codeId}"><code>${this.escapeHtml(scriptCode)}</code></pre>
+                        <div class="ai-message-content">${this.escapeHtml(userRequest)}</div>`;
+
+                    messageDiv.innerHTML = headerWithToggle + body;
+
+                    // Store the user request part as the prompt for reuse
+                    content = userRequest;
+                    messageDiv.setAttribute('data-prompt', content);
+
+                    this.messagesContainer.appendChild(messageDiv);
+                    this.messagesContainer.scrollTop =
+                        this.messagesContainer.scrollHeight;
+                    this.scrollToBottom();
+
+                    return messageDiv;
+                } else {
+                    body = `<div class="ai-message-content">${this.escapeHtml(content)}</div>`;
+                }
+            } else {
+                body = `<div class="ai-message-content">${this.escapeHtml(content)}</div>`;
+            }
         }
 
         messageDiv.innerHTML = header + body;
