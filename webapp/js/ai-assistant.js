@@ -10,9 +10,13 @@ class AIAssistant {
         this.autoRun = localStorage.getItem('ai_auto_run') !== 'false'; // Default to true
         this.isShowingErrorFix = false; // Flag to prevent duplicate error fix messages
         this.isAuthenticated = false; // Track authentication state
+        this.hasLoadedLastChat = false; // Flag to prevent loading last chat multiple times
 
         // Get website URL for API calls
         this.websiteURL = this.getWebsiteURL();
+
+        // Initialize chat session manager
+        this.sessionManager = null; // Will be initialized after UI setup
 
         // Configure marked.js for markdown parsing
         if (typeof marked !== 'undefined') {
@@ -104,6 +108,12 @@ class AIAssistant {
             chatContainer.style.display = 'flex';
             loginContainer.style.display = 'none';
             subscriptionContainer.style.display = 'none';
+
+            // Load last chat session if available
+            if (this.sessionManager && !this.hasLoadedLastChat) {
+                this.hasLoadedLastChat = true;
+                this.sessionManager.loadLastChat();
+            }
         }
     }
 
@@ -112,33 +122,11 @@ class AIAssistant {
         this.promptInput = document.getElementById('ai-prompt');
         this.sendButton = document.getElementById('ai-send-btn');
         this.messagesContainer = document.getElementById('ai-messages');
-        this.autoRunButton = document.getElementById('ai-auto-run-btn');
-        this.contextFontButton = document.getElementById('ai-context-font-btn');
-        this.contextScriptButton = document.getElementById(
-            'ai-context-script-btn'
-        );
         this.isAssistantViewFocused = false;
 
         // Restore saved context or default to 'font'
         const savedContext = localStorage.getItem('ai_context');
         this.context = savedContext || 'font';
-
-        // Set context button states based on restored context
-        if (this.context === 'font') {
-            this.contextFontButton.classList.add('active');
-            this.contextScriptButton.classList.remove('active');
-        } else {
-            this.contextFontButton.classList.remove('active');
-            this.contextScriptButton.classList.add('active');
-        }
-
-        // No placeholder needed - we have the >>> prefix and "Talk to me..." label
-
-        // Update auto-run button state
-        this.updateAutoRunButton();
-
-        // Update context buttons state
-        this.updateContextButtons();
 
         // Update context label
         this.updateContextLabel();
@@ -156,64 +144,30 @@ class AIAssistant {
             }
         });
 
-        this.autoRunButton.addEventListener('click', (event) => {
-            event.stopPropagation(); // Prevent view focus
-            this.toggleAutoRun();
-            // Restore cursor to input field
-            if (this.promptInput) {
-                this.promptInput.focus();
-                if (this._updateCursor) {
-                    setTimeout(() => this._updateCursor(), 0);
-                }
-            }
-        });
-
-        this.contextFontButton.addEventListener('click', (event) => {
-            event.stopPropagation(); // Prevent view focus
-            this.setContext('font');
-            // Restore cursor to input field
-            if (this.promptInput) {
-                this.promptInput.focus();
-                if (this._updateCursor) {
-                    setTimeout(() => this._updateCursor(), 0);
-                }
-            }
-        });
-
-        this.contextScriptButton.addEventListener('click', (event) => {
-            event.stopPropagation(); // Prevent view focus
-            this.setContext('script');
-            // Restore cursor to input field
-            if (this.promptInput) {
-                this.promptInput.focus();
-                if (this._updateCursor) {
-                    setTimeout(() => this._updateCursor(), 0);
-                }
-            }
-        });
-
         // Setup info modal
         this.setupInfoModal();
 
         // Setup login button
         this.setupLoginButton();
 
+        // Setup context selection
+        this.setupContextSelection();
+
+        // Setup chat buttons (new chat, history)
+        this.setupChatButtons();
+
+        // Set default model from server settings
+        this.setDefaultModel();
+
+        // Initialize session manager after UI is ready
+        if (typeof ChatSessionManager !== 'undefined') {
+            this.sessionManager = new ChatSessionManager(this);
+        }
+
         // Add click handler for assistant view to focus text field when scrolled to bottom
         this.setupAssistantViewClickHandler();
 
-        // Add wider cursor styling for the prompt textarea
-        this.addWideCursorStyle();
-
-        // Auto-resize textarea based on content
-        this.promptInput.addEventListener('input', () => {
-            this.autoResizeTextarea();
-        });
-
-        // Set initial height
-        setTimeout(() => {
-            this.autoResizeTextarea();
-        }, 100);
-
+        // Send on Cmd+Enter
         this.promptInput.addEventListener('keydown', (e) => {
             if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
                 // Don't send if modal is open
@@ -230,10 +184,12 @@ class AIAssistant {
         window.addEventListener('viewFocused', (event) => {
             this.isAssistantViewFocused =
                 event.detail.viewId === 'view-assistant';
-            this.updateAutoRunButton(); // Update button appearance based on focus
-            this.updateContextButtons(); // Update context button appearance based on focus
             this.updateContextLabel(); // Update context label appearance based on focus
+            this.updateSendButtonShortcut(); // Show/hide shortcut based on focus
         });
+
+        // Initialize shortcut visibility
+        this.updateSendButtonShortcut();
 
         // Add global keyboard shortcuts when assistant is focused
         document.addEventListener('keydown', (event) => {
@@ -302,68 +258,7 @@ class AIAssistant {
                     }
                 }
             }
-
-            // Check if Alt+R to toggle auto-run (or show error notification in script context)
-            if (
-                !cmdKey &&
-                event.altKey &&
-                !event.shiftKey &&
-                code === 'KeyR' &&
-                this.isAssistantViewFocused
-            ) {
-                event.preventDefault();
-                this.toggleAutoRun();
-            }
-
-            // Check if Alt+F to switch to font context
-            if (
-                !cmdKey &&
-                event.altKey &&
-                !event.shiftKey &&
-                code === 'KeyF' &&
-                this.isAssistantViewFocused
-            ) {
-                event.preventDefault();
-                this.setContext('font');
-            }
-
-            // Check if Alt+S to switch to script context
-            if (
-                !cmdKey &&
-                event.altKey &&
-                !event.shiftKey &&
-                code === 'KeyS' &&
-                this.isAssistantViewFocused
-            ) {
-                event.preventDefault();
-                this.setContext('script');
-            }
         });
-    }
-
-    setContext(context) {
-        this.context = context;
-
-        // Save context to localStorage
-        localStorage.setItem('ai_context', context);
-
-        // Update button states
-        if (context === 'font') {
-            this.contextFontButton.classList.add('active');
-            this.contextScriptButton.classList.remove('active');
-        } else {
-            this.contextFontButton.classList.remove('active');
-            this.contextScriptButton.classList.add('active');
-        }
-
-        // Update button colors
-        this.updateContextButtons();
-
-        // Update Auto-Run button state
-        this.updateAutoRunButton();
-
-        // Update context label and prefix colors
-        this.updateContextLabel();
     }
 
     updateContextLabel() {
@@ -386,6 +281,188 @@ class AIAssistant {
             contextLabel.classList.add('script-context');
             contextLabel.classList.remove('font-context');
         }
+    }
+
+    setupContextSelection() {
+        const fontRadio = document.getElementById('ai-context-radio-font');
+        const scriptRadio = document.getElementById('ai-context-radio-script');
+
+        if (fontRadio && scriptRadio) {
+            fontRadio.addEventListener('change', () => {
+                if (fontRadio.checked) {
+                    this.context = 'font';
+                    localStorage.setItem('ai_context', 'font');
+                }
+            });
+
+            scriptRadio.addEventListener('change', () => {
+                if (scriptRadio.checked) {
+                    this.context = 'script';
+                    localStorage.setItem('ai_context', 'script');
+                }
+            });
+
+            // Set initial state based on saved context
+            if (this.context === 'font') {
+                fontRadio.checked = true;
+            } else {
+                scriptRadio.checked = true;
+            }
+        }
+    }
+
+    async setDefaultModel() {
+        const modelSelect = document.getElementById('ai-model-select');
+        if (!modelSelect) return;
+
+        try {
+            // Fetch models and default from server settings
+            const response = await fetch(`${this.websiteURL}/api/ai/settings`);
+            if (response.ok) {
+                const settings = await response.json();
+                console.log('[AI] Settings received:', settings);
+
+                // Clear existing options
+                modelSelect.innerHTML = '';
+
+                // Populate options from server data
+                settings.models.forEach((model) => {
+                    console.log('[AI] Processing model:', model);
+                    const option = document.createElement('option');
+                    option.value = model.id;
+
+                    // Use just the short name
+                    option.textContent = model.shortName;
+
+                    modelSelect.appendChild(option);
+                });
+
+                // Restore saved model from localStorage, or use server default
+                const savedModel = localStorage.getItem('ai_selected_model');
+                if (
+                    savedModel &&
+                    modelSelect.querySelector(`option[value="${savedModel}"]`)
+                ) {
+                    modelSelect.value = savedModel;
+                    console.log('[AI] Restored saved model:', savedModel);
+                } else if (settings.defaultModel) {
+                    modelSelect.value = settings.defaultModel;
+                    console.log(
+                        '[AI] Using default model:',
+                        settings.defaultModel
+                    );
+                }
+
+                // Save selection when user changes model
+                modelSelect.addEventListener('change', () => {
+                    localStorage.setItem(
+                        'ai_selected_model',
+                        modelSelect.value
+                    );
+                    console.log(
+                        '[AI] Saved model selection:',
+                        modelSelect.value
+                    );
+                });
+            }
+        } catch (error) {
+            console.error('[AI] Failed to load models:', error);
+            // Add fallback option if fetch fails
+            const fallbackOption = document.createElement('option');
+            fallbackOption.value = 'claude-haiku-4-5-20251001';
+            fallbackOption.textContent = 'Haiku (Fast)';
+            modelSelect.appendChild(fallbackOption);
+        }
+    }
+
+    setupChatButtons() {
+        const newChatBtn = document.getElementById('ai-new-chat-btn');
+        const historyBtn = document.getElementById('ai-chat-history-btn');
+
+        if (newChatBtn) {
+            newChatBtn.addEventListener('click', (event) => {
+                event.stopPropagation();
+                this.startNewChat();
+            });
+        }
+
+        if (historyBtn) {
+            historyBtn.addEventListener('click', (event) => {
+                event.stopPropagation();
+                if (this.sessionManager) {
+                    this.sessionManager.openChatHistoryMenu();
+                }
+            });
+        }
+
+        // Setup close button for chat history menu
+        const closeBtn = document.getElementById('ai-chat-history-close-btn');
+        const backdrop = document.getElementById('ai-chat-history-backdrop');
+
+        if (closeBtn) {
+            closeBtn.addEventListener('click', () => {
+                if (this.sessionManager) {
+                    this.sessionManager.closeChatHistoryMenu();
+                }
+            });
+        }
+
+        if (backdrop) {
+            backdrop.addEventListener('click', () => {
+                if (this.sessionManager) {
+                    this.sessionManager.closeChatHistoryMenu();
+                }
+            });
+        }
+
+        // Setup Escape key to close chat history menu
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') {
+                const menu = document.getElementById('ai-chat-history-menu');
+                if (
+                    menu &&
+                    menu.style.display === 'block' &&
+                    this.sessionManager
+                ) {
+                    this.sessionManager.closeChatHistoryMenu();
+                }
+            }
+        });
+    }
+
+    startNewChat() {
+        if (this.messages.length > 0) {
+            if (!confirm('Start a new chat? The current chat will be saved.')) {
+                return;
+            }
+        }
+
+        // Reset chat state
+        if (this.sessionManager) {
+            this.sessionManager.currentChatId = null;
+            this.sessionManager.isContextLocked = false;
+        }
+
+        // Clear messages
+        this.messages = [];
+        this.messagesContainer.innerHTML = '';
+
+        // Show context selector again
+        const contextSelector = document.getElementById('ai-context-selector');
+        const contextDisplay = document.getElementById('ai-context-display');
+        if (contextSelector) {
+            contextSelector.classList.remove('hidden');
+        }
+        if (contextDisplay) {
+            contextDisplay.classList.add('hidden');
+        }
+
+        // Focus input
+        if (this.promptInput) {
+            this.promptInput.focus();
+        }
+
+        console.log('[AIAssistant] New chat started');
     }
 
     setupLoginButton() {
@@ -421,8 +498,11 @@ class AIAssistant {
         if (!assistantView) return;
 
         assistantView.addEventListener('click', (event) => {
-            // Don't activate if clicking on a button
-            if (event.target.closest('button')) {
+            // Don't activate if clicking on a button or select
+            if (
+                event.target.closest('button') ||
+                event.target.closest('select')
+            ) {
                 return;
             }
 
@@ -499,92 +579,6 @@ class AIAssistant {
                 closeModal();
             }
         });
-    }
-
-    updateContextButtons() {
-        if (!this.contextFontButton || !this.contextScriptButton) return;
-
-        // Font button - toggle active state and context class
-        this.contextFontButton.classList.toggle(
-            'active',
-            this.context === 'font'
-        );
-
-        // Script button - toggle active state and context class
-        this.contextScriptButton.classList.toggle(
-            'active',
-            this.context === 'script'
-        );
-    }
-
-    toggleAutoRun() {
-        // If in script context, show error notification instead
-        if (this.context === 'script') {
-            // Play error sound
-            if (window.playSound) {
-                window.playSound('error');
-            }
-
-            // Make Font context button blink
-            this.contextFontButton.classList.add('error-blink');
-
-            // Remove blink after animation completes (0.6s)
-            setTimeout(() => {
-                this.contextFontButton.classList.remove('error-blink');
-            }, 600);
-
-            return; // Don't toggle auto-run in script context
-        }
-
-        this.autoRun = !this.autoRun;
-        localStorage.setItem('ai_auto_run', this.autoRun);
-        this.updateAutoRunButton();
-    }
-
-    updateAutoRunButton() {
-        if (this.autoRunButton) {
-            // Style differently when context is script (but keep enabled for click handler)
-            if (this.context === 'script') {
-                this.autoRunButton.disabled = false; // Keep enabled so click event fires
-                this.autoRunButton.innerHTML =
-                    'Auto-Run <span class="ai-button-shortcut"><span class="material-symbols-outlined">keyboard_option_key</span>R</span>';
-                this.autoRunButton.classList.remove('active');
-                this.autoRunButton.classList.add('disabled-in-script');
-            } else {
-                this.autoRunButton.disabled = false;
-                this.autoRunButton.classList.remove('disabled-in-script');
-                this.autoRunButton.classList.toggle('active', this.autoRun);
-
-                // Update keyboard shortcut color based on active state
-                const shortcutSpan = this.autoRunButton.querySelector(
-                    '.ai-button-shortcut'
-                );
-                if (shortcutSpan) {
-                    if (this.autoRun) {
-                        shortcutSpan.style.opacity = '0.6';
-                    } else {
-                        shortcutSpan.style.opacity = '';
-                    }
-                }
-
-                this.autoRunButton.innerHTML = `Auto-Run <span class="ai-button-shortcut"><span class="material-symbols-outlined">keyboard_option_key</span>R</span>`;
-            }
-        }
-
-        // Update auto-run indicator
-        this.updateAutoRunIndicator();
-    }
-
-    updateAutoRunIndicator() {
-        const indicator = document.getElementById('ai-auto-run-indicator');
-        if (!indicator) return;
-
-        // Show only when auto-run is on AND in font context
-        if (this.autoRun && this.context === 'font') {
-            indicator.style.display = 'flex';
-        } else {
-            indicator.style.display = 'none';
-        }
     }
 
     updateButtonShortcuts() {
@@ -1350,10 +1344,7 @@ class AIAssistant {
                     messageDiv.remove();
                     this.isShowingErrorFix = false;
 
-                    // Switch to script context
-                    this.setContext('script');
-
-                    // Switch to assistant view (explicitly after context switch)
+                    // Switch to assistant view
                     if (window.focusView) {
                         window.focusView('view-assistant');
                     }
@@ -1528,9 +1519,25 @@ ${errorTraceback}
             return;
         }
 
+        // Hide context selector after first message and show locked context
+        const contextSelector = document.getElementById('ai-context-selector');
+        const contextDisplay = document.getElementById('ai-context-display');
+        if (contextSelector && !contextSelector.classList.contains('hidden')) {
+            contextSelector.classList.add('hidden');
+            if (contextDisplay) {
+                contextDisplay.classList.remove('hidden');
+                const contextLabel =
+                    this.context === 'font' ? 'Font Context' : 'Script Context';
+                contextDisplay.innerHTML = `<span class="material-symbols-outlined">lock</span> <span class="ai-context-display-text">${contextLabel}</span><span class="ai-context-display-hint">Start a new chat to change context</span>`;
+            }
+            // Lock context in session manager
+            if (this.sessionManager) {
+                this.sessionManager.isContextLocked = true;
+            }
+        }
+
         // Clear input
         this.promptInput.value = '';
-        this.autoResizeTextarea();
         this.promptInput.disabled = true;
         this.sendButton.disabled = true;
 
@@ -1683,16 +1690,26 @@ ${errorTraceback}
             headers['Authorization'] = `Bearer ${sessionToken}`;
         }
 
+        // Get selected model
+        const modelSelect = document.getElementById('ai-model-select');
+        const selectedModel = modelSelect
+            ? modelSelect.value
+            : 'claude-sonnet-4-5-20250929';
+
         // Call the website's AI API endpoint
+        const chatId = this.sessionManager
+            ? this.sessionManager.currentChatId
+            : null;
         const response = await fetch(`${this.websiteURL}/api/ai/assistant`, {
             method: 'POST',
             credentials: 'include', // Include cookies for authentication
             headers: headers,
             body: JSON.stringify({
                 prompt: fullPrompt,
-                history: this.conversationHistory,
+                chatId: chatId,
                 context: currentScript,
-                contextType: this.context
+                contextType: this.context,
+                model: selectedModel
             })
         });
 
@@ -1740,6 +1757,17 @@ ${errorTraceback}
         }
 
         const data = await response.json();
+
+        // Update chat session ID if this was a new chat
+        if (data.chatId && this.sessionManager) {
+            this.sessionManager.currentChatId = data.chatId;
+            this.sessionManager.isContextLocked = true;
+        }
+
+        // Update chat history menu if available
+        if (data.chatHistory && this.sessionManager) {
+            this.sessionManager.updateChatHistory(data.chatHistory);
+        }
 
         // Log usage information
         if (data.usage) {
@@ -1854,6 +1882,18 @@ if '_original_stdout' in dir():
 
             // Re-throw with cleaned up error message
             throw new Error(error.message || String(error));
+        }
+    }
+
+    /**
+     * Update send button shortcut visibility based on view focus
+     */
+    updateSendButtonShortcut() {
+        const shortcut = document.getElementById('ai-send-btn-shortcut');
+        if (shortcut) {
+            shortcut.style.display = this.isAssistantViewFocused
+                ? 'inline-flex'
+                : 'none';
         }
     }
 

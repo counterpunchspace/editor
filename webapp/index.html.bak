@@ -415,18 +415,14 @@
                                 class="view-title-button"
                                 title="Start a new chat"
                             >
-                                <span class="material-symbols-outlined"
-                                    >add</span
-                                >
+                                <span class="material-symbols-outlined">add</span>
                             </button>
                             <button
                                 id="ai-chat-history-btn"
                                 class="view-title-button"
                                 title="View chat history"
                             >
-                                <span class="material-symbols-outlined"
-                                    >history</span
-                                >
+                                <span class="material-symbols-outlined">history</span>
                             </button>
                         </div>
                     </div>
@@ -492,110 +488,68 @@
                         <!-- Chat interface for authenticated users -->
                         <div id="ai-chat-container">
                             <!-- Context Selector (shown before first message) -->
-                            <div
-                                id="ai-context-selector"
-                                class="ai-context-selector"
-                            >
+                            <div id="ai-context-selector" class="ai-context-selector">
                                 <h4>Choose your working context:</h4>
                                 <div class="ai-context-radio-group">
                                     <label class="ai-context-radio-label">
-                                        <input
-                                            type="radio"
-                                            name="ai-context"
-                                            id="ai-context-radio-font"
-                                            value="font"
-                                            checked
-                                        />
+                                        <input type="radio" name="ai-context" id="ai-context-radio-font" value="font" checked>
                                         <span class="ai-context-radio-custom">
-                                            <span
-                                                class="material-symbols-outlined"
-                                                >font_download</span
-                                            >
+                                            <span class="material-symbols-outlined">font_download</span>
                                             <strong>Font Context</strong>
-                                            <small
-                                                >Work directly on the current
-                                                font</small
-                                            >
+                                            <small>Work directly on the current font</small>
                                         </span>
                                     </label>
                                     <label class="ai-context-radio-label">
-                                        <input
-                                            type="radio"
-                                            name="ai-context"
-                                            id="ai-context-radio-script"
-                                            value="script"
-                                        />
+                                        <input type="radio" name="ai-context" id="ai-context-radio-script" value="script">
                                         <span class="ai-context-radio-custom">
-                                            <span
-                                                class="material-symbols-outlined"
-                                                >code</span
-                                            >
+                                            <span class="material-symbols-outlined">code</span>
                                             <strong>Script Context</strong>
-                                            <small
-                                                >Create or edit reusable
-                                                scripts</small
-                                            >
+                                            <small>Create or edit reusable scripts</small>
                                         </span>
                                     </label>
                                 </div>
-                                <p class="ai-context-note">
-                                    This choice will be locked after your first
-                                    message.
-                                </p>
+                                <p class="ai-context-note">This choice will be locked after your first message.</p>
                             </div>
-
-                            <div id="ai-messages"></div>
-
+                            
                             <!-- Locked Context Display (shown after first message) -->
-                            <div
-                                id="ai-context-display"
-                                class="ai-context-display hidden"
-                            >
-                                <span class="material-symbols-outlined"
-                                    >lock</span
-                                >
-                                <span class="ai-context-display-text"
-                                    >Font Context</span
-                                >
-                                <span class="ai-context-display-hint"
-                                    >Start a new chat to change context</span
-                                >
+                            <div id="ai-context-display" class="ai-context-display hidden">
+                                <span class="material-symbols-outlined">lock</span> Font Context
                             </div>
-
+                            
+                            <div id="ai-messages"></div>
                             <div id="ai-input-container">
+                                <div id="ai-prompt-label">
+                                    I’m your assistant. How may I help?
+                                </div>
+                                <div id="ai-context-label-line">
+                                    <span
+                                        id="ai-context-label"
+                                        class="font-context"
+                                        ><span id="ai-prompt-prefix">>>></span>
+                                        Font Context</span
+                                    >
+                                </div>
                                 <div id="ai-prompt-wrapper">
                                     <textarea
                                         id="ai-prompt"
-                                        placeholder="Ask me anything about your font..."
+                                        placeholder=""
                                         data-1p-ignore
                                     ></textarea>
                                 </div>
-                                <div class="ai-input-controls">
-                                    <button
-                                        id="ai-send-btn"
-                                        class="ai-send-button"
-                                    >
+                                <div id="ai-button-container">
+                                    <button id="ai-send-btn">
+                                        Send with
                                         <span class="material-symbols-outlined"
-                                            >send</span
+                                            >keyboard_command_key</span
+                                        ><span class="material-symbols-outlined"
+                                            >keyboard_return</span
                                         >
-                                        Send
-                                        <span
-                                            id="ai-send-btn-shortcut"
-                                            class="ai-button-shortcut"
-                                            style="display: none"
-                                        >
-                                            <span
-                                                class="material-symbols-outlined"
-                                                >keyboard_command_key</span
-                                            >↵
-                                        </span>
                                     </button>
-                                    <select
-                                        id="ai-model-select"
-                                        class="ai-model-select"
+                                    <span
+                                        id="ai-auto-run-indicator"
+                                        style="display: none"
+                                        >Script will auto-run</span
                                     >
-                                        <!-- Models loaded dynamically from server -->
-                                    </select>
                                 </div>
                             </div>
                         </div>
@@ -1523,17 +1477,10 @@
         </script>
 
         <!-- Chat History Menu -->
-        <div
-            id="ai-chat-history-menu"
-            class="ai-chat-history-menu"
-            style="display: none"
-        >
+        <div id="ai-chat-history-menu" class="ai-chat-history-menu" style="display: none;">
             <div class="ai-chat-history-header">
                 <h3>Chat History</h3>
-                <button
-                    id="ai-chat-history-close-btn"
-                    class="ai-chat-history-close"
-                >
+                <button id="ai-chat-history-close-btn" class="ai-chat-history-close">
                     <span class="material-symbols-outlined">close</span>
                 </button>
             </div>
@@ -1541,12 +1488,8 @@
                 <!-- Chat history items will be populated here -->
             </div>
         </div>
-        <div
-            id="ai-chat-history-backdrop"
-            class="ai-chat-history-backdrop"
-            style="display: none"
-        ></div>
-
+        <div id="ai-chat-history-backdrop" class="ai-chat-history-backdrop" style="display: none;"></div>
+        
         <!-- Include Chat Session Manager -->
         <script src="js/chat-session-manager.js"></script>
     </body>
