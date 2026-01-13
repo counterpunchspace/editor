@@ -156,6 +156,9 @@ class AIAssistant {
         // Setup chat buttons (new chat, history)
         this.setupChatButtons();
 
+        // Setup auto-run checkbox
+        this.setupAutoRunCheckbox();
+
         // Set default model from server settings
         this.setDefaultModel();
 
@@ -302,6 +305,7 @@ class AIAssistant {
                 if (fontRadio.checked) {
                     this.context = 'font';
                     localStorage.setItem('ai_context', 'font');
+                    this.updateAutoRunVisibility();
                 }
             });
 
@@ -309,6 +313,7 @@ class AIAssistant {
                 if (scriptRadio.checked) {
                     this.context = 'script';
                     localStorage.setItem('ai_context', 'script');
+                    this.updateAutoRunVisibility();
                 }
             });
 
@@ -503,6 +508,39 @@ class AIAssistant {
         }
 
         console.log('[AIAssistant] New chat started');
+    }
+
+    setupAutoRunCheckbox() {
+        const checkbox = document.getElementById('ai-auto-run-checkbox');
+        if (!checkbox) return;
+
+        // Set initial state from localStorage
+        checkbox.checked = this.autoRun;
+
+        // Update localStorage and instance variable when changed
+        checkbox.addEventListener('change', () => {
+            this.autoRun = checkbox.checked;
+            localStorage.setItem(
+                'ai_auto_run',
+                checkbox.checked ? 'true' : 'false'
+            );
+            console.log('[AIAssistant] Auto-run set to:', this.autoRun);
+        });
+
+        // Show/hide checkbox based on context
+        this.updateAutoRunVisibility();
+    }
+
+    updateAutoRunVisibility() {
+        const label = document.querySelector('.ai-auto-run-label');
+        if (!label) return;
+
+        // Only show in font context
+        if (this.context === 'font') {
+            label.style.display = 'flex';
+        } else {
+            label.style.display = 'none';
+        }
     }
 
     setupLoginButton() {
