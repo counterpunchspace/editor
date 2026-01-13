@@ -35,6 +35,41 @@ class ChatSessionManager {
     }
 
     /**
+     * Generate context icon HTML
+     * @param {string} contextType - 'font' or 'script'
+     * @returns {string} HTML for context icon
+     */
+    static getContextIconHTML(contextType) {
+        const icon = contextType === 'font' ? 'font_download' : 'code';
+        const contextClass =
+            contextType === 'font' ? 'font-context' : 'script-context';
+        return `
+            <div class="ai-context-selection-icon ${contextClass}">
+                <span class="material-symbols-outlined">${icon}</span>
+            </div>
+        `;
+    }
+
+    /**
+     * Generate context selection buttons HTML
+     * @returns {string} HTML for context selection buttons
+     */
+    static getContextSelectionButtonsHTML() {
+        return `
+            <button class="ai-context-selection-btn" data-context="font">
+                ${ChatSessionManager.getContextIconHTML('font')}
+                <span class="label">Font Context</span>
+                <span class="description">Work directly on the current font</span>
+            </button>
+            <button class="ai-context-selection-btn" data-context="script">
+                ${ChatSessionManager.getContextIconHTML('script')}
+                <span class="label">Script Context</span>
+                <span class="description">Create or edit reusable scripts</span>
+            </button>
+        `;
+    }
+
+    /**
      * Show context selection at the start of a new chat
      */
     showContextSelection() {
@@ -46,16 +81,7 @@ class ChatSessionManager {
                 <h3>Choose your working context</h3>
                 <p>Select whether you want to work on the font or a script. This cannot be changed during the chat.</p>
                 <div class="ai-context-selection-buttons">
-                    <button class="ai-context-selection-btn" data-context="font">
-                        <span class="material-symbols-outlined">font_download</span>
-                        <span class="label">Font Context</span>
-                        <span class="description">Work directly on the current font</span>
-                    </button>
-                    <button class="ai-context-selection-btn" data-context="script">
-                        <span class="material-symbols-outlined">code</span>
-                        <span class="label">Script Context</span>
-                        <span class="description">Create or edit reusable scripts</span>
-                    </button>
+                    ${ChatSessionManager.getContextSelectionButtonsHTML()}
                 </div>
             </div>
         `;
@@ -94,10 +120,15 @@ class ChatSessionManager {
             context === 'font'
                 ? 'Working directly on the current font'
                 : 'Creating or editing reusable scripts';
+        const contextIcon = context === 'font' ? 'font_download' : 'code';
+        const contextClass =
+            context === 'font'
+                ? 'ai-context-tag-font'
+                : 'ai-context-tag-script';
 
         messageDiv.innerHTML = `
             <div class="ai-system-message">
-                <span class="material-symbols-outlined">lock</span>
+                <span class="ai-context-display-icon ${contextClass}"><span class="material-symbols-outlined">${contextIcon}</span></span>
                 <div>
                     <strong>${contextLabel} selected</strong>
                     <p>${contextDescription}</p>
@@ -152,20 +183,8 @@ class ChatSessionManager {
             // Set current chat ID
             this.currentChatId = data.chatSession.id;
 
-            // Set context
-            this.aiAssistant.context = data.chatSession.contextType;
-            localStorage.setItem('ai_context', data.chatSession.contextType);
-
-            // Update radio buttons
-            const fontRadio = document.getElementById('ai-context-radio-font');
-            const scriptRadio = document.getElementById(
-                'ai-context-radio-script'
-            );
-            if (fontRadio && scriptRadio) {
-                fontRadio.checked = data.chatSession.contextType === 'font';
-                scriptRadio.checked = data.chatSession.contextType === 'script';
-            }
-
+            // Set context using setContext to ensure all UI updates happen
+            this.aiAssistant.setContext(data.chatSession.contextType);
             this.isContextLocked = true;
 
             // Hide context selector and show locked display
@@ -181,7 +200,15 @@ class ChatSessionManager {
                     data.chatSession.contextType === 'font'
                         ? 'Font Context'
                         : 'Script Context';
-                contextDisplay.innerHTML = `<span class="material-symbols-outlined">lock</span> <span class="ai-context-display-text">${contextLabel}</span><span class="ai-context-display-hint">Start a new chat to change context</span>`;
+                const contextIcon =
+                    data.chatSession.contextType === 'font'
+                        ? 'font_download'
+                        : 'code';
+                const contextClass =
+                    data.chatSession.contextType === 'font'
+                        ? 'ai-context-tag-font'
+                        : 'ai-context-tag-script';
+                contextDisplay.innerHTML = `<span class="ai-context-display-icon ${contextClass}"><span class="material-symbols-outlined">${contextIcon}</span></span><span class="ai-context-display-text">${contextLabel}</span><span class="ai-context-display-hint">Start a new chat to change context</span>`;
             }
 
             // Clear current messages
@@ -269,20 +296,8 @@ class ChatSessionManager {
             // Load the chat
             this.currentChatId = data.chatSession.id;
 
-            // Set context
-            this.aiAssistant.context = data.chatSession.contextType;
-            localStorage.setItem('ai_context', data.chatSession.contextType);
-
-            // Update radio buttons
-            const fontRadio = document.getElementById('ai-context-radio-font');
-            const scriptRadio = document.getElementById(
-                'ai-context-radio-script'
-            );
-            if (fontRadio && scriptRadio) {
-                fontRadio.checked = data.chatSession.contextType === 'font';
-                scriptRadio.checked = data.chatSession.contextType === 'script';
-            }
-
+            // Set context using setContext to ensure all UI updates happen
+            this.aiAssistant.setContext(data.chatSession.contextType);
             this.isContextLocked = true;
 
             // Hide context selector and show locked display
@@ -298,7 +313,15 @@ class ChatSessionManager {
                     data.chatSession.contextType === 'font'
                         ? 'Font Context'
                         : 'Script Context';
-                contextDisplay.innerHTML = `<span class="material-symbols-outlined">lock</span> <span class="ai-context-display-text">${contextLabel}</span><span class="ai-context-display-hint">Start a new chat to change context</span>`;
+                const contextIcon =
+                    data.chatSession.contextType === 'font'
+                        ? 'font_download'
+                        : 'code';
+                const contextClass =
+                    data.chatSession.contextType === 'font'
+                        ? 'ai-context-tag-font'
+                        : 'ai-context-tag-script';
+                contextDisplay.innerHTML = `<span class="ai-context-display-icon ${contextClass}"><span class="material-symbols-outlined">${contextIcon}</span></span><span class="ai-context-display-text">${contextLabel}</span><span class="ai-context-display-hint">Start a new chat to change context</span>`;
             }
 
             // Recreate messages from history
@@ -557,24 +580,42 @@ class ChatSessionManager {
 
             const contextIcon =
                 session.contextType === 'font' ? 'font_download' : 'code';
+            const contextClass =
+                session.contextType === 'font'
+                    ? 'font-context'
+                    : 'script-context';
 
             // Handle date parsing more robustly
             let timeAgo = 'Unknown';
             try {
-                const timestamp = new Date(session.lastActivityAt).getTime();
-                if (!isNaN(timestamp)) {
-                    timeAgo = this.formatRelativeTime(timestamp);
+                // Try lastActivityAt first, fall back to updatedAt or createdAt
+                const dateField =
+                    session.lastActivityAt ||
+                    session.updatedAt ||
+                    session.createdAt;
+                if (dateField) {
+                    const timestamp = new Date(dateField).getTime();
+                    if (!isNaN(timestamp)) {
+                        timeAgo = this.formatRelativeTime(timestamp);
+                    }
+                } else {
+                    console.warn(
+                        '[ChatSession] No date field found for session:',
+                        session
+                    );
                 }
             } catch (e) {
                 console.error(
                     '[ChatSession] Error parsing date:',
                     session.lastActivityAt,
+                    session.updatedAt,
+                    session.createdAt,
                     e
                 );
             }
 
             item.innerHTML = `
-                <div class="ai-chat-history-item-icon">
+                <div class="ai-chat-history-item-icon ${contextClass}">
                     <span class="material-symbols-outlined">${contextIcon}</span>
                 </div>
                 <div class="ai-chat-history-item-content">
@@ -591,6 +632,16 @@ class ChatSessionManager {
             });
 
             listContainer.appendChild(item);
+
+            // Scroll active item into view
+            if (session.id === this.currentChatId) {
+                requestAnimationFrame(() => {
+                    item.scrollIntoView({
+                        behavior: 'smooth',
+                        block: 'nearest'
+                    });
+                });
+            }
         });
     }
 

@@ -507,10 +507,7 @@
                                             checked
                                         />
                                         <span class="ai-context-radio-custom">
-                                            <span
-                                                class="material-symbols-outlined"
-                                                >font_download</span
-                                            >
+                                            <!-- Populated by ChatSessionManager.getContextIconHTML('font') -->
                                             <strong>Font Context</strong>
                                             <small
                                                 >Work directly on the current
@@ -526,10 +523,7 @@
                                             value="script"
                                         />
                                         <span class="ai-context-radio-custom">
-                                            <span
-                                                class="material-symbols-outlined"
-                                                >code</span
-                                            >
+                                            <!-- Populated by ChatSessionManager.getContextIconHTML('script') -->
                                             <strong>Script Context</strong>
                                             <small
                                                 >Create or edit reusable
@@ -546,23 +540,29 @@
 
                             <div id="ai-messages"></div>
 
-                            <!-- Locked Context Display (shown after first message) -->
-                            <div
-                                id="ai-context-display"
-                                class="ai-context-display hidden"
-                            >
-                                <span class="material-symbols-outlined"
-                                    >lock</span
-                                >
-                                <span class="ai-context-display-text"
-                                    >Font Context</span
-                                >
-                                <span class="ai-context-display-hint"
-                                    >Start a new chat to change context</span
-                                >
-                            </div>
-
                             <div id="ai-input-container">
+                                <!-- Locked Context Display (shown after first message) -->
+                                <div
+                                    id="ai-context-display"
+                                    class="ai-context-display hidden"
+                                >
+                                    <span
+                                        id="ai-context-display-icon"
+                                        class="ai-context-display-icon ai-context-tag-font"
+                                    >
+                                        <span class="material-symbols-outlined"
+                                            >font_download</span
+                                        >
+                                    </span>
+                                    <span class="ai-context-display-text"
+                                        >Font Context</span
+                                    >
+                                    <span class="ai-context-display-hint"
+                                        >Start a new chat to change
+                                        context</span
+                                    >
+                                </div>
+
                                 <div id="ai-prompt-wrapper">
                                     <textarea
                                         id="ai-prompt"

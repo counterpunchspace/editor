@@ -326,6 +326,41 @@ class AIAssistant {
         }
     }
 
+    /**
+     * Set the context (font or script) and update all related UI
+     */
+    setContext(context) {
+        this.context = context;
+        localStorage.setItem('ai_context', context);
+
+        // Update radio buttons
+        const fontRadio = document.getElementById('ai-context-radio-font');
+        const scriptRadio = document.getElementById('ai-context-radio-script');
+        if (fontRadio && scriptRadio) {
+            fontRadio.checked = context === 'font';
+            scriptRadio.checked = context === 'script';
+        }
+
+        // Update context display
+        const contextSelector = document.getElementById('ai-context-selector');
+        const contextDisplay = document.getElementById('ai-context-display');
+        if (contextSelector) contextSelector.classList.add('hidden');
+        if (contextDisplay) {
+            contextDisplay.classList.remove('hidden');
+            const contextLabel =
+                context === 'font' ? 'Font Context' : 'Script Context';
+            const contextIcon = context === 'font' ? 'font_download' : 'code';
+            const contextClass =
+                context === 'font'
+                    ? 'ai-context-tag-font'
+                    : 'ai-context-tag-script';
+            contextDisplay.innerHTML = `<span class="ai-context-display-icon ${contextClass}"><span class="material-symbols-outlined">${contextIcon}</span></span><span class="ai-context-display-text">${contextLabel}</span><span class="ai-context-display-hint">Start a new chat to change context</span>`;
+        }
+
+        // Update auto-run visibility
+        this.updateAutoRunVisibility();
+    }
+
     async setDefaultModel() {
         this.modelBtn = document.getElementById('ai-model-btn');
         this.modelBtnName = document.getElementById('ai-model-btn-name');
@@ -835,6 +870,62 @@ class AIAssistant {
             }
         }
     }
+
+    /**
+     * Creates a message header HTML string
+     * @param {string} role - 'user', 'assistant', 'output', 'error', 'system'
+     * @param {object} options - Optional settings
+     * @param {string} options.label - Custom label override
+     * @param {string} options.icon - Custom Material Symbol icon name
+     * @param {boolean} options.showContext - Whether to show context tag (default true)
+     * @param {string} options.rightContent - Additional HTML for the right side
+     * @returns {string} HTML string for the header
+     */
+    createMessageHeader(role, options = {}) {
+        const timestamp = new Date().toLocaleTimeString();
+
+        // Determine icon and label based on role
+        let icon, label;
+        switch (role) {
+            case 'user':
+                icon = options.icon || 'person';
+                label = options.label || 'You';
+                break;
+            case 'assistant':
+            case 'output':
+                icon = options.icon || 'attach_file';
+                label =
+                    options.label ||
+                    (role === 'output' ? 'Output' : 'Assistant');
+                break;
+            case 'error':
+                icon = options.icon || 'warning';
+                label = options.label || 'Script Error';
+                break;
+            case 'system':
+                icon = options.icon || 'info';
+                label = options.label || 'System';
+                break;
+            default:
+                icon = options.icon || 'attach_file';
+                label = options.label || 'AI';
+        }
+
+        const iconHtml = `<span class="material-symbols-outlined">${icon}</span>`;
+
+        if (options.rightContent) {
+            return `
+                <div class="ai-message-header">
+                    <span>${iconHtml} ${label} - ${timestamp}</span>
+                    <div class="ai-message-header-right">
+                        ${options.rightContent}
+                    </div>
+                </div>`;
+        }
+
+        return `<div class="ai-message-header"><span>${iconHtml} ${label} - ${timestamp}</span></div>`;
+    }
+
     addMessage(role, content, isCode = false, isCollapsible = false) {
         // Show messages container on first message
         if (
@@ -847,21 +938,7 @@ class AIAssistant {
         const messageDiv = document.createElement('div');
         messageDiv.className = `ai-message ai-message-${role}`;
 
-        const timestamp = new Date().toLocaleTimeString();
-        const roleLabel =
-            role === 'user'
-                ? '😀 You'
-                : role === 'output'
-                  ? '🤖 Output'
-                  : '🤖 AI';
-
-        // Add context tag with appropriate color
-        const contextTag =
-            this.context === 'script'
-                ? '<span class="ai-context-tag ai-context-tag-script">Script</span>'
-                : '<span class="ai-context-tag ai-context-tag-font">Font</span>';
-
-        const header = `<div class="ai-message-header"><span>${roleLabel} - ${timestamp}</span>${contextTag}</div>`;
+        const header = this.createMessageHeader(role);
 
         let body;
         if (isCode) {
@@ -1051,8 +1128,6 @@ class AIAssistant {
         const messageDiv = document.createElement('div');
         messageDiv.className = 'ai-message ai-message-output';
 
-        const timestamp = new Date().toLocaleTimeString();
-
         // Generate unique IDs
         const codeId =
             'code-' + Date.now() + Math.random().toString(36).substr(2, 9);
@@ -1063,29 +1138,21 @@ class AIAssistant {
         const openBtnId =
             'open-' + Date.now() + Math.random().toString(36).substr(2, 9);
 
-        // Add context tag with appropriate color
-        const contextTag =
-            this.context === 'script'
-                ? '<span class="ai-context-tag ai-context-tag-script">Script</span>'
-                : '<span class="ai-context-tag ai-context-tag-font">Font</span>';
+        // Create toggle link for code visibility
+        const codeToggleHtml = `<span class="ai-code-toggle-link" id="${btnId}" onclick="
+            const code = document.getElementById('${codeId}');
+            const btn = document.getElementById('${btnId}');
+            code.classList.toggle('collapsed');
+            if (code.classList.contains('collapsed')) {
+                btn.textContent = '▶ Show Code';
+            } else {
+                btn.textContent = '▼ Hide Code';
+            }
+        ">▶ Show Code</span>`;
 
-        const header = `
-            <div class="ai-message-header">
-                <span>👽 Assistant - ${timestamp}</span>
-                <div class="ai-message-header-right">
-                    ${contextTag}
-                    <span class="ai-code-toggle-link" id="${btnId}" onclick="
-                        const code = document.getElementById('${codeId}');
-                        const btn = document.getElementById('${btnId}');
-                        code.classList.toggle('collapsed');
-                        if (code.classList.contains('collapsed')) {
-                            btn.textContent = '▶ Show Code';
-                        } else {
-                            btn.textContent = '▼ Hide Code';
-                        }
-                    ">▶ Show Code</span>
-                </div>
-            </div>`;
+        const header = this.createMessageHeader('assistant', {
+            rightContent: codeToggleHtml
+        });
 
         // Show appropriate buttons based on context
         let buttonContainerHtml = '';
@@ -1480,11 +1547,12 @@ class AIAssistant {
             const messageDiv = document.createElement('div');
             messageDiv.className = 'ai-message ai-message-error-fix';
 
-            const timestamp = new Date().toLocaleTimeString();
             const fixBtnId =
                 'fix-' + Date.now() + Math.random().toString(36).substr(2, 9);
 
-            const header = `<div class="ai-message-header">⚠️ Script Error - ${timestamp}</div>`;
+            const header = this.createMessageHeader('error', {
+                showContext: false
+            });
 
             const body = `
                 <div class="ai-error-fix-content">
@@ -1586,15 +1654,7 @@ class AIAssistant {
         messageDiv.className =
             'ai-message ai-message-user ai-message-error-traceback';
 
-        const timestamp = new Date().toLocaleTimeString();
-
-        // Add context tag
-        const contextTag =
-            this.context === 'script'
-                ? '<span class="ai-context-tag ai-context-tag-script">Script</span>'
-                : '<span class="ai-context-tag ai-context-tag-font">Font</span>';
-
-        const header = `<div class="ai-message-header"><span>😀 You - ${timestamp}</span>${contextTag}</div>`;
+        const header = this.createMessageHeader('user');
 
         // Format as markdown for consistent styling with assistant messages
         const markdownContent = `The script produced an error. Please analyze and fix it, but don't refactor any other parts of the code.
@@ -1708,7 +1768,13 @@ ${errorTraceback}
                 contextDisplay.classList.remove('hidden');
                 const contextLabel =
                     this.context === 'font' ? 'Font Context' : 'Script Context';
-                contextDisplay.innerHTML = `<span class="material-symbols-outlined">lock</span> <span class="ai-context-display-text">${contextLabel}</span><span class="ai-context-display-hint">Start a new chat to change context</span>`;
+                const contextIcon =
+                    this.context === 'font' ? 'font_download' : 'code';
+                const contextClass =
+                    this.context === 'font'
+                        ? 'ai-context-tag-font'
+                        : 'ai-context-tag-script';
+                contextDisplay.innerHTML = `<span class="ai-context-display-icon ${contextClass}"><span class="material-symbols-outlined">${contextIcon}</span></span><span class="ai-context-display-text">${contextLabel}</span><span class="ai-context-display-hint">Start a new chat to change context</span>`;
             }
             // Lock context in session manager
             if (this.sessionManager) {
@@ -1892,7 +1958,7 @@ ${errorTraceback}
         });
 
         // Log the request for debugging
-        console.group('👽 AI Prompt Sent to API');
+        console.group('[AIAssistant] AI Prompt Sent to API');
         console.log('[AIAssistant]', 'Prompt:', fullPrompt);
         console.log('[AIAssistant]', 'Context Type:', this.context);
         console.log(
@@ -2332,6 +2398,26 @@ KeyError: 'A'`;
 
 // Initialize AI assistant when page loads
 document.addEventListener('DOMContentLoaded', () => {
+    // Populate context icons in radio buttons immediately
+    const fontRadio = document.querySelector(
+        '#ai-context-radio-font + .ai-context-radio-custom'
+    );
+    const scriptRadio = document.querySelector(
+        '#ai-context-radio-script + .ai-context-radio-custom'
+    );
+
+    if (fontRadio && scriptRadio) {
+        // Insert icons at the beginning of each custom radio span
+        fontRadio.insertAdjacentHTML(
+            'afterbegin',
+            ChatSessionManager.getContextIconHTML('font')
+        );
+        scriptRadio.insertAdjacentHTML(
+            'afterbegin',
+            ChatSessionManager.getContextIconHTML('script')
+        );
+    }
+
     // Wait for Pyodide to be ready
     const initAI = () => {
         if (window.pyodide) {

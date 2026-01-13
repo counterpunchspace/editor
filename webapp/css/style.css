@@ -545,10 +545,10 @@ kbd + kbd {
 
 /* Content containers for views with text content */
 .view-content {
-    margin: 20px;
+    margin-right: 20px;
     margin-left: 15px;
-    margin-top: 2px;
-    margin-bottom: 10px;
+    margin-top: 0px;
+    margin-bottom: 0px;
     overflow: auto;
     flex: 1;
 }
@@ -2030,7 +2030,6 @@ kbd + kbd {
 #ai-chat-container {
     display: flex;
     flex-direction: column;
-    margin-top: 7px;
 }
 
 /* AI Login Container */
@@ -2183,14 +2182,15 @@ kbd + kbd {
 }
 
 .ai-message {
-    margin-bottom: 2px;
+    margin: 10px;
     padding: 12px 15px 17px 15px;
     border: none;
+    border-radius: 6px;
 }
 
 .ai-message-user {
     color: var(--text-tertiary);
-    background-color: var(--ai-user-bg);
+    background-color: var(--message-bg);
 }
 
 .ai-message-user .ai-message-header {
@@ -2217,7 +2217,7 @@ kbd + kbd {
 
 .ai-message-assistant {
     color: var(--text-tertiary);
-    background-color: var(--ai-assistant-bg);
+    background-color: transparent;
 }
 
 .ai-message-assistant .ai-message-header {
@@ -2227,7 +2227,7 @@ kbd + kbd {
 
 .ai-message-system {
     color: var(--text-muted);
-    background-color: var(--ai-system-bg);
+    background-color: var(--message-bg);
 }
 
 .ai-message-error {
@@ -2237,18 +2237,18 @@ kbd + kbd {
 
 .ai-message-error-fix {
     color: var(--text-primary);
-    background-color: rgba(255, 165, 0, 0.2);
+    background-color: var(--message-bg);
     animation: error-blink 0.4s ease-in-out 3;
 }
 
 @keyframes error-blink {
     0%,
     100% {
-        background-color: rgba(255, 165, 0, 0.2);
+        background-color: var(--input-bg);
     }
 
     50% {
-        background-color: rgba(255, 165, 0, 0.5);
+        background-color: var(--border-primary);
     }
 }
 
@@ -2357,7 +2357,7 @@ kbd + kbd {
 
 .ai-message-output {
     color: var(--text-tertiary);
-    background-color: var(--ai-assistant-bg);
+    /* background-color: var(--ai-assistant-bg); */
 }
 
 .ai-message-output .ai-message-header {
@@ -2375,6 +2375,11 @@ kbd + kbd {
     align-items: center;
 }
 
+.ai-message-header .material-symbols-outlined {
+    font-size: 20px;
+    vertical-align: middle;
+}
+
 .ai-message-header-right {
     display: flex;
     align-items: center;
@@ -2382,23 +2387,27 @@ kbd + kbd {
 }
 
 .ai-context-tag {
-    padding: 2px 8px;
-    border-radius: 3px;
-    font-size: calc(var(--size, 1) * (10px / var(--pixel-density, 1)));
-    font-weight: 600;
-    font-family: var(--font-families-mono);
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    border-radius: 6px;
+}
+
+.ai-context-tag .material-symbols-outlined {
+    font-size: 18px;
+    line-height: 1;
 }
 
 .ai-context-tag-script {
-    background-color: var(--view-scripts);
-    color: var(--background-primary);
+    background-color: var(--script-context-bg);
+    color: var(--script-context-text);
 }
 
 .ai-context-tag-font {
-    background-color: var(--view-editor);
-    color: var(--background-primary);
+    background-color: var(--font-context-bg);
+    color: var(--font-context-text);
 }
 
 .ai-code-toggle-link {
@@ -2639,7 +2648,8 @@ kbd + kbd {
     gap: 10px;
     flex-shrink: 0;
     padding: 16px;
-    /* border-top: 1px solid var(--border-primary); */
+    margin-top: 15px;
+    background-color: var(--input-bg);
 }
 
 #ai-prompt-wrapper {
@@ -4302,6 +4312,11 @@ kbd + kbd {
     border-color: var(--border-primary);
 }
 
+.ai-chat-history-item.active {
+    background-color: var(--selection-bg);
+    border-color: var(--primary);
+}
+
 .ai-chat-history-item-icon {
     flex-shrink: 0;
     display: flex;
@@ -4419,7 +4434,7 @@ kbd + kbd {
     flex: 1;
     max-width: 220px;
     padding: 20px;
-    background-color: var(--input-bg);
+    background: none;
     border: 2px solid var(--border-primary);
     border-radius: 8px;
     cursor: pointer;
@@ -4436,9 +4451,29 @@ kbd + kbd {
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
 }
 
-.ai-context-selection-btn .material-symbols-outlined {
+.ai-context-selection-icon {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 64px;
+    height: 64px;
+    border-radius: 12px;
+    background-color: var(--input-bg);
+}
+
+.ai-context-selection-icon.font-context {
+    background-color: var(--font-context-bg);
+    color: var(--font-context-text);
+}
+
+.ai-context-selection-icon.script-context {
+    background-color: var(--script-context-bg);
+    color: var(--script-context-text);
+}
+
+.ai-context-selection-icon .material-symbols-outlined {
     font-size: 48px;
-    color: var(--text-primary);
 }
 
 .ai-context-selection-btn .label {
@@ -4587,11 +4622,6 @@ kbd + kbd {
     opacity: 0.7;
 }
 
-.ai-context-radio-custom .material-symbols-outlined {
-    font-size: 32px;
-    color: var(--text-primary);
-}
-
 .ai-context-radio-custom strong {
     font-family: var(--font-families-sans);
     font-size: 13px;
@@ -4618,9 +4648,8 @@ kbd + kbd {
 .ai-context-display {
     display: flex;
     align-items: center;
-    gap: 8px;
-    padding: 15px 20px 0px 20px;
-    border-top: 1px solid var(--border-primary);
+    gap: 10px;
+    padding: 0;
     font-family: var(--font-families-sans);
     font-size: 11px;
     font-weight: 600;
@@ -4631,20 +4660,28 @@ kbd + kbd {
     display: none;
 }
 
-.ai-context-display .material-symbols-outlined {
-    font-size: 14px;
-    color: var(--text-secondary);
+.ai-context-display-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    border-radius: 6px;
 }
 
-.ai-context-display-text {
-    flex-shrink: 0;
+.ai-context-display-icon.ai-context-tag-font {
+    background-color: var(--font-context-bg);
+    color: var(--font-context-text);
 }
 
-.ai-context-display-hint {
-    margin-left: auto;
-    font-size: 10px;
-    font-weight: 400;
-    opacity: 0.6;
+.ai-context-display-icon.ai-context-tag-script {
+    background-color: var(--script-context-bg);
+    color: var(--script-context-text);
+}
+
+.ai-context-display-icon .material-symbols-outlined {
+    font-size: 18px;
+    line-height: 1;
 }
 
 .ai-context-display-text {

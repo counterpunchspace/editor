@@ -30,9 +30,10 @@
     --scrollbar-thumb: #555555;
     --input-border: rgba(255, 255, 255, 0.2);
     --input-bg: rgba(255, 255, 255, 0.05);
+    --message-bg: rgba(255, 255, 255, 0.1);
     --custom-cursor-color: rgba(255, 255, 255, 0.8);
     --ai-error-text: #ff3300;
-    --ai-assistant-text: rgba(220, 180, 255, 1);
+    --ai-assistant-text: rgba(180, 180, 180, 1);
     --ai-error-bg: rgba(255, 51, 0, 0.1);
     --ai-assistant-bg: rgba(200, 150, 255, 0.3);
     --ai-user-text: rgba(150, 220, 255, 1);
@@ -99,9 +100,10 @@
     --scrollbar-thumb: #c0c0c0;
     --input-border: rgba(0, 0, 0, 0.2);
     --input-bg: rgba(0, 0, 0, 0.04);
+    --message-bg: rgba(0, 0, 0, 0.08);
     --custom-cursor-color: rgba(0, 0, 0, 0.8);
     --ai-error-text: #cc2600;
-    --ai-assistant-text: rgba(90, 0, 160, 1);
+    --ai-assistant-text: rgba(80, 80, 80, 1);
     --ai-error-bg: rgba(200, 40, 0, 0.1);
     --ai-assistant-bg: rgba(120, 0, 200, 0.12);
     --ai-user-text: rgba(0, 70, 140, 1);
