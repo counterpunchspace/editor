@@ -1,6 +1,6 @@
 # Unreleased
 
-- **Add items here** for the next release (Replace this comment)
+- **Assistant design** Great overhaul of assistant chat interface UI design
 
 # v0.1.4
 
