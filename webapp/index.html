@@ -590,12 +590,18 @@
                                             >↵
                                         </span>
                                     </button>
-                                    <select
-                                        id="ai-model-select"
-                                        class="ai-model-select"
+                                    <button
+                                        id="ai-model-btn"
+                                        class="ai-model-btn"
+                                        title="Select AI model"
                                     >
-                                        <!-- Models loaded dynamically from server -->
-                                    </select>
+                                        <span id="ai-model-btn-name"
+                                            >Loading...</span
+                                        >
+                                        <span class="material-symbols-outlined"
+                                            >expand_more</span
+                                        >
+                                    </button>
                                     <label class="ai-auto-run-label">
                                         <input
                                             type="checkbox"
@@ -1530,6 +1536,28 @@
                 });
             }
         </script>
+
+        <!-- Model Picker Modal -->
+        <div
+            id="ai-model-picker-overlay"
+            class="ai-model-picker-overlay"
+            style="display: none"
+        >
+            <div class="ai-model-picker">
+                <div class="ai-model-picker-header">
+                    <h3>Select AI Model</h3>
+                    <button
+                        id="ai-model-picker-close"
+                        class="ai-model-picker-close"
+                    >
+                        <span class="material-symbols-outlined">close</span>
+                    </button>
+                </div>
+                <div id="ai-model-picker-list" class="ai-model-picker-list">
+                    <!-- Model options populated dynamically -->
+                </div>
+            </div>
+        </div>
 
         <!-- Chat History Menu -->
         <div

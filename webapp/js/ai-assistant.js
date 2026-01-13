@@ -327,8 +327,21 @@ class AIAssistant {
     }
 
     async setDefaultModel() {
-        const modelSelect = document.getElementById('ai-model-select');
-        if (!modelSelect) return;
+        this.modelBtn = document.getElementById('ai-model-btn');
+        this.modelBtnName = document.getElementById('ai-model-btn-name');
+        this.modelPickerOverlay = document.getElementById(
+            'ai-model-picker-overlay'
+        );
+        this.modelPickerList = document.getElementById('ai-model-picker-list');
+        this.modelPickerClose = document.getElementById(
+            'ai-model-picker-close'
+        );
+
+        if (!this.modelBtn) return;
+
+        // Store models for later reference
+        this.availableModels = [];
+        this.selectedModelId = null;
 
         try {
             // Fetch models and default from server settings
@@ -337,56 +350,145 @@ class AIAssistant {
                 const settings = await response.json();
                 console.log('[AI] Settings received:', settings);
 
-                // Clear existing options
-                modelSelect.innerHTML = '';
-
-                // Populate options from server data
-                settings.models.forEach((model) => {
-                    console.log('[AI] Processing model:', model);
-                    const option = document.createElement('option');
-                    option.value = model.id;
-
-                    // Use just the short name
-                    option.textContent = model.shortName;
-
-                    modelSelect.appendChild(option);
-                });
+                this.availableModels = settings.models;
 
                 // Restore saved model from localStorage, or use server default
                 const savedModel = localStorage.getItem('ai_selected_model');
-                if (
-                    savedModel &&
-                    modelSelect.querySelector(`option[value="${savedModel}"]`)
-                ) {
-                    modelSelect.value = savedModel;
+                const validModel = this.availableModels.find(
+                    (m) => m.id === savedModel
+                );
+                if (validModel) {
+                    this.selectedModelId = savedModel;
                     console.log('[AI] Restored saved model:', savedModel);
                 } else if (settings.defaultModel) {
-                    modelSelect.value = settings.defaultModel;
+                    this.selectedModelId = settings.defaultModel;
                     console.log(
                         '[AI] Using default model:',
                         settings.defaultModel
                     );
+                } else if (this.availableModels.length > 0) {
+                    this.selectedModelId = this.availableModels[0].id;
                 }
 
-                // Save selection when user changes model
-                modelSelect.addEventListener('change', () => {
-                    localStorage.setItem(
-                        'ai_selected_model',
-                        modelSelect.value
-                    );
-                    console.log(
-                        '[AI] Saved model selection:',
-                        modelSelect.value
-                    );
-                });
+                this.updateModelButtonText();
+                this.populateModelPicker();
+                this.setupModelPickerEvents();
             }
         } catch (error) {
             console.error('[AI] Failed to load models:', error);
-            // Add fallback option if fetch fails
-            const fallbackOption = document.createElement('option');
-            fallbackOption.value = 'claude-haiku-4-5-20251001';
-            fallbackOption.textContent = 'Haiku (Fast)';
-            modelSelect.appendChild(fallbackOption);
+            // Fallback model
+            this.availableModels = [
+                {
+                    id: 'claude-haiku-4-5-20251001',
+                    shortName: 'Haiku',
+                    description: 'Fast, efficient model',
+                    hint: 'Best for simple tasks',
+                    price: '$0.25/1M tokens'
+                }
+            ];
+            this.selectedModelId = 'claude-haiku-4-5-20251001';
+            this.updateModelButtonText();
+            this.populateModelPicker();
+            this.setupModelPickerEvents();
+        }
+    }
+
+    updateModelButtonText() {
+        const model = this.availableModels.find(
+            (m) => m.id === this.selectedModelId
+        );
+        if (model && this.modelBtnName) {
+            this.modelBtnName.textContent = model.shortName;
+        }
+    }
+
+    populateModelPicker() {
+        if (!this.modelPickerList) return;
+
+        this.modelPickerList.innerHTML = '';
+
+        this.availableModels.forEach((model) => {
+            const option = document.createElement('div');
+            option.className =
+                'ai-model-option' +
+                (model.id === this.selectedModelId ? ' selected' : '');
+            option.dataset.modelId = model.id;
+
+            option.innerHTML = `
+                <div class="ai-model-option-header">
+                    <span class="ai-model-option-name">${model.shortName}</span>
+                    <span class="ai-model-option-price">${model.price || ''}</span>
+                </div>
+                ${model.description ? `<div class="ai-model-option-description">${model.description}</div>` : ''}
+                ${model.hint ? `<div class="ai-model-option-hint">${model.hint}</div>` : ''}
+            `;
+
+            option.addEventListener('click', () => this.selectModel(model.id));
+            this.modelPickerList.appendChild(option);
+        });
+    }
+
+    selectModel(modelId) {
+        this.selectedModelId = modelId;
+        localStorage.setItem('ai_selected_model', modelId);
+        console.log('[AI] Saved model selection:', modelId);
+
+        this.updateModelButtonText();
+
+        // Update selected state in picker
+        const options =
+            this.modelPickerList.querySelectorAll('.ai-model-option');
+        options.forEach((opt) => {
+            opt.classList.toggle('selected', opt.dataset.modelId === modelId);
+        });
+
+        this.closeModelPicker();
+    }
+
+    setupModelPickerEvents() {
+        // Open modal
+        this.modelBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            this.openModelPicker();
+        });
+
+        // Close button
+        if (this.modelPickerClose) {
+            this.modelPickerClose.addEventListener('click', () =>
+                this.closeModelPicker()
+            );
+        }
+
+        // Close on overlay click
+        if (this.modelPickerOverlay) {
+            this.modelPickerOverlay.addEventListener('click', (e) => {
+                if (e.target === this.modelPickerOverlay) {
+                    this.closeModelPicker();
+                }
+            });
+        }
+
+        // Close on Escape key
+        this._modelPickerEscHandler = (e) => {
+            if (
+                e.key === 'Escape' &&
+                this.modelPickerOverlay.style.display !== 'none'
+            ) {
+                this.closeModelPicker();
+            }
+        };
+        document.addEventListener('keydown', this._modelPickerEscHandler);
+    }
+
+    openModelPicker() {
+        if (this.modelPickerOverlay) {
+            this.modelPickerOverlay.style.display = 'flex';
+        }
+    }
+
+    closeModelPicker() {
+        if (this.modelPickerOverlay) {
+            this.modelPickerOverlay.style.display = 'none';
         }
     }
 
@@ -1769,10 +1871,8 @@ ${errorTraceback}
         }
 
         // Get selected model
-        const modelSelect = document.getElementById('ai-model-select');
-        const selectedModel = modelSelect
-            ? modelSelect.value
-            : 'claude-sonnet-4-5-20250929';
+        const selectedModel =
+            this.selectedModelId || 'claude-sonnet-4-5-20250929';
 
         // Call the website's AI API endpoint
         const chatId = this.sessionManager
