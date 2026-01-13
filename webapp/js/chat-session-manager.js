@@ -405,6 +405,9 @@ class ChatSessionManager {
             const sessionToken = window.authManager
                 ? window.authManager.getSessionToken()
                 : null;
+            
+            console.log('[ChatSession] Session token for chat-sessions API:', sessionToken ? sessionToken.substring(0, 20) + '...' : 'NONE');
+            console.log('[ChatSession] authManager exists:', !!window.authManager);
 
             const headers = {
                 'Content-Type': 'application/json'
@@ -412,7 +415,12 @@ class ChatSessionManager {
 
             if (sessionToken) {
                 headers['Authorization'] = `Bearer ${sessionToken}`;
+                console.log('[ChatSession] Added Authorization header');
+            } else {
+                console.log('[ChatSession] No session token - relying on credentials: include');
             }
+
+            console.log('[ChatSession] Fetching from:', `${this.aiAssistant.websiteURL}/api/ai/chat-sessions`);
 
             const response = await fetch(
                 `${this.aiAssistant.websiteURL}/api/ai/chat-sessions`,
@@ -423,6 +431,9 @@ class ChatSessionManager {
                 }
             );
 
+            console.log('[ChatSession] Response status:', response.status);
+            console.log('[ChatSession] Response headers:', Array.from(response.headers.entries()));
+
             if (!response.ok) {
                 console.error(
                     '[ChatSession] Failed to load chat history:',
@@ -431,6 +442,13 @@ class ChatSessionManager {
                 );
                 const errorText = await response.text();
                 console.error('[ChatSession] Response:', errorText);
+
+                // Handle authentication errors
+                if (response.status === 401) {
+                    // Not authenticated - show message in the menu
+                    this.chatHistory = [];
+                    this.showAuthenticationRequired();
+                }
                 return;
             }
 
@@ -444,6 +462,24 @@ class ChatSessionManager {
         } catch (error) {
             console.error('[ChatSession] Error loading chat history:', error);
         }
+    }
+
+    /**
+     * Show authentication required message in chat history menu
+     */
+    showAuthenticationRequired() {
+        const container = document.getElementById('ai-chat-history-list');
+        if (!container) return;
+
+        container.innerHTML = `
+            <div class="ai-chat-history-empty">
+                <span class="material-symbols-outlined" style="font-size: 48px; opacity: 0.3;">lock</span>
+                <p>Please sign in to view chat history</p>
+                <button class="ai-chat-history-login-btn" onclick="window.authManager && window.authManager.login()">
+                    Sign In
+                </button>
+            </div>
+        `;
     }
 
     /**

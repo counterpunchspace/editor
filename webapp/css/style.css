@@ -4201,6 +4201,29 @@ kbd + kbd {
     font-size: 13px;
 }
 
+.ai-chat-history-login-btn {
+    margin-top: 16px;
+    padding: 10px 20px;
+    background: var(--primary);
+    color: white;
+    border: none;
+    border-radius: 6px;
+    font-family: var(--font-families-sans);
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.ai-chat-history-login-btn:hover {
+    opacity: 0.9;
+    transform: translateY(-1px);
+}
+
+.ai-chat-history-login-btn:active {
+    transform: translateY(0);
+}
+
 /* Context Selection */
 .ai-message-context-selection {
     padding: 20px;
