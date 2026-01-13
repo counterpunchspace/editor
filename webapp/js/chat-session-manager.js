@@ -400,7 +400,11 @@ class ChatSessionManager {
             );
 
             if (!response.ok) {
-                console.error('[ChatSession] Failed to load chat history:', response.status, response.statusText);
+                console.error(
+                    '[ChatSession] Failed to load chat history:',
+                    response.status,
+                    response.statusText
+                );
                 const errorText = await response.text();
                 console.error('[ChatSession] Response:', errorText);
                 return;
@@ -448,11 +452,16 @@ class ChatSessionManager {
     refreshHistoryMenu() {
         const listContainer = document.getElementById('ai-chat-history-list');
         if (!listContainer) {
-            console.error('[ChatSession] Chat history list container not found');
+            console.error(
+                '[ChatSession] Chat history list container not found'
+            );
             return;
         }
 
-        console.log('[ChatSession] Refreshing history menu, items:', this.chatHistory?.length || 0);
+        console.log(
+            '[ChatSession] Refreshing history menu, items:',
+            this.chatHistory?.length || 0
+        );
 
         // Clear existing items
         listContainer.innerHTML = '';
@@ -474,7 +483,7 @@ class ChatSessionManager {
 
             const contextIcon =
                 session.contextType === 'font' ? 'font_download' : 'code';
-            
+
             // Handle date parsing more robustly
             let timeAgo = 'Unknown';
             try {
@@ -483,7 +492,11 @@ class ChatSessionManager {
                     timeAgo = this.formatRelativeTime(timestamp);
                 }
             } catch (e) {
-                console.error('[ChatSession] Error parsing date:', session.lastActivityAt, e);
+                console.error(
+                    '[ChatSession] Error parsing date:',
+                    session.lastActivityAt,
+                    e
+                );
             }
 
             item.innerHTML = `
