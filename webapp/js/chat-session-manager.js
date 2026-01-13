@@ -405,9 +405,15 @@ class ChatSessionManager {
             const sessionToken = window.authManager
                 ? window.authManager.getSessionToken()
                 : null;
-            
-            console.log('[ChatSession] Session token for chat-sessions API:', sessionToken ? sessionToken.substring(0, 20) + '...' : 'NONE');
-            console.log('[ChatSession] authManager exists:', !!window.authManager);
+
+            console.log(
+                '[ChatSession] Session token for chat-sessions API:',
+                sessionToken ? sessionToken.substring(0, 20) + '...' : 'NONE'
+            );
+            console.log(
+                '[ChatSession] authManager exists:',
+                !!window.authManager
+            );
 
             const headers = {
                 'Content-Type': 'application/json'
@@ -417,10 +423,15 @@ class ChatSessionManager {
                 headers['Authorization'] = `Bearer ${sessionToken}`;
                 console.log('[ChatSession] Added Authorization header');
             } else {
-                console.log('[ChatSession] No session token - relying on credentials: include');
+                console.log(
+                    '[ChatSession] No session token - relying on credentials: include'
+                );
             }
 
-            console.log('[ChatSession] Fetching from:', `${this.aiAssistant.websiteURL}/api/ai/chat-sessions`);
+            console.log(
+                '[ChatSession] Fetching from:',
+                `${this.aiAssistant.websiteURL}/api/ai/chat-sessions`
+            );
 
             const response = await fetch(
                 `${this.aiAssistant.websiteURL}/api/ai/chat-sessions`,
@@ -432,7 +443,10 @@ class ChatSessionManager {
             );
 
             console.log('[ChatSession] Response status:', response.status);
-            console.log('[ChatSession] Response headers:', Array.from(response.headers.entries()));
+            console.log(
+                '[ChatSession] Response headers:',
+                Array.from(response.headers.entries())
+            );
 
             if (!response.ok) {
                 console.error(
