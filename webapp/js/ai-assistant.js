@@ -160,8 +160,18 @@ class AIAssistant {
         this.setDefaultModel();
 
         // Initialize session manager after UI is ready
+        console.log(
+            '[AIAssistant] ChatSessionManager available:',
+            typeof ChatSessionManager !== 'undefined'
+        );
         if (typeof ChatSessionManager !== 'undefined') {
             this.sessionManager = new ChatSessionManager(this);
+            console.log(
+                '[AIAssistant] SessionManager initialized:',
+                !!this.sessionManager
+            );
+        } else {
+            console.error('[AIAssistant] ChatSessionManager class not found!');
         }
 
         // Add click handler for assistant view to focus text field when scrolled to bottom
@@ -376,8 +386,11 @@ class AIAssistant {
     }
 
     setupChatButtons() {
+        console.log('[AIAssistant] Setting up chat buttons');
         const newChatBtn = document.getElementById('ai-new-chat-btn');
         const historyBtn = document.getElementById('ai-chat-history-btn');
+        console.log('[AIAssistant] New chat button found:', !!newChatBtn);
+        console.log('[AIAssistant] History button found:', !!historyBtn);
 
         if (newChatBtn) {
             newChatBtn.addEventListener('click', (event) => {
@@ -388,11 +401,38 @@ class AIAssistant {
 
         if (historyBtn) {
             historyBtn.addEventListener('click', (event) => {
+                console.log('[AIAssistant] Chat history button clicked');
                 event.stopPropagation();
+                console.log(
+                    '[AIAssistant] SessionManager exists:',
+                    !!this.sessionManager
+                );
+                console.log(
+                    '[AIAssistant] SessionManager type:',
+                    typeof this.sessionManager
+                );
                 if (this.sessionManager) {
-                    this.sessionManager.openChatHistoryMenu();
+                    console.log('[AIAssistant] Calling openChatHistoryMenu()');
+                    try {
+                        this.sessionManager.openChatHistoryMenu();
+                        console.log(
+                            '[AIAssistant] openChatHistoryMenu() called successfully'
+                        );
+                    } catch (error) {
+                        console.error(
+                            '[AIAssistant] Error calling openChatHistoryMenu():',
+                            error
+                        );
+                    }
+                } else {
+                    console.error(
+                        '[AIAssistant] SessionManager not initialized!'
+                    );
                 }
             });
+            console.log(
+                '[AIAssistant] Chat history button click handler attached'
+            );
         }
 
         // Setup close button for chat history menu

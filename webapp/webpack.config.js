@@ -30,7 +30,11 @@ module.exports = {
                 { from: 'examples', to: 'examples' },
                 { from: 'py', to: 'py' },
                 { from: 'wheels', to: 'wheels' },
-                { from: '_headers', to: '_headers' }
+                { from: '_headers', to: '_headers' },
+                {
+                    from: 'js/chat-session-manager.js',
+                    to: 'js/chat-session-manager.js'
+                }
             ]
         })
     ],

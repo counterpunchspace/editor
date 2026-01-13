@@ -346,20 +346,44 @@ class ChatSessionManager {
      * Open chat history menu and load history from server
      */
     async openChatHistoryMenu() {
+        console.log('[ChatSession] openChatHistoryMenu() called');
         const menu = document.getElementById('ai-chat-history-menu');
         const backdrop = document.getElementById('ai-chat-history-backdrop');
+        console.log('[ChatSession] Menu element found:', !!menu);
+        console.log('[ChatSession] Backdrop element found:', !!backdrop);
 
-        if (!menu || !backdrop) return;
+        if (!menu || !backdrop) {
+            console.error(
+                '[ChatSession] Menu or backdrop element not found! Cannot open menu.'
+            );
+            return;
+        }
 
-        // Show menu and backdrop
-        menu.style.display = 'block';
-        backdrop.style.display = 'block';
+        try {
+            // Show menu and backdrop
+            console.log('[ChatSession] Showing menu and backdrop');
+            menu.style.display = 'block';
+            backdrop.style.display = 'block';
+            console.log(
+                '[ChatSession] Menu display set to:',
+                menu.style.display
+            );
 
-        // Load chat history from server
-        await this.loadChatHistoryFromServer();
+            // Load chat history from server
+            console.log('[ChatSession] Loading chat history from server...');
+            await this.loadChatHistoryFromServer();
+            console.log('[ChatSession] Chat history loaded');
 
-        // Populate menu
-        this.refreshHistoryMenu();
+            // Populate menu
+            console.log('[ChatSession] Refreshing history menu...');
+            this.refreshHistoryMenu();
+            console.log('[ChatSession] Menu opened successfully');
+        } catch (error) {
+            console.error(
+                '[ChatSession] Error in openChatHistoryMenu():',
+                error
+            );
+        }
     }
 
     /**
