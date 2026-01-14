@@ -817,7 +817,7 @@ class AIAssistant {
             if (
                 text.includes(window.translations.ai.buttons.openInEditor.text)
             ) {
-                btn.innerHTML = `<span class="material-symbols-outlined">edit_note</span>${window.translations.ai.buttons.openInEditor.text}`;
+                btn.innerHTML = `<span class="material-symbols-outlined">edit</span>${window.translations.ai.buttons.openInEditor.text}`;
                 btn.title = window.translations.ai.buttons.openInEditor.title;
             }
         });
@@ -830,7 +830,7 @@ class AIAssistant {
             if (
                 text.includes(window.translations.ai.buttons.reviewChanges.text)
             ) {
-                btn.innerHTML = `<span class="material-symbols-outlined">difference</span>${window.translations.ai.buttons.reviewChanges.text}`;
+                btn.innerHTML = `<span class="material-symbols-outlined">eye_tracking</span>${window.translations.ai.buttons.reviewChanges.text}`;
                 btn.title = window.translations.ai.buttons.reviewChanges.title;
             }
         });
@@ -854,7 +854,7 @@ class AIAssistant {
             '.ai-review-changes-btn'
         );
         if (reviewButton) {
-            reviewButton.innerHTML = `<span class="material-symbols-outlined">difference</span>${window.translations.ai.buttons.reviewChanges.text} <span class="ai-btn-shortcut"><span class="material-symbols-outlined">keyboard_command_key</span><span class="material-symbols-outlined">keyboard_option_key</span>R</span>`;
+            reviewButton.innerHTML = `<span class="material-symbols-outlined">eye_tracking</span>${window.translations.ai.buttons.reviewChanges.text} <span class="ai-btn-shortcut"><span class="material-symbols-outlined">keyboard_command_key</span><span class="material-symbols-outlined">keyboard_option_key</span>R</span>`;
             reviewButton.title =
                 window.translations.ai.buttons.reviewChanges.title;
         }
@@ -862,7 +862,7 @@ class AIAssistant {
         // Check for Open in Script Editor button
         const openButton = lastMessage.querySelector('.ai-open-in-editor-btn');
         if (openButton) {
-            openButton.innerHTML = `<span class="material-symbols-outlined">edit_note</span>${window.translations.ai.buttons.openInEditor.text} <span class="ai-btn-shortcut"><span class="material-symbols-outlined">keyboard_command_key</span><span class="material-symbols-outlined">keyboard_option_key</span>O</span>`;
+            openButton.innerHTML = `<span class="material-symbols-outlined">edit</span>${window.translations.ai.buttons.openInEditor.text} <span class="ai-btn-shortcut"><span class="material-symbols-outlined">keyboard_command_key</span><span class="material-symbols-outlined">keyboard_option_key</span>O</span>`;
             openButton.title =
                 window.translations.ai.buttons.openInEditor.title;
         }
@@ -1216,14 +1216,14 @@ class AIAssistant {
                 Math.random().toString(36).substr(2, 9);
             buttonContainerHtml = `
                 <div class="ai-button-group">
-                    <button class="ai-btn ai-review-changes-btn" id="${openBtnId}" title="${window.translations.ai.buttons.reviewChanges.title}"><span class="material-symbols-outlined">difference</span>${window.translations.ai.buttons.reviewChanges.text}</button>
-                    <button class="ai-btn ai-open-in-editor-btn" id="${directOpenBtnId}" title="${window.translations.ai.buttons.openInEditor.title}"><span class="material-symbols-outlined">edit_note</span>${window.translations.ai.buttons.openInEditor.text}</button>
+                    <button class="ai-btn ai-review-changes-btn" id="${openBtnId}" title="${window.translations.ai.buttons.reviewChanges.title}"><span class="material-symbols-outlined">eye_tracking</span>${window.translations.ai.buttons.reviewChanges.text}</button>
+                    <button class="ai-btn ai-open-in-editor-btn" id="${directOpenBtnId}" title="${window.translations.ai.buttons.openInEditor.title}"><span class="material-symbols-outlined">edit</span>${window.translations.ai.buttons.openInEditor.text}</button>
                 </div>`;
         } else if (showRunButton) {
             // Font context: show both buttons
             buttonContainerHtml = `
                 <div class="ai-button-group">
-                    <button class="ai-btn ai-open-in-editor-btn" id="${openBtnId}" title="${window.translations.ai.buttons.openInEditor.title}"><span class="material-symbols-outlined">edit_note</span>${window.translations.ai.buttons.openInEditor.text}</button>
+                    <button class="ai-btn ai-open-in-editor-btn" id="${openBtnId}" title="${window.translations.ai.buttons.openInEditor.title}"><span class="material-symbols-outlined">edit</span>${window.translations.ai.buttons.openInEditor.text}</button>
                     <button class="ai-btn ai-run-in-console-btn" id="${runBtnId}"><span class="material-symbols-outlined">play_arrow</span>Run in Console</button>
                 </div>`;
         }

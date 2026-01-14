@@ -2342,13 +2342,13 @@ kbd + kbd {
 }
 
 .ai-fix-code-btn {
-    align-self: flex-start;
+    align-self: flex-end;
 }
 
 .ai-reuse-prompt-container {
     margin-top: 8px;
     display: flex;
-    justify-content: flex-start;
+    justify-content: flex-end;
 }
 
 .ai-copy-prompt-btn {
@@ -2635,6 +2635,7 @@ kbd + kbd {
     display: flex;
     gap: 8px;
     margin-top: 8px;
+    justify-content: flex-end;
 }
 
 /* Keep header button shortcuts visible */
