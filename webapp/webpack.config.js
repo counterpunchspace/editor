@@ -34,6 +34,10 @@ module.exports = {
                 {
                     from: 'js/chat-session-manager.js',
                     to: 'js/chat-session-manager.js'
+                },
+                {
+                    from: 'js/translations.js',
+                    to: 'js/translations.js'
                 }
             ]
         })
