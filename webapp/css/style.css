@@ -2828,18 +2828,21 @@ kbd + kbd {
     font-size: 11px;
     color: var(--text-muted);
     font-family: var(--font-families-mono);
+    font-weight: 400;
 }
 
 .ai-model-option-description {
     font-size: 11px;
     color: var(--text-secondary);
     line-height: 1.4;
+    font-weight: 400;
 }
 
 .ai-model-option-hint {
     font-size: 10px;
     color: var(--text-muted);
     font-style: italic;
+    font-weight: 400;
 }
 
 .ai-auto-run-label {

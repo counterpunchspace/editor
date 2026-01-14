@@ -449,12 +449,15 @@ class AIAssistant {
                 (model.id === this.selectedModelId ? ' selected' : '');
             option.dataset.modelId = model.id;
 
+            // Format pricing
+            const priceText = `$${model.inputPerMillion}/$${model.outputPerMillion} (I/O) per million tokens`;
+
             option.innerHTML = `
                 <div class="ai-model-option-header">
                     <span class="ai-model-option-name">${model.shortName}</span>
-                    <span class="ai-model-option-price">${model.price || ''}</span>
                 </div>
                 ${model.description ? `<div class="ai-model-option-description">${model.description}</div>` : ''}
+                <div class="ai-model-option-price">${priceText}</div>
                 ${model.hint ? `<div class="ai-model-option-hint">${model.hint}</div>` : ''}
             `;
 
