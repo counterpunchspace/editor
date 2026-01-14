@@ -830,7 +830,7 @@ class AIAssistant {
             if (
                 text.includes(window.translations.ai.buttons.reviewChanges.text)
             ) {
-                btn.innerHTML = `<span class="material-symbols-outlined">eye_tracking</span>${window.translations.ai.buttons.reviewChanges.text}`;
+                btn.innerHTML = `<span class="material-symbols-outlined">visibility</span>${window.translations.ai.buttons.reviewChanges.text}`;
                 btn.title = window.translations.ai.buttons.reviewChanges.title;
             }
         });
@@ -854,7 +854,7 @@ class AIAssistant {
             '.ai-review-changes-btn'
         );
         if (reviewButton) {
-            reviewButton.innerHTML = `<span class="material-symbols-outlined">eye_tracking</span>${window.translations.ai.buttons.reviewChanges.text} <span class="ai-btn-shortcut"><span class="material-symbols-outlined">keyboard_command_key</span><span class="material-symbols-outlined">keyboard_option_key</span>R</span>`;
+            reviewButton.innerHTML = `<span class="material-symbols-outlined">visibility</span>${window.translations.ai.buttons.reviewChanges.text} <span class="ai-btn-shortcut"><span class="material-symbols-outlined">keyboard_command_key</span><span class="material-symbols-outlined">keyboard_option_key</span>R</span>`;
             reviewButton.title =
                 window.translations.ai.buttons.reviewChanges.title;
         }
@@ -1216,7 +1216,7 @@ class AIAssistant {
                 Math.random().toString(36).substr(2, 9);
             buttonContainerHtml = `
                 <div class="ai-button-group">
-                    <button class="ai-btn ai-review-changes-btn" id="${openBtnId}" title="${window.translations.ai.buttons.reviewChanges.title}"><span class="material-symbols-outlined">eye_tracking</span>${window.translations.ai.buttons.reviewChanges.text}</button>
+                    <button class="ai-btn ai-review-changes-btn" id="${openBtnId}" title="${window.translations.ai.buttons.reviewChanges.title}"><span class="material-symbols-outlined">visibility</span>${window.translations.ai.buttons.reviewChanges.text}</button>
                     <button class="ai-btn ai-open-in-editor-btn" id="${directOpenBtnId}" title="${window.translations.ai.buttons.openInEditor.title}"><span class="material-symbols-outlined">edit</span>${window.translations.ai.buttons.openInEditor.text}</button>
                 </div>`;
         } else if (showRunButton) {
