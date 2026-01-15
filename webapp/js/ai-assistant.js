@@ -380,10 +380,18 @@ class AIAssistant {
 
         try {
             // Fetch models and default from server settings
+            console.log(
+                '[AI] Fetching settings from:',
+                `${this.websiteURL}/api/ai/settings`
+            );
             const response = await fetch(`${this.websiteURL}/api/ai/settings`);
+            console.log('[AI] Settings response status:', response.status);
+            console.log('[AI] Settings response ok:', response.ok);
+
             if (response.ok) {
                 const settings = await response.json();
                 console.log('[AI] Settings received:', settings);
+                console.log('[AI] Number of models:', settings.models?.length);
 
                 this.availableModels = settings.models;
 
@@ -408,9 +416,17 @@ class AIAssistant {
                 this.updateModelButtonText();
                 this.populateModelPicker();
                 this.setupModelPickerEvents();
+            } else {
+                console.error(
+                    '[AI] Settings request failed:',
+                    response.status,
+                    response.statusText
+                );
+                throw new Error(`HTTP ${response.status}`);
             }
         } catch (error) {
             console.error('[AI] Failed to load models:', error);
+            console.log('[AI] Using fallback model');
             // Fallback model
             this.availableModels = [
                 {
