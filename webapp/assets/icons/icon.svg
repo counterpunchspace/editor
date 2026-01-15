@@ -1,7 +1,14 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
-  <!-- Background -->
-  <rect width="512" height="512" fill="#000000"/>
-  
-  <!-- Simple font/text representation -->
-  <text x="256" y="340" font-family="monospace" font-size="280" font-weight="bold" fill="#ffffff" text-anchor="middle">Aa</text>
+<?xml version="1.0" encoding="UTF-8"?>
+<svg id="Layer_1" xmlns="http://www.w3.org/2000/svg" version="1.1" viewBox="0 0 512 512">
+  <!-- Generator: Adobe Illustrator 30.0.0, SVG Export Plug-In . SVG Version: 2.1.1 Build 123)  -->
+  <defs>
+    <style>
+      .st0 {
+        fill: #fff;
+      }
+    </style>
+  </defs>
+  <rect class="st0" width="512" height="512"/>
+  <path d="M192.7,370.5l22.8-22.8c7.1,7.1,15.7,10.4,25.9,9.9,10.1-.5,19.1-4.4,26.9-11.5l91.2-91.2,90.1-90.1c7.1-7.8,10.7-16.9,10.7-27.3s-3.6-19.4-10.7-27.1l-48.1-48c-7.4-7.5-16.4-11.2-27.1-11.2s-19.7,3.7-27.2,11.2l-90.1,90.1-91.2,91.2c-7.8,7.1-11.9,15.9-12.3,26.4-.4,10.5,3.2,19.3,10.7,26.4l-74,74h102.4ZM374.4,89.6l48,48-76.8,77.3-48.5-48.5,77.3-76.8ZM269.9,193.6l48.5,48.5-77.3,76.8-48.5-48,77.3-77.3Z"/>
+  <rect x="51.2" y="409.6" width="409.6" height="68.5"/>
 </svg>

@@ -26,8 +26,8 @@ You can use the provided `icon.svg` as a base and convert it to PNG files:
 brew install imagemagick
 
 # Generate all icon sizes
-for size in 72 96 128 144 152 192 384 512; do
-  convert -background none -resize ${size}x${size} icon.svg icon-${size}x${size}.png
+for size in 32 72 96 128 144 152 192 384 512; do
+  magick convert -background none -resize ${size}x${size} icon.svg icon-${size}x${size}.png
 done
 ```
 
