@@ -2,6 +2,10 @@
 
 - **Add items here** for the next release (Replace this comment)
 
+# v0.1.5
+
+- **New Domain** No code changes, just pushing a new release to https://editor.counterpunch.space
+
 # v0.1.4-p.2
 
 - **Assistant design** Great overhaul of assistant chat interface UI design
