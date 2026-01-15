@@ -41,12 +41,12 @@ class AIAssistant {
         }
 
         // Production font editor URL
-        if (hostname === 'production.fonteditor-863.pages.dev') {
-            return 'https://fonteditorwebsite.pages.dev';
+        if (hostname === 'editor.counterpunch.space') {
+            return 'https://counterpunch.space';
         }
 
         // Default to production website
-        return 'https://fonteditorwebsite.pages.dev';
+        return 'https://counterpunch.space';
     }
 
     async checkAuthenticationStatus() {

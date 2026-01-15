@@ -4,8 +4,8 @@
 
 Try the editor live:
 
-- Latest official release (using `release.sh`): https://production.fonteditor-863.pages.dev
-- Latest preview (updated after each push): https://preview.fonteditor-863.pages.dev
+- Latest official release (using `release.sh`): https://editor.counterpunch.space
+- Latest preview (updated after each push): https://preview.editor.counterpunch.space
 
 ## Develop
 

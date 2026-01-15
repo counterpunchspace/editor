@@ -73,14 +73,14 @@ class AuthManager {
 
         // Production/preview font editor URLs
         if (
-            hostname === 'production.fonteditor-863.pages.dev' ||
-            hostname === 'preview.fonteditor-863.pages.dev'
+            hostname === 'editor.counterpunch.space' ||
+            hostname === 'preview.editor.counterpunch.space'
         ) {
-            return 'https://fonteditorwebsite.pages.dev';
+            return 'https://counterpunch.space';
         }
 
         // Default to production
-        return 'https://fonteditorwebsite.pages.dev';
+        return 'https://counterpunch.space';
     }
 
     /**
