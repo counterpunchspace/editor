@@ -79,7 +79,7 @@ jobs:
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          projectName: fonteditor
+          projectName: editor
           directory: ./webapp/build
           gitHubToken: ${{ secrets.GITHUB_TOKEN }}
           branch: main
