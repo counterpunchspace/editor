@@ -82,7 +82,7 @@ jobs:
           projectName: fonteditor
           directory: ./webapp/build
           gitHubToken: ${{ secrets.GITHUB_TOKEN }}
-          branch: production
+          branch: main
 
       - name: Deployment summary
         run: |
