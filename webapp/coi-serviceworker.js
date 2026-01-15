@@ -3,7 +3,7 @@
 let coepCredentialless = false;
 
 // PWA Cache configuration
-const VERSION = 'v0.1.4-p.2';
+const VERSION = 'v0.1.5';
 const CACHE_NAME = 'counterpunch-pwa-' + VERSION;
 const CDN_CACHE_NAME = 'counterpunch-cdn-cache-' + VERSION;
 const OFFLINE_URL = '/index.html';
