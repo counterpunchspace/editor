@@ -40,6 +40,7 @@ Users will see an orange update notification button in the title bar within 10 m
 - ✅ Live recompilation during editing
 - ✅ Variable preview, live interpolation, animation
 - ✅ Assistant generates Python code
+- ✅ Canvas drawing plugins
 
 ### Pre-babelfont-ts Foundation (Due: Feb 2, 2026)
 
@@ -68,6 +69,7 @@ Website and subscription system while waiting for `babelfont-ts`
 - ◻️ .designspace I/O
 - ◻️ Glyph overview
 - ◻️ Glyph search and filtering
+- ◻️ Glyph filtering plugins
 - ◻️ Basic layer/glyph operations
 - ◻️ API documentation
 
@@ -98,8 +100,9 @@ Core editing features
 
 Feature code, plugins, ccmp
 
+- ◻️ Plugin system architecture complete
+- ◻️ OpenType feature code generator
 - ◻️ OpenType feature code editor
-- ◻️ Plugin system architecture
 - ◻️ Glyph composition UI (OpenType ccmp)
 - ◻️ Contextual kerning/positioning UI
 
