@@ -72,6 +72,8 @@ Website and subscription system while waiting for `babelfont-ts`
 - ◻️ Glyph filtering plugins
 - ◻️ Basic layer/glyph operations
 - ◻️ API documentation
+- ◻️ Insert glyphs into editor text
+- ◻️ Multi-line editing
 
 ### v0.3 (Due: Mar 10, 2026)
 
