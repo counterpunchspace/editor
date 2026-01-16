@@ -33,86 +33,94 @@ Users will see an orange update notification button in the title bar within 10 m
 
 ## Roadmap
 
+### Pre-historic bootstrapping phase
+
+- ✅ Bidirectional text shaping
+- ✅ Super basic outline editing
+- ✅ Live recompilation during editing
+- ✅ Variable preview, live interpolation, animation
+- ✅ Assistant generates Python code
+
 ### Pre-babelfont-ts Foundation (Due: Feb 2, 2026)
 
 Website and subscription system while waiting for `babelfont-ts`
 
-- [x] Cloudflare setup
-- [x] Cloudflare Workers - AI Assistant Relay
-- [x] Authentication system - Passwordless
-- [x] Usage metering and billing sync
-- [x] User dashboard
-- [x] Stripe setup
-- [x] Website content
-- [x] Terms of service, privacy policy
-- [x] Configure custom domains
-- [x] Website design
-- [x] Canvas plugin system
+- ✅ Cloudflare setup
+- ✅ Cloudflare Workers - AI Assistant Relay
+- ✅ Authentication system - Passwordless
+- ✅ Usage metering and billing sync
+- ✅ User dashboard
+- ✅ Stripe setup
+- ✅ Website content
+- ✅ Terms of service, privacy policy
+- ✅ Configure custom domains
+- ✅ Website design
+- ✅ Canvas plugin system
 
 ### v0.2 (Due: Feb 15, 2026)
 
 `babelfont-ts` object model integration
 
-- [x] .glyphs I/O
-- [ ] .glyphspackage I/O
-- [ ] .ufo I/O
-- [x] .babelfont I/O
-- [ ] .designspace I/O
-- [ ] Glyph overview
-- [ ] Glyph search and filtering
-- [ ] Basic layer/glyph operations
-- [ ] API documentation
+- ✅ .glyphs I/O
+- ◻️ .glyphspackage I/O
+- ◻️ .ufo I/O
+- ✅ .babelfont I/O
+- ◻️ .designspace I/O
+- ◻️ Glyph overview
+- ◻️ Glyph search and filtering
+- ◻️ Basic layer/glyph operations
+- ◻️ API documentation
 
 ### v0.3 (Due: Mar 10, 2026)
 
 Core editing features
 
-- [ ] Contour point manipulation
-- [ ] Component editing
-- [ ] Anchor editing
-- [ ] Guideline editing
-- [ ] Layer management UI
-- [ ] Undo/redo system
-- [ ] Clipboard operations
-- [ ] Selection tools
-- [ ] Grid and guides
-- [ ] Font info editing
-- [ ] avar2 editor
-- [ ] variable components
-- [ ] Master/instance management
-- [ ] Multiple font windows
-- [ ] Path operations (boolean)
-- [ ] Transform tools
+- ◻️ Contour point manipulation
+- ◻️ Component editing
+- ◻️ Anchor editing
+- ◻️ Guideline editing
+- ◻️ Layer management UI
+- ◻️ Undo/redo system
+- ◻️ Clipboard operations
+- ◻️ Selection tools
+- ◻️ Grid and guides
+- ◻️ Font info editing
+- ◻️ avar2 editor
+- ◻️ variable components
+- ◻️ Master/instance management
+- ◻️ Multiple font windows
+- ◻️ Path operations (boolean)
+- ◻️ Transform tools
 
 ### v0.4 (Due: Apr 1, 2026)
 
 Feature code, plugins, ccmp
 
-- [ ] OpenType feature code editor
-- [ ] Feature code validation
-- [ ] Plugin system architecture
-- [ ] Glyph composition UI (OpenType ccmp)
+- ◻️ OpenType feature code editor
+- ◻️ Feature code validation
+- ◻️ Plugin system architecture
+- ◻️ Glyph composition UI (OpenType ccmp)
 
 ### v0.5 (Due: Apr 21, 2026)
 
 Cleanup, documentation, testing, videos
 
-- [ ] Performance optimization
-- [ ] Memory usage optimization
-- [ ] Unit test coverage
-- [ ] Integration test suite
-- [ ] End-to-end tests
-- [ ] Browser compatibility testing
-- [ ] Code documentation
-- [ ] Load testing
-- [ ] User guide completion
+- ◻️ Performance optimization
+- ◻️ Memory usage optimization
+- ◻️ Unit test coverage
+- ◻️ Integration test suite
+- ◻️ End-to-end tests
+- ◻️ Browser compatibility testing
+- ◻️ Code documentation
+- ◻️ Load testing
+- ◻️ User guide completion
 
 ### v0.6 Public Beta (Due: May 10, 2026)
 
-- [ ] Monitoring and analytics setup
-- [ ] Security and penetration testing
-- [ ] Demo video production
-- [ ] Public announcement
+- ◻️ Monitoring and analytics setup
+- ◻️ Security and penetration testing
+- ◻️ Demo video production
+- ◻️ Public announcement
 
 ### v0.7...v0.9
 
