@@ -113,3 +113,9 @@ Cleanup, documentation, testing, videos
 - [ ] Security and penetration testing
 - [ ] Demo video production
 - [ ] Public announcement
+
+### v0.7...v0.9
+
+Polish, incorporate user feedback
+
+### v1.0 Public Release (Due: October 2026)
