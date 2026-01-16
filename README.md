@@ -91,15 +91,17 @@ Core editing features
 - ◻️ Multiple font windows
 - ◻️ Path operations (boolean)
 - ◻️ Transform tools
+- ◻️ Kerning UI
+- ◻️ Automatic glyph metric updates
 
 ### v0.4 (Due: Apr 1, 2026)
 
 Feature code, plugins, ccmp
 
 - ◻️ OpenType feature code editor
-- ◻️ Feature code validation
 - ◻️ Plugin system architecture
 - ◻️ Glyph composition UI (OpenType ccmp)
+- ◻️ Contextual kerning/positioning UI
 
 ### v0.5 (Due: Apr 21, 2026)
 
