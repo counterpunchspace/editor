@@ -70,10 +70,10 @@ Website and subscription system while waiting for `babelfont-ts`
 - ◻️ .ufo/.designspace I/O
 - ✅ .babelfont I/O
 - ◻️ Glyph overview
+- ◻️ Python script I/O structure
 - ◻️ Glyph search and filtering
 - ◻️ Glyph filtering plugins
 - ◻️ Insert glyphs into editor text
-- ◻️ Python script I/O structure
 
 ### v0.3 (Due: Mar 10, 2026)
 
