@@ -44,7 +44,7 @@ Users will see an orange update notification button in the title bar within 10 m
 
 ### Pre-babelfont-ts Foundation (Due: Feb 2, 2026)
 
-Website and subscription system while waiting for `babelfont-ts`
+**Website and subscription system while waiting for `babelfont-ts`**
 
 - ✅ Cloudflare setup
 - ✅ Cloudflare Workers - AI Assistant Relay
@@ -60,7 +60,7 @@ Website and subscription system while waiting for `babelfont-ts`
 
 ### v0.2 (Due: Feb 15, 2026)
 
-`babelfont-ts` object model integration
+**`babelfont-ts` object model integration — Counterpunch becomes an analysis tool**
 
 - ◻️ User file sytem I/O
 - ✅ .glyphs I/O
@@ -69,16 +69,17 @@ Website and subscription system while waiting for `babelfont-ts`
 - ◻️ .glyphspackage I/O
 - ◻️ .ufo/.designspace I/O
 - ✅ .babelfont I/O
+- ◻️ Python scripts I/O
 - ◻️ Glyph overview
-- ◻️ Python script I/O structure
 - ◻️ Glyph search and filtering
 - ◻️ Glyph filtering plugins
 - ◻️ Insert glyphs into editor text
+- ◻️ OpenType feature code editor
 - ◻️ Fontspector integration (incl. glyph-level messages)
 
 ### v0.3 (Due: Mar 10, 2026)
 
-Core editing features
+**Counterpunch becomes a simple font editor**
 
 - ◻️ Multi-line editing
 - ◻️ Basic layer/glyph operations
@@ -90,12 +91,8 @@ Core editing features
 - ◻️ Undo/redo system
 - ◻️ Clipboard operations
 - ◻️ Selection tools
-- ◻️ Grid and guides
 - ◻️ Font info editing
-- ◻️ avar2 editor
-- ◻️ variable components
 - ◻️ Master/instance management
-- ◻️ Multiple font windows
 - ◻️ Path operations (boolean)
 - ◻️ Transform tools
 - ◻️ Kerning UI
@@ -103,13 +100,15 @@ Core editing features
 
 ### v0.4 (Due: Apr 1, 2026)
 
-Feature code, plugins, ccmp
+**Extended features — Counterpunch becomes a full-featured font editor**
 
-- ◻️ Plugin system architecture complete
+- ◻️ avar2 editor
+- ◻️ Variable components
 - ◻️ OpenType feature code generator
-- ◻️ OpenType feature code editor
 - ◻️ Glyph composition UI (OpenType ccmp)
 - ◻️ Contextual kerning/positioning UI
+- ◻️ Multiple font windows
+- ◻️ Plugin system architecture complete
 
 ### v0.5 (Due: Apr 21, 2026)
 
