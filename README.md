@@ -73,6 +73,7 @@ Website and subscription system while waiting for `babelfont-ts`
 - ◻️ Glyph search and filtering
 - ◻️ Glyph filtering plugins
 - ◻️ Insert glyphs into editor text
+- ◻️ Python script I/O structure
 
 ### v0.3 (Due: Mar 10, 2026)
 
