@@ -62,23 +62,24 @@ Website and subscription system while waiting for `babelfont-ts`
 
 `babelfont-ts` object model integration
 
+- ◻️ User file sytem I/O
 - ✅ .glyphs I/O
+- ✅ .vfj I/O
+- ◻️ .vfb I/O
 - ◻️ .glyphspackage I/O
-- ◻️ .ufo I/O
+- ◻️ .ufo/.designspace I/O
 - ✅ .babelfont I/O
-- ◻️ .designspace I/O
 - ◻️ Glyph overview
 - ◻️ Glyph search and filtering
 - ◻️ Glyph filtering plugins
-- ◻️ Basic layer/glyph operations
-- ◻️ API documentation
 - ◻️ Insert glyphs into editor text
-- ◻️ Multi-line editing
 
 ### v0.3 (Due: Mar 10, 2026)
 
 Core editing features
 
+- ◻️ Multi-line editing
+- ◻️ Basic layer/glyph operations
 - ◻️ Contour point manipulation
 - ◻️ Component editing
 - ◻️ Anchor editing
