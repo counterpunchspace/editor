@@ -1,4 +1,4 @@
-import { PythonBabelfont } from './pythonbabelfont';
+import type { Babelfont } from './babelfont';
 
 type Tag = string;
 type DesignspaceCoordinate = number;
@@ -39,7 +39,7 @@ export function piecewiseLinearMap(
 
 export function userspaceToDesignspace(
     location: UserspaceLocation,
-    axes: PythonBabelfont.Axis[]
+    axes: Babelfont.Axis[]
 ): DesignspaceLocation {
     const result: DesignspaceLocation = {};
     console.log('Mapping userspace location to designspace:', location);
@@ -56,7 +56,7 @@ export function userspaceToDesignspace(
 
 export function designspaceToUserspace(
     location: DesignspaceLocation,
-    axes: PythonBabelfont.Axis[]
+    axes: Babelfont.Axis[]
 ): DesignspaceLocation {
     const result: DesignspaceLocation = {};
     console.log('Mapping userspace location to designspace:', location);

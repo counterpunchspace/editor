@@ -2,7 +2,7 @@ import { LayerDataNormalizer } from '../layer-data-normalizer';
 import { fontInterpolation } from '../font-interpolation';
 import { GlyphCanvas } from '../glyph-canvas';
 import fontManager from '../font-manager';
-import { PythonBabelfont } from '../pythonbabelfont';
+import type { Babelfont } from '../babelfont';
 import { Transform } from '../basictypes';
 import { Logger } from '../logger';
 import { Layer } from '../babelfont-model';
@@ -13,7 +13,7 @@ let console: Logger = new Logger('OutlineEditor', true);
 type Point = { contourIndex: number; nodeIndex: number };
 
 // Recursively parse nodes in component layer data (including nested components)
-const parseComponentNodes = (shapes: PythonBabelfont.Shape[]) => {
+const parseComponentNodes = (shapes: Babelfont.Shape[]) => {
     if (!shapes) return;
 
     shapes.forEach((shape) => {
@@ -64,8 +64,8 @@ export class OutlineEditor {
     layerDataDirty: boolean = false;
     previousSelectedLayerId: string | null = null;
     previousVariationSettings: Record<string, number> | null = null;
-    layerData: PythonBabelfont.Layer | null = null;
-    targetLayerData: PythonBabelfont.Layer | null = null;
+    layerData: Babelfont.Layer | null = null;
+    targetLayerData: Babelfont.Layer | null = null;
     selectedLayerId: string | null = null;
     isInterpolating: boolean = false;
     isLayerSwitchAnimating: boolean = false;
@@ -308,7 +308,7 @@ export class OutlineEditor {
                 const layers = this.glyphCanvas.fontData?.layers;
                 if (layers) {
                     const previousLayer = layers.find(
-                        (l: PythonBabelfont.Layer) =>
+                        (l: Babelfont.Layer) =>
                             l.id === this.previousSelectedLayerId
                     );
 
@@ -808,23 +808,23 @@ export class OutlineEditor {
         // Process each selected point
         for (const { contourIndex, nodeIndex } of this.selectedPoints) {
             const contour = currentLayerData.shapes[contourIndex];
-            if (!contour || !('nodes' in contour)) continue;
+            if (!contour || !('nodes' in contour) || !contour.nodes) continue;
 
             const nodes = contour.nodes;
             const node = nodes[nodeIndex];
             if (!node) continue;
 
             // If this is a curve point, remove its handles from selection (we'll move them together)
-            if (node.type === 'c' || node.type === 'cs') {
+            if (node.nodetype === 'c' || node.nodetype === 'cs') {
                 const prevIndex = (nodeIndex - 1 + nodes.length) % nodes.length;
                 const nextIndex = (nodeIndex + 1) % nodes.length;
                 const prevNode = nodes[prevIndex];
                 const nextNode = nodes[nextIndex];
 
-                if (prevNode?.type === 'o') {
+                if (prevNode?.nodetype === 'o') {
                     selectedPointKeys.delete(`${contourIndex}:${prevIndex}`);
                 }
-                if (nextNode?.type === 'o') {
+                if (nextNode?.nodetype === 'o') {
                     selectedPointKeys.delete(`${contourIndex}:${nextIndex}`);
                 }
             }
@@ -836,7 +836,7 @@ export class OutlineEditor {
             if (!selectedPointKeys.has(key)) continue; // Skip if removed above
 
             const contour = currentLayerData.shapes[contourIndex];
-            if (!contour || !('nodes' in contour)) continue;
+            if (!contour || !('nodes' in contour) || !contour.nodes) continue;
 
             const nodes = contour.nodes;
             const node = nodes[nodeIndex];
@@ -846,17 +846,17 @@ export class OutlineEditor {
             node.y += deltaY;
 
             // If this is a curve point, move its handles together
-            if (node.type === 'c' || node.type === 'cs') {
+            if (node.nodetype === 'c' || node.nodetype === 'cs') {
                 const prevIndex = (nodeIndex - 1 + nodes.length) % nodes.length;
                 const nextIndex = (nodeIndex + 1) % nodes.length;
                 const prevNode = nodes[prevIndex];
                 const nextNode = nodes[nextIndex];
 
-                if (prevNode?.type === 'o') {
+                if (prevNode?.nodetype === 'o') {
                     prevNode.x += deltaX;
                     prevNode.y += deltaY;
                 }
-                if (nextNode?.type === 'o') {
+                if (nextNode?.nodetype === 'o') {
                     nextNode.x += deltaX;
                     nextNode.y += deltaY;
                 }
@@ -867,11 +867,11 @@ export class OutlineEditor {
         if (this.selectedPoints.length === 1) {
             const { contourIndex, nodeIndex } = this.selectedPoints[0];
             const contour = currentLayerData.shapes[contourIndex];
-            if (contour && 'nodes' in contour) {
+            if (contour && 'nodes' in contour && contour.nodes) {
                 const nodes = contour.nodes;
                 const offcurve = nodes[nodeIndex];
 
-                if (offcurve?.type === 'o') {
+                if (offcurve?.nodetype === 'o') {
                     // Find the associated curve point and the other handle
                     const nextIndex = (nodeIndex + 1) % nodes.length;
                     const prevIndex =
@@ -879,31 +879,33 @@ export class OutlineEditor {
                     const nextNode = nodes[nextIndex];
                     const prevNode = nodes[prevIndex];
 
-                    let curvePoint: PythonBabelfont.Node | null = null;
+                    let curvePoint: Babelfont.Node | null = null;
                     let otherHandleIndex = -1;
 
                     if (
                         nextNode &&
-                        (nextNode.type === 'c' || nextNode.type === 'cs')
+                        (nextNode.nodetype === 'c' ||
+                            nextNode.nodetype === 'cs')
                     ) {
                         curvePoint = nextNode;
                         const afterCurve = (nextIndex + 1) % nodes.length;
                         if (
                             afterCurve !== nodeIndex &&
-                            nodes[afterCurve]?.type === 'o'
+                            nodes[afterCurve]?.nodetype === 'o'
                         ) {
                             otherHandleIndex = afterCurve;
                         }
                     } else if (
                         prevNode &&
-                        (prevNode.type === 'c' || prevNode.type === 'cs')
+                        (prevNode.nodetype === 'c' ||
+                            prevNode.nodetype === 'cs')
                     ) {
                         curvePoint = prevNode;
                         const beforeCurve =
                             (prevIndex - 1 + nodes.length) % nodes.length;
                         if (
                             beforeCurve !== nodeIndex &&
-                            nodes[beforeCurve]?.type === 'o'
+                            nodes[beforeCurve]?.nodetype === 'o'
                         ) {
                             otherHandleIndex = beforeCurve;
                         }
@@ -1046,17 +1048,17 @@ export class OutlineEditor {
 
         // First, check for hovering near component origins, which take priority.
         const components = currentLayerData.shapes
-            .map((shape: PythonBabelfont.Shape, index: number) => ({
+            .map((shape: Babelfont.Shape, index: number) => ({
                 shape,
                 index
             }))
             .filter(
-                (item: { shape: PythonBabelfont.Shape; index: number }) =>
+                (item: { shape: Babelfont.Shape; index: number }) =>
                     'Component' in item.shape
             );
 
         const getComponentOrigin = (item: {
-            shape: PythonBabelfont.Shape;
+            shape: Babelfont.Shape;
             index: number;
         }) => {
             const transform = ('Component' in item.shape &&
@@ -1100,7 +1102,7 @@ export class OutlineEditor {
     }
 
     _isPointInComponent(
-        shape: PythonBabelfont.Shape,
+        shape: Babelfont.Shape,
         glyphX: number,
         glyphY: number
     ): boolean {
@@ -1123,7 +1125,7 @@ export class OutlineEditor {
         // Collect all outline shapes with their accumulated transforms
         // This allows proper counter detection via nonzero winding rule
         const collectOutlineShapes = (
-            shapes: PythonBabelfont.Shape[],
+            shapes: Babelfont.Shape[],
             parentTransform: Transform = [1, 0, 0, 1, 0, 0]
         ): Array<{ nodes: any[]; transform: Transform }> => {
             const outlineShapes: Array<{
@@ -1173,6 +1175,7 @@ export class OutlineEditor {
                     }
                 } else if (
                     'nodes' in componentShape &&
+                    componentShape.nodes &&
                     componentShape.nodes.length > 0
                 ) {
                     outlineShapes.push({
@@ -1187,7 +1190,7 @@ export class OutlineEditor {
 
         // Collect all shapes from the component hierarchy
         const outlineShapes = collectOutlineShapes(
-            shape.Component.layerData!.shapes
+            shape.Component.layerData!.shapes || []
         );
 
         if (outlineShapes.length === 0) {
@@ -1261,7 +1264,7 @@ export class OutlineEditor {
 
         const foundAnchorIndex = this._findHoveredItem(
             currentLayerData.anchors.map(
-                (anchor: PythonBabelfont.Anchor, index: number) => ({
+                (anchor: Babelfont.Anchor, index: number) => ({
                     ...anchor,
                     index
                 })
@@ -1283,10 +1286,10 @@ export class OutlineEditor {
         }
 
         const points = currentLayerData.shapes.flatMap(
-            (shape: PythonBabelfont.Shape, contourIndex: number) => {
-                if (!('nodes' in shape)) return [];
+            (shape: Babelfont.Shape, contourIndex: number) => {
+                if (!('nodes' in shape) || !shape.nodes) return [];
                 return shape.nodes.map(
-                    (node: PythonBabelfont.Node, nodeIndex: number) => ({
+                    (node: Babelfont.Node, nodeIndex: number) => ({
                         node,
                         contourIndex,
                         nodeIndex
@@ -1336,7 +1339,12 @@ export class OutlineEditor {
         for (const point of this.selectedPoints) {
             const { contourIndex, nodeIndex } = point;
             const shape = currentLayerData.shapes[contourIndex];
-            if (shape && 'nodes' in shape && shape.nodes[nodeIndex]) {
+            if (
+                shape &&
+                'nodes' in shape &&
+                shape.nodes &&
+                shape.nodes[nodeIndex]
+            ) {
                 shape.nodes[nodeIndex].x += deltaX;
                 shape.nodes[nodeIndex].y += deltaY;
             }
@@ -1410,25 +1418,34 @@ export class OutlineEditor {
         const { contourIndex, nodeIndex } = pointIndex;
         const shape = currentLayerData.shapes[contourIndex];
 
-        if (!shape || !('nodes' in shape) || !shape.nodes[nodeIndex]) {
+        if (
+            !shape ||
+            !('nodes' in shape) ||
+            !shape.nodes ||
+            !shape.nodes[nodeIndex]
+        ) {
             return;
         }
 
         const node = shape.nodes[nodeIndex];
-        const { type } = node;
+        const { nodetype: type } = node;
 
         // Toggle smooth state based on current type
-        let newType = {
-            c: 'cs',
-            cs: 'c',
-            q: 'qs',
-            qs: 'q',
-            l: 'ls',
-            ls: 'l',
-            o: 'o'
-        }[type] as PythonBabelfont.NodeType;
+        let newType = (
+            {
+                c: 'cs',
+                cs: 'c',
+                q: 'qs',
+                qs: 'q',
+                l: 'ls',
+                ls: 'l',
+                m: 'ms',
+                ms: 'm',
+                o: 'o'
+            } as Record<Babelfont.NodeType, Babelfont.NodeType>
+        )[type] as Babelfont.NodeType;
 
-        node.type = newType;
+        node.nodetype = newType;
 
         // Save (non-blocking)
         this.saveLayerData();
@@ -1775,7 +1792,7 @@ export class OutlineEditor {
         await this.selectLayer(sortedLayers[nextIndex]);
     }
 
-    async selectLayer(layer: PythonBabelfont.Layer): Promise<void> {
+    async selectLayer(layer: Babelfont.Layer): Promise<void> {
         // Select a layer and update axis sliders to match its master location
         // Clear previous state when explicitly selecting a layer
         this.previousSelectedLayerId = null;
@@ -1805,8 +1822,7 @@ export class OutlineEditor {
         if (this.layerData) {
             this.layerData.isInterpolated = false;
         }
-        let masters: PythonBabelfont.Master[] =
-            this.glyphCanvas.fontData.masters;
+        let masters: Babelfont.Master[] = this.glyphCanvas.fontData.masters;
         console.log(`Selected layer: ${layer.name} (ID: ${layer.id})`);
         console.log('Layer data:', layer);
         console.log('Available masters:', masters);
@@ -1912,8 +1928,7 @@ export class OutlineEditor {
 
         // Check if current variation settings match any layer's master location
         let layers = this.glyphCanvas.fontData?.layers;
-        let masters: PythonBabelfont.Master[] =
-            this.glyphCanvas.fontData?.masters;
+        let masters: Babelfont.Master[] = this.glyphCanvas.fontData?.masters;
         if (!layers || !masters) {
             console.log(
                 '[OutlineEditor] No layers or masters found, returning'
@@ -2050,7 +2065,7 @@ export class OutlineEditor {
      * Always starts from root layerData and navigates through components
      * @returns The layer data at the current glyph_stack position
      */
-    getCurrentLayerDataFromStack(): PythonBabelfont.Layer | null {
+    getCurrentLayerDataFromStack(): Babelfont.Layer | null {
         if (!this.layerData || !this.glyphStack) {
             return this.layerData;
         }
@@ -2061,7 +2076,7 @@ export class OutlineEditor {
         }
 
         // Start with root layer data
-        let currentLayerData: PythonBabelfont.Layer | null = this.layerData;
+        let currentLayerData: Babelfont.Layer | null = this.layerData;
 
         // Navigate through each component in the stack (skip the first root item)
         for (let i = 0; i < parsed.length; i++) {
@@ -2087,7 +2102,7 @@ export class OutlineEditor {
                 return null;
             }
 
-            const shape: PythonBabelfont.Shape =
+            const shape: Babelfont.Shape =
                 currentLayerData.shapes[item.componentIndex];
             if (!('Component' in shape)) {
                 console.error(
@@ -2265,6 +2280,7 @@ export class OutlineEditor {
         // skipUIUpdate: if true, skip UI updates (useful when rebuilding component stack)
         if (
             !this.layerData ||
+            !this.layerData.shapes ||
             !this.layerData.shapes[componentIndex] ||
             !this.selectedLayerId
         ) {
@@ -2693,7 +2709,7 @@ export class OutlineEditor {
         );
 
         // Start at root and navigate through components
-        let currentLayerData: PythonBabelfont.Layer | null = this.layerData;
+        let currentLayerData: Babelfont.Layer | null = this.layerData;
 
         for (let i = 0; i < parsed.length; i++) {
             const item = parsed[i];
@@ -2718,7 +2734,7 @@ export class OutlineEditor {
                 break;
             }
 
-            const shape: PythonBabelfont.Shape =
+            const shape: Babelfont.Shape =
                 currentLayerData.shapes[item.componentIndex];
             if (!('Component' in shape)) {
                 console.error(
@@ -2729,7 +2745,7 @@ export class OutlineEditor {
                 break;
             }
 
-            const comp: PythonBabelfont.Component = shape.Component;
+            const comp: Babelfont.Component = shape.Component;
             console.log(
                 `[getAccumulatedTransformFromStack] Level ${i}: component "${comp.reference}", transform:`,
                 comp.transform

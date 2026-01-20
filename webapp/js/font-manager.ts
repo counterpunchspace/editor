@@ -8,7 +8,7 @@
 import APP_SETTINGS from './settings';
 import { fontCompilation } from './font-compilation';
 import { get_glyph_order } from '../wasm-dist/babelfont_fontc_web';
-import { PythonBabelfont } from './pythonbabelfont';
+import type { Babelfont } from './babelfont';
 import { designspaceToUserspace, userspaceToDesignspace } from './locations';
 import type { DesignspaceLocation } from './locations';
 import { Font, Path } from './babelfont-model';
@@ -630,13 +630,12 @@ class FontManager {
         return this.typingFont !== null && this.editingFont !== null;
     }
 
-    private getGlyph(glyphName: string): PythonBabelfont.Glyph | null {
+    private getGlyph(glyphName: string): Babelfont.Glyph | null {
         // Get glyph data for a specific glyph name
         if (!this.currentFont) {
             return null;
         }
-        let glyphs: PythonBabelfont.Glyph[] =
-            this.currentFont.babelfontData.glyphs;
+        let glyphs: Babelfont.Glyph[] = this.currentFont.babelfontData.glyphs;
         if (!glyphs) {
             return null;
         }
@@ -650,12 +649,12 @@ class FontManager {
     private getLayer(
         glyphName: string,
         layerId: string
-    ): PythonBabelfont.Layer | null {
+    ): Babelfont.Layer | null {
         // Get layer data for a specific glyph and layer ID
         let glyph = this.getGlyph(glyphName);
-        if (!glyph) {
+        if (!glyph || !glyph.layers) {
             console.warn(
-                `[FontManager] getLayer: glyph "${glyphName}" not found`
+                `[FontManager] getLayer: glyph "${glyphName}" not found or has no layers`
             );
             return null;
         }
@@ -682,7 +681,7 @@ class FontManager {
     fetchLayerData(
         componentGlyphName: string,
         selectedLayerId: string
-    ): PythonBabelfont.Layer | null {
+    ): Babelfont.Layer | null {
         // Fetch layer data for a specific glyph, recursively fetching nested component layer data
         let layer = this.getLayer(componentGlyphName, selectedLayerId);
         if (!layer) {
@@ -738,7 +737,7 @@ class FontManager {
             master_ids.add(master.id);
         }
         let layersData = [];
-        for (let layer of glyph.layers) {
+        for (let layer of glyph.layers || []) {
             // Only include non-background layers that are DEFAULT layers for their master
             // (not AssociatedWithMaster layers, which are intermediate/alternate designs)
             if (!layer.is_background) {
@@ -763,19 +762,26 @@ class FontManager {
             }
         }
         let axes_order = this.currentFont!.babelfontData.axes.map(
-            (axis: PythonBabelfont.Axis) => axis.tag
+            (axis: Babelfont.Axis) => axis.tag
         );
 
         let mastersData = [];
         for (let master of this.currentFont!.babelfontData
-            .masters as PythonBabelfont.Master[]) {
+            .masters as Babelfont.Master[]) {
             let userspaceLocation = designspaceToUserspace(
-                master.location,
+                master.location || {},
                 this.currentFont!.babelfontData.axes
             );
+            // Extract master name from I18NDictionary (use 'en' or first available)
+            let masterName =
+                typeof master.name === 'string'
+                    ? master.name
+                    : master.name?.en ||
+                      Object.values(master.name || {})[0] ||
+                      'Unknown';
             mastersData.push({
                 id: master.id,
-                name: master.name,
+                name: masterName,
                 location: userspaceLocation
             });
         }
@@ -790,17 +796,17 @@ class FontManager {
     async saveLayerData(
         glyphName: string,
         layerId: string,
-        layerData: PythonBabelfont.Layer
+        layerData: Babelfont.Layer
     ) {
         // Helper function to recursively clean shapes for saving
-        const cleanShapeForSaving = (shape: PythonBabelfont.Shape): any => {
+        const cleanShapeForSaving = (shape: Babelfont.Shape): any => {
             if ('Path' in shape) {
                 // For Path shapes, ensure we only save the string representation
                 // Remove any parsed 'nodes' array that was added during rendering
                 if ('nodes' in shape && Array.isArray(shape.nodes)) {
-                    // Convert array back to string: [{x, y, type}, ...] -> "x y type x y type ..."
+                    // Convert array back to string: [{x, y, nodetype}, ...] -> "x y nodetype x y nodetype ..."
                     const nodesString = shape.nodes
-                        .map((node) => `${node.x} ${node.y} ${node.type}`)
+                        .map((node) => `${node.x} ${node.y} ${node.nodetype}`)
                         .join(' ');
                     return {
                         Path: { nodes: nodesString, closed: shape.Path.closed }
@@ -822,7 +828,12 @@ class FontManager {
             } else {
                 // For other shape types (Anchor, etc.), create a clean copy
                 // Avoid JSON.parse(JSON.stringify()) which can fail on circular refs
-                return { ...shape };
+                const isObject =
+                    shape && typeof shape === 'object' && !Array.isArray(shape);
+                if (isObject) {
+                    return { ...(shape as object) } as Babelfont.Shape;
+                }
+                return shape;
             }
         };
 
@@ -848,26 +859,28 @@ class FontManager {
 
         // Create a clean copy of the layer data with only serializable properties
         // Don't save isInterpolated flag - it's runtime state only
-        let layerDataCopy: PythonBabelfont.Layer = {
+        let layerDataCopy: Babelfont.Layer = {
             width: layerData.width,
             height: layerData.height,
             vertWidth: layerData.vertWidth,
             name: layerData.name,
             id: layerData.id,
             _master: layerData._master,
-            shapes: newShapes,
+            shapes: newShapes || [],
             isInterpolated: false, // Always false for saved data
             // Copy other optional properties if they exist
             ...(cleanAnchors && { anchors: cleanAnchors }),
             ...(cleanGuides && { guides: cleanGuides }),
             ...(layerData.color && { color: layerData.color }),
-            ...(layerData.layerIndex !== undefined && {
-                layerIndex: layerData.layerIndex
+            ...(layerData.layer_index !== undefined && {
+                layer_index: layerData.layer_index
             }),
             ...(layerData.is_background !== undefined && {
                 is_background: layerData.is_background
             }),
-            ...(layerData.background && { background: layerData.background }),
+            ...(layerData.background_layer_id && {
+                background_layer_id: layerData.background_layer_id
+            }),
             ...(layerData.location && { location: { ...layerData.location } }),
             ...(layerData.format_specific && {
                 format_specific: layerData.format_specific
@@ -884,6 +897,14 @@ class FontManager {
             console.error(
                 `[FontManager]`,
                 `Glyph ${glyphName} not found - cannot save layer data`
+            );
+            return;
+        }
+
+        if (!glyph.layers) {
+            console.error(
+                `[FontManager]`,
+                `Glyph ${glyphName} has no layers - cannot save layer data`
             );
             return;
         }

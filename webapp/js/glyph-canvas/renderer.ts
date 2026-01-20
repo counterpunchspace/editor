@@ -6,7 +6,7 @@ import type { ViewportManager } from './viewport';
 import type { TextRunEditor } from './textrun';
 import { GlyphCanvas } from '../glyph-canvas';
 import { LayerDataNormalizer } from '../layer-data-normalizer';
-import { PythonBabelfont } from '../pythonbabelfont';
+import type { Babelfont } from '../babelfont';
 
 /**
  * Calculate bounding box from SVG path data
@@ -793,7 +793,11 @@ export class GlyphCanvasRenderer {
             if (currentLayerData && currentLayerData.shapes) {
                 // Calculate bounds from all contours
                 currentLayerData.shapes.forEach((shape) => {
-                    if ('nodes' in shape && shape.nodes.length > 0) {
+                    if (
+                        'nodes' in shape &&
+                        shape.nodes &&
+                        shape.nodes.length > 0
+                    ) {
                         shape.nodes.forEach(
                             ({ x, y }: { x: number; y: number }) => {
                                 minX = Math.min(minX, x);
@@ -884,7 +888,7 @@ export class GlyphCanvasRenderer {
                     currentLayerData?.isInterpolated);
 
             currentLayerData.shapes.forEach((shape, contourIndex: number) =>
-                this.drawShape(shape, contourIndex, isInterpolated)
+                this.drawShape(shape, contourIndex, !!isInterpolated)
             );
 
             // Draw components
@@ -1413,7 +1417,7 @@ export class GlyphCanvasRenderer {
     }
 
     drawShape(
-        shape: PythonBabelfont.Shape,
+        shape: Babelfont.Shape,
         contourIndex: number,
         isInterpolated: boolean
     ) {
@@ -1558,19 +1562,19 @@ export class GlyphCanvasRenderer {
                 : 'rgba(0, 0, 0, 0.5)';
             this.ctx.lineWidth = 1 * invScale;
 
-            nodes.forEach((node: PythonBabelfont.Node, nodeIndex: number) => {
-                const { x, y, type } = node;
+            nodes.forEach((node: Babelfont.Node, nodeIndex: number) => {
+                const { x, y, nodetype: type } = node;
 
                 // Only draw lines from off-curve points
                 if (type === 'o') {
                     // Check if this is the first or second control point in a cubic bezier pair
                     let prevIdx = nodeIndex - 1;
                     if (prevIdx < 0) prevIdx = nodes.length - 1;
-                    const prevType = nodes[prevIdx].type;
+                    const prevType = nodes[prevIdx].nodetype;
 
                     let nextIdx = nodeIndex + 1;
                     if (nextIdx >= nodes.length) nextIdx = 0;
-                    const nextType = nodes[nextIdx].type;
+                    const nextType = nodes[nextIdx].nodetype;
                     const isPrevOffCurve = prevType === 'o';
                     const isNextOffCurve = nextType === 'o';
 
@@ -1586,7 +1590,7 @@ export class GlyphCanvasRenderer {
                         const {
                             x: targetX,
                             y: targetY,
-                            type: targetType
+                            nodetype: targetType
                         } = nodes[targetIdx];
                         if (
                             targetType === 'c' ||
@@ -1606,7 +1610,7 @@ export class GlyphCanvasRenderer {
                         const {
                             x: targetX,
                             y: targetY,
-                            type: targetType
+                            nodetype: targetType
                         } = nodes[targetIdx];
                         if (
                             targetType === 'c' ||
@@ -1630,8 +1634,8 @@ export class GlyphCanvasRenderer {
         }
 
         (shape as any).nodes.forEach(
-            (node: PythonBabelfont.Node, nodeIndex: number) => {
-                const { x, y, type } = node;
+            (node: Babelfont.Node, nodeIndex: number) => {
+                const { x, y, nodetype: type } = node;
                 const isInterpolated =
                     this.glyphCanvas.outlineEditor.isInterpolating ||
                     (this.glyphCanvas.outlineEditor.selectedLayerId === null &&
@@ -2517,7 +2521,7 @@ export class GlyphCanvasRenderer {
         this.ctx.restore();
     }
 
-    buildPathFromNodes(nodes: PythonBabelfont.Node[], pathTarget?: Path2D) {
+    buildPathFromNodes(nodes: Babelfont.Node[], pathTarget?: Path2D) {
         // Build a canvas path from a nodes array
         // pathTarget: if provided (Path2D object), draws to it; otherwise draws to this.ctx
         // Returns the startIdx for use in drawing direction arrows
@@ -2531,7 +2535,7 @@ export class GlyphCanvasRenderer {
         // Find first on-curve point to start
         let startIdx = 0;
         for (let i = 0; i < nodes.length; i++) {
-            const { x, y, type } = nodes[i];
+            const { x, y, nodetype: type } = nodes[i];
             if (type === 'c' || type === 'cs' || type === 'l') {
                 startIdx = i;
                 break;
@@ -2549,8 +2553,12 @@ export class GlyphCanvasRenderer {
             const next2Idx = (startIdx + i + 2) % nodes.length;
             const next3Idx = (startIdx + i + 3) % nodes.length;
 
-            const { x, y, type } = nodes[idx];
-            const { x: next1X, y: next1Y, type: next1Type } = nodes[nextIdx];
+            const { x, y, nodetype: type } = nodes[idx];
+            const {
+                x: next1X,
+                y: next1Y,
+                nodetype: next1Type
+            } = nodes[nextIdx];
 
             if (
                 type === 'l' ||
@@ -2564,7 +2572,7 @@ export class GlyphCanvasRenderer {
                     const {
                         x: next2X,
                         y: next2Y,
-                        type: next2Type
+                        nodetype: next2Type
                     } = nodes[next2Idx];
                     const { x: next3X, y: next3Y } = nodes[next3Idx];
 

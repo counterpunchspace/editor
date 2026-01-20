@@ -193,8 +193,8 @@ describe('GlyphCanvas onMouseDown', () => {
         expect(focusSpy).toHaveBeenCalled();
     });
 
-    test('should start canvas panning when Cmd key is pressed', () => {
-        canvas.cmdKeyPressed = true;
+    test('should start canvas panning when Space key is pressed', () => {
+        canvas.outlineEditor.spaceKeyPressed = true;
         canvas.onMouseDown({ clientX: 10, clientY: 20, detail: 1 });
         expect(canvas.isDraggingCanvas).toBe(true);
     });
@@ -776,10 +776,10 @@ describe('GlyphCanvas keyboard handling', () => {
         canvas.destroy();
     });
 
-    test('should track Cmd key state for panning', () => {
-        expect(canvas.cmdKeyPressed).toBe(false);
-        // Cmd key tracking happens in canvas event listener, not onKeyDown
-        // This is implementation detail tested through integration
+    test('should track Space key state for panning', () => {
+        expect(canvas.outlineEditor.spaceKeyPressed).toBe(false);
+        // Space key tracking happens in OutlineEditor, which manages the key state
+        // This is tested through integration with onMouseDown test above
     });
 
     test('should handle space key for preview mode in glyph edit mode', () => {

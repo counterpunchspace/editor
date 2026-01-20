@@ -16,7 +16,7 @@
 import { GlyphCanvas } from './glyph-canvas';
 import { OutlineEditor } from './glyph-canvas/outline-editor';
 import { DesignspaceLocation } from './locations';
-import { PythonBabelfont } from './pythonbabelfont';
+import type { Babelfont } from './babelfont';
 
 /**
  * Layer Data Normalizer
@@ -120,7 +120,7 @@ export class LayerDataNormalizer {
      * @param {string|Array} nodes - Nodes as string or already-parsed array
      * @returns {Array} Array of [x, y, type] triplets
      */
-    static parseNodes(nodes: string | any[]): PythonBabelfont.Node[] {
+    static parseNodes(nodes: string | any[]): Babelfont.Node[] {
         // If already an array, return as-is
         if (Array.isArray(nodes)) {
             return nodes;
@@ -132,13 +132,13 @@ export class LayerDataNormalizer {
             if (!nodesStr) return [];
 
             const tokens = nodesStr.split(/\s+/);
-            const nodesArray: PythonBabelfont.Node[] = [];
+            const nodesArray: Babelfont.Node[] = [];
 
             for (let i = 0; i + 2 < tokens.length; i += 3) {
                 nodesArray.push({
                     x: parseFloat(tokens[i]), // x
                     y: parseFloat(tokens[i + 1]), // y
-                    type: tokens[i + 2] as PythonBabelfont.NodeType // type (m, l, o, c, q, ms, ls, etc.)
+                    nodetype: tokens[i + 2] as Babelfont.NodeType // type (m, l, o, c, q, ms, ls, etc.)
                 });
             }
 
@@ -154,13 +154,13 @@ export class LayerDataNormalizer {
      * @param {Array} nodes - Array of node objects with x, y, type properties
      * @returns {string} Nodes as space-separated string "x1 y1 type x2 y2 type ..."
      */
-    static serializeNodes(nodes: PythonBabelfont.Node[]): string {
+    static serializeNodes(nodes: Babelfont.Node[]): string {
         if (!Array.isArray(nodes) || nodes.length === 0) {
             return '';
         }
 
         return nodes
-            .map((node) => `${node.x} ${node.y} ${node.type}`)
+            .map((node) => `${node.x} ${node.y} ${node.nodetype}`)
             .join(' ');
     }
 
@@ -251,9 +251,9 @@ export class LayerDataNormalizer {
      * Get the next node in a circular array
      */
     static getNextNode(
-        nodes: PythonBabelfont.Node[],
+        nodes: Babelfont.Node[],
         currentIndex: number
-    ): PythonBabelfont.Node | null {
+    ): Babelfont.Node | null {
         if (!nodes || nodes.length === 0) return null;
         const nextIndex = (currentIndex + 1) % nodes.length;
         return nodes[nextIndex];
@@ -263,9 +263,9 @@ export class LayerDataNormalizer {
      * Get the previous node in a circular array
      */
     static getPrevNode(
-        nodes: PythonBabelfont.Node[],
+        nodes: Babelfont.Node[],
         currentIndex: number
-    ): PythonBabelfont.Node | null {
+    ): Babelfont.Node | null {
         if (!nodes || nodes.length === 0) return null;
         const prevIndex = (currentIndex - 1 + nodes.length) % nodes.length;
         return nodes[prevIndex];

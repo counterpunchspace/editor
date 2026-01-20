@@ -457,6 +457,9 @@ export namespace Babelfont {
          * Format-specific data
          */
         format_specific?: Babelfont.FormatSpecific;
+
+        // CUSTOM EXTENSION: Cached layer data for component reference
+        layerData?: Babelfont.Layer;
     };
 
     /**
@@ -482,7 +485,17 @@ export namespace Babelfont {
         /**
          * Draw a quadratic Bézier curve to this node
          */
-        | 'QCurve';
+        | 'QCurve'
+        // CUSTOM EXTENSIONS: Abbreviated node types used in this application
+        | 'm'
+        | 'l'
+        | 'o'
+        | 'c'
+        | 'q'
+        | 'ms'
+        | 'ls'
+        | 'cs'
+        | 'qs';
 
     /**
      * A node in a glyph outline
@@ -538,12 +551,18 @@ export namespace Babelfont {
                * A component in a glyph
                */
               Component: Babelfont.Component;
+              // CUSTOM EXTENSION: Flattened access to component properties
+              reference?: string;
+              transform?: Babelfont.F32[];
+              layerData?: Babelfont.Layer;
           }
         | {
               /**
                * A path in a glyph
                */
               Path: Babelfont.Path;
+              // CUSTOM EXTENSION: Flattened access to path nodes
+              nodes?: Babelfont.Node[];
           };
 
     /**
@@ -579,6 +598,16 @@ export namespace Babelfont {
          * The advance width of the layer
          */
         width: Babelfont.F32;
+
+        /**
+         * The advance height of the layer (for vertical text)
+         */
+        height?: Babelfont.F32;
+
+        /**
+         * The vertical advance width
+         */
+        vertWidth?: Babelfont.F32;
 
         /**
          * The name of the layer
@@ -639,6 +668,10 @@ export namespace Babelfont {
          * Format-specific data for the layer
          */
         format_specific?: Babelfont.FormatSpecific;
+
+        // CUSTOM EXTENSIONS: Application-specific properties
+        _master?: string; // Legacy master ID reference
+        isInterpolated?: boolean; // Whether this layer is interpolated
     };
 
     /**
