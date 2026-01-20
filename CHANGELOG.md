@@ -1,6 +1,6 @@
 # Unreleased
 
-- **Add items here** for the next release (Replace this comment)
+- **AI Chat Persistence**: Last active chat ID now stored in localStorage and loaded on startup instead of chronologically last chat. Provides continuity when returning to the editor.
 
 # v0.1.5
 

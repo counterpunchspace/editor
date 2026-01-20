@@ -27,6 +27,9 @@ class ChatSessionManager {
         this.isContextLocked = false;
         this.aiAssistant.messages = [];
         this.aiAssistant.messagesContainer.innerHTML = '';
+        
+        // Clear localStorage when starting new chat
+        localStorage.removeItem('ai_last_chat_id');
 
         // Show context selection
         this.showContextSelection();
@@ -180,8 +183,9 @@ class ChatSessionManager {
 
             const data = await response.json();
 
-            // Set current chat ID
+            // Set current chat ID and save to localStorage
             this.currentChatId = data.chatSession.id;
+            localStorage.setItem('ai_last_chat_id', this.currentChatId);
 
             // Set context using setContext to ensure all UI updates happen
             this.aiAssistant.setContext(data.chatSession.contextType);
@@ -251,6 +255,24 @@ class ChatSessionManager {
      */
     async loadLastChat() {
         try {
+            // Check if we have a saved chat ID in localStorage
+            const savedChatId = localStorage.getItem('ai_last_chat_id');
+            
+            if (savedChatId) {
+                // Try to load the saved chat
+                console.log(`[ChatSession] Loading saved chat: ${savedChatId}`);
+                try {
+                    await this.loadChatSession(savedChatId);
+                    return; // Successfully loaded saved chat
+                } catch (error) {
+                    console.log('[ChatSession] Saved chat not available, falling back to last chat:', error.message);
+                    // Clear invalid chat ID from localStorage
+                    localStorage.removeItem('ai_last_chat_id');
+                    // Continue to load chronologically last chat
+                }
+            }
+
+            // Fall back to loading chronologically last chat from API
             const sessionToken = window.authManager
                 ? window.authManager.getSessionToken()
                 : null;
@@ -293,8 +315,9 @@ class ChatSessionManager {
                 return;
             }
 
-            // Load the chat
+            // Load the chat and save to localStorage
             this.currentChatId = data.chatSession.id;
+            localStorage.setItem('ai_last_chat_id', this.currentChatId);
 
             // Set context using setContext to ensure all UI updates happen
             this.aiAssistant.setContext(data.chatSession.contextType);
