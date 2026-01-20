@@ -40,7 +40,7 @@
 
             // Call before-execution hook
             if (window.beforePythonExecution) {
-                window.beforePythonExecution();
+                await window.beforePythonExecution(code);
             }
 
             // Log to browser console only (NOT terminal to avoid infinite loop)
@@ -93,9 +93,17 @@
             executionCounter++;
             const execId = executionCounter;
 
-            // Call before-execution hook
+            // Call before-execution hook (sync version - no await)
             if (window.beforePythonExecution) {
-                window.beforePythonExecution();
+                const hookResult = window.beforePythonExecution(code);
+                // If hook returns a promise, we can't await it in sync context
+                // Log a warning if it seems to be async
+                if (hookResult && typeof hookResult.then === 'function') {
+                    console.warn(
+                        '[PythonExec]',
+                        'beforePythonExecution hook returned a promise in sync context - cannot await'
+                    );
+                }
             }
 
             // Log to browser console only (NOT terminal to avoid infinite loop)

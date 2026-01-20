@@ -61,6 +61,7 @@ import './matplotlib-handler.js';
 import './memory-monitor.js';
 import './pyodide-official-console.js';
 import './python-execution-wrapper.js';
+import './python-package-lazy-loader.js';
 import './python-ui-sync.js';
 import './python-post-execution';
 import './resizer.js';
