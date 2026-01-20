@@ -158,6 +158,27 @@ export class Font extends BabelfontFont {
      *     f.write(json_str)
      */
     toJSONString(): string {
+        // Pre-process: ensure all Path objects have nodes array initialized
+        // This must happen BEFORE JSON.stringify calls toJSON() on each object
+        const ensurePathNodes = (obj: any): void => {
+            if (!obj || typeof obj !== 'object') return;
+
+            // Fix Path instances
+            if (obj instanceof BabelfontPath && obj.nodes === undefined) {
+                obj.nodes = [];
+            }
+
+            // Recursively process all properties
+            if (Array.isArray(obj)) {
+                obj.forEach((item) => ensurePathNodes(item));
+            } else {
+                Object.values(obj).forEach((value) => ensurePathNodes(value));
+            }
+        };
+
+        // Fix all paths in the font before serialization
+        ensurePathNodes(this);
+
         return JSON.stringify(this, (key, value) => {
             // When serializing shape objects, filter out normalizer wrapper properties
             // The normalizer adds { Path: {...}, nodes: [...], isInterpolated?: bool }
@@ -196,6 +217,26 @@ export class Font extends BabelfontFont {
     static fromData(data: IFont): Font {
         return new Font(data);
     }
+
+    /**
+     * String representation for debugging
+     *
+     * @returns Human-readable string
+     * @example
+     * print(font)  # <Font "MyFont" 123 glyphs>
+     */
+    toString(): string {
+        const familyName =
+            this.names?.family_name?.en ||
+            Object.values(this.names?.family_name || {})[0] ||
+            'Unnamed';
+        const glyphCount = this.glyphs?.length || 0;
+        const masterCount = this.masters?.length || 0;
+        const axisCount = this.axes?.length || 0;
+        const info =
+            masterCount > 1 ? ` ${axisCount} axes, ${masterCount} masters` : '';
+        return `<Font "${familyName}" ${glyphCount} glyphs${info}>`;
+    }
 }
 
 // ============================================================================
@@ -233,6 +274,25 @@ export class Glyph extends BabelfontGlyph {
             const master = l.master as any;
             return master.master === masterId || master === masterId;
         }) as Layer | undefined;
+    }
+
+    /**
+     * String representation for debugging
+     *
+     * @returns Human-readable string
+     * @example
+     * print(glyph)  # <Glyph "A" [U+0041] 2 layers>
+     */
+    toString(): string {
+        const codepoints =
+            this.codepoints
+                ?.map(
+                    (cp) =>
+                        `U+${cp.toString(16).toUpperCase().padStart(4, '0')}`
+                )
+                .join(', ') || 'none';
+        const layerCount = this.layers?.length || 0;
+        return `<Glyph "${this.name}" [${codepoints}] ${layerCount} layers>`;
     }
 }
 
@@ -344,7 +404,9 @@ export class Layer extends BabelfontLayer {
      * path.addNode({"x": 0, "y": 0, "type": "line"})
      */
     addPath(closed: boolean = false): Path {
-        const path = new Path({ nodes: [], closed });
+        // Create path using constructor with empty nodes string
+        // IPath interface expects nodes as Node[] but constructor parses string to Node[]
+        const path = new Path({ nodes: '' as any, closed });
         if (!this.shapes) this.shapes = [];
         this.shapes.push(path as any);
         this.markDirty();
@@ -974,6 +1036,30 @@ export class Layer extends BabelfontLayer {
             (window as any).fontManager.currentFont.dirty = true;
         }
     }
+
+    /**
+     * String representation for debugging
+     *
+     * @returns Human-readable string
+     * @example
+     * print(layer)  # <Layer "m01" width=500>
+     */
+    toString(): string {
+        let masterId: string;
+        if (typeof this.master === 'object') {
+            if ('DefaultForMaster' in this.master) {
+                masterId = (this.master as any).DefaultForMaster;
+            } else if ('AssociatedWithMaster' in this.master) {
+                masterId = (this.master as any).AssociatedWithMaster;
+            } else {
+                masterId = (this.master as any).master || 'unknown';
+            }
+        } else {
+            masterId = this.master || this.id || 'unknown';
+        }
+        const width = this.width !== undefined ? ` width=${this.width}` : '';
+        return `<Layer "${masterId}"${width}>`;
+    }
 }
 
 // ============================================================================
@@ -981,6 +1067,18 @@ export class Layer extends BabelfontLayer {
 // ============================================================================
 
 export class Path extends BabelfontPath {
+    /**
+     * Override toJSON to add safety check for undefined nodes
+     * This prevents crashes during serialization if nodes isn't properly initialized
+     */
+    toJSON(): any {
+        // Ensure nodes is initialized before calling parent toJSON
+        if (!this.nodes) {
+            this.nodes = [];
+        }
+        return super.toJSON();
+    }
+
     /**
      * Convert nodes array to compact string format
      *
@@ -1044,6 +1142,19 @@ export class Path extends BabelfontPath {
             (window as any).fontManager.currentFont.dirty = true;
         }
     }
+
+    /**
+     * String representation for debugging
+     *
+     * @returns Human-readable string
+     * @example
+     * print(path)  # <Path closed 4 nodes>
+     */
+    toString(): string {
+        const closedStr = this.closed ? 'closed' : 'open';
+        const nodeCount = Array.isArray(this.nodes) ? this.nodes.length : 0;
+        return `<Path ${closedStr} ${nodeCount} nodes>`;
+    }
 }
 
 // ============================================================================
@@ -1053,18 +1164,122 @@ export class Path extends BabelfontPath {
 export class Component extends BabelfontComponent {
     // Custom property for caching component layer data
     cachedComponentLayerData?: any;
+
+    /**
+     * String representation for debugging
+     *
+     * @returns Human-readable string
+     * @example
+     * print(comp)  # <Component ref="A">
+     */
+    toString(): string {
+        const transform = this.transform
+            ? ` transform=${JSON.stringify(this.transform)}`
+            : '';
+        return `<Component ref="${this.reference}"${transform}>`;
+    }
 }
 
 // ============================================================================
 // Re-export other classes unchanged
 // ============================================================================
 
-export class Node extends BabelfontNode {}
-export class Anchor extends BabelfontAnchor {}
-export class Guide extends BabelfontGuide {}
-export class Axis extends BabelfontAxis {}
-export class Instance extends BabelfontInstance {}
-export class Master extends BabelfontMaster {}
+export class Node extends BabelfontNode {
+    /**
+     * String representation for debugging
+     *
+     * @returns Human-readable string
+     * @example
+     * print(node)  # <Node (100, 200) Line smooth>
+     */
+    toString(): string {
+        const smooth = this.smooth ? ' smooth' : '';
+        return `<Node (${this.x}, ${this.y}) ${this.nodetype}${smooth}>`;
+    }
+}
+export class Anchor extends BabelfontAnchor {
+    /**
+     * String representation for debugging
+     *
+     * @returns Human-readable string
+     * @example
+     * print(anchor)  # <Anchor "top" (250, 700)>
+     */
+    toString(): string {
+        const name = this.name ? ` "${this.name}"` : '';
+        return `<Anchor${name} (${this.x}, ${this.y})>`;
+    }
+}
+export class Guide extends BabelfontGuide {
+    /**
+     * String representation for debugging
+     *
+     * @returns Human-readable string
+     * @example
+     * print(guide)  # <Guide "baseline" pos={...}>
+     */
+    toString(): string {
+        const name = this.name ? ` "${this.name}"` : '';
+        return `<Guide${name} pos=${JSON.stringify(this.pos)}>`;
+    }
+}
+export class Axis extends BabelfontAxis {
+    /**
+     * String representation for debugging
+     *
+     * @returns Human-readable string
+     * @example
+     * print(axis)  # <Axis "Weight" tag="wght" 100-400-900>
+     */
+    toString(): string {
+        const displayName =
+            typeof this.name === 'string'
+                ? this.name
+                : this.name?.dflt ||
+                  Object.values(this.name || {})[0] ||
+                  'unknown';
+        const range = `${this.min || '?'}-${this.default || '?'}-${this.max || '?'}`;
+        return `<Axis "${displayName}" tag="${this.tag}" ${range}>`;
+    }
+}
+export class Instance extends BabelfontInstance {
+    /**
+     * String representation for debugging
+     *
+     * @returns Human-readable string
+     * @example
+     * print(instance)  # <Instance "Bold" location={...}>
+     */
+    toString(): string {
+        const displayName =
+            typeof this.name === 'string'
+                ? this.name
+                : this.name?.en ||
+                  Object.values(this.name || {})[0] ||
+                  'unknown';
+        const location = this.location ? JSON.stringify(this.location) : '{}';
+        return `<Instance "${displayName}" location=${location}>`;
+    }
+}
+export class Master extends BabelfontMaster {
+    /**
+     * String representation for debugging
+     *
+     * @returns Human-readable string
+     * @example
+     * print(master)  # <Master "Regular" id="m01" location={...}>
+     */
+    toString(): string {
+        const displayName =
+            typeof this.name === 'string'
+                ? this.name
+                : this.name?.en ||
+                  Object.values(this.name || {})[0] ||
+                  'unknown';
+        const location = this.location ? JSON.stringify(this.location) : '{}';
+        return `<Master "${displayName}" id="${this.id}" location=${location}>`;
+    }
+}
 export class Names extends BabelfontNames {}
 export class Features extends BabelfontFeatures {}
 export class CustomOTValues extends BabelfontCustomOTValues {}
