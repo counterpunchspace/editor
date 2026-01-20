@@ -1,6 +1,7 @@
 # Unreleased
 
 - **AI Chat Persistence**: Last active chat ID now stored in localStorage and loaded on startup instead of chronologically last chat. Provides continuity when returning to the editor.
+- **Extended Python packages**: Lazy-load `numpy`, `matplotlib`, `pandas` only when they're needed to speed up editor startup. Also fixed a memory leak after `matplotlib` usage that speeds up consecutive `matplotlib` runs.
 
 # v0.1.5
 
