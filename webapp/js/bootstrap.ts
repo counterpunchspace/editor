@@ -1,8 +1,47 @@
 import './wasm-init'; // Initialize WASM module
-import './loading-animation.js';
+// import './loading-animation.js';  // Removed - animation disabled
 import './tab-lifecycle.js';
 import './mcp-transport';
 import './critical-error-handler';
+
+// Utility function to update loading status (extracted from loading-animation.js)
+window.updateLoadingStatus = function (
+    message: string,
+    isReady: boolean = false
+) {
+    const statusElement = document.getElementById('loading-status');
+    if (statusElement) {
+        statusElement.textContent = message;
+        if (isReady) {
+            statusElement.classList.add('ready');
+        } else {
+            statusElement.classList.remove('ready');
+        }
+    }
+};
+
+// Clear initial message and show "Bootstrapping..." after 2 seconds
+const initBootstrappingMessage = () => {
+    const statusElement = document.getElementById('loading-status');
+    if (statusElement) {
+        // Clear the initial message immediately
+        statusElement.textContent = '';
+
+        // Show "Bootstrapping..." after 2 seconds if no other message has been set
+        setTimeout(() => {
+            if (statusElement.textContent === '') {
+                statusElement.textContent = 'Bootstrapping...';
+            }
+        }, 2000);
+    }
+};
+
+// Initialize bootstrapping message when DOM is ready
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initBootstrappingMessage);
+} else {
+    initBootstrappingMessage();
+}
 
 import './auth-manager.js'; // Authentication with fonteditorwebsite
 import './ai-assistant.js';

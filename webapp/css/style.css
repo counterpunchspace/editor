@@ -6,7 +6,7 @@
     /* Font family fallbacks (tokens only has primary font) */
     --font-families-mono: 'IBM Plex Mono', 'Courier New', Courier, monospace;
     --font-families-sans:
-        'IBM Plex Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
+        'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
         sans-serif;
 }
 
@@ -25,7 +25,7 @@ body {
 
 body {
     font-family:
-        'IBM Plex Sans',
+        'Inter',
         -apple-system,
         BlinkMacSystemFont,
         'Segoe UI',
@@ -106,19 +106,22 @@ kbd + kbd {
     pointer-events: none;
 }
 
-#loading-animation-canvas {
-    position: absolute;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 100%;
-    z-index: 1;
-}
-
 .loading-content {
     text-align: center;
     position: relative;
     z-index: 2;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 20px;
+}
+
+.loading-icon {
+    width: 90px;
+    height: 90px;
+    position: relative;
+    top: -50px;
+    border-radius: 20%;
 }
 
 .loading-status {
@@ -128,7 +131,7 @@ kbd + kbd {
     right: 0;
     margin-top: 150px;
     text-align: center;
-    font-family: var(--font-families-mono);
+    font-family: 'Inter', sans-serif;
     font-size: 18px;
     color: var(--text-muted);
     z-index: 2;
@@ -140,9 +143,9 @@ kbd + kbd {
 }
 
 .loading-logo {
-    font-family: 'EB Garamond', serif;
+    font-family: 'Funnel Display', serif;
     font-size: 90px;
-    font-weight: 400;
+    font-weight: 700;
     color: var(--text-primary);
     line-height: 1;
     position: relative;
@@ -180,7 +183,7 @@ kbd + kbd {
 }
 
 .app-name {
-    font-family: var(--font-families-mono);
+    font-family: 'Funnel Display', sans-serif;
     font-size: 24px;
     font-weight: 400;
     position: relative;
@@ -188,7 +191,6 @@ kbd + kbd {
     top: -1px;
     margin: 0;
     letter-spacing: 0.5px;
-    word-spacing: -8px;
 }
 
 .toolbar-center {
@@ -940,6 +942,8 @@ kbd + kbd {
     right: 0;
     background-color: var(--background-primary);
     border: 1px solid var(--border-primary);
+    border-left-width: 3px;
+    border-bottom-width: 3px;
     border-right: none;
     min-width: 300px;
     overflow-y: auto;
@@ -1737,7 +1741,7 @@ kbd + kbd {
     margin-bottom: 15px;
     border-radius: 4px;
     cursor: pointer;
-    font-family: 'IBM Plex Sans', sans-serif;
+    font-family: 'Inter', sans-serif;
     font-weight: 500;
     font-size: 14px;
     transition: all 0.3s ease;
@@ -1819,7 +1823,7 @@ kbd + kbd {
     padding: 6px 8px;
     border-radius: 4px;
     cursor: pointer;
-    font-family: 'IBM Plex Sans', sans-serif;
+    font-family: 'Inter', sans-serif;
     font-size: 12px;
     font-weight: 500;
     transition: all 0.2s ease;
@@ -1874,7 +1878,7 @@ kbd + kbd {
     font-weight: 600;
     transition: all 0.2s ease;
     margin-left: 6px;
-    font-family: 'IBM Plex Sans', sans-serif;
+    font-family: 'Inter', sans-serif;
     display: flex;
     align-items: center;
     gap: 3px;
@@ -2199,7 +2203,7 @@ kbd + kbd {
 }
 
 .ai-message-user .ai-message-content {
-    font-family: 'IBM Plex Sans', sans-serif;
+    font-family: 'Inter', sans-serif;
 }
 
 .ai-message-user .ai-message-content p {
@@ -2276,7 +2280,7 @@ kbd + kbd {
     align-items: center;
     gap: 6px;
     padding: 12px 16px;
-    font-family: 'IBM Plex Sans', sans-serif;
+    font-family: 'Inter', sans-serif;
     font-size: calc(var(--size, 1) * (11px / var(--pixel-density, 1)));
     color: var(--text-subtle);
     font-style: italic;
@@ -2328,7 +2332,7 @@ kbd + kbd {
 }
 
 .ai-error-fix-text {
-    font-family: 'IBM Plex Sans', sans-serif;
+    font-family: 'Inter', sans-serif;
     font-size: calc(var(--size, 1) * (12px / var(--pixel-density, 1)));
     line-height: 1.6;
 }
@@ -2477,7 +2481,7 @@ kbd + kbd {
 }
 
 .ai-markdown-explanation {
-    font-family: 'IBM Plex Sans', sans-serif;
+    font-family: 'Inter', sans-serif;
     font-size: calc(var(--size, 1) * (12px / var(--pixel-density, 1)));
     line-height: 1.6;
     color: var(--text-tertiary);
@@ -3097,7 +3101,7 @@ kbd + kbd {
 }
 
 .settings-item-label {
-    font-family: 'IBM Plex Sans', sans-serif;
+    font-family: 'Inter', sans-serif;
     font-size: 14px;
     color: var(--text-primary);
     margin-bottom: 8px;
@@ -3106,7 +3110,7 @@ kbd + kbd {
 }
 
 .settings-item-description {
-    font-family: 'IBM Plex Sans', sans-serif;
+    font-family: 'Inter', sans-serif;
     font-size: 12px;
     color: var(--text-secondary);
     margin-top: 4px;
@@ -3126,7 +3130,7 @@ kbd + kbd {
     padding: 10px 12px;
     border-radius: 4px;
     cursor: pointer;
-    font-family: 'IBM Plex Sans', sans-serif;
+    font-family: 'Inter', sans-serif;
     font-size: 13px;
     color: var(--text-secondary);
     transition: all 0.2s ease;
@@ -3400,7 +3404,7 @@ kbd + kbd {
 .info-popup-content {
     padding: 20px;
     overflow-y: auto;
-    font-family: 'IBM Plex Sans', sans-serif;
+    font-family: 'Inter', sans-serif;
     font-size: 13px;
     line-height: 1.6;
     color: var(--text-tertiary);
@@ -3484,7 +3488,7 @@ kbd + kbd {
     padding: 16px;
     background-color: var(--input-bg);
     border-top: 1px solid var(--border-tertiary);
-    font-family: 'IBM Plex Sans', sans-serif;
+    font-family: 'Inter', sans-serif;
     font-size: calc(var(--size, 1) * (12px / var(--pixel-density, 1)));
     line-height: 1.6;
     color: var(--text-tertiary);

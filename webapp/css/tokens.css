@@ -4,7 +4,7 @@
 /* Global tokens (theme-independent) */
 :root {
     --font-families-mono: 'IBM Plex Mono';
-    --font-families-sans: 'IBM Plex Sans';
+    --font-families-sans: 'Inter';
 }
 
 /* Dark theme (default) */
