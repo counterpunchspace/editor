@@ -214,7 +214,7 @@ export class Glyph extends BabelfontGlyph {
      *     print(layer.width)
      */
     getLayerById(id: string): Layer | undefined {
-        return this.layers?.find((l) => l.id === id) as Layer | undefined;
+        return this.getLayer(id) as Layer | undefined;
     }
 
     /**
@@ -989,51 +989,14 @@ export class Path extends BabelfontPath {
      * @example
      * nodes_str = Path.nodesToString(path.nodes)
      */
-    static nodesToString(nodes: INode[]): string {
-        const tokens: string[] = [];
-
-        for (const node of nodes) {
-            // Ensure we have valid numbers
-            const x =
-                typeof node.x === 'number'
-                    ? node.x
-                    : parseFloat(String(node.x));
-            const y =
-                typeof node.y === 'number'
-                    ? node.y
-                    : parseFloat(String(node.y));
-
-            if (isNaN(x) || isNaN(y)) {
-                console.error('[Path]', 'Invalid node coordinates:', node);
-                continue;
-            }
-
-            tokens.push(x.toString());
-            tokens.push(y.toString());
-
-            // Get node type - check both 'nodetype' (object model) and 'type' (normalizer)
-            const nodeType = (node as any).nodetype || (node as any).type;
-
-            // Map nodetype back to short form
-            const typeMap: Record<string, string> = {
-                Move: 'm',
-                Line: 'l',
-                OffCurve: 'o',
-                Curve: 'c',
-                QCurve: 'q',
-                // Also handle short forms directly (from normalizer)
-                m: 'm',
-                l: 'l',
-                o: 'o',
-                c: 'c',
-                q: 'q'
-            };
-
-            const typeChar = typeMap[nodeType] || 'l';
-            tokens.push(typeChar);
-        }
-
-        return tokens.join(' ');
+    static nodesToString(nodes: any[]): string {
+        // Use babelfont-ts Path.toJSON() method
+        // We need to create a Path instance with the nodes, but IPath expects nodes as string
+        // So we bypass the constructor and set properties directly
+        const tempPath = Object.create(Path.prototype);
+        tempPath.nodes = nodes;
+        tempPath.closed = false;
+        return tempPath.toJSON().nodes;
     }
 
     /**

@@ -242,6 +242,32 @@ Create and add an anchor
 anchor = layer.createAnchor("top", 250, 700)
 ```
 
+#### `processPathSegments(pathData: { nodes: any[]; closed?: boolean; }) -> Array<{ points: Array<{ x: number; y: number }>; type: 'line' | 'quadratic' | 'cubic'; }>`
+Process a path into Bezier curve segments
+Handles the babelfont node format where:
+- Nodes can have 'type' (lowercase: o, c, l, q, etc.) or 'nodetype' (capitalized: OffCurve, Curve, Line, etc.)
+- Segments are sequences: [oncurve] [offcurve*] [oncurve]
+- For closed paths, the path can start with offcurve nodes
+
+#### `flattenComponents(layer: [Layer](#layer), font: [Font](#font) | None = None) -> list[PathData]`
+Flatten all components in the layer to paths with their transforms applied
+This recursively processes nested components to any depth
+
+#### `getDirectPaths() -> list[PathData]`
+Get only direct paths in this layer (no components)
+
+#### `getAllPaths() -> list[PathData]`
+Get all paths in this layer including transformed paths from components (recursively flattened)
+
+#### `calculateBoundingBox(layer: [Layer](#layer), includeAnchors: bool, font: [Font](#font) | None = None) -> { minX: number; minY: number; maxX: number; maxY: number; width: number; height: number; } | None`
+Calculate bounding box for layer
+
+#### `getBoundingBox(includeAnchors: bool) -> { minX: number; minY: number; maxX: number; maxY: number; width: number; height: number; } | None`
+Calculate bounding box for this layer
+
+#### `getIntersectionsOnLine(p1: { x: number; y: number }, p2: { x: number; y: number }, includeComponents: bool) -> Array<{ x: number; y: number; t: number }>`
+Calculate intersections between a line segment and all paths in this layer
+
 #### `markDirty() -> None`
 ---
 
@@ -257,7 +283,7 @@ if shape.isPath():
 
 ### Methods
 
-#### `nodesToString(nodes: list[INode]) -> str`
+#### `nodesToString(nodes: list[Any]) -> str`
 Convert nodes array to compact string format
 
 **Example:**
