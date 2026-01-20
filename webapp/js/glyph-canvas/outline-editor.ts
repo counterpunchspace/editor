@@ -12,7 +12,7 @@ import type {
 } from '../babelfont-types';
 import { Transform } from '../basictypes';
 import { Logger } from '../logger';
-import { Layer } from '../babelfont-model';
+import { Layer } from '../babelfont-extended';
 import APP_SETTINGS from '../settings';
 
 let console: Logger = new Logger('OutlineEditor', true);
@@ -2973,9 +2973,26 @@ export class OutlineEditor {
             this.isEditingComponent()
         );
 
-        // Use the Layer.calculateBoundingBox static method with includeAnchors=true
-        // to match the old behavior of including anchors
-        const bbox = Layer.calculateBoundingBox(currentLayerData, true);
+        // Find the layer instance from currentFontModel
+        const glyphName = this.currentGlyphName;
+        const layerId = this.selectedLayerId;
+
+        let layerInstance: Layer | null = null;
+        if (glyphName && layerId) {
+            const glyph = (window as any).currentFontModel?.findGlyph(
+                glyphName
+            );
+            if (glyph && glyph.layers) {
+                layerInstance =
+                    glyph.layers.find((l: Layer) => l.id === layerId) || null;
+            }
+        }
+
+        let bbox = null;
+        if (layerInstance) {
+            // Use instance method
+            bbox = layerInstance.getBoundingBox(true);
+        }
 
         if (bbox) {
             console.log(

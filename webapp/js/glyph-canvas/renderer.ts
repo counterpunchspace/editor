@@ -1,6 +1,6 @@
 import { adjustColorHueAndLightness, desaturateColor } from '../design';
 import APP_SETTINGS from '../settings';
-import { Layer } from '../babelfont-model';
+import { Layer } from '../babelfont-extended';
 
 import type { ViewportManager } from './viewport';
 import type { TextRunEditor } from './textrun';
@@ -2169,8 +2169,7 @@ export class GlyphCanvasRenderer {
         // via fontManager.fetchLayerData() - this is already at the correct nesting level
         const layerData = this.glyphCanvas.outlineEditor.layerData;
 
-        // Create a temporary Layer wrapper to use getIntersectionsOnLine()
-        // Get the current glyph wrapper from the font model to enable component lookups
+        // Get the current layer wrapper from the font model
         const glyphName = this.glyphCanvas.outlineEditor.currentGlyphName;
         const glyphWrapper = glyphName
             ? (window as any).currentFontModel.findGlyph(glyphName)
@@ -2190,9 +2189,10 @@ export class GlyphCanvasRenderer {
             }
         }
 
-        // Fallback: create temporary wrapper if we couldn't find the layer
-        const tempLayer =
-            layerWrapper || new Layer([layerData], 0, glyphWrapper);
+        // If we can't find the layer wrapper, we can't calculate intersections
+        if (!layerWrapper) {
+            return;
+        }
 
         // Define line endpoints in component-local space
         let horizontalIntersections: Array<{
@@ -2238,7 +2238,7 @@ export class GlyphCanvasRenderer {
             }
 
             // Get intersections along the user-defined line
-            const lineIntersections = tempLayer.getIntersectionsOnLine(
+            const lineIntersections = layerWrapper.getIntersectionsOnLine(
                 { x: originLocalX, y: originLocalY },
                 { x: currentLocalX, y: currentLocalY },
                 true // include nested components
@@ -2254,7 +2254,7 @@ export class GlyphCanvasRenderer {
             // Get intersections along horizontal line at crosshair Y (in component-local coords)
             const horizontalP1 = { x: -largeDistance, y: localY };
             const horizontalP2 = { x: largeDistance, y: localY };
-            horizontalIntersections = tempLayer.getIntersectionsOnLine(
+            horizontalIntersections = layerWrapper.getIntersectionsOnLine(
                 horizontalP1,
                 horizontalP2,
                 true // include nested components
@@ -2263,7 +2263,7 @@ export class GlyphCanvasRenderer {
             // Get intersections along vertical line at crosshair X (in component-local coords)
             const verticalP1 = { x: localX, y: -largeDistance };
             const verticalP2 = { x: localX, y: largeDistance };
-            verticalIntersections = tempLayer.getIntersectionsOnLine(
+            verticalIntersections = layerWrapper.getIntersectionsOnLine(
                 verticalP1,
                 verticalP2,
                 true // include nested components

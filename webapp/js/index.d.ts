@@ -128,7 +128,7 @@ declare global {
         // From font-dropdown.js
         fontDropdownManager: FontDropdownManager;
 
-        // From babelfont-model.js (wrapper for Python) and babelfont-extended.js (primary model)
+        // From babelfont-extended.js (primary model with geometry methods)
         currentFontModel: Font | null;
 
         // From font-interpolation.js

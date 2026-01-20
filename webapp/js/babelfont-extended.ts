@@ -49,6 +49,20 @@ import type {
 } from 'babelfont-ts';
 
 import type { ClassRegistry } from 'babelfont-ts';
+import { Bezier } from 'bezier-js';
+import { LayerDataNormalizer } from './layer-data-normalizer';
+
+// Type for simple path data (used internally for geometry calculations)
+type PathData = {
+    nodes: Array<{
+        x: number;
+        y: number;
+        nodetype?: string;
+        type?: string;
+        smooth?: boolean;
+    }>;
+    closed?: boolean;
+};
 
 // ============================================================================
 // Font Class
@@ -408,6 +422,550 @@ export class Layer extends BabelfontLayer {
         this.anchors.push(anchor as any);
         this.markDirty();
         return anchor;
+    }
+
+    /**
+     * Process a path into Bezier curve segments
+     * Handles the babelfont node format where:
+     * - Nodes can have 'type' (lowercase: o, c, l, q, etc.) or 'nodetype' (capitalized: OffCurve, Curve, Line, etc.)
+     * - Segments are sequences: [oncurve] [offcurve*] [oncurve]
+     * - For closed paths, the path can start with offcurve nodes
+     *
+     * @param pathData - Path data with nodes array and closed flag
+     * @returns Array of Bezier curve segments, each with {points, type}
+     */
+    static processPathSegments(pathData: {
+        nodes: any[];
+        closed?: boolean;
+    }): Array<{
+        points: Array<{ x: number; y: number }>;
+        type: 'line' | 'quadratic' | 'cubic';
+    }> {
+        const segments: Array<{
+            points: Array<{ x: number; y: number }>;
+            type: 'line' | 'quadratic' | 'cubic';
+        }> = [];
+
+        if (!pathData.nodes || pathData.nodes.length < 2) {
+            return segments;
+        }
+
+        const nodes = pathData.nodes;
+        const closed = pathData.closed !== false; // Default to true
+
+        // Helper to get node type (handles both 'type' and 'nodetype' fields)
+        const getNodeType = (node: any): string => {
+            return (node.type || node.nodetype || '').toString().toLowerCase();
+        };
+
+        // Helper to check if node is offcurve
+        const isOffCurve = (node: any): boolean => {
+            const type = getNodeType(node);
+            return type === 'o' || type === 'offcurve';
+        };
+
+        // Helper to check if node is oncurve
+        const isOnCurve = (node: any): boolean => {
+            return !isOffCurve(node);
+        };
+
+        // Find the first oncurve node to start from
+        let startIdx = 0;
+        if (closed) {
+            // For closed paths, find first oncurve node
+            for (let i = 0; i < nodes.length; i++) {
+                if (isOnCurve(nodes[i])) {
+                    startIdx = i;
+                    break;
+                }
+            }
+        }
+
+        // Process segments
+        let i = startIdx;
+        let processedCount = 0;
+        const maxNodes = closed ? nodes.length : nodes.length - 1;
+
+        while (processedCount < maxNodes) {
+            const currentIdx = i % nodes.length;
+            const current = nodes[currentIdx];
+
+            if (!isOnCurve(current)) {
+                // Skip if we somehow landed on an offcurve (shouldn't happen after finding start)
+                i++;
+                processedCount++;
+                continue;
+            }
+
+            // Collect points for this segment: [oncurve] [offcurve*] [oncurve]
+            const points: Array<{ x: number; y: number }> = [
+                { x: current.x, y: current.y }
+            ];
+
+            // Collect all following offcurve nodes
+            let j = (currentIdx + 1) % nodes.length;
+            let offcurveCount = 0;
+            while (offcurveCount < nodes.length) {
+                // Safety limit
+                if (j >= nodes.length && !closed) break;
+
+                const node = nodes[j % nodes.length];
+                if (isOffCurve(node)) {
+                    points.push({ x: node.x, y: node.y });
+                    j++;
+                    offcurveCount++;
+                } else {
+                    // Found next oncurve node
+                    points.push({ x: node.x, y: node.y });
+                    break;
+                }
+            }
+
+            // Determine segment type based on number of points
+            if (points.length === 2) {
+                // Line segment: [oncurve] [oncurve]
+                segments.push({ points, type: 'line' });
+                i++;
+                processedCount++;
+            } else if (points.length === 3) {
+                // Quadratic Bezier: [oncurve] [offcurve] [oncurve]
+                segments.push({ points, type: 'quadratic' });
+                i += 1 + offcurveCount;
+                processedCount += 1 + offcurveCount;
+            } else if (points.length === 4) {
+                // Cubic Bezier: [oncurve] [offcurve] [offcurve] [oncurve]
+                segments.push({ points, type: 'cubic' });
+                i += 1 + offcurveCount;
+                processedCount += 1 + offcurveCount;
+            } else if (points.length > 4) {
+                // Too many control points - skip this malformed segment
+                i += 1 + offcurveCount;
+                processedCount += 1 + offcurveCount;
+            } else {
+                // Not enough points (shouldn't happen)
+                i++;
+                processedCount++;
+            }
+
+            // Safety check to prevent infinite loops
+            if (processedCount > nodes.length * 2) {
+                break;
+            }
+        }
+
+        return segments;
+    }
+
+    /**
+     * Flatten all components in the layer to paths with their transforms applied
+     * This recursively processes nested components to any depth
+     * @param layer - Layer instance
+     * @param font - Font object for looking up component references
+     * @returns Array of flattened path data objects with transformed coordinates
+     */
+    private static flattenComponents(layer: Layer, font?: Font): PathData[] {
+        const flattenedPaths: PathData[] = [];
+
+        if (!layer.shapes) return flattenedPaths;
+
+        // Helper function to apply transform to a node
+        const transformNode = (node: any, transform: number[]): any => {
+            const [a, b, c, d, tx, ty] = transform;
+            const result: any = {
+                x: a * node.x + c * node.y + tx,
+                y: b * node.x + d * node.y + ty
+            };
+            // Preserve node type field (either 'type' or 'nodetype')
+            if (node.type !== undefined) result.type = node.type;
+            if (node.nodetype !== undefined) result.nodetype = node.nodetype;
+            if (node.smooth !== undefined) result.smooth = node.smooth;
+            return result;
+        };
+
+        // Helper function to combine two transform matrices
+        const combineTransforms = (t1: number[], t2: number[]): number[] => {
+            const [a1, b1, c1, d1, tx1, ty1] = t1;
+            const [a2, b2, c2, d2, tx2, ty2] = t2;
+            return [
+                a1 * a2 + c1 * b2,
+                b1 * a2 + d1 * b2,
+                a1 * c2 + c1 * d2,
+                b1 * c2 + d1 * d2,
+                a1 * tx2 + c1 * ty2 + tx1,
+                b1 * tx2 + d1 * ty2 + ty1
+            ];
+        };
+
+        // Process shapes
+        const processShape = (
+            shape: Path | Component,
+            transform: number[] = [1, 0, 0, 1, 0, 0]
+        ) => {
+            if (shape instanceof BabelfontPath) {
+                // Direct path - transform its nodes
+                const transformedNodes = shape.nodes.map((node: any) =>
+                    transformNode(node, transform)
+                );
+                flattenedPaths.push({
+                    nodes: transformedNodes,
+                    closed: shape.closed ?? true
+                });
+            } else if (shape instanceof BabelfontComponent) {
+                // Component - recursively process its shapes with accumulated transform
+                const compTransform = shape.transform?.toAffine() || [
+                    1, 0, 0, 1, 0, 0
+                ];
+                const combinedTransform = combineTransforms(
+                    transform,
+                    compTransform
+                );
+
+                // Look up the component glyph
+                if (font) {
+                    const componentGlyph = font.findGlyph(shape.reference);
+                    if (
+                        componentGlyph &&
+                        componentGlyph.layers &&
+                        componentGlyph.layers.length > 0
+                    ) {
+                        // Use the first layer (or find matching master)
+                        const componentLayer = componentGlyph.layers[0];
+                        if (componentLayer.shapes) {
+                            for (const nestedShape of componentLayer.shapes) {
+                                processShape(
+                                    nestedShape as Path | Component,
+                                    combinedTransform
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        };
+
+        for (const shape of layer.shapes) {
+            processShape(shape as Path | Component);
+        }
+
+        return flattenedPaths;
+    }
+
+    /**
+     * Get only direct paths in this layer (no components)
+     * @returns Array of path data objects from shapes that are paths
+     */
+    private getDirectPaths(): PathData[] {
+        const paths: PathData[] = [];
+
+        if (!this.shapes) return paths;
+
+        for (const shape of this.shapes) {
+            if (shape instanceof BabelfontPath) {
+                paths.push({
+                    nodes: shape.nodes.map((n: any) => ({ ...n.toJSON() })),
+                    closed: shape.closed ?? true
+                });
+            }
+        }
+
+        return paths;
+    }
+
+    /**
+     * Get all paths in this layer including transformed paths from components (recursively flattened)
+     * @returns Array of path data objects with all components resolved to transformed paths
+     */
+    getAllPaths(): PathData[] {
+        // Navigate up to Font to enable component lookup
+        const glyph = this.parent as Glyph;
+        const font = glyph ? (glyph.parent as Font) : undefined;
+
+        return Layer.flattenComponents(this, font);
+    }
+
+    /**
+     * Calculate bounding box for layer
+     * @param layer - Layer instance
+     * @param includeAnchors - If true, include anchors in the bounding box calculation (default: false)
+     * @param font - Font object for component lookup (optional)
+     * @returns Bounding box {minX, minY, maxX, maxY, width, height} or null if no geometry
+     */
+    static calculateBoundingBox(
+        layer: Layer,
+        includeAnchors: boolean = false,
+        font?: Font
+    ): {
+        minX: number;
+        minY: number;
+        maxX: number;
+        maxY: number;
+        width: number;
+        height: number;
+    } | null {
+        let minX = Infinity;
+        let minY = Infinity;
+        let maxX = -Infinity;
+        let maxY = -Infinity;
+        let hasPoints = false;
+
+        // Helper function to expand bounding box with a point
+        const expandBounds = (x: number, y: number) => {
+            minX = Math.min(minX, x);
+            minY = Math.min(minY, y);
+            maxX = Math.max(maxX, x);
+            maxY = Math.max(maxY, y);
+            hasPoints = true;
+        };
+
+        // Get all paths (flattened including components)
+        const paths = Layer.flattenComponents(layer, font);
+
+        // Process all paths
+        for (const path of paths) {
+            if (path.nodes && Array.isArray(path.nodes)) {
+                for (const node of path.nodes) {
+                    expandBounds(node.x, node.y);
+                }
+            }
+        }
+
+        // Include anchors in bounding box if requested
+        if (includeAnchors && layer.anchors) {
+            for (const anchor of layer.anchors) {
+                expandBounds((anchor as any).x, (anchor as any).y);
+            }
+        }
+
+        if (!hasPoints) {
+            // No points found (e.g., space character) - use glyph width from layer
+            const glyphWidth = layer.width || 250; // Fallback to 250 if no width
+            const height = 10;
+
+            return {
+                minX: 0,
+                minY: -height / 2,
+                maxX: glyphWidth,
+                maxY: height / 2,
+                width: glyphWidth,
+                height: height
+            };
+        }
+
+        return {
+            minX,
+            minY,
+            maxX,
+            maxY,
+            width: maxX - minX,
+            height: maxY - minY
+        };
+    }
+
+    /**
+     * Calculate bounding box for this layer
+     * @param includeAnchors - If true, include anchors in the bounding box calculation (default: false)
+     * @returns Bounding box {minX, minY, maxX, maxY, width, height} or null if no geometry
+     */
+    getBoundingBox(includeAnchors: boolean = false): {
+        minX: number;
+        minY: number;
+        maxX: number;
+        maxY: number;
+        width: number;
+        height: number;
+    } | null {
+        // Navigate up to Font to enable component lookup
+        const glyph = this.parent as Glyph;
+        const font = glyph ? (glyph.parent as Font) : undefined;
+
+        return Layer.calculateBoundingBox(this, includeAnchors, font);
+    }
+
+    /**
+     * Calculate intersections between a line segment and all paths in this layer
+     * @param p1 - First point {x, y} of the line segment
+     * @param p2 - Second point {x, y} of the line segment
+     * @param includeComponents - If true, include component paths (default: false)
+     * @returns Array of intersection points sorted by distance from p1, each with {x, y, t} where t is the parameter along the line (0 at p1, 1 at p2)
+     */
+    getIntersectionsOnLine(
+        p1: { x: number; y: number },
+        p2: { x: number; y: number },
+        includeComponents: boolean = false
+    ): Array<{ x: number; y: number; t: number }> {
+        const intersections: Array<{ x: number; y: number; t: number }> = [];
+
+        // Get all paths including components if requested
+        const paths = includeComponents
+            ? this.getAllPaths()
+            : this.getDirectPaths();
+
+        // Create a line object for intersections
+        const line = {
+            p1: { x: p1.x, y: p1.y },
+            p2: { x: p2.x, y: p2.y }
+        };
+
+        // Process each path
+        for (const path of paths) {
+            if (!path.nodes || !Array.isArray(path.nodes)) continue;
+
+            // Use the reusable segment processor
+            const segments = Layer.processPathSegments({
+                nodes: path.nodes,
+                closed: path.closed
+            });
+
+            // Process each segment
+            for (const segment of segments) {
+                // Validate segment points before creating Bezier
+                if (
+                    !segment ||
+                    !segment.points ||
+                    !Array.isArray(segment.points) ||
+                    segment.points.length < 2
+                ) {
+                    continue;
+                }
+
+                // Check all points are valid
+                let allPointsValid = true;
+                for (const pt of segment.points) {
+                    if (
+                        !pt ||
+                        typeof pt.x !== 'number' ||
+                        typeof pt.y !== 'number'
+                    ) {
+                        allPointsValid = false;
+                        break;
+                    }
+                }
+
+                if (!allPointsValid) {
+                    continue;
+                }
+
+                try {
+                    // Handle line-line intersection manually (bezier-js doesn't detect these reliably)
+                    if (
+                        segment.type === 'line' &&
+                        segment.points.length === 2
+                    ) {
+                        const s1 = segment.points[0];
+                        const s2 = segment.points[1];
+
+                        // Line-line intersection formula
+                        // Line 1 (segment): s1 to s2
+                        // Line 2 (test line): p1 to p2
+                        const denom =
+                            (p2.y - p1.y) * (s2.x - s1.x) -
+                            (p2.x - p1.x) * (s2.y - s1.y);
+
+                        // Check if lines are parallel (or coincident)
+                        if (Math.abs(denom) > 1e-10) {
+                            const ua =
+                                ((p2.x - p1.x) * (s1.y - p1.y) -
+                                    (p2.y - p1.y) * (s1.x - p1.x)) /
+                                denom;
+                            const ub =
+                                ((s2.x - s1.x) * (s1.y - p1.y) -
+                                    (s2.y - s1.y) * (s1.x - p1.x)) /
+                                denom;
+
+                            // Check if intersection is within both line segments (0 <= t <= 1)
+                            if (ua >= 0 && ua <= 1 && ub >= 0 && ub <= 1) {
+                                const point = {
+                                    x: s1.x + ua * (s2.x - s1.x),
+                                    y: s1.y + ua * (s2.y - s1.y)
+                                };
+
+                                intersections.push({
+                                    x: point.x,
+                                    y: point.y,
+                                    t: ub // t on the test line
+                                });
+                            }
+                        }
+
+                        // Skip bezier-js for line segments
+                        continue;
+                    }
+
+                    // Create Bezier curve from segment points
+                    const curve = new Bezier(segment.points);
+
+                    // Find intersections between this curve segment and the line
+                    const curveIntersections = curve.intersects(line as any);
+
+                    if (Array.isArray(curveIntersections)) {
+                        for (const result of curveIntersections) {
+                            let point: { x: number; y: number };
+                            let tOnLine: number;
+
+                            if (typeof result === 'string') {
+                                // Format: "t1/t2" where t1 is t on curve, t2 is t on line
+                                const parts = result.split('/');
+                                tOnLine = parseFloat(parts[1]);
+                                point = {
+                                    x: p1.x + tOnLine * (p2.x - p1.x),
+                                    y: p1.y + tOnLine * (p2.y - p1.y)
+                                };
+                            } else {
+                                // Single number
+                                // For line-line intersections, this is t on the line being tested
+                                // For curve-line intersections, this is t on the curve
+                                if (segment.type === 'line') {
+                                    // Line-line intersection: result is t on the line being tested
+                                    tOnLine = result;
+                                    point = {
+                                        x: p1.x + tOnLine * (p2.x - p1.x),
+                                        y: p1.y + tOnLine * (p2.y - p1.y)
+                                    };
+                                } else {
+                                    // Curve-line intersection: result is t on the curve
+                                    // Get the point on the curve at this t value
+                                    const curvePoint = curve.get(result);
+                                    point = {
+                                        x: curvePoint.x,
+                                        y: curvePoint.y
+                                    };
+
+                                    // Calculate t on the line
+                                    // For horizontal line: t = (x - x1) / (x2 - x1)
+                                    // For vertical line: t = (y - y1) / (y2 - y1)
+                                    if (
+                                        Math.abs(p2.x - p1.x) >
+                                        Math.abs(p2.y - p1.y)
+                                    ) {
+                                        // More horizontal than vertical
+                                        tOnLine =
+                                            (point.x - p1.x) / (p2.x - p1.x);
+                                    } else {
+                                        // More vertical than horizontal
+                                        tOnLine =
+                                            (point.y - p1.y) / (p2.y - p1.y);
+                                    }
+                                }
+                            }
+
+                            intersections.push({
+                                x: point.x,
+                                y: point.y,
+                                t: tOnLine
+                            });
+                        }
+                    }
+                } catch (e) {
+                    // Skip segments that cause errors
+                    continue;
+                }
+            }
+        }
+
+        // Sort intersections by t parameter (distance along line from p1)
+        intersections.sort((a, b) => a.t - b.t);
+
+        return intersections;
     }
 
     private markDirty(): void {
