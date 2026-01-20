@@ -84,6 +84,39 @@
                 installedPackages.add(pkg);
                 console.log('[LazyLoader]', `✅ ${pkg} installed successfully`);
             }
+
+            // Apply matplotlib patch if matplotlib was installed
+            if (packages.includes('matplotlib')) {
+                console.log(
+                    '[LazyLoader]',
+                    '🎨 Matplotlib detected, applying auto-cleanup patch...'
+                );
+                try {
+                    const patchResponse = await fetch(
+                        './py/matplotlib_patch.py'
+                    );
+                    const patchCode = await patchResponse.text();
+                    await window.pyodide._originalRunPythonAsync(patchCode);
+                    console.log(
+                        '[LazyLoader]',
+                        '✅ Applied matplotlib auto-cleanup patch'
+                    );
+                    // Also print to Python console so it's visible
+                    await window.pyodide._originalRunPythonAsync(
+                        `print("[LazyLoader] ✅ Matplotlib auto-cleanup patch applied")`
+                    );
+                } catch (error) {
+                    console.error(
+                        '[LazyLoader]',
+                        '❌ Failed to apply matplotlib patch:',
+                        error
+                    );
+                    // Print error to Python console
+                    await window.pyodide._originalRunPythonAsync(
+                        `print("[LazyLoader] ❌ Failed to apply matplotlib patch: ${error.message}")`
+                    );
+                }
+            }
         } catch (error) {
             console.error(
                 '[LazyLoader]',
@@ -119,9 +152,20 @@
 
         // Install our hook
         window.beforePythonExecution = async function (code) {
+            const hookStartTime = performance.now();
+
             // Call existing hook first
             if (typeof existingBeforeHook === 'function') {
+                const existingHookStart = performance.now();
                 await existingBeforeHook(code);
+                const existingHookDuration =
+                    performance.now() - existingHookStart;
+                if (existingHookDuration > 10) {
+                    console.log(
+                        '[LazyLoader]',
+                        `⏱️ Existing hook took ${existingHookDuration.toFixed(1)}ms`
+                    );
+                }
             }
 
             // Only check if we have code to analyze
@@ -130,9 +174,31 @@
             }
 
             // Detect and install required packages
+            const detectionStart = performance.now();
             const required = detectRequiredPackages(code);
+            const detectionDuration = performance.now() - detectionStart;
+
+            console.log(
+                '[LazyLoader]',
+                `📦 Package detection: ${detectionDuration.toFixed(1)}ms, found: [${required.join(', ') || 'none'}], installed: [${[...installedPackages].join(', ') || 'none'}]`
+            );
+
             if (required.length > 0) {
+                const installStart = performance.now();
                 await installPackages(required);
+                const installDuration = performance.now() - installStart;
+                console.log(
+                    '[LazyLoader]',
+                    `⏱️ Package installation took ${installDuration.toFixed(1)}ms`
+                );
+            }
+
+            const totalDuration = performance.now() - hookStartTime;
+            if (totalDuration > 10) {
+                console.log(
+                    '[LazyLoader]',
+                    `⏱️ Total beforePythonExecution hook: ${totalDuration.toFixed(1)}ms`
+                );
             }
         };
 

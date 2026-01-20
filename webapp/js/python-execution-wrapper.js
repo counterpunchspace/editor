@@ -37,23 +37,37 @@
         window.pyodide.runPythonAsync = async function (code, options) {
             executionCounter++;
             const execId = executionCounter;
+            const totalStartTime = performance.now();
 
             // Call before-execution hook
             if (window.beforePythonExecution) {
+                const hookStartTime = performance.now();
                 await window.beforePythonExecution(code);
+                const hookDuration = performance.now() - hookStartTime;
+                if (hookDuration > 10) {
+                    console.log(
+                        '[PythonExec]',
+                        `⏱️ beforePythonExecution hook #${execId} took ${hookDuration.toFixed(1)}ms`
+                    );
+                }
             }
 
             // Log to browser console only (NOT terminal to avoid infinite loop)
             console.group(`🐍 Python Execution (Async) #${execId}`);
-            console.log('[PythonExec]', code);
+            console.log(
+                '[PythonExec]',
+                code.substring(0, 200) + (code.length > 200 ? '...' : '')
+            );
             console.groupEnd();
 
             // Execute the original function
             try {
+                const execStartTime = performance.now();
                 const result = await _originalRunPythonAsync(code, options);
+                const execDuration = performance.now() - execStartTime;
                 console.log(
                     '[PythonExec]',
-                    `✅ Execution #${execId} completed successfully`
+                    `✅ Execution #${execId} completed in ${execDuration.toFixed(1)}ms`
                 );
                 return result;
             } catch (error) {
@@ -66,25 +80,23 @@
             } finally {
                 // Call after-execution hook (always, even on error)
                 if (window.afterPythonExecution) {
-                    console.log(
-                        '[PythonExec]',
-                        `🪝 Calling afterPythonExecution hook for async #${execId}`
-                    );
-                    console.log(
-                        '[PythonExec]',
-                        `   Hook type: ${typeof window.afterPythonExecution}, toString: ${window.afterPythonExecution.toString().substring(0, 100)}`
-                    );
+                    const afterHookStart = performance.now();
                     window.afterPythonExecution();
-                    console.log(
-                        '[PythonExec]',
-                        `   ✅ Hook completed for async #${execId}`
-                    );
-                } else {
-                    console.warn(
-                        '[PythonExec]',
-                        `⚠️ No afterPythonExecution hook registered for async #${execId}`
-                    );
+                    const afterHookDuration =
+                        performance.now() - afterHookStart;
+                    if (afterHookDuration > 10) {
+                        console.log(
+                            '[PythonExec]',
+                            `⏱️ afterPythonExecution hook #${execId} took ${afterHookDuration.toFixed(1)}ms`
+                        );
+                    }
                 }
+
+                const totalDuration = performance.now() - totalStartTime;
+                console.log(
+                    '[PythonExec]',
+                    `⏱️ TOTAL time for execution #${execId}: ${totalDuration.toFixed(1)}ms`
+                );
             }
         };
 
