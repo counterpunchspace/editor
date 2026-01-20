@@ -1359,10 +1359,7 @@ class AIAssistant {
             // This is normal during startup or when terminal hasn't loaded yet
             try {
                 await window.pyodide.runPythonAsync(code);
-                console.log(
-                    '[AIAssistant]',
-                    '✅ Code executed successfully'
-                );
+                console.log('[AIAssistant]', '✅ Code executed successfully');
 
                 // Play done sound
                 if (window.playSound) {
