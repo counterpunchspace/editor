@@ -4,7 +4,7 @@
  * API Documentation Generator - JavaScript Introspection
  *
  * Generates API documentation for the Font Object Model by introspecting
- * the TypeScript babelfont-model.ts file directly. Produces Python-oriented
+ * the TypeScript babelfont-extended.ts file directly. Produces Python-oriented
  * documentation since Python is the primary scripting interface.
  *
  * Usage:
@@ -19,6 +19,9 @@ import ts from "typescript";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
+// Source file to parse
+const SOURCE_FILE = join(__dirname, "webapp/js/babelfont-extended.ts");
+
 /**
  * Parse TypeScript file and extract class information
  */
@@ -28,7 +31,7 @@ function parseTypeScriptFile(filePath) {
     filePath,
     sourceCode,
     ts.ScriptTarget.Latest,
-    true
+    true,
   );
 
   const classes = [];
@@ -39,7 +42,7 @@ function parseTypeScriptFile(filePath) {
 
       // Only process exported classes
       const isExported = node.modifiers?.some(
-        (m) => m.kind === ts.SyntaxKind.ExportKeyword
+        (m) => m.kind === ts.SyntaxKind.ExportKeyword,
       );
       if (!isExported) {
         ts.forEachChild(node, visit);
@@ -116,7 +119,7 @@ function extractProperty(node, sourceFile) {
   if (!name || name.startsWith("_")) return null; // Skip private properties
 
   const isReadOnly = node.modifiers?.some(
-    (m) => m.kind === ts.SyntaxKind.ReadonlyKeyword
+    (m) => m.kind === ts.SyntaxKind.ReadonlyKeyword,
   );
 
   // Check if there's a corresponding setter
@@ -125,7 +128,7 @@ function extractProperty(node, sourceFile) {
   let hasSetter = false;
   if (hasGetter && parent && ts.isClassDeclaration(parent)) {
     hasSetter = parent.members.some(
-      (m) => ts.isSetAccessor(m) && m.name?.getText(sourceFile) === name
+      (m) => ts.isSetAccessor(m) && m.name?.getText(sourceFile) === name,
     );
   }
 
@@ -356,9 +359,9 @@ function generateClassDocs(classInfo) {
  * Generate the complete API documentation
  */
 function generateAPIDocs(version = null) {
-  console.log("📄 Parsing babelfont-model.ts...");
+  console.log("📄 Parsing babelfont-extended.ts...");
 
-  const modelPath = join(__dirname, "webapp", "js", "babelfont-model.ts");
+  const modelPath = SOURCE_FILE;
   const classes = parseTypeScriptFile(modelPath);
 
   console.log(`✅ Found ${classes.length} exported classes`);

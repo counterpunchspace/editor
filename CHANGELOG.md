@@ -1,5 +1,6 @@
 # Unreleased
 
+- **Babelfont-ts Migration**: Migrated from custom babelfont.d.ts type definitions to babelfont-ts from babelfont-rs repository. Deleted old babelfont.d.ts and babelfont-extensions.d.ts files. Created babelfont-types.ts compatibility layer with interface-based types for duck-typing, babelfont-extended.ts with convenience methods (findGlyph, findGlyphByUnicode, getAxis, lsb/rsb setters), and coordinate conversion helpers for @simoncozens/fonttypes branded types.
 - **AI Chat Persistence**: Last active chat ID now stored in localStorage and loaded on startup instead of chronologically last chat. Provides continuity when returning to the editor.
 - **Extended Python packages**: Lazy-load `numpy`, `matplotlib`, `pandas` only when they're needed to speed up editor startup. Also fixed a memory leak after `matplotlib` usage that speeds up consecutive `matplotlib` runs.
 

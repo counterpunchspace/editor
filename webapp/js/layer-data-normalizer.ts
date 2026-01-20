@@ -16,7 +16,7 @@
 import { GlyphCanvas } from './glyph-canvas';
 import { OutlineEditor } from './glyph-canvas/outline-editor';
 import { DesignspaceLocation } from './locations';
-import type { Babelfont } from './babelfont';
+import type { Node, NodeType, Shape } from './babelfont-types';
 
 /**
  * Layer Data Normalizer
@@ -120,7 +120,7 @@ export class LayerDataNormalizer {
      * @param {string|Array} nodes - Nodes as string or already-parsed array
      * @returns {Array} Array of [x, y, type] triplets
      */
-    static parseNodes(nodes: string | any[]): Babelfont.Node[] {
+    static parseNodes(nodes: string | any[]): Node[] {
         // If already an array, return as-is
         if (Array.isArray(nodes)) {
             return nodes;
@@ -132,13 +132,13 @@ export class LayerDataNormalizer {
             if (!nodesStr) return [];
 
             const tokens = nodesStr.split(/\s+/);
-            const nodesArray: Babelfont.Node[] = [];
+            const nodesArray: Node[] = [];
 
             for (let i = 0; i + 2 < tokens.length; i += 3) {
                 nodesArray.push({
                     x: parseFloat(tokens[i]), // x
                     y: parseFloat(tokens[i + 1]), // y
-                    nodetype: tokens[i + 2] as Babelfont.NodeType // type (m, l, o, c, q, ms, ls, etc.)
+                    nodetype: tokens[i + 2] as NodeType // type (m, l, o, c, q, ms, ls, etc.)
                 });
             }
 
@@ -154,7 +154,7 @@ export class LayerDataNormalizer {
      * @param {Array} nodes - Array of node objects with x, y, type properties
      * @returns {string} Nodes as space-separated string "x1 y1 type x2 y2 type ..."
      */
-    static serializeNodes(nodes: Babelfont.Node[]): string {
+    static serializeNodes(nodes: Node[]): string {
         if (!Array.isArray(nodes) || nodes.length === 0) {
             return '';
         }
@@ -250,10 +250,7 @@ export class LayerDataNormalizer {
     /**
      * Get the next node in a circular array
      */
-    static getNextNode(
-        nodes: Babelfont.Node[],
-        currentIndex: number
-    ): Babelfont.Node | null {
+    static getNextNode(nodes: Node[], currentIndex: number): Node | null {
         if (!nodes || nodes.length === 0) return null;
         const nextIndex = (currentIndex + 1) % nodes.length;
         return nodes[nextIndex];
@@ -262,10 +259,7 @@ export class LayerDataNormalizer {
     /**
      * Get the previous node in a circular array
      */
-    static getPrevNode(
-        nodes: Babelfont.Node[],
-        currentIndex: number
-    ): Babelfont.Node | null {
+    static getPrevNode(nodes: Node[], currentIndex: number): Node | null {
         if (!nodes || nodes.length === 0) return null;
         const prevIndex = (currentIndex - 1 + nodes.length) % nodes.length;
         return nodes[prevIndex];

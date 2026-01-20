@@ -8,10 +8,10 @@
 import APP_SETTINGS from './settings';
 import { fontCompilation } from './font-compilation';
 import { get_glyph_order } from '../wasm-dist/babelfont_fontc_web';
-import type { Babelfont } from './babelfont';
+import type { Glyph, Layer, Axis, Master, Shape } from './babelfont-types';
 import { designspaceToUserspace, userspaceToDesignspace } from './locations';
 import type { DesignspaceLocation } from './locations';
-import { Font, Path } from './babelfont-model';
+import { loadFontFromJSON, Font, Path } from './babelfont-extended';
 import { ensureWasmInitialized } from './wasm-init';
 import { sidebarErrorDisplay } from './sidebar-error-display';
 
@@ -60,7 +60,7 @@ class OpenedFont {
             }
         }
 
-        this.fontModel = Font.fromData(this.babelfontData); // Create object model
+        this.fontModel = loadFontFromJSON(this.babelfontData); // Create object model with extended classes
         this.path = path;
         this.name =
             this.babelfontData?.names.family_name.dflt || 'Untitled Font';
@@ -630,12 +630,12 @@ class FontManager {
         return this.typingFont !== null && this.editingFont !== null;
     }
 
-    private getGlyph(glyphName: string): Babelfont.Glyph | null {
+    private getGlyph(glyphName: string): Glyph | null {
         // Get glyph data for a specific glyph name
         if (!this.currentFont) {
             return null;
         }
-        let glyphs: Babelfont.Glyph[] = this.currentFont.babelfontData.glyphs;
+        let glyphs: Glyph[] = this.currentFont.babelfontData.glyphs;
         if (!glyphs) {
             return null;
         }
@@ -646,10 +646,7 @@ class FontManager {
         return glyph;
     }
 
-    private getLayer(
-        glyphName: string,
-        layerId: string
-    ): Babelfont.Layer | null {
+    private getLayer(glyphName: string, layerId: string): Layer | null {
         // Get layer data for a specific glyph and layer ID
         let glyph = this.getGlyph(glyphName);
         if (!glyph || !glyph.layers) {
@@ -681,7 +678,7 @@ class FontManager {
     fetchLayerData(
         componentGlyphName: string,
         selectedLayerId: string
-    ): Babelfont.Layer | null {
+    ): Layer | null {
         // Fetch layer data for a specific glyph, recursively fetching nested component layer data
         let layer = this.getLayer(componentGlyphName, selectedLayerId);
         if (!layer) {
@@ -762,12 +759,12 @@ class FontManager {
             }
         }
         let axes_order = this.currentFont!.babelfontData.axes.map(
-            (axis: Babelfont.Axis) => axis.tag
+            (axis: Axis) => axis.tag
         );
 
         let mastersData = [];
         for (let master of this.currentFont!.babelfontData
-            .masters as Babelfont.Master[]) {
+            .masters as Master[]) {
             let userspaceLocation = designspaceToUserspace(
                 master.location || {},
                 this.currentFont!.babelfontData.axes
@@ -793,13 +790,9 @@ class FontManager {
         };
     }
 
-    async saveLayerData(
-        glyphName: string,
-        layerId: string,
-        layerData: Babelfont.Layer
-    ) {
+    async saveLayerData(glyphName: string, layerId: string, layerData: Layer) {
         // Helper function to recursively clean shapes for saving
-        const cleanShapeForSaving = (shape: Babelfont.Shape): any => {
+        const cleanShapeForSaving = (shape: Shape): any => {
             if ('Path' in shape) {
                 // For Path shapes, ensure we only save the string representation
                 // Remove any parsed 'nodes' array that was added during rendering
@@ -831,7 +824,7 @@ class FontManager {
                 const isObject =
                     shape && typeof shape === 'object' && !Array.isArray(shape);
                 if (isObject) {
-                    return { ...(shape as object) } as Babelfont.Shape;
+                    return { ...(shape as object) } as Shape;
                 }
                 return shape;
             }
@@ -859,7 +852,7 @@ class FontManager {
 
         // Create a clean copy of the layer data with only serializable properties
         // Don't save isInterpolated flag - it's runtime state only
-        let layerDataCopy: Babelfont.Layer = {
+        let layerDataCopy: Layer = {
             width: layerData.width,
             height: layerData.height,
             vertWidth: layerData.vertWidth,

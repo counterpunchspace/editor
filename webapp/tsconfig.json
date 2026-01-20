@@ -9,7 +9,11 @@
         "forceConsistentCasingInFileNames": true,
         "allowJs": true,
         "outDir": "./build",
-        "lib": ["es6", "dom", "DOM.AsyncIterable"]
+        "lib": ["es6", "dom", "DOM.AsyncIterable"],
+        "paths": {
+            "babelfont-ts": ["./vendor/babelfont-rs/babelfont-ts/src/index.ts"],
+            "babelfont-ts/*": ["./vendor/babelfont-rs/babelfont-ts/src/*"]
+        }
     },
-    "include": ["js/**/*.ts"]
+    "include": ["js/**/*.ts", "vendor/babelfont-rs/babelfont-ts/src/**/*.ts"]
 }

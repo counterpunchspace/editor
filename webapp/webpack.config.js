@@ -62,7 +62,13 @@ module.exports = {
         ]
     },
     resolve: {
-        extensions: ['.tsx', '.ts', '.js']
+        extensions: ['.tsx', '.ts', '.js'],
+        alias: {
+            'babelfont-ts': path.resolve(
+                __dirname,
+                'vendor/babelfont-rs/babelfont-ts/src'
+            )
+        }
     },
     devServer: {
         static: [

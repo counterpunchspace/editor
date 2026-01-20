@@ -2,7 +2,14 @@ import { LayerDataNormalizer } from '../layer-data-normalizer';
 import { fontInterpolation } from '../font-interpolation';
 import { GlyphCanvas } from '../glyph-canvas';
 import fontManager from '../font-manager';
-import type { Babelfont } from '../babelfont';
+import type {
+    Shape,
+    Layer as LayerType,
+    Node as NodeType,
+    NodeType as NodeTypeEnum,
+    Master,
+    Anchor
+} from '../babelfont-types';
 import { Transform } from '../basictypes';
 import { Logger } from '../logger';
 import { Layer } from '../babelfont-model';
@@ -13,7 +20,7 @@ let console: Logger = new Logger('OutlineEditor', true);
 type Point = { contourIndex: number; nodeIndex: number };
 
 // Recursively parse nodes in component layer data (including nested components)
-const parseComponentNodes = (shapes: Babelfont.Shape[]) => {
+const parseComponentNodes = (shapes: Shape[]) => {
     if (!shapes) return;
 
     shapes.forEach((shape) => {
@@ -64,8 +71,8 @@ export class OutlineEditor {
     layerDataDirty: boolean = false;
     previousSelectedLayerId: string | null = null;
     previousVariationSettings: Record<string, number> | null = null;
-    layerData: Babelfont.Layer | null = null;
-    targetLayerData: Babelfont.Layer | null = null;
+    layerData: LayerType | null = null;
+    targetLayerData: LayerType | null = null;
     selectedLayerId: string | null = null;
     isInterpolating: boolean = false;
     isLayerSwitchAnimating: boolean = false;
@@ -308,8 +315,7 @@ export class OutlineEditor {
                 const layers = this.glyphCanvas.fontData?.layers;
                 if (layers) {
                     const previousLayer = layers.find(
-                        (l: Babelfont.Layer) =>
-                            l.id === this.previousSelectedLayerId
+                        (l: LayerType) => l.id === this.previousSelectedLayerId
                     );
 
                     if (previousLayer) {
@@ -808,9 +814,10 @@ export class OutlineEditor {
         // Process each selected point
         for (const { contourIndex, nodeIndex } of this.selectedPoints) {
             const contour = currentLayerData.shapes[contourIndex];
-            if (!contour || !('nodes' in contour) || !contour.nodes) continue;
+            if (!contour || !('nodes' in contour) || !(contour as any).nodes)
+                continue;
 
-            const nodes = contour.nodes;
+            const nodes = (contour as any).nodes as NodeType[];
             const node = nodes[nodeIndex];
             if (!node) continue;
 
@@ -836,9 +843,10 @@ export class OutlineEditor {
             if (!selectedPointKeys.has(key)) continue; // Skip if removed above
 
             const contour = currentLayerData.shapes[contourIndex];
-            if (!contour || !('nodes' in contour) || !contour.nodes) continue;
+            if (!contour || !('nodes' in contour) || !(contour as any).nodes)
+                continue;
 
-            const nodes = contour.nodes;
+            const nodes = (contour as any).nodes as NodeType[];
             const node = nodes[nodeIndex];
             if (!node) continue;
 
@@ -867,8 +875,8 @@ export class OutlineEditor {
         if (this.selectedPoints.length === 1) {
             const { contourIndex, nodeIndex } = this.selectedPoints[0];
             const contour = currentLayerData.shapes[contourIndex];
-            if (contour && 'nodes' in contour && contour.nodes) {
-                const nodes = contour.nodes;
+            if (contour && 'nodes' in contour && (contour as any).nodes) {
+                const nodes = (contour as any).nodes as NodeType[];
                 const offcurve = nodes[nodeIndex];
 
                 if (offcurve?.nodetype === 'o') {
@@ -879,7 +887,7 @@ export class OutlineEditor {
                     const nextNode = nodes[nextIndex];
                     const prevNode = nodes[prevIndex];
 
-                    let curvePoint: Babelfont.Node | null = null;
+                    let curvePoint: NodeType | null = null;
                     let otherHandleIndex = -1;
 
                     if (
@@ -1048,19 +1056,16 @@ export class OutlineEditor {
 
         // First, check for hovering near component origins, which take priority.
         const components = currentLayerData.shapes
-            .map((shape: Babelfont.Shape, index: number) => ({
+            .map((shape: Shape, index: number) => ({
                 shape,
                 index
             }))
             .filter(
-                (item: { shape: Babelfont.Shape; index: number }) =>
+                (item: { shape: Shape; index: number }) =>
                     'Component' in item.shape
             );
 
-        const getComponentOrigin = (item: {
-            shape: Babelfont.Shape;
-            index: number;
-        }) => {
+        const getComponentOrigin = (item: { shape: Shape; index: number }) => {
             const transform = ('Component' in item.shape &&
                 item.shape.Component.transform) || [1, 0, 0, 1, 0, 0];
             return { x: transform[4] || 0, y: transform[5] || 0 };
@@ -1101,11 +1106,7 @@ export class OutlineEditor {
         }
     }
 
-    _isPointInComponent(
-        shape: Babelfont.Shape,
-        glyphX: number,
-        glyphY: number
-    ): boolean {
+    _isPointInComponent(shape: Shape, glyphX: number, glyphY: number): boolean {
         if (!('Component' in shape)) {
             return false;
         }
@@ -1125,7 +1126,7 @@ export class OutlineEditor {
         // Collect all outline shapes with their accumulated transforms
         // This allows proper counter detection via nonzero winding rule
         const collectOutlineShapes = (
-            shapes: Babelfont.Shape[],
+            shapes: Shape[],
             parentTransform: Transform = [1, 0, 0, 1, 0, 0]
         ): Array<{ nodes: any[]; transform: Transform }> => {
             const outlineShapes: Array<{
@@ -1175,11 +1176,11 @@ export class OutlineEditor {
                     }
                 } else if (
                     'nodes' in componentShape &&
-                    componentShape.nodes &&
-                    componentShape.nodes.length > 0
+                    (componentShape as any).nodes &&
+                    (componentShape as any).nodes.length > 0
                 ) {
                     outlineShapes.push({
-                        nodes: componentShape.nodes,
+                        nodes: (componentShape as any).nodes,
                         transform: parentTransform
                     });
                 }
@@ -1263,12 +1264,10 @@ export class OutlineEditor {
         }
 
         const foundAnchorIndex = this._findHoveredItem(
-            currentLayerData.anchors.map(
-                (anchor: Babelfont.Anchor, index: number) => ({
-                    ...anchor,
-                    index
-                })
-            ),
+            currentLayerData.anchors.map((anchor: Anchor, index: number) => ({
+                ...anchor,
+                index
+            })),
             (item) => ({ x: item.x, y: item.y }),
             (item) => item.index
         );
@@ -1286,10 +1285,10 @@ export class OutlineEditor {
         }
 
         const points = currentLayerData.shapes.flatMap(
-            (shape: Babelfont.Shape, contourIndex: number) => {
-                if (!('nodes' in shape) || !shape.nodes) return [];
-                return shape.nodes.map(
-                    (node: Babelfont.Node, nodeIndex: number) => ({
+            (shape: Shape, contourIndex: number) => {
+                if (!('nodes' in shape) || !(shape as any).nodes) return [];
+                return (shape as any).nodes.map(
+                    (node: NodeType, nodeIndex: number) => ({
                         node,
                         contourIndex,
                         nodeIndex
@@ -1343,10 +1342,10 @@ export class OutlineEditor {
                 shape &&
                 'nodes' in shape &&
                 shape.nodes &&
-                shape.nodes[nodeIndex]
+                (shape as any).nodes[nodeIndex]
             ) {
-                shape.nodes[nodeIndex].x += deltaX;
-                shape.nodes[nodeIndex].y += deltaY;
+                (shape as any).nodes[nodeIndex].x += deltaX;
+                (shape as any).nodes[nodeIndex].y += deltaY;
             }
         }
 
@@ -1421,13 +1420,13 @@ export class OutlineEditor {
         if (
             !shape ||
             !('nodes' in shape) ||
-            !shape.nodes ||
-            !shape.nodes[nodeIndex]
+            !(shape as any).nodes ||
+            !(shape as any).nodes[nodeIndex]
         ) {
             return;
         }
 
-        const node = shape.nodes[nodeIndex];
+        const node = (shape as any).nodes[nodeIndex];
         const { nodetype: type } = node;
 
         // Toggle smooth state based on current type
@@ -1442,8 +1441,8 @@ export class OutlineEditor {
                 m: 'ms',
                 ms: 'm',
                 o: 'o'
-            } as Record<Babelfont.NodeType, Babelfont.NodeType>
-        )[type] as Babelfont.NodeType;
+            } as any
+        )[type] as NodeTypeEnum;
 
         node.nodetype = newType;
 
@@ -1792,7 +1791,7 @@ export class OutlineEditor {
         await this.selectLayer(sortedLayers[nextIndex]);
     }
 
-    async selectLayer(layer: Babelfont.Layer): Promise<void> {
+    async selectLayer(layer: LayerType): Promise<void> {
         // Select a layer and update axis sliders to match its master location
         // Clear previous state when explicitly selecting a layer
         this.previousSelectedLayerId = null;
@@ -1822,7 +1821,7 @@ export class OutlineEditor {
         if (this.layerData) {
             this.layerData.isInterpolated = false;
         }
-        let masters: Babelfont.Master[] = this.glyphCanvas.fontData.masters;
+        let masters: Master[] = this.glyphCanvas.fontData.masters;
         console.log(`Selected layer: ${layer.name} (ID: ${layer.id})`);
         console.log('Layer data:', layer);
         console.log('Available masters:', masters);
@@ -1928,7 +1927,7 @@ export class OutlineEditor {
 
         // Check if current variation settings match any layer's master location
         let layers = this.glyphCanvas.fontData?.layers;
-        let masters: Babelfont.Master[] = this.glyphCanvas.fontData?.masters;
+        let masters: Master[] = this.glyphCanvas.fontData?.masters;
         if (!layers || !masters) {
             console.log(
                 '[OutlineEditor] No layers or masters found, returning'
@@ -2065,7 +2064,7 @@ export class OutlineEditor {
      * Always starts from root layerData and navigates through components
      * @returns The layer data at the current glyph_stack position
      */
-    getCurrentLayerDataFromStack(): Babelfont.Layer | null {
+    getCurrentLayerDataFromStack(): LayerType | null {
         if (!this.layerData || !this.glyphStack) {
             return this.layerData;
         }
@@ -2076,7 +2075,7 @@ export class OutlineEditor {
         }
 
         // Start with root layer data
-        let currentLayerData: Babelfont.Layer | null = this.layerData;
+        let currentLayerData: LayerType | null = this.layerData;
 
         // Navigate through each component in the stack (skip the first root item)
         for (let i = 0; i < parsed.length; i++) {
@@ -2102,8 +2101,7 @@ export class OutlineEditor {
                 return null;
             }
 
-            const shape: Babelfont.Shape =
-                currentLayerData.shapes[item.componentIndex];
+            const shape: Shape = currentLayerData.shapes[item.componentIndex];
             if (!('Component' in shape)) {
                 console.error(
                     '[GlyphStack] Shape at index',
@@ -2709,7 +2707,7 @@ export class OutlineEditor {
         );
 
         // Start at root and navigate through components
-        let currentLayerData: Babelfont.Layer | null = this.layerData;
+        let currentLayerData: LayerType | null = this.layerData;
 
         for (let i = 0; i < parsed.length; i++) {
             const item = parsed[i];
@@ -2734,8 +2732,7 @@ export class OutlineEditor {
                 break;
             }
 
-            const shape: Babelfont.Shape =
-                currentLayerData.shapes[item.componentIndex];
+            const shape: Shape = currentLayerData.shapes[item.componentIndex];
             if (!('Component' in shape)) {
                 console.error(
                     '[getAccumulatedTransformFromStack] Shape at index',
@@ -2745,7 +2742,7 @@ export class OutlineEditor {
                 break;
             }
 
-            const comp: Babelfont.Component = shape.Component;
+            const comp: any = shape.Component;
             console.log(
                 `[getAccumulatedTransformFromStack] Level ${i}: component "${comp.reference}", transform:`,
                 comp.transform

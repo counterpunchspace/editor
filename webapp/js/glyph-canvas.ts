@@ -12,8 +12,12 @@ import fontManager from './font-manager';
 import { OutlineEditor } from './glyph-canvas/outline-editor';
 import { Logger } from './logger';
 import APP_SETTINGS from './settings';
-import { designspaceToUserspace, userspaceToDesignspace } from './locations';
-import { Glyph, Layer } from './babelfont-model';
+import {
+    designspaceToUserspace,
+    userspaceToDesignspace,
+    fromDesignspaceLocation
+} from './locations';
+import { Glyph, Layer } from './babelfont-extended';
 
 let console: Logger = new Logger('GlyphCanvas', true);
 
@@ -1087,7 +1091,7 @@ class GlyphCanvas {
                         ) {
                             await this.selectMaster(
                                 firstMaster.id,
-                                firstMaster.location
+                                fromDesignspaceLocation(firstMaster.location)
                             );
                         }
                     }
@@ -1255,8 +1259,10 @@ class GlyphCanvas {
             }
 
             const glyphName = this.getCurrentGlyphName();
-            glyph = fontModel.glyphs.find((g) => g.name === glyphName);
-            glyphLayers = glyph?.layers || [];
+            glyph = fontModel.glyphs.find((g) => g.name === glyphName) as
+                | Glyph
+                | undefined;
+            glyphLayers = (glyph?.layers || []) as Layer[];
             console.log(
                 '[GlyphCanvas] Edit mode: glyph',
                 glyphName,
@@ -1338,7 +1344,7 @@ class GlyphCanvas {
                     .filter((tag: string) => tag in userspaceLocation)
                     .map(
                         (tag: string) =>
-                            `${tag}:${Math.round(userspaceLocation[tag])}`
+                            `${tag}:${Math.round(userspaceLocation[tag] as unknown as number)}`
                     )
                     .join(', ');
                 axisValues = locationParts;
@@ -1380,14 +1386,14 @@ class GlyphCanvas {
                             typeof layerMaster === 'object' &&
                             'DefaultForMaster' in layerMaster
                         ) {
-                            masterId = layerMaster.DefaultForMaster;
+                            masterId = layerMaster.DefaultForMaster as string;
                         }
 
                         // Create minimal layer object for selectLayer
                         this.outlineEditor.selectLayer({
                             id: correspondingLayer.id,
                             name: correspondingLayer.name,
-                            _master: masterId,
+                            _master: masterId as string | undefined,
                             shapes: [],
                             isInterpolated: false
                         } as any);
@@ -1395,7 +1401,12 @@ class GlyphCanvas {
                     // If no layer, do nothing (inactive state)
                 } else {
                     // Text mode: select master and animate to its location
-                    this.selectMaster(master.id!, master.location || {});
+                    this.selectMaster(
+                        master.id!,
+                        master.location
+                            ? fromDesignspaceLocation(master.location)
+                            : {}
+                    );
                 }
 
                 // Restore focus to canvas if editor view is active
@@ -1476,7 +1487,10 @@ class GlyphCanvas {
         this.captureTextModeAutoPanAnchor();
 
         // Animate to master location (10 frames) using userspace coordinates
-        await this.animateToLocation(userspaceLocation, 10);
+        await this.animateToLocation(
+            fromDesignspaceLocation(userspaceLocation),
+            10
+        );
 
         // Clear auto-pan anchor after animation
         this.textModeAutoPanAnchorScreen = null;
@@ -1497,7 +1511,12 @@ class GlyphCanvas {
 
         // If no master selected or not found, select first master
         if (currentIndex === -1) {
-            await this.selectMaster(masters[0].id!, masters[0].location || {});
+            await this.selectMaster(
+                masters[0].id!,
+                masters[0].location
+                    ? fromDesignspaceLocation(masters[0].location)
+                    : {}
+            );
             return;
         }
 
@@ -1516,9 +1535,10 @@ class GlyphCanvas {
         }
 
         // Select the next master
+        const nextLocation = masters[nextIndex].location;
         await this.selectMaster(
             masters[nextIndex].id!,
-            masters[nextIndex].location || {}
+            nextLocation ? fromDesignspaceLocation(nextLocation) : {}
         );
     }
 
@@ -1604,8 +1624,8 @@ class GlyphCanvas {
             // Check if all axes match within tolerance
             let allMatch = true;
             for (const tag in masterLocation) {
-                const masterValue = masterLocation[tag];
-                const currentValue = currentLocation[tag];
+                const masterValue = masterLocation[tag] as unknown as number;
+                const currentValue = currentLocation[tag] as unknown as number;
                 const diff = Math.abs(masterValue - currentValue);
                 console.log(
                     `[GlyphCanvas]   Axis ${tag}: master=${masterValue}, current=${currentValue}, diff=${diff}, match=${diff <= tolerance}`

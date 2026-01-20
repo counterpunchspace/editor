@@ -1,6 +1,6 @@
 const fs = require('fs');
 const path = require('path');
-const { Font } = require('../js/babelfont-model');
+const { Font } = require('../js/babelfont-extended');
 
 describe('Babelfont Object Model', () => {
     let fontData;

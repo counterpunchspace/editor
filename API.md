@@ -1,7 +1,5 @@
 # Font Object Model API Documentation
 
-**Version:** v0.1.5
-
 *Auto-generated from JavaScript object model introspection*
 
 
@@ -10,18 +8,17 @@
 
 - [Overview](#overview)
 - [Class Reference](#class-reference)
-  - [Font](#font) - The main font class representing a complete font
-  - [Glyph](#glyph) - Glyph in the font
-  - [Layer](#layer) - Layer in a glyph representing a master or intermediate design
-  - [Shape](#shape) - Shape wrapper that can contain either a Component or a Path
-  - [Path](#path) - Path (contour) in a layer
-  - [Node](#node) - Point in a path
-  - [Component](#component) - Component reference to another glyph
-  - [Anchor](#anchor) - Anchor point in a layer
-  - [Guide](#guide) - Guideline in a layer or master
-  - [Axis](#axis) - Variation axis in a variable font
-  - [Master](#master) - Master/source in a design space
-  - [Instance](#instance) - Named instance in a variable font
+  - [Font](#font) - 
+  - [Glyph](#glyph) - 
+  - [Layer](#layer) - 
+  - [Path](#path) - 
+  - [Node](#node) - 
+  - [Component](#component) - 
+  - [Anchor](#anchor) - 
+  - [Guide](#guide) - 
+  - [Axis](#axis) - 
+  - [Master](#master) - 
+  - [Instance](#instance) - 
 - [Complete Examples](#complete-examples)
 - [Tips and Best Practices](#tips-and-best-practices)
 
@@ -64,37 +61,11 @@ font = glyph.parent()     # Font object
 
 ## Font
 
-The main font class representing a complete font
-
 **Access:**
 ```python
 # fonteditor module is pre-loaded
 font = CurrentFont()
 ```
-
-### Properties
-
-#### Read/Write Properties
-
-- **`upm`** (float | int)
-- **`version`** ([number, number])
-- **`note`** (str | None)
-- **`date`** (str)
-- **`names`** (Babelfont.Names)
-- **`custom_ot_values`** (list[Babelfont.OTValue] | None)
-- **`variation_sequences`** ( | dict | None)
-- **`features`** (Babelfont.Features)
-- **`first_kern_groups`** (dict | None)
-- **`second_kern_groups`** (dict | None)
-- **`format_specific`** (Babelfont.FormatSpecific | None)
-- **`source`** (str | None)
-
-#### Read-Only Properties
-
-- **`axes`** (list[[Axis](#axis)] | None)
-- **`instances`** (list[[Instance](#instance)] | None)
-- **`masters`** (list[[Master](#master)] | None)
-- **`glyphs`** (list[[Glyph](#glyph)])
 
 ### Methods
 
@@ -105,71 +76,71 @@ Find a glyph by name
 ```python
 glyph = font.findGlyph("A")
 if glyph:
+    print(glyph.width)
+```
+
+#### `findGlyphByUnicode(unicode: float | int) -> [Glyph](#glyph) | None`
+Find a glyph by Unicode codepoint
+
+**Example:**
+```python
+glyph = font.findGlyphByUnicode(0x0041)  # 'A'
+if glyph:
     print(glyph.name)
 ```
 
-#### `findGlyphByCodepoint(codepoint: float | int) -> [Glyph](#glyph) | None`
-Find a glyph by codepoint
+#### `getAxis(tag: str) -> [Axis](#axis) | None`
+Get an axis by tag
 
 **Example:**
 ```python
-glyph = font.findGlyphByCodepoint(0x0041)  # Find 'A'
+axis = font.getAxis("wght")
+if axis:
+    print(axis.min, axis.max)
 ```
 
-#### `duplicateGlyph(glyph: [Glyph](#glyph), newName: str) -> [Glyph](#glyph)`
-Duplicate a glyph with a new name
+#### `getAxisByName(name: str) -> [Axis](#axis) | None`
+Get an axis by name
 
 **Example:**
 ```python
-new_glyph = font.duplicateGlyph(glyph, "A.alt")
+axis = font.getAxisByName("Weight")
+if axis:
+    print(axis.tag)
 ```
 
-#### `findAxis(id: str) -> [Axis](#axis) | None`
-Find an axis by ID
-
-#### `findAxisByTag(tag: str) -> [Axis](#axis) | None`
-Find an axis by tag
+#### `getMaster(id: str) -> [Master](#master) | None`
+Get a master by ID
 
 **Example:**
 ```python
-weight_axis = font.findAxisByTag("wght")
-```
-
-#### `findMaster(id: str) -> [Master](#master) | None`
-Find a master by ID
-
-#### `addGlyph(name: str, category: Babelfont.GlyphCategory) -> [Glyph](#glyph)`
-Add a new glyph to the font
-
-**Example:**
-```python
-glyph = font.addGlyph("myGlyph", "Base")
-```
-
-#### `removeGlyph(name: str) -> bool`
-Remove a glyph by name
-
-**Example:**
-```python
-font.removeGlyph("oldGlyph")
+master = font.getMaster("m01")
+if master:
+    print(master.name)
 ```
 
 #### `toJSONString() -> str`
-Serialize the font back to JSON string
+Serialize font to JSON string
 
-#### `fromJSONString(json: str) -> [Font](#font)`
-Create a Font instance from JSON string
+**Example:**
+```python
+json_str = font.toJSONString()
+with open("font.json", "w") as f:
+    f.write(json_str)
+```
 
-#### `fromData(data: Babelfont.Font) -> [Font](#font)`
+#### `fromData(data: IFont) -> [Font](#font)`
 Create a Font instance from parsed JSON data
 
-#### `toString() -> str`
+**Example:**
+```python
+font = Font.fromData(data_dict)
+```
+
 ---
 
 
 ## Glyph
-
-Glyph in the font
 
 **Access:**
 ```python
@@ -178,48 +149,32 @@ glyph = font.glyphs[0]
 glyph = font.findGlyph("A")
 ```
 
-### Properties
-
-#### Read/Write Properties
-
-- **`name`** (str)
-- **`production_name`** (str | None)
-- **`category`** (Babelfont.GlyphCategory)
-- **`codepoints`** (list[float | int] | None)
-- **`exported`** (bool | None)
-- **`direction`** (Babelfont.Direction | None)
-- **`formatspecific`** (Babelfont.FormatSpecific | None)
-
-#### Read-Only Properties
-
-- **`layers`** (list[[Layer](#layer)] | None)
-
 ### Methods
 
-#### `addLayer(width: float | int, master: Babelfont.LayerType | None = None) -> [Layer](#layer)`
-Add a new layer to the glyph
+#### `getLayerById(id: str) -> [Layer](#layer) | None`
+Get a layer by ID
 
 **Example:**
 ```python
-layer = glyph.addLayer(500)  # 500 units wide
+layer = glyph.getLayerById("m01")
+if layer:
+    print(layer.width)
 ```
 
-#### `removeLayer(index: float | int) -> None`
-Remove a layer at the specified index
+#### `getLayerByMasterId(masterId: str) -> [Layer](#layer) | None`
+Get a layer by master ID
 
-#### `findLayerById(id: str) -> [Layer](#layer) | None`
-Find a layer by ID
+**Example:**
+```python
+layer = glyph.getLayerByMasterId("m01")
+if layer:
+    print(layer.width)
+```
 
-#### `findLayerByMasterId(masterId: str) -> [Layer](#layer) | None`
-Find a layer by master ID
-
-#### `toString() -> str`
 ---
 
 
 ## Layer
-
-Layer in a glyph representing a master or intermediate design
 
 **Access:**
 ```python
@@ -228,31 +183,22 @@ layer = glyph.layers[0]
 
 ### Properties
 
-#### Read/Write Properties
+All properties are read/write:
 
-- **`width`** (float | int)
-- **`lsb`** (float | int): Get the left sidebearing (LSB) - the distance from x=0 to the left edge of the bounding box
-- **`rsb`** (float | int): Get the right sidebearing (RSB) - the distance from the right edge of the bounding box to the advance width
-- **`name`** (str | None)
-- **`id`** (str | None)
-- **`master`** (Babelfont.LayerType | None)
-- **`color`** (Babelfont.Color | None)
-- **`layer_index`** (float | int | None)
-- **`is_background`** (bool | None)
-- **`background_layer_id`** (str | None)
-- **`location`** (dict | None)
-- **`format_specific`** (Babelfont.FormatSpecific | None)
-
-#### Read-Only Properties
-
-- **`guides`** (list[[Guide](#guide)] | None)
-- **`shapes`** (list[[Shape](#shape)] | None)
-- **`anchors`** (list[[Anchor](#anchor)] | None)
+- **`cachedComponentLayerData`** (Any)
+- **`lsb`** (float | int): Get left sidebearing
+- **`rsb`** (float | int): Get right sidebearing
 
 ### Methods
 
-#### `addShape(shape: Babelfont.Shape) -> [Shape](#shape)`
-Add a new shape to the layer
+#### `bounds() -> { x: number; y: number; width: number; height: number } | None`
+Get bounding box of layer (WASM-backed)
+
+**Example:**
+```python
+bounds = layer.bounds()
+print(f"x={bounds['x']}, y={bounds['y']}")
+```
 
 #### `addPath(closed: bool) -> [Path](#path)`
 Add a new path to the layer
@@ -260,98 +206,47 @@ Add a new path to the layer
 **Example:**
 ```python
 path = layer.addPath(closed=True)
+path.addNode({"x": 0, "y": 0, "type": "line"})
 ```
 
-#### `addComponent(reference: str, transform: list[float | int] | None = None) -> [Component](#component)`
+#### `deletePath(index: float | int) -> None`
+Delete a path by index
+
+**Example:**
+```python
+layer.deletePath(0)
+```
+
+#### `addComponent(reference: str, transform: Any | None = None) -> [Component](#component)`
 Add a new component to the layer
 
 **Example:**
 ```python
-component = layer.addComponent("A")
-# With transformation
-component = layer.addComponent("acutecomb", [1, 0, 0, 1, 250, 500])
+comp = layer.addComponent("A")
+comp.transform.x = 100
 ```
 
-#### `removeShape(index: float | int) -> None`
-Remove a shape at the specified index
-
-#### `addAnchor(x: float | int, y: float | int, name: str | None = None) -> [Anchor](#anchor)`
-Add a new anchor to the layer
+#### `deleteComponent(index: float | int) -> None`
+Delete a component by index
 
 **Example:**
 ```python
-anchor = layer.addAnchor(250, 700, "top")
+layer.deleteComponent(0)
 ```
 
-#### `removeAnchor(index: float | int) -> None`
-Remove an anchor at the specified index
+#### `createAnchor(name: str, x: float | int, y: float | int) -> [Anchor](#anchor)`
+Create and add an anchor
 
-#### `processPathSegments(pathData: { nodes: any[]; closed?: boolean; }) -> Array<{ points: Array<{ x: number; y: number }>; type: 'line' | 'quadratic' | 'cubic'; }>`
-Process a path into Bezier curve segments
-Handles the babelfont node format where:
-- Nodes can have 'type' (lowercase: o, c, l, q, etc.) or 'nodetype' (capitalized: OffCurve, Curve, Line, etc.)
-- Segments are sequences: [oncurve] [offcurve*] [oncurve]
-- For closed paths, the path can start with offcurve nodes
-
-#### `flattenComponents(layerData: Any, font: [Font](#font) | None = None, masterId: str | None = None) -> list[Babelfont.Path]`
-Flatten all components in the layer to paths with their transforms applied
-This recursively processes nested components to any depth
-
-#### `getDirectPaths() -> list[Babelfont.Path]`
-Get only direct paths in this layer (no components)
-
-#### `getAllPaths() -> list[Babelfont.Path]`
-Get all paths in this layer including transformed paths from components (recursively flattened)
-
-#### `calculateBoundingBox(layerData: Any, includeAnchors: bool, font: [Font](#font) | None = None, masterId: str | None = None) -> { minX: number; minY: number; maxX: number; maxY: number; width: number; height: number; } | None`
-Calculate bounding box for layer data
-
-#### `getBoundingBox(includeAnchors: bool) -> { minX: number; minY: number; maxX: number; maxY: number; width: number; height: number; } | None`
-Calculate bounding box for this layer
-
-#### `getIntersectionsOnLine(p1: { x: number; y: number }, p2: { x: number; y: number }, includeComponents: bool) -> Array<{ x: number; y: number; t: number }>`
-Calculate intersections between a line segment and all paths in this layer
-
-#### `getSidebearingsAtHeight(y: float | int) -> { left: number; right: number; } | None`
-Calculate sidebearings at a given Y height by measuring distance from glyph edges to first/last outline intersections
-
-#### `getMatchingLayerOnGlyph(glyphName: str) -> [Layer](#layer) | None`
-Find the matching layer on another glyph that represents the same master
-
-#### `toString() -> str`
----
-
-
-## Shape
-
-Shape wrapper that can contain either a Component or a Path
-
-**Access:**
+**Example:**
 ```python
-shape = layer.shapes[0]
+anchor = layer.createAnchor("top", 250, 700)
 ```
 
-### Methods
-
-#### `isComponent() -> bool`
-Check if this shape is a component
-
-#### `isPath() -> bool`
-Check if this shape is a path
-
-#### `asComponent() -> [Component](#component)`
-Get as Component (throws if not a component)
-
-#### `asPath() -> [Path](#path)`
-Get as Path (throws if not a path)
-
-#### `toString() -> str`
+#### `markDirty() -> None`
 ---
 
 
 ## Path
-
-Path (contour) in a layer
 
 **Access:**
 ```python
@@ -360,83 +255,55 @@ if shape.isPath():
     path = shape.asPath()
 ```
 
-### Properties
-
-All properties are read/write:
-
-- **`nodes`** (list[[Node](#node)])
-- **`closed`** (bool)
-- **`format_specific`** (Babelfont.FormatSpecific | None)
-
 ### Methods
 
-#### `parseNodesString(nodesStr: str) -> list[Babelfont.Node]`
-Parse nodes from babelfont-rs string format
-Format: "x1 y1 type x2 y2 type ..."
-Types: m, l, o, c, q (with optional 's' suffix for smooth)
-
-#### `mapNodeType(shortType: str) -> Babelfont.NodeType`
-Map short node type to Babelfont.NodeType
-
-#### `nodesToString(nodes: list[Babelfont.Node]) -> str`
-Convert nodes array back to compact string format for serialization
-
-#### `insertNode(index: float | int, x: float | int, y: float | int, nodetype: Babelfont.NodeType, smooth: bool | None = None) -> [Node](#node)`
-Insert a node at the specified index
+#### `nodesToString(nodes: list[INode]) -> str`
+Convert nodes array to compact string format
 
 **Example:**
 ```python
-path.insertNode(1, 150, 250, "Line")  # Insert at index 1
+nodes_str = Path.nodesToString(path.nodes)
 ```
 
-#### `removeNode(index: float | int) -> None`
-Remove a node at the specified index
+#### `insertNode(index: float | int, node: INode) -> None`
+Insert a node at a specific index
 
 **Example:**
 ```python
-path.removeNode(0)  # Remove first node
+path.insertNode(1, {"x": 100, "y": 200, "type": "line"})
 ```
 
-#### `appendNode(x: float | int, y: float | int, nodetype: Babelfont.NodeType, smooth: bool | None = None) -> [Node](#node)`
-Append a node to the end of the path
+#### `addNode(node: INode) -> None`
+Add a node to the end of the path
 
 **Example:**
 ```python
-path.appendNode(100, 200, "Line")
-path.appendNode(300, 400, "Curve", smooth=True)
+path.addNode({"x": 100, "y": 200, "type": "line"})
 ```
 
-#### `toString() -> str`
+#### `deleteNode(index: float | int) -> None`
+Delete a node by index
+
+**Example:**
+```python
+path.deleteNode(0)
+```
+
+#### `markDirty() -> None`
 ---
 
 
 ## Node
-
-Point in a path
 
 **Access:**
 ```python
 node = path.nodes[0]
 ```
 
-### Properties
-
-All properties are read/write:
-
-- **`x`** (float | int)
-- **`y`** (float | int)
-- **`nodetype`** (Babelfont.NodeType)
-- **`smooth`** (bool | None)
-
-### Methods
-
-#### `toString() -> str`
 ---
 
 
 ## Component
-
-Component reference to another glyph
 
 **Access:**
 ```python
@@ -449,47 +316,22 @@ if shape.isComponent():
 
 All properties are read/write:
 
-- **`reference`** (str)
-- **`transform`** (list[float | int] | None)
-- **`format_specific`** (Babelfont.FormatSpecific | None)
-
-### Methods
-
-#### `toString() -> str`
-#### `getTransformedPaths() -> list[Babelfont.Path]`
-Get all paths from this component with transforms applied recursively
-Automatically determines the correct master by walking up the parent chain
+- **`cachedComponentLayerData`** (Any)
 
 ---
 
 
 ## Anchor
 
-Anchor point in a layer
-
 **Access:**
 ```python
 anchor = layer.anchors[0]
 ```
 
-### Properties
-
-All properties are read/write:
-
-- **`x`** (float | int)
-- **`y`** (float | int)
-- **`name`** (str | None)
-- **`format_specific`** (Babelfont.FormatSpecific | None)
-
-### Methods
-
-#### `toString() -> str`
 ---
 
 
 ## Guide
-
-Guideline in a layer or master
 
 **Access:**
 ```python
@@ -498,24 +340,10 @@ guide = layer.guides[0]
 guide = master.guides[0]
 ```
 
-### Properties
-
-All properties are read/write:
-
-- **`pos`** (Babelfont.Position)
-- **`name`** (str | None)
-- **`color`** (Babelfont.Color | None)
-- **`format_specific`** (Babelfont.FormatSpecific | None)
-
-### Methods
-
-#### `toString() -> str`
 ---
 
 
 ## Axis
-
-Variation axis in a variable font
 
 **Access:**
 ```python
@@ -524,30 +352,10 @@ axis = font.axes[0]
 axis = font.findAxisByTag("wght")
 ```
 
-### Properties
-
-All properties are read/write:
-
-- **`name`** (Babelfont.I18NDictionary)
-- **`tag`** (str)
-- **`id`** (str)
-- **`min`** (float | int | None)
-- **`max`** (float | int | None)
-- **`default`** (float | int | None)
-- **`map`** (list[[number, number]] | None)
-- **`hidden`** (bool | None)
-- **`values`** (list[float | int] | None)
-- **`formatspecific`** (Babelfont.FormatSpecific | None)
-
-### Methods
-
-#### `toString() -> str`
 ---
 
 
 ## Master
-
-Master/source in a design space
 
 **Access:**
 ```python
@@ -556,52 +364,16 @@ master = font.masters[0]
 master = font.findMaster("master-id")
 ```
 
-### Properties
-
-#### Read/Write Properties
-
-- **`name`** (Babelfont.I18NDictionary)
-- **`id`** (str)
-- **`location`** (dict | None)
-- **`metrics`** (dict)
-- **`kerning`** (dict)
-- **`custom_ot_values`** (list[Babelfont.OTValue] | None)
-- **`format_specific`** (Babelfont.FormatSpecific | None)
-
-#### Read-Only Properties
-
-- **`guides`** (list[[Guide](#guide)] | None)
-
-### Methods
-
-#### `toString() -> str`
 ---
 
 
 ## Instance
-
-Named instance in a variable font
 
 **Access:**
 ```python
 instance = font.instances[0]
 ```
 
-### Properties
-
-All properties are read/write:
-
-- **`id`** (str)
-- **`name`** (Babelfont.I18NDictionary)
-- **`location`** (dict | None)
-- **`custom_names`** (Babelfont.Names)
-- **`variable`** (bool | None)
-- **`linked_style`** (str | None)
-- **`format_specific`** (Babelfont.FormatSpecific | None)
-
-### Methods
-
-#### `toString() -> str`
 ---
 
 

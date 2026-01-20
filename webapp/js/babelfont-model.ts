@@ -1,17 +1,44 @@
 /**
- * Babelfont Object Model
+ * Babelfont Wrapper Model - Special Operations Layer
  *
- * This module provides an object-oriented facade over the raw babelfontJson data.
- * All objects are lightweight wrappers that read/write directly to the underlying
- * JSON structure using getters and setters - no data duplication.
+ * This module provides wrapper classes over raw JSON data for:
+ * 1. Python/Pyodide access to font data via JsProxy (object model with getters/setters)
+ * 2. Complex geometry operations (getIntersectionsOnLine, calculateBoundingBox)
+ * 3. Component flattening and path transformation utilities
  *
- * This allows:
- * - Type-safe object manipulation in JavaScript/TypeScript
- * - Rich methods on classes (e.g., path.insertNode())
- * - Direct synchronous access from Python via Pyodide's JsProxy system
+ * NOTE: This is NOT the primary font model. For normal font operations,
+ * use babelfont-extended.ts which provides clean classes extending babelfont-ts.
+ * This wrapper layer is only used by:
+ * - glyph-canvas/renderer.ts - for Layer geometry methods
+ * - glyph-canvas/outline-editor.ts - for Layer intersection calculations
+ * - Python scripts via Pyodide - accessing object model convenience functions
  */
 
-import type { Babelfont } from './babelfont';
+import type {
+    Node as NodeType,
+    NodeType as NodeTypeEnum,
+    Path as PathType,
+    Shape as ShapeType,
+    Component as ComponentType,
+    Anchor as AnchorType,
+    Guide as GuideType,
+    Layer as LayerType,
+    LayerType as LayerMasterType,
+    Glyph as GlyphType,
+    GlyphCategory,
+    Font as FontType,
+    Axis as AxisType,
+    Master as MasterType,
+    Instance as InstanceType,
+    I18NDictionary,
+    Names,
+    Features,
+    FormatSpecific,
+    Position,
+    Color,
+    Direction,
+    OTValue
+} from './babelfont-types';
 import { LayerDataNormalizer } from './layer-data-normalizer';
 import { Bezier } from 'bezier-js';
 
@@ -109,11 +136,11 @@ export class Node extends ArrayElementBase {
         markFontDirty();
     }
 
-    get nodetype(): Babelfont.NodeType {
+    get nodetype(): NodeTypeEnum {
         return this.data.nodetype;
     }
 
-    set nodetype(value: Babelfont.NodeType) {
+    set nodetype(value: NodeTypeEnum) {
         this.data.nodetype = value;
         markFontDirty();
     }
@@ -165,7 +192,7 @@ export class Path extends ArrayElementBase {
         return this._nodeWrappers!;
     }
 
-    set nodes(value: Babelfont.Node[]) {
+    set nodes(value: NodeType[]) {
         this.data.nodes = value;
         this._nodeWrappers = null; // Invalidate cache
     }
@@ -175,12 +202,12 @@ export class Path extends ArrayElementBase {
      * Format: "x1 y1 type x2 y2 type ..."
      * Types: m, l, o, c, q (with optional 's' suffix for smooth)
      */
-    private parseNodesString(nodesStr: string): Babelfont.Node[] {
+    private parseNodesString(nodesStr: string): NodeType[] {
         const trimmed = nodesStr.trim();
         if (!trimmed) return [];
 
         const tokens = trimmed.split(/\s+/);
-        const nodesArray: Babelfont.Node[] = [];
+        const nodesArray: NodeType[] = [];
 
         for (let i = 0; i + 2 < tokens.length; i += 3) {
             const typeStr = tokens[i + 2];
@@ -189,7 +216,7 @@ export class Path extends ArrayElementBase {
                 smooth ? typeStr.slice(0, -1) : typeStr
             );
 
-            const node: Babelfont.Node = {
+            const node: NodeType = {
                 x: parseFloat(tokens[i]),
                 y: parseFloat(tokens[i + 1]),
                 nodetype: nodetype
@@ -206,10 +233,10 @@ export class Path extends ArrayElementBase {
     }
 
     /**
-     * Map short node type to Babelfont.NodeType
+     * Map short node type to NodeTypeEnum
      */
-    private mapNodeType(shortType: string): Babelfont.NodeType {
-        const map: Record<string, Babelfont.NodeType> = {
+    private mapNodeType(shortType: string): NodeTypeEnum {
+        const map: Record<string, NodeTypeEnum> = {
             m: 'Move',
             l: 'Line',
             o: 'OffCurve',
@@ -222,7 +249,7 @@ export class Path extends ArrayElementBase {
     /**
      * Convert nodes array back to compact string format for serialization
      */
-    static nodesToString(nodes: Babelfont.Node[]): string {
+    static nodesToString(nodes: NodeType[]): string {
         const tokens: string[] = [];
 
         for (const node of nodes) {
@@ -291,11 +318,11 @@ export class Path extends ArrayElementBase {
         this.data.closed = value;
     }
 
-    get format_specific(): Babelfont.FormatSpecific | undefined {
+    get format_specific(): FormatSpecific | undefined {
         return this.data.format_specific;
     }
 
-    set format_specific(value: Babelfont.FormatSpecific | undefined) {
+    set format_specific(value: FormatSpecific | undefined) {
         this.data.format_specific = value;
     }
 
@@ -308,10 +335,10 @@ export class Path extends ArrayElementBase {
         index: number,
         x: number,
         y: number,
-        nodetype: Babelfont.NodeType = 'Line',
+        nodetype: NodeTypeEnum = 'Line',
         smooth?: boolean
     ): Node {
-        const nodeData: Babelfont.Node = { x, y, nodetype };
+        const nodeData: NodeType = { x, y, nodetype };
         if (smooth !== undefined) {
             nodeData.smooth = smooth;
         }
@@ -340,7 +367,7 @@ export class Path extends ArrayElementBase {
     appendNode(
         x: number,
         y: number,
-        nodetype: Babelfont.NodeType = 'Line',
+        nodetype: NodeTypeEnum = 'Line',
         smooth?: boolean
     ): Node {
         return this.insertNode(this.data.nodes.length, x, y, nodetype, smooth);
@@ -375,11 +402,11 @@ export class Component extends ArrayElementBase {
         this.data.transform = value;
     }
 
-    get format_specific(): Babelfont.FormatSpecific | undefined {
+    get format_specific(): FormatSpecific | undefined {
         return this.data.format_specific;
     }
 
-    set format_specific(value: Babelfont.FormatSpecific | undefined) {
+    set format_specific(value: FormatSpecific | undefined) {
         this.data.format_specific = value;
     }
 
@@ -395,8 +422,8 @@ export class Component extends ArrayElementBase {
      * Automatically determines the correct master by walking up the parent chain
      * @returns Array of transformed path data objects
      */
-    getTransformedPaths(): Babelfont.Path[] {
-        const paths: Babelfont.Path[] = [];
+    getTransformedPaths(): PathType[] {
+        const paths: PathType[] = [];
         const componentTransform = this.transform || [1, 0, 0, 1, 0, 0];
 
         // Get the Font object to look up component glyphs
@@ -469,6 +496,11 @@ export class Component extends ArrayElementBase {
 
                     // Apply this component's transform to all nested paths
                     for (const nestedPath of nestedPaths) {
+                        if (
+                            !nestedPath.nodes ||
+                            typeof nestedPath.nodes === 'string'
+                        )
+                            continue;
                         const transformedNodes = nestedPath.nodes.map(
                             (node: any) =>
                                 transformNode(node, componentTransform)
@@ -536,11 +568,11 @@ export class Anchor extends ArrayElementBase {
         this.data.name = value;
     }
 
-    get format_specific(): Babelfont.FormatSpecific | undefined {
+    get format_specific(): FormatSpecific | undefined {
         return this.data.format_specific;
     }
 
-    set format_specific(value: Babelfont.FormatSpecific | undefined) {
+    set format_specific(value: FormatSpecific | undefined) {
         this.data.format_specific = value;
     }
 
@@ -554,11 +586,11 @@ export class Anchor extends ArrayElementBase {
  * Guideline in a layer or master
  */
 export class Guide extends ArrayElementBase {
-    get pos(): Babelfont.Position {
+    get pos(): Position {
         return this.data.pos;
     }
 
-    set pos(value: Babelfont.Position) {
+    set pos(value: Position) {
         this.data.pos = value;
     }
 
@@ -570,19 +602,19 @@ export class Guide extends ArrayElementBase {
         this.data.name = value;
     }
 
-    get color(): Babelfont.Color | undefined {
+    get color(): Color | undefined {
         return this.data.color;
     }
 
-    set color(value: Babelfont.Color | undefined) {
+    set color(value: Color | undefined) {
         this.data.color = value;
     }
 
-    get format_specific(): Babelfont.FormatSpecific | undefined {
+    get format_specific(): FormatSpecific | undefined {
         return this.data.format_specific;
     }
 
-    set format_specific(value: Babelfont.FormatSpecific | undefined) {
+    set format_specific(value: FormatSpecific | undefined) {
         this.data.format_specific = value;
     }
 
@@ -783,11 +815,11 @@ export class Layer extends ArrayElementBase {
         this.data.id = value;
     }
 
-    get master(): Babelfont.LayerType | undefined {
+    get master(): LayerMasterType | undefined {
         return this.data.master;
     }
 
-    set master(value: Babelfont.LayerType | undefined) {
+    set master(value: LayerMasterType | undefined) {
         this.data.master = value;
     }
 
@@ -830,11 +862,11 @@ export class Layer extends ArrayElementBase {
         return this._anchorWrappers!;
     }
 
-    get color(): Babelfont.Color | undefined {
+    get color(): Color | undefined {
         return this.data.color;
     }
 
-    set color(value: Babelfont.Color | undefined) {
+    set color(value: Color | undefined) {
         this.data.color = value;
     }
 
@@ -870,18 +902,18 @@ export class Layer extends ArrayElementBase {
         this.data.location = value;
     }
 
-    get format_specific(): Babelfont.FormatSpecific | undefined {
+    get format_specific(): FormatSpecific | undefined {
         return this.data.format_specific;
     }
 
-    set format_specific(value: Babelfont.FormatSpecific | undefined) {
+    set format_specific(value: FormatSpecific | undefined) {
         this.data.format_specific = value;
     }
 
     /**
      * Add a new shape to the layer
      */
-    addShape(shape: Babelfont.Shape): Shape {
+    addShape(shape: ShapeType): Shape {
         if (!this.data.shapes) {
             this.data.shapes = [];
         }
@@ -896,11 +928,11 @@ export class Layer extends ArrayElementBase {
      * path = layer.addPath(closed=True)
      */
     addPath(closed: boolean = true): Path {
-        const pathData: Babelfont.Path = {
+        const pathData: PathType = {
             nodes: [],
             closed
         };
-        const shapeData: Babelfont.Shape = { Path: pathData };
+        const shapeData: ShapeType = { Path: pathData };
         const shape = this.addShape(shapeData);
         return shape.asPath();
     }
@@ -913,11 +945,11 @@ export class Layer extends ArrayElementBase {
      * component = layer.addComponent("acutecomb", [1, 0, 0, 1, 250, 500])
      */
     addComponent(reference: string, transform?: number[]): Component {
-        const componentData: Babelfont.Component = { reference };
+        const componentData: ComponentType = { reference };
         if (transform) {
             componentData.transform = transform;
         }
-        const shapeData: Babelfont.Shape = { Component: componentData };
+        const shapeData: ShapeType = { Component: componentData };
         const shape = this.addShape(shapeData);
         return shape.asComponent();
     }
@@ -941,7 +973,7 @@ export class Layer extends ArrayElementBase {
         if (!this.data.anchors) {
             this.data.anchors = [];
         }
-        const anchorData: Babelfont.Anchor = { x, y };
+        const anchorData: AnchorType = { x, y };
         if (name) {
             anchorData.name = name;
         }
@@ -1103,8 +1135,8 @@ export class Layer extends ArrayElementBase {
         layerData: any,
         font?: Font,
         masterId?: string
-    ): Babelfont.Path[] {
-        const flattenedPaths: Babelfont.Path[] = [];
+    ): PathType[] {
+        const flattenedPaths: PathType[] = [];
 
         // Helper function to apply transform to a node
         const transformNode = (node: any, transform: number[]): any => {
@@ -1239,8 +1271,8 @@ export class Layer extends ArrayElementBase {
      * Get only direct paths in this layer (no components)
      * @returns Array of path data objects from shapes that are paths
      */
-    private getDirectPaths(): Babelfont.Path[] {
-        const paths: Babelfont.Path[] = [];
+    private getDirectPaths(): PathType[] {
+        const paths: PathType[] = [];
 
         if (!this.shapes) return paths;
 
@@ -1260,8 +1292,8 @@ export class Layer extends ArrayElementBase {
      * Get all paths in this layer including transformed paths from components (recursively flattened)
      * @returns Array of path data objects with all components resolved to transformed paths
      */
-    getAllPaths(): Babelfont.Path[] {
-        const paths: Babelfont.Path[] = [];
+    getAllPaths(): PathType[] {
+        const paths: PathType[] = [];
 
         if (!this.shapes) return paths;
 
@@ -1634,9 +1666,9 @@ export class Layer extends ArrayElementBase {
         let thisMasterId: string | undefined;
         if (typeof this.master === 'object') {
             if ('DefaultForMaster' in this.master) {
-                thisMasterId = this.master.DefaultForMaster;
+                thisMasterId = (this.master as any).DefaultForMaster;
             } else if ('AssociatedWithMaster' in this.master) {
-                thisMasterId = this.master.AssociatedWithMaster;
+                thisMasterId = (this.master as any).AssociatedWithMaster;
             }
         } else {
             thisMasterId = this.master;
@@ -1662,9 +1694,9 @@ export class Layer extends ArrayElementBase {
             let layerMasterId: string | undefined;
             if (typeof layer.master === 'object') {
                 if ('DefaultForMaster' in layer.master) {
-                    layerMasterId = layer.master.DefaultForMaster;
+                    layerMasterId = (layer.master as any).DefaultForMaster;
                 } else if ('AssociatedWithMaster' in layer.master) {
-                    layerMasterId = layer.master.AssociatedWithMaster;
+                    layerMasterId = (layer.master as any).AssociatedWithMaster;
                 }
             } else {
                 layerMasterId = layer.master;
@@ -1682,9 +1714,9 @@ export class Layer extends ArrayElementBase {
         let masterId: string;
         if (typeof this.master === 'object') {
             if ('DefaultForMaster' in this.master) {
-                masterId = this.master.DefaultForMaster;
+                masterId = (this.master as any).DefaultForMaster;
             } else if ('AssociatedWithMaster' in this.master) {
-                masterId = this.master.AssociatedWithMaster;
+                masterId = (this.master as any).AssociatedWithMaster;
             } else {
                 masterId = 'unknown';
             }
@@ -1718,11 +1750,11 @@ export class Glyph extends ArrayElementBase {
         this.data.production_name = value;
     }
 
-    get category(): Babelfont.GlyphCategory {
+    get category(): GlyphCategory {
         return this.data.category;
     }
 
-    set category(value: Babelfont.GlyphCategory) {
+    set category(value: GlyphCategory) {
         this.data.category = value;
     }
 
@@ -1772,12 +1804,12 @@ export class Glyph extends ArrayElementBase {
 
             if (!isDefaultLayer) continue;
 
-            // Extract master ID from layer.master.DefaultForMaster or use layer._master
+            // Extract master ID from (layer.master as any).DefaultForMaster or use layer._master
             const masterId =
                 layer.master &&
                 typeof layer.master === 'object' &&
                 'DefaultForMaster' in layer.master
-                    ? layer.master.DefaultForMaster
+                    ? (layer.master as any).DefaultForMaster
                     : layer._master || layer.id;
 
             if (!masterId || !masterIds.has(masterId)) continue;
@@ -1800,7 +1832,7 @@ export class Glyph extends ArrayElementBase {
                     typeof masterData === 'object' &&
                     'DefaultForMaster' in masterData
                 ) {
-                    return masterData.DefaultForMaster;
+                    return (masterData as any).DefaultForMaster;
                 }
                 // Fallback to raw data access
                 return (layer as any).data._master || layer.id || '';
@@ -1835,19 +1867,19 @@ export class Glyph extends ArrayElementBase {
         this.data.exported = value;
     }
 
-    get direction(): Babelfont.Direction | undefined {
+    get direction(): Direction | undefined {
         return this.data.direction;
     }
 
-    set direction(value: Babelfont.Direction | undefined) {
+    set direction(value: Direction | undefined) {
         this.data.direction = value;
     }
 
-    get formatspecific(): Babelfont.FormatSpecific | undefined {
+    get formatspecific(): FormatSpecific | undefined {
         return this.data.formatspecific;
     }
 
-    set formatspecific(value: Babelfont.FormatSpecific | undefined) {
+    set formatspecific(value: FormatSpecific | undefined) {
         this.data.formatspecific = value;
     }
 
@@ -1856,7 +1888,7 @@ export class Glyph extends ArrayElementBase {
      * @example
      * layer = glyph.addLayer(500)  # 500 units wide
      */
-    addLayer(width: number, master?: Babelfont.LayerType): Layer {
+    addLayer(width: number, master?: LayerMasterType): Layer {
         if (!this.data.layers) {
             this.data.layers = [];
         }
@@ -1870,7 +1902,7 @@ export class Glyph extends ArrayElementBase {
             layerId = crypto.randomUUID();
         } while (existingIds.has(layerId));
 
-        const layerData: Babelfont.Layer = { width, id: layerId };
+        const layerData: LayerType = { width, id: layerId };
         if (master) {
             layerData.master = master;
         }
@@ -1936,11 +1968,11 @@ export class Glyph extends ArrayElementBase {
  * Variation axis in a variable font
  */
 export class Axis extends ArrayElementBase {
-    get name(): Babelfont.I18NDictionary {
+    get name(): I18NDictionary {
         return this.data.name;
     }
 
-    set name(value: Babelfont.I18NDictionary) {
+    set name(value: I18NDictionary) {
         this.data.name = value;
     }
 
@@ -2008,11 +2040,11 @@ export class Axis extends ArrayElementBase {
         this.data.values = value;
     }
 
-    get formatspecific(): Babelfont.FormatSpecific | undefined {
+    get formatspecific(): FormatSpecific | undefined {
         return this.data.formatspecific;
     }
 
-    set formatspecific(value: Babelfont.FormatSpecific | undefined) {
+    set formatspecific(value: FormatSpecific | undefined) {
         this.data.formatspecific = value;
     }
 
@@ -2034,11 +2066,11 @@ export class Axis extends ArrayElementBase {
 export class Master extends ArrayElementBase {
     private _guideWrappers: Guide[] | null = null;
 
-    get name(): Babelfont.I18NDictionary {
+    get name(): I18NDictionary {
         return this.data.name;
     }
 
-    set name(value: Babelfont.I18NDictionary) {
+    set name(value: I18NDictionary) {
         this.data.name = value;
     }
 
@@ -2087,19 +2119,19 @@ export class Master extends ArrayElementBase {
         this.data.kerning = value;
     }
 
-    get custom_ot_values(): Babelfont.OTValue[] | undefined {
+    get custom_ot_values(): OTValue[] | undefined {
         return this.data.custom_ot_values;
     }
 
-    set custom_ot_values(value: Babelfont.OTValue[] | undefined) {
+    set custom_ot_values(value: OTValue[] | undefined) {
         this.data.custom_ot_values = value;
     }
 
-    get format_specific(): Babelfont.FormatSpecific | undefined {
+    get format_specific(): FormatSpecific | undefined {
         return this.data.format_specific;
     }
 
-    set format_specific(value: Babelfont.FormatSpecific | undefined) {
+    set format_specific(value: FormatSpecific | undefined) {
         this.data.format_specific = value;
     }
 
@@ -2127,11 +2159,11 @@ export class Instance extends ArrayElementBase {
         this.data.id = value;
     }
 
-    get name(): Babelfont.I18NDictionary {
+    get name(): I18NDictionary {
         return this.data.name;
     }
 
-    set name(value: Babelfont.I18NDictionary) {
+    set name(value: I18NDictionary) {
         this.data.name = value;
     }
 
@@ -2143,11 +2175,11 @@ export class Instance extends ArrayElementBase {
         this.data.location = value;
     }
 
-    get custom_names(): Babelfont.Names {
+    get custom_names(): Names {
         return this.data.custom_names;
     }
 
-    set custom_names(value: Babelfont.Names) {
+    set custom_names(value: Names) {
         this.data.custom_names = value;
     }
 
@@ -2167,11 +2199,11 @@ export class Instance extends ArrayElementBase {
         this.data.linked_style = value;
     }
 
-    get format_specific(): Babelfont.FormatSpecific | undefined {
+    get format_specific(): FormatSpecific | undefined {
         return this.data.format_specific;
     }
 
-    set format_specific(value: Babelfont.FormatSpecific | undefined) {
+    set format_specific(value: FormatSpecific | undefined) {
         this.data.format_specific = value;
     }
 
@@ -2196,7 +2228,7 @@ export class Font extends ModelBase {
     private _masterWrappers: Master[] | null = null;
     private _instanceWrappers: Instance[] | null = null;
 
-    constructor(data: Babelfont.Font) {
+    constructor(data: FontType) {
         super(data);
     }
 
@@ -2284,19 +2316,19 @@ export class Font extends ModelBase {
         this._data.date = value;
     }
 
-    get names(): Babelfont.Names {
+    get names(): Names {
         return this._data.names;
     }
 
-    set names(value: Babelfont.Names) {
+    set names(value: Names) {
         this._data.names = value;
     }
 
-    get custom_ot_values(): Babelfont.OTValue[] | undefined {
+    get custom_ot_values(): OTValue[] | undefined {
         return this._data.custom_ot_values;
     }
 
-    set custom_ot_values(value: Babelfont.OTValue[] | undefined) {
+    set custom_ot_values(value: OTValue[] | undefined) {
         this._data.custom_ot_values = value;
     }
 
@@ -2312,11 +2344,11 @@ export class Font extends ModelBase {
         this._data.variation_sequences = value;
     }
 
-    get features(): Babelfont.Features {
+    get features(): Features {
         return this._data.features;
     }
 
-    set features(value: Babelfont.Features) {
+    set features(value: Features) {
         this._data.features = value;
     }
 
@@ -2336,11 +2368,11 @@ export class Font extends ModelBase {
         this._data.second_kern_groups = value;
     }
 
-    get format_specific(): Babelfont.FormatSpecific | undefined {
+    get format_specific(): FormatSpecific | undefined {
         return this._data.format_specific;
     }
 
-    set format_specific(value: Babelfont.FormatSpecific | undefined) {
+    set format_specific(value: FormatSpecific | undefined) {
         this._data.format_specific = value;
     }
 
@@ -2475,8 +2507,8 @@ export class Font extends ModelBase {
      * @example
      * glyph = font.addGlyph("myGlyph", "Base")
      */
-    addGlyph(name: string, category: Babelfont.GlyphCategory = 'Base'): Glyph {
-        const glyphData: Babelfont.Glyph = {
+    addGlyph(name: string, category: GlyphCategory = 'Base'): Glyph {
+        const glyphData: GlyphType = {
             name,
             category,
             layers: []
@@ -2542,7 +2574,7 @@ export class Font extends ModelBase {
     /**
      * Create a Font instance from parsed JSON data
      */
-    static fromData(data: Babelfont.Font): Font {
+    static fromData(data: FontType): Font {
         return new Font(data);
     }
 

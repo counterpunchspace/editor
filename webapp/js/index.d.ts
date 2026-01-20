@@ -9,7 +9,7 @@ import { GlyphCanvas } from './glyph-canvas.js';
 import MemoryMonitor from './memory-monitor.js';
 import ResizableViews from './resizer.js';
 import SaveButton from './save-button.js';
-import { Font } from './babelfont-model.js';
+import { Font } from './babelfont-extended.js';
 import type MCPLogTransport from './mcp-transport.js';
 declare global {
     // Any property augmentation we make to the Window interface
@@ -128,7 +128,7 @@ declare global {
         // From font-dropdown.js
         fontDropdownManager: FontDropdownManager;
 
-        // From babelfont-model.js
+        // From babelfont-model.js (wrapper for Python) and babelfont-extended.js (primary model)
         currentFontModel: Font | null;
 
         // From font-interpolation.js

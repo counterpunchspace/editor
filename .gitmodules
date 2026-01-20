@@ -1,0 +1,3 @@
+[submodule "webapp/vendor/babelfont-rs"]
+	path = webapp/vendor/babelfont-rs
+	url = https://github.com/simoncozens/babelfont-rs.git

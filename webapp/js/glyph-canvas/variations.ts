@@ -1,5 +1,5 @@
 import { get_font_axes } from '../../wasm-dist/babelfont_fontc_web';
-import Babelfont from '../babelfont';
+import type { Axis } from '../babelfont-types';
 import { ensureWasmInitialized } from '../wasm-init';
 
 interface VariationAxis {
