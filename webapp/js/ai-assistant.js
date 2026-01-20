@@ -1356,15 +1356,12 @@ class AIAssistant {
 
         if (!window.term) {
             // Console not yet initialized - execute without terminal output
-            console.warn(
-                '[AIAssistant]',
-                'Console terminal not available, executing Python code directly'
-            );
+            // This is normal during startup or when terminal hasn't loaded yet
             try {
                 await window.pyodide.runPythonAsync(code);
                 console.log(
                     '[AIAssistant]',
-                    '✅ Code executed successfully (console terminal not available for output)'
+                    '✅ Code executed successfully'
                 );
 
                 // Play done sound
