@@ -603,6 +603,7 @@ export class Layer extends BabelfontLayer {
         ) => {
             if (shape instanceof BabelfontPath) {
                 // Direct path - transform its nodes
+                if (!shape.nodes || !Array.isArray(shape.nodes)) return;
                 const transformedNodes = shape.nodes.map((node: any) =>
                     transformNode(node, transform)
                 );
