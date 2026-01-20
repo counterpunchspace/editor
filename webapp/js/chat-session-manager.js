@@ -27,7 +27,7 @@ class ChatSessionManager {
         this.isContextLocked = false;
         this.aiAssistant.messages = [];
         this.aiAssistant.messagesContainer.innerHTML = '';
-        
+
         // Clear localStorage when starting new chat
         localStorage.removeItem('ai_last_chat_id');
 
@@ -257,7 +257,7 @@ class ChatSessionManager {
         try {
             // Check if we have a saved chat ID in localStorage
             const savedChatId = localStorage.getItem('ai_last_chat_id');
-            
+
             if (savedChatId) {
                 // Try to load the saved chat
                 console.log(`[ChatSession] Loading saved chat: ${savedChatId}`);
@@ -265,7 +265,10 @@ class ChatSessionManager {
                     await this.loadChatSession(savedChatId);
                     return; // Successfully loaded saved chat
                 } catch (error) {
-                    console.log('[ChatSession] Saved chat not available, falling back to last chat:', error.message);
+                    console.log(
+                        '[ChatSession] Saved chat not available, falling back to last chat:',
+                        error.message
+                    );
                     // Clear invalid chat ID from localStorage
                     localStorage.removeItem('ai_last_chat_id');
                     // Continue to load chronologically last chat
