@@ -76,6 +76,7 @@ Users will see an orange update notification button in the title bar within 10 m
 - ◻️ Insert glyphs into editor text
 - ◻️ OpenType feature code editor
 - ◻️ Fontspector integration (incl. glyph-level messages)
+- ◻️ Interactive demo
 
 ### v0.3 (Due: Mar 10, 2026)
 
