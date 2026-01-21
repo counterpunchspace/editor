@@ -791,16 +791,72 @@ class FontManager {
     }
 
     async saveLayerData(glyphName: string, layerId: string, layerData: Layer) {
-        // Helper function to recursively clean shapes for saving
-        const cleanShapeForSaving = (shape: Shape): any => {
+        // Helper to convert node type to short format for Rust
+        // Handles both enum values (Move, Line, etc.) and already-short values (m, l, etc.)
+        const nodeTypeToShort = (
+            nodetype: string,
+            smooth?: boolean
+        ): string => {
+            const type = (nodetype || 'l').toString().toLowerCase();
+            let shortType: string;
+            switch (type) {
+                case 'move':
+                case 'm':
+                    shortType = 'm';
+                    break;
+                case 'line':
+                case 'l':
+                case 'ls':
+                    shortType = 'l';
+                    break;
+                case 'offcurve':
+                case 'o':
+                case 'os':
+                    shortType = 'o';
+                    break;
+                case 'curve':
+                case 'c':
+                case 'cs':
+                    shortType = 'c';
+                    break;
+                case 'qcurve':
+                case 'q':
+                case 'qs':
+                    shortType = 'q';
+                    break;
+                default:
+                    // If already short (single char), use as-is; otherwise default to 'l'
+                    shortType =
+                        type.length === 1 || type.length === 2 ? type : 'l';
+            }
+            // Add smooth suffix if needed (and not already present)
+            if (smooth && !shortType.endsWith('s')) {
+                shortType += 's';
+            }
+            return shortType;
+        };
+
+        // Helper to convert nodes array to string format
+        const nodesToString = (nodes: any[]): string => {
+            return nodes
+                .map((node) => {
+                    const shortType = nodeTypeToShort(
+                        node.nodetype,
+                        node.smooth
+                    );
+                    return `${node.x} ${node.y} ${shortType}`;
+                })
+                .join(' ');
+        };
+
+        // Helper function to clean shapes for JSON serialization (nodes as strings)
+        const cleanShapeForJson = (shape: Shape): any => {
             if ('Path' in shape) {
                 // For Path shapes, ensure we only save the string representation
                 // Remove any parsed 'nodes' array that was added during rendering
                 if ('nodes' in shape && Array.isArray(shape.nodes)) {
-                    // Convert array back to string: [{x, y, nodetype}, ...] -> "x y nodetype x y nodetype ..."
-                    const nodesString = shape.nodes
-                        .map((node) => `${node.x} ${node.y} ${node.nodetype}`)
-                        .join(' ');
+                    // Convert array back to string with proper short node types
+                    const nodesString = nodesToString(shape.nodes as any[]);
                     return {
                         Path: { nodes: nodesString, closed: shape.Path.closed }
                     };
@@ -818,9 +874,30 @@ class FontManager {
                 return {
                     Component: componentData
                 };
+            } else if ('nodes' in shape && 'closed' in shape) {
+                // Unwrapped Path instance - wrap it and convert nodes to string
+                const nodes = (shape as any).nodes;
+                let nodesString: string;
+                if (Array.isArray(nodes)) {
+                    nodesString = nodesToString(nodes);
+                } else {
+                    nodesString = nodes || '';
+                }
+                return {
+                    Path: { nodes: nodesString, closed: (shape as any).closed }
+                };
+            } else if ('reference' in shape) {
+                // Unwrapped Component instance - wrap it
+                const {
+                    __parent,
+                    layerData: _,
+                    ...componentData
+                } = shape as any;
+                return {
+                    Component: componentData
+                };
             } else {
-                // For other shape types (Anchor, etc.), create a clean copy
-                // Avoid JSON.parse(JSON.stringify()) which can fail on circular refs
+                // For other shape types, create a clean copy
                 const isObject =
                     shape && typeof shape === 'object' && !Array.isArray(shape);
                 if (isObject) {
@@ -830,8 +907,48 @@ class FontManager {
             }
         };
 
-        // Convert nodes array back to string format and strip internal properties
-        let newShapes = layerData.shapes?.map(cleanShapeForSaving);
+        // Helper function to clean shapes for in-memory storage (nodes as arrays)
+        const cleanShapeForMemory = (shape: Shape): any => {
+            if ('Path' in shape) {
+                // Keep nodes as-is (array or string)
+                return {
+                    Path: { ...shape.Path },
+                    // Preserve the nodes array at top level for rendering
+                    ...('nodes' in shape && { nodes: shape.nodes })
+                };
+            } else if ('Component' in shape) {
+                // Strip the layerData property from components
+                const componentData = { ...shape.Component };
+                delete componentData.layerData;
+                return { Component: componentData };
+            } else if ('nodes' in shape && 'closed' in shape) {
+                // Unwrapped Path instance - wrap it but keep nodes as array
+                const nodes = (shape as any).nodes;
+                return {
+                    Path: { nodes: nodes, closed: (shape as any).closed },
+                    nodes: Array.isArray(nodes) ? nodes : undefined
+                };
+            } else if ('reference' in shape) {
+                // Unwrapped Component instance - wrap it
+                const {
+                    __parent,
+                    layerData: _,
+                    ...componentData
+                } = shape as any;
+                return { Component: componentData };
+            } else {
+                const isObject =
+                    shape && typeof shape === 'object' && !Array.isArray(shape);
+                if (isObject) {
+                    return { ...(shape as object) } as Shape;
+                }
+                return shape;
+            }
+        };
+
+        // Create shapes for JSON (stringified nodes) and for memory (array nodes)
+        const shapesForJson = layerData.shapes?.map(cleanShapeForJson);
+        const shapesForMemory = layerData.shapes?.map(cleanShapeForMemory);
 
         // Deep copy anchors and guides to avoid circular references
         const cleanAnchors = layerData.anchors?.map((anchor) => ({
@@ -850,16 +967,14 @@ class FontManager {
             ...(guide.color && { color: guide.color })
         }));
 
-        // Create a clean copy of the layer data with only serializable properties
-        // Don't save isInterpolated flag - it's runtime state only
-        let layerDataCopy: Layer = {
+        // Base layer properties (shared between memory and JSON versions)
+        const baseLayerProps = {
             width: layerData.width,
             height: layerData.height,
             vertWidth: layerData.vertWidth,
             name: layerData.name,
             id: layerData.id,
             _master: layerData._master,
-            shapes: newShapes || [],
             isInterpolated: false, // Always false for saved data
             // Copy other optional properties if they exist
             ...(cleanAnchors && { anchors: cleanAnchors }),
@@ -883,6 +998,18 @@ class FontManager {
             ...((layerData as any).master && {
                 master: (layerData as any).master
             })
+        };
+
+        // Layer data for in-memory storage (array nodes for rendering)
+        const layerDataForMemory: Layer = {
+            ...baseLayerProps,
+            shapes: shapesForMemory || []
+        };
+
+        // Layer data for JSON serialization (string nodes for Rust)
+        const layerDataForJson: Layer = {
+            ...baseLayerProps,
+            shapes: shapesForJson || []
         };
 
         let glyph = this.getGlyph(glyphName);
@@ -911,8 +1038,8 @@ class FontManager {
             );
             return;
         }
-        // Directly assign the cleaned layer data (no need for JSON.parse/stringify)
-        glyph.layers[layerIndex] = layerDataCopy;
+        // Store layer with array nodes in memory for rendering
+        glyph.layers[layerIndex] = layerDataForMemory;
         console.log(glyph.layers[layerIndex]);
 
         // Update the babelfontJson string
@@ -931,16 +1058,15 @@ class FontManager {
                     (l: any) => l.id === layerId
                 );
                 if (layerIndexInJson !== -1) {
-                    glyphInJson.layers[layerIndexInJson] = layerDataCopy;
+                    // Use stringified nodes for JSON (Rust compatibility)
+                    glyphInJson.layers[layerIndexInJson] = layerDataForJson;
                 }
             }
             this.currentFont!.babelfontJson = JSON.stringify(fontData);
-            // Also update the babelfontData reference
-            this.currentFont!.babelfontData = fontData;
-            // Recreate the font model to reflect changes
-            this.currentFont!.fontModel = Font.fromData(fontData);
-            // Update global reference
-            window.currentFontModel = this.currentFont!.fontModel;
+            // Also update the babelfontData reference with memory-friendly data
+            // Note: We update babelfontData.glyphs directly above, so fontData
+            // now has the JSON version. We need to keep in-memory version separate.
+            // Don't recreate fontModel here as it would lose array nodes.
         } catch (error) {
             console.error(
                 '[FontManager] Error updating babelfont JSON:',

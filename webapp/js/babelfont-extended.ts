@@ -342,10 +342,17 @@ export class Font extends BabelfontFont {
         ensurePathNodes(this);
 
         return JSON.stringify(this, (key, value) => {
-            // When serializing shape objects, filter out normalizer wrapper properties
-            // The normalizer adds { Path: {...}, nodes: [...], isInterpolated?: bool }
-            // but we only want { Path: {...} } or { Component: {...} } in the JSON
+            // When serializing shape objects, we need to handle multiple cases:
+            // 1. Normalizer wrappers: { Path: {...}, nodes: [...], isInterpolated?: bool }
+            // 2. Unwrapped shapes: directly Path or Component instances without wrapper
+            // Rust expects: { Path: {...} } or { Component: {...} } (tagged format)
             if (value && typeof value === 'object' && !Array.isArray(value)) {
+                // If we're processing the content inside a Path or Component wrapper,
+                // don't try to wrap it again (prevents infinite recursion)
+                if (key === 'Path' || key === 'Component') {
+                    return value;
+                }
+
                 // Check if this looks like a normalizer wrapper for a Path shape
                 // It will have BOTH 'Path' and 'nodes' at the same level (duplicate property)
                 if (
@@ -362,6 +369,37 @@ export class Font extends BabelfontFont {
                     !('Path' in value)
                 ) {
                     return { Component: value.Component };
+                }
+
+                // Handle unwrapped Path: has 'nodes' property but no 'Path' wrapper
+                // Only wrap if it has a toJSON method (class instance or proxy), not plain objects
+                // Plain objects from toJSON() don't have toJSON method
+                if (
+                    'nodes' in value &&
+                    'closed' in value &&
+                    !('Path' in value) &&
+                    !('Component' in value) &&
+                    !('reference' in value) &&
+                    typeof value.toJSON === 'function'
+                ) {
+                    // Get the serialized path (with nodes as string)
+                    const pathData = value.toJSON();
+                    return { Path: pathData };
+                }
+
+                // Handle unwrapped Component: has 'reference' property but no 'Component' wrapper
+                // Check for parent getter (defined on class instances via ensureParentAccessors)
+                // to distinguish class instances from plain objects
+                if (
+                    'reference' in value &&
+                    !('Path' in value) &&
+                    !('Component' in value) &&
+                    !('nodes' in value && 'closed' in value) &&
+                    Object.getOwnPropertyDescriptor(value, 'parent')?.get
+                ) {
+                    // Filter out internal properties like __parent
+                    const { __parent, ...componentData } = value as any;
+                    return { Component: componentData };
                 }
             }
             return value;
