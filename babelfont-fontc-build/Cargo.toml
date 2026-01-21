@@ -7,7 +7,8 @@ edition = "2021"
 crate-type = ["cdylib"]
 
 [dependencies]
-babelfont = { git = "https://github.com/simoncozens/babelfont-rs.git", default-features = false, features = ["fontir", "glyphs", "ufo", "fontlab"] }
+# Use local babelfont submodule to stay in sync with TypeScript definitions
+babelfont = { path = "../webapp/vendor/babelfont-rs", default-features = false, features = ["fontir", "glyphs", "ufo", "fontlab"] }
 kurbo = "0.12"
 # Use local fontc with rayon completely removed
 wasm-bindgen = "0.2"

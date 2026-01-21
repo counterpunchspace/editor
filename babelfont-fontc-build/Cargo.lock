@@ -94,7 +94,7 @@ checksum = "7c02d123df017efcdfbd739ef81735b36c5ba83ec3c59c80a9d7ecc718f92e50"
 [[package]]
 name = "ascii_plist_derive"
 version = "0.2.0"
-source = "git+https://github.com/googlefonts/fontc?branch=paths-all-optional#626596abb98e59192359caed4fa19081cde862e6"
+source = "git+https://github.com/googlefonts/fontc#eef514cb1c26c306c8a539882829d77bc9418c85"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -109,19 +109,19 @@ checksum = "c08606f8c3cbf4ce6ec8e28fb0014a2c086708fe954eaa885384a6165172e7e8"
 
 [[package]]
 name = "babelfont"
-version = "0.1.2-pre"
-source = "git+https://github.com/simoncozens/babelfont-rs.git#b95c9ba3998e9b2e75b76d7a747e61b763a6aaac"
+version = "0.2.0-pre"
 dependencies = [
  "chrono",
  "fea-rs-ast",
  "fontc",
- "fontdrasil 0.4.0 (git+https://github.com/googlefonts/fontc?branch=paths-all-optional)",
+ "fontdrasil 0.4.0 (git+https://github.com/googlefonts/fontc)",
  "fontir",
  "glyphslib",
  "indexmap 2.12.1",
  "kurbo 0.12.0",
  "log",
  "norad",
+ "num-traits",
  "ordered-float",
  "paste",
  "regex",
@@ -531,11 +531,11 @@ dependencies = [
 [[package]]
 name = "fea-rs"
 version = "0.22.0"
-source = "git+https://github.com/googlefonts/fontc?branch=paths-all-optional#626596abb98e59192359caed4fa19081cde862e6"
+source = "git+https://github.com/googlefonts/fontc#eef514cb1c26c306c8a539882829d77bc9418c85"
 dependencies = [
  "ansi_term",
  "env_logger",
- "fontdrasil 0.4.0 (git+https://github.com/googlefonts/fontc?branch=paths-all-optional)",
+ "fontdrasil 0.4.0 (git+https://github.com/googlefonts/fontc)",
  "indexmap 2.12.1",
  "log",
  "ordered-float",
@@ -594,12 +594,12 @@ dependencies = [
 [[package]]
 name = "fontbe"
 version = "0.5.0"
-source = "git+https://github.com/googlefonts/fontc?branch=paths-all-optional#626596abb98e59192359caed4fa19081cde862e6"
+source = "git+https://github.com/googlefonts/fontc#eef514cb1c26c306c8a539882829d77bc9418c85"
 dependencies = [
  "bincode",
  "chrono",
- "fea-rs 0.22.0 (git+https://github.com/googlefonts/fontc?branch=paths-all-optional)",
- "fontdrasil 0.4.0 (git+https://github.com/googlefonts/fontc?branch=paths-all-optional)",
+ "fea-rs 0.22.0 (git+https://github.com/googlefonts/fontc)",
+ "fontdrasil 0.4.0 (git+https://github.com/googlefonts/fontc)",
  "fontir",
  "icu_properties",
  "indexmap 2.12.1",
@@ -617,13 +617,13 @@ dependencies = [
 [[package]]
 name = "fontc"
 version = "0.6.0"
-source = "git+https://github.com/googlefonts/fontc?branch=paths-all-optional#626596abb98e59192359caed4fa19081cde862e6"
+source = "git+https://github.com/googlefonts/fontc#eef514cb1c26c306c8a539882829d77bc9418c85"
 dependencies = [
  "bitflags",
  "crossbeam-channel",
  "env_logger",
  "fontbe",
- "fontdrasil 0.4.0 (git+https://github.com/googlefonts/fontc?branch=paths-all-optional)",
+ "fontdrasil 0.4.0 (git+https://github.com/googlefonts/fontc)",
  "fontir",
  "fontra2fontir",
  "glyphs2fontir",
@@ -670,14 +670,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "fontdrasil"
+version = "0.4.0"
+source = "git+https://github.com/googlefonts/fontc#eef514cb1c26c306c8a539882829d77bc9418c85"
+dependencies = [
+ "env_logger",
+ "kurbo 0.12.0",
+ "log",
+ "ordered-float",
+ "serde",
+ "smol_str",
+ "thiserror 2.0.17",
+ "write-fonts",
+]
+
+[[package]]
 name = "fontir"
 version = "0.5.0"
-source = "git+https://github.com/googlefonts/fontc?branch=paths-all-optional#626596abb98e59192359caed4fa19081cde862e6"
+source = "git+https://github.com/googlefonts/fontc#eef514cb1c26c306c8a539882829d77bc9418c85"
 dependencies = [
  "bitflags",
  "chrono",
  "env_logger",
- "fontdrasil 0.4.0 (git+https://github.com/googlefonts/fontc?branch=paths-all-optional)",
+ "fontdrasil 0.4.0 (git+https://github.com/googlefonts/fontc)",
  "indexmap 2.12.1",
  "kurbo 0.12.0",
  "log",
@@ -685,6 +700,7 @@ dependencies = [
  "parking_lot",
  "serde",
  "serde_yaml",
+ "smallvec",
  "smol_str",
  "thiserror 2.0.17",
  "write-fonts",
@@ -693,10 +709,10 @@ dependencies = [
 [[package]]
 name = "fontra2fontir"
 version = "0.4.0"
-source = "git+https://github.com/googlefonts/fontc?branch=paths-all-optional#626596abb98e59192359caed4fa19081cde862e6"
+source = "git+https://github.com/googlefonts/fontc#eef514cb1c26c306c8a539882829d77bc9418c85"
 dependencies = [
  "env_logger",
- "fontdrasil 0.4.0 (git+https://github.com/googlefonts/fontc?branch=paths-all-optional)",
+ "fontdrasil 0.4.0 (git+https://github.com/googlefonts/fontc)",
  "fontir",
  "indexmap 2.12.1",
  "kurbo 0.12.0",
@@ -723,12 +739,12 @@ dependencies = [
 [[package]]
 name = "glyphs-reader"
 version = "0.5.0"
-source = "git+https://github.com/googlefonts/fontc?branch=paths-all-optional#626596abb98e59192359caed4fa19081cde862e6"
+source = "git+https://github.com/googlefonts/fontc#eef514cb1c26c306c8a539882829d77bc9418c85"
 dependencies = [
  "ascii_plist_derive",
  "chrono",
  "env_logger",
- "fontdrasil 0.4.0 (git+https://github.com/googlefonts/fontc?branch=paths-all-optional)",
+ "fontdrasil 0.4.0 (git+https://github.com/googlefonts/fontc)",
  "icu_properties",
  "indexmap 2.12.1",
  "kurbo 0.12.0",
@@ -745,11 +761,11 @@ dependencies = [
 [[package]]
 name = "glyphs2fontir"
 version = "0.6.0"
-source = "git+https://github.com/googlefonts/fontc?branch=paths-all-optional#626596abb98e59192359caed4fa19081cde862e6"
+source = "git+https://github.com/googlefonts/fontc#eef514cb1c26c306c8a539882829d77bc9418c85"
 dependencies = [
  "chrono",
  "env_logger",
- "fontdrasil 0.4.0 (git+https://github.com/googlefonts/fontc?branch=paths-all-optional)",
+ "fontdrasil 0.4.0 (git+https://github.com/googlefonts/fontc)",
  "fontir",
  "glyphs-reader",
  "indexmap 2.12.1",
@@ -763,9 +779,9 @@ dependencies = [
 
 [[package]]
 name = "glyphslib"
-version = "0.1.0"
+version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cf12af6504e11bb3f713f6183dbb4d40d629099aadf0bf8b713b5110849a907f"
+checksum = "99c0d378277e07d579868cc498b4c76ea6abfe24053a4a45c336f503ff429c60"
 dependencies = [
  "itertools",
  "openstep-plist",
@@ -826,9 +842,9 @@ dependencies = [
 
 [[package]]
 name = "icu_collections"
-version = "2.0.0"
+version = "2.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "200072f5d0e3614556f94a9930d5dc3e0662a652823904c3a75dc3b0af7fee47"
+checksum = "4c6b649701667bbe825c3b7e6388cb521c23d88644678e83c0c4d0a621a34b43"
 dependencies = [
  "displaydoc",
  "potential_utf",
@@ -845,7 +861,6 @@ checksum = "edba7861004dd3714265b4db54a3c390e880ab658fec5f7db895fae2046b5bb6"
 dependencies = [
  "displaydoc",
  "litemap",
- "serde",
  "tinystr",
  "writeable",
  "zerovec",
@@ -853,25 +868,23 @@ dependencies = [
 
 [[package]]
 name = "icu_properties"
-version = "2.0.2"
+version = "2.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f5a97b8ac6235e69506e8dacfb2adf38461d2ce6d3e9bd9c94c4cbc3cd4400a4"
+checksum = "020bfc02fe870ec3a66d93e677ccca0562506e5872c650f893269e08615d74ec"
 dependencies = [
- "displaydoc",
  "icu_collections",
  "icu_locale_core",
  "icu_properties_data",
  "icu_provider",
- "potential_utf",
  "zerotrie",
  "zerovec",
 ]
 
 [[package]]
 name = "icu_properties_data"
-version = "2.0.1"
+version = "2.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "298459143998310acd25ffe6810ed544932242d3f07083eee1084d83a71bd632"
+checksum = "616c294cf8d725c6afcd8f55abc17c56464ef6211f9ed59cccffe534129c77af"
 
 [[package]]
 name = "icu_provider"
@@ -881,8 +894,6 @@ checksum = "85962cf0ce02e1e0a629cc34e7ca3e373ce20dda4c4d7294bbd0bf1fdb59e614"
 dependencies = [
  "displaydoc",
  "icu_locale_core",
- "serde",
- "stable_deref_trait",
  "writeable",
  "yoke",
  "zerofrom",
@@ -1110,9 +1121,9 @@ checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
 
 [[package]]
 name = "openstep-plist"
-version = "0.1.0"
+version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9950bf633d13e32875256c772828e28773fb047e53d1e18d2c6772f716ffa2fa"
+checksum = "05b90d0861fc887b36f13436f5e843697423eb837f99258c5b2539b484117d6d"
 dependencies = [
  "itertools",
  "serde",
@@ -1716,11 +1727,11 @@ dependencies = [
 [[package]]
 name = "ufo2fontir"
 version = "0.4.0"
-source = "git+https://github.com/googlefonts/fontc?branch=paths-all-optional#626596abb98e59192359caed4fa19081cde862e6"
+source = "git+https://github.com/googlefonts/fontc#eef514cb1c26c306c8a539882829d77bc9418c85"
 dependencies = [
  "chrono",
  "env_logger",
- "fontdrasil 0.4.0 (git+https://github.com/googlefonts/fontc?branch=paths-all-optional)",
+ "fontdrasil 0.4.0 (git+https://github.com/googlefonts/fontc)",
  "fontir",
  "indexmap 2.12.1",
  "kurbo 0.12.0",

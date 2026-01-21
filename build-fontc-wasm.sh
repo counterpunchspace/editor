@@ -7,9 +7,12 @@ set -e  # Exit on error
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WEBAPP_DIR="$SCRIPT_DIR/webapp"
 WASM_DIR="$SCRIPT_DIR/babelfont-fontc-build"
+BABELFONT_DIR="$WEBAPP_DIR/vendor/babelfont-rs"
 
 echo "🦀 Building fontc with babelfont-rs for WebAssembly..."
 echo "Direct Python → Rust integration (no file system)"
+echo "📍 Using local babelfont from: $BABELFONT_DIR"
+echo "   This ensures Rust WASM and TypeScript definitions stay in sync"
 echo ""
 
 # Check if Rust is installed
@@ -38,7 +41,7 @@ cd "$WASM_DIR"
 
 # Create or update the Rust crate for babelfont-fontc integration
 if [ ! -f "Cargo.toml" ]; then
-    echo "� Creating babelfont-fontc crate..."
+    echo "📝 Creating babelfont-fontc crate with local babelfont..."
     cat > Cargo.toml << 'EOF'
 [package]
 name = "babelfont-fontc-web"
@@ -49,20 +52,37 @@ edition = "2021"
 crate-type = ["cdylib"]
 
 [dependencies]
-babelfont = { git = "https://github.com/simoncozens/babelfont-rs.git", features = ["fontir"] }
-# Use the same versions that babelfont uses
-fontc = { git = "https://github.com/googlefonts/fontc.git", branch = "edit-edits" }
-fontir = { git = "https://github.com/googlefonts/fontc.git", branch = "edit-edits" }
+# Use local babelfont submodule to stay in sync with TypeScript definitions
+babelfont = { path = "../webapp/vendor/babelfont-rs", default-features = false, features = ["fontir", "glyphs", "ufo", "fontlab"] }
+kurbo = "0.12"
 wasm-bindgen = "0.2"
 serde_json = "1.0"
 console_error_panic_hook = "0.1"
 tempfile = "3"
+js-sys = "0.3.83"
+fontdrasil = { git = "https://github.com/googlefonts/fontc", branch = "paths-all-optional" }
+write-fonts = "0.44"
+read-fonts = "0.36"
+skrifa = "0.28"
+
+[dependencies.web-sys]
+version = "0.3"
+features = ["console"]
 
 [profile.release]
 opt-level = "z"
 lto = true
 EOF
-    echo "✓ Created Cargo.toml"
+    echo "✓ Created Cargo.toml with local babelfont"
+else
+    echo "✓ Using existing Cargo.toml"
+    # Verify it's using the local path
+    if grep -q 'path = "../webapp/vendor/babelfont-rs"' Cargo.toml; then
+        echo "   ✓ Confirmed using local babelfont submodule"
+    elif grep -q 'git.*babelfont-rs' Cargo.toml; then
+        echo "   ⚠️  WARNING: Cargo.toml is using git dependency instead of local submodule"
+        echo "   Update Cargo.toml to use: babelfont = { path = \"../webapp/vendor/babelfont-rs\", ... }"
+    fi
 fi
 
 # Ensure src directory exists (but don't overwrite lib.rs)
