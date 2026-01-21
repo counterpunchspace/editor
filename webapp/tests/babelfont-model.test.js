@@ -1,7 +1,11 @@
 const fs = require('fs');
 const path = require('path');
 const { Font } = require('../js/babelfont-extended');
-const { initFixtureHelper, loadGlyphsAsBabelfont, cleanupFixtures } = require('./fixture-helper');
+const {
+    initFixtureHelper,
+    loadGlyphsAsBabelfont,
+    cleanupFixtures
+} = require('./fixture-helper');
 
 describe('Babelfont Object Model', () => {
     let fontData;
@@ -569,7 +573,9 @@ describe('Babelfont Object Model', () => {
     describe('Layer.flattenComponents()', () => {
         test('should flatten adieresis components across all layers with transforms', () => {
             // Load NestedComponents.glyphs for this test
-            const nestedFontData = loadGlyphsAsBabelfont('NestedComponents.glyphs');
+            const nestedFontData = loadGlyphsAsBabelfont(
+                'NestedComponents.glyphs'
+            );
             const nestedFont = Font.fromData(nestedFontData);
 
             const adieresis = nestedFont.findGlyph('adieresis');
@@ -726,7 +732,9 @@ describe('Babelfont Object Model', () => {
     describe('Layer.getIntersectionsOnLine()', () => {
         test('should calculate intersections on adieresis layer 2 with components', () => {
             // Load NestedComponents.glyphs for this test
-            const nestedFontData = loadGlyphsAsBabelfont('NestedComponents.glyphs');
+            const nestedFontData = loadGlyphsAsBabelfont(
+                'NestedComponents.glyphs'
+            );
             const nestedFont = Font.fromData(nestedFontData);
 
             const adieresis = nestedFont.findGlyph('adieresis');
