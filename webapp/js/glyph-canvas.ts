@@ -58,6 +58,10 @@ class GlyphCanvas {
 
     resizeObserver: ResizeObserver | null = null;
 
+    // Track previous container dimensions for resize handling
+    lastContainerWidth: number = 0;
+    lastContainerHeight: number = 0;
+
     propertiesSection: HTMLElement | null = null;
     leftSidebar: HTMLElement | null = null;
     rightSidebar: HTMLElement | null = null;
@@ -138,6 +142,10 @@ class GlyphCanvas {
 
         // Set up HiDPI canvas
         this.setupHiDPI();
+
+        // Store initial dimensions for resize tracking
+        this.lastContainerWidth = this.container.clientWidth;
+        this.lastContainerHeight = this.container.clientHeight;
 
         // Set initial scale and position with deterministic values
         // Using fixed values instead of getBoundingClientRect() for consistency
@@ -1032,7 +1040,67 @@ class GlyphCanvas {
     }
 
     onResize(): void {
+        // Get current dimensions
+        const newWidth = this.container.clientWidth;
+        const newHeight = this.container.clientHeight;
+
+        // Use stored previous dimensions (or current if first resize)
+        const oldWidth = this.lastContainerWidth || newWidth;
+        const oldHeight = this.lastContainerHeight || newHeight;
+
+        // Update stored dimensions for next resize
+        this.lastContainerWidth = newWidth;
+        this.lastContainerHeight = newHeight;
+
+        // Resize the canvas first
         this.setupHiDPI();
+
+        // Skip viewport adjustment if no viewportManager or dimensions unchanged
+        if (
+            !this.viewportManager ||
+            (oldWidth === newWidth && oldHeight === newHeight)
+        ) {
+            this.render();
+            return;
+        }
+
+        // Get the font-space point that was at the old screen center
+        const oldCenterX = oldWidth / 2;
+        const oldCenterY = oldHeight / 2;
+        const fontSpaceCenter = this.viewportManager.getFontSpaceCoordinates(
+            oldCenterX,
+            oldCenterY
+        );
+        const oldScale = this.viewportManager.scale;
+
+        // New screen center
+        const newCenterX = newWidth / 2;
+        const newCenterY = newHeight / 2;
+
+        // Calculate zoom adjustment based on both width and height change (dampened by 30%)
+        const widthRatio = newWidth / oldWidth;
+        const heightRatio = newHeight / oldHeight;
+        // Use whichever dimension changed more
+        const sizeRatio =
+            Math.abs(widthRatio - 1) > Math.abs(heightRatio - 1)
+                ? widthRatio
+                : heightRatio;
+        const dampenedRatio = 1 + (sizeRatio - 1) * 0.7; // 30% less zoom change
+        const newScale = oldScale * dampenedRatio;
+
+        // Only apply if within zoom limits
+        if (newScale >= 0.01 && newScale <= 100) {
+            this.viewportManager.scale = newScale;
+        }
+
+        // Adjust pan to keep the font-space center point at screen center
+        // screen = scale * fontX + panX  =>  panX = screen - scale * fontX
+        // For Y axis (flipped): screenY = -scale * fontY + panY  =>  panY = screenY + scale * fontY
+        this.viewportManager.panX =
+            newCenterX - this.viewportManager.scale * fontSpaceCenter.x;
+        this.viewportManager.panY =
+            newCenterY + this.viewportManager.scale * fontSpaceCenter.y;
+
         this.render();
     }
 
