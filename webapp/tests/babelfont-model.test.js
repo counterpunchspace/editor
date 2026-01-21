@@ -1,21 +1,20 @@
 const fs = require('fs');
 const path = require('path');
 const { Font } = require('../js/babelfont-extended');
+const { initFixtureHelper, loadGlyphsAsBabelfont, cleanupFixtures } = require('./fixture-helper');
 
 describe('Babelfont Object Model', () => {
     let fontData;
     let font;
 
-    beforeAll(() => {
-        // Load Fustat.babelfont as test fixture
-        const fixturePath = path.join(
-            __dirname,
-            '..',
-            'examples',
-            'Fustat.babelfont'
-        );
-        const jsonString = fs.readFileSync(fixturePath, 'utf-8');
-        fontData = JSON.parse(jsonString);
+    beforeAll(async () => {
+        // Initialize WASM and load Fustat.glyphs as test fixture
+        await initFixtureHelper();
+        fontData = loadGlyphsAsBabelfont('Fustat.glyphs');
+    });
+
+    afterAll(() => {
+        cleanupFixtures();
     });
 
     beforeEach(() => {
@@ -569,18 +568,8 @@ describe('Babelfont Object Model', () => {
 
     describe('Layer.flattenComponents()', () => {
         test('should flatten adieresis components across all layers with transforms', () => {
-            // Load NestedComponents.babelfont for this test
-            const nestedFixturePath = path.join(
-                __dirname,
-                '..',
-                'examples',
-                'NestedComponents.babelfont'
-            );
-            const nestedJsonString = fs.readFileSync(
-                nestedFixturePath,
-                'utf-8'
-            );
-            const nestedFontData = JSON.parse(nestedJsonString);
+            // Load NestedComponents.glyphs for this test
+            const nestedFontData = loadGlyphsAsBabelfont('NestedComponents.glyphs');
             const nestedFont = Font.fromData(nestedFontData);
 
             const adieresis = nestedFont.findGlyph('adieresis');
@@ -736,18 +725,8 @@ describe('Babelfont Object Model', () => {
 
     describe('Layer.getIntersectionsOnLine()', () => {
         test('should calculate intersections on adieresis layer 2 with components', () => {
-            // Load NestedComponents.babelfont for this test
-            const nestedFixturePath = path.join(
-                __dirname,
-                '..',
-                'examples',
-                'NestedComponents.babelfont'
-            );
-            const nestedJsonString = fs.readFileSync(
-                nestedFixturePath,
-                'utf-8'
-            );
-            const nestedFontData = JSON.parse(nestedJsonString);
+            // Load NestedComponents.glyphs for this test
+            const nestedFontData = loadGlyphsAsBabelfont('NestedComponents.glyphs');
             const nestedFont = Font.fromData(nestedFontData);
 
             const adieresis = nestedFont.findGlyph('adieresis');
