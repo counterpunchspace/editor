@@ -26,6 +26,11 @@ This is a WebAssembly-based font editor using Rust (fontc/babelfont) compiled to
 - Decide intelligently in which JavaScript file to place new code. Infer target files from each file name or comments at the file header and only create new files if a topic is entirely new.
 - The font object is available under `window.currentFontModel`
 
+### Submodules
+
+The repository has a babelfont-rs Git submodule which contains babelfont-ts which we're using.
+Changes to those are forbidden as we have no control over them. If we must make changes, we need to propose a PR, so first try to work around it.
+
 ### Rust
 
 - Follow standard Rust conventions
