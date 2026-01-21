@@ -71,6 +71,25 @@ type PathData = {
 export class Font extends BabelfontFont {
     constructor(data: IFont, registry?: ClassRegistry) {
         super(data, registry);
+
+        // Add _pyrepr as a getter that computes the string inline (bypasses Proxy interception)
+        // This is used by the Python wrapper for __str__ representation for print()
+        Object.defineProperty(this, '_pyrepr', {
+            get: () => {
+                const familyName =
+                    this.names?.family_name?.en ||
+                    Object.values(this.names?.family_name || {})[0] ||
+                    'Unnamed';
+                const glyphCount = this.glyphs?.length || 0;
+                const masterCount = this.masters?.length || 0;
+                const axisCount = this.axes?.length || 0;
+                const info =
+                    masterCount > 1
+                        ? ` ${axisCount} axes, ${masterCount} masters`
+                        : '';
+                return `<Font "${familyName}" ${glyphCount} glyphs${info}>`;
+            }
+        });
     }
 
     /**
@@ -244,6 +263,26 @@ export class Font extends BabelfontFont {
 // ============================================================================
 
 export class Glyph extends BabelfontGlyph {
+    constructor(data: IGlyph) {
+        super(data);
+
+        // Add _pyrepr as a getter that computes the string inline (bypasses Proxy interception)
+        // This is used by the Python wrapper for __str__ representation for print()
+        Object.defineProperty(this, '_pyrepr', {
+            get: () => {
+                const codepoints =
+                    this.codepoints
+                        ?.map(
+                            (cp) =>
+                                `U+${cp.toString(16).toUpperCase().padStart(4, '0')}`
+                        )
+                        .join(', ') || 'none';
+                const layerCount = this.layers?.length || 0;
+                return `<Glyph "${this.name}" [${codepoints}] ${layerCount} layers>`;
+            }
+        });
+    }
+
     /**
      * Get a layer by ID
      *
@@ -303,6 +342,32 @@ export class Glyph extends BabelfontGlyph {
 export class Layer extends BabelfontLayer {
     // Custom property for caching component layer data
     cachedComponentLayerData?: any;
+
+    constructor(data: ILayer) {
+        super(data);
+
+        // Add _pyrepr as a getter that computes the string inline (bypasses Proxy interception)
+        // This is used by the Python wrapper for __str__ representation for print()
+        Object.defineProperty(this, '_pyrepr', {
+            get: () => {
+                let masterId: string;
+                if (typeof this.master === 'object') {
+                    if ('DefaultForMaster' in this.master) {
+                        masterId = (this.master as any).DefaultForMaster;
+                    } else if ('AssociatedWithMaster' in this.master) {
+                        masterId = (this.master as any).AssociatedWithMaster;
+                    } else {
+                        masterId = (this.master as any).master || 'unknown';
+                    }
+                } else {
+                    masterId = this.master || this.id || 'unknown';
+                }
+                const width =
+                    this.width !== undefined ? ` width=${this.width}` : '';
+                return `<Layer "${masterId}"${width}>`;
+            }
+        });
+    }
 
     /**
      * Get bounding box of layer (WASM-backed)
@@ -406,7 +471,7 @@ export class Layer extends BabelfontLayer {
     addPath(closed: boolean = false): Path {
         // Create path using constructor with empty nodes string
         // IPath interface expects nodes as Node[] but constructor parses string to Node[]
-        const path = new Path({ nodes: '' as any, closed });
+        const path = new Path({ nodes: '' as any, closed } as IPath);
         if (!this.shapes) this.shapes = [];
         this.shapes.push(path as any);
         this.markDirty();
@@ -1067,6 +1132,22 @@ export class Layer extends BabelfontLayer {
 // ============================================================================
 
 export class Path extends BabelfontPath {
+    constructor(data: IPath) {
+        super(data);
+
+        // Add _pyrepr as a getter that computes the string inline (bypasses Proxy interception)
+        // This is used by the Python wrapper for __str__ representation for print()
+        Object.defineProperty(this, '_pyrepr', {
+            get: () => {
+                const closedStr = this.closed ? 'closed' : 'open';
+                const nodeCount = Array.isArray(this.nodes)
+                    ? this.nodes.length
+                    : 0;
+                return `<Path ${closedStr} ${nodeCount} nodes>`;
+            }
+        });
+    }
+
     /**
      * Override toJSON to add safety check for undefined nodes
      * This prevents crashes during serialization if nodes isn't properly initialized
@@ -1165,6 +1246,21 @@ export class Component extends BabelfontComponent {
     // Custom property for caching component layer data
     cachedComponentLayerData?: any;
 
+    constructor(data: IComponent) {
+        super(data);
+
+        // Add _pyrepr as a getter that computes the string inline (bypasses Proxy interception)
+        // This is used by the Python wrapper for __str__ representation for print()
+        Object.defineProperty(this, '_pyrepr', {
+            get: () => {
+                const transform = this.transform
+                    ? ` transform=${JSON.stringify(this.transform)}`
+                    : '';
+                return `<Component ref="${this.reference}"${transform}>`;
+            }
+        });
+    }
+
     /**
      * String representation for debugging
      *
@@ -1185,6 +1281,19 @@ export class Component extends BabelfontComponent {
 // ============================================================================
 
 export class Node extends BabelfontNode {
+    constructor(data: INode) {
+        super(data);
+
+        // Add _pyrepr as a getter that computes the string inline (bypasses Proxy interception)
+        // This is used by the Python wrapper for __str__ representation for print()
+        Object.defineProperty(this, '_pyrepr', {
+            get: () => {
+                const smooth = this.smooth ? ' smooth' : '';
+                return `<Node (${this.x}, ${this.y}) ${this.nodetype}${smooth}>`;
+            }
+        });
+    }
+
     /**
      * String representation for debugging
      *
@@ -1198,6 +1307,19 @@ export class Node extends BabelfontNode {
     }
 }
 export class Anchor extends BabelfontAnchor {
+    constructor(data: IAnchor) {
+        super(data);
+
+        // Add _pyrepr as a getter that computes the string inline (bypasses Proxy interception)
+        // This is used by the Python wrapper for __str__ representation for print()
+        Object.defineProperty(this, '_pyrepr', {
+            get: () => {
+                const name = this.name ? ` "${this.name}"` : '';
+                return `<Anchor${name} (${this.x}, ${this.y})>`;
+            }
+        });
+    }
+
     /**
      * String representation for debugging
      *
@@ -1211,6 +1333,19 @@ export class Anchor extends BabelfontAnchor {
     }
 }
 export class Guide extends BabelfontGuide {
+    constructor(data: IGuide) {
+        super(data);
+
+        // Add _pyrepr as a getter that computes the string inline (bypasses Proxy interception)
+        // This is used by the Python wrapper for __str__ representation for print()
+        Object.defineProperty(this, '_pyrepr', {
+            get: () => {
+                const name = this.name ? ` "${this.name}"` : '';
+                return `<Guide${name} pos=${JSON.stringify(this.pos)}>`;
+            }
+        });
+    }
+
     /**
      * String representation for debugging
      *
@@ -1224,6 +1359,25 @@ export class Guide extends BabelfontGuide {
     }
 }
 export class Axis extends BabelfontAxis {
+    constructor(data: IAxis) {
+        super(data);
+
+        // Add _pyrepr as a getter that computes the string inline (bypasses Proxy interception)
+        // This is used by the Python wrapper for __str__ representation for print()
+        Object.defineProperty(this, '_pyrepr', {
+            get: () => {
+                const displayName =
+                    typeof this.name === 'string'
+                        ? this.name
+                        : this.name?.dflt ||
+                          Object.values(this.name || {})[0] ||
+                          'unknown';
+                const range = `${this.min || '?'}-${this.default || '?'}-${this.max || '?'}`;
+                return `<Axis "${displayName}" tag="${this.tag}" ${range}>`;
+            }
+        });
+    }
+
     /**
      * String representation for debugging
      *
@@ -1243,6 +1397,27 @@ export class Axis extends BabelfontAxis {
     }
 }
 export class Instance extends BabelfontInstance {
+    constructor(data: IInstance) {
+        super(data);
+
+        // Add _pyrepr as a getter that computes the string inline (bypasses Proxy interception)
+        // This is used by the Python wrapper for __str__ representation for print()
+        Object.defineProperty(this, '_pyrepr', {
+            get: () => {
+                const displayName =
+                    typeof this.name === 'string'
+                        ? this.name
+                        : this.name?.en ||
+                          Object.values(this.name || {})[0] ||
+                          'unknown';
+                const location = this.location
+                    ? JSON.stringify(this.location)
+                    : '{}';
+                return `<Instance "${displayName}" location=${location}>`;
+            }
+        });
+    }
+
     /**
      * String representation for debugging
      *
@@ -1262,6 +1437,27 @@ export class Instance extends BabelfontInstance {
     }
 }
 export class Master extends BabelfontMaster {
+    constructor(data: IMaster) {
+        super(data);
+
+        // Add _pyrepr as a getter that computes the string inline (bypasses Proxy interception)
+        // This is used by the Python wrapper for __str__ representation for print()
+        Object.defineProperty(this, '_pyrepr', {
+            get: () => {
+                const displayName =
+                    typeof this.name === 'string'
+                        ? this.name
+                        : this.name?.en ||
+                          Object.values(this.name || {})[0] ||
+                          'unknown';
+                const location = this.location
+                    ? JSON.stringify(this.location)
+                    : '{}';
+                return `<Master "${displayName}" id="${this.id}" location=${location}>`;
+            }
+        });
+    }
+
     /**
      * String representation for debugging
      *

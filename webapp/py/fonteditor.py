@@ -20,6 +20,132 @@ Core functionality for font editing operations
 
 import js
 import pyodide.ffi
+import builtins
+
+# Store original print
+_original_print = builtins.print
+
+# Override print to force __str__ conversion
+def print(*args, **kwargs):
+    """Custom print that properly handles _BabelfontWrapper objects"""
+    converted_args = []
+    for arg in args:
+        if isinstance(arg, _BabelfontWrapper):
+            # Force string conversion via __str__
+            converted_args.append(str(arg))
+        else:
+            converted_args.append(arg)
+    return _original_print(*converted_args, **kwargs)
+
+# Replace built-in print
+builtins.print = print
+
+
+class _BabelfontWrapper:
+    """Generic wrapper to make babelfont objects print nicely in Python console"""
+    __slots__ = ('__obj', '_repr_str')  # Use slots to control attribute access
+    
+    def __init__(self, obj):
+        object.__setattr__(self, '_BabelfontWrapper__obj', obj)  # Name mangling to hide from Pyodide
+        # Pre-compute the string representation
+        object.__setattr__(self, '_repr_str', self._compute_repr())
+    
+    def _compute_repr(self):
+        """Compute string representation by accessing JS _pyrepr getter property"""
+        obj = object.__getattribute__(self, '_BabelfontWrapper__obj')
+        try:
+            # Try accessing _pyrepr property (not calling it - it's a getter)
+            if hasattr(obj, '_pyrepr'):
+                result = str(obj._pyrepr)  # Access as property, not method
+                if result and result != '[object Object]':
+                    return result
+        except Exception as e:
+            print(f"[FontEditor] Error accessing _pyrepr: {e}")
+            import traceback
+            traceback.print_exc()
+        
+        # Fallback to default representation
+        return f'<{type(obj).__name__} at {hex(id(obj))}>'
+    
+    def __repr__(self):
+        return self._repr_str
+    
+    def __str__(self):
+        return self._repr_str
+    
+    def __format__(self, format_spec):
+        """Format method - forces string representation"""
+        return self._repr_str
+    
+    # Override the default string conversion that Pyodide console uses
+    def _repr_mimebundle_(self, include=None, exclude=None):
+        return {'text/plain': self._repr_str}
+    
+    # CRITICAL: Override toJs() to ensure proper representation when passed to JS
+    def toJs(self):
+        """When this Python object is converted to JavaScript, return a string representation"""
+        return self._repr_str
+    
+    # Pyodide-specific: override __reduce__ to prevent introspection into _obj
+    def __reduce__(self):
+        """Prevent pickle from accessing _obj"""
+        return (str, (self._repr_str,))
+    
+    def _should_wrap(self, obj):
+        """Check if an object should be wrapped"""
+        # Don't wrap None or primitives
+        if obj is None:
+            return False
+        # Check if it has a toString method (indicating it's a babelfont object)
+        try:
+            return hasattr(obj, 'toString') and not callable(obj)
+        except:
+            return False
+    
+    def _wrap_method(self, method):
+        """Wrap a method to auto-wrap its return value"""
+        def wrapper(*args, **kwargs):
+            result = method(*args, **kwargs)
+            # Auto-wrap babelfont objects in the result
+            if self._should_wrap(result):
+                return _BabelfontWrapper(result)
+            return result
+        return wrapper
+    
+    def __getattr__(self, name):
+        # Forward all attribute access to the wrapped object
+        obj = object.__getattribute__(self, '_BabelfontWrapper__obj')
+        result = getattr(obj, name)
+        # If it's a callable (method/function), wrap it to auto-wrap return values
+        if callable(result):
+            return self._wrap_method(result)
+        # Auto-wrap babelfont objects but not methods
+        if self._should_wrap(result):
+            return _BabelfontWrapper(result)
+        return result
+    
+    def __getitem__(self, key):
+        # Forward indexing to the wrapped object
+        obj = object.__getattribute__(self, '_BabelfontWrapper__obj')
+        result = obj[key]
+        # Auto-wrap babelfont objects but not methods
+        if self._should_wrap(result):
+            return _BabelfontWrapper(result)
+        return result
+    
+    def __len__(self):
+        # Forward len() to the wrapped object
+        obj = object.__getattribute__(self, '_BabelfontWrapper__obj')
+        return len(obj)
+    
+    def __iter__(self):
+        # Forward iteration to the wrapped object, wrapping each item
+        obj = object.__getattribute__(self, '_BabelfontWrapper__obj')
+        for item in obj:
+            if self._should_wrap(item):
+                yield _BabelfontWrapper(item)
+            else:
+                yield item
 
 
 def CurrentFont():
@@ -34,9 +160,11 @@ def CurrentFont():
 
     Example:
         >>> font = CurrentFont()
-        >>> print(font.info.familyName)
+        >>> print(font)
     """
     if type(js.window.currentFontModel) is pyodide.ffi.JsNull:
         raise RuntimeError("No font is currently open")
-    return js.window.currentFontModel
+    
+    font_obj = js.window.currentFontModel
+    return _BabelfontWrapper(font_obj)
 
