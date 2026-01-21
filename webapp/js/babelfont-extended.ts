@@ -259,7 +259,7 @@ export class Font extends BabelfontFont {
      * font = Font.fromData(data_dict)
      */
     static fromData(data: IFont): Font {
-        return new Font(data);
+        return new Font(data, ExtendedClassRegistry);
     }
 
     /**
