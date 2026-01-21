@@ -517,6 +517,10 @@ function generateClassDocs(classInfo, typeDefinitions = new Map()) {
   // Access example
   const accessExamples = {
     Font: "```python\n# fonteditor module is pre-loaded\nfont = CurrentFont()\n```",
+    Names:
+      '```python\n# Access all name entries\nfont.names.copyright = {"en": "Copyright 2026"}\nfont.names.family_name = {"en": "My Font"}\n```',
+    Features:
+      '```python\n# Define OpenType feature code\nfont.features.classes["@lowercase"] = "a b c d e"\nfont.features.prefixes["languagesystems"] = "languagesystem DFLT dflt;"\nfont.features.features.append(("liga", "sub f i by fi;"))\n```',
     Glyph:
       '```python\nglyph = font.glyphs[0]\n# or\nglyph = font.findGlyph("A")\n```',
     Layer: "```python\nlayer = glyph.layers[0]\n```",
@@ -675,6 +679,8 @@ function generateAPIDocs(version = null) {
   // Parse babelfont-ts source files for wrapper class interfaces
   const classFiles = [
     "font.ts",
+    "names.ts",
+    "features.ts",
     "glyph.ts",
     "layer.ts",
     "shape.ts",

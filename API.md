@@ -9,6 +9,8 @@
 - [Overview](#overview)
 - [Class Reference](#class-reference)
   - [Font](#font)
+  - [Names](#names)
+  - [Features](#features)
   - [Glyph](#glyph)
   - [Layer](#layer)
   - [Path](#path)
@@ -151,6 +153,68 @@ Create and add a new glyph to the font
 glyph = font.addGlyph("A")
 print(glyph.name)
 ```
+
+---
+
+
+## Names
+
+**Access:**
+```python
+# Access all name entries
+font.names.copyright = {"en": "Copyright 2026"}
+font.names.family_name = {"en": "My Font"}
+```
+
+### Properties
+
+All properties are read/write:
+
+- **`copyright`** (I18NDictionary | None): Copyright notice (OpenType Name ID 0)
+- **`family_name`** (I18NDictionary | None): Font family name (OpenType Name ID 1)
+- **`preferred_subfamily_name`** (I18NDictionary | None): Font Subfamily name (OpenType Name ID 2)
+- **`unique_id`** (I18NDictionary | None): Unique font identifier (OpenType Name ID 3)
+- **`full_name`** (I18NDictionary | None): Full font name (OpenType Name ID 4)
+- **`version`** (I18NDictionary | None): Version string (OpenType Name ID 5)
+- **`postscript_name`** (I18NDictionary | None): PostScript name for the font (OpenType Name ID 6)
+- **`trademark`** (I18NDictionary | None): Trademark (OpenType Name ID 7)
+- **`manufacturer`** (I18NDictionary | None): Manufacturer Name (OpenType Name ID 8)
+- **`designer`** (I18NDictionary | None): Designer. (Name of the designer of the typeface.) (OpenType Name ID 9)
+- **`description`** (I18NDictionary | None): Description. (Description of the typeface.) (OpenType Name ID 10)
+- **`manufacturer_url`** (I18NDictionary | None): URL of Vendor. URL of font vendor (with protocol, e.g., http://, ftp://). (OpenType Name ID 11)
+- **`designer_url`** (I18NDictionary | None): URL of Designer. URL of typeface designer (with protocol, e.g., http://, ftp://). (OpenType Name ID 12)
+- **`license`** (I18NDictionary | None): License Description. Description of the license or licenses under which the font is provided. (OpenType Name ID 13)
+- **`license_url`** (I18NDictionary | None): License Info URL. URL where additional licensing information can be found. (OpenType Name ID 14)
+- **`typographic_family`** (I18NDictionary | None): Typographic Family name. (OpenType Name ID 16)
+- **`typographic_subfamily`** (I18NDictionary | None): Typographic Subfamily name. (OpenType Name ID 17)
+- **`compatible_full_name`** (I18NDictionary | None): Compatible Full (Macintosh only). (OpenType Name ID 18)
+- **`sample_text`** (I18NDictionary | None): Sample text. (OpenType Name ID 19)
+- **`postscript_cid_name`** (I18NDictionary | None): PostScript CID findfont name. (OpenType Name ID 20)
+- **`wws_family_name`** (I18NDictionary | None): WWS Family Name. (OpenType Name ID 21)
+- **`wws_subfamily_name`** (I18NDictionary | None): WWS Subfamily Name. (OpenType Name ID 22)
+- **`variations_postscript_name_prefix`** (I18NDictionary | None): Variations PostScript Name Prefix. (OpenType Name ID 25)
+
+---
+
+
+## Features
+
+**Access:**
+```python
+# Define OpenType feature code
+font.features.classes["@lowercase"] = "a b c d e"
+font.features.prefixes["languagesystems"] = "languagesystem DFLT dflt;"
+font.features.features.append(("liga", "sub f i by fi;"))
+```
+
+### Properties
+
+All properties are read/write:
+
+- **`classes`** (dict): Opentype classes  The key should not start with
+- **`prefixes`** (dict): Opentype prefixes  A dictionary of OpenType lookups and other feature code to be placed before features are defined. The keys are user-defined names, the values are AFDKO feature code.
+- **`features`** (Array<[string, PossiblyAutomaticCode]>): OpenType features  A list of OpenType feature code, expressed as a tuple (feature tag, code).
+- **`include_paths`** (list[str] | None): Include paths  Paths to search for included feature files.
 
 ---
 
