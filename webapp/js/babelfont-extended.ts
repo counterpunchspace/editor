@@ -776,12 +776,12 @@ export class Layer extends BabelfontLayer {
         };
 
         // Helper to check if shape is a path (class instance or plain object)
+        // Note: Check property-based detection FIRST because instanceof may fail with Proxy-wrapped objects
         const isPath = (shape: any): boolean => {
-            if (shape instanceof BabelfontPath) return true;
             // Plain object with wrapped format {Path: {...}}
             if (shape && typeof shape === 'object' && 'Path' in shape)
                 return true;
-            // Plain object with nodes array (direct path data)
+            // Plain object or class instance with nodes array (but not component)
             if (
                 shape &&
                 typeof shape === 'object' &&
@@ -793,23 +793,23 @@ export class Layer extends BabelfontLayer {
         };
 
         // Helper to check if shape is a component (class instance or plain object)
+        // Note: Check property-based detection FIRST because instanceof may fail with Proxy-wrapped objects
         const isComponent = (shape: any): boolean => {
-            if (shape instanceof BabelfontComponent) return true;
             // Plain object with wrapped format {Component: {...}}
             if (shape && typeof shape === 'object' && 'Component' in shape)
+                return true;
+            // Plain object or class instance with direct reference property
+            if (shape && typeof shape === 'object' && 'reference' in shape)
                 return true;
             return false;
         };
 
         // Helper to get path data from shape (handles both formats)
+        // Note: Check property-based detection FIRST because instanceof may fail with Proxy-wrapped objects
         const getPathData = (
             shape: any
         ): { nodes: any[]; closed: boolean } | null => {
-            if (shape instanceof BabelfontPath) {
-                if (!shape.nodes || !Array.isArray(shape.nodes)) return null;
-                return { nodes: shape.nodes, closed: shape.closed ?? true };
-            }
-            // Plain object with wrapped format
+            // Plain object with wrapped format {Path: {...}}
             if ('Path' in shape) {
                 const pathData = shape.Path;
                 if (!pathData.nodes) return null;
@@ -818,7 +818,7 @@ export class Layer extends BabelfontLayer {
                     : [];
                 return { nodes, closed: pathData.closed ?? true };
             }
-            // Plain object with direct nodes
+            // Plain object or class instance with direct nodes (Proxy-wrapped or not)
             if ('nodes' in shape) {
                 const nodes = Array.isArray(shape.nodes) ? shape.nodes : [];
                 return { nodes, closed: shape.closed ?? true };
@@ -826,28 +826,90 @@ export class Layer extends BabelfontLayer {
             return null;
         };
 
+        // Helper to convert DecomposedAffine plain object to affine array
+        const decomposedToAffine = (decomposed: any): number[] => {
+            if (!decomposed) return [1, 0, 0, 1, 0, 0];
+            // Ensure all required fields have defaults before instantiating
+            const normalized = {
+                translation: decomposed.translation ?? [0, 0],
+                scale: decomposed.scale ?? [1, 1],
+                rotation: decomposed.rotation ?? 0,
+                skew: decomposed.skew ?? [0, 0],
+                order: decomposed.order
+            };
+            const instance = new BabelfontDecomposedAffine(normalized);
+            return instance.toAffine();
+        };
+
         // Helper to get component data from shape (handles both formats)
+        // Note: Check property-based detection FIRST because instanceof may fail with Proxy-wrapped objects
         const getComponentData = (
             shape: any
-        ): { reference: string; transform: number[] } | null => {
-            if (shape instanceof BabelfontComponent) {
-                return {
-                    reference: shape.reference,
-                    transform: shape.transform?.toAffine() || [1, 0, 0, 1, 0, 0]
-                };
-            }
-            // Plain object with wrapped format
+        ): {
+            reference: string;
+            transform: number[];
+            inlineLayerData?: any;
+        } | null => {
+            // Helper to check if object is array-like (0-5 numeric keys from Proxy-wrapped array)
+            const isArrayLikeTransform = (obj: any): boolean => {
+                return (
+                    obj &&
+                    typeof obj === 'object' &&
+                    '0' in obj &&
+                    '1' in obj &&
+                    '2' in obj &&
+                    '3' in obj &&
+                    '4' in obj &&
+                    '5' in obj
+                );
+            };
+
+            // Helper to convert array-like object to array
+            const toTransformArray = (obj: any): number[] => {
+                return [obj[0], obj[1], obj[2], obj[3], obj[4], obj[5]];
+            };
+
+            // Plain object with wrapped format {Component: {...}}
             if ('Component' in shape) {
                 const compData = shape.Component;
                 let transform = [1, 0, 0, 1, 0, 0];
                 if (Array.isArray(compData.transform)) {
                     transform = compData.transform;
-                } else if (compData.transform?.toAffine) {
-                    transform = compData.transform.toAffine();
+                } else if (isArrayLikeTransform(compData.transform)) {
+                    // Proxy-wrapped array with numeric keys
+                    transform = toTransformArray(compData.transform);
+                } else if (
+                    compData.transform &&
+                    typeof compData.transform === 'object'
+                ) {
+                    // DecomposedAffine object (class instance or plain) - normalize and convert
+                    transform = decomposedToAffine(compData.transform);
                 }
                 return {
                     reference: compData.ref || compData.reference,
-                    transform
+                    transform,
+                    inlineLayerData: compData.layerData
+                };
+            }
+            // Plain object or class instance with direct reference (Proxy-wrapped or not)
+            if ('reference' in shape) {
+                let transform = [1, 0, 0, 1, 0, 0];
+                if (Array.isArray(shape.transform)) {
+                    transform = shape.transform;
+                } else if (isArrayLikeTransform(shape.transform)) {
+                    // Proxy-wrapped array with numeric keys
+                    transform = toTransformArray(shape.transform);
+                } else if (
+                    shape.transform &&
+                    typeof shape.transform === 'object'
+                ) {
+                    // DecomposedAffine object (class instance or plain) - normalize and convert
+                    transform = decomposedToAffine(shape.transform);
+                }
+                return {
+                    reference: shape.ref || shape.reference,
+                    transform,
+                    inlineLayerData: shape.layerData
                 };
             }
             return null;
@@ -879,7 +941,18 @@ export class Layer extends BabelfontLayer {
                     compData.transform
                 );
 
-                // Look up the component glyph
+                // First priority: use inline layerData if available (for interpolated data)
+                if (compData.inlineLayerData?.shapes) {
+                    for (const nestedShape of compData.inlineLayerData.shapes) {
+                        processShape(
+                            nestedShape as Path | Component,
+                            combinedTransform
+                        );
+                    }
+                    return;
+                }
+
+                // Fallback: look up the component glyph from font
                 if (font) {
                     const componentGlyph = font.findGlyph(compData.reference);
                     if (
@@ -887,8 +960,16 @@ export class Layer extends BabelfontLayer {
                         componentGlyph.layers &&
                         componentGlyph.layers.length > 0
                     ) {
-                        // Use the first layer (or find matching master)
-                        const componentLayer = componentGlyph.layers[0];
+                        // Find matching layer by master ID, fall back to first layer
+                        let componentLayer = componentGlyph.layers[0];
+                        if (layer.id) {
+                            const matchingLayer = componentGlyph.layers.find(
+                                (l: any) => l.id === layer.id
+                            );
+                            if (matchingLayer) {
+                                componentLayer = matchingLayer;
+                            }
+                        }
                         if (componentLayer.shapes) {
                             for (const nestedShape of componentLayer.shapes) {
                                 processShape(
@@ -1639,6 +1720,39 @@ export const ExtendedClassRegistry: ClassRegistry = {
 };
 
 /**
+ * Unwrap shapes from babelfont JSON format to babelfont-ts expected format.
+ * babelfont JSON uses: {Component: {reference: ...}} and {Path: {nodes: ...}}
+ * babelfont-ts expects: {reference: ...} and {nodes: ...} (flat format)
+ */
+function preprocessFontData(data: any): any {
+    if (!data || !data.glyphs) return data;
+
+    // Deep clone to avoid modifying original
+    const cloned = JSON.parse(JSON.stringify(data));
+
+    for (const glyph of cloned.glyphs) {
+        if (!glyph.layers) continue;
+        for (const layer of glyph.layers) {
+            if (!layer.shapes) continue;
+            layer.shapes = layer.shapes.map((shape: any) => {
+                // Unwrap {Component: {...}} to flat format
+                if (shape.Component) {
+                    return shape.Component;
+                }
+                // Unwrap {Path: {...}} to flat format
+                if (shape.Path) {
+                    return shape.Path;
+                }
+                // Already in flat format
+                return shape;
+            });
+        }
+    }
+
+    return cloned;
+}
+
+/**
  * Load a font from JSON using extended classes
  *
  * @param data - Font data as JSON
@@ -1648,5 +1762,6 @@ export const ExtendedClassRegistry: ClassRegistry = {
  * print(font.findGlyph("A").width)
  */
 export function loadFontFromJSON(data: any): Font {
-    return new Font(data, ExtendedClassRegistry);
+    const preprocessed = preprocessFontData(data);
+    return new Font(preprocessed, ExtendedClassRegistry);
 }
