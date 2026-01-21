@@ -1428,7 +1428,8 @@ export class OutlineEditor {
         }
 
         const node = (shape as any).nodes[nodeIndex];
-        const { nodetype: type } = node;
+        // Handle both 'type' and 'nodetype' field names
+        const type = node.nodetype || node.type;
 
         // Toggle smooth state based on current type
         let newType = (
@@ -1445,7 +1446,13 @@ export class OutlineEditor {
             } as any
         )[type] as NodeTypeEnum;
 
-        node.nodetype = newType;
+        // Update whichever field was used
+        if (node.nodetype !== undefined) {
+            node.nodetype = newType;
+        }
+        if (node.type !== undefined) {
+            node.type = newType;
+        }
 
         // Save (non-blocking)
         this.saveLayerData();

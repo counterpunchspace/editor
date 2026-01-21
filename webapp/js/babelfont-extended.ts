@@ -25,8 +25,16 @@ import {
     CustomOTValues as BabelfontCustomOTValues,
     Position as BabelfontPosition,
     DecomposedAffine as BabelfontDecomposedAffine,
-    Color as BabelfontColor
+    Color as BabelfontColor,
+    isPath,
+    isComponent
 } from 'babelfont-ts';
+
+// Import setParent directly from parent module (not exported from main index)
+import { setParent } from '../vendor/babelfont-rs/babelfont-ts/src/parent';
+
+// Re-export type guard functions for shape type checking
+export { isPath, isComponent };
 
 import type {
     Font as IFont,
@@ -68,9 +76,99 @@ type PathData = {
 // Font Class
 // ============================================================================
 
+/**
+ * Convert affine matrix [a,b,c,d,tx,ty] to decomposed transform format
+ * Uses QR decomposition to extract translation, scale, rotation, and skew
+ */
+function affineToDecomposed(affine: number[]): {
+    translation: [number, number];
+    scale: [number, number];
+    rotation: number;
+    skew: [number, number];
+} {
+    const [a, b, c, d, tx, ty] = affine;
+
+    // Translation is straightforward
+    const translation: [number, number] = [tx, ty];
+
+    // Decompose the 2x2 matrix part using QR-like decomposition
+    // Matrix: [a c]
+    //         [b d]
+
+    // Scale x is length of first column
+    const scaleX = Math.sqrt(a * a + b * b);
+
+    // Normalize first column
+    const a1 = scaleX !== 0 ? a / scaleX : 0;
+    const b1 = scaleX !== 0 ? b / scaleX : 0;
+
+    // Rotation angle from normalized first column
+    const rotation = Math.atan2(b1, a1);
+
+    // Compute skew - the angle between the columns
+    // Second column projected onto perpendicular of first
+    const skewX = a1 * c + b1 * d;
+
+    // Scale y is length of second column minus skew contribution
+    const scaleY = Math.sqrt(c * c + d * d - skewX * skewX) || 0;
+
+    // Handle negative scale (reflection)
+    const det = a * d - b * c;
+    const finalScaleY = det < 0 ? -scaleY : scaleY;
+
+    return {
+        translation,
+        scale: [scaleX, finalScaleY],
+        rotation,
+        skew: [scaleX !== 0 ? skewX / scaleX : 0, 0]
+    };
+}
+
+/**
+ * Normalize shapes from WASM tagged-enum format to flat format expected by babelfont-ts
+ * WASM outputs: { "Path": { nodes: "...", closed: true } }
+ * babelfont-ts expects: { nodes: "...", closed: true }
+ * Also converts component transforms from affine [a,b,c,d,tx,ty] to decomposed format
+ */
+function normalizeShapesInData(data: IFont): IFont {
+    if (!data.glyphs) return data;
+
+    for (const glyph of data.glyphs) {
+        if (!glyph.layers) continue;
+        for (const layer of glyph.layers) {
+            if (!layer.shapes) continue;
+            layer.shapes = layer.shapes.map((shape: any) => {
+                // Unwrap Path wrapper
+                if (shape.Path) {
+                    return shape.Path;
+                }
+                // Unwrap Component wrapper
+                if (shape.Component) {
+                    const component = shape.Component;
+                    // Convert affine matrix transform to decomposed format
+                    if (Array.isArray(component.transform)) {
+                        component.transform = affineToDecomposed(
+                            component.transform
+                        );
+                    }
+                    return component;
+                }
+                // For already unwrapped components, also check transform format
+                if (shape.reference && Array.isArray(shape.transform)) {
+                    shape.transform = affineToDecomposed(shape.transform);
+                }
+                return shape;
+            });
+        }
+    }
+    return data;
+}
+
 export class Font extends BabelfontFont {
     constructor(data: IFont, registry?: ClassRegistry) {
-        super(data, registry);
+        // Normalize shapes from WASM format before passing to babelfont-ts
+        const normalizedData = normalizeShapesInData(data);
+        super(normalizedData, registry);
 
         // Add _pyrepr as a getter that computes the string inline (bypasses Proxy interception)
         // This is used by the Python wrapper for __str__ representation for print()
@@ -189,7 +287,27 @@ export class Font extends BabelfontFont {
         const glyph = new Glyph(glyphData);
         if (!this.glyphs) this.glyphs = [];
         this.glyphs.push(glyph as any);
+        // Set parent relationship
+        setParent(glyph as any, this);
         return glyph;
+    }
+
+    /**
+     * Remove a glyph from the font by name
+     *
+     * @param name - The glyph name to remove
+     * @returns True if glyph was removed, false if not found
+     * @example
+     * removed = font.removeGlyph("A")
+     * if removed:
+     *     print("Glyph removed")
+     */
+    removeGlyph(name: string): boolean {
+        if (!this.glyphs) return false;
+        const index = this.glyphs.findIndex((g) => g.name === name);
+        if (index === -1) return false;
+        this.glyphs.splice(index, 1);
+        return true;
     }
 
     /**
@@ -364,6 +482,8 @@ export class Glyph extends BabelfontGlyph {
         const layer = new Layer(layerData);
         if (!this.layers) this.layers = [];
         this.layers.push(layer as any);
+        // Set parent relationship
+        setParent(layer as any, this);
         return layer;
     }
 
@@ -445,9 +565,9 @@ export class Layer extends BabelfontLayer {
      * print(f"LSB: {lsb}")
      */
     get lsb(): number {
-        const bounds = this.bounds();
-        if (!bounds) return 0;
-        return bounds.x;
+        const bbox = this.getBoundingBox(false);
+        if (!bbox) return 0;
+        return bbox.minX;
     }
 
     /**
@@ -458,24 +578,43 @@ export class Layer extends BabelfontLayer {
      * layer.lsb = 50
      */
     set lsb(value: number) {
-        const bounds = this.bounds();
-        if (!bounds) return;
+        const bbox = this.getBoundingBox(false);
+        if (!bbox) return;
 
-        const delta = value - bounds.x;
+        const delta = value - bbox.minX;
 
         // Shift all shapes
         this.shapes?.forEach((shape) => {
-            if ('nodes' in shape) {
-                // Path
-                (shape as any).nodes?.forEach((node: any) => {
+            if (isPath(shape)) {
+                // Path - shift all nodes
+                shape.nodes?.forEach((node: any) => {
                     node.x += delta;
                 });
-            } else if ('transform' in shape) {
-                // Component
-                (shape as any).transform.x += delta;
+            } else if (isComponent(shape)) {
+                // Component - ensure transform exists and update translation
+                if (!shape.transform) {
+                    // Create default identity transform as DecomposedAffine
+                    (shape as any).transform = new BabelfontDecomposedAffine({
+                        translation: [0, 0],
+                        scale: [1, 1],
+                        rotation: 0,
+                        skew: [0, 0]
+                    });
+                }
+                const transform = shape.transform as any;
+                if (transform.translation) {
+                    // DecomposedAffine format with translation: [x, y]
+                    transform.translation[0] =
+                        (transform.translation[0] || 0) + delta;
+                } else if (Array.isArray(transform)) {
+                    // Matrix format [a, b, c, d, tx, ty]
+                    transform[4] = (transform[4] || 0) + delta;
+                }
             }
         });
 
+        // Adjust width to maintain rsb
+        this.width += delta;
         this.markDirty();
     }
 
@@ -488,9 +627,9 @@ export class Layer extends BabelfontLayer {
      * print(f"RSB: {rsb}")
      */
     get rsb(): number {
-        const bounds = this.bounds();
-        if (!bounds) return 0;
-        return this.width - (bounds.x + bounds.width);
+        const bbox = this.getBoundingBox(false);
+        if (!bbox) return 0;
+        return this.width - bbox.maxX;
     }
 
     /**
@@ -501,14 +640,111 @@ export class Layer extends BabelfontLayer {
      * layer.rsb = 50
      */
     set rsb(value: number) {
-        const bounds = this.bounds();
-        if (!bounds) return;
+        const bbox = this.getBoundingBox(false);
+        if (!bbox) return;
 
-        const currentRsb = this.width - (bounds.x + bounds.width);
+        const currentRsb = this.width - bbox.maxX;
         const delta = value - currentRsb;
         this.width += delta;
 
         this.markDirty();
+    }
+
+    /**
+     * Get the master ID for this layer
+     * Handles the various formats master can be stored in
+     *
+     * @returns The master ID string
+     */
+    getMasterId(): string | undefined {
+        if (!this.master) return this.id;
+        if (typeof this.master === 'string') return this.master;
+        if (typeof this.master === 'object') {
+            const m = this.master as any;
+            if ('DefaultForMaster' in m) return m.DefaultForMaster;
+            if ('AssociatedWithMaster' in m) return m.AssociatedWithMaster;
+            if ('master' in m) return m.master;
+        }
+        return this.id;
+    }
+
+    /**
+     * Find the matching layer on another glyph (same master)
+     *
+     * @param glyphName - Name of the glyph to find matching layer on
+     * @returns The matching layer if found, undefined otherwise
+     * @example
+     * layer_a = glyph_a.layers[0]
+     * layer_b = layer_a.getMatchingLayerOnGlyph("B")  # Same master on glyph B
+     */
+    getMatchingLayerOnGlyph(glyphName: string): Layer | undefined {
+        // Navigate up to get the font
+        const glyph = this.parent as Glyph;
+        if (!glyph) return undefined;
+        const font = glyph.parent as Font;
+        if (!font) return undefined;
+
+        // Find the target glyph
+        const targetGlyph = font.findGlyph(glyphName);
+        if (!targetGlyph || !targetGlyph.layers) return undefined;
+
+        // Get this layer's master ID
+        const masterId = this.getMasterId();
+        if (!masterId) return undefined;
+
+        // Find matching layer in target glyph
+        for (const layer of targetGlyph.layers) {
+            const extLayer = layer as Layer;
+            if (extLayer.getMasterId() === masterId) {
+                return extLayer;
+            }
+        }
+
+        return undefined;
+    }
+
+    /**
+     * Get sidebearings at a specific height (y value)
+     * Calculates the distance from edges to the first/last intersection with paths
+     *
+     * @param height - The y coordinate to measure at
+     * @param includeComponents - Whether to include component paths (default: true)
+     * @returns Object with lsb (left sidebearing at height) and rsb (right sidebearing at height), or null if no intersections
+     * @example
+     * sb = layer.getSidebearingsAtHeight(400)
+     * if sb:
+     *     print(f"LSB at 400: {sb['lsb']}, RSB at 400: {sb['rsb']}")
+     */
+    getSidebearingsAtHeight(
+        height: number,
+        includeComponents: boolean = true
+    ): { lsb: number; rsb: number } | null {
+        // Create a horizontal line across the glyph at the given height
+        // Use a wide range to ensure we capture all intersections
+        const intersections = this.getIntersectionsOnLine(
+            { x: -10000, y: height },
+            { x: 10000, y: height },
+            includeComponents
+        );
+
+        if (!intersections || intersections.length === 0) {
+            return null;
+        }
+
+        // Find the leftmost and rightmost intersection x coordinates
+        let minX = Infinity;
+        let maxX = -Infinity;
+        for (const int of intersections) {
+            if (int.x < minX) minX = int.x;
+            if (int.x > maxX) maxX = int.x;
+        }
+
+        // LSB = distance from left edge (0) to first intersection
+        // RSB = distance from last intersection to layer width
+        return {
+            lsb: minX,
+            rsb: this.width - maxX
+        };
     }
 
     /**
@@ -1345,6 +1581,33 @@ export class Layer extends BabelfontLayer {
 
 export class Path extends BabelfontPath {
     constructor(data: IPath) {
+        // Handle nodes that are already arrays (from WASM output) vs strings (from Glyphs files)
+        // babelfont-ts parseNodes() expects a string, so we need to convert arrays to string format
+        if (data.nodes && Array.isArray(data.nodes)) {
+            // Convert array of node objects to string format: "x y type x y type ..."
+            const nodesStr = (data.nodes as any[])
+                .map((n: any) => {
+                    const typeChar =
+                        n.nodetype === 'move'
+                            ? 'm'
+                            : n.nodetype === 'offcurve'
+                              ? 'o'
+                              : n.nodetype === 'curve'
+                                ? n.smooth
+                                    ? 'cs'
+                                    : 'c'
+                                : n.nodetype === 'qcurve'
+                                  ? n.smooth
+                                      ? 'qs'
+                                      : 'q'
+                                  : n.smooth
+                                    ? 'ls'
+                                    : 'l';
+                    return `${n.x} ${n.y} ${typeChar}`;
+                })
+                .join(' ');
+            (data as any).nodes = nodesStr;
+        }
         super(data);
 
         // Add _pyrepr as a getter that computes the string inline (bypasses Proxy interception)
