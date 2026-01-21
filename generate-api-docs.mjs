@@ -402,6 +402,12 @@ function tsToPythonType(tsType) {
     return `list[${tsToPythonType(baseType)}]`;
   }
 
+  // Handle parenthesized types (e.g., "(Component | Path)")
+  if (tsType.startsWith("(") && tsType.endsWith(")")) {
+    const inner = tsType.slice(1, -1);
+    return `(${tsToPythonType(inner)})`;
+  }
+
   // Handle union types
   if (tsType.includes("|")) {
     const types = tsType.split("|").map((t) => tsToPythonType(t.trim()));

@@ -303,7 +303,7 @@ All properties are read/write:
 - **`id`** (str | None): The ID of the layer
 - **`master`** (LayerType | None): The relationship between this layer and a master, if any
 - **`guides`** (list[[Guide](#guide)] | None): Guidelines in the layer
-- **`shapes`** (list[(Component | Path)])
+- **`shapes`** (list[([Component](#component) | [Path](#path))])
 - **`anchors`** (list[[Anchor](#anchor)] | None): Anchors in the layer
 - **`color`** ([Color](#color) | None): The color of the layer
 - **`layer_index`** (float | int | None): The index of the layer in a color font
