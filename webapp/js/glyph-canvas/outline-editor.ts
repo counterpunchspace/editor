@@ -367,11 +367,12 @@ export class OutlineEditor {
         // Remember if preview was already on (from keyboard toggle)
         this.previewModeBeforeSlider = this.isPreviewMode;
 
-        // Set interpolating flag (don't change preview mode)
-        this.isInterpolating = true;
-
-        // Capture anchor point for auto-panning
+        // Capture anchor point BEFORE setting interpolating flag
+        // so we capture bbox using layer instance (same as layer switch)
         this.captureAutoPanAnchor();
+
+        // Set interpolating flag AFTER capturing anchor
+        this.isInterpolating = true;
 
         // If not in preview mode, mark current layer data as interpolated and render
         // to show monochrome visual feedback immediately
@@ -2049,7 +2050,9 @@ export class OutlineEditor {
 
             // Pan to glyph after interpolation completes (when switching glyphs via keyboard)
             // This ensures we have the correct interpolated bounds for panning
+            // Skip during slider interpolation - we use auto-pan instead
             if (
+                !this.isInterpolating &&
                 this.glyphCanvas.textRunEditor!.selectedGlyphIndex >= 0 &&
                 this.glyphCanvas.textRunEditor!.selectedGlyphIndex <
                     this.glyphCanvas.textRunEditor!.shapedGlyphs.length
@@ -2901,7 +2904,7 @@ export class OutlineEditor {
             return;
         }
 
-        // Get glyph position in text run
+        // Get glyph position in text run (this updates with HarfBuzz reshaping)
         const glyphPosition = this.glyphCanvas.textRunEditor!._getGlyphPosition(
             this.glyphCanvas.textRunEditor!.selectedGlyphIndex
         );
@@ -2920,7 +2923,7 @@ export class OutlineEditor {
             localCenterY = transformedY;
         }
 
-        // Transform to world space (account for glyph position in text run)
+        // Transform to world space using CURRENT glyph position
         const worldCenterX =
             glyphPosition.xPosition + glyphPosition.xOffset + localCenterX;
         const worldCenterY = glyphPosition.yOffset + localCenterY;
@@ -2932,7 +2935,7 @@ export class OutlineEditor {
                 worldCenterY
             );
 
-        // Calculate the offset between where the bbox center is now vs where it should be
+        // Calculate the offset between where the anchor is now vs where it should be
         const offsetX = this.autoPanAnchorScreen.x - currentScreenPos.x;
         const offsetY = this.autoPanAnchorScreen.y - currentScreenPos.y;
 
@@ -2976,12 +2979,17 @@ export class OutlineEditor {
         );
 
         // Find the layer instance from currentFontModel
-        // EXCEPT during layer switch animation - then we use interpolated data
+        // EXCEPT during layer switch animation or slider interpolation - then use interpolated data
         const glyphName = this.currentGlyphName;
         const layerId = this.selectedLayerId;
 
         let layerInstance: Layer | null = null;
-        if (glyphName && layerId && !this.isLayerSwitchAnimating) {
+        if (
+            glyphName &&
+            layerId &&
+            !this.isLayerSwitchAnimating &&
+            !this.isInterpolating
+        ) {
             const glyph = (window as any).currentFontModel?.findGlyph(
                 glyphName
             );
