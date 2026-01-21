@@ -10,3 +10,5 @@ build/
 # Ignore Playwright test artifacts
 test-results/
 playwright-report/
+# Ignore submodule vendor code
+vendor/
