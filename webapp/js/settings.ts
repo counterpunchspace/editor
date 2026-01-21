@@ -78,7 +78,7 @@ const APP_SETTINGS = {
         PAN_SPEED_MOUSE_HORIZONTAL: 1.5, // mouse wheel horizontal pan speed (Shift+scroll)
 
         // Debug/development
-        SHOW_BOUNDING_BOX: true, // Show calculated bounding box in editing mode
+        SHOW_BOUNDING_BOX: false, // Show calculated bounding box in editing mode
         INTERPOLATION_ANIMATION_DELAY: 0, // ms - delay between animation frames for debugging (0 = no delay)
 
         // Measurement tool
