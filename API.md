@@ -402,9 +402,11 @@ Calculate intersections between a line segment and all paths in this layer
 
 **Access:**
 ```python
-shape = layer.shapes[0]
-if shape.isPath():
-    path = shape.asPath()
+# Direct access - check for 'nodes' property
+for shape in layer.shapes:
+    if hasattr(shape, 'nodes'):
+        # shape is a Path
+        nodes = shape.nodes
 ```
 
 **Note:** Create paths using `layer.addPath(closed=True/False)`.
@@ -480,9 +482,11 @@ All properties are read/write:
 
 **Access:**
 ```python
-shape = layer.shapes[0]
-if shape.isComponent():
-    component = shape.asComponent()
+# Direct access - check for 'reference' property
+for shape in layer.shapes:
+    if hasattr(shape, 'reference'):
+        # shape is a Component
+        ref = shape.reference
 ```
 
 **Note:** Create components using `layer.addComponent("glyphName")`.
@@ -773,9 +777,9 @@ for glyph in font.glyphs:
             # Scale all shapes
             if layer.shapes:
                 for shape in layer.shapes:
-                    if shape.isPath():
-                        path = shape.asPath()
-                        for node in path.nodes:
+                    if hasattr(shape, 'nodes'):
+                        # Path - scale nodes
+                        for node in shape.nodes:
                             node.x *= scale_factor
                             node.y *= scale_factor
             
@@ -792,23 +796,18 @@ print(f"Scaled {len(font.glyphs)} glyphs by {scale_factor}x")
 
 ## Tips and Best Practices
 
-### Performance
-
-- Changes to properties are immediately reflected in the underlying JSON data
-- No need to "save" or "commit" changes - they are live
-- For batch operations, group changes together to minimize redraws
-
 ### Type Checking
 
 ```python
-# Always check shape type before accessing
+# Shapes are JavaScript objects - check properties
 for shape in layer.shapes:
-    if shape.isPath():
-        path = shape.asPath()
-        # Work with path
-    elif shape.isComponent():
-        component = shape.asComponent()
-        # Work with component
+    if hasattr(shape, 'nodes'):
+        # shape is a Path - has nodes property
+        for node in shape.nodes:
+            print(f"Node at ({node.x}, {node.y})")
+    elif hasattr(shape, 'reference'):
+        # shape is a Component - has reference property
+        print(f"Component references: {shape.reference}")
 ```
 
 ### Safe Property Access
@@ -819,10 +818,9 @@ if glyph.layers:
     for layer in glyph.layers:
         if layer.shapes:
             for shape in layer.shapes:
-                if shape.isPath():
-                    path = shape.asPath()
-                    # Now you can access nodes
-                    for node in path.nodes:
+                if hasattr(shape, 'nodes'):
+                    # shape is a Path
+                    for node in shape.nodes:
                         print(f"Node at ({node.x}, {node.y})")
 ```
 
@@ -830,15 +828,15 @@ if glyph.layers:
 
 ```python
 # Direct access (may fail if properties are None)
-# glyph.layers[0].shapes[0].asPath().nodes  # DON'T DO THIS
+# glyph.layers[0].shapes[0].nodes  # DON'T DO THIS
 
 # Safe access with checks:
 layer = glyph.layers[0] if glyph.layers else None
 if layer and layer.shapes:
     shape = layer.shapes[0]
-    if shape.isPath():
-        path = shape.asPath()
-        nodes = path.nodes
+    if hasattr(shape, 'nodes'):
+        # shape is a Path
+        nodes = shape.nodes
         print(f"Path has {len(nodes)} nodes")
 ```
 
@@ -850,29 +848,30 @@ if layer and layer.shapes:
 
 ### Common Issues
 
-**Q: Why does `glyph.layers[0].shapes[0].asPath().nodes` fail?**
+**Q: Why does `glyph.layers[0].shapes[0].nodes` fail?**
 
-A: Optional properties may be `None`. Use safe access:
+A: Optional properties may be `None`, and the shape might be a Component instead of a Path. Use safe access:
 ```python
 # Check each step
 if glyph.layers and len(glyph.layers) > 0:
     layer = glyph.layers[0]
     if layer.shapes and len(layer.shapes) > 0:
         shape = layer.shapes[0]
-        if shape.isPath():
-            path = shape.asPath()
-            nodes = path.nodes  # Now safe to access
+        if hasattr(shape, 'nodes'):
+            nodes = shape.nodes  # Now safe to access
 ```
 
 **Q: How do I know if a shape is a path or component?**
 
-A: Always check with `isPath()` or `isComponent()` before calling `asPath()` or `asComponent()`:
+A: Check for the distinguishing properties - Path has `nodes`, Component has `reference`:
 ```python
 for shape in layer.shapes:
-    if shape.isPath():
-        path = shape.asPath()
-    elif shape.isComponent():
-        component = shape.asComponent()
+    if hasattr(shape, 'nodes'):
+        # Path - work with nodes
+        print(f"Path with {len(shape.nodes)} nodes")
+    elif hasattr(shape, 'reference'):
+        # Component - work with reference
+        print(f"Component referencing {shape.reference}")
 ```
 
 ---
