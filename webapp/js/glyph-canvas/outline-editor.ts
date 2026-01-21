@@ -1802,6 +1802,11 @@ export class OutlineEditor {
             layer,
             `id: ${layer.id}, _master: ${layer._master}`
         );
+
+        // Capture anchor point BEFORE changing selectedLayerId
+        // so we capture the bbox of the current layer, not the target
+        this.captureAutoPanAnchor();
+
         this.selectedLayerId = layer.id!;
 
         // Rebuild glyph_stack with new layer ID (preserves component path)
@@ -1812,9 +1817,6 @@ export class OutlineEditor {
             const rootGlyphName = this.glyphCanvas.getCurrentGlyphName();
             this.buildGlyphStack(rootGlyphName, layer.id!, []);
         }
-
-        // Capture anchor point before layer switch animation begins
-        this.captureAutoPanAnchor();
 
         // Immediately clear interpolated flag on existing data
         // to prevent rendering with monochrome colors
@@ -2974,11 +2976,12 @@ export class OutlineEditor {
         );
 
         // Find the layer instance from currentFontModel
+        // EXCEPT during layer switch animation - then we use interpolated data
         const glyphName = this.currentGlyphName;
         const layerId = this.selectedLayerId;
 
         let layerInstance: Layer | null = null;
-        if (glyphName && layerId) {
+        if (glyphName && layerId && !this.isLayerSwitchAnimating) {
             const glyph = (window as any).currentFontModel?.findGlyph(
                 glyphName
             );
@@ -2990,8 +2993,16 @@ export class OutlineEditor {
 
         let bbox = null;
         if (layerInstance) {
-            // Use instance method
+            // Use instance method for actual layer
             bbox = layerInstance.getBoundingBox(true);
+        } else if (currentLayerData) {
+            // Fallback: calculate bbox from current layer data (e.g., during interpolation)
+            // Cast currentLayerData to Layer-like for static method
+            bbox = Layer.calculateBoundingBox(
+                currentLayerData as unknown as Layer,
+                true,
+                (window as any).currentFontModel
+            );
         }
 
         if (bbox) {

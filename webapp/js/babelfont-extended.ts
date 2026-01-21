@@ -775,34 +775,113 @@ export class Layer extends BabelfontLayer {
             ];
         };
 
+        // Helper to check if shape is a path (class instance or plain object)
+        const isPath = (shape: any): boolean => {
+            if (shape instanceof BabelfontPath) return true;
+            // Plain object with wrapped format {Path: {...}}
+            if (shape && typeof shape === 'object' && 'Path' in shape)
+                return true;
+            // Plain object with nodes array (direct path data)
+            if (
+                shape &&
+                typeof shape === 'object' &&
+                'nodes' in shape &&
+                !('reference' in shape)
+            )
+                return true;
+            return false;
+        };
+
+        // Helper to check if shape is a component (class instance or plain object)
+        const isComponent = (shape: any): boolean => {
+            if (shape instanceof BabelfontComponent) return true;
+            // Plain object with wrapped format {Component: {...}}
+            if (shape && typeof shape === 'object' && 'Component' in shape)
+                return true;
+            return false;
+        };
+
+        // Helper to get path data from shape (handles both formats)
+        const getPathData = (
+            shape: any
+        ): { nodes: any[]; closed: boolean } | null => {
+            if (shape instanceof BabelfontPath) {
+                if (!shape.nodes || !Array.isArray(shape.nodes)) return null;
+                return { nodes: shape.nodes, closed: shape.closed ?? true };
+            }
+            // Plain object with wrapped format
+            if ('Path' in shape) {
+                const pathData = shape.Path;
+                if (!pathData.nodes) return null;
+                const nodes = Array.isArray(pathData.nodes)
+                    ? pathData.nodes
+                    : [];
+                return { nodes, closed: pathData.closed ?? true };
+            }
+            // Plain object with direct nodes
+            if ('nodes' in shape) {
+                const nodes = Array.isArray(shape.nodes) ? shape.nodes : [];
+                return { nodes, closed: shape.closed ?? true };
+            }
+            return null;
+        };
+
+        // Helper to get component data from shape (handles both formats)
+        const getComponentData = (
+            shape: any
+        ): { reference: string; transform: number[] } | null => {
+            if (shape instanceof BabelfontComponent) {
+                return {
+                    reference: shape.reference,
+                    transform: shape.transform?.toAffine() || [1, 0, 0, 1, 0, 0]
+                };
+            }
+            // Plain object with wrapped format
+            if ('Component' in shape) {
+                const compData = shape.Component;
+                let transform = [1, 0, 0, 1, 0, 0];
+                if (Array.isArray(compData.transform)) {
+                    transform = compData.transform;
+                } else if (compData.transform?.toAffine) {
+                    transform = compData.transform.toAffine();
+                }
+                return {
+                    reference: compData.ref || compData.reference,
+                    transform
+                };
+            }
+            return null;
+        };
+
         // Process shapes
         const processShape = (
             shape: Path | Component,
             transform: number[] = [1, 0, 0, 1, 0, 0]
         ) => {
-            if (shape instanceof BabelfontPath) {
+            if (isPath(shape)) {
                 // Direct path - transform its nodes
-                if (!shape.nodes || !Array.isArray(shape.nodes)) return;
-                const transformedNodes = shape.nodes.map((node: any) =>
+                const pathData = getPathData(shape);
+                if (!pathData) return;
+                const transformedNodes = pathData.nodes.map((node: any) =>
                     transformNode(node, transform)
                 );
                 flattenedPaths.push({
                     nodes: transformedNodes,
-                    closed: shape.closed ?? true
+                    closed: pathData.closed
                 });
-            } else if (shape instanceof BabelfontComponent) {
+            } else if (isComponent(shape)) {
                 // Component - recursively process its shapes with accumulated transform
-                const compTransform = shape.transform?.toAffine() || [
-                    1, 0, 0, 1, 0, 0
-                ];
+                const compData = getComponentData(shape);
+                if (!compData) return;
+
                 const combinedTransform = combineTransforms(
                     transform,
-                    compTransform
+                    compData.transform
                 );
 
                 // Look up the component glyph
                 if (font) {
-                    const componentGlyph = font.findGlyph(shape.reference);
+                    const componentGlyph = font.findGlyph(compData.reference);
                     if (
                         componentGlyph &&
                         componentGlyph.layers &&
