@@ -30,6 +30,9 @@ jobs:
       - name: Install dependencies in webapp
         run: npm install --prefix webapp
 
+      - name: Install babelfont-ts dependencies
+        run: npm install --prefix webapp/vendor/babelfont-rs/babelfont-ts
+
       - name: Install Playwright browsers
         run: npx playwright install --with-deps chromium webkit
         working-directory: webapp
