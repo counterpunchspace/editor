@@ -419,7 +419,8 @@ function generateClassDocs(classInfo) {
     // Document read/write properties
     readWriteProps.forEach((prop) => {
       const pyType = tsToPythonType(prop.type);
-      const desc = prop.jsDoc ? `: ${prop.jsDoc}` : "";
+      // Replace newlines in descriptions with spaces to keep everything on one line
+      const desc = prop.jsDoc ? `: ${prop.jsDoc.replace(/\n/g, " ")}` : "";
       lines.push(`- **\`${prop.name}\`** (${pyType})${desc}`);
     });
 
@@ -431,7 +432,8 @@ function generateClassDocs(classInfo) {
     // Document read-only properties
     readOnlyProps.forEach((prop) => {
       const pyType = tsToPythonType(prop.type);
-      const desc = prop.jsDoc ? `: ${prop.jsDoc}` : "";
+      // Replace newlines in descriptions with spaces to keep everything on one line
+      const desc = prop.jsDoc ? `: ${prop.jsDoc.replace(/\n/g, " ")}` : "";
       lines.push(`- **\`${prop.name}\`** (${pyType})${desc}`);
     });
 

@@ -81,21 +81,11 @@ All properties are read/write:
 - **`note`** (str | None): An optional note about the font
 - **`date`** (datetime): The font's creation date
 - **`names`** ([Names](#names))
-- **`custom_ot_values`** (CustomOTValues | None): Any values to be placed in OpenType tables on export to override defaults
-
-These must be font-wide. Metrics which may vary by master should be placed in the `metrics` field of a Master
+- **`custom_ot_values`** (CustomOTValues | None): Any values to be placed in OpenType tables on export to override defaults  These must be font-wide. Metrics which may vary by master should be placed in the `metrics` field of a Master
 - **`variation_sequences`** (dict | None): A map of Unicode Variation Sequences to glyph names
 - **`features`** ([Features](#features))
-- **`first_kern_groups`** (dict | None): A dictionary of kerning groups
-
-The key is the group name and the value is a list of glyph names in the group
-Group names are *not* prefixed with "@" here. This is the first item in a kerning pair.
-and so these are generally organized based on the profile of *right side* of the
-glyph (for LTR scripts).
-- **`second_kern_groups`** (dict | None): The key is the group name and the value is a list of glyph names in the group
-Group names are *not* prefixed with "@" here. This is the second item in a kerning pair.
-and so these are generally organized based on the profile of *left side* of the
-glyph (for LTR scripts).
+- **`first_kern_groups`** (dict | None): A dictionary of kerning groups  The key is the group name and the value is a list of glyph names in the group Group names are *not* prefixed with "@" here. This is the first item in a kerning pair. and so these are generally organized based on the profile of *right side* of the glyph (for LTR scripts).
+- **`second_kern_groups`** (dict | None): The key is the group name and the value is a list of glyph names in the group Group names are *not* prefixed with "@" here. This is the second item in a kerning pair. and so these are generally organized based on the profile of *left side* of the glyph (for LTR scripts).
 - **`format_specific`** (dict | None): Format-specific data
 - **`source`** (str | None): The source file path, if any, from which this font was loaded
 
@@ -511,11 +501,7 @@ All properties are read/write:
 - **`location`** (dict | None): Location of the master in design space coordinates
 - **`guides`** (list[[Guide](#guide)] | None): Global guidelines associated with the master
 - **`metrics`** (dict): Master-specific metrics
-- **`kerning`** (Map<[string, string], number>): Kerning for this master.
-
-(Kerning pairs are (left glyph name, right glyph name) -> value)
-Groups are represented as `@<groupname>`; whether they are first or second
-groups is determined by position in the tuple.
+- **`kerning`** (Map<[string, string], number>): Kerning for this master.  (Kerning pairs are (left glyph name, right glyph name) -> value) Groups are represented as `@<groupname>`; whether they are first or second groups is determined by position in the tuple.
 - **`custom_ot_values`** (CustomOTValues | None): Custom OpenType values for this master
 - **`format_specific`** (dict | None): Format-specific data
 
@@ -533,9 +519,7 @@ instance = font.instances[0]
 
 All properties are read/write:
 
-- **`id`** (str): Unique identifier for the instance
-
-Should be unique within the design space; usually a UUID.
+- **`id`** (str): Unique identifier for the instance  Should be unique within the design space; usually a UUID.
 - **`name`** (I18NDictionary): Name of the instance
 - **`location`** (dict | None): Location of the instance in design space coordinates
 - **`custom_names`** ([Names](#names)): Any custom names for the instance if it is exported as a static font
