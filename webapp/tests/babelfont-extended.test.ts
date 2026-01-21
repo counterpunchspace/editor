@@ -108,6 +108,27 @@ describe('Extended babelfont classes', () => {
             expect(master).toBeDefined();
             expect(master?.id).toBe('m01');
         });
+
+        it('should add a new glyph', () => {
+            const fontData = {
+                glyphs: [],
+                axes: [],
+                masters: [],
+                instances: []
+            };
+
+            const font = loadFontFromJSON(fontData);
+            expect(font.glyphs?.length).toBe(0);
+
+            const glyph = font.addGlyph('A', 'letter');
+
+            expect(font.glyphs?.length).toBe(1);
+            expect(glyph).toBeDefined();
+            expect(glyph.name).toBe('A');
+            expect(glyph.category).toBe('letter');
+            expect(glyph.exported).toBe(true);
+            expect(glyph.layers).toEqual([]);
+        });
     });
 
     describe('Glyph class', () => {
@@ -136,6 +157,35 @@ describe('Extended babelfont classes', () => {
             expect(layer).toBeDefined();
             expect(layer?.id).toBe('layer1');
             expect(layer?.width).toBe(600);
+        });
+
+        it('should add a new layer', () => {
+            const fontData = {
+                glyphs: [
+                    {
+                        name: 'A',
+                        category: 'letter',
+                        exported: true,
+                        layers: []
+                    }
+                ],
+                axes: [],
+                masters: [],
+                instances: []
+            };
+
+            const font = loadFontFromJSON(fontData);
+            const glyph = font.findGlyph('A');
+
+            expect(glyph?.layers?.length).toBe(0);
+
+            const layer = glyph?.addLayer('m01', 500);
+
+            expect(glyph?.layers?.length).toBe(1);
+            expect(layer).toBeDefined();
+            expect(layer?.width).toBe(500);
+            expect(layer?.id).toBe('m01');
+            expect(layer?.master).toBe('m01');
         });
     });
 

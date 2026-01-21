@@ -168,6 +168,31 @@ export class Font extends BabelfontFont {
     }
 
     /**
+     * Create and add a new glyph to the font
+     *
+     * @param name - The glyph name
+     * @param category - The glyph category (default: "Base")
+     * @returns The newly created glyph
+     * @example
+     * glyph = font.addGlyph("A")
+     * print(glyph.name)
+     */
+    addGlyph(name: string, category: string = 'Base'): Glyph {
+        // Create minimal glyph data matching IGlyph interface
+        const glyphData: any = {
+            name,
+            category,
+            exported: true,
+            codepoints: [],
+            layers: []
+        };
+        const glyph = new Glyph(glyphData);
+        if (!this.glyphs) this.glyphs = [];
+        this.glyphs.push(glyph as any);
+        return glyph;
+    }
+
+    /**
      * Serialize font to JSON string
      *
      * @returns JSON string representation
@@ -313,6 +338,33 @@ export class Glyph extends BabelfontGlyph {
             const master = l.master as any;
             return master.master === masterId || master === masterId;
         }) as Layer | undefined;
+    }
+
+    /**
+     * Create and add a new layer to the glyph
+     *
+     * @param masterId - The master ID for this layer (optional)
+     * @param width - Layer width (default: 600)
+     * @returns The newly created layer
+     * @example
+     * layer = glyph.addLayer("m01")
+     * print(layer.width)
+     */
+    addLayer(masterId?: string, width: number = 600): Layer {
+        // Create minimal layer data matching ILayer interface
+        const layerData: any = {
+            width,
+            shapes: [] as any[],
+            anchors: [] as any[]
+        };
+        if (masterId) {
+            layerData.master = masterId;
+            layerData.id = masterId;
+        }
+        const layer = new Layer(layerData);
+        if (!this.layers) this.layers = [];
+        this.layers.push(layer as any);
+        return layer;
     }
 
     /**
@@ -462,10 +514,10 @@ export class Layer extends BabelfontLayer {
     /**
      * Add a new path to the layer
      *
-     * @param closed - Whether the path should be closed
+     * @param closed - Whether the path should be closed (default: False)
      * @returns The newly created path
      * @example
-     * path = layer.addPath(closed=True)
+     * path = layer.addPath()
      * path.addNode({"x": 0, "y": 0, "type": "line"})
      */
     addPath(closed: boolean = false): Path {

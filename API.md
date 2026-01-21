@@ -8,17 +8,17 @@
 
 - [Overview](#overview)
 - [Class Reference](#class-reference)
-  - [Font](#font) - 
-  - [Glyph](#glyph) - 
-  - [Layer](#layer) - 
-  - [Path](#path) - 
-  - [Node](#node) - 
-  - [Component](#component) - 
-  - [Anchor](#anchor) - 
-  - [Guide](#guide) - 
-  - [Axis](#axis) - 
-  - [Master](#master) - 
-  - [Instance](#instance) - 
+  - [Font](#font)
+  - [Glyph](#glyph)
+  - [Layer](#layer)
+  - [Path](#path)
+  - [Node](#node)
+  - [Component](#component)
+  - [Anchor](#anchor)
+  - [Guide](#guide)
+  - [Axis](#axis)
+  - [Master](#master)
+  - [Instance](#instance)
 - [Complete Examples](#complete-examples)
 - [Tips and Best Practices](#tips-and-best-practices)
 
@@ -66,6 +66,8 @@ font = glyph.parent()     # Font object
 # fonteditor module is pre-loaded
 font = CurrentFont()
 ```
+
+**Note:** Font objects are created by loading font files. Use `CurrentFont()` to access the current font.
 
 ### Properties
 
@@ -141,22 +143,13 @@ if master:
     print(master.name)
 ```
 
-#### `toJSONString() -> str`
-Serialize font to JSON string
+#### `addGlyph(name: str, category: str) -> [Glyph](#glyph)`
+Create and add a new glyph to the font
 
 **Example:**
 ```python
-json_str = font.toJSONString()
-with open("font.json", "w") as f:
-    f.write(json_str)
-```
-
-#### `fromData(data: IFont) -> [Font](#font)`
-Create a Font instance from parsed JSON data
-
-**Example:**
-```python
-font = Font.fromData(data_dict)
+glyph = font.addGlyph("A")
+print(glyph.name)
 ```
 
 ---
@@ -171,17 +164,19 @@ glyph = font.glyphs[0]
 glyph = font.findGlyph("A")
 ```
 
+**Note:** Create new glyphs using `font.addGlyph(name, category)`. Existing glyphs are accessed from `font.glyphs` list or via `font.findGlyph(name)`.
+
 ### Properties
 
 All properties are read/write:
 
 - **`name`** (str): The name of the glyph
 - **`production_name`** (str | None): The production name of the glyph, if any
-- **`category`** (GlyphCategory): The category of the glyph
+- **`category`** (GlyphCategory): The category of the glyph. Options: `"Base"`, `"Mark"`, `"Unknown"`, `"Ligature"`
 - **`codepoints`** (list[float | int] | None): Unicode codepoints assigned to the glyph
 - **`layers`** (list[[Layer](#layer)])
 - **`exported`** (bool): Whether the glyph is exported
-- **`direction`** (Direction | None): The writing direction of the glyph, if any
+- **`direction`** (Direction | None): The writing direction of the glyph, if any. Options: `"LeftToRight"` (Left to right text flow), `"RightToLeft"` (Right to left text flow), `"TopToBottom"` (Top to bottom text flow), `"Bidi"` (Bidirectional,)
 - **`component_axes`** (list[[Axis](#axis)] | None): Glyph-specific axes for "smart components" / variable components
 - **`format_specific`** (dict | None): Format-specific data
 
@@ -207,6 +202,15 @@ if layer:
     print(layer.width)
 ```
 
+#### `addLayer(masterId: str | None = None, width: float | int) -> [Layer](#layer)`
+Create and add a new layer to the glyph
+
+**Example:**
+```python
+layer = glyph.addLayer("m01")
+print(layer.width)
+```
+
 ---
 
 
@@ -216,6 +220,8 @@ if layer:
 ```python
 layer = glyph.layers[0]
 ```
+
+**Note:** Create new layers using `glyph.addLayer(masterId, width)`. Existing layers are accessed from `glyph.layers` list.
 
 ### Properties
 
@@ -255,7 +261,7 @@ Add a new path to the layer
 
 **Example:**
 ```python
-path = layer.addPath(closed=True)
+path = layer.addPath()
 path.addNode({"x": 0, "y": 0, "type": "line"})
 ```
 
@@ -330,6 +336,8 @@ if shape.isPath():
     path = shape.asPath()
 ```
 
+**Note:** Create paths using `layer.addPath(closed=True/False)`.
+
 ### Properties
 
 All properties are read/write:
@@ -382,13 +390,15 @@ path.deleteNode(0)
 node = path.nodes[0]
 ```
 
+**Note:** Create nodes using `path.addNode({"x": 100, "y": 200, "type": "line"})`.
+
 ### Properties
 
 All properties are read/write:
 
 - **`x`** (float | int): The x-coordinate of the node
 - **`y`** (float | int): The y-coordinate of the node
-- **`nodetype`** (NodeType): The type of the node
+- **`nodetype`** (NodeType): The type of the node. Options: `"Move"` (Move to a new position without drawing (only defined for open contours)), `"Line"` (Draw a straight line to this node), `"OffCurve"` (Cubic Bézier curve control node (off-curve)), `"Curve"` (Draw a cubic Bézier curve to this node), `"QCurve"` (Draw a quadratic Bézier curve to this node)
 - **`smooth`** (bool | None): Whether the node is smooth
 - **`format_specific`** (dict | None): Format-specific data
 
@@ -403,6 +413,8 @@ shape = layer.shapes[0]
 if shape.isComponent():
     component = shape.asComponent()
 ```
+
+**Note:** Create components using `layer.addComponent("glyphName")`.
 
 ### Properties
 
@@ -423,6 +435,8 @@ All properties are read/write:
 ```python
 anchor = layer.anchors[0]
 ```
+
+**Note:** Create anchors using `layer.createAnchor("name", x, y)`.
 
 ### Properties
 
@@ -445,6 +459,8 @@ guide = layer.guides[0]
 guide = master.guides[0]
 ```
 
+**Note:** Guides are accessed from `layer.guides` or `master.guides` lists.
+
 ### Properties
 
 All properties are read/write:
@@ -465,6 +481,8 @@ axis = font.axes[0]
 # or
 axis = font.findAxisByTag("wght")
 ```
+
+**Note:** Axes are accessed from `font.axes` list.
 
 ### Properties
 
@@ -492,6 +510,8 @@ master = font.masters[0]
 master = font.findMaster("master-id")
 ```
 
+**Note:** Masters are accessed from `font.masters` list.
+
 ### Properties
 
 All properties are read/write:
@@ -515,6 +535,8 @@ All properties are read/write:
 instance = font.instances[0]
 ```
 
+**Note:** Instances are accessed from `font.instances` list.
+
 ### Properties
 
 All properties are read/write:
@@ -532,29 +554,7 @@ All properties are read/write:
 
 ## Complete Examples
 
-### Example 1: Creating a Simple Glyph
-
-```python
-# Get the font
-font = CurrentFont()
-
-# Create a new glyph
-glyph = font.addGlyph("myGlyph", "Base")
-
-# Add a layer
-layer = glyph.addLayer(500)  # 500 units wide
-
-# Create a rectangle path
-path = layer.addPath(closed=True)
-path.appendNode(100, 0, "Line")
-path.appendNode(400, 0, "Line")
-path.appendNode(400, 700, "Line")
-path.appendNode(100, 700, "Line")
-
-print(f"Created glyph: {glyph.name}")
-```
-
-### Example 2: Modifying Existing Glyphs
+### Example 1: Modifying Existing Glyphs
 
 ```python
 font = CurrentFont()
@@ -574,31 +574,31 @@ if glyph_a:
                     node.y += 5   # Shift 5 units up
     
     # Add an anchor
-    layer.addAnchor(250, 700, "top")
+    layer.createAnchor("top", 250, 700)
     
     print(f"Modified {glyph_a.name}")
 ```
 
-### Example 3: Working with Components
+### Example 2: Working with Components
 
 ```python
 font = CurrentFont()
 
-# Create a glyph with a component
-glyph = font.addGlyph("Aacute", "Base")
-layer = glyph.addLayer(600)
-
-# Add base letter component
-base = layer.addComponent("A")
-
-# Add accent component with transformation
-# Transform: [scaleX, skewX, skewY, scaleY, translateX, translateY]
-accent = layer.addComponent("acutecomb", [1, 0, 0, 1, 250, 500])
-
-print(f"Created {glyph.name} with components")
+# Access an existing glyph
+glyph = font.findGlyph("Aacute")
+if glyph and glyph.layers:
+    layer = glyph.layers[0]
+    
+    # Add base letter component
+    base = layer.addComponent("A")
+    
+    # Add accent component with transformation
+    accent = layer.addComponent("acutecomb")
+    
+    print(f"Added components to {glyph.name}")
 ```
 
-### Example 4: Iterating Through Font
+### Example 3: Iterating Through Font
 
 ```python
 font = CurrentFont()
@@ -617,7 +617,7 @@ for glyph in font.glyphs:
 print(f"Total nodes in font: {total_nodes}")
 ```
 
-### Example 5: Working with Variable Fonts
+### Example 4: Working with Variable Fonts
 
 ```python
 font = CurrentFont()
@@ -636,7 +636,7 @@ if font.axes:
             print(f"  Master: {location_str}")
 ```
 
-### Example 6: Batch Processing Glyphs
+### Example 5: Batch Processing Glyphs
 
 ```python
 font = CurrentFont()

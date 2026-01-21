@@ -819,4 +819,41 @@ describe('Babelfont Object Model', () => {
             });
         });
     });
+
+    describe('Object Creation Methods', () => {
+        test('Font.addGlyph() should create and add a new glyph', () => {
+            const initialCount = font.glyphs.length;
+            const glyph = font.addGlyph('newglyph', 'letter');
+
+            expect(font.glyphs.length).toBe(initialCount + 1);
+            expect(glyph).toBeDefined();
+            expect(glyph.name).toBe('newglyph');
+            expect(glyph.category).toBe('letter');
+            expect(glyph.exported).toBe(true);
+            expect(glyph.layers).toEqual([]);
+        });
+
+        test('Glyph.addLayer() should create and add a new layer', () => {
+            const glyph = font.glyphs[0];
+            const initialCount = glyph.layers.length;
+            const layer = glyph.addLayer('m01', 500);
+
+            expect(glyph.layers.length).toBe(initialCount + 1);
+            expect(layer).toBeDefined();
+            expect(layer.width).toBe(500);
+            expect(layer.id).toBe('m01');
+            expect(layer.master).toBe('m01');
+        });
+
+        test('Created glyph should have proper parent relationship', () => {
+            const glyph = font.addGlyph('testglyph', 'base');
+            expect(glyph.parent()).toBe(font);
+        });
+
+        test('Created layer should have proper parent relationship', () => {
+            const glyph = font.glyphs[0];
+            const layer = glyph.addLayer('test', 600);
+            expect(layer.parent()).toBe(glyph);
+        });
+    });
 });

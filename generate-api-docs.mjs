@@ -19,6 +19,15 @@ import ts from "typescript";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
+// Methods to skip in API documentation
+const SKIP_METHODS = [
+  "toString",
+  "markDirty",
+  "toJSON",
+  "toJSONString",
+  "fromData",
+];
+
 // Source files to parse
 const SOURCE_FILE = join(__dirname, "webapp/js/babelfont-extended.ts");
 const BABELFONT_TS_DIR = join(
@@ -74,6 +83,7 @@ function parseTypeScriptFile(filePath) {
         name: className,
         properties: [],
         methods: [],
+        constructor: null,
         jsDoc: extractJsDoc(node)?.description || null,
       };
 
@@ -85,6 +95,8 @@ function parseTypeScriptFile(filePath) {
         } else if (ts.isMethodDeclaration(member)) {
           const method = extractMethod(member, sourceFile);
           if (method) classInfo.methods.push(method);
+        } else if (ts.isConstructorDeclaration(member)) {
+          classInfo.constructor = extractConstructor(member, sourceFile);
         }
       });
 
@@ -131,7 +143,7 @@ function extractInterfaceProperty(member, sourceFile) {
 }
 
 /**
- * Parse underlying.ts to extract base interface properties
+ * Parse underlying.ts to extract base interface properties and type definitions
  */
 function parseUnderlyingFile(filePath) {
   const sourceCode = readFileSync(filePath, "utf-8");
@@ -143,6 +155,7 @@ function parseUnderlyingFile(filePath) {
   );
 
   const interfaces = new Map(); // interfaceName -> properties[]
+  const typeDefinitions = new Map(); // typeName -> options[]
 
   function visit(node) {
     if (ts.isInterfaceDeclaration(node) && node.name) {
@@ -159,11 +172,81 @@ function parseUnderlyingFile(filePath) {
       interfaces.set(interfaceName, props);
     }
 
+    // Extract enum definitions
+    if (ts.isEnumDeclaration(node) && node.name) {
+      const enumName = node.name.text;
+      const options = [];
+
+      node.members.forEach((member) => {
+        if (member.name) {
+          const memberName = member.name.getText(sourceFile);
+          const jsDoc = extractJsDoc(member);
+          const description = jsDoc?.description || null;
+
+          // Get the value if it's a string literal
+          let value = memberName;
+          if (member.initializer && ts.isStringLiteral(member.initializer)) {
+            value = member.initializer.text;
+          }
+
+          options.push({ value, description });
+        }
+      });
+
+      typeDefinitions.set(enumName, options);
+    }
+
+    // Extract type alias with union of string literals
+    if (ts.isTypeAliasDeclaration(node) && node.name) {
+      const typeName = node.name.text;
+      const typeNode = node.type;
+
+      if (ts.isUnionTypeNode(typeNode)) {
+        const options = [];
+
+        typeNode.types.forEach((type) => {
+          if (ts.isLiteralTypeNode(type) && ts.isStringLiteral(type.literal)) {
+            const value = type.literal.text;
+            // Try to get JSDoc for this specific literal (usually on the line)
+            options.push({ value, description: null });
+          }
+        });
+
+        if (options.length > 0) {
+          // Get JSDoc description from the type alias itself
+          const jsDoc = extractJsDoc(node);
+          const typeDescription = jsDoc?.description || null;
+
+          // Parse JSDoc to extract per-value descriptions if available
+          if (jsDoc?.description) {
+            const lines = jsDoc.description.split("\n");
+            lines.forEach((line) => {
+              const match = line.match(/^(?:A |An |The )?(.+?)(?: glyph)?$/);
+              if (match) {
+                // Try to match descriptions to values
+                const desc = line.trim();
+                options.forEach((opt) => {
+                  if (
+                    desc.toLowerCase().includes(opt.value.toLowerCase()) &&
+                    !opt.description
+                  ) {
+                    opt.description = desc;
+                  }
+                });
+              }
+            });
+          }
+
+          typeDefinitions.set(typeName, options);
+        }
+      }
+    }
+
     ts.forEachChild(node, visit);
   }
 
   visit(sourceFile);
-  return interfaces;
+  return { interfaces, typeDefinitions };
 }
 
 /**
@@ -245,9 +328,7 @@ function simplifyType(tsType) {
 function extractMethod(node, sourceFile) {
   const name = node.name?.getText(sourceFile);
   if (!name || name.startsWith("_")) return null; // Skip private methods
-  if (name === "toString") return null; // Skip toString method
-  if (name === "markDirty") return null; // Skip mark_dirty method
-  if (name === "toJSON") return null; // Skip mark_dirty method
+  if (SKIP_METHODS.includes(name)) return null; // Skip methods in skip list
 
   const parameters = node.parameters
     .map((p) => {
@@ -270,6 +351,30 @@ function extractMethod(node, sourceFile) {
     parameters,
     returnType,
     signature: `${name}(${parameters}): ${returnType}`,
+    jsDoc: jsDoc?.description || null,
+    example: jsDoc?.example || null,
+  };
+}
+
+/**
+ * Extract constructor information
+ */
+function extractConstructor(node, sourceFile) {
+  const parameters = node.parameters
+    .map((p) => {
+      const paramName = p.name.getText(sourceFile);
+      const paramType = p.type
+        ? simplifyType(p.type.getText(sourceFile))
+        : "any";
+      const optional = p.questionToken ? "?" : "";
+      return `${paramName}${optional}: ${paramType}`;
+    })
+    .join(", ");
+
+  const jsDoc = extractJsDoc(node);
+
+  return {
+    parameters,
     jsDoc: jsDoc?.description || null,
     example: jsDoc?.example || null,
   };
@@ -365,9 +470,41 @@ function tsToPythonType(tsType) {
 }
 
 /**
+ * Get formatted type options for a property if available
+ * @param {string} tsType - TypeScript type string
+ * @param {Map} typeDefinitions - Map of type names to their options
+ * @returns {string} Formatted options string or empty string
+ */
+function getTypeOptions(tsType, typeDefinitions) {
+  // Extract the base type name (remove optional/undefined, array brackets, etc.)
+  let baseType = tsType
+    .replace(/\s*\|\s*undefined$/, "")
+    .replace(/\[\]$/, "")
+    .trim();
+
+  // Check if we have options for this type
+  if (typeDefinitions.has(baseType)) {
+    const options = typeDefinitions.get(baseType);
+    if (options.length > 0) {
+      const optionsList = options
+        .map((opt) => {
+          if (opt.description) {
+            return `\`"${opt.value}"\` (${opt.description})`;
+          }
+          return `\`"${opt.value}"\``;
+        })
+        .join(", ");
+      return `. Options: ${optionsList}`;
+    }
+  }
+
+  return "";
+}
+
+/**
  * Generate markdown documentation for a class
  */
-function generateClassDocs(classInfo) {
+function generateClassDocs(classInfo, typeDefinitions = new Map()) {
   const lines = [];
   const className = classInfo.name;
 
@@ -401,6 +538,30 @@ function generateClassDocs(classInfo) {
     lines.push(`**Access:**\n${accessExamples[className]}\n`);
   }
 
+  // Note about object creation (constructors are not directly accessible in Python)
+  const creationNotes = {
+    Font: "**Note:** Font objects are created by loading font files. Use `CurrentFont()` to access the current font.",
+    Glyph:
+      "**Note:** Create new glyphs using `font.addGlyph(name, category)`. Existing glyphs are accessed from `font.glyphs` list or via `font.findGlyph(name)`.",
+    Layer:
+      "**Note:** Create new layers using `glyph.addLayer(masterId, width)`. Existing layers are accessed from `glyph.layers` list.",
+    Path: "**Note:** Create paths using `layer.addPath(closed=True/False)`.",
+    Node: '**Note:** Create nodes using `path.addNode({"x": 100, "y": 200, "type": "line"})`.',
+    Component:
+      '**Note:** Create components using `layer.addComponent("glyphName")`.',
+    Anchor:
+      '**Note:** Create anchors using `layer.createAnchor("name", x, y)`.',
+    Guide:
+      "**Note:** Guides are accessed from `layer.guides` or `master.guides` lists.",
+    Axis: "**Note:** Axes are accessed from `font.axes` list.",
+    Master: "**Note:** Masters are accessed from `font.masters` list.",
+    Instance: "**Note:** Instances are accessed from `font.instances` list.",
+  };
+
+  if (creationNotes[className]) {
+    lines.push(`${creationNotes[className]}\n`);
+  }
+
   // Properties section
   if (classInfo.properties.length > 0) {
     lines.push(`### Properties\n`);
@@ -420,7 +581,14 @@ function generateClassDocs(classInfo) {
     readWriteProps.forEach((prop) => {
       const pyType = tsToPythonType(prop.type);
       // Replace newlines in descriptions with spaces to keep everything on one line
-      const desc = prop.jsDoc ? `: ${prop.jsDoc.replace(/\n/g, " ")}` : "";
+      let desc = prop.jsDoc ? `: ${prop.jsDoc.replace(/\n/g, " ")}` : "";
+
+      // Check if this property's type has defined options
+      const typeOptions = getTypeOptions(prop.type, typeDefinitions);
+      if (typeOptions) {
+        desc += typeOptions;
+      }
+
       lines.push(`- **\`${prop.name}\`** (${pyType})${desc}`);
     });
 
@@ -433,7 +601,14 @@ function generateClassDocs(classInfo) {
     readOnlyProps.forEach((prop) => {
       const pyType = tsToPythonType(prop.type);
       // Replace newlines in descriptions with spaces to keep everything on one line
-      const desc = prop.jsDoc ? `: ${prop.jsDoc.replace(/\n/g, " ")}` : "";
+      let desc = prop.jsDoc ? `: ${prop.jsDoc.replace(/\n/g, " ")}` : "";
+
+      // Check if this property's type has defined options
+      const typeOptions = getTypeOptions(prop.type, typeDefinitions);
+      if (typeOptions) {
+        desc += typeOptions;
+      }
+
       lines.push(`- **\`${prop.name}\`** (${pyType})${desc}`);
     });
 
@@ -489,11 +664,12 @@ function generateAPIDocs(version = null) {
   const extendedClasses = parseTypeScriptFile(SOURCE_FILE);
   console.log(`✅ Found ${extendedClasses.length} extended classes`);
 
-  // Parse underlying.ts for base interfaces
+  // Parse underlying.ts for base interfaces and type definitions
   const underlyingPath = join(BABELFONT_TS_DIR, "underlying.ts");
-  const underlyingInterfaces = parseUnderlyingFile(underlyingPath);
+  const { interfaces: underlyingInterfaces, typeDefinitions } =
+    parseUnderlyingFile(underlyingPath);
   console.log(
-    `✅ Parsed underlying.ts: ${underlyingInterfaces.size} interfaces`,
+    `✅ Parsed underlying.ts: ${underlyingInterfaces.size} interfaces, ${typeDefinitions.size} type definitions`,
   );
 
   // Parse babelfont-ts source files for wrapper class interfaces
@@ -557,6 +733,8 @@ function generateAPIDocs(version = null) {
   // Order classes for documentation
   const classOrder = [
     "Font",
+    "Names",
+    "Features",
     "Glyph",
     "Layer",
     "Shape",
@@ -593,8 +771,8 @@ function generateAPIDocs(version = null) {
   lines.push("- [Class Reference](#class-reference)");
   orderedClasses.forEach((cls) => {
     const anchor = cls.name.toLowerCase();
-    const desc = cls.jsDoc || "";
-    lines.push(`  - [${cls.name}](#${anchor}) - ${desc}`);
+    const desc = cls.jsDoc ? ` - ${cls.jsDoc}` : "";
+    lines.push(`  - [${cls.name}](#${anchor})${desc}`);
   });
   lines.push("- [Complete Examples](#complete-examples)");
   lines.push("- [Tips and Best Practices](#tips-and-best-practices)");
@@ -609,7 +787,7 @@ function generateAPIDocs(version = null) {
   lines.push("");
 
   orderedClasses.forEach((cls) => {
-    lines.push(generateClassDocs(cls));
+    lines.push(generateClassDocs(cls, typeDefinitions));
     lines.push("");
   });
 
@@ -672,29 +850,7 @@ font = glyph.parent()     # Font object
 function getExamplesSection() {
   return `## Complete Examples
 
-### Example 1: Creating a Simple Glyph
-
-\`\`\`python
-# Get the font
-font = CurrentFont()
-
-# Create a new glyph
-glyph = font.addGlyph("myGlyph", "Base")
-
-# Add a layer
-layer = glyph.addLayer(500)  # 500 units wide
-
-# Create a rectangle path
-path = layer.addPath(closed=True)
-path.appendNode(100, 0, "Line")
-path.appendNode(400, 0, "Line")
-path.appendNode(400, 700, "Line")
-path.appendNode(100, 700, "Line")
-
-print(f"Created glyph: {glyph.name}")
-\`\`\`
-
-### Example 2: Modifying Existing Glyphs
+### Example 1: Modifying Existing Glyphs
 
 \`\`\`python
 font = CurrentFont()
@@ -714,31 +870,31 @@ if glyph_a:
                     node.y += 5   # Shift 5 units up
     
     # Add an anchor
-    layer.addAnchor(250, 700, "top")
+    layer.createAnchor("top", 250, 700)
     
     print(f"Modified {glyph_a.name}")
 \`\`\`
 
-### Example 3: Working with Components
+### Example 2: Working with Components
 
 \`\`\`python
 font = CurrentFont()
 
-# Create a glyph with a component
-glyph = font.addGlyph("Aacute", "Base")
-layer = glyph.addLayer(600)
-
-# Add base letter component
-base = layer.addComponent("A")
-
-# Add accent component with transformation
-# Transform: [scaleX, skewX, skewY, scaleY, translateX, translateY]
-accent = layer.addComponent("acutecomb", [1, 0, 0, 1, 250, 500])
-
-print(f"Created {glyph.name} with components")
+# Access an existing glyph
+glyph = font.findGlyph("Aacute")
+if glyph and glyph.layers:
+    layer = glyph.layers[0]
+    
+    # Add base letter component
+    base = layer.addComponent("A")
+    
+    # Add accent component with transformation
+    accent = layer.addComponent("acutecomb")
+    
+    print(f"Added components to {glyph.name}")
 \`\`\`
 
-### Example 4: Iterating Through Font
+### Example 3: Iterating Through Font
 
 \`\`\`python
 font = CurrentFont()
@@ -757,7 +913,7 @@ for glyph in font.glyphs:
 print(f"Total nodes in font: {total_nodes}")
 \`\`\`
 
-### Example 5: Working with Variable Fonts
+### Example 4: Working with Variable Fonts
 
 \`\`\`python
 font = CurrentFont()
@@ -776,7 +932,7 @@ if font.axes:
             print(f"  Master: {location_str}")
 \`\`\`
 
-### Example 6: Batch Processing Glyphs
+### Example 5: Batch Processing Glyphs
 
 \`\`\`python
 font = CurrentFont()
