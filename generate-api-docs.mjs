@@ -19,11 +19,15 @@ import ts from "typescript";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-// Source file to parse
+// Source files to parse
 const SOURCE_FILE = join(__dirname, "webapp/js/babelfont-extended.ts");
+const BABELFONT_TS_DIR = join(
+  __dirname,
+  "webapp/vendor/babelfont-rs/babelfont-ts/src",
+);
 
 /**
- * Parse TypeScript file and extract class information
+ * Parse TypeScript file and extract class/interface information
  */
 function parseTypeScriptFile(filePath) {
   const sourceCode = readFileSync(filePath, "utf-8");
@@ -35,8 +39,25 @@ function parseTypeScriptFile(filePath) {
   );
 
   const classes = [];
+  const interfaces = new Map(); // className -> properties[]
 
   function visit(node) {
+    // Collect interface declarations
+    if (ts.isInterfaceDeclaration(node) && node.name) {
+      const interfaceName = node.name.text;
+      const props = [];
+
+      node.members.forEach((member) => {
+        if (ts.isPropertySignature(member)) {
+          const prop = extractInterfaceProperty(member, sourceFile);
+          if (prop) props.push(prop);
+        }
+      });
+
+      interfaces.set(interfaceName, props);
+    }
+
+    // Process class declarations
     if (ts.isClassDeclaration(node) && node.name) {
       const className = node.name.text;
 
@@ -74,7 +95,75 @@ function parseTypeScriptFile(filePath) {
   }
 
   visit(sourceFile);
+
+  // Merge interface properties into classes
+  classes.forEach((cls) => {
+    if (interfaces.has(cls.name)) {
+      const interfaceProps = interfaces.get(cls.name);
+      cls.properties = [...interfaceProps, ...cls.properties];
+    }
+  });
+
   return classes;
+}
+
+/**
+ * Extract property from interface signature
+ */
+function extractInterfaceProperty(member, sourceFile) {
+  const name = member.name?.getText(sourceFile);
+  if (!name || name.startsWith("_")) return null;
+
+  const type = member.type ? member.type.getText(sourceFile) : "any";
+  const isReadOnly = member.modifiers?.some(
+    (m) => m.kind === ts.SyntaxKind.ReadonlyKeyword,
+  );
+  const isOptional = !!member.questionToken;
+  const jsDoc = extractJsDoc(member);
+
+  return {
+    name,
+    type:
+      isOptional && !type.includes("undefined") ? `${type} | undefined` : type,
+    readOnly: isReadOnly,
+    jsDoc: jsDoc?.description || null,
+  };
+}
+
+/**
+ * Parse underlying.ts to extract base interface properties
+ */
+function parseUnderlyingFile(filePath) {
+  const sourceCode = readFileSync(filePath, "utf-8");
+  const sourceFile = ts.createSourceFile(
+    filePath,
+    sourceCode,
+    ts.ScriptTarget.Latest,
+    true,
+  );
+
+  const interfaces = new Map(); // interfaceName -> properties[]
+
+  function visit(node) {
+    if (ts.isInterfaceDeclaration(node) && node.name) {
+      const interfaceName = node.name.text;
+      const props = [];
+
+      node.members.forEach((member) => {
+        if (ts.isPropertySignature(member)) {
+          const prop = extractInterfaceProperty(member, sourceFile);
+          if (prop) props.push(prop);
+        }
+      });
+
+      interfaces.set(interfaceName, props);
+    }
+
+    ts.forEachChild(node, visit);
+  }
+
+  visit(sourceFile);
+  return interfaces;
 }
 
 /**
@@ -199,6 +288,7 @@ function tsToPythonType(tsType) {
     void: "None",
     undefined: "None",
     null: "None",
+    Date: "datetime",
   };
 
   // Handle array types
@@ -216,6 +306,30 @@ function tsToPythonType(tsType) {
   // Handle Record types
   if (tsType.startsWith("Record<")) {
     return "dict";
+  }
+
+  // Handle tuple types
+  if (tsType.match(/^\[.*\]$/)) {
+    // Convert [number, number] to tuple[float | int, float | int]
+    const inner = tsType.slice(1, -1);
+    const types = inner.split(",").map((t) => tsToPythonType(t.trim()));
+    return `tuple[${types.join(", ")}]`;
+  }
+
+  // Handle import() types - extract the last part
+  if (tsType.includes("import(")) {
+    // Extract types like DesignspaceLocation from import("@simoncozens/fonttypes").DesignspaceLocation
+    const match = tsType.match(/\.(\w+)/);
+    if (match) {
+      const typeName = match[1];
+      // Map some known types
+      const importTypeMap = {
+        DesignspaceLocation: "dict",
+        UserspaceCoordinate: "float | int",
+        DesignspaceCoordinate: "float | int",
+      };
+      return importTypeMap[typeName] || typeName;
+    }
   }
 
   // Direct mapping
@@ -237,6 +351,11 @@ function tsToPythonType(tsType) {
     "Master",
     "Instance",
     "Font",
+    "Names",
+    "Features",
+    "DecomposedAffine",
+    "Color",
+    "Position",
   ];
   if (knownClasses.includes(tsType)) {
     return `[${tsType}](#${tsType.toLowerCase()})`;
@@ -362,12 +481,76 @@ function generateClassDocs(classInfo) {
  * Generate the complete API documentation
  */
 function generateAPIDocs(version = null) {
-  console.log("📄 Parsing babelfont-extended.ts...");
+  console.log("📄 Parsing TypeScript sources...");
 
-  const modelPath = SOURCE_FILE;
-  const classes = parseTypeScriptFile(modelPath);
+  // Parse babelfont-extended.ts for methods
+  const extendedClasses = parseTypeScriptFile(SOURCE_FILE);
+  console.log(`✅ Found ${extendedClasses.length} extended classes`);
 
-  console.log(`✅ Found ${classes.length} exported classes`);
+  // Parse underlying.ts for base interfaces
+  const underlyingPath = join(BABELFONT_TS_DIR, "underlying.ts");
+  const underlyingInterfaces = parseUnderlyingFile(underlyingPath);
+  console.log(
+    `✅ Parsed underlying.ts: ${underlyingInterfaces.size} interfaces`,
+  );
+
+  // Parse babelfont-ts source files for wrapper class interfaces
+  const classFiles = [
+    "font.ts",
+    "glyph.ts",
+    "layer.ts",
+    "shape.ts",
+    "anchor.ts",
+    "guide.ts",
+    "axis.ts",
+    "master.ts",
+    "instance.ts",
+  ];
+
+  const baseClasses = new Map();
+  classFiles.forEach((file) => {
+    const filePath = join(BABELFONT_TS_DIR, file);
+    try {
+      const classes = parseTypeScriptFile(filePath);
+      classes.forEach((cls) => {
+        // Also merge in underlying interface properties
+        const underlyingProps = underlyingInterfaces.get(cls.name) || [];
+        const allProps = [...underlyingProps, ...cls.properties];
+        // Deduplicate by name
+        const propMap = new Map();
+        allProps.forEach((prop) => propMap.set(prop.name, prop));
+        cls.properties = Array.from(propMap.values());
+
+        baseClasses.set(cls.name, cls);
+      });
+      console.log(`✅ Parsed ${file}: ${classes.length} classes`);
+    } catch (err) {
+      console.warn(`⚠️ Could not parse ${file}: ${err.message}`);
+    }
+  });
+
+  // Merge base properties into extended classes
+  const mergedClasses = extendedClasses.map((extCls) => {
+    const baseCls = baseClasses.get(extCls.name);
+    if (baseCls) {
+      // Merge properties (base first, then extended)
+      const allProps = [...baseCls.properties, ...extCls.properties];
+      // Deduplicate by name (extended overrides base)
+      const propMap = new Map();
+      allProps.forEach((prop) => propMap.set(prop.name, prop));
+
+      return {
+        ...extCls,
+        properties: Array.from(propMap.values()),
+        jsDoc: extCls.jsDoc || baseCls.jsDoc,
+      };
+    }
+    return extCls;
+  });
+
+  console.log(`✅ Merged ${mergedClasses.length} classes with base properties`);
+
+  console.log(`✅ Merged ${mergedClasses.length} classes with base properties`);
 
   // Order classes for documentation
   const classOrder = [
@@ -386,7 +569,7 @@ function generateAPIDocs(version = null) {
   ];
 
   const orderedClasses = classOrder
-    .map((name) => classes.find((c) => c.name === name))
+    .map((name) => mergedClasses.find((c) => c.name === name))
     .filter((c) => c);
 
   console.log("📝 Generating documentation...");
