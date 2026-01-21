@@ -268,7 +268,6 @@ Calculate bounding box for this layer
 #### `getIntersectionsOnLine(p1: { x: number; y: number }, p2: { x: number; y: number }, includeComponents: bool) -> Array<{ x: number; y: number; t: number }>`
 Calculate intersections between a line segment and all paths in this layer
 
-#### `markDirty() -> None`
 ---
 
 
@@ -315,7 +314,6 @@ Delete a node by index
 path.deleteNode(0)
 ```
 
-#### `markDirty() -> None`
 ---
 
 

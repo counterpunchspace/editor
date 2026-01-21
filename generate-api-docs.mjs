@@ -158,6 +158,7 @@ function extractMethod(node, sourceFile) {
   if (!name || name.startsWith("_")) return null; // Skip private methods
   if (name === "toString") return null; // Skip toString method
   if (name === "markDirty") return null; // Skip mark_dirty method
+  if (name === "toJSON") return null; // Skip mark_dirty method
 
   const parameters = node.parameters
     .map((p) => {
