@@ -689,6 +689,34 @@ export class Layer extends BabelfontLayer {
     }
 
     /**
+     * Get all paths in this layer (filtered from shapes)
+     *
+     * @returns Array of Path objects
+     * @example
+     * for path in layer.paths:
+     *     print(f"Path has {len(path.nodes)} nodes")
+     */
+    get paths(): Path[] {
+        if (!this.shapes) return [];
+        return this.shapes.filter((shape): shape is Path => isPath(shape));
+    }
+
+    /**
+     * Get all components in this layer (filtered from shapes)
+     *
+     * @returns Array of Component objects
+     * @example
+     * for comp in layer.components:
+     *     print(f"Component refs {comp.reference}")
+     */
+    get components(): Component[] {
+        if (!this.shapes) return [];
+        return this.shapes.filter((shape): shape is Component =>
+            isComponent(shape)
+        );
+    }
+
+    /**
      * Get the master ID for this layer
      * Handles the various formats master can be stored in
      *

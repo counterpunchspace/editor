@@ -48,9 +48,11 @@ allowing navigation up the object tree to the root Font object.
 **Example:**
 ```python
 # Navigate from node up to font
-node = font.glyphs[0].layers[0].shapes[0].asPath().nodes[0]
+path = font.glyphs[0].layers[0].paths[0]
+node = path.nodes[0]
+
 path = node.parent        # Path object
-layer = path.parent       # Layer object (Path is a Shape)
+layer = path.parent       # Layer object
 glyph = layer.parent      # Glyph object
 font = glyph.parent       # Font object
 ```
@@ -305,7 +307,7 @@ layer = glyph.layers[0]
 
 ### Properties
 
-All properties are read/write:
+#### Read/Write Properties
 
 - **`width`** (float | int): The advance width of the layer
 - **`name`** (str | None): The name of the layer
@@ -324,6 +326,11 @@ All properties are read/write:
 - **`cachedComponentLayerData`** (Any)
 - **`lsb`** (float | int): Get left sidebearing
 - **`rsb`** (float | int): Get right sidebearing
+
+#### Read-Only Properties
+
+- **`paths`** (list[[Path](#path)]): Get all paths in this layer (filtered from shapes)
+- **`components`** (list[[Component](#component)]): Get all components in this layer (filtered from shapes)
 
 ### Methods
 
@@ -721,14 +728,11 @@ glyph_a = font.findGlyph("A")
 if glyph_a:
     layer = glyph_a.layers[0]
     
-    # Modify all nodes
-    if layer.shapes:
-        for shape in layer.shapes:
-            if shape.isPath():
-                path = shape.asPath()
-                for node in path.nodes:
-                    node.x += 10  # Shift 10 units right
-                    node.y += 5   # Shift 5 units up
+    # Modify all nodes in all paths
+    for path in layer.paths:
+        for node in path.nodes:
+            node.x += 10  # Shift 10 units right
+            node.y += 5   # Shift 5 units up
     
     # Add an anchor
     layer.createAnchor("top", 250, 700)
@@ -765,11 +769,8 @@ total_nodes = 0
 for glyph in font.glyphs:
     if glyph.layers:
         for layer in glyph.layers:
-            if layer.shapes:
-                for shape in layer.shapes:
-                    if shape.isPath():
-                        path = shape.asPath()
-                        total_nodes += len(path.nodes)
+            for path in layer.paths:
+                total_nodes += len(path.nodes)
 
 print(f"Total nodes in font: {total_nodes}")
 ```
@@ -807,14 +808,11 @@ for glyph in font.glyphs:
             # Scale width
             layer.width *= scale_factor
             
-            # Scale all shapes
-            if layer.shapes:
-                for shape in layer.shapes:
-                    if hasattr(shape, 'nodes'):
-                        # Path - scale nodes
-                        for node in shape.nodes:
-                            node.x *= scale_factor
-                            node.y *= scale_factor
+            # Scale all paths
+            for path in layer.paths:
+                for node in path.nodes:
+                    node.x *= scale_factor
+                    node.y *= scale_factor
             
             # Scale anchors
             if layer.anchors:
@@ -829,19 +827,22 @@ print(f"Scaled {len(font.glyphs)} glyphs by {scale_factor}x")
 
 ## Tips and Best Practices
 
-### Type Checking
+### Accessing Paths and Components
+
+Layers provide `.paths` and `.components` properties for clean access:
 
 ```python
-# Shapes are JavaScript objects - check properties
-for shape in layer.shapes:
-    if hasattr(shape, 'nodes'):
-        # shape is a Path - has nodes property
-        for node in shape.nodes:
-            print(f"Node at ({node.x}, {node.y})")
-    elif hasattr(shape, 'reference'):
-        # shape is a Component - has reference property
-        print(f"Component references: {shape.reference}")
+# Access paths directly
+for path in layer.paths:
+    for node in path.nodes:
+        print(f"Node at ({node.x}, {node.y})")
+
+# Access components directly
+for comp in layer.components:
+    print(f"Component references: {comp.reference}")
 ```
+
+**Note:** If you need to work with all shapes together, use `layer.shapes`. For filtered access, use `layer.paths` or `layer.components`.
 
 ### Safe Property Access
 
@@ -849,28 +850,23 @@ for shape in layer.shapes:
 # Check for optional properties
 if glyph.layers:
     for layer in glyph.layers:
-        if layer.shapes:
-            for shape in layer.shapes:
-                if hasattr(shape, 'nodes'):
-                    # shape is a Path
-                    for node in shape.nodes:
-                        print(f"Node at ({node.x}, {node.y})")
+        for path in layer.paths:
+            for node in path.nodes:
+                print(f"Node at ({node.x}, {node.y})")
 ```
 
 ### Accessing Nodes Example
 
 ```python
 # Direct access (may fail if properties are None)
-# glyph.layers[0].shapes[0].nodes  # DON'T DO THIS
+# glyph.layers[0].paths[0].nodes  # DON'T DO THIS without checks
 
 # Safe access with checks:
 layer = glyph.layers[0] if glyph.layers else None
-if layer and layer.shapes:
-    shape = layer.shapes[0]
-    if hasattr(shape, 'nodes'):
-        # shape is a Path
-        nodes = shape.nodes
-        print(f"Path has {len(nodes)} nodes")
+if layer and layer.paths:
+    path = layer.paths[0]
+    nodes = path.nodes
+    print(f"Path has {len(nodes)} nodes")
 ```
 
 ### Coordinate System
@@ -881,30 +877,29 @@ if layer and layer.shapes:
 
 ### Common Issues
 
-**Q: Why does `glyph.layers[0].shapes[0].nodes` fail?**
+**Q: Why does `glyph.layers[0].paths[0].nodes` fail?**
 
-A: Optional properties may be `None`, and the shape might be a Component instead of a Path. Use safe access:
+A: Optional properties may be `None`, and there might be no paths. Use safe access:
 ```python
 # Check each step
 if glyph.layers and len(glyph.layers) > 0:
     layer = glyph.layers[0]
-    if layer.shapes and len(layer.shapes) > 0:
-        shape = layer.shapes[0]
-        if hasattr(shape, 'nodes'):
-            nodes = shape.nodes  # Now safe to access
+    if layer.paths and len(layer.paths) > 0:
+        path = layer.paths[0]
+        nodes = path.nodes  # Now safe to access
 ```
 
-**Q: How do I know if a shape is a path or component?**
+**Q: How do I work with paths and components separately?**
 
-A: Check for the distinguishing properties - Path has `nodes`, Component has `reference`:
+A: Use the `.paths` and `.components` properties on Layer:
 ```python
-for shape in layer.shapes:
-    if hasattr(shape, 'nodes'):
-        # Path - work with nodes
-        print(f"Path with {len(shape.nodes)} nodes")
-    elif hasattr(shape, 'reference'):
-        # Component - work with reference
-        print(f"Component referencing {shape.reference}")
+# Work with paths
+for path in layer.paths:
+    print(f"Path with {len(path.nodes)} nodes")
+
+# Work with components
+for comp in layer.components:
+    print(f"Component referencing {comp.reference}")
 ```
 
 ---
