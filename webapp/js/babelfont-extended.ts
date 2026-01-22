@@ -2054,8 +2054,126 @@ export class Names extends BabelfontNames {
         return `<Names family="${familyName}">`;
     }
 }
+
+/**
+ * Class for OpenType feature code that may be automatically generated
+ *
+ * NOTE: Currently the `automatic` property is always undefined when loading
+ * Glyphs files because the babelfont-rs Rust parser doesn't preserve this
+ * flag during conversion to JSON. The infrastructure is in place for when
+ * this is fixed upstream.
+ *
+ * @property {string} code - The OpenType feature code
+ * @property {boolean} [automatic] - Whether the code was automatically generated
+ * @property {Record<string, any>} [format_specific] - Format-specific data
+ */
+export class PossiblyAutomaticCode {
+    code: string;
+    automatic?: boolean;
+    format_specific?: Record<string, any>;
+
+    constructor(
+        data:
+            | string
+            | {
+                  code: string;
+                  automatic?: boolean;
+                  format_specific?: Record<string, any>;
+              }
+    ) {
+        if (typeof data === 'string') {
+            this.code = data;
+            // Always set optional properties to undefined if not provided
+            this.automatic = undefined;
+            this.format_specific = undefined;
+        } else {
+            this.code = data.code;
+            // Always set properties, even if undefined, to ensure they exist
+            // Convert numeric automatic (1/0 from Glyphs files) to boolean
+            this.automatic =
+                data.automatic !== undefined
+                    ? Boolean(data.automatic)
+                    : undefined;
+            this.format_specific = data.format_specific ?? undefined;
+        }
+
+        // Add _pyrepr as a getter that computes the string inline (bypasses Proxy interception)
+        // This is used by the Python wrapper for __str__ representation for print()
+        Object.defineProperty(this, '_pyrepr', {
+            get: () => {
+                // Replace newlines and collapse whitespace for single-line display
+                const singleLine = this.code.replace(/\s+/g, ' ').trim();
+                const preview =
+                    singleLine.length > 50
+                        ? singleLine.substring(0, 50) + '...'
+                        : singleLine;
+                const auto = this.automatic ? ' automatic' : '';
+                return `<PossiblyAutomaticCode "${preview}"${auto}>`;
+            }
+        });
+    }
+
+    /**
+     * String representation for debugging
+     *
+     * @returns Human-readable string
+     * @example
+     * print(code_obj)  # <PossiblyAutomaticCode "feature liga {...">
+     */
+    toString(): string {
+        // Replace newlines and collapse whitespace for single-line display
+        const singleLine = this.code.replace(/\s+/g, ' ').trim();
+        const preview =
+            singleLine.length > 50
+                ? singleLine.substring(0, 50) + '...'
+                : singleLine;
+        const auto = this.automatic ? ' automatic' : '';
+        return `<PossiblyAutomaticCode "${preview}"${auto}>`;
+    }
+
+    /**
+     * Convert to JSON representation
+     */
+    toJSON(): {
+        code: string;
+        automatic?: boolean;
+        format_specific?: Record<string, any>;
+    } {
+        const result: any = { code: this.code };
+        if (this.automatic !== undefined) result.automatic = this.automatic;
+        if (this.format_specific !== undefined)
+            result.format_specific = this.format_specific;
+        return result;
+    }
+}
+
 export class Features extends BabelfontFeatures {
     constructor(data: IFeatures) {
+        // Normalize classes: convert string values to PossiblyAutomaticCode instances
+        if (data.classes) {
+            const normalizedClasses: Record<string, any> = {};
+            for (const [key, value] of Object.entries(data.classes)) {
+                normalizedClasses[key] = new PossiblyAutomaticCode(value);
+            }
+            data.classes = normalizedClasses;
+        }
+
+        // Normalize prefixes: convert string values to PossiblyAutomaticCode instances
+        if (data.prefixes) {
+            const normalizedPrefixes: Record<string, any> = {};
+            for (const [key, value] of Object.entries(data.prefixes)) {
+                normalizedPrefixes[key] = new PossiblyAutomaticCode(value);
+            }
+            data.prefixes = normalizedPrefixes;
+        }
+
+        // Normalize features: convert string values to PossiblyAutomaticCode instances
+        if (data.features) {
+            data.features = data.features.map(([tag, code]) => {
+                return [tag, new PossiblyAutomaticCode(code)];
+            }) as any;
+        }
+
         super(data);
 
         // Add _pyrepr as a getter that computes the string inline (bypasses Proxy interception)
@@ -2113,11 +2231,12 @@ export const ExtendedClassRegistry: ClassRegistry = {
     Master,
     Names,
     Features,
+    PossiblyAutomaticCode,
     CustomOTValues,
     Position,
     DecomposedAffine,
     Color
-};
+} as any;
 
 /**
  * Unwrap shapes from babelfont JSON format to babelfont-ts expected format.

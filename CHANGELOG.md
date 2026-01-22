@@ -2,6 +2,7 @@
 
 - **Build System**: Updated `build-fontc-wasm.sh` to compile Rust WASM binary from local babelfont submodule (`webapp/vendor/babelfont-rs`) instead of GitHub. Ensures Rust binary and TypeScript definitions stay in sync.
 - **Babelfont-ts Migration**: Migrated from custom babelfont.d.ts type definitions to babelfont-ts from babelfont-rs repository. Deleted old babelfont.d.ts and babelfont-extensions.d.ts files. Created babelfont-types.ts compatibility layer with interface-based types for duck-typing, babelfont-extended.ts with convenience methods (findGlyph, findGlyphByUnicode, getAxis, lsb/rsb setters), and coordinate conversion helpers for @simoncozens/fonttypes branded types.
+- **PossiblyAutomaticCode Class**: Created `PossiblyAutomaticCode` class for feature/class/prefix code with `code`, `automatic`, and `format_specific` properties. All `font.features.features`, `font.features.classes`, and `font.features.prefixes` now use this type. Note: `automatic` property currently always `undefined` when loading Glyphs files due to babelfont-rs parser limitation.
 - **AI Chat Persistence**: Last active chat ID now stored in localStorage and loaded on startup instead of chronologically last chat. Provides continuity when returning to the editor.
 - **Extended Python packages**: Lazy-load `numpy`, `matplotlib`, `pandas` only when they're needed to speed up editor startup. Also fixed a memory leak after `matplotlib` usage that speeds up consecutive `matplotlib` runs.
 

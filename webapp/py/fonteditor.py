@@ -124,6 +124,19 @@ class _BabelfontWrapper:
             return _BabelfontWrapper(result)
         return result
     
+    def __setattr__(self, name, value):
+        # Don't intercept setting of our internal slots
+        if name in ('_BabelfontWrapper__obj', '_repr_str'):
+            object.__setattr__(self, name, value)
+            return
+        
+        # Forward all other attribute assignments to the wrapped object
+        obj = object.__getattribute__(self, '_BabelfontWrapper__obj')
+        # If the value is a wrapper, unwrap it first
+        if isinstance(value, _BabelfontWrapper):
+            value = object.__getattribute__(value, '_BabelfontWrapper__obj')
+        setattr(obj, name, value)
+    
     def __getitem__(self, key):
         # Forward indexing to the wrapped object
         obj = object.__getattribute__(self, '_BabelfontWrapper__obj')
