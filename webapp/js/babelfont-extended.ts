@@ -1908,6 +1908,16 @@ export class Axis extends BabelfontAxis {
     constructor(data: IAxis) {
         super(data);
 
+        // Wrap name in I18NDictionary if it's a plain object
+        if (
+            this.name &&
+            typeof this.name === 'object' &&
+            !Array.isArray(this.name) &&
+            !(this.name instanceof I18NDictionary)
+        ) {
+            (this as any).name = new I18NDictionary(this.name);
+        }
+
         // Add _pyrepr as a getter that computes the string inline (bypasses Proxy interception)
         // This is used by the Python wrapper for __str__ representation for print()
         Object.defineProperty(this, '_pyrepr', {
@@ -1915,9 +1925,7 @@ export class Axis extends BabelfontAxis {
                 const displayName =
                     typeof this.name === 'string'
                         ? this.name
-                        : this.name?.dflt ||
-                          Object.values(this.name || {})[0] ||
-                          'unknown';
+                        : this.name?.toString() || 'unknown';
                 const range = `${this.min || '?'}-${this.default || '?'}-${this.max || '?'}`;
                 return `<Axis "${displayName}" tag="${this.tag}" ${range}>`;
             }
@@ -1930,14 +1938,16 @@ export class Axis extends BabelfontAxis {
      * @returns Human-readable string
      * @example
      * print(axis)  # <Axis "Weight" tag="wght" 100-400-900>
+     *
+     * # Access localized axis name
+     * print(axis.name.get('en'))  # 'Weight'
+     * axis.name.set('de', 'Strichstärke')
      */
     toString(): string {
         const displayName =
             typeof this.name === 'string'
                 ? this.name
-                : this.name?.dflt ||
-                  Object.values(this.name || {})[0] ||
-                  'unknown';
+                : this.name?.toString() || 'unknown';
         const range = `${this.min || '?'}-${this.default || '?'}-${this.max || '?'}`;
         return `<Axis "${displayName}" tag="${this.tag}" ${range}>`;
     }
@@ -1946,6 +1956,26 @@ export class Instance extends BabelfontInstance {
     constructor(data: IInstance) {
         super(data);
 
+        // Wrap name in I18NDictionary if it's a plain object
+        if (
+            this.name &&
+            typeof this.name === 'object' &&
+            !Array.isArray(this.name) &&
+            !(this.name instanceof I18NDictionary)
+        ) {
+            (this as any).name = new I18NDictionary(this.name);
+        }
+
+        // Wrap custom_names in Names if it's a plain object
+        if (
+            this.custom_names &&
+            typeof this.custom_names === 'object' &&
+            !Array.isArray(this.custom_names) &&
+            !(this.custom_names instanceof Names)
+        ) {
+            (this as any).custom_names = new Names(this.custom_names as INames);
+        }
+
         // Add _pyrepr as a getter that computes the string inline (bypasses Proxy interception)
         // This is used by the Python wrapper for __str__ representation for print()
         Object.defineProperty(this, '_pyrepr', {
@@ -1953,9 +1983,7 @@ export class Instance extends BabelfontInstance {
                 const displayName =
                     typeof this.name === 'string'
                         ? this.name
-                        : this.name?.en ||
-                          Object.values(this.name || {})[0] ||
-                          'unknown';
+                        : this.name?.toString() || 'unknown';
                 const location = this.location
                     ? JSON.stringify(this.location)
                     : '{}';
@@ -1970,14 +1998,19 @@ export class Instance extends BabelfontInstance {
      * @returns Human-readable string
      * @example
      * print(instance)  # <Instance "Bold" location={...}>
+     *
+     * # Access localized instance name
+     * print(instance.name.get('en'))  # 'Bold'
+     * instance.name.set('de', 'Fett')
+     *
+     * # Access full name table
+     * instance.custom_names.family_name.set('de', 'Meine Schrift Fett')
      */
     toString(): string {
         const displayName =
             typeof this.name === 'string'
                 ? this.name
-                : this.name?.en ||
-                  Object.values(this.name || {})[0] ||
-                  'unknown';
+                : this.name?.toString() || 'unknown';
         const location = this.location ? JSON.stringify(this.location) : '{}';
         return `<Instance "${displayName}" location=${location}>`;
     }
@@ -1986,6 +2019,16 @@ export class Master extends BabelfontMaster {
     constructor(data: IMaster) {
         super(data);
 
+        // Wrap name in I18NDictionary if it's a plain object
+        if (
+            this.name &&
+            typeof this.name === 'object' &&
+            !Array.isArray(this.name) &&
+            !(this.name instanceof I18NDictionary)
+        ) {
+            (this as any).name = new I18NDictionary(this.name);
+        }
+
         // Add _pyrepr as a getter that computes the string inline (bypasses Proxy interception)
         // This is used by the Python wrapper for __str__ representation for print()
         Object.defineProperty(this, '_pyrepr', {
@@ -1993,9 +2036,7 @@ export class Master extends BabelfontMaster {
                 const displayName =
                     typeof this.name === 'string'
                         ? this.name
-                        : this.name?.en ||
-                          Object.values(this.name || {})[0] ||
-                          'unknown';
+                        : this.name?.toString() || 'unknown';
                 const location = this.location
                     ? JSON.stringify(this.location)
                     : '{}';
@@ -2010,21 +2051,338 @@ export class Master extends BabelfontMaster {
      * @returns Human-readable string
      * @example
      * print(master)  # <Master "Regular" id="m01" location={...}>
+     *
+     * # Access localized master name
+     * print(master.name.get('en'))  # 'Regular'
+     * master.name.set('de', 'Normal')
      */
     toString(): string {
         const displayName =
             typeof this.name === 'string'
                 ? this.name
-                : this.name?.en ||
-                  Object.values(this.name || {})[0] ||
-                  'unknown';
+                : this.name?.toString() || 'unknown';
         const location = this.location ? JSON.stringify(this.location) : '{}';
         return `<Master "${displayName}" id="${this.id}" location=${location}>`;
     }
 }
+
+/**
+ * Multi-language dictionary for font name entries
+ *
+ * I18NDictionary stores localized versions of font metadata strings.
+ * Language codes should follow OpenType Language System Tags (e.g., 'en', 'de', 'fr').
+ * The special code 'dflt' represents the default/fallback value.
+ *
+ * When displayed as a string, it automatically selects the most appropriate value:
+ * 1. 'dflt' (default) if present
+ * 2. 'en' (English) if present
+ * 3. First available language
+ *
+ * All font name properties (family_name, designer, copyright, etc.) return
+ * I18NDictionary objects that you can query and modify.
+ *
+ * @example
+ * // JavaScript: Get default/preferred value
+ * console.log(font.names.family_name.toString())  // "My Font"
+ * console.log(String(font.names.family_name))     // "My Font" (auto-converts)
+ *
+ * @example
+ * // JavaScript: Access specific language
+ * const english = font.names.family_name.get('en')    // "My Font"
+ * const german = font.names.family_name.get('de', 'Fallback')  // With default
+ *
+ * // Check if language exists
+ * if (font.names.family_name.has('de')) {
+ *     console.log(font.names.family_name.get('de'))
+ * }
+ *
+ * @example
+ * // JavaScript: Set localized values
+ * font.names.family_name.set('en', 'My Font')
+ * font.names.family_name.set('de', 'Meine Schriftart')
+ * font.names.family_name.set('fr', 'Ma Police')
+ * font.names.family_name.setDefault('My Font')  // Sets 'dflt'
+ *
+ * @example
+ * // JavaScript: Inspect available languages
+ * const langs = font.names.family_name.keys()  // ['dflt', 'en', 'de', 'fr']
+ * console.log(font.names.family_name.has('de'))  // true
+ *
+ * // Iterate over all localizations
+ * for (const [lang, value] of font.names.family_name.entries()) {
+ *     console.log(`${lang}: ${value}`)
+ * }
+ *
+ * @example
+ * # Python: Auto-converts to string for display
+ * print(font.names.family_name)  # "My Font"
+ * print(font.names.designer)     # "Jane Doe"
+ *
+ * # Access as string in expressions
+ * family_name = str(font.names.family_name)
+ * full_name = f"{font.names.family_name} {font.names.subfamily_name}"
+ *
+ * @example
+ * # Python: Get specific language
+ * english_name = font.names.family_name.get('en')
+ * german_name = font.names.family_name.get('de', 'My Font')  # With default
+ *
+ * # Check if language exists
+ * if font.names.family_name.has('de'):
+ *     print(font.names.family_name.get('de'))
+ *
+ * @example
+ * # Python: Set localized values
+ * font.names.family_name.set('en', 'My Font')
+ * font.names.family_name.set('de', 'Meine Schriftart')
+ * font.names.family_name.set('fr', 'Ma Police')
+ * font.names.family_name.setDefault('My Font')
+ *
+ * # Set multiple name fields
+ * font.names.designer.set('en', 'Jane Doe')
+ * font.names.designer.set('de', 'Jane Doe')
+ * font.names.copyright.setDefault('Copyright © 2024 Jane Doe')
+ *
+ * @example
+ * # Python: Inspect available languages
+ * langs = font.names.family_name.keys()  # ['dflt', 'en', 'de', 'fr']
+ * print(f"Available languages: {', '.join(langs)}")
+ *
+ * # Iterate over all localizations
+ * for lang, value in font.names.family_name.entries():
+ *     print(f"{lang}: {value}")
+ *
+ * # Convert to dictionary
+ * name_dict = font.names.family_name.toObject()
+ */
+export class I18NDictionary {
+    private data: Record<string, string>;
+
+    constructor(data: Record<string, string> = {}) {
+        this.data = data;
+
+        // Add _pyrepr for Python console display
+        Object.defineProperty(this, '_pyrepr', {
+            get: () => {
+                const value = this.toString();
+                const langs = this.keys();
+                return `<I18NDict "${value}" [${langs.join(', ')}]>`;
+            }
+        });
+    }
+
+    /**
+     * Get the default/preferred string value
+     * Preference order: 'dflt' > 'en' > first available
+     *
+     * @returns Default string value
+     * @example
+     * # Python - auto-converts to string
+     * print(font.names.family_name)  # "My Font"
+     * name = str(font.names.family_name)
+     */
+    toString(): string {
+        if ('dflt' in this.data) return this.data.dflt;
+        if ('en' in this.data) return this.data.en;
+        const keys = Object.keys(this.data);
+        return keys.length > 0 ? this.data[keys[0]] : '';
+    }
+
+    /**
+     * Get value for a specific language code
+     *
+     * @param lang - Language code (e.g., 'en', 'de', 'dflt')
+     * @param defaultValue - Optional fallback value
+     * @returns String value for the language, or defaultValue if not found
+     * @example
+     * english = font.names.family_name.get('en')
+     * german = font.names.family_name.get('de', 'My Font')  # With fallback
+     */
+    get(lang: string, defaultValue?: string): string | undefined {
+        return this.data[lang] ?? defaultValue;
+    }
+
+    /**
+     * Set value for a specific language code
+     *
+     * @param lang - Language code (e.g., 'en', 'de', 'dflt')
+     * @param value - String value to set
+     * @example
+     * font.names.family_name.set('en', 'My Font')
+     * font.names.family_name.set('de', 'Meine Schriftart')
+     * font.names.family_name.set('fr', 'Ma Police')
+     */
+    set(lang: string, value: string): void {
+        this.data[lang] = value;
+    }
+
+    /**
+     * Set the default ('dflt') value
+     *
+     * @param value - String value to set as default
+     * @example
+     * font.names.family_name.setDefault('My Font')
+     */
+    setDefault(value: string): void {
+        this.data.dflt = value;
+    }
+
+    /**
+     * Get the default ('dflt') value
+     *
+     * @returns The 'dflt' value if it exists, undefined otherwise
+     * @example
+     * default = font.names.family_name.getDefault()  # Gets 'dflt' language code
+     * if default is not None:
+     *     print(f"Default: {default}")
+     */
+    getDefault(): string | undefined {
+        return this.data.dflt;
+    }
+
+    /**
+     * Check if a language code exists
+     *
+     * @param lang - Language code to check
+     * @returns True if the language exists
+     * @example
+     * if font.names.family_name.has('de'):
+     *     print(font.names.family_name.get('de'))
+     */
+    has(lang: string): boolean {
+        return lang in this.data;
+    }
+
+    /**
+     * Get all available language codes
+     *
+     * @returns Array of language codes
+     * @example
+     * langs = font.names.family_name.keys()  # ['dflt', 'en', 'de']
+     * print(f"Available: {', '.join(langs)}")
+     */
+    keys(): string[] {
+        return Object.keys(this.data);
+    }
+
+    /**
+     * Get all [language, value] pairs
+     *
+     * @returns Array of [language, value] tuples
+     * @example
+     * for lang, value in font.names.family_name.entries():
+     *     print(f"{lang}: {value}")
+     */
+    entries(): [string, string][] {
+        return Object.entries(this.data);
+    }
+
+    /**
+     * Convert to a plain JavaScript object
+     *
+     * @returns Plain object with language codes as keys
+     * @example
+     * obj = font.names.family_name.toObject()  # {'dflt': 'My Font', 'en': 'My Font'}
+     */
+    toObject(): Record<string, string> {
+        return { ...this.data };
+    }
+
+    /**
+     * Get the underlying data object (for serialization)
+     * @internal
+     */
+    toJSON(): Record<string, string> {
+        return this.data;
+    }
+}
+
+/**
+ * Font naming information with multi-language support
+ *
+ * All name properties (family_name, designer, copyright, etc.) are I18NDictionary objects
+ * that support multiple languages. They auto-convert to strings when displayed.
+ *
+ * @example
+ * // Access default/preferred name value (JavaScript)
+ * console.log(font.names.family_name.toString())  // "My Font"
+ *
+ * // Access specific language (JavaScript)
+ * const english = font.names.family_name.get('en')
+ * const german = font.names.family_name.get('de', 'Fallback')
+ *
+ * // Set localized names (JavaScript)
+ * font.names.family_name.set('en', 'My Font')
+ * font.names.family_name.set('de', 'Meine Schriftart')
+ * font.names.family_name.setDefault('My Font')
+ *
+ * // Check available languages (JavaScript)
+ * font.names.family_name.keys()     // ['dflt', 'en', 'de']
+ * font.names.family_name.has('de')  // true
+ *
+ * @example
+ * # Python usage - names auto-convert to strings
+ * print(font.names.family_name)  # "My Font"
+ * print(font.names.designer)     # "Jane Doe"
+ *
+ * # Access specific language in Python
+ * english_name = font.names.family_name.get('en')
+ * german_name = font.names.family_name.get('de', 'Fallback')
+ *
+ * # Set localized names in Python
+ * font.names.family_name.set('de', 'Meine Schriftart')
+ * font.names.designer.set('de', 'Jane Doe')
+ * font.names.family_name.setDefault('My Font')
+ *
+ * # Check available languages in Python
+ * langs = font.names.family_name.keys()  # ['dflt', 'en', 'de']
+ * if font.names.family_name.has('de'):
+ *     print(font.names.family_name.get('de'))
+ *
+ * # Iterate over all name entries
+ * for name_key in ['family_name', 'designer', 'copyright']:
+ *     name = getattr(font.names, name_key)
+ *     print(f"{name_key}: {name}")
+ */
 export class Names extends BabelfontNames {
     constructor(data: INames) {
         super(data);
+
+        // Wrap all I18NDictionary properties
+        const i18nProperties = [
+            'copyright',
+            'family_name',
+            'subfamily_name',
+            'unique_id',
+            'full_name',
+            'version',
+            'postscript_name',
+            'trademark',
+            'manufacturer',
+            'designer',
+            'description',
+            'manufacturer_url',
+            'designer_url',
+            'license',
+            'license_url',
+            'typographic_family',
+            'typographic_subfamily',
+            'compatible_full_name',
+            'sample_text',
+            'postscript_cid_name',
+            'wws_family_name',
+            'wws_subfamily_name',
+            'variations_postscript_name_prefix',
+            'preferred_family_name',
+            'preferred_subfamily_name'
+        ];
+
+        for (const prop of i18nProperties) {
+            const value = (this as any)[prop];
+            if (value && typeof value === 'object' && !Array.isArray(value)) {
+                (this as any)[prop] = new I18NDictionary(value);
+            }
+        }
 
         // Add _pyrepr as a getter that computes the string inline (bypasses Proxy interception)
         // This is used by the Python wrapper for __str__ representation for print()

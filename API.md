@@ -9,7 +9,8 @@
 - [Overview](#overview)
 - [Class Reference](#class-reference)
   - [Font](#font)
-  - [Names](#names)
+  - [Names](#names) - Font naming information with multi-language support
+  - [I18NDictionary](#i18ndictionary) - Multi-language dictionary for font name entries
   - [Features](#features)
   - [PossiblyAutomaticCode](#possiblyautomaticcode) - Class for OpenType feature code that may be automatically generated
   - [Glyph](#glyph)
@@ -172,6 +173,11 @@ if removed:
 
 ## Names
 
+Font naming information with multi-language support
+
+All name properties (family_name, designer, copyright, etc.) are I18NDictionary objects
+that support multiple languages. They auto-convert to strings when displayed.
+
 **Access:**
 ```python
 # Access all name entries
@@ -183,29 +189,120 @@ font.names.family_name = {"en": "My Font"}
 
 All properties are read/write:
 
-- **`copyright`** (I18NDictionary | None): Copyright notice (OpenType Name ID 0)
-- **`family_name`** (I18NDictionary | None): Font family name (OpenType Name ID 1)
-- **`preferred_subfamily_name`** (I18NDictionary | None): Font Subfamily name (OpenType Name ID 2)
-- **`unique_id`** (I18NDictionary | None): Unique font identifier (OpenType Name ID 3)
-- **`full_name`** (I18NDictionary | None): Full font name (OpenType Name ID 4)
-- **`version`** (I18NDictionary | None): Version string (OpenType Name ID 5)
-- **`postscript_name`** (I18NDictionary | None): PostScript name for the font (OpenType Name ID 6)
-- **`trademark`** (I18NDictionary | None): Trademark (OpenType Name ID 7)
-- **`manufacturer`** (I18NDictionary | None): Manufacturer Name (OpenType Name ID 8)
-- **`designer`** (I18NDictionary | None): Designer. (Name of the designer of the typeface.) (OpenType Name ID 9)
-- **`description`** (I18NDictionary | None): Description. (Description of the typeface.) (OpenType Name ID 10)
-- **`manufacturer_url`** (I18NDictionary | None): URL of Vendor. URL of font vendor (with protocol, e.g., http://, ftp://). (OpenType Name ID 11)
-- **`designer_url`** (I18NDictionary | None): URL of Designer. URL of typeface designer (with protocol, e.g., http://, ftp://). (OpenType Name ID 12)
-- **`license`** (I18NDictionary | None): License Description. Description of the license or licenses under which the font is provided. (OpenType Name ID 13)
-- **`license_url`** (I18NDictionary | None): License Info URL. URL where additional licensing information can be found. (OpenType Name ID 14)
-- **`typographic_family`** (I18NDictionary | None): Typographic Family name. (OpenType Name ID 16)
-- **`typographic_subfamily`** (I18NDictionary | None): Typographic Subfamily name. (OpenType Name ID 17)
-- **`compatible_full_name`** (I18NDictionary | None): Compatible Full (Macintosh only). (OpenType Name ID 18)
-- **`sample_text`** (I18NDictionary | None): Sample text. (OpenType Name ID 19)
-- **`postscript_cid_name`** (I18NDictionary | None): PostScript CID findfont name. (OpenType Name ID 20)
-- **`wws_family_name`** (I18NDictionary | None): WWS Family Name. (OpenType Name ID 21)
-- **`wws_subfamily_name`** (I18NDictionary | None): WWS Subfamily Name. (OpenType Name ID 22)
-- **`variations_postscript_name_prefix`** (I18NDictionary | None): Variations PostScript Name Prefix. (OpenType Name ID 25)
+- **`copyright`** ([I18NDictionary](#i18ndictionary) | None): Copyright notice (OpenType Name ID 0)
+- **`family_name`** ([I18NDictionary](#i18ndictionary) | None): Font family name (OpenType Name ID 1)
+- **`preferred_subfamily_name`** ([I18NDictionary](#i18ndictionary) | None): Font Subfamily name (OpenType Name ID 2)
+- **`unique_id`** ([I18NDictionary](#i18ndictionary) | None): Unique font identifier (OpenType Name ID 3)
+- **`full_name`** ([I18NDictionary](#i18ndictionary) | None): Full font name (OpenType Name ID 4)
+- **`version`** ([I18NDictionary](#i18ndictionary) | None): Version string (OpenType Name ID 5)
+- **`postscript_name`** ([I18NDictionary](#i18ndictionary) | None): PostScript name for the font (OpenType Name ID 6)
+- **`trademark`** ([I18NDictionary](#i18ndictionary) | None): Trademark (OpenType Name ID 7)
+- **`manufacturer`** ([I18NDictionary](#i18ndictionary) | None): Manufacturer Name (OpenType Name ID 8)
+- **`designer`** ([I18NDictionary](#i18ndictionary) | None): Designer. (Name of the designer of the typeface.) (OpenType Name ID 9)
+- **`description`** ([I18NDictionary](#i18ndictionary) | None): Description. (Description of the typeface.) (OpenType Name ID 10)
+- **`manufacturer_url`** ([I18NDictionary](#i18ndictionary) | None): URL of Vendor. URL of font vendor (with protocol, e.g., http://, ftp://). (OpenType Name ID 11)
+- **`designer_url`** ([I18NDictionary](#i18ndictionary) | None): URL of Designer. URL of typeface designer (with protocol, e.g., http://, ftp://). (OpenType Name ID 12)
+- **`license`** ([I18NDictionary](#i18ndictionary) | None): License Description. Description of the license or licenses under which the font is provided. (OpenType Name ID 13)
+- **`license_url`** ([I18NDictionary](#i18ndictionary) | None): License Info URL. URL where additional licensing information can be found. (OpenType Name ID 14)
+- **`typographic_family`** ([I18NDictionary](#i18ndictionary) | None): Typographic Family name. (OpenType Name ID 16)
+- **`typographic_subfamily`** ([I18NDictionary](#i18ndictionary) | None): Typographic Subfamily name. (OpenType Name ID 17)
+- **`compatible_full_name`** ([I18NDictionary](#i18ndictionary) | None): Compatible Full (Macintosh only). (OpenType Name ID 18)
+- **`sample_text`** ([I18NDictionary](#i18ndictionary) | None): Sample text. (OpenType Name ID 19)
+- **`postscript_cid_name`** ([I18NDictionary](#i18ndictionary) | None): PostScript CID findfont name. (OpenType Name ID 20)
+- **`wws_family_name`** ([I18NDictionary](#i18ndictionary) | None): WWS Family Name. (OpenType Name ID 21)
+- **`wws_subfamily_name`** ([I18NDictionary](#i18ndictionary) | None): WWS Subfamily Name. (OpenType Name ID 22)
+- **`variations_postscript_name_prefix`** ([I18NDictionary](#i18ndictionary) | None): Variations PostScript Name Prefix. (OpenType Name ID 25)
+
+---
+
+
+## I18NDictionary
+
+Multi-language dictionary for font name entries
+
+I18NDictionary stores localized versions of font metadata strings.
+Language codes should follow OpenType Language System Tags (e.g., 'en', 'de', 'fr').
+The special code 'dflt' represents the default/fallback value.
+
+When displayed as a string, it automatically selects the most appropriate value:
+1. 'dflt' (default) if present
+2. 'en' (English) if present
+3. First available language
+
+All font name properties (family_name, designer, copyright, etc.) return
+I18NDictionary objects that you can query and modify.
+
+### Properties
+
+All properties are read/write:
+
+- **`data`** (dict[str, str])
+
+### Methods
+
+#### `get(lang: str, defaultValue: str | None = None) -> str | None`
+Get value for a specific language code
+
+**Example:**
+```python
+english = font.names.family_name.get('en')
+german = font.names.family_name.get('de', 'My Font')  # With fallback
+```
+
+#### `set(lang: str, value: str) -> None`
+Set value for a specific language code
+
+**Example:**
+```python
+font.names.family_name.set('en', 'My Font')
+font.names.family_name.set('de', 'Meine Schriftart')
+font.names.family_name.set('fr', 'Ma Police')
+```
+
+#### `setDefault(value: str) -> None`
+Set the default ('dflt') value
+
+**Example:**
+```python
+font.names.family_name.setDefault('My Font')
+```
+
+#### `getDefault() -> str | None`
+Get the default ('dflt') value
+
+**Example:**
+```python
+default = font.names.family_name.getDefault()  # Gets 'dflt' language code
+if default is not None:
+    print(f"Default: {default}")
+```
+
+#### `has(lang: str) -> bool`
+Check if a language code exists
+
+**Example:**
+```python
+if font.names.family_name.has('de'):
+    print(font.names.family_name.get('de'))
+```
+
+#### `keys() -> list[str]`
+Get all available language codes
+
+**Example:**
+```python
+langs = font.names.family_name.keys()  # ['dflt', 'en', 'de']
+print(f"Available: {', '.join(langs)}")
+```
+
+#### `entries() -> list[tuple[str, str]]`
+Get all [language, value] pairs
+
+**Example:**
+```python
+for lang, value in font.names.family_name.entries():
+    print(f"{lang}: {value}")
+```
 
 ---
 
@@ -250,6 +347,11 @@ All properties are read/write:
 ## PossiblyAutomaticCode
 
 Class for OpenType feature code that may be automatically generated
+
+NOTE: Currently the `automatic` property is always undefined when loading
+Glyphs files because the babelfont-rs Rust parser doesn't preserve this
+flag during conversion to JSON. The infrastructure is in place for when
+this is fixed upstream.
 
 **Access:**
 ```python
@@ -640,7 +742,7 @@ axis = font.findAxisByTag("wght")
 
 All properties are read/write:
 
-- **`name`** (I18NDictionary): Name of the axis
+- **`name`** ([I18NDictionary](#i18ndictionary)): Name of the axis
 - **`tag`** (str): 4-character tag of the axis
 - **`min`** (float | int | None): Minimum value of the axis in user space coordinates
 - **`max`** (float | int | None): Maximum value of the axis in user space coordinates
@@ -668,7 +770,7 @@ master = font.findMaster("master-id")
 
 All properties are read/write:
 
-- **`name`** (I18NDictionary): Name of the master
+- **`name`** ([I18NDictionary](#i18ndictionary)): Name of the master
 - **`id`** (str): Unique identifier for the master (usually a UUID)
 - **`location`** (dict | None): Location of the master in design space coordinates
 - **`guides`** (list[[Guide](#guide)] | None): Global guidelines associated with the master
@@ -694,7 +796,7 @@ instance = font.instances[0]
 All properties are read/write:
 
 - **`id`** (str): Unique identifier for the instance  Should be unique within the design space; usually a UUID.
-- **`name`** (I18NDictionary): Name of the instance
+- **`name`** ([I18NDictionary](#i18ndictionary)): Name of the instance
 - **`location`** (dict | None): Location of the instance in design space coordinates
 - **`custom_names`** ([Names](#names)): Any custom names for the instance if it is exported as a static font
 - **`variable`** (bool | None): Whether the instance represents an export of a variable font

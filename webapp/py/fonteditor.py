@@ -116,9 +116,11 @@ class _BabelfontWrapper:
         # Forward all attribute access to the wrapped object
         obj = object.__getattribute__(self, '_BabelfontWrapper__obj')
         result = getattr(obj, name)
+        
         # If it's a callable (method/function), wrap it to auto-wrap return values
         if callable(result):
             return self._wrap_method(result)
+        
         # Auto-wrap babelfont objects but not methods
         if self._should_wrap(result):
             return _BabelfontWrapper(result)
@@ -208,8 +210,10 @@ class _BabelfontWrapper:
         obj = object.__getattribute__(self, '_BabelfontWrapper__obj')
         try:
             keys = js.Object.keys(obj)
+            
             for key in keys:
                 value = js.Reflect.get(obj, key)
+                
                 if self._should_wrap(value):
                     yield _BabelfontWrapper(value)
                 else:
@@ -222,8 +226,10 @@ class _BabelfontWrapper:
         obj = object.__getattribute__(self, '_BabelfontWrapper__obj')
         try:
             keys = js.Object.keys(obj)
+            
             for key in keys:
                 value = js.Reflect.get(obj, key)
+                
                 if self._should_wrap(value):
                     yield (key, _BabelfontWrapper(value))
                 else:
@@ -275,6 +281,22 @@ def CurrentFont():
     Example:
         >>> font = CurrentFont()
         >>> print(font)
+        >>> 
+        >>> # Names are I18NDictionary objects - auto-convert to string for display
+        >>> print(font.names.family_name)  # "My Font Family" (default value)
+        >>> 
+        >>> # Access specific languages
+        >>> print(font.names.family_name.get('en'))  # "My Font Family"
+        >>> german = font.names.family_name.get('de', 'Fallback')
+        >>> 
+        >>> # Set values
+        >>> font.names.family_name.set('de', 'Meine Schriftart')
+        >>> font.names.family_name.setDefault('My Font')
+        >>> 
+        >>> # Check available languages
+        >>> print(font.names.family_name.keys())  # ['dflt', 'en', 'de']
+        >>> if font.names.family_name.has('de'):
+        >>>     print(font.names.family_name.get('de'))
     """
     if type(js.window.currentFontModel) is pyodide.ffi.JsNull:
         raise RuntimeError("No font is currently open")

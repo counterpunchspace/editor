@@ -26,6 +26,7 @@ const SKIP_METHODS = [
   "toJSON",
   "toJSONString",
   "fromData",
+  "toObject",
 ];
 
 // Source files to parse
@@ -482,6 +483,7 @@ function tsToPythonType(tsType) {
     "Color",
     "Position",
     "PossiblyAutomaticCode",
+    "I18NDictionary",
   ];
   if (knownClasses.includes(tsType)) {
     return `[${tsType}](#${tsType.toLowerCase()})`;
@@ -764,6 +766,7 @@ function generateAPIDocs(version = null) {
   const classOrder = [
     "Font",
     "Names",
+    "I18NDictionary",
     "Features",
     "PossiblyAutomaticCode",
     "Glyph",
@@ -802,7 +805,8 @@ function generateAPIDocs(version = null) {
   lines.push("- [Class Reference](#class-reference)");
   orderedClasses.forEach((cls) => {
     const anchor = cls.name.toLowerCase();
-    const desc = cls.jsDoc ? ` - ${cls.jsDoc}` : "";
+    // Extract only first line of description for TOC
+    const desc = cls.jsDoc ? ` - ${cls.jsDoc.split("\n")[0].trim()}` : "";
     lines.push(`  - [${cls.name}](#${anchor})${desc}`);
   });
   lines.push("- [Type Definitions](#type-definitions)");
