@@ -558,9 +558,9 @@ describe('GlyphCanvas point type toggling', () => {
             shapes: [
                 {
                     nodes: [
-                        { x: 100, y: 100, type: 'c' },
-                        { x: 200, y: 200, type: 'c' },
-                        { x: 300, y: 300, type: 'c' }
+                        { x: 100, y: 100, nodetype: 'c' },
+                        { x: 200, y: 200, nodetype: 'c' },
+                        { x: 300, y: 300, nodetype: 'c' }
                     ]
                 }
             ],
@@ -578,18 +578,18 @@ describe('GlyphCanvas point type toggling', () => {
             contourIndex: 0,
             nodeIndex: 0
         });
-        expect(canvas.outlineEditor.layerData.shapes[0].nodes[0].type).toBe(
+        expect(canvas.outlineEditor.layerData.shapes[0].nodes[0].nodetype).toBe(
             'cs'
         );
     });
 
     test('should toggle smooth curve point back to curve', () => {
-        canvas.outlineEditor.layerData.shapes[0].nodes[0].type = 'cs';
+        canvas.outlineEditor.layerData.shapes[0].nodes[0].nodetype = 'cs';
         canvas.outlineEditor.togglePointSmooth({
             contourIndex: 0,
             nodeIndex: 0
         });
-        expect(canvas.outlineEditor.layerData.shapes[0].nodes[0].type).toBe(
+        expect(canvas.outlineEditor.layerData.shapes[0].nodes[0].nodetype).toBe(
             'c'
         );
     });
