@@ -86,11 +86,11 @@ All properties are read/write:
 - **`date`** (datetime): The font's creation date
 - **`names`** ([Names](#names))
 - **`custom_ot_values`** (CustomOTValues | None): Any values to be placed in OpenType tables on export to override defaults  These must be font-wide. Metrics which may vary by master should be placed in the `metrics` field of a Master
-- **`variation_sequences`** (dict | None): A map of Unicode Variation Sequences to glyph names
+- **`variation_sequences`** (dict[str, str] | None): A map of Unicode Variation Sequences to glyph names
 - **`features`** ([Features](#features))
-- **`first_kern_groups`** (dict | None): A dictionary of kerning groups  The key is the group name and the value is a list of glyph names in the group Group names are *not* prefixed with "@" here. This is the first item in a kerning pair. and so these are generally organized based on the profile of *right side* of the glyph (for LTR scripts).
-- **`second_kern_groups`** (dict | None): The key is the group name and the value is a list of glyph names in the group Group names are *not* prefixed with "@" here. This is the second item in a kerning pair. and so these are generally organized based on the profile of *left side* of the glyph (for LTR scripts).
-- **`format_specific`** (dict | None): Format-specific data
+- **`first_kern_groups`** (dict[str, list[str]] | None): A dictionary of kerning groups  The key is the group name and the value is a list of glyph names in the group Group names are *not* prefixed with "@" here. This is the first item in a kerning pair. and so these are generally organized based on the profile of *right side* of the glyph (for LTR scripts).
+- **`second_kern_groups`** (dict[str, list[str]] | None): The key is the group name and the value is a list of glyph names in the group Group names are *not* prefixed with "@" here. This is the second item in a kerning pair. and so these are generally organized based on the profile of *left side* of the glyph (for LTR scripts).
+- **`format_specific`** (dict[str, Any] | None): Format-specific data
 - **`source`** (str | None): The source file path, if any, from which this font was loaded
 
 ### Methods
@@ -227,8 +227,8 @@ font.features.classes["@uppercase"] = {
 
 All properties are read/write:
 
-- **`classes`** (dict): Opentype classes  The key should not start with
-- **`prefixes`** (dict): Opentype prefixes  A dictionary of OpenType lookups and other feature code to be placed before features are defined. The keys are user-defined names, the values are AFDKO feature code.
+- **`classes`** (dict[str, [PossiblyAutomaticCode](#possiblyautomaticcode)]): Opentype classes  The key should not start with
+- **`prefixes`** (dict[str, [PossiblyAutomaticCode](#possiblyautomaticcode)]): Opentype prefixes  A dictionary of OpenType lookups and other feature code to be placed before features are defined. The keys are user-defined names, the values are AFDKO feature code.
 - **`features`** (list[tuple[str, [PossiblyAutomaticCode](#possiblyautomaticcode)]]): OpenType features  A list of OpenType feature code, expressed as a tuple (feature tag, code).
 - **`include_paths`** (list[str] | None): Include paths  Paths to search for included feature files.
 
@@ -258,7 +258,7 @@ All properties are read/write:
 - **`exported`** (bool): Whether the glyph is exported
 - **`direction`** (Direction | None): The writing direction of the glyph, if any. Options: `"LeftToRight"` (Left to right text flow), `"RightToLeft"` (Right to left text flow), `"TopToBottom"` (Top to bottom text flow), `"Bidi"` (Bidirectional,)
 - **`component_axes`** (list[[Axis](#axis)] | None): Glyph-specific axes for "smart components" / variable components
-- **`format_specific`** (dict | None): Format-specific data
+- **`format_specific`** (dict[str, Any] | None): Format-specific data
 
 ### Methods
 
@@ -320,7 +320,7 @@ All properties are read/write:
 - **`background_layer_id`** (str | None): The ID of the background layer for this layer, if any
 - **`location`** (dict | None): The location of the layer in design space, if it is not at the default location for a master
 - **`smart_component_location`** (dict | None): The location of the layer in smart component (glyph-specific axes) space
-- **`format_specific`** (dict | None): Format-specific data for the layer
+- **`format_specific`** (dict[str, Any] | None): Format-specific data for the layer
 - **`cachedComponentLayerData`** (Any)
 - **`lsb`** (float | int): Get left sidebearing
 - **`rsb`** (float | int): Get right sidebearing
@@ -450,7 +450,7 @@ All properties are read/write:
 
 - **`nodes`** (list[[Node](#node)])
 - **`closed`** (bool): Whether the path is closed
-- **`format_specific`** (dict | None): Format-specific data
+- **`format_specific`** (dict[str, Any] | None): Format-specific data
 
 ### Methods
 
@@ -506,7 +506,7 @@ All properties are read/write:
 - **`y`** (float | int): The y-coordinate of the node
 - **`nodetype`** (NodeType): The type of the node. Options: `"Move"` (Move to a new position without drawing (only defined for open contours)), `"Line"` (Draw a straight line to this node), `"OffCurve"` (Cubic Bézier curve control node (off-curve)), `"Curve"` (Draw a cubic Bézier curve to this node), `"QCurve"` (Draw a quadratic Bézier curve to this node)
 - **`smooth`** (bool | None): Whether the node is smooth
-- **`format_specific`** (dict | None): Format-specific data
+- **`format_specific`** (dict[str, Any] | None): Format-specific data
 
 ---
 
@@ -531,7 +531,7 @@ All properties are read/write:
 - **`reference`** (str): The referenced glyph name
 - **`transform`** ([DecomposedAffine](#decomposedaffine))
 - **`location`** (dict | None): A location for a variable component
-- **`format_specific`** (dict | None): Format-specific data
+- **`format_specific`** (dict[str, Any] | None): Format-specific data
 - **`cachedComponentLayerData`** (Any)
 
 ---
@@ -553,7 +553,7 @@ All properties are read/write:
 - **`x`** (float | int): X coordinate
 - **`y`** (float | int): Y coordinate
 - **`name`** (str | None): Name of the anchor
-- **`format_specific`** (dict | None): Format-specific data
+- **`format_specific`** (dict[str, Any] | None): Format-specific data
 
 ---
 
@@ -576,7 +576,7 @@ All properties are read/write:
 - **`pos`** ([Position](#position)): Position of the guideline
 - **`name`** (str | None): Optional name of the guideline
 - **`color`** ([Color](#color) | None): Optional color of the guideline
-- **`format_specific`** (dict | None): Format-specific data
+- **`format_specific`** (dict[str, Any] | None): Format-specific data
 
 ---
 
@@ -604,7 +604,7 @@ All properties are read/write:
 - **`map`** (float | int | None | None): Mapping of user space coordinates to design space coordinates
 - **`hidden`** (bool | None): Whether the axis is hidden in the font's user interface
 - **`values`** (list[float | int] | None): Predefined values for the axis in user space coordinates
-- **`format_specific`** (dict | None): Format-specific data
+- **`format_specific`** (dict[str, Any] | None): Format-specific data
 
 ---
 
@@ -628,10 +628,10 @@ All properties are read/write:
 - **`id`** (str): Unique identifier for the master (usually a UUID)
 - **`location`** (dict | None): Location of the master in design space coordinates
 - **`guides`** (list[[Guide](#guide)] | None): Global guidelines associated with the master
-- **`metrics`** (dict): Master-specific metrics
+- **`metrics`** (dict[str, float | int]): Master-specific metrics
 - **`kerning`** (Map<[string, string], number>): Kerning for this master.  (Kerning pairs are (left glyph name, right glyph name) -> value) Groups are represented as `@<groupname>`; whether they are first or second groups is determined by position in the tuple.
 - **`custom_ot_values`** (CustomOTValues | None): Custom OpenType values for this master
-- **`format_specific`** (dict | None): Format-specific data
+- **`format_specific`** (dict[str, Any] | None): Format-specific data
 
 ---
 
@@ -655,7 +655,7 @@ All properties are read/write:
 - **`custom_names`** ([Names](#names)): Any custom names for the instance if it is exported as a static font
 - **`variable`** (bool | None): Whether the instance represents an export of a variable font
 - **`linked_style`** (str | None): Name of the linked style for style linking (e.g., "Bold Italic" links to "Bold" and "Italic")
-- **`format_specific`** (dict | None): Format-specific data
+- **`format_specific`** (dict[str, Any] | None): Format-specific data
 
 ---
 

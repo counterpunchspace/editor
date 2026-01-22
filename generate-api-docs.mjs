@@ -416,6 +416,11 @@ function tsToPythonType(tsType) {
 
   // Handle Record types
   if (tsType.startsWith("Record<")) {
+    const inner = tsType.match(/^Record<(.*)>$/)?.[1];
+    if (inner) {
+      const [keyType, valueType] = inner.split(",").map((t) => t.trim());
+      return `dict[${tsToPythonType(keyType)}, ${tsToPythonType(valueType)}]`;
+    }
     return "dict";
   }
 
