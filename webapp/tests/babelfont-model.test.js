@@ -230,15 +230,17 @@ describe('Babelfont Object Model', () => {
                     const rawLayers = rawGlyph.layers;
 
                     // Count foreground default layers in raw data
+                    // Handles both old format { DefaultForMaster: "id" } and new format { type: "DefaultForMaster", master: "id" }
                     let expectedCount = 0;
                     for (const layer of rawLayers) {
                         if (layer.is_background) continue;
-                        if (
-                            layer.master &&
-                            typeof layer.master === 'object' &&
-                            'DefaultForMaster' in layer.master
-                        ) {
-                            expectedCount++;
+                        if (layer.master && typeof layer.master === 'object') {
+                            const isDefaultForMaster =
+                                'DefaultForMaster' in layer.master ||
+                                layer.master.type === 'DefaultForMaster';
+                            if (isDefaultForMaster) {
+                                expectedCount++;
+                            }
                         }
                     }
 

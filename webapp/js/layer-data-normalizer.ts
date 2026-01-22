@@ -69,6 +69,7 @@ export class LayerDataNormalizer {
      */
     static normalizeShapes(shapes: any[], isInterpolated: boolean): any[] {
         return shapes.map((shape, shapeIndex) => {
+            // Handle old wrapped format: { Path: { nodes: ... } }
             if (shape.Path) {
                 // Parse nodes if they're a string (from babelfont-rs)
                 let parsedNodes = this.parseNodes(shape.Path.nodes);
@@ -87,7 +88,26 @@ export class LayerDataNormalizer {
                     nodes: parsedNodes,
                     isInterpolated: isInterpolated
                 };
-            } else if (shape.Component) {
+            }
+            // Handle new unwrapped format: direct Path object with nodes property
+            else if (shape.nodes !== undefined && shape.reference === undefined) {
+                // Parse nodes if they're a string
+                let parsedNodes = this.parseNodes(shape.nodes);
+
+                // For non-interpolated data, update in place
+                if (typeof shape.nodes === 'string') {
+                    shape.nodes = parsedNodes;
+                }
+
+                // Return the shape with parsed nodes
+                return {
+                    ...shape,
+                    nodes: parsedNodes,
+                    isInterpolated: isInterpolated
+                };
+            }
+            // Handle old wrapped component format: { Component: { reference: ... } }
+            else if (shape.Component) {
                 return {
                     Component: {
                         reference: shape.Component.reference,
@@ -107,8 +127,53 @@ export class LayerDataNormalizer {
                     isInterpolated: isInterpolated
                 };
             }
+            // Handle new unwrapped component format: direct Component object with reference property
+            else if (shape.reference !== undefined) {
+                return {
+                    ...shape,
+                    // Recursively normalize nested component layer data if present
+                    layerData: shape.layerData
+                        ? this.normalize(shape.layerData, isInterpolated)
+                        : null,
+                    isInterpolated: isInterpolated
+                };
+            }
             return shape;
         });
+    }
+
+    /**
+     * Map babelfont-ts NodeType enum names to renderer shorthand types
+     *
+     * babelfont-ts uses full names: Move, Line, OffCurve, Curve, QCurve
+     * renderer uses shorthand: m, l, o, c, q (with 's' suffix for smooth: ms, ls, cs, qs)
+     *
+     * @param {string} nodetype - The node type from babelfont-ts or already shorthand
+     * @param {boolean} smooth - Whether the node is smooth (for on-curve nodes)
+     * @returns {NodeType} The shorthand nodetype for the renderer
+     */
+    static normalizeNodeType(nodetype: string, smooth?: boolean): NodeType {
+        // Map babelfont-ts enum names to shorthand
+        const typeMap: Record<string, string> = {
+            Move: 'm',
+            Line: 'l',
+            OffCurve: 'o',
+            Curve: 'c',
+            QCurve: 'q'
+        };
+
+        // Check if it's a babelfont-ts type name
+        if (nodetype in typeMap) {
+            const shortType = typeMap[nodetype];
+            // Add 's' suffix for smooth on-curve nodes (not off-curve)
+            if (smooth && shortType !== 'o' && shortType !== 'm') {
+                return (shortType + 's') as NodeType;
+            }
+            return shortType as NodeType;
+        }
+
+        // Already shorthand or unknown - return as-is
+        return nodetype as NodeType;
     }
 
     /**
@@ -118,12 +183,29 @@ export class LayerDataNormalizer {
      * where type is: m, l, o, c, q (with optional 's' suffix for smooth)
      *
      * @param {string|Array} nodes - Nodes as string or already-parsed array
-     * @returns {Array} Array of [x, y, type] triplets
+     * @returns {Array} Array of node objects with normalized types
      */
     static parseNodes(nodes: string | any[]): Node[] {
-        // If already an array, return as-is
+        // If already an array, normalize node types (babelfont-ts uses full names)
         if (Array.isArray(nodes)) {
-            return nodes;
+            return nodes.map((node) => {
+                // Check if nodetype needs normalization
+                if (
+                    node.nodetype &&
+                    ['Move', 'Line', 'OffCurve', 'Curve', 'QCurve'].includes(
+                        node.nodetype
+                    )
+                ) {
+                    return {
+                        ...node,
+                        nodetype: this.normalizeNodeType(
+                            node.nodetype,
+                            node.smooth
+                        )
+                    };
+                }
+                return node;
+            });
         }
 
         // Parse string format
@@ -213,18 +295,29 @@ export class LayerDataNormalizer {
             if (!shapes) return;
 
             shapes.forEach((shape) => {
-                // Already parsed in normalize(), but ensure consistency
+                // Handle old wrapped format: { Path: { nodes: "..." } }
                 if (shape.Path && !shape.nodes) {
                     shape.nodes = this.parseNodes(shape.Path.nodes);
                 }
+                // Handle new unwrapped format: { nodes: "...", closed: true }
+                if (typeof shape.nodes === 'string') {
+                    shape.nodes = this.parseNodes(shape.nodes);
+                }
 
-                // Recursively parse nested component data
+                // Recursively parse nested component data - handle both formats
                 if (
                     shape.Component &&
                     shape.Component.layerData &&
                     shape.Component.layerData.shapes
                 ) {
                     parseComponentNodes(shape.Component.layerData.shapes);
+                } else if (
+                    shape.reference &&
+                    shape.layerData &&
+                    shape.layerData.shapes
+                ) {
+                    // New unwrapped component format
+                    parseComponentNodes(shape.layerData.shapes);
                 }
             });
         };

@@ -12,7 +12,7 @@ import type {
 } from '../babelfont-types';
 import { Transform } from '../basictypes';
 import { Logger } from '../logger';
-import { Layer } from '../babelfont-extended';
+import { Layer, Path, Component } from '../babelfont-extended';
 import APP_SETTINGS from '../settings';
 
 let console: Logger = new Logger('OutlineEditor', true);
@@ -24,9 +24,9 @@ const parseComponentNodes = (shapes: Shape[]) => {
     if (!shapes) return;
 
     shapes.forEach((shape) => {
-        // Parse nodes in Path shapes
+        // Parse nodes in Path shapes - handle both wrapped and unwrapped formats
         if ('Path' in shape && shape.Path.nodes) {
-            // Parse if string, replace in place so object model and renderer share same reference
+            // Old wrapped format: { Path: { nodes: "..." } }
             if (typeof shape.Path.nodes === 'string') {
                 (shape.Path.nodes as any) = LayerDataNormalizer.parseNodes(
                     shape.Path.nodes
@@ -34,15 +34,30 @@ const parseComponentNodes = (shapes: Shape[]) => {
             }
             // Reference the same array (not a copy) so modifications propagate
             (shape as any).nodes = shape.Path.nodes;
+        } else if (
+            'nodes' in shape &&
+            typeof (shape as any).nodes === 'string'
+        ) {
+            // New unwrapped format: { nodes: "...", closed: true }
+            (shape as any).nodes = LayerDataNormalizer.parseNodes(
+                (shape as any).nodes
+            );
         }
 
-        // Recursively parse nested component data
+        // Recursively parse nested component data - handle both formats
         if (
             'Component' in shape &&
             shape.Component.layerData &&
             shape.Component.layerData.shapes
         ) {
             parseComponentNodes(shape.Component.layerData.shapes);
+        } else if (
+            'reference' in shape &&
+            (shape as any).layerData &&
+            (shape as any).layerData.shapes
+        ) {
+            // New unwrapped component format
+            parseComponentNodes((shape as any).layerData.shapes);
         }
     });
 };
@@ -818,7 +833,15 @@ export class OutlineEditor {
             if (!contour || !('nodes' in contour) || !(contour as any).nodes)
                 continue;
 
-            const nodes = (contour as any).nodes as NodeType[];
+            // Parse nodes if they're a string
+            const nodesData = (contour as any).nodes;
+            const nodes =
+                typeof nodesData === 'string'
+                    ? LayerDataNormalizer.parseNodes(nodesData)
+                    : nodesData;
+
+            if (!Array.isArray(nodes)) continue;
+
             const node = nodes[nodeIndex];
             if (!node) continue;
 
@@ -836,6 +859,11 @@ export class OutlineEditor {
                     selectedPointKeys.delete(`${contourIndex}:${nextIndex}`);
                 }
             }
+
+            // Update the contour with parsed nodes if we had to parse them
+            if (typeof nodesData === 'string') {
+                (contour as any).nodes = nodes;
+            }
         }
 
         // Move the selected nodes
@@ -847,7 +875,20 @@ export class OutlineEditor {
             if (!contour || !('nodes' in contour) || !(contour as any).nodes)
                 continue;
 
-            const nodes = (contour as any).nodes as NodeType[];
+            // Parse nodes if they're a string
+            const nodesData = (contour as any).nodes;
+            const nodes =
+                typeof nodesData === 'string'
+                    ? LayerDataNormalizer.parseNodes(nodesData)
+                    : nodesData;
+
+            if (!Array.isArray(nodes)) continue;
+
+            // Update the contour with parsed nodes if we had to parse them
+            if (typeof nodesData === 'string') {
+                (contour as any).nodes = nodes;
+            }
+
             const node = nodes[nodeIndex];
             if (!node) continue;
 
@@ -877,7 +918,20 @@ export class OutlineEditor {
             const { contourIndex, nodeIndex } = this.selectedPoints[0];
             const contour = currentLayerData.shapes[contourIndex];
             if (contour && 'nodes' in contour && (contour as any).nodes) {
-                const nodes = (contour as any).nodes as NodeType[];
+                // Parse nodes if they're a string
+                const nodesData = (contour as any).nodes;
+                const nodes =
+                    typeof nodesData === 'string'
+                        ? LayerDataNormalizer.parseNodes(nodesData)
+                        : nodesData;
+
+                if (!Array.isArray(nodes)) return;
+
+                // Update the contour with parsed nodes if we had to parse them
+                if (typeof nodesData === 'string') {
+                    (contour as any).nodes = nodes;
+                }
+
                 const offcurve = nodes[nodeIndex];
 
                 if (offcurve?.nodetype === 'o') {
@@ -1281,20 +1335,33 @@ export class OutlineEditor {
 
     updateHoveredPoint(): void {
         const currentLayerData = this.getCurrentLayerDataFromStack();
-        if (!currentLayerData || !currentLayerData.shapes) {
+        if (
+            !currentLayerData ||
+            !currentLayerData.shapes ||
+            !Array.isArray(currentLayerData.shapes)
+        ) {
             return;
         }
 
         const points = currentLayerData.shapes.flatMap(
-            (shape: Shape, contourIndex: number) => {
-                if (!('nodes' in shape) || !(shape as any).nodes) return [];
-                return (shape as any).nodes.map(
-                    (node: NodeType, nodeIndex: number) => ({
-                        node,
-                        contourIndex,
-                        nodeIndex
-                    })
-                );
+            (shape: any, contourIndex: number) => {
+                // Only process path shapes (not components)
+                if (!shape.nodes || shape.reference || 'Component' in shape)
+                    return [];
+
+                // Parse nodes if they're a string
+                const nodes =
+                    typeof shape.nodes === 'string'
+                        ? LayerDataNormalizer.parseNodes(shape.nodes)
+                        : shape.nodes;
+
+                if (!Array.isArray(nodes)) return [];
+
+                return nodes.map((node: NodeType, nodeIndex: number) => ({
+                    node,
+                    contourIndex,
+                    nodeIndex
+                }));
             }
         );
 
@@ -2634,9 +2701,12 @@ export class OutlineEditor {
                 return null;
             }
 
-            const componentShape =
-                currentLayer.shapes[stackItem.componentIndex];
-            if (!componentShape || !('Component' in componentShape)) {
+            // Filter to get only components from shapes
+            const components = currentLayer.shapes.filter(
+                (s: any) => s.reference || 'Component' in s
+            );
+            const componentShape = components[stackItem.componentIndex];
+            if (!componentShape) {
                 console.error(
                     '[OutlineEditor] Component shape not found at index',
                     stackItem.componentIndex
@@ -2644,8 +2714,14 @@ export class OutlineEditor {
                 return null;
             }
 
+            // Handle both wrapped and unwrapped formats
+            const comp =
+                'Component' in componentShape
+                    ? componentShape.Component
+                    : componentShape;
+
             // Get this component's interpolated transform and accumulate it
-            const t = componentShape.Component.transform || [1, 0, 0, 1, 0, 0];
+            const t = comp.transform || [1, 0, 0, 1, 0, 0];
             console.log(
                 '[extractComponentTransform] Stack level',
                 i,
@@ -3051,8 +3127,11 @@ export class OutlineEditor {
             // Clear interpolated flag to restore editing mode
             if (this.layerData) {
                 this.layerData.isInterpolated = false;
-                // Also clear on shapes
-                if (this.layerData.shapes) {
+                // Also clear on all shapes
+                if (
+                    this.layerData.shapes &&
+                    Array.isArray(this.layerData.shapes)
+                ) {
                     this.layerData.shapes.forEach((shape: any) => {
                         if (shape.isInterpolated !== undefined) {
                             shape.isInterpolated = false;

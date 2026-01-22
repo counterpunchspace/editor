@@ -11,9 +11,10 @@ import { get_glyph_order } from '../wasm-dist/babelfont_fontc_web';
 import type { Glyph, Layer, Axis, Master, Shape } from './babelfont-types';
 import { designspaceToUserspace, userspaceToDesignspace } from './locations';
 import type { DesignspaceLocation } from './locations';
-import { loadFontFromJSON, Font, Path } from './babelfont-extended';
+import { loadFontFromJSON, Font, Path, parseLayerMaster } from './babelfont-extended';
 import { ensureWasmInitialized } from './wasm-init';
 import { sidebarErrorDisplay } from './sidebar-error-display';
+import { LayerDataNormalizer } from './layer-data-normalizer';
 
 export type GlyphData = {
     glyphName: string;
@@ -44,17 +45,14 @@ class OpenedFont {
         this.babelfontData = JSON.parse(babelfontJson);
 
         // Normalize layer master references from dict format to _master field
-        // Babelfont format stores: master: { DefaultForMaster: "id" } or { AssociatedWithMaster: "id" }
-        // We need: _master: "id"
+        // Handles both old format: { DefaultForMaster: "id" }
+        // And new format: { type: "DefaultForMaster", master: "id" }
         for (const glyph of this.babelfontData.glyphs || []) {
             for (const layer of glyph.layers || []) {
                 if (layer.master && typeof layer.master === 'object') {
-                    // Extract master ID from dict format
-                    const masterDict = layer.master;
-                    if ('DefaultForMaster' in masterDict) {
-                        layer._master = masterDict.DefaultForMaster;
-                    } else if ('AssociatedWithMaster' in masterDict) {
-                        layer._master = masterDict.AssociatedWithMaster;
+                    const parsed = parseLayerMaster(layer.master);
+                    if (parsed.masterId) {
+                        layer._master = parsed.masterId;
                     }
                 }
             }
@@ -631,11 +629,13 @@ class FontManager {
     }
 
     private getGlyph(glyphName: string): Glyph | null {
-        // Get glyph data for a specific glyph name
+        // Get glyph from the object model (which has parsed nodes as arrays)
         if (!this.currentFont) {
             return null;
         }
-        let glyphs: Glyph[] = this.currentFont.babelfontData.glyphs;
+        // Use fontModel (object model) instead of babelfontData (raw JSON)
+        // This ensures nodes are parsed into arrays, not strings
+        let glyphs = this.currentFont.fontModel.glyphs;
         if (!glyphs) {
             return null;
         }
@@ -643,7 +643,7 @@ class FontManager {
         if (!glyph) {
             return null;
         }
-        return glyph;
+        return glyph as unknown as Glyph;
     }
 
     private getLayer(glyphName: string, layerId: string): Layer | null {
@@ -738,15 +738,11 @@ class FontManager {
             // Only include non-background layers that are DEFAULT layers for their master
             // (not AssociatedWithMaster layers, which are intermediate/alternate designs)
             if (!layer.is_background) {
-                // Check if this is a default layer (has DefaultForMaster in master dict)
-                const layerAny = layer as any;
-                const isDefaultLayer =
-                    layerAny.master &&
-                    typeof layerAny.master === 'object' &&
-                    'DefaultForMaster' in layerAny.master;
+                // Check if this is a default layer using parseLayerMaster helper
+                const parsed = parseLayerMaster(layer.master);
 
-                if (isDefaultLayer) {
-                    let master_id = layer._master || layer.id;
+                if (parsed.isDefaultForMaster) {
+                    let master_id = parsed.masterId || layer._master || layer.id;
                     if (master_id && master_ids.has(master_id)) {
                         layersData.push({
                             id: layer.id as string,

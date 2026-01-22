@@ -1,6 +1,6 @@
 import { adjustColorHueAndLightness, desaturateColor } from '../design';
 import APP_SETTINGS from '../settings';
-import { Layer } from '../babelfont-extended';
+import { Layer, Path, Component } from '../babelfont-extended';
 
 import type { ViewportManager } from './viewport';
 import type { TextRunEditor } from './textrun';
@@ -588,10 +588,23 @@ export class GlyphCanvasRenderer {
                 );
                 if (nestedBounds.hasPoints) {
                     // Apply the nested component's transform to its bounds
-                    const transform = shape.Component.transform || [
+                    const transformData = shape.Component.transform || [
                         1, 0, 0, 1, 0, 0
                     ];
-                    const [a, b, c, d, tx, ty] = transform;
+
+                    // Handle both array and object transforms
+                    let a, b, c, d, tx, ty;
+                    if (Array.isArray(transformData)) {
+                        [a, b, c, d, tx, ty] = transformData;
+                    } else {
+                        // DecomposedAffine object format
+                        a = transformData.scaleX ?? 1;
+                        b = transformData.rotateY ?? 0;
+                        c = transformData.rotateX ?? 0;
+                        d = transformData.scaleY ?? 1;
+                        tx = transformData.translateX ?? 0;
+                        ty = transformData.translateY ?? 0;
+                    }
 
                     // Transform all four corners of the bounding box
                     const corners = [
@@ -887,19 +900,35 @@ export class GlyphCanvasRenderer {
                 (this.glyphCanvas.outlineEditor.selectedLayerId === null &&
                     currentLayerData?.isInterpolated);
 
-            currentLayerData.shapes.forEach((shape, contourIndex: number) =>
-                this.drawShape(shape, contourIndex, !!isInterpolated)
+            // Draw paths (filter from shapes array)
+            currentLayerData.shapes.forEach(
+                (shape: any, contourIndex: number) => {
+                    if (
+                        shape instanceof Path ||
+                        (shape.nodes && !shape.reference)
+                    ) {
+                        this.drawShape(shape, contourIndex, !!isInterpolated);
+                    }
+                }
             );
 
-            // Draw components
-            currentLayerData.shapes.forEach((shape, index: number) => {
-                if (!('Component' in shape)) {
-                    return; // Not a component
-                }
+            // Draw components (filter from shapes array)
+            currentLayerData.shapes.forEach((shape: any, index: number) => {
+                // Skip if not a component
+                if (!shape.reference && !('Component' in shape)) return;
+
+                // Handle both wrapped and unwrapped component formats
+                const comp =
+                    shape instanceof Component
+                        ? shape
+                        : 'Component' in shape
+                          ? shape.Component
+                          : shape;
+                if (!comp.reference) return;
 
                 console.log(
                     '[Renderer]',
-                    `Component ${index}: reference="${shape.Component.reference}"`
+                    `Component ${index}: reference="${comp.reference}"`
                 );
 
                 // Disable selection/hover highlighting for interpolated data
@@ -925,16 +954,13 @@ export class GlyphCanvasRenderer {
                     d = 1,
                     tx = 0,
                     ty = 0;
-                if (
-                    'Component' in shape &&
-                    Array.isArray(shape.Component.transform)
-                ) {
-                    a = shape.Component.transform[0] || 1;
-                    b = shape.Component.transform[1] || 0;
-                    c = shape.Component.transform[2] || 0;
-                    d = shape.Component.transform[3] || 1;
-                    tx = shape.Component.transform[4] || 0;
-                    ty = shape.Component.transform[5] || 0;
+                if (Array.isArray(comp.transform)) {
+                    a = comp.transform[0] || 1;
+                    b = comp.transform[1] || 0;
+                    c = comp.transform[2] || 0;
+                    d = comp.transform[3] || 1;
+                    tx = comp.transform[4] || 0;
+                    ty = comp.transform[5] || 0;
                 }
 
                 this.ctx.save();
@@ -951,17 +977,16 @@ export class GlyphCanvasRenderer {
                 this.ctx.transform(a, b, c, d, tx, ty);
 
                 // Draw the component's outline shapes if they were fetched
-                if (
-                    'Component' in shape &&
-                    shape.Component.layerData &&
-                    shape.Component.layerData.shapes
-                ) {
+                if (comp.layerData && comp.layerData.shapes) {
                     // Collect all outline shapes (non-component shapes with nodes) at each nesting level
                     // for combined path rendering to properly handle counters via winding rule
                     const collectOutlineShapes = (
                         shapes: any[],
                         transform: number[] | null = null
-                    ): Array<{ nodes: any[]; transform: number[] | null }> => {
+                    ): Array<{
+                        nodes: any[];
+                        transform: number[] | null;
+                    }> => {
                         const outlineShapes: Array<{
                             nodes: any[];
                             transform: number[] | null;
@@ -1043,7 +1068,7 @@ export class GlyphCanvasRenderer {
 
                     // Collect all outline shapes from the component hierarchy
                     const outlineShapes = collectOutlineShapes(
-                        shape.Component.layerData.shapes
+                        comp.layerData.shapes
                     );
 
                     if (outlineShapes.length > 0) {
@@ -1176,10 +1201,9 @@ export class GlyphCanvasRenderer {
                     // Collect component label data for later drawing (on top of everything)
                     // Only show on hover
                     if (isHovered) {
-                        const componentName =
-                            shape.Component.reference || 'component';
+                        const componentName = comp.reference || 'component';
                         const bounds = this.getComponentBounds(
-                            shape.Component.layerData.shapes
+                            comp.layerData.shapes
                         );
                         if (bounds.hasPoints) {
                             componentLabels.push({
@@ -1252,8 +1276,7 @@ export class GlyphCanvasRenderer {
                     ? 'rgba(255, 255, 255, 0.8)'
                     : 'rgba(0, 0, 0, 0.8)';
                 this.ctx.fillText(
-                    ('Component' in shape && shape.Component.reference) ||
-                        'component',
+                    comp.reference || 'component',
                     markerSize * 1.5,
                     markerSize
                 );
@@ -1416,48 +1439,49 @@ export class GlyphCanvasRenderer {
         this.ctx.restore();
     }
 
-    drawShape(shape: Shape, contourIndex: number, isInterpolated: boolean) {
+    drawShape(
+        shape: Path | Shape,
+        contourIndex: number,
+        isInterpolated: boolean
+    ) {
         const invScale = 1 / this.viewportManager.scale;
         const isDarkTheme =
             document.documentElement.getAttribute('data-theme') !== 'light';
-        console.log(
-            '[Renderer]',
-            'Drawing shape',
-            contourIndex,
-            ':',
-            'Component' in shape ? 'Component' : 'Path',
-            'Component' in shape
-                ? `ref=${shape.Component.reference}`
-                : `nodes=${'Path' in shape && shape.Path.nodes ? (typeof shape.Path.nodes === 'string' ? 'string' : shape.Path.nodes.length) : 0}`
-        );
+
         if ('Component' in shape) {
             // Component - will be drawn separately as markers
             return;
         }
 
-        // Handle Path object from to_dict() - nodes might be in shape.Path.nodes
+        // Handle Path object - either unwrapped or wrapped format
         let nodes: Node[] | undefined = undefined;
-        if ('Path' in shape && shape.Path.nodes) {
-            // Nodes might be in shape.Path.nodes (from to_dict())
-            const shapeNodes = shape.Path.nodes;
+
+        if (shape instanceof Path) {
+            // New unwrapped Path object
+            const shapeNodes = shape.nodes;
             if (typeof shapeNodes === 'string') {
-                // Parse string nodes
                 nodes = LayerDataNormalizer.parseNodes(shapeNodes);
             } else if (Array.isArray(shapeNodes)) {
-                nodes = shapeNodes;
+                // Normalize node types from babelfont-ts format to renderer format
+                nodes = LayerDataNormalizer.parseNodes(shapeNodes);
             }
-            console.log(
-                '[Renderer] Using shape.Path.nodes, first coords:',
-                nodes?.[0]?.x,
-                nodes?.[0]?.y
-            );
+        } else if ('Path' in shape && shape.Path.nodes) {
+            // Old wrapped format: shape.Path.nodes
+            const shapeNodes = shape.Path.nodes;
+            if (typeof shapeNodes === 'string') {
+                nodes = LayerDataNormalizer.parseNodes(shapeNodes);
+            } else if (Array.isArray(shapeNodes)) {
+                // Normalize node types from babelfont-ts format to renderer format
+                nodes = LayerDataNormalizer.parseNodes(shapeNodes);
+            }
         } else if ('nodes' in shape) {
             // Direct nodes property
             const shapeNodes = (shape as any).nodes;
             if (typeof shapeNodes === 'string') {
                 nodes = LayerDataNormalizer.parseNodes(shapeNodes);
             } else if (Array.isArray(shapeNodes)) {
-                nodes = shapeNodes;
+                // Normalize node types from babelfont-ts format to renderer format
+                nodes = LayerDataNormalizer.parseNodes(shapeNodes);
             }
         }
 
@@ -1642,7 +1666,7 @@ export class GlyphCanvasRenderer {
             return;
         }
 
-        (shape as any).nodes.forEach((node: Node, nodeIndex: number) => {
+        nodes.forEach((node: Node, nodeIndex: number) => {
             const { x, y, nodetype: type } = node;
             const isInterpolated =
                 this.glyphCanvas.outlineEditor.isInterpolating ||

@@ -17,7 +17,7 @@ import {
     userspaceToDesignspace,
     fromDesignspaceLocation
 } from './locations';
-import { Glyph, Layer } from './babelfont-extended';
+import { Glyph, Layer, parseLayerMaster } from './babelfont-extended';
 
 let console: Logger = new Logger('GlyphCanvas', true);
 
@@ -1359,15 +1359,8 @@ class GlyphCanvas {
             let correspondingLayer: Layer | undefined;
             if (isEditMode) {
                 correspondingLayer = glyphLayers.find((layer) => {
-                    const layerMaster = layer.master;
-                    if (
-                        layerMaster &&
-                        typeof layerMaster === 'object' &&
-                        'DefaultForMaster' in layerMaster
-                    ) {
-                        return layerMaster.DefaultForMaster === master.id;
-                    }
-                    return false;
+                    const parsed = parseLayerMaster(layer.master);
+                    return parsed.isDefaultForMaster && parsed.masterId === master.id;
                 });
 
                 // If no layer exists for this master, mark as inactive
@@ -1447,15 +1440,8 @@ class GlyphCanvas {
                     // Edit mode: load layer if it exists
                     if (correspondingLayer) {
                         // Extract master ID from layer
-                        const layerMaster = correspondingLayer.master;
-                        let masterId = correspondingLayer.id;
-                        if (
-                            layerMaster &&
-                            typeof layerMaster === 'object' &&
-                            'DefaultForMaster' in layerMaster
-                        ) {
-                            masterId = layerMaster.DefaultForMaster as string;
-                        }
+                        const parsed = parseLayerMaster(correspondingLayer.master);
+                        const masterId = parsed.masterId || correspondingLayer.id;
 
                         // Create minimal layer object for selectLayer
                         this.outlineEditor.selectLayer({

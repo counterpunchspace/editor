@@ -73,6 +73,87 @@ type PathData = {
 };
 
 // ============================================================================
+// Layer Master Type Helpers
+// ============================================================================
+
+/**
+ * Parse layer master type to extract master ID and type
+ * Handles both formats:
+ * - Old: { DefaultForMaster: "id" } or { AssociatedWithMaster: "id" }
+ * - New: { type: "DefaultForMaster", master: "id" } or { type: "AssociatedWithMaster", master: "id" }
+ *
+ * @param master - The layer.master property (can be various formats)
+ * @returns Object with masterId, isDefaultForMaster, and isAssociatedWithMaster
+ */
+export function parseLayerMaster(master: any): {
+    masterId: string | undefined;
+    isDefaultForMaster: boolean;
+    isAssociatedWithMaster: boolean;
+} {
+    if (!master || typeof master !== 'object') {
+        return {
+            masterId: typeof master === 'string' ? master : undefined,
+            isDefaultForMaster: false,
+            isAssociatedWithMaster: false
+        };
+    }
+
+    // New format: { type: "DefaultForMaster", master: "id" }
+    if (master.type === 'DefaultForMaster') {
+        return {
+            masterId: master.master,
+            isDefaultForMaster: true,
+            isAssociatedWithMaster: false
+        };
+    }
+    if (master.type === 'AssociatedWithMaster') {
+        return {
+            masterId: master.master,
+            isDefaultForMaster: false,
+            isAssociatedWithMaster: true
+        };
+    }
+    if (master.type === 'FreeFloating') {
+        return {
+            masterId: undefined,
+            isDefaultForMaster: false,
+            isAssociatedWithMaster: false
+        };
+    }
+
+    // Old format: { DefaultForMaster: "id" }
+    if ('DefaultForMaster' in master) {
+        return {
+            masterId: master.DefaultForMaster,
+            isDefaultForMaster: true,
+            isAssociatedWithMaster: false
+        };
+    }
+    if ('AssociatedWithMaster' in master) {
+        return {
+            masterId: master.AssociatedWithMaster,
+            isDefaultForMaster: false,
+            isAssociatedWithMaster: true
+        };
+    }
+
+    // Fallback: check for 'master' property directly
+    if ('master' in master) {
+        return {
+            masterId: master.master,
+            isDefaultForMaster: false,
+            isAssociatedWithMaster: false
+        };
+    }
+
+    return {
+        masterId: undefined,
+        isDefaultForMaster: false,
+        isAssociatedWithMaster: false
+    };
+}
+
+// ============================================================================
 // Font Class
 // ============================================================================
 
@@ -560,18 +641,8 @@ export class Layer extends BabelfontLayer {
         // This is used by the Python wrapper for __str__ representation for print()
         Object.defineProperty(this, '_pyrepr', {
             get: () => {
-                let masterId: string;
-                if (typeof this.master === 'object') {
-                    if ('DefaultForMaster' in this.master) {
-                        masterId = (this.master as any).DefaultForMaster;
-                    } else if ('AssociatedWithMaster' in this.master) {
-                        masterId = (this.master as any).AssociatedWithMaster;
-                    } else {
-                        masterId = (this.master as any).master || 'unknown';
-                    }
-                } else {
-                    masterId = this.master || this.id || 'unknown';
-                }
+                const parsed = parseLayerMaster(this.master);
+                const masterId = parsed.masterId || this.id || 'unknown';
                 const width =
                     this.width !== undefined ? ` width=${this.width}` : '';
                 return `<Layer "${masterId}"${width}>`;
@@ -725,13 +796,8 @@ export class Layer extends BabelfontLayer {
     getMasterId(): string | undefined {
         if (!this.master) return this.id;
         if (typeof this.master === 'string') return this.master;
-        if (typeof this.master === 'object') {
-            const m = this.master as any;
-            if ('DefaultForMaster' in m) return m.DefaultForMaster;
-            if ('AssociatedWithMaster' in m) return m.AssociatedWithMaster;
-            if ('master' in m) return m.master;
-        }
-        return this.id;
+        const parsed = parseLayerMaster(this.master);
+        return parsed.masterId || this.id;
     }
 
     /**
@@ -1629,18 +1695,8 @@ export class Layer extends BabelfontLayer {
      * print(layer)  # <Layer "m01" width=500>
      */
     toString(): string {
-        let masterId: string;
-        if (typeof this.master === 'object') {
-            if ('DefaultForMaster' in this.master) {
-                masterId = (this.master as any).DefaultForMaster;
-            } else if ('AssociatedWithMaster' in this.master) {
-                masterId = (this.master as any).AssociatedWithMaster;
-            } else {
-                masterId = (this.master as any).master || 'unknown';
-            }
-        } else {
-            masterId = this.master || this.id || 'unknown';
-        }
+        const parsed = parseLayerMaster(this.master);
+        const masterId = parsed.masterId || this.id || 'unknown';
         const width = this.width !== undefined ? ` width=${this.width}` : '';
         return `<Layer "${masterId}"${width}>`;
     }
