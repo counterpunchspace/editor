@@ -154,6 +154,16 @@ glyph = font.addGlyph("A")
 print(glyph.name)
 ```
 
+#### `removeGlyph(name: str) -> bool`
+Remove a glyph from the font by name
+
+**Example:**
+```python
+removed = font.removeGlyph("A")
+if removed:
+    print("Glyph removed")
+```
+
 ---
 
 
@@ -324,6 +334,30 @@ Get bounding box of layer (WASM-backed)
 ```python
 bounds = layer.bounds()
 print(f"x={bounds['x']}, y={bounds['y']}")
+```
+
+#### `getMasterId() -> str | None`
+Get the master ID for this layer
+Handles the various formats master can be stored in
+
+#### `getMatchingLayerOnGlyph(glyphName: str) -> [Layer](#layer) | None`
+Find the matching layer on another glyph (same master)
+
+**Example:**
+```python
+layer_a = glyph_a.layers[0]
+layer_b = layer_a.getMatchingLayerOnGlyph("B")  # Same master on glyph B
+```
+
+#### `getSidebearingsAtHeight(height: float | int, includeComponents: bool) -> { left: number; right: number } | None`
+Get sidebearings at a specific height (y value)
+Calculates the distance from the left edge (0) and right edge (layer width) to the outline intersections at the given height
+
+**Example:**
+```python
+sb = layer.getSidebearingsAtHeight(400)
+if sb:
+    print(f"LSB at 400: {sb['left']}, RSB at 400: {sb['right']}")
 ```
 
 #### `addPath(closed: bool) -> [Path](#path)`
