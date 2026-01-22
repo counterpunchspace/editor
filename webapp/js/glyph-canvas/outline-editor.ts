@@ -361,11 +361,12 @@ export class OutlineEditor {
         // Remember if preview was already on (from keyboard toggle)
         this.previewModeBeforeSlider = this.isPreviewMode;
 
+        // Capture anchor point BEFORE setting interpolating flag
+        // This ensures correct bounding box is used for auto-panning
+        this.captureAutoPanAnchor();
+
         // Set interpolating flag (don't change preview mode)
         this.isInterpolating = true;
-
-        // Capture anchor point for auto-panning
-        this.captureAutoPanAnchor();
 
         // If not in preview mode, mark current layer data as interpolated and render
         // to show monochrome visual feedback immediately
@@ -1999,12 +2000,14 @@ export class OutlineEditor {
                     console.log('Keeping previous state (during slider use)');
                 }
 
-                // Fetch layer data immediately when we find a match
-                // This ensures the layer is loaded even during slider dragging
-                await this.fetchLayerData(); // Fetch layer data for outline editor
+                // Fetch layer data EXCEPT during slider interpolation or layer switch animation
+                // During these states, we use interpolated data instead
+                if (!this.isInterpolating && !this.isLayerSwitchAnimating) {
+                    await this.fetchLayerData(); // Fetch layer data for outline editor
 
-                // Perform mouse hit detection after layer data is loaded
-                this.performHitDetection(null);
+                    // Perform mouse hit detection after layer data is loaded
+                    this.performHitDetection(null);
+                }
 
                 // Clear the interpolating flag and render to display the new outlines
                 this.isInterpolating = false;
@@ -2865,7 +2868,7 @@ export class OutlineEditor {
             localCenterY = transformedY;
         }
 
-        // Transform to world space (account for glyph position in text run)
+        // Transform to world space (using CURRENT glyph position)
         const worldCenterX =
             glyphPosition.xPosition + glyphPosition.xOffset + localCenterX;
         const worldCenterY = glyphPosition.yOffset + localCenterY;
@@ -2921,7 +2924,7 @@ export class OutlineEditor {
             localCenterY = transformedY;
         }
 
-        // Transform to world space (account for glyph position in text run)
+        // Transform to world space (using CURRENT glyph position)
         const worldCenterX =
             glyphPosition.xPosition + glyphPosition.xOffset + localCenterX;
         const worldCenterY = glyphPosition.yOffset + localCenterY;

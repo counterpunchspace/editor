@@ -1876,7 +1876,9 @@ class GlyphCanvas {
         // Pan to show a specific glyph (used when switching glyphs with cmd+left/right)
         // Delegates to ViewportManager.panToGlyph
 
+        // Skip during slider interpolation - we use auto-pan instead
         if (
+            this.outlineEditor.isInterpolating ||
             !this.outlineEditor.active ||
             glyphIndex < 0 ||
             glyphIndex >= this.textRunEditor!.shapedGlyphs.length
