@@ -7,6 +7,8 @@ Try the editor live:
 - Latest official release (using `release.sh`): https://editor.counterpunch.space
 - Latest preview (updated after each succesful push): https://preview.editor.counterpunch.space
 
+Update to a newer version using the **reload button** that appears in the title bar after a new version got released. This invalidates the browser cache for this website and reloads all resources.
+
 ## Develop
 
 Run the app locally with `cd webapp && npm run dev`
