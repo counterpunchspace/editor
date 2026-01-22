@@ -26,11 +26,6 @@ This is a WebAssembly-based font editor using Rust (fontc/babelfont) compiled to
 - Decide intelligently in which JavaScript file to place new code. Infer target files from each file name or comments at the file header and only create new files if a topic is entirely new.
 - The font object is available under `window.currentFontModel`
 
-### Submodules
-
-The repository has a babelfont-rs Git submodule which contains babelfont-ts which we're using.
-Changes to those are forbidden as we have no control over them. If we must make changes, we need to propose a PR, so first try to work around it.
-
 ### Rust
 
 - Follow standard Rust conventions
@@ -42,6 +37,11 @@ Changes to those are forbidden as we have no control over them. If we must make 
 - Refer to instructions/CSS_COLOR_STYLING.md for color standards
 - Use CSS custom properties for theming
 - Keep selectors specific but not overly nested
+
+## Submodules
+
+The repository has a babelfont-rs Git submodule which contains babelfont-ts which we're using.
+Changes to those are forbidden as we have no control over them. If we must make changes, we need to propose a PR, so first try to work around it.
 
 ## Architecture Principles
 
@@ -93,3 +93,7 @@ Changes to those are forbidden as we have no control over them. If we must make 
 ## Github Repository
 
 - Add major changes since last push to CHANGELOG.md. Be as concise as possible. Don't keep adding new items for fixes to the same topic, instead do a rewrite.
+
+## Documentation
+
+The documentation is rendered into `API.md` using `node generate-api-docs.mjs` from the repo root folder. Don't make any changes to `API.md`, but instead edit the generator and regenerate.
