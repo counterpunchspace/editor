@@ -127,25 +127,126 @@ class _BabelfontWrapper:
     def __getitem__(self, key):
         # Forward indexing to the wrapped object
         obj = object.__getattribute__(self, '_BabelfontWrapper__obj')
-        result = obj[key]
+        
+        # Try different access methods for JsProxy objects
+        try:
+            # For numeric indices (arrays), convert to int
+            if isinstance(key, int):
+                result = obj[int(key)]
+            # For string keys (objects/dicts), try attribute access first
+            else:
+                # Try bracket notation using js.Reflect
+                result = js.Reflect.get(obj, key)
+        except Exception as e:
+            # Fallback to direct access
+            try:
+                result = obj[key]
+            except:
+                raise KeyError(f"Key {key!r} not found")
+        
         # Auto-wrap babelfont objects but not methods
         if self._should_wrap(result):
             return _BabelfontWrapper(result)
         return result
     
+    def __setitem__(self, key, value):
+        # Forward item assignment to the wrapped object
+        obj = object.__getattribute__(self, '_BabelfontWrapper__obj')
+        # If the value is a wrapper, unwrap it first
+        if isinstance(value, _BabelfontWrapper):
+            value = object.__getattribute__(value, '_BabelfontWrapper__obj')
+        
+        # Use Reflect.set for proper JavaScript object property assignment
+        try:
+            js.Reflect.set(obj, key, value)
+        except Exception:
+            # Fallback to direct assignment
+            obj[key] = value
+    
     def __len__(self):
         # Forward len() to the wrapped object
         obj = object.__getattribute__(self, '_BabelfontWrapper__obj')
+        # For objects, return number of keys
+        try:
+            constructor_name = obj.constructor.name if hasattr(obj, 'constructor') else None
+            if constructor_name == 'Object':
+                return len(js.Object.keys(obj))
+        except:
+            pass
         return len(obj)
+    
+    def keys(self):
+        """Return keys for dict-like objects"""
+        obj = object.__getattribute__(self, '_BabelfontWrapper__obj')
+        try:
+            constructor_name = obj.constructor.name if hasattr(obj, 'constructor') else None
+            if constructor_name == 'Object':
+                return list(js.Object.keys(obj))
+        except:
+            pass
+        # Fallback for objects that don't have a clear constructor
+        try:
+            return list(js.Object.keys(obj))
+        except:
+            raise TypeError(f"keys() not supported for {type(obj)}")
+    
+    def values(self):
+        """Return values for dict-like objects"""
+        obj = object.__getattribute__(self, '_BabelfontWrapper__obj')
+        try:
+            keys = js.Object.keys(obj)
+            for key in keys:
+                value = js.Reflect.get(obj, key)
+                if self._should_wrap(value):
+                    yield _BabelfontWrapper(value)
+                else:
+                    yield value
+        except:
+            raise TypeError(f"values() not supported for {type(obj)}")
+    
+    def items(self):
+        """Return (key, value) pairs for dict-like objects"""
+        obj = object.__getattribute__(self, '_BabelfontWrapper__obj')
+        try:
+            keys = js.Object.keys(obj)
+            for key in keys:
+                value = js.Reflect.get(obj, key)
+                if self._should_wrap(value):
+                    yield (key, _BabelfontWrapper(value))
+                else:
+                    yield (key, value)
+        except:
+            raise TypeError(f"items() not supported for {type(obj)}")
     
     def __iter__(self):
         # Forward iteration to the wrapped object, wrapping each item
         obj = object.__getattribute__(self, '_BabelfontWrapper__obj')
-        for item in obj:
-            if self._should_wrap(item):
-                yield _BabelfontWrapper(item)
+        
+        # Check if it's an array-like object or a dict-like object
+        try:
+            # Try to get the constructor name to determine type
+            constructor_name = obj.constructor.name if hasattr(obj, 'constructor') else None
+            
+            # If it's an Array, iterate normally
+            if constructor_name == 'Array' or hasattr(obj, 'length'):
+                for item in obj:
+                    if self._should_wrap(item):
+                        yield _BabelfontWrapper(item)
+                    else:
+                        yield item
+            # If it's an Object (dict-like), iterate over keys
             else:
-                yield item
+                # Use Object.keys() to get the keys
+                keys = js.Object.keys(obj)
+                for key in keys:
+                    yield key
+        except Exception:
+            # Fallback: try direct iteration
+            for item in obj:
+                if self._should_wrap(item):
+                    yield _BabelfontWrapper(item)
+                else:
+                    yield item
 
 
 def CurrentFont():

@@ -539,7 +539,7 @@ function generateClassDocs(classInfo, typeDefinitions = new Map()) {
     Names:
       '```python\n# Access all name entries\nfont.names.copyright = {"en": "Copyright 2026"}\nfont.names.family_name = {"en": "My Font"}\n```',
     Features:
-      '```python\n# Define OpenType feature code (simple string form)\nfont.features.classes["@lowercase"] = "a b c d e"\nfont.features.prefixes["languagesystems"] = "languagesystem DFLT dflt;"\nfont.features.features.append(("liga", "sub f i by fi;"))\n\n# Or use object form for automatic code tracking\nfont.features.classes["@uppercase"] = {\n    "code": "A B C",\n    "automatic": True\n}\n```',
+      '```python\n# Define OpenType feature code (simple string form)\nfont.features.classes["@lowercase"] = "a b c d e"\nfont.features.prefixes["languagesystems"] = "languagesystem DFLT dflt;"\nfont.features.features.append(("liga", "sub f i by fi;"))\n\n# Or use object form for automatic code tracking\nfont.features.classes["@uppercase"] = {\n    "code": "A B C",\n    "automatic": True\n}\n\n# Iterate over classes and prefixes (dict-like objects)\nfor class_name in font.features.classes:\n    print(f"Class: {class_name}")\n\nfor name, code in font.features.prefixes.items():\n    print(f"Prefix {name}: {code}")\n```',
     Glyph:
       '```python\nglyph = font.glyphs[0]\n# or\nglyph = font.findGlyph("A")\n```',
     Layer: "```python\nlayer = glyph.layers[0]\n```",
@@ -1061,6 +1061,30 @@ for comp in layer.components:
 \`\`\`
 
 **Note:** If you need to work with all shapes together, use \`layer.shapes\`. For filtered access, use \`layer.paths\` or \`layer.components\`.
+
+### Iterating Over Dict-Like Properties
+
+Some properties like \`font.features.classes\` and \`font.features.prefixes\` are dict-like objects. Use standard Python dict iteration methods:
+
+\`\`\`python
+# Iterate over keys
+for class_name in font.features.classes:
+    print(f"Class: {class_name}")
+
+# Iterate over values
+for code in font.features.classes.values():
+    print(f"Code: {code}")
+
+# Iterate over key-value pairs
+for name, code in font.features.classes.items():
+    print(f"{name}: {code}")
+
+# Direct access
+code = font.features.classes["@lowercase"]
+
+# Assignment
+font.features.classes["@uppercase"] = "A B C D E"
+\`\`\`
 
 ### Safe Property Access
 

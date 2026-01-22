@@ -223,6 +223,13 @@ font.features.classes["@uppercase"] = {
     "code": "A B C",
     "automatic": True
 }
+
+# Iterate over classes and prefixes (dict-like objects)
+for class_name in font.features.classes:
+    print(f"Class: {class_name}")
+
+for name, code in font.features.prefixes.items():
+    print(f"Prefix {name}: {code}")
 ```
 
 ### Properties
@@ -843,6 +850,30 @@ for comp in layer.components:
 ```
 
 **Note:** If you need to work with all shapes together, use `layer.shapes`. For filtered access, use `layer.paths` or `layer.components`.
+
+### Iterating Over Dict-Like Properties
+
+Some properties like `font.features.classes` and `font.features.prefixes` are dict-like objects. Use standard Python dict iteration methods:
+
+```python
+# Iterate over keys
+for class_name in font.features.classes:
+    print(f"Class: {class_name}")
+
+# Iterate over values
+for code in font.features.classes.values():
+    print(f"Code: {code}")
+
+# Iterate over key-value pairs
+for name, code in font.features.classes.items():
+    print(f"{name}: {code}")
+
+# Direct access
+code = font.features.classes["@lowercase"]
+
+# Assignment
+font.features.classes["@uppercase"] = "A B C D E"
+```
 
 ### Safe Property Access
 

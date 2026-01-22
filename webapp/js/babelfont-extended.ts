@@ -2022,8 +2022,74 @@ export class Master extends BabelfontMaster {
         return `<Master "${displayName}" id="${this.id}" location=${location}>`;
     }
 }
-export class Names extends BabelfontNames {}
-export class Features extends BabelfontFeatures {}
+export class Names extends BabelfontNames {
+    constructor(data: INames) {
+        super(data);
+
+        // Add _pyrepr as a getter that computes the string inline (bypasses Proxy interception)
+        // This is used by the Python wrapper for __str__ representation for print()
+        Object.defineProperty(this, '_pyrepr', {
+            get: () => {
+                const familyName =
+                    this.family_name?.en ||
+                    Object.values(this.family_name || {})[0] ||
+                    'Unnamed';
+                return `<Names family="${familyName}">`;
+            }
+        });
+    }
+
+    /**
+     * String representation for debugging
+     *
+     * @returns Human-readable string
+     * @example
+     * print(font.names)  # <Names family="My Font">
+     */
+    toString(): string {
+        const familyName =
+            this.family_name?.en ||
+            Object.values(this.family_name || {})[0] ||
+            'Unnamed';
+        return `<Names family="${familyName}">`;
+    }
+}
+export class Features extends BabelfontFeatures {
+    constructor(data: IFeatures) {
+        super(data);
+
+        // Add _pyrepr as a getter that computes the string inline (bypasses Proxy interception)
+        // This is used by the Python wrapper for __str__ representation for print()
+        Object.defineProperty(this, '_pyrepr', {
+            get: () => {
+                const classCount = this.classes
+                    ? Object.keys(this.classes).length
+                    : 0;
+                const prefixCount = this.prefixes
+                    ? Object.keys(this.prefixes).length
+                    : 0;
+                const featureCount = this.features ? this.features.length : 0;
+                return `<Features ${classCount} classes, ${prefixCount} prefixes, ${featureCount} features>`;
+            }
+        });
+    }
+
+    /**
+     * String representation for debugging
+     *
+     * @returns Human-readable string
+     * @example
+     * print(font.features)  # <Features 5 classes, 2 prefixes, 10 features>
+     */
+    toString(): string {
+        const classCount = this.classes ? Object.keys(this.classes).length : 0;
+        const prefixCount = this.prefixes
+            ? Object.keys(this.prefixes).length
+            : 0;
+        const featureCount = this.features ? this.features.length : 0;
+        return `<Features ${classCount} classes, ${prefixCount} prefixes, ${featureCount} features>`;
+    }
+}
 export class CustomOTValues extends BabelfontCustomOTValues {}
 export class Position extends BabelfontPosition {}
 export class DecomposedAffine extends BabelfontDecomposedAffine {}
