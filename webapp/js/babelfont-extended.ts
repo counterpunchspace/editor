@@ -743,45 +743,50 @@ export class Layer extends BabelfontLayer {
 
     /**
      * Get sidebearings at a specific height (y value)
-     * Calculates the distance from edges to the first/last intersection with paths
+     * Calculates the distance from the left edge (0) and right edge (layer width) to the outline intersections at the given height
      *
-     * @param height - The y coordinate to measure at
-     * @param includeComponents - Whether to include component paths (default: true)
-     * @returns Object with lsb (left sidebearing at height) and rsb (right sidebearing at height), or null if no intersections
+     * @param height - The y coordinate at which to measure sidebearings
+     * @param includeComponents - Whether to include component paths in the calculation (default: true)
+     * @returns Object with left and right sidebearing values, or null if no intersections found at this height
      * @example
      * sb = layer.getSidebearingsAtHeight(400)
      * if sb:
-     *     print(f"LSB at 400: {sb['lsb']}, RSB at 400: {sb['rsb']}")
+     *     print(f"LSB at 400: {sb['left']}, RSB at 400: {sb['right']}")
      */
     getSidebearingsAtHeight(
         height: number,
         includeComponents: boolean = true
-    ): { lsb: number; rsb: number } | null {
-        // Create a horizontal line across the glyph at the given height
-        // Use a wide range to ensure we capture all intersections
+    ): { left: number; right: number } | null {
+        const glyphWidth = this.width;
+
+        // Define horizontal line extending far beyond glyph bounds
+        const lineP1 = { x: -10000, y: height };
+        const lineP2 = { x: glyphWidth + 10000, y: height };
+
+        // Use existing getIntersectionsOnLine method with components included
         const intersections = this.getIntersectionsOnLine(
-            { x: -10000, y: height },
-            { x: 10000, y: height },
+            lineP1,
+            lineP2,
             includeComponents
         );
 
-        if (!intersections || intersections.length === 0) {
+        if (intersections.length === 0) {
             return null;
         }
 
-        // Find the leftmost and rightmost intersection x coordinates
-        let minX = Infinity;
-        let maxX = -Infinity;
-        for (const int of intersections) {
-            if (int.x < minX) minX = int.x;
-            if (int.x > maxX) maxX = int.x;
-        }
+        // Sort by X coordinate
+        intersections.sort((a, b) => a.x - b.x);
 
-        // LSB = distance from left edge (0) to first intersection
-        // RSB = distance from last intersection to layer width
+        const firstIntersection = intersections[0];
+        const lastIntersection = intersections[intersections.length - 1];
+
+        // Calculate distances from glyph edges
+        const leftSidebearing = firstIntersection.x - 0;
+        const rightSidebearing = glyphWidth - lastIntersection.x;
+
         return {
-            lsb: minX,
-            rsb: this.width - maxX
+            left: leftSidebearing,
+            right: rightSidebearing
         };
     }
 
