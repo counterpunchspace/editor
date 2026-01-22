@@ -196,12 +196,12 @@ fn manually_interpolate_layer(
         match reference_shape {
             Shape::Component(ref_comp) => {
                 // Collect transforms from all masters for this component
-                let master_transforms: Vec<(kurbo::Affine, f64)> = masters
+                let master_transforms: Vec<_> = masters
                     .iter()
                     .filter_map(|(layer, loc_value)| {
                         layer.shapes.get(shape_idx).and_then(|s| {
                             if let Shape::Component(comp) = s {
-                                Some((comp.transform, *loc_value))
+                                Some((comp.transform.clone(), *loc_value))
                             } else {
                                 None
                             }
@@ -219,28 +219,41 @@ fn manually_interpolate_layer(
                 );
 
                 if !master_transforms.is_empty() {
+                    let first_affine: kurbo::Affine = master_transforms[0].0.clone().into();
                     web_sys::console::log_1(
                         &format!(
                             "[Rust] First transform: {:?}",
-                            master_transforms[0].0.as_coeffs()
+                            first_affine.as_coeffs()
                         )
                         .into(),
                     );
                 }
 
+                // Convert transforms to kurbo::Affine for interpolation
+                let master_affines: Vec<(kurbo::Affine, f64)> = master_transforms.iter()
+                    .map(|(decomp, loc)| {
+                        let affine: kurbo::Affine = decomp.clone().into();
+                        (affine, *loc)
+                    })
+                    .collect();
+                
                 // Interpolate the transform
-                let interpolated_transform = if master_transforms.len() >= 2 {
-                    interpolate_affine(&master_transforms, target_value)?
-                } else if !master_transforms.is_empty() {
-                    master_transforms[0].0
+                let interpolated_affine = if master_affines.len() >= 2 {
+                    interpolate_affine(&master_affines, target_value)?
+                } else if !master_affines.is_empty() {
+                    master_affines[0].0
                 } else {
-                    ref_comp.transform
+                    ref_comp.transform.clone().into()
                 };
+                
+                // Convert back to component's transform type
+                let interpolated_transform = interpolated_affine.into();
 
                 // Create component with interpolated transform (reference stays the same)
                 interpolated_shapes.push(Shape::Component(babelfont::Component {
                     reference: ref_comp.reference.clone(),
                     transform: interpolated_transform,
+                    location: Default::default(), // No smart component support yet
                     format_specific: ref_comp.format_specific.clone(),
                 }));
             }
@@ -326,6 +339,7 @@ fn manually_interpolate_layer(
         background_layer_id: None,
         layer_index: None,
         master: babelfont::LayerType::FreeFloating,
+        smart_component_location: Default::default(),
         format_specific: Default::default(),
     })
 }
@@ -380,6 +394,7 @@ fn interpolate_path_shape(master_paths: &[(&Shape, f64)], target_value: f64) -> 
             y: interp_y,
             nodetype: reference_node.nodetype.clone(),
             smooth: reference_node.smooth,
+            format_specific: Default::default(),
         });
     }
 
