@@ -9,10 +9,10 @@
 - [Overview](#overview)
 - [Class Reference](#class-reference)
   - [Font](#font)
-  - [Names](#names) - Font naming information with multi-language support
-  - [I18NDictionary](#i18ndictionary) - Multi-language dictionary for font name entries
+  - [Names](#names) - Font naming information with multi-language support. All name properties (family_name, designer, copyright, etc.) are I18NDictionary objects. that support multiple languages. They auto-convert to strings when displayed.
+  - [I18NDictionary](#i18ndictionary) - Multi-language dictionary for font name entries. I18NDictionary stores localized versions of font metadata strings. Language codes should follow OpenType Language System Tags (e.g., 'en', 'de', 'fr'). The special code 'dflt' represents the default/fallback value. When displayed as a string, it automatically selects the most appropriate value:. 1. 'dflt' (default) if present. 2. 'en' (English) if present. 3. First available language. All font name properties (family_name, designer, copyright, etc.) return. I18NDictionary objects that you can query and modify.
   - [Features](#features)
-  - [PossiblyAutomaticCode](#possiblyautomaticcode) - Class for OpenType feature code that may be automatically generated
+  - [PossiblyAutomaticCode](#possiblyautomaticcode) - Class for OpenType feature code that may be automatically generated. NOTE: Currently the `automatic` property is always undefined when loading. Glyphs files because the babelfont-rs Rust parser doesn't preserve this. flag during conversion to JSON. The infrastructure is in place for when. this is fixed upstream.
   - [Glyph](#glyph)
   - [Layer](#layer)
   - [Path](#path)
@@ -89,11 +89,11 @@ All properties are read/write:
 - **`note`** (str | None): An optional note about the font
 - **`date`** (datetime): The font's creation date
 - **`names`** ([Names](#names))
-- **`custom_ot_values`** (CustomOTValues | None): Any values to be placed in OpenType tables on export to override defaults  These must be font-wide. Metrics which may vary by master should be placed in the `metrics` field of a Master
+- **`custom_ot_values`** (CustomOTValues | None): Any values to be placed in OpenType tables on export to override defaults. These must be font-wide. Metrics which may vary by master should be placed in the `metrics` field of a Master
 - **`variation_sequences`** (dict[str, str] | None): A map of Unicode Variation Sequences to glyph names
 - **`features`** ([Features](#features))
-- **`first_kern_groups`** (dict[str, list[str]] | None): A dictionary of kerning groups  The key is the group name and the value is a list of glyph names in the group Group names are *not* prefixed with "@" here. This is the first item in a kerning pair. and so these are generally organized based on the profile of *right side* of the glyph (for LTR scripts).
-- **`second_kern_groups`** (dict[str, list[str]] | None): The key is the group name and the value is a list of glyph names in the group Group names are *not* prefixed with "@" here. This is the second item in a kerning pair. and so these are generally organized based on the profile of *left side* of the glyph (for LTR scripts).
+- **`first_kern_groups`** (dict[str, list[str]] | None): A dictionary of kerning groups. The key is the group name and the value is a list of glyph names in the group. Group names are *not* prefixed with "@" here. This is the first item in a kerning pair. and so these are generally organized based on the profile of *right side* of the. glyph (for LTR scripts).
+- **`second_kern_groups`** (dict[str, list[str]] | None): The key is the group name and the value is a list of glyph names in the group. Group names are *not* prefixed with "@" here. This is the second item in a kerning pair. and so these are generally organized based on the profile of *left side* of the. glyph (for LTR scripts).
 - **`format_specific`** (dict[str, Any] | None): Format-specific data
 - **`source`** (str | None): The source file path, if any, from which this font was loaded
 
@@ -173,10 +173,7 @@ if removed:
 
 ## Names
 
-Font naming information with multi-language support
-
-All name properties (family_name, designer, copyright, etc.) are I18NDictionary objects
-that support multiple languages. They auto-convert to strings when displayed.
+Font naming information with multi-language support. All name properties (family_name, designer, copyright, etc.) are I18NDictionary objects. that support multiple languages. They auto-convert to strings when displayed.
 
 **Access:**
 ```python
@@ -218,19 +215,7 @@ All properties are read/write:
 
 ## I18NDictionary
 
-Multi-language dictionary for font name entries
-
-I18NDictionary stores localized versions of font metadata strings.
-Language codes should follow OpenType Language System Tags (e.g., 'en', 'de', 'fr').
-The special code 'dflt' represents the default/fallback value.
-
-When displayed as a string, it automatically selects the most appropriate value:
-1. 'dflt' (default) if present
-2. 'en' (English) if present
-3. First available language
-
-All font name properties (family_name, designer, copyright, etc.) return
-I18NDictionary objects that you can query and modify.
+Multi-language dictionary for font name entries. I18NDictionary stores localized versions of font metadata strings. Language codes should follow OpenType Language System Tags (e.g., 'en', 'de', 'fr'). The special code 'dflt' represents the default/fallback value. When displayed as a string, it automatically selects the most appropriate value:. 1. 'dflt' (default) if present. 2. 'en' (English) if present. 3. First available language. All font name properties (family_name, designer, copyright, etc.) return. I18NDictionary objects that you can query and modify.
 
 ### Properties
 
@@ -311,47 +296,35 @@ for lang, value in font.names.family_name.entries():
 
 **Access:**
 ```python
-# Set feature code (plain strings auto-convert to PossiblyAutomaticCode)
-font.features.classes["@lowercase"] = "a b c d e"
-font.features.prefixes["languagesystems"] = "languagesystem DFLT dflt;"
-font.features.features.append(("liga", "sub f i by fi;"))
-
-# Or set with full object form
-font.features.classes["@uppercase"] = {
-    "code": "A B C",
-    "automatic": True
-}
-
-# Read values (always PossiblyAutomaticCode objects)
+# Access feature code objects
 code_obj = font.features.classes["@lowercase"]
-print(code_obj.code)  # "a b c d e"
-print(code_obj)  # <PossiblyAutomaticCode "a b c d e">
+print(code_obj.code)  # The actual feature code string
+print(code_obj.automatic)  # True if auto-generated, None otherwise
 
 # Iterate over classes and prefixes
 for name, code_obj in font.features.classes.items():
     print(f"{name}: {code_obj.code}")
+
+# Iterate over features (list of tuples)
+for tag, code_obj in font.features.features:
+    print(f"{tag}: {code_obj.code}")
 ```
 
 ### Properties
 
 All properties are read/write:
 
-- **`classes`** (dict[str, [PossiblyAutomaticCode](#possiblyautomaticcode)]): Opentype classes  The key should not start with
-- **`prefixes`** (dict[str, [PossiblyAutomaticCode](#possiblyautomaticcode)]): Opentype prefixes  A dictionary of OpenType lookups and other feature code to be placed before features are defined. The keys are user-defined names, the values are AFDKO feature code.
-- **`features`** (list[tuple[str, [PossiblyAutomaticCode](#possiblyautomaticcode)]]): OpenType features  A list of OpenType feature code, expressed as a tuple (feature tag, code).
-- **`include_paths`** (list[str] | None): Include paths  Paths to search for included feature files.
+- **`classes`** (dict[str, [PossiblyAutomaticCode](#possiblyautomaticcode)]): Opentype classes. The key should not start with
+- **`prefixes`** (dict[str, [PossiblyAutomaticCode](#possiblyautomaticcode)]): Opentype prefixes. A dictionary of OpenType lookups and other feature code to be placed before features are defined. The keys are user-defined names, the values are AFDKO feature code.
+- **`features`** (list[tuple[str, [PossiblyAutomaticCode](#possiblyautomaticcode)]]): OpenType features. A list of OpenType feature code, expressed as a tuple (feature tag, code).
+- **`include_paths`** (list[str] | None): Include paths. Paths to search for included feature files.
 
 ---
 
 
 ## PossiblyAutomaticCode
 
-Class for OpenType feature code that may be automatically generated
-
-NOTE: Currently the `automatic` property is always undefined when loading
-Glyphs files because the babelfont-rs Rust parser doesn't preserve this
-flag during conversion to JSON. The infrastructure is in place for when
-this is fixed upstream.
+Class for OpenType feature code that may be automatically generated. NOTE: Currently the `automatic` property is always undefined when loading. Glyphs files because the babelfont-rs Rust parser doesn't preserve this. flag during conversion to JSON. The infrastructure is in place for when. this is fixed upstream.
 
 **Access:**
 ```python
@@ -483,8 +456,7 @@ print(f"x={bounds['x']}, y={bounds['y']}")
 ```
 
 #### `getMasterId() -> str | None`
-Get the master ID for this layer
-Handles the various formats master can be stored in
+Get the master ID for this layer. Handles the various formats master can be stored in
 
 #### `getMatchingLayerOnGlyph(glyphName: str) -> [Layer](#layer) | None`
 Find the matching layer on another glyph (same master)
@@ -496,8 +468,7 @@ layer_b = layer_a.getMatchingLayerOnGlyph("B")  # Same master on glyph B
 ```
 
 #### `getSidebearingsAtHeight(height: float | int, includeComponents: bool) -> { left: number; right: number } | None`
-Get sidebearings at a specific height (y value)
-Calculates the distance from the left edge (0) and right edge (layer width) to the outline intersections at the given height
+Get sidebearings at a specific height (y value). Calculates the distance from the left edge (0) and right edge (layer width) to the outline intersections at the given height
 
 **Example:**
 ```python
@@ -549,15 +520,10 @@ anchor = layer.createAnchor("top", 250, 700)
 ```
 
 #### `processPathSegments(pathData: { nodes: any[]; closed?: boolean; }) -> Array<{ points: Array<{ x: number; y: number }>; type: 'line' | 'quadratic' | 'cubic'; }>`
-Process a path into Bezier curve segments
-Handles the babelfont node format where:
-- Nodes can have 'type' (lowercase: o, c, l, q, etc.) or 'nodetype' (capitalized: OffCurve, Curve, Line, etc.)
-- Segments are sequences: [oncurve] [offcurve*] [oncurve]
-- For closed paths, the path can start with offcurve nodes
+Process a path into Bezier curve segments. Handles the babelfont node format where:. - Nodes can have 'type' (lowercase: o, c, l, q, etc.) or 'nodetype' (capitalized: OffCurve, Curve, Line, etc.). - Segments are sequences: [oncurve] [offcurve*] [oncurve]. - For closed paths, the path can start with offcurve nodes
 
 #### `flattenComponents(layer: [Layer](#layer), font: [Font](#font) | None = None) -> list[PathData]`
-Flatten all components in the layer to paths with their transforms applied
-This recursively processes nested components to any depth
+Flatten all components in the layer to paths with their transforms applied. This recursively processes nested components to any depth
 
 #### `getDirectPaths() -> list[PathData]`
 Get only direct paths in this layer (no components)
@@ -775,7 +741,7 @@ All properties are read/write:
 - **`location`** (dict | None): Location of the master in design space coordinates
 - **`guides`** (list[[Guide](#guide)] | None): Global guidelines associated with the master
 - **`metrics`** (dict[str, float | int]): Master-specific metrics
-- **`kerning`** (Map<[string, string], number>): Kerning for this master.  (Kerning pairs are (left glyph name, right glyph name) -> value) Groups are represented as `@<groupname>`; whether they are first or second groups is determined by position in the tuple.
+- **`kerning`** (Map<[string, string], number>): Kerning for this master. (Kerning pairs are (left glyph name, right glyph name) -> value). Groups are represented as `@<groupname>`; whether they are first or second. groups is determined by position in the tuple.
 - **`custom_ot_values`** (CustomOTValues | None): Custom OpenType values for this master
 - **`format_specific`** (dict[str, Any] | None): Format-specific data
 
@@ -795,7 +761,7 @@ instance = font.instances[0]
 
 All properties are read/write:
 
-- **`id`** (str): Unique identifier for the instance  Should be unique within the design space; usually a UUID.
+- **`id`** (str): Unique identifier for the instance. Should be unique within the design space; usually a UUID.
 - **`name`** ([I18NDictionary](#i18ndictionary)): Name of the instance
 - **`location`** (dict | None): Location of the instance in design space coordinates
 - **`custom_names`** ([Names](#names)): Any custom names for the instance if it is exported as a static font

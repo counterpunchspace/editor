@@ -264,7 +264,26 @@ function extractJsDoc(node) {
     if (ts.isJSDoc(doc)) {
       // Extract main comment
       if (doc.comment) {
-        description += doc.comment + "\n";
+        // Join multi-line comments intelligently
+        const comment =
+          typeof doc.comment === "string" ? doc.comment : doc.comment.text;
+        const lines = comment
+          .split("\n")
+          .map((line) => line.trim())
+          .filter((line) => line);
+
+        // Join lines with proper punctuation
+        const joined = lines
+          .map((line, idx) => {
+            // If line doesn't end with punctuation and it's not the last line, add period
+            if (idx < lines.length - 1 && !/[.!?]$/.test(line)) {
+              return line + ".";
+            }
+            return line;
+          })
+          .join(" ");
+
+        description += joined + "\n";
       }
 
       // Extract @example tags
@@ -543,7 +562,7 @@ function generateClassDocs(classInfo, typeDefinitions = new Map()) {
     Names:
       '```python\n# Access all name entries\nfont.names.copyright = {"en": "Copyright 2026"}\nfont.names.family_name = {"en": "My Font"}\n```',
     Features:
-      '```python\n# Set feature code (plain strings auto-convert to PossiblyAutomaticCode)\nfont.features.classes["@lowercase"] = "a b c d e"\nfont.features.prefixes["languagesystems"] = "languagesystem DFLT dflt;"\nfont.features.features.append(("liga", "sub f i by fi;"))\n\n# Or set with full object form\nfont.features.classes["@uppercase"] = {\n    "code": "A B C",\n    "automatic": True\n}\n\n# Read values (always PossiblyAutomaticCode objects)\ncode_obj = font.features.classes["@lowercase"]\nprint(code_obj.code)  # "a b c d e"\nprint(code_obj)  # <PossiblyAutomaticCode "a b c d e">\n\n# Iterate over classes and prefixes\nfor name, code_obj in font.features.classes.items():\n    print(f"{name}: {code_obj.code}")\n```',
+      '```python\n# Access feature code objects\ncode_obj = font.features.classes["@lowercase"]\nprint(code_obj.code)  # The actual feature code string\nprint(code_obj.automatic)  # True if auto-generated, None otherwise\n\n# Iterate over classes and prefixes\nfor name, code_obj in font.features.classes.items():\n    print(f"{name}: {code_obj.code}")\n\n# Iterate over features (list of tuples)\nfor tag, code_obj in font.features.features:\n    print(f"{tag}: {code_obj.code}")\n```',
     PossiblyAutomaticCode:
       '```python\n# Access from features\ncode_obj = font.features.classes["@lowercase"]\nprint(code_obj.code)  # The actual feature code string\nprint(code_obj.automatic)  # True if auto-generated, None otherwise\n\n# Iterate over features (array of tuples)\nfor tag, code_obj in font.features.features:\n    print(f"{tag}: {code_obj.code}")\n```',
     Glyph:
