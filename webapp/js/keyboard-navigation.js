@@ -775,11 +775,15 @@
                     }
 
                     setTimeout(() => {
-                        // Focus input without scrolling
+                        // Focus input without scrolling (unless user is selecting text)
+                        const selection = window.getSelection();
+                        const hasSelection =
+                            selection && selection.toString().length > 0;
+
                         const cmdInput = document.querySelector(
                             '#console-container .cmd textarea'
                         );
-                        if (cmdInput) {
+                        if (cmdInput && !hasSelection) {
                             cmdInput.focus({ preventScroll: true });
                         }
 
