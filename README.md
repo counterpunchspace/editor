@@ -62,7 +62,7 @@ Users will see an orange update notification button in the title bar within 10 m
 
 **`babelfont-ts` object model integration — Counterpunch becomes an analysis tool**
 
-- ◻️ User file sytem I/O
+- ✅ User file sytem I/O
 - ✅ .glyphs I/O
 - ✅ .vfj I/O
 - ◻️ .vfb I/O
