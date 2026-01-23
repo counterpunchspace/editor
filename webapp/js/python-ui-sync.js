@@ -34,11 +34,11 @@ function afterPythonExecution() {
     // TODO: Check for dirty glyphs and redraw if current glyph was modified
     // TODO: Call get_and_clear_dirty_glyphs() and update UI accordingly
 
-    // Skip dirty checks if we're loading a font or if dropdown manager not ready
-    if (isLoadingFont || !window.fontDropdownManager) {
+    // Skip dirty checks if we're loading a font or font manager not ready
+    if (isLoadingFont || !window.fontManager) {
         console.log(
             '[PythonUISync]',
-            '⏭️ Skipping dirty checks (loading font or dropdown not ready)'
+            '⏭️ Skipping dirty checks (loading font or manager not ready)'
         );
         return;
     }
@@ -48,8 +48,8 @@ function afterPythonExecution() {
         clearTimeout(dirtyCheckTimeout);
     }
     dirtyCheckTimeout = setTimeout(() => {
-        if (window.fontDropdownManager) {
-            window.fontDropdownManager.updateDirtyIndicator();
+        if (window.fontManager) {
+            window.fontManager.updateDirtyIndicator();
         }
     }, 100); // Wait 100ms after last execution before checking
 
@@ -72,8 +72,8 @@ window.setFontLoadingState = function (loading) {
             clearTimeout(dirtyCheckTimeout);
         }
         dirtyCheckTimeout = setTimeout(() => {
-            if (window.fontDropdownManager) {
-                window.fontDropdownManager.updateDirtyIndicator();
+            if (window.fontManager) {
+                window.fontManager.updateDirtyIndicator();
             }
         }, 200);
     }

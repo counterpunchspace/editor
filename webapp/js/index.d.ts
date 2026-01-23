@@ -4,7 +4,6 @@ import AIAssistant from './ai-assistant.js';
 import CacheManager from './cache-manager.js';
 import type { FontCompilation } from './font-compilation.js';
 import FontManager from './font-manager.js';
-import FontDropdownManager from './font-dropdown.js';
 import { GlyphCanvas } from './glyph-canvas.js';
 import MemoryMonitor from './memory-monitor.js';
 import ResizableViews from './resizer.js';
@@ -119,9 +118,6 @@ declare global {
 
         // From font-manager.js
         fontManager: FontManager;
-
-        // From font-dropdown.js
-        fontDropdownManager: FontDropdownManager;
 
         // From babelfont-model.js
         currentFontModel: Font | null;
