@@ -1782,6 +1782,11 @@ kbd + kbd {
     box-shadow: 0 4px 8px var(--input-bg);
 }
 
+/* Disable interaction when files view is not focused */
+.view-files:not(.focused) #file-browser {
+    pointer-events: none;
+}
+
 #file-browser {
     height: 100%;
     overflow-y: auto;
