@@ -45,7 +45,6 @@ if (document.readyState === 'loading') {
 
 import './auth-manager.js'; // Authentication with fonteditorwebsite
 import './ai-assistant.js';
-import './api-docs-generator.js';
 import './auto-compile-manager';
 import './cache-manager.js';
 import './canvas-plugin-manager';
