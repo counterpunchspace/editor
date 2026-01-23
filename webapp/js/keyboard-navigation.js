@@ -70,27 +70,11 @@
             const widthRatio = currentWidth / containerWidth;
             const heightRatio = currentHeight / availableHeight;
 
-            console.log('[KeyboardNav]', 'Editor activation check:', {
-                currentWidth,
-                currentHeight,
-                containerWidth,
-                availableHeight,
-                widthRatio: widthRatio.toFixed(3),
-                heightRatio: heightRatio.toFixed(3),
-                widthThreshold: config.widthThreshold,
-                heightThreshold: config.heightThreshold
-            });
-
             if (widthRatio < config.widthThreshold) {
                 // Expand width
                 const targetWidth = containerWidth * config.widthTarget;
                 const otherView = topRowViews[1 - viewIndex];
                 const otherWidth = containerWidth - targetWidth;
-
-                console.log('[KeyboardNav]', 'Expanding editor width:', {
-                    targetWidth,
-                    otherWidth
-                });
 
                 if (otherWidth >= 24) {
                     const totalWidth = targetWidth + otherWidth;
@@ -105,13 +89,6 @@
                 const targetHeight = availableHeight * config.heightTarget;
                 const bottomRow = document.querySelector('.bottom-row');
                 const bottomHeight = availableHeight - targetHeight;
-
-                console.log('[KeyboardNav]', 'Expanding editor height:', {
-                    targetHeight,
-                    bottomHeight,
-                    topFlex: (targetHeight / availableHeight).toFixed(3),
-                    bottomFlex: (bottomHeight / availableHeight).toFixed(3)
-                });
 
                 if (bottomHeight >= 24) {
                     topRow.style.flex = `${targetHeight / availableHeight}`;
@@ -558,6 +535,12 @@
      * Blur the console terminal cursor
      */
     function blurConsole() {
+        // Preserve scroll position when blurring (jQuery Terminal may auto-scroll on blur)
+        const terminalScroller = document.querySelector(
+            '#console-container .terminal-scroller'
+        );
+        const scrollBefore = terminalScroller ? terminalScroller.scrollTop : 0;
+
         // Find and blur the actual hidden input element that jQuery Terminal uses
         const terminalInput = document.querySelector(
             '.cmd textarea, .cmd input, #console-container .terminal'
@@ -574,6 +557,13 @@
             consoleContainer.contains(document.activeElement)
         ) {
             document.activeElement.blur();
+        }
+
+        // Restore scroll position after blur (in case jQuery Terminal scrolled)
+        if (terminalScroller) {
+            setTimeout(() => {
+                terminalScroller.scrollTop = scrollBefore;
+            }, 0);
         }
     }
 
@@ -651,6 +641,30 @@
      * @param {boolean} viaKeyboard - Whether the focus was triggered by keyboard shortcut
      */
     function focusView(viewId, viaKeyboard = false) {
+        // Capture console scroll position IMMEDIATELY if activating console
+        // (before anything else that might trigger scroll)
+        let consoleScrollBefore = 0;
+        let terminalScroller = null;
+        if (viewId === 'view-console') {
+            // Use scroll position from click handler if available (most accurate)
+            if (consoleScrollFromClick !== null) {
+                consoleScrollBefore = consoleScrollFromClick;
+                consoleScrollFromClick = null; // Reset for next time
+            } else {
+                terminalScroller = document.querySelector(
+                    '#console-container .terminal-scroller'
+                );
+                consoleScrollBefore = terminalScroller
+                    ? terminalScroller.scrollTop
+                    : 0;
+            }
+            if (!terminalScroller) {
+                terminalScroller = document.querySelector(
+                    '#console-container .terminal-scroller'
+                );
+            }
+        }
+
         // Prevent recursive calls
         if (isFocusing) {
             console.warn(
@@ -713,32 +727,76 @@
                     prompt.blur();
                 }
 
-                // Focus the terminal
-                setTimeout(() => {
-                    // Try to get terminal instance from window.term or directly from jQuery
-                    let term = window.term;
+                // Use the scroll position captured at the start of focusView
+                const scrollBefore = consoleScrollBefore;
 
-                    // If window.term doesn't exist, try to get it from the jQuery terminal plugin
-                    if (!term) {
-                        const consoleElement = $('#console-container');
-                        if (consoleElement.length && consoleElement.terminal) {
-                            term = consoleElement.terminal();
+                if (viaKeyboard) {
+                    // Keyboard activation - allow auto-scroll to bottom
+                    setTimeout(() => {
+                        // Try to get terminal instance from window.term or directly from jQuery
+                        let term = window.term;
+
+                        // If window.term doesn't exist, try to get it from the jQuery terminal plugin
+                        if (!term) {
+                            const consoleElement = $('#console-container');
+                            if (
+                                consoleElement.length &&
+                                consoleElement.terminal
+                            ) {
+                                term = consoleElement.terminal();
+                            }
                         }
+
+                        if (term && term.focus) {
+                            // Call terminal focus method (this scrolls to bottom)
+                            term.focus();
+                        }
+                    }, 50);
+                } else {
+                    // Mouse activation - prevent all scrolling on the terminal-scroller element
+                    let scrollBlocked = false;
+
+                    // Block any scroll events temporarily
+                    const blockScroll = (e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        if (terminalScroller) {
+                            terminalScroller.scrollTop = scrollBefore;
+                        }
+                    };
+
+                    if (terminalScroller) {
+                        terminalScroller.addEventListener(
+                            'scroll',
+                            blockScroll,
+                            true
+                        );
+                        scrollBlocked = true;
                     }
 
-                    if (term && term.focus) {
-                        // Call terminal focus method
-                        term.focus();
-                    }
+                    setTimeout(() => {
+                        // Focus input without scrolling
+                        const cmdInput = document.querySelector(
+                            '#console-container .cmd textarea'
+                        );
+                        if (cmdInput) {
+                            cmdInput.focus({ preventScroll: true });
+                        }
 
-                    // Always try to focus the input element directly as well
-                    const cmdInput = document.querySelector(
-                        '#console-container .cmd textarea'
-                    );
-                    if (cmdInput) {
-                        cmdInput.focus();
-                    }
-                }, 50);
+                        // Keep scroll blocker active longer to catch delayed scrolls
+                        setTimeout(() => {
+                            if (scrollBlocked && terminalScroller) {
+                                terminalScroller.removeEventListener(
+                                    'scroll',
+                                    blockScroll,
+                                    true
+                                );
+                                // Final restore
+                                terminalScroller.scrollTop = scrollBefore;
+                            }
+                        }, 500);
+                    }, 50);
+                }
             }
 
             // If activating assistant, focus and scroll
@@ -1001,6 +1059,9 @@
         }
     }
 
+    // Store console scroll position from click handler (before any other events fire)
+    let consoleScrollFromClick = null;
+
     /**
      * Handle view clicks for focus
      */
@@ -1008,6 +1069,8 @@
         // Find the closest parent view element
         const view = event.currentTarget;
         if (view && view.id) {
+            // Scroll position for console already captured in mousedown handler
+
             // Only focus if not already focused to avoid unnecessary operations
             if (!view.classList.contains('focused')) {
                 focusView(view.id);
@@ -1029,6 +1092,24 @@
         document.querySelectorAll('.view').forEach((view) => {
             view.addEventListener('click', handleViewClick);
         });
+
+        // Add special early capture for console clicks to grab scroll position
+        // BEFORE jQuery Terminal can react to the click
+        const consoleView = document.getElementById('view-console');
+        if (consoleView) {
+            consoleView.addEventListener(
+                'mousedown',
+                (event) => {
+                    const terminalScroller = document.querySelector(
+                        '#console-container .terminal-scroller'
+                    );
+                    consoleScrollFromClick = terminalScroller
+                        ? terminalScroller.scrollTop
+                        : 0;
+                },
+                true
+            ); // Use capture phase to run before jQuery Terminal
+        }
 
         console.log('[KeyboardNav]', 'Keyboard navigation initialized');
     }
