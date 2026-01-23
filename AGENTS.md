@@ -60,7 +60,7 @@ This is a WebAssembly-based font editor using Rust (fontc/babelfont) compiled to
 
 ## Testing & Verification
 
-- **Always verify TypeScript/JavaScript changes** by running `cd webapp && npm run build` after making edits and checking it for errors. Use only `npm run build` without ever changing ` 2>&1 | tail -40` suffixes.
+- **Always verify TypeScript/JavaScript changes** by running `cd webapp && npm run build` after making edits and checking it for errors. Use only clean `npm run build` command without ` 2>&1 | tail -40` etc suffixes.
 - The `get_errors` tool only checks VS Code's TypeScript language server, which may miss errors that webpack's stricter compilation catches
 - Look for "compiled successfully" or "ERROR" in the build output
 - Check exit code to ensure compilation succeeded
