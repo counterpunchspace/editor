@@ -38,6 +38,13 @@ const VIEW_SETTINGS = {
             modifiers: { cmd: true, shift: true },
             displayModifiers: ['⌘', '⇧'],
             secondaryBehavior: 'expandToTarget'
+        },
+        'view-files': {
+            // Files view
+            key: 'f',
+            modifiers: { cmd: true, shift: true },
+            displayModifiers: ['⌘', '⇧'],
+            secondaryBehavior: 'expandToTarget'
         }
     },
 
