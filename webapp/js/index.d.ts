@@ -82,7 +82,6 @@ declare global {
         };
 
         // From file-browser.js
-        _trackingInitPromise: Promise<void> | null;
         navigateToPath: (path: string) => Promise<void>;
         selectFile: (filePath: string) => void;
         initFileBrowser: () => Promise<void>;
@@ -96,6 +95,8 @@ declare global {
         handleFileUpload: (e: Event) => void;
         openFont: (path: string) => Promise<void>;
         downloadFile: (filePath: string, fileName: string) => Promise<void>;
+        selectDiskFolder: () => Promise<void>;
+        reEnableAccess: () => Promise<void>;
 
         // From font-compilation.js
         fontCompilation: FontCompilation;

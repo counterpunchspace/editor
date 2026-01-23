@@ -366,6 +366,27 @@
                     </div>
                     <div class="view-content">
                         <div id="file-browser">
+                            <div class="file-context-tabs">
+                                <!-- Tabs generated dynamically by file-browser.ts -->
+                            </div>
+                            <div id="permission-banner">
+                                <div class="permission-banner-content">
+                                    <span class="material-symbols-outlined permission-banner-icon">lock</span>
+                                    <span class="permission-banner-text">Folder access expired. Re-enable to continue.</span>
+                                    <button class="permission-banner-button" onclick="window.reEnableAccess()">Re-enable</button>
+                                </div>
+                            </div>
+                            <div id="open-folder-container">
+                                <div class="open-folder-content">
+                                    <span class="material-symbols-outlined open-folder-icon">folder_open</span>
+                                    <h2>Open Folder</h2>
+                                    <p>Select a folder from your computer to browse and edit fonts directly.</p>
+                                    <button class="open-folder-button" onclick="window.selectDiskFolder()">
+                                        <span class="material-symbols-outlined">folder_open</span>
+                                        Select Folder
+                                    </button>
+                                </div>
+                            </div>
                             <div id="file-tree"></div>
                         </div>
                     </div>

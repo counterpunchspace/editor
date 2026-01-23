@@ -1,9 +1,29 @@
 // File Browser for in-browser memfs
 // Shows the Pyodide file system in view 3
 
-let fileSystemCache = { currentPath: '/' };
+import {
+    FileSystemAdapter,
+    isFileSystemAccessSupported,
+    FileInfo
+} from './file-system-adapter';
+import { showCriticalError } from './critical-error-handler';
+import {
+    pluginRegistry,
+    FilesystemPlugin,
+    DiskPlugin
+} from './filesystem-plugins';
 
-import { createWorker, OPFSFileSystem } from 'opfs-worker';
+interface FileSystemState {
+    currentPath: string;
+    currentPlugin: FilesystemPlugin;
+    activeAdapter: FileSystemAdapter;
+}
+
+let fileSystemCache: FileSystemState = {
+    currentPath: '/',
+    currentPlugin: pluginRegistry.getDefault()!,
+    activeAdapter: pluginRegistry.getDefault()!.getAdapter()
+};
 
 function formatFileSize(bytes: number): string {
     if (bytes === 0) return '0 B';
@@ -81,7 +101,7 @@ function isSupportedFontFormat(name: string, isDir: boolean): boolean {
     return supportedExtensions.some((ext) => name.endsWith(ext));
 }
 
-async function openFont(path: string) {
+async function openFont(path: string, fileHandle?: FileSystemFileHandle) {
     if (!window.pyodide) {
         alert('Python not ready yet. Please wait a moment and try again.');
         return;
@@ -90,16 +110,19 @@ async function openFont(path: string) {
     try {
         const startTime = performance.now();
         console.log('[FileBrowser]', `Opening font: ${path}`);
-        let fs = await getOPFSRoot();
-        let contents = await fs.readFile(path);
 
-        // Ensure contents is a string
-        if (contents instanceof Uint8Array) {
-            contents = new TextDecoder().decode(contents);
-        }
+        let contents = await fileSystemCache.activeAdapter.readFile(path);
 
         // Determine file extension
         const extension = path.split('.').pop()?.toLowerCase() || '';
+
+        // For text-based formats (.babelfont is JSON), decode from UTF-8
+        // For binary formats (.glyphs, .ufo, etc.), keep as Uint8Array - Python/Rust handles format detection
+        if (extension === 'babelfont' && contents instanceof Uint8Array) {
+            contents = new TextDecoder('utf-8').decode(contents);
+        }
+        // All other formats: keep as Uint8Array for worker to handle
+
         let babelfontJson: string;
 
         // For non-.babelfont files, use Rust loader to convert
@@ -142,11 +165,12 @@ async function openFont(path: string) {
                     'message',
                     handleMessage
                 );
+
                 window.fontCompilation!.worker!.postMessage({
                     type: 'openFont',
                     id,
                     filename: path.split('/').pop() || path,
-                    contents
+                    contents // Uint8Array for binary formats, string for .babelfont
                 });
             });
 
@@ -155,8 +179,8 @@ async function openFont(path: string) {
                 `Successfully converted ${extension} to babelfont format`
             );
         } else {
-            // For .babelfont files, use contents directly
-            babelfontJson = contents;
+            // For .babelfont files, use contents directly (already a string)
+            babelfontJson = contents as string;
         }
 
         const endTime = performance.now();
@@ -167,15 +191,36 @@ async function openFont(path: string) {
             `Successfully opened font: ${path} (${duration}s)`
         );
 
-        // Clear tracking promise (for save button compatibility)
-        window._trackingInitPromise = Promise.resolve();
+        // Get file handle for disk plugin
+        let actualFileHandle = fileHandle;
+        if (
+            !actualFileHandle &&
+            fileSystemCache.currentPlugin.getId() === 'disk'
+        ) {
+            const diskPlugin = fileSystemCache.currentPlugin as DiskPlugin;
+            const adapter = diskPlugin.getAdapter() as any;
+            if (adapter.getFileHandle) {
+                actualFileHandle = await adapter.getFileHandle(path);
+            }
+        }
+
+        // Get directory handle for disk plugin
+        let directoryHandle: FileSystemDirectoryHandle | undefined;
+        if (fileSystemCache.currentPlugin.getId() === 'disk') {
+            const diskPlugin = fileSystemCache.currentPlugin as DiskPlugin;
+            const adapter = diskPlugin.getAdapter() as any;
+            directoryHandle = adapter.directoryHandle;
+        }
 
         // Dispatch fontLoaded event to font manager
         window.dispatchEvent(
             new CustomEvent('fontLoaded', {
                 detail: {
                     path: path,
-                    babelfontJson: babelfontJson
+                    babelfontJson: babelfontJson,
+                    sourcePlugin: fileSystemCache.currentPlugin,
+                    fileHandle: actualFileHandle,
+                    directoryHandle: directoryHandle
                 }
             })
         );
@@ -201,65 +246,138 @@ async function openFont(path: string) {
     }
 }
 
-interface FileInfo {
-    path: string;
-    is_dir: boolean;
-    size: number;
-    mtime: string;
-    handle?: FileSystemHandle;
+async function switchContext(pluginId: string) {
+    console.log('[FileBrowser]', `Switching to ${pluginId} context`);
+
+    const plugin = pluginRegistry.get(pluginId);
+    if (!plugin) {
+        console.error('[FileBrowser]', `Plugin '${pluginId}' not found`);
+        return;
+    }
+
+    // Deactivate old plugin
+    await fileSystemCache.currentPlugin.onDeactivate();
+
+    // Activate new plugin
+    fileSystemCache.currentPlugin = plugin;
+    fileSystemCache.activeAdapter = plugin.getAdapter();
+
+    // Update tab UI
+    document.querySelectorAll('.context-tab').forEach((tab) => {
+        tab.classList.remove('active');
+        if (tab.getAttribute('data-plugin-id') === pluginId) {
+            tab.classList.add('active');
+        }
+    });
+
+    // Try to activate plugin (may fail if setup needed)
+    const activated = await plugin.onActivate();
+    if (!activated) {
+        // Plugin needs setup (e.g., directory selection for disk)
+        if (pluginId === 'disk') {
+            const diskPlugin = plugin as DiskPlugin;
+            const isReady = await diskPlugin.isReady();
+            if (!isReady) {
+                showOpenFolderUI();
+                return;
+            }
+            // Has directory but permission denied
+            showPermissionBanner(true);
+            hideOpenFolderUI();
+        }
+        return;
+    }
+
+    // Plugin activated successfully
+    hideOpenFolderUI();
+    showPermissionBanner(false);
+
+    // Navigate to plugin's default path
+    const defaultPath = plugin.getDefaultPath();
+    fileSystemCache.currentPath = defaultPath;
+    await navigateToPath(defaultPath);
 }
 
-// OPFS Root handle cache
-let fs: OPFSFileSystem | null = null;
+async function selectDiskFolder() {
+    try {
+        const plugin = fileSystemCache.currentPlugin;
+        if (!(plugin instanceof DiskPlugin)) {
+            console.error('[FileBrowser]', 'Current plugin is not DiskPlugin');
+            return;
+        }
 
-async function getOPFSRoot(): Promise<OPFSFileSystem> {
-    if (!fs) {
-        fs = await createWorker();
+        const success = await plugin.showSetupUI();
+        if (success) {
+            hideOpenFolderUI();
+            fileSystemCache.currentPath = '/';
+            await navigateToPath('/');
+        }
+    } catch (error: any) {
+        console.error('[FileBrowser]', 'Error selecting folder:', error);
+        alert(`Error selecting folder: ${error.message}`);
     }
-    return fs;
+}
+
+async function reEnableAccess() {
+    try {
+        const plugin = fileSystemCache.currentPlugin;
+        if (!(plugin instanceof DiskPlugin)) {
+            console.error('[FileBrowser]', 'Current plugin is not DiskPlugin');
+            return;
+        }
+
+        const permission = await plugin.requestPermission();
+        if (permission) {
+            showPermissionBanner(false);
+            await refreshFileSystem();
+        } else {
+            alert('Permission not granted. Please try again.');
+        }
+    } catch (error: any) {
+        console.error('[FileBrowser]', 'Error requesting permission:', error);
+        alert(`Error requesting permission: ${error.message}`);
+    }
+}
+
+function showPermissionBanner(show: boolean) {
+    const banner = document.getElementById('permission-banner');
+    if (banner) {
+        banner.style.display = show ? 'flex' : 'none';
+    }
+}
+
+function showOpenFolderUI() {
+    const openFolderContainer = document.getElementById(
+        'open-folder-container'
+    );
+    const fileTree = document.getElementById('file-tree');
+
+    if (openFolderContainer) {
+        openFolderContainer.classList.add('visible');
+    }
+    if (fileTree) {
+        fileTree.style.display = 'none';
+    }
+}
+
+function hideOpenFolderUI() {
+    const openFolderContainer = document.getElementById(
+        'open-folder-container'
+    );
+    const fileTree = document.getElementById('file-tree');
+
+    if (openFolderContainer) {
+        openFolderContainer.classList.remove('visible');
+    }
+    if (fileTree) {
+        fileTree.style.display = 'block';
+    }
 }
 
 async function scanDirectory(
     path: string = '/'
 ): Promise<Record<string, FileInfo>> {
-    try {
-        const fs = await getOPFSRoot();
-        const dirHandle = await fs.readDir(path);
-        const items: Record<string, FileInfo> = {};
-
-        for (const dirEnt of dirHandle || []) {
-            const is_dir = dirEnt.kind === 'directory';
-            let size = 0;
-            let mtime = '';
-            let name = dirEnt.name;
-            const itemPath = path === '/' ? `/${name}` : `${path}/${name}`;
-
-            if (!is_dir) {
-                let full_path =
-                    path === '/' ? `/${dirEnt.name}` : `${path}/${dirEnt.name}`;
-                try {
-                    const stat = await fs?.stat(full_path);
-                    size = stat!.size;
-                    mtime = stat!.mtime;
-                } catch (e) {
-                    // Skip files we can't access
-                    continue;
-                }
-            }
-
-            items[name] = {
-                path: itemPath,
-                is_dir,
-                size,
-                mtime
-            };
-        }
-
-        return items;
-    } catch (error: any) {
-        console.error('[FileBrowser]', 'Error scanning directory:', error);
-        return {};
-    }
+    return await fileSystemCache.activeAdapter.scanDirectory(path);
 }
 
 async function createFolder() {
@@ -275,14 +393,9 @@ async function createFolder() {
     }
 
     try {
-        const fs = await getOPFSRoot();
-        await fs.mkdir(`${currentPath}/${folderName}`, { recursive: true });
-
-        console.log(
-            '[FileBrowser]',
-            `Created folder: ${currentPath}/${folderName}`
-        );
-
+        const newPath = `${currentPath}/${folderName}`;
+        await fileSystemCache.activeAdapter.createFolder(newPath);
+        console.log('[FileBrowser]', `Created folder: ${newPath}`);
         await refreshFileSystem();
     } catch (error: any) {
         console.error('[FileBrowser]', 'Error creating folder:', error);
@@ -292,20 +405,22 @@ async function createFolder() {
 
 async function downloadFile(filePath: string, fileName: string) {
     try {
-        // Parse the path to get directory and filename
-        const pathParts = filePath.replace(/^\/+/, '').split('/');
-        const fileNameFromPath = pathParts.pop() || fileName;
-        const dirPath = '/' + pathParts.join('/');
+        // Get the file content
+        const fileContent =
+            await fileSystemCache.activeAdapter.readFile(filePath);
 
-        // Get the file handle
-        const fs = await getOPFSRoot();
-        const file = (await fs.readFile(
-            filePath,
-            'binary'
-        )) as Uint8Array<ArrayBuffer>;
+        // Ensure we have Uint8Array for blob creation
+        let fileData: Uint8Array;
+        if (typeof fileContent === 'string') {
+            fileData = new TextEncoder().encode(fileContent);
+        } else {
+            fileData = new Uint8Array(fileContent as any);
+        }
 
         // Create blob and download
-        const fileBlob = new Blob([file], { type: 'application/octet-stream' });
+        const fileBlob = new Blob([fileData as any], {
+            type: 'application/octet-stream'
+        });
         const url = URL.createObjectURL(fileBlob);
         const a = document.createElement('a');
         a.href = url;
@@ -332,12 +447,8 @@ async function deleteItem(itemPath: string, itemName: string, isDir: boolean) {
     if (!confirm(confirmMsg)) return;
 
     try {
-        const fs = await getOPFSRoot();
-        // Remove the item using the full path
-        await fs.remove(itemPath, { recursive: isDir });
-
+        await fileSystemCache.activeAdapter.deleteItem(itemPath, isDir);
         console.log('[FileBrowser]', `Deleted: ${itemPath}`);
-
         await refreshFileSystem();
     } catch (error: any) {
         console.error('[FileBrowser]', 'Error deleting item:', error);
@@ -352,7 +463,6 @@ async function uploadFiles(
     const startTime = performance.now();
     const currentPath = directory || fileSystemCache.currentPath || '/';
     let uploadedCount = 0;
-    let folderCount = 0;
 
     for (const file of files) {
         try {
@@ -361,14 +471,13 @@ async function uploadFiles(
             const relativePath = file.webkitRelativePath || file.name;
             const fullpath = currentPath + '/' + relativePath;
 
-            // Get or create parent directories
-            const fs = await getOPFSRoot();
-            let contents = await file.arrayBuffer();
-            await fs.writeFile(fullpath, contents);
-            console.log(
-                '[FileBrowser]',
-                `Uploading file: ${currentPath}/${relativePath}`
+            // Write file using adapter
+            const contents = await file.arrayBuffer();
+            await fileSystemCache.activeAdapter.writeFile(
+                fullpath,
+                new Uint8Array(contents)
             );
+            console.log('[FileBrowser]', `Uploading file: ${fullpath}`);
             uploadedCount++;
         } catch (error: any) {
             console.error(
@@ -554,8 +663,15 @@ async function refreshFileSystem() {
     const currentPath = fileSystemCache.currentPath || '/';
     console.log('[FileBrowser]', 'Refreshing file system...');
 
-    // Clear cache
-    fileSystemCache = { currentPath };
+    // Preserve current plugin and adapter references
+    const currentPlugin = fileSystemCache.currentPlugin;
+    const activeAdapter = fileSystemCache.activeAdapter;
+
+    fileSystemCache = {
+        currentPath,
+        currentPlugin,
+        activeAdapter
+    };
 
     // Reload current directory
     await navigateToPath(currentPath);
@@ -566,7 +682,7 @@ async function refreshFileSystem() {
 // Initialize file browser when Pyodide is ready
 async function initFileBrowser() {
     try {
-        console.log('[FileBrowser]', 'Initializing file browser with OPFS...');
+        console.log('[FileBrowser]', 'Initializing file browser...');
 
         // Check if OPFS is supported
         if (!navigator.storage?.getDirectory) {
@@ -580,16 +696,73 @@ async function initFileBrowser() {
             return;
         }
 
-        // Initialize OPFS root
-        await getOPFSRoot();
+        // Check if File System Access API is supported for disk context
+        if (!isFileSystemAccessSupported()) {
+            console.warn(
+                '[FileBrowser]',
+                'File System Access API not supported - disk context disabled'
+            );
+            showCriticalError(
+                'File System Access Not Supported',
+                "Your browser doesn't support native file system access for the Disk context.",
+                'Please use Chrome 86+, Edge 86+, or Safari 15.2+ for full functionality. You can still use the Memory context for browser storage.'
+            );
+        }
 
-        // Create /user folder if it doesn't exist
-        const root = await getOPFSRoot();
-        await root.mkdir('/user', { recursive: true });
+        // Initialize disk plugin (restore directory handle)
+        const diskPlugin = pluginRegistry.get('disk') as DiskPlugin;
+        if (diskPlugin) {
+            const adapter = diskPlugin.getAdapter() as any;
+            if (adapter.initialize) {
+                await adapter.initialize();
+            }
+        }
 
-        // Navigate to /user folder
-        await navigateToPath('/user');
-        console.log('[FileBrowser]', 'File browser initialized with OPFS');
+        // Create /user folder in memory context if it doesn't exist
+        const memoryPlugin = pluginRegistry.get('memory');
+        if (memoryPlugin) {
+            await memoryPlugin.getAdapter().createFolder('/user');
+        }
+
+        // Generate context tabs dynamically from plugin registry
+        const tabsContainer = document.querySelector('.file-context-tabs');
+        if (tabsContainer) {
+            tabsContainer.innerHTML = ''; // Clear existing tabs
+
+            const plugins = pluginRegistry.getAll();
+            plugins.forEach((plugin) => {
+                const button = document.createElement('button');
+                button.className = 'context-tab';
+                button.setAttribute('data-plugin-id', plugin.getId());
+                button.textContent = `${plugin.getIcon()} ${plugin.getName()}`;
+
+                // Mark default plugin as active
+                if (plugin.getId() === pluginRegistry.getDefaultId()) {
+                    button.classList.add('active');
+                }
+
+                // Add click handler
+                button.addEventListener('click', async () => {
+                    await switchContext(plugin.getId());
+                });
+
+                tabsContainer.appendChild(button);
+            });
+
+            console.log(
+                '[FileBrowser]',
+                `Generated ${plugins.length} context tabs`
+            );
+        }
+
+        // Navigate to default plugin's default path
+        const defaultPlugin = pluginRegistry.getDefault();
+        if (defaultPlugin) {
+            const defaultPath = defaultPlugin.getDefaultPath();
+            await navigateToPath(defaultPath);
+        }
+
+        console.log('[FileBrowser]', 'File browser initialized');
     } catch (error: any) {
         console.error(
             '[FileBrowser]',
@@ -604,6 +777,12 @@ document.addEventListener('DOMContentLoaded', () => {
     setTimeout(initFileBrowser, 1500); // Wait a bit longer for Pyodide to be ready
 });
 
+// Wrapper function to get file handle from global map
+async function openFontWithHandle(path: string) {
+    const fileHandle = (window as any)._fileHandles?.[path];
+    await openFont(path, fileHandle);
+}
+
 // Export functions for global access
 window.refreshFileSystem = refreshFileSystem;
 window.navigateToPath = navigateToPath;
@@ -614,4 +793,8 @@ window.deleteItem = deleteItem;
 window.uploadFiles = uploadFiles;
 window.handleFileUpload = handleFileUpload;
 window.openFont = openFont;
+(window as any).openFontWithHandle = openFontWithHandle;
+(window as any).switchContext = switchContext;
+(window as any).selectDiskFolder = selectDiskFolder;
+(window as any).reEnableAccess = reEnableAccess;
 window.downloadFile = downloadFile;

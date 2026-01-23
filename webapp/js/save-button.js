@@ -98,54 +98,38 @@ class SaveButton {
         this.button.prop('disabled', true).text('Saving...');
 
         try {
-            // Check if tracking is ready, and wait if needed
-            const trackingCheckStart = performance.now();
-            const trackingReady = await window.pyodide.runPythonAsync(`
-IsTrackingReady()
-            `);
-            console.log(
-                '[SaveButton]',
-                `⏱️ Tracking check: ${(performance.now() - trackingCheckStart).toFixed(0)}ms`
-            );
-
-            if (!trackingReady) {
-                console.log(
-                    '[SaveButton]',
-                    'Waiting for dirty tracking to initialize...'
-                );
-                this.button.text('Preparing...');
-
-                // Wait for tracking init promise if available
-                if (window._trackingInitPromise) {
-                    await window._trackingInitPromise;
-                    console.log(
-                        '[SaveButton]',
-                        'Tracking ready, proceeding with save'
-                    );
-                    this.button.text('Saving...');
-                }
+            // Get current font
+            const currentFont = window.fontManager?.currentFont;
+            if (!currentFont) {
+                throw new Error('No font loaded');
             }
 
-            // Simply call font.save() - callbacks will handle everything else
-            const pythonSaveStart = performance.now();
-            console.log('[SaveButton]', '🔵 Calling Python font.save()...');
-            const result = await window.pyodide.runPythonAsync(`
-# Get font and call save - this triggers all registered callbacks
-font = CurrentFont()
-if font:
-    font.save()
-    "success"  # Return a truthy value
-else:
-    None
-            `);
-            const pythonSaveDuration = performance.now() - pythonSaveStart;
+            const pluginId = currentFont.sourcePlugin.getId();
             console.log(
                 '[SaveButton]',
-                `⏱️ Python save returned: ${pythonSaveDuration.toFixed(0)}ms`
+                `${currentFont.sourcePlugin.getIcon()} Saving to ${pluginId}...`
+            );
+            const saveOperationStart = performance.now();
+
+            // Sync JSON from object model first
+            currentFont.syncJsonFromModel();
+
+            // Save via plugin
+            await currentFont.save();
+
+            const duration = (performance.now() - saveOperationStart) / 1000;
+            console.log(
+                '[SaveButton]',
+                `✅ Save completed in ${duration.toFixed(2)}s`
             );
 
-            if (!result) {
-                throw new Error('No font open or save failed');
+            // Trigger callbacks
+            if (window._fontSaveCallbacks) {
+                window._fontSaveCallbacks.afterSave?.(
+                    window.fontManager.currentFontId,
+                    currentFont.path,
+                    duration
+                );
             }
 
             // Success - callbacks have already handled UI updates

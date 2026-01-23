@@ -2505,31 +2505,39 @@ export class Font extends ModelBase {
      * Serialize the font back to JSON string
      */
     toJSONString(): string {
-        return JSON.stringify(this._data, (key, value) => {
-            // When serializing shape objects, filter out normalizer wrapper properties
-            // The normalizer adds { Path: {...}, nodes: [...], isInterpolated?: bool }
-            // but we only want { Path: {...} } or { Component: {...} } in the JSON
-            if (value && typeof value === 'object' && !Array.isArray(value)) {
-                // Check if this looks like a normalizer wrapper for a Path shape
-                // It will have BOTH 'Path' and 'nodes' at the same level (duplicate property)
+        return JSON.stringify(
+            this._data,
+            (key, value) => {
+                // When serializing shape objects, filter out normalizer wrapper properties
+                // The normalizer adds { Path: {...}, nodes: [...], isInterpolated?: bool }
+                // but we only want { Path: {...} } or { Component: {...} } in the JSON
                 if (
-                    'Path' in value &&
-                    'nodes' in value &&
-                    !('Component' in value)
+                    value &&
+                    typeof value === 'object' &&
+                    !Array.isArray(value)
                 ) {
-                    return { Path: value.Path };
+                    // Check if this looks like a normalizer wrapper for a Path shape
+                    // It will have BOTH 'Path' and 'nodes' at the same level (duplicate property)
+                    if (
+                        'Path' in value &&
+                        'nodes' in value &&
+                        !('Component' in value)
+                    ) {
+                        return { Path: value.Path };
+                    }
+                    // Check if this looks like a normalizer wrapper for a Component shape
+                    if (
+                        'Component' in value &&
+                        ('isInterpolated' in value || 'nodes' in value) &&
+                        !('Path' in value)
+                    ) {
+                        return { Component: value.Component };
+                    }
                 }
-                // Check if this looks like a normalizer wrapper for a Component shape
-                if (
-                    'Component' in value &&
-                    ('isInterpolated' in value || 'nodes' in value) &&
-                    !('Path' in value)
-                ) {
-                    return { Component: value.Component };
-                }
-            }
-            return value;
-        });
+                return value;
+            },
+            2
+        ); // Format with 2-space indentation for readable git diffs
     }
 
     /**

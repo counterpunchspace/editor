@@ -1,5 +1,8 @@
 # Unreleased
 
+- **Filesystem Plugin Architecture**: Extensible plugin system for file access (MemoryPlugin for OPFS browser storage, DiskPlugin for File System Access API). Dynamic UI generation from plugin metadata (icons, names). Unified save flow through plugin adapters. Enables future CloudPlugin, GitPlugin, etc. without core code changes.
+- **Direct Disk Access**: File System Access API implementation allows opening/saving fonts directly from local filesystem via directory picker. File handles cached in IndexedDB for persistence. Binary mode consistency across OPFS and disk contexts.
+- **JSON Formatting**: .babelfont files now save with 2-space indentation for readable git diffs instead of single-line output.
 - **Viewport Preservation on Resize**: Canvas resize now preserves viewport center and applies dampened zoom adjustment (30% less aggressive) based on dominant dimension change, improving UX during window resizes.
 - **AI Chat Persistence**: Last active chat ID now stored in localStorage and loaded on startup instead of chronologically last chat. Provides continuity when returning to the editor.
 - **Extended Python packages**: Lazy-load `numpy`, `matplotlib`, `pandas` only when they're needed to speed up editor startup. Also fixed a memory leak after `matplotlib` usage that speeds up consecutive `matplotlib` runs.

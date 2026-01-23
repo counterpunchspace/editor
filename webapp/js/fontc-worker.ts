@@ -202,7 +202,40 @@ self.onmessage = async (event) => {
 
         try {
             console.log(`[Fontc Worker] Opening font file: ${filename}`);
-            const babelfontJson = open_font_file(filename, contents);
+            console.log(
+                `[Fontc Worker] Contents type: ${typeof contents}, isUint8Array: ${contents instanceof Uint8Array}, length: ${contents.length || contents.byteLength || 'unknown'}`
+            );
+
+            // Convert Uint8Array to string for WASM
+            // Both OPFS and disk now return Uint8Array consistently
+            // Use Latin-1 encoding (1:1 byte mapping) to preserve exact bytes
+            // Rust will detect format and decode properly (handles both UTF-8 text and binary plist)
+            if (!(contents instanceof Uint8Array)) {
+                console.error(
+                    `[Fontc Worker] Expected Uint8Array, got:`,
+                    typeof contents
+                );
+                throw new Error(`Expected Uint8Array, got ${typeof contents}`);
+            }
+
+            const contentsStr = Array.from(contents, (byte) =>
+                String.fromCharCode(byte)
+            ).join('');
+            console.log(
+                `[Fontc Worker] Converted ${contents.length} bytes to Latin-1 string`
+            );
+            console.log(
+                `[Fontc Worker] First 100 bytes:`,
+                Array.from(contents.slice(0, 100))
+                    .map((b) => b.toString(16).padStart(2, '0'))
+                    .join(' ')
+            );
+            console.log(
+                `[Fontc Worker] First 100 chars of string:`,
+                contentsStr.substring(0, 100)
+            );
+
+            const babelfontJson = open_font_file(filename, contentsStr);
             console.log(
                 `[Fontc Worker] Successfully converted to babelfont JSON (${babelfontJson.length} bytes)`
             );

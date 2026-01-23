@@ -14,6 +14,7 @@ import type { DesignspaceLocation } from './locations';
 import { Font, Path } from './babelfont-model';
 import { ensureWasmInitialized } from './wasm-init';
 import { sidebarErrorDisplay } from './sidebar-error-display';
+import type { FilesystemPlugin } from './filesystem-plugins';
 
 export type GlyphData = {
     glyphName: string;
@@ -38,10 +39,22 @@ class OpenedFont {
     name: string;
     path: string;
     dirty: boolean;
+    sourcePlugin: FilesystemPlugin;
+    fileHandle?: FileSystemFileHandle;
+    directoryHandle?: FileSystemDirectoryHandle;
 
-    constructor(babelfontJson: string, path: string) {
+    constructor(
+        babelfontJson: string,
+        path: string,
+        sourcePlugin: FilesystemPlugin,
+        fileHandle?: FileSystemFileHandle,
+        directoryHandle?: FileSystemDirectoryHandle
+    ) {
         this.babelfontJson = babelfontJson;
         this.babelfontData = JSON.parse(babelfontJson);
+        this.sourcePlugin = sourcePlugin;
+        this.fileHandle = fileHandle;
+        this.directoryHandle = directoryHandle;
 
         // Normalize layer master references from dict format to _master field
         // Babelfont format stores: master: { DefaultForMaster: "id" } or { AssociatedWithMaster: "id" }
@@ -222,6 +235,63 @@ class OpenedFont {
             }
         }
     }
+
+    /**
+     * Save font using the source plugin's adapter
+     */
+    async save(): Promise<void> {
+        const pluginId = this.sourcePlugin.getId();
+        console.log(
+            `[FontManager]`,
+            `${this.sourcePlugin.getIcon()} Saving font to ${pluginId}: ${this.path}`
+        );
+
+        // For disk plugin, need file handle and permission check
+        if (pluginId === 'disk') {
+            if (!this.fileHandle) {
+                throw new Error('No file handle available for disk save');
+            }
+
+            // Check permission
+            const permission = await (this.fileHandle as any).queryPermission({
+                mode: 'readwrite'
+            });
+            if (permission !== 'granted') {
+                const requestedPermission = await (
+                    this.fileHandle as any
+                ).requestPermission({ mode: 'readwrite' });
+                if (requestedPermission !== 'granted') {
+                    throw new Error('Write permission not granted');
+                }
+            }
+
+            // Write to file
+            try {
+                const writable = await this.fileHandle.createWritable();
+                await writable.write(this.babelfontJson);
+                await writable.close();
+                console.log(
+                    '[FontManager]',
+                    `✅ Saved font to disk: ${this.path}`
+                );
+            } catch (error) {
+                if (error instanceof Error && error.name === 'SecurityError') {
+                    throw new Error(
+                        'Permission denied. Please re-enable folder access.'
+                    );
+                }
+                throw error;
+            }
+        } else {
+            // For other plugins, use adapter's writeFile method
+            const adapter = this.sourcePlugin.getAdapter();
+            await adapter.writeFile(this.path, this.babelfontJson);
+            console.log(
+                '[FontManager]',
+                `✅ Saved font to ${pluginId}: ${this.path}`
+            );
+        }
+    }
 }
 
 class FontManager {
@@ -297,8 +367,10 @@ class FontManager {
             this.openedFonts.forEach((openedFont, fontId) => {
                 const option = document.createElement('option');
                 option.value = fontId;
-                option.textContent = openedFont.name;
-                option.title = openedFont.path; // Show path on hover
+                const sourceIcon = openedFont.sourcePlugin.getIcon() + ' ';
+                const sourceName = openedFont.sourcePlugin.getName();
+                option.textContent = sourceIcon + openedFont.name;
+                option.title = `${openedFont.path} (${sourceName})`; // Show path and context on hover
 
                 // Select the current font
                 if (fontId === this.currentFontId) {
@@ -335,10 +407,29 @@ class FontManager {
      * Compiles the typing font immediately
      *
      * @param {string} babelfontJson - The .babelfont JSON string
+     * @param {string} path - File path
+     * @param {FilesystemPlugin} sourcePlugin - The filesystem plugin used to load this font
+     * @param {FileSystemFileHandle} fileHandle - Optional file handle (for disk plugin)
+     * @param {FileSystemDirectoryHandle} directoryHandle - Optional directory handle (for disk plugin)
      */
-    async loadFont(babelfontJson: string, path: string = '') {
-        console.log('[FontManager]', '🔧 FontManager: Loading font...');
-        let newFont = new OpenedFont(babelfontJson, path);
+    async loadFont(
+        babelfontJson: string,
+        path: string,
+        sourcePlugin: FilesystemPlugin,
+        fileHandle?: FileSystemFileHandle,
+        directoryHandle?: FileSystemDirectoryHandle
+    ) {
+        console.log(
+            '[FontManager]',
+            `🔧 Loading font from ${sourcePlugin.getName()}...`
+        );
+        let newFont = new OpenedFont(
+            babelfontJson,
+            path,
+            sourcePlugin,
+            fileHandle,
+            directoryHandle
+        );
         let newid = `font-${Date.now()}`;
         this.openedFonts.set(newid, newFont);
         this.currentFontId = newid;
@@ -1012,13 +1103,20 @@ window.addEventListener('fontLoaded', async (event: Event) => {
         // Get the babelfont JSON from the event
         const detail = (event as CustomEvent).detail;
 
+        const pluginName = detail.sourcePlugin?.getName() || 'unknown';
         console.log(
             '[FontManager]',
-            `📦 Received font JSON (${detail.babelfontJson.length} bytes)`
+            `📦 Received font JSON (${detail.babelfontJson.length} bytes from ${pluginName})`
         );
 
         // Load font into font manager
-        await fontManager!.loadFont(detail.babelfontJson, detail.path);
+        await fontManager!.loadFont(
+            detail.babelfontJson,
+            detail.path,
+            detail.sourcePlugin,
+            detail.fileHandle,
+            detail.directoryHandle
+        );
 
         // Update dropdown
         await fontManager!.onOpened();
