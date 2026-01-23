@@ -1,5 +1,4 @@
 import './wasm-init'; // Initialize WASM module
-// import './loading-animation.js';  // Removed - animation disabled
 import './tab-lifecycle.js';
 import './mcp-transport';
 import './critical-error-handler';

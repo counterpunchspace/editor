@@ -219,11 +219,6 @@
             return false;
         }
 
-        // Skip the loading animation canvas
-        if (canvas.id === 'loading-animation-canvas') {
-            return false;
-        }
-
         // Skip the glyph editor canvas
         if (canvas.closest('#glyph-canvas-container')) {
             return false;

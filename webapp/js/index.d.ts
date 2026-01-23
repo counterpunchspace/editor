@@ -131,12 +131,8 @@ declare global {
         // From keyboard-navigation.js
         focusView: (viewId: string) => void;
 
-        // From loading-animation.js
-        updateLoadingStatus: (status: string, isReady: boolean) => void;
-        WarpSpeedAnimation: {
-            requestStop: (onCompleteHook: () => void) => void;
-            instance: () => any; // WarpSpeedAnimation instance
-        };
+        // From bootstrap.ts (loading status)
+        updateLoadingStatus: (message: string, isReady?: boolean) => void;
 
         // From matplotlib-handler.js
         showMatplotlibPlot: (element: HTMLElement) => void;

@@ -1,6 +1,7 @@
 const path = require('path');
 const HtmlWebpackPlugin = require('html-webpack-plugin');
 const CopyWebpackPlugin = require('copy-webpack-plugin');
+const UnusedWebpackPlugin = require('unused-webpack-plugin');
 const { execSync } = require('child_process');
 
 module.exports = {
@@ -15,6 +16,11 @@ module.exports = {
         clean: true
     },
     plugins: [
+        new UnusedWebpackPlugin({
+            directories: [path.join(__dirname, 'js')],
+            exclude: ['*.test.js', '*.d.ts'],
+            root: __dirname
+        }),
         new HtmlWebpackPlugin({
             template: './index.html',
             inject: 'body',
