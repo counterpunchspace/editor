@@ -97,22 +97,12 @@ class CurvatureCombPlugin(BaseCanvasPlugin):
             ctx: Canvas 2D rendering context
             viewport_manager: Viewport manager for coordinate transformations
         """
-        if self.DEBUG:
-            console.log(f"[CurvatureComb] draw_below called for glyph: {glyph_name}")
-        
         if not layer_data:
-            if self.DEBUG:
-                console.log(f"[CurvatureComb] No layer_data provided")
             return
             
         shapes = layer_data.get('shapes', [])
         if not shapes:
-            if self.DEBUG:
-                console.log(f"[CurvatureComb] No shapes in layer_data")
             return
-        
-        if self.DEBUG:
-            console.log(f"[CurvatureComb] Processing {len(shapes)} shapes")
         
         ctx.save()
         
@@ -145,8 +135,6 @@ class CurvatureCombPlugin(BaseCanvasPlugin):
                     self._draw_curve_data(curve_data, ctx, min_curvature, max_curvature)
                     total_curve_count += 1
         
-        if self.DEBUG:
-            console.log(f"[CurvatureComb] Total cubic curves processed: {total_curve_count}")
         ctx.restore()
     
     def _collect_curve_data(self, shape):
@@ -176,7 +164,7 @@ class CurvatureCombPlugin(BaseCanvasPlugin):
                     i += 1
                     continue
                     
-                node_type = node.get('type', 'l')
+                node_type = node.get('nodetype', 'l')
                 
                 # Look ahead for cubic bezier curves
                 next1 = nodes[(i + 1) % len(nodes)]
@@ -189,9 +177,9 @@ class CurvatureCombPlugin(BaseCanvasPlugin):
                 
                 # Check if this is a cubic bezier
                 if (node_type in ('c', 'cs', 'l', 'ls') and 
-                    next1.get('type') == 'o' and 
-                    next2.get('type') == 'o' and 
-                    next3.get('type') in ('c', 'cs', 'l', 'ls')):
+                    next1.get('nodetype') == 'o' and 
+                    next2.get('nodetype') == 'o' and 
+                    next3.get('nodetype') in ('c', 'cs', 'l', 'ls')):
                     
                     if not all('x' in n and 'y' in n for n in [node, next1, next2, next3]):
                         i += 1
@@ -238,7 +226,7 @@ class CurvatureCombPlugin(BaseCanvasPlugin):
             console.log(f"[CurvatureComb] Nodes found: {len(nodes) if nodes else 0}")
             if nodes and len(nodes) > 0:
                 console.log(f"[CurvatureComb] First node: {nodes[0]}")
-                console.log(f"[CurvatureComb] Node types: {[n.get('type', '?') for n in nodes[:5]]}")
+                console.log(f"[CurvatureComb] Node types: {[n.get('nodetype', '?') for n in nodes[:5]]}")
         
         if not nodes or len(nodes) < 2:
             if self.DEBUG:
@@ -257,7 +245,7 @@ class CurvatureCombPlugin(BaseCanvasPlugin):
                     i += 1
                     continue
                     
-                node_type = node.get('type', 'l')
+                node_type = node.get('nodetype', 'l')
                 
                 # Look ahead for cubic bezier curves (on-curve followed by two off-curve)
                 # Use modulo to wrap around for closed paths
@@ -272,9 +260,9 @@ class CurvatureCombPlugin(BaseCanvasPlugin):
                 
                 # Check if this is a cubic bezier: on-curve, off-curve, off-curve, on-curve
                 if (node_type in ('c', 'cs', 'l', 'ls') and 
-                    next1.get('type') == 'o' and 
-                    next2.get('type') == 'o' and 
-                    next3.get('type') in ('c', 'cs', 'l', 'ls')):
+                    next1.get('nodetype') == 'o' and 
+                    next2.get('nodetype') == 'o' and 
+                    next3.get('nodetype') in ('c', 'cs', 'l', 'ls')):
                     
                     # Verify all nodes have x and y coordinates
                     if not all('x' in n and 'y' in n for n in [node, next1, next2, next3]):

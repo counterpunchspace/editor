@@ -265,7 +265,7 @@ class ExampleCanvasPlugin(BaseCanvasPlugin):
             # Find first on-curve point to start
             start_idx = 0
             for i, node in enumerate(nodes):
-                if node.get('type') in ('c', 'cs', 'l', 'ls'):
+                if node.get('nodetype') in ('c', 'cs', 'l', 'ls'):
                     start_idx = i
                     break
             
@@ -282,12 +282,12 @@ class ExampleCanvasPlugin(BaseCanvasPlugin):
                 next3_idx = (start_idx + i + 3) % len(nodes)
                 
                 node = nodes[idx]
-                node_type = node.get('type', 'l')
+                node_type = node.get('nodetype', 'l')
                 
                 # Check if next points are off-curve (cubic bezier)
                 if next_idx < len(nodes):
                     next_node = nodes[next_idx]
-                    next_type = next_node.get('type', 'l')
+                    next_type = next_node.get('nodetype', 'l')
                     
                     if next_type == 'o':  # Next is off-curve (control point)
                         # This is a cubic bezier curve
