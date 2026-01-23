@@ -482,6 +482,9 @@ kbd + kbd {
     border-right: 1px solid var(--border-primary);
     padding: 8px 0 0 0;
     justify-content: flex-end; /* Align to top when rotated (flex-end because of 180deg rotation) */
+    position: relative;
+    top: 4px;
+    left: -2px;
 }
 
 .view-fontinfo.collapsed-width .view-title-bar .view-title-left {
