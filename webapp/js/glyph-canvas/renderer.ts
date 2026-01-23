@@ -1354,9 +1354,10 @@ export class GlyphCanvasRenderer {
                     this.applyInverseComponentTransform(); // Cancel out component transform
                     this.ctx.scale(1, -1); // Flip Y axis to fix upside-down text
                     this.ctx.font = `${fontSize}px Inter, -apple-system, system-ui, sans-serif`;
+                    const labelOpacity = isSelected ? 1.0 : 0.5;
                     this.ctx.fillStyle = isDarkTheme
-                        ? 'rgba(255, 255, 255, 0.8)'
-                        : 'rgba(0, 0, 0, 0.8)';
+                        ? `rgba(255, 255, 255, ${labelOpacity})`
+                        : `rgba(0, 0, 0, ${labelOpacity})`;
                     this.ctx.fillText(
                         name,
                         anchorSize + 4.5 * invScale,
