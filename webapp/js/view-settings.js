@@ -53,8 +53,8 @@ const VIEW_SETTINGS = {
     activation: {
         // Secondary views (bottom row) - expand if smaller than threshold
         secondary: {
-            heightThreshold: 0.25, // If height < 25% of container
-            heightTarget: 0.5, // Expand to 50% height
+            heightThreshold: 0.1, // If height < 10% of container
+            heightTarget: 0.33, // Expand to 33% height
             widthTarget: 0.33 // Expand to 33% width on secondary activation
         },
         // Font info view - expand by width

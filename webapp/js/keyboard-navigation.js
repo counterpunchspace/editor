@@ -290,52 +290,54 @@
                     }
                 }
             } else if (isBottomRow) {
-                // Bottom row secondary views - expand height and width to target if smaller
-                const config = settings.activation.secondary;
+                // Bottom row secondary views - expand height and width to resize target
+                const resizeConfig = settings.resize[viewId];
                 const bottomRow = view.closest('.bottom-row');
                 const topRow = document.querySelector('.top-row');
                 const views = Array.from(bottomRow.querySelectorAll('.view'));
                 const viewIndex = views.indexOf(view);
 
-                // Expand height if smaller than target
-                const currentHeight = bottomRow.offsetHeight;
-                const targetHeight = availableHeight * config.heightTarget;
+                if (resizeConfig) {
+                    // Expand height if smaller than resize target
+                    const currentHeight = bottomRow.offsetHeight;
+                    const targetHeight = availableHeight * resizeConfig.height;
 
-                if (currentHeight < targetHeight) {
-                    const topHeight = availableHeight - targetHeight;
+                    if (currentHeight < targetHeight) {
+                        const topHeight = availableHeight - targetHeight;
 
-                    if (topHeight >= 200) {
-                        topRow.style.flex = `${topHeight / availableHeight}`;
-                        bottomRow.style.flex = `${targetHeight / availableHeight}`;
+                        if (topHeight >= 200) {
+                            topRow.style.flex = `${topHeight / availableHeight}`;
+                            bottomRow.style.flex = `${targetHeight / availableHeight}`;
+                        }
                     }
-                }
 
-                // Expand width if smaller than target
-                const currentWidth = view.offsetWidth;
-                const targetWidth = containerWidth * config.widthTarget;
+                    // Expand width if smaller than resize target
+                    const currentWidth = view.offsetWidth;
+                    const targetWidth = containerWidth * resizeConfig.width;
 
-                if (currentWidth < targetWidth && views.length > 1) {
-                    const remainingWidth = containerWidth - targetWidth;
-                    const otherViewsCount = views.length - 1;
-                    const remainingWidthPerView =
-                        remainingWidth / otherViewsCount;
+                    if (currentWidth < targetWidth && views.length > 1) {
+                        const remainingWidth = containerWidth - targetWidth;
+                        const otherViewsCount = views.length - 1;
+                        const remainingWidthPerView =
+                            remainingWidth / otherViewsCount;
 
-                    if (remainingWidthPerView >= 100) {
-                        const widths = {};
-                        views.forEach((v, i) => {
-                            widths[i] =
-                                i === viewIndex
-                                    ? targetWidth
-                                    : remainingWidthPerView;
-                        });
+                        if (remainingWidthPerView >= 100) {
+                            const widths = {};
+                            views.forEach((v, i) => {
+                                widths[i] =
+                                    i === viewIndex
+                                        ? targetWidth
+                                        : remainingWidthPerView;
+                            });
 
-                        const totalWidth = Object.values(widths).reduce(
-                            (sum, w) => sum + w,
-                            0
-                        );
-                        views.forEach((v, i) => {
-                            v.style.flex = `${widths[i] / totalWidth}`;
-                        });
+                            const totalWidth = Object.values(widths).reduce(
+                                (sum, w) => sum + w,
+                                0
+                            );
+                            views.forEach((v, i) => {
+                                v.style.flex = `${widths[i] / totalWidth}`;
+                            });
+                        }
                     }
                 }
             }
