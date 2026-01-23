@@ -13,6 +13,7 @@ This is a WebAssembly-based font editor using Rust (fontc/babelfont) compiled to
 - Don't write spaghetti code
 - Clean up code that isn't needed any more, like excessive log statements or temporary documents
 - For seach and replace activity, prefer command-line commands whenever possible
+- Run command line arguments such that the user can see the output, don't route the output into unreadable pipelines
 
 ### JavaScript
 
