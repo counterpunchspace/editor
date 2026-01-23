@@ -77,6 +77,21 @@ export abstract class FilesystemPlugin {
     getDefaultPath(): string {
         return '/'; // Default: root
     }
+
+    /**
+     * Whether this plugin can be closed (e.g., disconnect folder access)
+     */
+    canClose(): boolean {
+        return false; // Default: cannot be closed
+    }
+
+    /**
+     * Close/disconnect this plugin's access (e.g., clear folder handle)
+     * Only called if canClose() returns true
+     */
+    async close(): Promise<void> {
+        // Default: no-op
+    }
 }
 
 /**
@@ -178,6 +193,16 @@ export class DiskPlugin extends FilesystemPlugin {
     async requestPermission(): Promise<boolean> {
         const permission = await this.nativeAdapter.requestPermission();
         return permission === 'granted';
+    }
+
+    canClose(): boolean {
+        return true; // Disk plugin can be closed to select different folder
+    }
+
+    /** Close access to current disk folder */
+    async close(): Promise<void> {
+        await this.nativeAdapter.clearDirectory();
+        console.log('[DiskPlugin]', 'Folder access closed');
     }
 
     /** Clear the selected directory */

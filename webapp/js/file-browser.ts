@@ -292,6 +292,24 @@ async function switchContext(pluginId: string) {
     hideOpenFolderUI();
     showPermissionBanner(false);
 
+    // Show/hide close button based on plugin capabilities
+    console.log(
+        '[FileBrowser]',
+        'Checking close button visibility - canClose:',
+        plugin.canClose()
+    );
+    if (plugin.canClose()) {
+        const isReady = await plugin.isReady();
+        console.log('[FileBrowser]', 'Plugin isReady:', isReady);
+        if (isReady) {
+            showCloseFolderButton();
+        } else {
+            hideCloseFolderButton();
+        }
+    } else {
+        hideCloseFolderButton();
+    }
+
     // Navigate to plugin's default path
     const defaultPath = plugin.getDefaultPath();
     fileSystemCache.currentPath = defaultPath;
@@ -315,6 +333,58 @@ async function selectDiskFolder() {
     } catch (error: any) {
         console.error('[FileBrowser]', 'Error selecting folder:', error);
         alert(`Error selecting folder: ${error.message}`);
+    }
+}
+
+// Close folder access (disk plugin only)
+async function closeFolderAccess() {
+    const { currentPlugin } = fileSystemCache;
+
+    if (!currentPlugin || !currentPlugin.canClose()) {
+        console.warn('[FileBrowser]', 'Current plugin cannot be closed');
+        return;
+    }
+
+    try {
+        console.log('[FileBrowser]', 'Closing folder access...');
+
+        // Close plugin (clears directory handle)
+        await currentPlugin.close();
+
+        // Update UI
+        showOpenFolderUI();
+        hideCloseFolderButton();
+
+        console.log('[FileBrowser]', 'Folder access closed');
+    } catch (error: any) {
+        console.error('[FileBrowser]', 'Error closing folder access:', error);
+        alert(`Error closing folder: ${error.message}`);
+    }
+}
+
+function showCloseFolderButton() {
+    const button = document.getElementById('close-folder-button');
+    console.log(
+        '[FileBrowser]',
+        'showCloseFolderButton - button exists:',
+        !!button
+    );
+    if (button) {
+        button.style.display = 'flex';
+        console.log('[FileBrowser]', 'Close button display set to flex');
+    }
+}
+
+function hideCloseFolderButton() {
+    const button = document.getElementById('close-folder-button');
+    console.log(
+        '[FileBrowser]',
+        'hideCloseFolderButton - button exists:',
+        !!button
+    );
+    if (button) {
+        button.style.display = 'none';
+        console.log('[FileBrowser]', 'Close button display set to none');
     }
 }
 
@@ -755,11 +825,31 @@ async function initFileBrowser() {
             );
         }
 
+        // Set up close button click handler
+        const closeButton = document.getElementById('close-folder-button');
+        if (closeButton) {
+            closeButton.addEventListener('click', async () => {
+                await closeFolderAccess();
+            });
+        }
+
         // Navigate to default plugin's default path
         const defaultPlugin = pluginRegistry.getDefault();
         if (defaultPlugin) {
             const defaultPath = defaultPlugin.getDefaultPath();
             await navigateToPath(defaultPath);
+
+            // Show/hide close button based on default plugin capabilities
+            if (defaultPlugin.canClose()) {
+                const isReady = await defaultPlugin.isReady();
+                if (isReady) {
+                    showCloseFolderButton();
+                } else {
+                    hideCloseFolderButton();
+                }
+            } else {
+                hideCloseFolderButton();
+            }
         }
 
         console.log('[FileBrowser]', 'File browser initialized');
@@ -797,4 +887,5 @@ window.openFont = openFont;
 (window as any).switchContext = switchContext;
 (window as any).selectDiskFolder = selectDiskFolder;
 (window as any).reEnableAccess = reEnableAccess;
+(window as any).closeFolderAccess = closeFolderAccess;
 window.downloadFile = downloadFile;
