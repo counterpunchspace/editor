@@ -3,12 +3,12 @@
     "description": "Manifest of example fonts to preload into /user folder on app initialization",
     "examples": [
         {
-            "source": "examples/Fustat.babelfont",
-            "destination": "/user/Fustat.babelfont"
+            "source": "examples/Fustat.glyphs",
+            "destination": "/user/Fustat.glyphs"
         },
         {
-            "source": "examples/NestedComponents.babelfont",
-            "destination": "/user/NestedComponents.babelfont"
+            "source": "examples/YanoneKaffeesatz.glyphs",
+            "destination": "/user/YanoneKaffeesatz.glyphs"
         }
     ]
 }
