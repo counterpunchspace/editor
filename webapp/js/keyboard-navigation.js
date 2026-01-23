@@ -1061,6 +1061,18 @@
                 return;
             }
         }
+
+        // Cmd+Alt+N - Start new chat (only when assistant view is focused)
+        if (cmdKey && event.altKey && key === 'n') {
+            if (currentFocusedView === 'view-assistant') {
+                event.preventDefault();
+                const newChatBtn = document.getElementById('ai-new-chat-btn');
+                if (newChatBtn) {
+                    newChatBtn.click();
+                }
+            }
+            return;
+        }
     }
 
     // Store console scroll position from click handler (before any other events fire)

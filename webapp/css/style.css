@@ -540,6 +540,19 @@ kbd + kbd {
     display: none;
 }
 
+/* Keyboard shortcut styling in buttons */
+.button-shortcut {
+    font-size: 10px !important;
+    white-space: nowrap;
+}
+
+/* Keyboard shortcut styling in buttons */
+.button-shortcut .material-symbols-outlined {
+    font-size: 12px !important;
+    position: relative;
+    top: -1px;
+}
+
 /* Disable view title bar buttons when their shortcuts are hidden (view not focused) */
 .view:not(.focused) .view-title-button {
     pointer-events: none;
