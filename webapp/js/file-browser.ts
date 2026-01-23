@@ -13,6 +13,12 @@ import {
     DiskPlugin
 } from './filesystem-plugins';
 
+const LAST_CONTEXT_KEY = 'last-filesystem-context';
+
+function getPathStorageKey(pluginId: string): string {
+    return `last-path-${pluginId}`;
+}
+
 interface FileSystemState {
     currentPath: string;
     currentPlugin: FilesystemPlugin;
@@ -262,6 +268,17 @@ async function switchContext(pluginId: string) {
     fileSystemCache.currentPlugin = plugin;
     fileSystemCache.activeAdapter = plugin.getAdapter();
 
+    // Save to localStorage
+    try {
+        localStorage.setItem(LAST_CONTEXT_KEY, pluginId);
+    } catch (e) {
+        console.warn(
+            '[FileBrowser]',
+            'Failed to save context to localStorage:',
+            e
+        );
+    }
+
     // Update tab UI
     document.querySelectorAll('.context-tab').forEach((tab) => {
         tab.classList.remove('active');
@@ -273,24 +290,21 @@ async function switchContext(pluginId: string) {
     // Try to activate plugin (may fail if setup needed)
     const activated = await plugin.onActivate();
     if (!activated) {
-        // Plugin needs setup (e.g., directory selection for disk)
-        if (pluginId === 'disk') {
-            const diskPlugin = plugin as DiskPlugin;
-            const isReady = await diskPlugin.isReady();
-            if (!isReady) {
-                showOpenFolderUI();
-                return;
-            }
-            // Has directory but permission denied
-            showPermissionBanner(true);
-            hideOpenFolderUI();
-        }
+        // Plugin needs setup - let plugin update its own UI
+        await plugin.updateUI({
+            showOpenFolderUI,
+            hideOpenFolderUI,
+            showPermissionBanner
+        });
         return;
     }
 
-    // Plugin activated successfully
-    hideOpenFolderUI();
-    showPermissionBanner(false);
+    // Plugin activated successfully - let plugin update UI
+    await plugin.updateUI({
+        showOpenFolderUI,
+        hideOpenFolderUI,
+        showPermissionBanner
+    });
 
     // Show/hide close button based on plugin capabilities
     console.log(
@@ -676,6 +690,18 @@ async function navigateToPath(path: string) {
         // Cache the current path
         fileSystemCache.currentPath = path;
 
+        // Save path to localStorage for current plugin
+        try {
+            const pluginId = fileSystemCache.currentPlugin.getId();
+            localStorage.setItem(getPathStorageKey(pluginId), path);
+        } catch (e) {
+            console.warn(
+                '[FileBrowser]',
+                'Failed to save path to localStorage:',
+                e
+            );
+        }
+
         // Setup drag & drop on the file tree
         setupDragAndDrop();
     } catch (error: any) {
@@ -833,11 +859,93 @@ async function initFileBrowser() {
             });
         }
 
-        // Navigate to default plugin's default path
-        const defaultPlugin = pluginRegistry.getDefault();
+        // Restore last used context from localStorage
+        let startPlugin: FilesystemPlugin | null = null;
+        try {
+            const lastContextId = localStorage.getItem(LAST_CONTEXT_KEY);
+            if (lastContextId) {
+                const restoredPlugin = pluginRegistry.get(lastContextId);
+                if (restoredPlugin) {
+                    // Check if plugin is ready (important for disk plugin)
+                    const isReady = await restoredPlugin.isReady();
+                    if (isReady) {
+                        // Activate the plugin to check permissions and setup
+                        const activated = await restoredPlugin.onActivate();
+                        if (activated) {
+                            startPlugin = restoredPlugin;
+                            console.log(
+                                '[FileBrowser]',
+                                `Restored last context: ${lastContextId}`
+                            );
+                        } else {
+                            console.log(
+                                '[FileBrowser]',
+                                `Last context ${lastContextId} failed to activate, using default`
+                            );
+                        }
+                    } else {
+                        console.log(
+                            '[FileBrowser]',
+                            `Last context ${lastContextId} not ready, using default`
+                        );
+                    }
+                }
+            }
+        } catch (e) {
+            console.warn(
+                '[FileBrowser]',
+                'Failed to restore context from localStorage:',
+                e
+            );
+        }
+
+        // Navigate to restored or default plugin's default path
+        const defaultPlugin = startPlugin || pluginRegistry.getDefault();
         if (defaultPlugin) {
-            const defaultPath = defaultPlugin.getDefaultPath();
-            await navigateToPath(defaultPath);
+            // Update file system cache to use the restored/default plugin
+            fileSystemCache.currentPlugin = defaultPlugin;
+            fileSystemCache.activeAdapter = defaultPlugin.getAdapter();
+
+            // Update tab UI to reflect the active plugin
+            document.querySelectorAll('.context-tab').forEach((tab) => {
+                tab.classList.remove('active');
+                if (
+                    tab.getAttribute('data-plugin-id') === defaultPlugin.getId()
+                ) {
+                    tab.classList.add('active');
+                }
+            });
+
+            // Let plugin update its UI state
+            await defaultPlugin.updateUI({
+                showOpenFolderUI,
+                hideOpenFolderUI,
+                showPermissionBanner
+            });
+
+            // Restore last visited path for this plugin
+            let startPath = defaultPlugin.getDefaultPath();
+            try {
+                const pluginId = defaultPlugin.getId();
+                const savedPath = localStorage.getItem(
+                    getPathStorageKey(pluginId)
+                );
+                if (savedPath) {
+                    startPath = savedPath;
+                    console.log(
+                        '[FileBrowser]',
+                        `Restored last path for ${pluginId}: ${savedPath}`
+                    );
+                }
+            } catch (e) {
+                console.warn(
+                    '[FileBrowser]',
+                    'Failed to restore path from localStorage:',
+                    e
+                );
+            }
+
+            await navigateToPath(startPath);
 
             // Show/hide close button based on default plugin capabilities
             if (defaultPlugin.canClose()) {

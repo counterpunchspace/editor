@@ -92,6 +92,21 @@ export abstract class FilesystemPlugin {
     async close(): Promise<void> {
         // Default: no-op
     }
+
+    /**
+     * Update UI elements specific to this plugin's state
+     * Called during initialization and context switching
+     * @param uiCallbacks Object containing UI update functions
+     */
+    async updateUI(uiCallbacks: {
+        showOpenFolderUI: () => void;
+        hideOpenFolderUI: () => void;
+        showPermissionBanner: (show: boolean) => void;
+    }): Promise<void> {
+        // Default: hide all special UI elements
+        uiCallbacks.hideOpenFolderUI();
+        uiCallbacks.showPermissionBanner(false);
+    }
 }
 
 /**
@@ -203,6 +218,29 @@ export class DiskPlugin extends FilesystemPlugin {
     async close(): Promise<void> {
         await this.nativeAdapter.clearDirectory();
         console.log('[DiskPlugin]', 'Folder access closed');
+    }
+
+    async updateUI(uiCallbacks: {
+        showOpenFolderUI: () => void;
+        hideOpenFolderUI: () => void;
+        showPermissionBanner: (show: boolean) => void;
+    }): Promise<void> {
+        const isReady = await this.isReady();
+
+        if (!isReady) {
+            uiCallbacks.showOpenFolderUI();
+            uiCallbacks.showPermissionBanner(false);
+        } else {
+            uiCallbacks.hideOpenFolderUI();
+
+            // Check permissions
+            const permission = await this.nativeAdapter.checkPermission();
+            if (permission !== 'granted') {
+                uiCallbacks.showPermissionBanner(true);
+            } else {
+                uiCallbacks.showPermissionBanner(false);
+            }
+        }
     }
 
     /** Clear the selected directory */
