@@ -1353,11 +1353,15 @@ export class GlyphCanvasRenderer {
                     this.ctx.translate(x, y);
                     this.applyInverseComponentTransform(); // Cancel out component transform
                     this.ctx.scale(1, -1); // Flip Y axis to fix upside-down text
-                    this.ctx.font = `${fontSize}px monospace`;
+                    this.ctx.font = `${fontSize}px Inter, -apple-system, system-ui, sans-serif`;
                     this.ctx.fillStyle = isDarkTheme
                         ? 'rgba(255, 255, 255, 0.8)'
                         : 'rgba(0, 0, 0, 0.8)';
-                    this.ctx.fillText(name, anchorSize * 1.5, anchorSize);
+                    this.ctx.fillText(
+                        name,
+                        anchorSize + 4.5 * invScale,
+                        anchorSize
+                    );
                     this.ctx.restore();
                 }
             });
@@ -1893,6 +1897,9 @@ export class GlyphCanvasRenderer {
             const colors = isDarkTheme
                 ? APP_SETTINGS.OUTLINE_EDITOR.COLORS_DARK
                 : APP_SETTINGS.OUTLINE_EDITOR.COLORS_LIGHT;
+            this.ctx.save();
+            this.ctx.globalAlpha =
+                APP_SETTINGS.OUTLINE_EDITOR.MEASUREMENT_TOOL_GUIDE_LINES_OPACITY;
             this.ctx.strokeStyle = colors.MEASUREMENT_TOOL_CROSSHAIR;
             this.ctx.lineWidth = 1;
             this.ctx.beginPath();
@@ -1908,6 +1915,111 @@ export class GlyphCanvasRenderer {
                         this.canvas.height) /
                     rect.height;
 
+                // Draw faint crosshair lines at origin and mouse position
+                // Horizontal line through origin
+                this.ctx.moveTo(0, originCanvasY);
+                this.ctx.lineTo(this.canvas.width, originCanvasY);
+
+                // Vertical line through origin
+                this.ctx.moveTo(originCanvasX, 0);
+                this.ctx.lineTo(originCanvasX, this.canvas.height);
+
+                // Horizontal line through mouse position
+                this.ctx.moveTo(0, this.glyphCanvas.mouseCanvasY);
+                this.ctx.lineTo(
+                    this.canvas.width,
+                    this.glyphCanvas.mouseCanvasY
+                );
+
+                // Vertical line through mouse position
+                this.ctx.moveTo(this.glyphCanvas.mouseCanvasX, 0);
+                this.ctx.lineTo(
+                    this.glyphCanvas.mouseCanvasX,
+                    this.canvas.height
+                );
+
+                this.ctx.stroke();
+
+                // Draw measurement labels (width, height, diagonal distance)
+                // Get origin and mouse positions in font space
+                const { x: originFontX, y: originFontY } =
+                    this.viewportManager.getFontSpaceCoordinates(
+                        this.glyphCanvas.measurementTool.originX,
+                        this.glyphCanvas.measurementTool.originY
+                    );
+                const { x: mouseFontX, y: mouseFontY } =
+                    this.viewportManager.getFontSpaceCoordinates(
+                        this.glyphCanvas.mouseX,
+                        this.glyphCanvas.mouseY
+                    );
+
+                const deltaX = Math.abs(mouseFontX - originFontX);
+                const deltaY = Math.abs(mouseFontY - originFontY);
+                const diagonal = Math.sqrt(deltaX * deltaX + deltaY * deltaY);
+
+                this.ctx.save();
+                this.ctx.globalAlpha =
+                    APP_SETTINGS.OUTLINE_EDITOR.MEASUREMENT_TOOL_GUIDE_LINES_OPACITY;
+                this.ctx.fillStyle = isDarkTheme ? '#FFFFFF' : '#000000';
+                this.ctx.font = '18px system-ui, -apple-system, sans-serif';
+                this.ctx.textBaseline = 'bottom';
+
+                // Width label on top (centered between origin and mouse X)
+                const widthLabelX =
+                    (originCanvasX + this.glyphCanvas.mouseCanvasX) / 2;
+                const widthLabelY = Math.min(
+                    originCanvasY,
+                    this.glyphCanvas.mouseCanvasY
+                );
+                this.ctx.textAlign = 'center';
+                this.ctx.fillText(
+                    `${Math.round(deltaX)}`,
+                    widthLabelX,
+                    widthLabelY - 9
+                );
+
+                // Height label on the right (centered between origin and mouse Y)
+                const heightLabelX = Math.max(
+                    originCanvasX,
+                    this.glyphCanvas.mouseCanvasX
+                );
+                const heightLabelY =
+                    (originCanvasY + this.glyphCanvas.mouseCanvasY) / 2;
+                this.ctx.textAlign = 'left';
+                this.ctx.textBaseline = 'middle';
+                this.ctx.fillText(
+                    `${Math.round(deltaY)}`,
+                    heightLabelX + 9,
+                    heightLabelY
+                );
+
+                // Diagonal distance at mouse position (outer corner)
+                const diagonalLabelX = this.glyphCanvas.mouseCanvasX;
+                const diagonalLabelY = this.glyphCanvas.mouseCanvasY;
+
+                // Align left if mouse is right of origin, right if mouse is left of origin
+                const mouseIsRightOfOrigin =
+                    this.glyphCanvas.mouseCanvasX > originCanvasX;
+                this.ctx.textAlign = mouseIsRightOfOrigin ? 'left' : 'right';
+
+                // Position above if mouse is above origin, below if mouse is below origin
+                const mouseIsAboveOrigin =
+                    this.glyphCanvas.mouseCanvasY < originCanvasY;
+                this.ctx.textBaseline = mouseIsAboveOrigin ? 'bottom' : 'top';
+
+                const diagonalOffsetX = mouseIsRightOfOrigin ? 9 : -9;
+                const diagonalOffsetY = mouseIsAboveOrigin ? -9 : 9;
+
+                this.ctx.fillText(
+                    `⌀${Math.round(diagonal)}`,
+                    diagonalLabelX + diagonalOffsetX,
+                    diagonalLabelY + diagonalOffsetY
+                );
+
+                this.ctx.restore();
+
+                // Draw main measurement line
+                this.ctx.beginPath();
                 this.ctx.moveTo(originCanvasX, originCanvasY);
                 this.ctx.lineTo(
                     this.glyphCanvas.mouseCanvasX,
@@ -1930,6 +2042,7 @@ export class GlyphCanvasRenderer {
             }
 
             this.ctx.stroke();
+            this.ctx.restore();
 
             // Draw coordinate labels for crosshair (not for custom drag line)
             if (!this.glyphCanvas.measurementTool.isDragging) {
@@ -2326,7 +2439,7 @@ export class GlyphCanvasRenderer {
 
         // Draw measurement lines and dots first, then labels on top
         this.ctx.strokeStyle = colors.MEASUREMENT_TOOL_LINE;
-        this.ctx.lineWidth = 1 / this.viewportManager.scale;
+        this.ctx.lineWidth = 2 / this.viewportManager.scale;
 
         // Collect label data to draw later (on top)
         const labelsToRender: Array<{
@@ -2341,7 +2454,11 @@ export class GlyphCanvasRenderer {
             horizontalIntersections.length > 0
         ) {
             // User-defined line: draw measurements along the line
+            // Only draw over inked areas (even-indexed segments), skip counters (odd-indexed segments)
             for (let i = 0; i < horizontalIntersections.length - 1; i++) {
+                // Skip odd-indexed segments (these are over counters/white space)
+                if (i % 2 !== 0) continue;
+
                 const p1 = transformToWorld(horizontalIntersections[i]);
                 const p2 = transformToWorld(horizontalIntersections[i + 1]);
 
@@ -2368,7 +2485,11 @@ export class GlyphCanvasRenderer {
             }
         } else {
             // Crosshair mode: draw horizontal and vertical measurements separately
+            // Only draw over inked areas (even-indexed segments), skip counters (odd-indexed segments)
             for (let i = 0; i < horizontalIntersections.length - 1; i++) {
+                // Skip odd-indexed segments (these are over counters/white space)
+                if (i % 2 !== 0) continue;
+
                 const p1 = transformToWorld(horizontalIntersections[i]);
                 const p2 = transformToWorld(horizontalIntersections[i + 1]);
 
@@ -2393,7 +2514,11 @@ export class GlyphCanvasRenderer {
             }
 
             // Draw vertical measurements
+            // Only draw over inked areas (even-indexed segments), skip counters (odd-indexed segments)
             for (let i = 0; i < verticalIntersections.length - 1; i++) {
+                // Skip odd-indexed segments (these are over counters/white space)
+                if (i % 2 !== 0) continue;
+
                 const p1 = transformToWorld(verticalIntersections[i]);
                 const p2 = transformToWorld(verticalIntersections[i + 1]);
 

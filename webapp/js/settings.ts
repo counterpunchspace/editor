@@ -83,6 +83,7 @@ const APP_SETTINGS = {
 
         // Measurement tool
         MEASUREMENT_TOOL_DISPLAY_DELAY: 400, // ms - delay before showing measurement tool when Shift key is pressed
+        MEASUREMENT_TOOL_GUIDE_LINES_OPACITY: 0.4, // opacity for horizontal/vertical guide lines when dragging measurement line
 
         // Preview mode
         PREVIEW_MODE_DELAY: 200, // ms - delay before activating preview mode with Space bar in text mode (below this delay, types a space character)
@@ -135,7 +136,7 @@ const APP_SETTINGS = {
             MEASUREMENT_TOOL_DOT: '#000000',
             MEASUREMENT_TOOL_LABEL_TEXT: '#ffffff',
             MEASUREMENT_TOOL_LABEL_BG: 'rgba(0, 0, 0, 0.85)',
-            MEASUREMENT_TOOL_CROSSHAIR: 'rgba(0, 0, 0, 0.3)'
+            MEASUREMENT_TOOL_CROSSHAIR: '#000000'
         },
 
         // Colors - Dark Theme
@@ -186,7 +187,7 @@ const APP_SETTINGS = {
             MEASUREMENT_TOOL_DOT: '#ffffff',
             MEASUREMENT_TOOL_LABEL_TEXT: '#000000',
             MEASUREMENT_TOOL_LABEL_BG: 'rgba(255, 255, 255, 0.85)',
-            MEASUREMENT_TOOL_CROSSHAIR: 'rgba(255, 255, 255, 0.3)'
+            MEASUREMENT_TOOL_CROSSHAIR: '#ffffff'
         }
     }
 
