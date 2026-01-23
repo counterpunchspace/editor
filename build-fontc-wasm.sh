@@ -36,35 +36,6 @@ rustup toolchain install nightly --profile minimal --component rust-std --compon
 mkdir -p "$WASM_DIR"
 cd "$WASM_DIR"
 
-# Create or update the Rust crate for babelfont-fontc integration
-if [ ! -f "Cargo.toml" ]; then
-    echo "� Creating babelfont-fontc crate..."
-    cat > Cargo.toml << 'EOF'
-[package]
-name = "babelfont-fontc-web"
-version = "0.1.0"
-edition = "2021"
-
-[lib]
-crate-type = ["cdylib"]
-
-[dependencies]
-babelfont = { git = "https://github.com/simoncozens/babelfont-rs.git", features = ["fontir"] }
-# Use the same versions that babelfont uses
-fontc = { git = "https://github.com/googlefonts/fontc.git", branch = "edit-edits" }
-fontir = { git = "https://github.com/googlefonts/fontc.git", branch = "edit-edits" }
-wasm-bindgen = "0.2"
-serde_json = "1.0"
-console_error_panic_hook = "0.1"
-tempfile = "3"
-
-[profile.release]
-opt-level = "z"
-lto = true
-EOF
-    echo "✓ Created Cargo.toml"
-fi
-
 # Ensure src directory exists (but don't overwrite lib.rs)
 mkdir -p src
 if [ ! -f "src/lib.rs" ]; then
