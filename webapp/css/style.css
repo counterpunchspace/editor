@@ -540,6 +540,18 @@ kbd + kbd {
     display: none;
 }
 
+/* Disable view title bar buttons when their shortcuts are hidden (view not focused) */
+.view:not(.focused) .view-title-button {
+    pointer-events: none;
+    opacity: 0.5;
+}
+
+/* Re-enable buttons with always-visible shortcuts (global shortcuts) */
+.view:not(.focused) .view-title-button:has(.console-clear-shortcut) {
+    pointer-events: auto;
+    opacity: 1;
+}
+
 /* Keep console clear shortcut always visible (global shortcut) */
 .console-clear-shortcut {
     display: inline !important;
