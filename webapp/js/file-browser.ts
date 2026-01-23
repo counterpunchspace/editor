@@ -294,7 +294,9 @@ async function switchContext(pluginId: string) {
         await plugin.updateUI({
             showOpenFolderUI,
             hideOpenFolderUI,
-            showPermissionBanner
+            showPermissionBanner,
+            showUnsupportedBrowserUI,
+            hideUnsupportedBrowserUI
         });
         return;
     }
@@ -303,7 +305,9 @@ async function switchContext(pluginId: string) {
     await plugin.updateUI({
         showOpenFolderUI,
         hideOpenFolderUI,
-        showPermissionBanner
+        showPermissionBanner,
+        showUnsupportedBrowserUI,
+        hideUnsupportedBrowserUI
     });
 
     // Show/hide close button based on plugin capabilities
@@ -402,6 +406,47 @@ function hideCloseFolderButton() {
     }
 }
 
+function showFileTree() {
+    const fileTree = document.getElementById('file-tree');
+    if (fileTree) {
+        fileTree.style.display = 'block';
+        console.log('[FileBrowser]', 'File tree shown');
+    }
+}
+
+function hideFileTree() {
+    const fileTree = document.getElementById('file-tree');
+    if (fileTree) {
+        fileTree.style.display = 'none';
+        console.log('[FileBrowser]', 'File tree hidden');
+    }
+}
+
+function showUnsupportedBrowserUI() {
+    const container = document.getElementById('plugin-message-container');
+    if (container) {
+        container.innerHTML = `
+            <div class="plugin-message-content">
+                <span class="material-symbols-outlined plugin-message-icon warning">info</span>
+                <h3>Browser Not Supported</h3>
+                <p>Your browser doesn't support native file system access for the Disk context.</p>
+                <p class="browser-suggestion">Please use Chrome/Chromium 86+, Edge 86+, or Safari 15.2+ for full functionality.<br>You can use the Memory context for browser storage.</p>
+            </div>
+        `;
+        container.classList.add('visible');
+    }
+    hideFileTree();
+}
+
+function hideUnsupportedBrowserUI() {
+    const container = document.getElementById('plugin-message-container');
+    if (container) {
+        container.innerHTML = '';
+        container.classList.remove('visible');
+    }
+    showFileTree();
+}
+
 async function reEnableAccess() {
     try {
         const plugin = fileSystemCache.currentPlugin;
@@ -434,28 +479,22 @@ function showOpenFolderUI() {
     const openFolderContainer = document.getElementById(
         'open-folder-container'
     );
-    const fileTree = document.getElementById('file-tree');
 
     if (openFolderContainer) {
         openFolderContainer.classList.add('visible');
     }
-    if (fileTree) {
-        fileTree.style.display = 'none';
-    }
+    hideFileTree();
 }
 
 function hideOpenFolderUI() {
     const openFolderContainer = document.getElementById(
         'open-folder-container'
     );
-    const fileTree = document.getElementById('file-tree');
 
     if (openFolderContainer) {
         openFolderContainer.classList.remove('visible');
     }
-    if (fileTree) {
-        fileTree.style.display = 'block';
-    }
+    showFileTree();
 }
 
 async function scanDirectory(
@@ -793,21 +832,22 @@ async function initFileBrowser() {
         }
 
         // Check if File System Access API is supported for disk context
-        if (!isFileSystemAccessSupported()) {
+        const diskApiSupported = isFileSystemAccessSupported();
+        if (!diskApiSupported) {
             console.warn(
                 '[FileBrowser]',
-                'File System Access API not supported - disk context disabled'
-            );
-            showCriticalError(
-                'File System Access Not Supported',
-                "Your browser doesn't support native file system access for the Disk context.",
-                'Please use Chrome 86+, Edge 86+, or Safari 15.2+ for full functionality. You can still use the Memory context for browser storage.'
+                'File System Access API not supported - disk context will show info message'
             );
         }
 
         // Initialize disk plugin (restore directory handle)
         const diskPlugin = pluginRegistry.get('disk') as DiskPlugin;
         if (diskPlugin) {
+            // Mark disk plugin as unsupported if needed
+            if (!diskApiSupported) {
+                (diskPlugin as any)._unsupported = true;
+            }
+
             const adapter = diskPlugin.getAdapter() as any;
             if (adapter.initialize) {
                 await adapter.initialize();
@@ -920,7 +960,9 @@ async function initFileBrowser() {
             await defaultPlugin.updateUI({
                 showOpenFolderUI,
                 hideOpenFolderUI,
-                showPermissionBanner
+                showPermissionBanner,
+                showUnsupportedBrowserUI,
+                hideUnsupportedBrowserUI
             });
 
             // Restore last visited path for this plugin

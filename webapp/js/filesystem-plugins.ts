@@ -102,10 +102,13 @@ export abstract class FilesystemPlugin {
         showOpenFolderUI: () => void;
         hideOpenFolderUI: () => void;
         showPermissionBanner: (show: boolean) => void;
+        showUnsupportedBrowserUI: () => void;
+        hideUnsupportedBrowserUI: () => void;
     }): Promise<void> {
         // Default: hide all special UI elements
         uiCallbacks.hideOpenFolderUI();
         uiCallbacks.showPermissionBanner(false);
+        uiCallbacks.hideUnsupportedBrowserUI();
     }
 }
 
@@ -224,7 +227,18 @@ export class DiskPlugin extends FilesystemPlugin {
         showOpenFolderUI: () => void;
         hideOpenFolderUI: () => void;
         showPermissionBanner: (show: boolean) => void;
+        showUnsupportedBrowserUI: () => void;
+        hideUnsupportedBrowserUI: () => void;
     }): Promise<void> {
+        // Check if browser is unsupported
+        if ((this as any)._unsupported) {
+            uiCallbacks.showUnsupportedBrowserUI();
+            uiCallbacks.showPermissionBanner(false);
+            return;
+        }
+
+        uiCallbacks.hideUnsupportedBrowserUI();
+
         const isReady = await this.isReady();
 
         if (!isReady) {

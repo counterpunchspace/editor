@@ -1971,6 +1971,57 @@ kbd + kbd {
     font-size: 14px;
 }
 
+/* Plugin Message Container (for dynamic plugin messages like unsupported browser) */
+#plugin-message-container {
+    display: none;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    padding: 40px 20px;
+}
+
+#plugin-message-container.visible {
+    display: flex;
+}
+
+.plugin-message-content {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    max-width: 350px;
+    gap: 12px;
+}
+
+.plugin-message-icon {
+    font-size: 32px;
+    opacity: 0.7;
+}
+
+.plugin-message-icon.warning {
+    color: var(--accent-yellow);
+}
+
+.plugin-message-content h3 {
+    margin: 0;
+    font-size: calc(var(--size, 1) * (14px / var(--pixel-density, 1)));
+    color: var(--text-primary);
+    font-weight: 500;
+}
+
+.plugin-message-content p {
+    margin: 0;
+    font-size: calc(var(--size, 1) * (12px / var(--pixel-density, 1)));
+    color: var(--text-secondary);
+    line-height: 1.5;
+}
+
+.plugin-message-content .browser-suggestion {
+    font-size: calc(var(--size, 1) * (11px / var(--pixel-density, 1)));
+    opacity: 0.8;
+}
+
 #file-tree {
     font-family: var(--font-families-mono);
     font-size: 13px;
