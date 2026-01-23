@@ -8,10 +8,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WEBAPP_DIR="$SCRIPT_DIR/webapp"
 WASM_DIR="$SCRIPT_DIR/babelfont-fontc-build"
 
-echo "🦀 Building fontc with babelfont-rs for WebAssembly..."
-echo "Direct Python → Rust integration (no file system)"
-echo ""
-
 # Check if Rust is installed
 if ! command -v rustc &> /dev/null; then
     echo "❌ Rust is not installed. Please install it from https://rustup.rs/"
@@ -35,13 +31,6 @@ rustup toolchain install nightly --profile minimal --component rust-std --compon
 # Create build directory
 mkdir -p "$WASM_DIR"
 cd "$WASM_DIR"
-
-# Ensure src directory exists (but don't overwrite lib.rs)
-mkdir -p src
-if [ ! -f "src/lib.rs" ]; then
-    echo "⚠️  Warning: src/lib.rs not found. Please create it manually."
-    exit 1
-fi
 
 echo ""
 echo "🔨 Building WASM module (single-threaded for browser compatibility)..."
