@@ -12,6 +12,7 @@ This is a WebAssembly-based font editor using Rust (fontc/babelfont) compiled to
 - Scan for reusable code in any of the languages, avoid duplicate implementations where possible
 - Don't write spaghetti code
 - Clean up code that isn't needed any more, like excessive log statements or temporary documents
+- For seach and replace activity, prefer command-line commands whenever possible
 
 ### JavaScript
 
