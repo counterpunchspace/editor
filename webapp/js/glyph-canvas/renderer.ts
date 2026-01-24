@@ -3158,19 +3158,10 @@ export class GlyphCanvasRenderer {
         const baseX = xPosition + xOffset;
         const baseY = yOffset;
 
-        const tiltRadians =
-            this.glyphCanvas.stackPreviewAnimator.getTiltAngleRadians();
-
-        // Render layers from bottom to top (deepest nesting first)
-        // This ensures proper visual stacking
-        const sortedLayers = [...layerTree].sort((a, b) => b.depth - a.depth);
-
-        sortedLayers.forEach((node, index) => {
+        // Render all layers on top of each other (no animation, no offset, no tilt)
+        // Just apply the accumulated transform and render
+        layerTree.forEach((node) => {
             this.ctx.save();
-
-            // Calculate opacity fade based on depth
-            const alpha = Math.max(0.3, 1 - node.depth * 0.15);
-            this.ctx.globalAlpha = alpha;
 
             // Translate to base glyph position
             this.ctx.translate(baseX, baseY);
@@ -3185,14 +3176,6 @@ export class GlyphCanvasRenderer {
                 node.transform[5]
             );
 
-            // Apply vertical offset for this layer
-            this.ctx.translate(0, node.yOffset);
-
-            // Apply tilt transform (skew leftward)
-            // Matrix: [1, 0, tan(angle), 1, 0, 0] for horizontal skew
-            // Negative tan for leftward tilt
-            this.ctx.transform(1, 0, -Math.tan(tiltRadians), 1, 0, 0);
-
             // Draw this component instance
             this.drawComponentInstance(node);
 
@@ -3202,7 +3185,7 @@ export class GlyphCanvasRenderer {
 
     /**
      * Draw a single component instance in stack preview mode
-     * Renders the component's layer data without applying transforms again
+     * Draw paths and component boxes, but DON'T recurse into nested components
      */
     drawComponentInstance(node: any): void {
         const layerData = node.componentLayerData;
@@ -3211,57 +3194,30 @@ export class GlyphCanvasRenderer {
         const invScale = 1 / this.viewportManager.scale;
         const isDarkTheme =
             document.documentElement.getAttribute('data-theme') !== 'light';
+        const colors = isDarkTheme
+            ? APP_SETTINGS.OUTLINE_EDITOR.COLORS_DARK
+            : APP_SETTINGS.OUTLINE_EDITOR.COLORS_LIGHT;
 
-        // Draw filled background for paths
-        this.ctx.save();
-        this.ctx.beginPath();
-
-        layerData.shapes.forEach((shape: any) => {
-            if ('Component' in shape) return;
-
-            let nodes = 'nodes' in shape ? shape.nodes : undefined;
-            if (!nodes && 'Path' in shape && shape.Path.nodes) {
-                nodes = LayerDataNormalizer.parseNodes(shape.Path.nodes);
-            }
-
-            if (nodes && nodes.length > 0) {
-                this.buildPathFromNodes(nodes);
-                this.ctx.closePath();
-            }
-        });
-
-        this.ctx.fillStyle = isDarkTheme
-            ? 'rgba(255, 255, 255, 0.015)'
-            : 'rgba(0, 0, 0, 0.015)';
-        this.ctx.fill();
-        this.ctx.restore();
-
-        // Draw paths (outlines only)
+        // Draw paths (not components)
         layerData.shapes.forEach((shape: any, index: number) => {
             if ('Component' in shape) return;
             this.drawShape(shape, index, false);
         });
 
-        // Draw blue boxes for nested components
-        // The component's CONTENT is in separate layer tree nodes, but we show the blue box here
-        const colors = isDarkTheme
-            ? APP_SETTINGS.OUTLINE_EDITOR.COLORS_DARK
-            : APP_SETTINGS.OUTLINE_EDITOR.COLORS_LIGHT;
-
-        layerData.shapes.forEach((shape: any) => {
+        // Draw blue boxes for components (same as normal editing mode)
+        layerData.shapes.forEach((shape: any, index: number) => {
             if (!('Component' in shape)) return;
 
             const component = shape.Component;
             if (!component.layerData || !component.layerData.shapes) return;
 
-            // Apply component's transform to position the blue box
             const transform = component.transform || [1, 0, 0, 1, 0, 0];
             const [a, b, c, d, tx, ty] = transform;
 
             this.ctx.save();
             this.ctx.transform(a, b, c, d, tx, ty);
 
-            // Draw flattened component outlines (blue box)
+            // Draw the component's flattened outline (blue box) using existing function
             this.drawComponentWithOutlines(
                 component.layerData.shapes,
                 false,
@@ -3271,7 +3227,7 @@ export class GlyphCanvasRenderer {
                 isDarkTheme
             );
 
-            // Draw component origin marker
+            // Draw component marker
             if (
                 APP_SETTINGS.OUTLINE_EDITOR.SHOW_COMPONENT_ORIGIN_MARKERS &&
                 this.viewportManager.scale >=
