@@ -150,6 +150,37 @@ export class GlyphCanvasRenderer {
             transform.f
         );
 
+        // Apply rotation if stack preview mode is active
+        if (this.glyphCanvas.stackPreviewAnimator.shouldRenderStackPreview()) {
+            // Calculate animation progress for rotation
+            let animationProgress;
+            if (this.glyphCanvas.stackPreviewAnimator.isAnimating) {
+                const elapsed =
+                    performance.now() -
+                    this.glyphCanvas.stackPreviewAnimator.animationStartTime;
+                const rawProgress = Math.min(
+                    elapsed /
+                        this.glyphCanvas.stackPreviewAnimator.config
+                            .animationDuration,
+                    1.0
+                );
+                animationProgress = this.glyphCanvas.stackPreviewAnimator
+                    .isReversing
+                    ? 1 - rawProgress
+                    : rawProgress;
+            } else {
+                animationProgress = this.glyphCanvas.stackPreviewAnimator
+                    .isActive
+                    ? 1
+                    : 0;
+            }
+            const easedProgress = 1 - Math.pow(1 - animationProgress, 3);
+
+            // Apply 30° slant to the left (horizontal skew)
+            const slantAngle = -30 * (Math.PI / 180) * easedProgress;
+            this.ctx.transform(1, 0, Math.tan(slantAngle), 1, 0, 0);
+        }
+
         // Check if stack preview mode is active
         if (this.glyphCanvas.stackPreviewAnimator.shouldRenderStackPreview()) {
             // In stack preview mode, render other glyphs normally but replace selected glyph with stack preview
