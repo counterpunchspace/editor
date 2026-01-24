@@ -69,7 +69,7 @@ export class StackPreviewAnimator {
             diagonalOffsetAngle: config?.diagonalOffsetAngle ?? 45,
             targetTiltAngle: config?.targetTiltAngle ?? 30,
             animationDuration: config?.animationDuration ?? 500,
-            debugDrawBounds: config?.debugDrawBounds ?? true
+            debugDrawBounds: config?.debugDrawBounds ?? false
         };
     }
 
@@ -123,14 +123,18 @@ export class StackPreviewAnimator {
     }
 
     /**
-     * Animation loop with ease-out cubic easing
+     * Animation loop with easing
      */
     private animate(): void {
         const elapsed = performance.now() - this.animationStartTime;
         const progress = Math.min(elapsed / this.config.animationDuration, 1.0);
 
-        // Ease-out cubic: 1 - (1 - t)^3
-        const easedProgress = 1 - Math.pow(1 - progress, 3);
+        // Use different easing for forward vs reverse
+        // Forward: ease-out cubic (fast start, slow end)
+        // Reverse: ease-in cubic (slow start, fast end) - mirrors the opening
+        const easedProgress = this.isReversing
+            ? Math.pow(progress, 3) // ease-in cubic: t^3
+            : 1 - Math.pow(1 - progress, 3); // ease-out cubic: 1 - (1-t)^3
 
         const viewport = this.glyphCanvas.viewportManager;
         if (!viewport) return;
