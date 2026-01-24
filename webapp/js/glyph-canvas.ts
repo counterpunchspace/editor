@@ -118,11 +118,7 @@ class GlyphCanvas {
         this.measurementTool = new MeasurementTool(this);
 
         // Initialize stack preview animator
-        this.stackPreviewAnimator = new StackPreviewAnimator(this, {
-            verticalSpacing: 500,
-            targetTiltAngle: 60,
-            totalFrames: 10
-        });
+        this.stackPreviewAnimator = new StackPreviewAnimator(this);
 
         this.axesManager = new AxesManager();
         this.featuresManager = new FeaturesManager();

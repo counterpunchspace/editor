@@ -152,8 +152,11 @@ export class GlyphCanvasRenderer {
 
         // Check if stack preview mode is active
         if (this.glyphCanvas.stackPreviewAnimator.shouldRenderStackPreview()) {
-            // In stack preview mode, skip normal rendering and draw stack layers
-            this.drawStackPreview();
+            // In stack preview mode, render other glyphs normally but replace selected glyph with stack preview
+            this.drawSelection();
+            this.drawShapedGlyphsWithStackPreview();
+            this.drawCanvasPluginsBelow();
+            this.drawCanvasPluginsAbove();
         } else {
             // Normal rendering
             // Draw selection highlight
@@ -2635,6 +2638,84 @@ export class GlyphCanvasRenderer {
         this.ctx.stroke();
     }
 
+    /**
+     * Draw shaped glyphs with stack preview for selected glyph
+     */
+    drawShapedGlyphsWithStackPreview() {
+        if (
+            !this.textRunEditor.shapedGlyphs ||
+            this.textRunEditor.shapedGlyphs.length === 0
+        ) {
+            return;
+        }
+
+        if (!this.textRunEditor.hbFont) {
+            return;
+        }
+
+        const invScale = 1 / this.viewportManager.scale;
+        let xPosition = 0;
+
+        // Clear glyph bounds for hit testing
+        this.glyphCanvas.glyphBounds = [];
+
+        const isDarkTheme =
+            document.documentElement.getAttribute('data-theme') !== 'light';
+        const colors = isDarkTheme
+            ? APP_SETTINGS.OUTLINE_EDITOR.COLORS_DARK
+            : APP_SETTINGS.OUTLINE_EDITOR.COLORS_LIGHT;
+
+        this.textRunEditor.shapedGlyphs.forEach(
+            (glyph: any, glyphIndex: number) => {
+                const glyphId = glyph.g;
+                const xOffset = glyph.dx || 0;
+                const yOffset = glyph.dy || 0;
+                const xAdvance = glyph.ax || 0;
+
+                const x = xPosition + xOffset;
+                const y = yOffset;
+
+                const glyphData =
+                    this.textRunEditor.hbFont.glyphToPath(glyphId);
+                const pathBounds = glyphData
+                    ? calculatePathBounds(glyphData)
+                    : null;
+
+                this.glyphCanvas.glyphBounds.push({
+                    x: x,
+                    y: y,
+                    width: xAdvance,
+                    height: 1000,
+                    x1: pathBounds ? pathBounds.minX : 0,
+                    y1: pathBounds ? pathBounds.minY : 0,
+                    x2: pathBounds ? pathBounds.maxX : xAdvance,
+                    y2: pathBounds ? pathBounds.maxY : 1000
+                });
+
+                const isSelected =
+                    glyphIndex === this.textRunEditor.selectedGlyphIndex;
+
+                // For selected glyph, draw stack preview instead
+                if (isSelected) {
+                    this.drawStackPreview();
+                } else {
+                    // Draw other glyphs normally with HarfBuzz
+                    this.ctx.fillStyle = colors.GLYPH_INACTIVE_IN_EDITOR;
+
+                    if (glyphData) {
+                        this.ctx.save();
+                        this.ctx.translate(x, y);
+                        const path = new Path2D(glyphData);
+                        this.ctx.fill(path);
+                        this.ctx.restore();
+                    }
+                }
+
+                xPosition += xAdvance;
+            }
+        );
+    }
+
     drawSelection() {
         // Draw selection highlight
         if (
@@ -3161,9 +3242,15 @@ export class GlyphCanvasRenderer {
         // Calculate animation progress with reverse support
         let animationProgress;
         if (this.glyphCanvas.stackPreviewAnimator.isAnimating) {
-            const rawProgress =
-                this.glyphCanvas.stackPreviewAnimator.currentFrame /
-                this.glyphCanvas.stackPreviewAnimator.config.totalFrames;
+            const elapsed =
+                performance.now() -
+                this.glyphCanvas.stackPreviewAnimator.animationStartTime;
+            const rawProgress = Math.min(
+                elapsed /
+                    this.glyphCanvas.stackPreviewAnimator.config
+                        .animationDuration,
+                1.0
+            );
             animationProgress = this.glyphCanvas.stackPreviewAnimator
                 .isReversing
                 ? 1 - rawProgress

@@ -20,7 +20,7 @@ export interface LayerTreeNode {
 export interface StackPreviewConfig {
     verticalSpacing: number; // Font units per nesting level
     targetTiltAngle: number; // Degrees to tilt leftward
-    totalFrames: number; // Animation duration in frames
+    animationDuration: number; // Animation duration in milliseconds
 }
 
 /**
@@ -35,7 +35,7 @@ export class StackPreviewAnimator {
     isReversing: boolean = false;
 
     currentTiltAngle: number = 0; // Current tilt angle in degrees
-    currentFrame: number = 0;
+    animationStartTime: number = 0;
 
     layerTree: LayerTreeNode[] = [];
 
@@ -47,7 +47,7 @@ export class StackPreviewAnimator {
         this.config = {
             verticalSpacing: config?.verticalSpacing ?? 500,
             targetTiltAngle: config?.targetTiltAngle ?? 60,
-            totalFrames: config?.totalFrames ?? 30
+            animationDuration: config?.animationDuration ?? 500
         };
     }
 
@@ -61,7 +61,7 @@ export class StackPreviewAnimator {
         this.isActive = true;
         this.isAnimating = true;
         this.isReversing = false;
-        this.currentFrame = 0;
+        this.animationStartTime = performance.now();
 
         // Build layer tree from current glyph's layer data
         this.buildLayerTree();
@@ -78,7 +78,7 @@ export class StackPreviewAnimator {
         console.log('[StackPreview] Starting reverse animation');
         this.isAnimating = true;
         this.isReversing = true;
-        this.currentFrame = 0;
+        this.animationStartTime = performance.now();
 
         this.animate();
     }
@@ -87,11 +87,8 @@ export class StackPreviewAnimator {
      * Animation loop with ease-out cubic easing
      */
     private animate(): void {
-        this.currentFrame++;
-        const progress = Math.min(
-            this.currentFrame / this.config.totalFrames,
-            1.0
-        );
+        const elapsed = performance.now() - this.animationStartTime;
+        const progress = Math.min(elapsed / this.config.animationDuration, 1.0);
 
         // Ease-out cubic: 1 - (1 - t)^3
         const easedProgress = 1 - Math.pow(1 - progress, 3);
