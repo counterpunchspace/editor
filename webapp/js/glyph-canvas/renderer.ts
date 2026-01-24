@@ -3270,6 +3270,27 @@ export class GlyphCanvasRenderer {
         const baseX = xPosition + xOffset;
         const baseY = yOffset;
 
+        // Draw debug bounds if enabled
+        if (
+            this.glyphCanvas.stackPreviewAnimator.config.debugDrawBounds &&
+            this.glyphCanvas.stackPreviewAnimator.debugBounds
+        ) {
+            const bounds = this.glyphCanvas.stackPreviewAnimator.debugBounds;
+            const invScale = 1 / this.viewportManager.scale;
+
+            this.ctx.save();
+            this.ctx.strokeStyle = 'rgba(255, 0, 0, 0.8)';
+            this.ctx.lineWidth = 2 * invScale;
+            this.ctx.setLineDash([10 * invScale, 5 * invScale]);
+            this.ctx.strokeRect(
+                bounds.minX,
+                bounds.minY,
+                bounds.maxX - bounds.minX,
+                bounds.maxY - bounds.minY
+            );
+            this.ctx.restore();
+        }
+
         // Calculate animation progress with reverse support
         let animationProgress;
         if (this.glyphCanvas.stackPreviewAnimator.isAnimating) {
@@ -3293,6 +3314,113 @@ export class GlyphCanvasRenderer {
         }
         const easedProgress = 1 - Math.pow(1 - animationProgress, 3);
 
+        // Collect guide lines from ALL layers with outlines (not just max depth)
+        interface PathOriginPair {
+            topX: number;
+            topY: number;
+            baseX: number;
+            baseY: number;
+        }
+
+        const guideLines: PathOriginPair[] = [];
+
+        // Get diagonal angle from config
+        const diagonalAngleRad =
+            (this.glyphCanvas.stackPreviewAnimator.config.diagonalOffsetAngle *
+                Math.PI) /
+            180;
+
+        // Get path origins from ALL layers - only outline paths, not components
+        layerTree.forEach((node) => {
+            // Skip layers without depth (base layer has no offset)
+            if (node.depth === 0) return;
+
+            const layerData = node.componentLayerData;
+            if (!layerData || !layerData.shapes) return;
+
+            layerData.shapes.forEach((shape: any) => {
+                if ('Component' in shape) return; // Only process paths, not components
+
+                let nodes = 'nodes' in shape ? shape.nodes : undefined;
+                if (!nodes && 'Path' in shape && shape.Path.nodes) {
+                    nodes = LayerDataNormalizer.parseNodes(shape.Path.nodes);
+                }
+
+                if (nodes && nodes.length > 0) {
+                    // Find first on-curve point (origin)
+                    for (let i = 0; i < nodes.length; i++) {
+                        const { x, y, nodetype: type } = nodes[i];
+                        if (type === 'c' || type === 'cs' || type === 'l') {
+                            // Calculate diagonal offset for this depth using config angle
+                            const offsetDistance =
+                                node.depth *
+                                this.glyphCanvas.stackPreviewAnimator.config
+                                    .verticalSpacing *
+                                easedProgress;
+                            const diagXOffset =
+                                offsetDistance * Math.cos(diagonalAngleRad);
+                            const diagYOffset =
+                                offsetDistance * Math.sin(diagonalAngleRad);
+
+                            // Top position (with offset applied)
+                            const topX =
+                                node.transform[0] * x +
+                                node.transform[2] * y +
+                                node.transform[4] +
+                                baseX +
+                                diagXOffset;
+                            const topY =
+                                node.transform[1] * x +
+                                node.transform[3] * y +
+                                node.transform[5] +
+                                baseY +
+                                diagYOffset;
+
+                            // Base position (without offset - subtract the diagonal offset)
+                            const baseX_pos = topX - diagXOffset;
+                            const baseY_pos = topY - diagYOffset;
+
+                            guideLines.push({
+                                topX,
+                                topY,
+                                baseX: baseX_pos,
+                                baseY: baseY_pos
+                            });
+                            break;
+                        }
+                    }
+                }
+            });
+        });
+
+        // Draw guide lines from top positions down to base positions (45° downward)
+        console.log('[StackPreview] Guide lines:', {
+            lineCount: guideLines.length,
+            easedProgress
+        });
+
+        if (guideLines.length > 0) {
+            const invScale = 1 / this.viewportManager.scale;
+            const isDarkTheme =
+                document.documentElement.getAttribute('data-theme') !== 'light';
+
+            this.ctx.save();
+            this.ctx.strokeStyle = isDarkTheme
+                ? 'rgba(255, 255, 255, 0.3)'
+                : 'rgba(0, 0, 0, 0.3)';
+            this.ctx.lineWidth = 1 * invScale;
+            this.ctx.setLineDash([5 * invScale, 5 * invScale]);
+
+            for (const line of guideLines) {
+                this.ctx.beginPath();
+                this.ctx.moveTo(line.topX, line.topY);
+                this.ctx.lineTo(line.baseX, line.baseY);
+                this.ctx.stroke();
+            }
+
+            this.ctx.restore();
+        }
+
         // Render all layers with animated diagonal offset (45° to top-right)
         layerTree.forEach((node) => {
             this.ctx.save();
@@ -3310,10 +3438,18 @@ export class GlyphCanvasRenderer {
                 node.transform[5]
             );
 
-            // Apply animated diagonal offset (45° = equal x and y offsets)
-            const offsetDistance = node.depth * 500 * easedProgress;
-            const xOffset = offsetDistance * Math.cos(Math.PI / 4); // cos(45°)
-            const yOffset = offsetDistance * Math.sin(Math.PI / 4); // sin(45°)
+            // Apply animated diagonal offset using config angle
+            const offsetDistance =
+                node.depth *
+                this.glyphCanvas.stackPreviewAnimator.config.verticalSpacing *
+                easedProgress;
+            const diagonalAngleRad =
+                (this.glyphCanvas.stackPreviewAnimator.config
+                    .diagonalOffsetAngle *
+                    Math.PI) /
+                180;
+            const xOffset = offsetDistance * Math.cos(diagonalAngleRad);
+            const yOffset = offsetDistance * Math.sin(diagonalAngleRad);
             this.ctx.translate(xOffset, yOffset);
 
             // Draw this component instance
