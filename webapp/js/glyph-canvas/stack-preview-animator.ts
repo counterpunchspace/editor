@@ -47,7 +47,7 @@ export class StackPreviewAnimator {
         this.config = {
             verticalSpacing: config?.verticalSpacing ?? 500,
             targetTiltAngle: config?.targetTiltAngle ?? 60,
-            totalFrames: config?.totalFrames ?? 60
+            totalFrames: config?.totalFrames ?? 30
         };
     }
 

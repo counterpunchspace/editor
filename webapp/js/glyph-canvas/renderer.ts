@@ -3158,8 +3158,24 @@ export class GlyphCanvasRenderer {
         const baseX = xPosition + xOffset;
         const baseY = yOffset;
 
-        // Render all layers on top of each other (no animation, no offset, no tilt)
-        // Just apply the accumulated transform and render
+        // Calculate animation progress with reverse support
+        let animationProgress;
+        if (this.glyphCanvas.stackPreviewAnimator.isAnimating) {
+            const rawProgress =
+                this.glyphCanvas.stackPreviewAnimator.currentFrame /
+                this.glyphCanvas.stackPreviewAnimator.config.totalFrames;
+            animationProgress = this.glyphCanvas.stackPreviewAnimator
+                .isReversing
+                ? 1 - rawProgress
+                : rawProgress;
+        } else {
+            animationProgress = this.glyphCanvas.stackPreviewAnimator.isActive
+                ? 1
+                : 0;
+        }
+        const easedProgress = 1 - Math.pow(1 - animationProgress, 3);
+
+        // Render all layers with animated diagonal offset (45° to top-right)
         layerTree.forEach((node) => {
             this.ctx.save();
 
@@ -3175,6 +3191,12 @@ export class GlyphCanvasRenderer {
                 node.transform[4],
                 node.transform[5]
             );
+
+            // Apply animated diagonal offset (45° = equal x and y offsets)
+            const offsetDistance = node.depth * 500 * easedProgress;
+            const xOffset = offsetDistance * Math.cos(Math.PI / 4); // cos(45°)
+            const yOffset = offsetDistance * Math.sin(Math.PI / 4); // sin(45°)
+            this.ctx.translate(xOffset, yOffset);
 
             // Draw this component instance
             this.drawComponentInstance(node);
