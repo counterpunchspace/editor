@@ -58,6 +58,8 @@ const APP_SETTINGS = {
 
         // Stroke widths
         OUTLINE_STROKE_WIDTH: 1, // px - width of glyph outline paths
+        OUTLINE_OPACITY: 0.4, // opacity of glyph outline paths in editing mode
+        HANDLE_LINE_OPACITY: 0.3, // opacity of off-curve point handle lines in editing mode
 
         // Hit detection
         HIT_TOLERANCE: 15, // px - hit detection tolerance for glyphs and components (screen pixels)

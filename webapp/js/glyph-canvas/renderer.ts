@@ -710,6 +710,38 @@ export class GlyphCanvasRenderer {
         const isDarkTheme =
             document.documentElement.getAttribute('data-theme') !== 'light';
 
+        // Draw filled glyph background in 3% black before everything else
+        // Build a combined path from all contours (not components) to use nonzero winding for counters
+        this.ctx.save();
+        this.ctx.beginPath();
+
+        if (currentLayerData.shapes && Array.isArray(currentLayerData.shapes)) {
+            currentLayerData.shapes.forEach((shape) => {
+                // Only process contours/paths, skip components
+                if ('Component' in shape) {
+                    return;
+                }
+
+                // Get nodes from shape
+                let nodes = 'nodes' in shape ? shape.nodes : undefined;
+                if (!nodes && 'Path' in shape && shape.Path.nodes) {
+                    nodes = LayerDataNormalizer.parseNodes(shape.Path.nodes);
+                }
+
+                if (nodes && nodes.length > 0) {
+                    this.buildPathFromNodes(nodes);
+                    this.ctx.closePath();
+                }
+            });
+        }
+
+        // Fill with 3% white (dark theme) or black (light theme) - nonzero winding automatically handles counters
+        this.ctx.fillStyle = isDarkTheme
+            ? 'rgba(255, 255, 255, 0.015)'
+            : 'rgba(0, 0, 0, 0.015)';
+        this.ctx.fill();
+        this.ctx.restore();
+
         // Draw parent glyph outlines in background if editing a component
         if (this.glyphCanvas.outlineEditor.isEditingComponent()) {
             this.ctx.save();
@@ -1470,7 +1502,10 @@ export class GlyphCanvasRenderer {
 
         // Draw the outline path
         this.ctx.beginPath();
-        this.ctx.strokeStyle = isDarkTheme ? '#ffffff' : '#000000';
+        const outlineOpacity = APP_SETTINGS.OUTLINE_EDITOR.OUTLINE_OPACITY;
+        this.ctx.strokeStyle = isDarkTheme
+            ? `rgba(255, 255, 255, ${outlineOpacity})`
+            : `rgba(0, 0, 0, ${outlineOpacity})`;
         this.ctx.lineWidth =
             APP_SETTINGS.OUTLINE_EDITOR.OUTLINE_STROKE_WIDTH * invScale;
 
@@ -1562,9 +1597,11 @@ export class GlyphCanvasRenderer {
             }
 
             // Draw control point handle lines (from off-curve to adjacent on-curve points)
+            const handleOpacity =
+                APP_SETTINGS.OUTLINE_EDITOR.HANDLE_LINE_OPACITY;
             this.ctx.strokeStyle = isDarkTheme
-                ? 'rgba(255, 255, 255, 0.5)'
-                : 'rgba(0, 0, 0, 0.5)';
+                ? `rgba(255, 255, 255, ${handleOpacity})`
+                : `rgba(0, 0, 0, ${handleOpacity})`;
             this.ctx.lineWidth = 1 * invScale;
 
             nodes.forEach((node: Babelfont.Node, nodeIndex: number) => {
