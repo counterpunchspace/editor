@@ -910,6 +910,15 @@ export class GlyphCanvasRenderer {
             transform: number[];
         }> = [];
 
+        // Collect anchor labels to draw last (on top of component labels)
+        const anchorLabels: Array<{
+            name: string;
+            x: number;
+            y: number;
+            anchorSize: number;
+            fontSize: number;
+        }> = [];
+
         // Only draw shapes if they exist (empty glyphs like space won't have shapes)
         if (currentLayerData.shapes && Array.isArray(currentLayerData.shapes)) {
             // Apply monochrome during manual slider interpolation OR when not on an exact layer
@@ -1379,23 +1388,9 @@ export class GlyphCanvasRenderer {
 
                 this.ctx.restore();
 
-                // Draw anchor name only above minimum zoom threshold
-                if (name && this.viewportManager.scale > minZoomForLabels) {
-                    this.ctx.save();
-                    this.ctx.translate(x, y);
-                    this.applyInverseComponentTransform(); // Cancel out component transform
-                    this.ctx.scale(1, -1); // Flip Y axis to fix upside-down text
-                    this.ctx.font = `${fontSize}px Inter, -apple-system, system-ui, sans-serif`;
-                    const labelOpacity = isSelected ? 1.0 : 0.5;
-                    this.ctx.fillStyle = isDarkTheme
-                        ? `rgba(255, 255, 255, ${labelOpacity})`
-                        : `rgba(0, 0, 0, ${labelOpacity})`;
-                    this.ctx.fillText(
-                        name,
-                        anchorSize + 4.5 * invScale,
-                        anchorSize
-                    );
-                    this.ctx.restore();
+                // Collect anchor label for drawing later (on top of everything)
+                if (name && isSelected) {
+                    anchorLabels.push({ name, x, y, anchorSize, fontSize });
                 }
             });
         }
@@ -1444,6 +1439,38 @@ export class GlyphCanvasRenderer {
                 bgY + fontSize * 0.85 + padding / 2 + 4
             );
 
+            this.ctx.restore();
+        });
+
+        // Draw anchor labels on top of component labels
+        anchorLabels.forEach(({ name, x, y, anchorSize, fontSize }) => {
+            this.ctx.save();
+            this.ctx.translate(x, y);
+            this.applyInverseComponentTransform(); // Cancel out component transform
+            this.ctx.scale(1, -1); // Flip Y axis to fix upside-down text
+            this.ctx.font = `${fontSize}px Inter, -apple-system, system-ui, sans-serif`;
+
+            // Measure text for background rectangle
+            const metrics = this.ctx.measureText(name);
+            const padding = 2 * invScale;
+            const textX = anchorSize + 4.5 * invScale;
+            const textY = anchorSize;
+            const bgX = textX - padding;
+            const bgY = textY - fontSize * 0.75 - padding;
+            const bgWidth = metrics.width + padding * 2;
+            const bgHeight = fontSize + padding * 2;
+
+            // Draw background rectangle
+            this.ctx.fillStyle = isDarkTheme
+                ? 'rgba(0, 0, 0, 0.75)'
+                : 'rgba(255, 255, 255, 0.75)';
+            this.ctx.fillRect(bgX, bgY, bgWidth, bgHeight);
+
+            // Draw text
+            this.ctx.fillStyle = isDarkTheme
+                ? 'rgba(255, 255, 255, 1.0)'
+                : 'rgba(0, 0, 0, 1.0)';
+            this.ctx.fillText(name, textX, textY);
             this.ctx.restore();
         });
 
