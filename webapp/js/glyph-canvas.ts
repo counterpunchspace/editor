@@ -7,6 +7,7 @@ import { TextRunEditor } from './glyph-canvas/textrun';
 import { ViewportManager } from './glyph-canvas/viewport';
 import { GlyphCanvasRenderer } from './glyph-canvas/renderer';
 import { MeasurementTool } from './glyph-canvas/measurement-tool';
+import { StackPreviewAnimator } from './glyph-canvas/stack-preview-animator';
 import { get_glyph_name } from '../wasm-dist/babelfont_fontc_web';
 import fontManager from './font-manager';
 import { OutlineEditor } from './glyph-canvas/outline-editor';
@@ -94,6 +95,9 @@ class GlyphCanvas {
     // Measurement tool
     measurementTool!: MeasurementTool; // Initialized in constructor
 
+    // Stack preview animator for component visualization
+    stackPreviewAnimator!: StackPreviewAnimator; // Initialized in constructor
+
     // Auto-pan anchor for text mode (cursor position)
     textModeAutoPanAnchorScreen: { x: number; y: number } | null = null;
 
@@ -112,6 +116,13 @@ class GlyphCanvas {
 
         // Initialize measurement tool
         this.measurementTool = new MeasurementTool(this);
+
+        // Initialize stack preview animator
+        this.stackPreviewAnimator = new StackPreviewAnimator(this, {
+            verticalSpacing: 500,
+            targetTiltAngle: 60,
+            totalFrames: 10
+        });
 
         this.axesManager = new AxesManager();
         this.featuresManager = new FeaturesManager();
@@ -291,8 +302,76 @@ class GlyphCanvas {
         // Only active when editor view is focused
         // Note: Settings panel escape is handled in theme-switcher.js with capture phase
         document.addEventListener('keydown', (e) => {
+            // Block all input during stack preview animation
+            if (this.stackPreviewAnimator.isInputBlocked()) {
+                e.preventDefault();
+                e.stopPropagation();
+                return;
+            }
+
             if (e.key === 'Escape') {
+                // Check if stack preview is active first
+                if (
+                    this.stackPreviewAnimator.isActive &&
+                    !this.stackPreviewAnimator.isAnimating
+                ) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    this.stackPreviewAnimator.reverseAnimation();
+                    return;
+                }
                 this.outlineEditor.onEscapeKey(e);
+            }
+        });
+
+        // Cmd+Alt+S handler with capture phase to activate stack preview
+        document.addEventListener('keydown', (e) => {
+            // Use code instead of key because Alt+S produces '‚' on macOS
+            if ((e.metaKey || e.ctrlKey) && e.altKey && e.code === 'KeyS') {
+                console.log('[GlyphCanvas] Cmd+Alt+S detected', {
+                    key: e.key,
+                    code: e.code,
+                    metaKey: e.metaKey,
+                    ctrlKey: e.ctrlKey,
+                    altKey: e.altKey,
+                    outlineEditorActive: this.outlineEditor.active,
+                    stackPreviewActive: this.stackPreviewAnimator.isActive,
+                    stackPreviewAnimating: this.stackPreviewAnimator.isAnimating
+                });
+
+                // Check if editing view is active and in editing mode
+                const editorView = document.querySelector('#view-editor');
+                const isEditorFocused =
+                    editorView && editorView.classList.contains('focused');
+
+                console.log('[GlyphCanvas] Editor focus check:', {
+                    editorView: !!editorView,
+                    isEditorFocused,
+                    outlineEditorActive: this.outlineEditor.active
+                });
+
+                if (isEditorFocused && this.outlineEditor.active) {
+                    e.preventDefault();
+                    e.stopPropagation();
+
+                    if (
+                        !this.stackPreviewAnimator.isActive &&
+                        !this.stackPreviewAnimator.isAnimating
+                    ) {
+                        console.log(
+                            '[GlyphCanvas] Starting stack preview mode'
+                        );
+                        this.stackPreviewAnimator.startAnimation();
+                    } else {
+                        console.log(
+                            '[GlyphCanvas] Stack preview already active or animating'
+                        );
+                    }
+                } else {
+                    console.log(
+                        '[GlyphCanvas] Not starting stack preview - editor not focused or not active'
+                    );
+                }
             }
         });
 

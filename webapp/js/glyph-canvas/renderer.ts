@@ -150,20 +150,27 @@ export class GlyphCanvasRenderer {
             transform.f
         );
 
-        // Draw selection highlight
-        this.drawSelection();
+        // Check if stack preview mode is active
+        if (this.glyphCanvas.stackPreviewAnimator.shouldRenderStackPreview()) {
+            // In stack preview mode, skip normal rendering and draw stack layers
+            this.drawStackPreview();
+        } else {
+            // Normal rendering
+            // Draw selection highlight
+            this.drawSelection();
 
-        // Draw shaped glyphs
-        this.drawShapedGlyphs();
+            // Draw shaped glyphs
+            this.drawShapedGlyphs();
 
-        // Draw canvas plugins below outline editor
-        this.drawCanvasPluginsBelow();
+            // Draw canvas plugins below outline editor
+            this.drawCanvasPluginsBelow();
 
-        // Draw outline editor (when layer is selected)
-        this.drawOutlineEditor();
+            // Draw outline editor (when layer is selected)
+            this.drawOutlineEditor();
 
-        // Draw canvas plugins above outline editor
-        this.drawCanvasPluginsAbove();
+            // Draw canvas plugins above outline editor
+            this.drawCanvasPluginsAbove();
+        }
 
         // Draw measurement tool intersections (in transformed space)
         this.drawMeasurementIntersections();
@@ -997,222 +1004,14 @@ export class GlyphCanvasRenderer {
                     shape.Component.layerData &&
                     shape.Component.layerData.shapes
                 ) {
-                    // Collect all outline shapes (non-component shapes with nodes) at each nesting level
-                    // for combined path rendering to properly handle counters via winding rule
-                    const collectOutlineShapes = (
-                        shapes: any[],
-                        transform: number[] | null = null
-                    ): Array<{ nodes: any[]; transform: number[] | null }> => {
-                        const outlineShapes: Array<{
-                            nodes: any[];
-                            transform: number[] | null;
-                        }> = [];
-
-                        shapes.forEach((componentShape) => {
-                            // Handle nested components
-                            if ('Component' in componentShape) {
-                                // Calculate combined transform
-                                let nestedTransform = transform;
-                                if (
-                                    componentShape.Component.transform &&
-                                    Array.isArray(
-                                        componentShape.Component.transform
-                                    )
-                                ) {
-                                    const t =
-                                        componentShape.Component.transform;
-                                    if (transform) {
-                                        // Combine transforms (multiply matrices)
-                                        const [a1, b1, c1, d1, tx1, ty1] =
-                                            transform;
-                                        const [a2, b2, c2, d2, tx2, ty2] = [
-                                            t[0] || 1,
-                                            t[1] || 0,
-                                            t[2] || 0,
-                                            t[3] || 1,
-                                            t[4] || 0,
-                                            t[5] || 0
-                                        ];
-                                        nestedTransform = [
-                                            a1 * a2 + b1 * c2,
-                                            a1 * b2 + b1 * d2,
-                                            c1 * a2 + d1 * c2,
-                                            c1 * b2 + d1 * d2,
-                                            a1 * tx2 + c1 * ty2 + tx1,
-                                            b1 * tx2 + d1 * ty2 + ty1
-                                        ];
-                                    } else {
-                                        nestedTransform = [
-                                            t[0] || 1,
-                                            t[1] || 0,
-                                            t[2] || 0,
-                                            t[3] || 1,
-                                            t[4] || 0,
-                                            t[5] || 0
-                                        ];
-                                    }
-                                }
-
-                                // Recursively collect nested component's shapes
-                                if (
-                                    componentShape.Component.layerData &&
-                                    componentShape.Component.layerData.shapes
-                                ) {
-                                    outlineShapes.push(
-                                        ...collectOutlineShapes(
-                                            componentShape.Component.layerData
-                                                .shapes,
-                                            nestedTransform
-                                        )
-                                    );
-                                }
-                            }
-                            // Handle outline shapes (with nodes)
-                            else if (
-                                componentShape.nodes &&
-                                componentShape.nodes.length > 0
-                            ) {
-                                outlineShapes.push({
-                                    nodes: componentShape.nodes,
-                                    transform: transform
-                                });
-                            }
-                        });
-
-                        return outlineShapes;
-                    };
-
-                    // Collect all outline shapes from the component hierarchy
-                    const outlineShapes = collectOutlineShapes(
-                        shape.Component.layerData.shapes
+                    this.drawComponentWithOutlines(
+                        shape.Component.layerData.shapes,
+                        isSelected,
+                        isHovered,
+                        !!isInterpolated,
+                        invScale,
+                        isDarkTheme
                     );
-
-                    if (outlineShapes.length > 0) {
-                        // Get colors
-                        const colors = isDarkTheme
-                            ? APP_SETTINGS.OUTLINE_EDITOR.COLORS_DARK
-                            : APP_SETTINGS.OUTLINE_EDITOR.COLORS_LIGHT;
-
-                        // Determine stroke color based on state
-                        const baseStrokeColor = isSelected
-                            ? colors.COMPONENT_SELECTED
-                            : colors.COMPONENT_NORMAL;
-
-                        // For hover, make it 20% darker
-                        let strokeColor = isHovered
-                            ? adjustColorHueAndLightness(baseStrokeColor, 0, 50)
-                            : baseStrokeColor;
-
-                        // Determine fill color based on state
-                        const baseFillColor = isSelected
-                            ? colors.COMPONENT_FILL_SELECTED
-                            : colors.COMPONENT_FILL_NORMAL;
-
-                        // For hover, make it 20% darker
-                        let fillColor = isHovered
-                            ? adjustColorHueAndLightness(baseFillColor, 0, 50)
-                            : baseFillColor;
-
-                        // Apply monochrome for interpolated data
-                        if (isInterpolated) {
-                            strokeColor = desaturateColor(strokeColor);
-                            fillColor = desaturateColor(fillColor);
-                        }
-
-                        // Apply glow effect only in dark theme
-                        if (isDarkTheme) {
-                            const { glowColor, glowStrokeWidth, glowBlur } =
-                                this.calculateGlowParams(
-                                    strokeColor,
-                                    invScale,
-                                    1.0 // Full opacity for strong glow
-                                );
-
-                            // First pass: Draw glow - build combined path for all shapes
-                            this.ctx.save();
-                            this.ctx.shadowBlur = glowBlur;
-                            this.ctx.shadowColor = glowColor;
-                            this.ctx.shadowOffsetX = 0;
-                            this.ctx.shadowOffsetY = 0;
-                            this.ctx.strokeStyle = glowColor;
-                            this.ctx.lineWidth = glowStrokeWidth;
-
-                            this.ctx.beginPath();
-                            outlineShapes.forEach(({ nodes, transform }) => {
-                                if (transform) {
-                                    this.ctx.save();
-                                    this.ctx.transform(
-                                        transform[0],
-                                        transform[1],
-                                        transform[2],
-                                        transform[3],
-                                        transform[4],
-                                        transform[5]
-                                    );
-                                }
-                                this.buildPathFromNodes(nodes);
-                                this.ctx.closePath();
-                                if (transform) {
-                                    this.ctx.restore();
-                                }
-                            });
-                            this.ctx.stroke();
-                            this.ctx.restore();
-                        }
-
-                        // Second pass: Draw fill and stroke - build combined path for all shapes
-                        // This allows paths with opposite directions to create counters (holes)
-                        // using the canvas nonzero winding rule
-                        this.ctx.shadowBlur = 0;
-                        this.ctx.shadowColor = 'transparent';
-
-                        this.ctx.beginPath();
-                        outlineShapes.forEach(({ nodes, transform }) => {
-                            if (transform) {
-                                this.ctx.save();
-                                this.ctx.transform(
-                                    transform[0],
-                                    transform[1],
-                                    transform[2],
-                                    transform[3],
-                                    transform[4],
-                                    transform[5]
-                                );
-                            }
-                            this.buildPathFromNodes(nodes);
-                            this.ctx.closePath();
-                            if (transform) {
-                                this.ctx.restore();
-                            }
-                        });
-
-                        this.ctx.fillStyle = fillColor;
-                        this.ctx.fill();
-
-                        // Stroke all paths
-                        this.ctx.beginPath();
-                        outlineShapes.forEach(({ nodes, transform }) => {
-                            if (transform) {
-                                this.ctx.save();
-                                this.ctx.transform(
-                                    transform[0],
-                                    transform[1],
-                                    transform[2],
-                                    transform[3],
-                                    transform[4],
-                                    transform[5]
-                                );
-                            }
-                            this.buildPathFromNodes(nodes);
-                            this.ctx.closePath();
-                            if (transform) {
-                                this.ctx.restore();
-                            }
-                        });
-                        this.ctx.strokeStyle = strokeColor;
-                        this.ctx.lineWidth = 1 * invScale;
-                        this.ctx.stroke();
-                    }
 
                     // Collect component label data for later drawing (on top of everything)
                     // Only show on hover
@@ -3325,5 +3124,483 @@ export class GlyphCanvasRenderer {
                 xPosition += xAdvance;
             }
         );
+    }
+
+    /**
+     * Render stack preview mode showing component nesting layers
+     */
+    drawStackPreview(): void {
+        console.log('[StackPreview] Rendering stack preview');
+
+        const layerTree = this.glyphCanvas.stackPreviewAnimator.layerTree;
+        if (layerTree.length === 0) return;
+
+        // Get glyph position in text run (same as normal rendering)
+        if (
+            this.textRunEditor.selectedGlyphIndex < 0 ||
+            this.textRunEditor.selectedGlyphIndex >=
+                this.textRunEditor.shapedGlyphs.length
+        ) {
+            return;
+        }
+
+        let xPosition = 0;
+        for (let i = 0; i < this.textRunEditor.selectedGlyphIndex; i++) {
+            xPosition += this.textRunEditor.shapedGlyphs[i].ax || 0;
+        }
+
+        const glyph =
+            this.textRunEditor.shapedGlyphs[
+                this.textRunEditor.selectedGlyphIndex
+            ];
+        const xOffset = glyph.dx || 0;
+        const yOffset = glyph.dy || 0;
+        const baseX = xPosition + xOffset;
+        const baseY = yOffset;
+
+        const tiltRadians =
+            this.glyphCanvas.stackPreviewAnimator.getTiltAngleRadians();
+
+        // Render layers from bottom to top (deepest nesting first)
+        // This ensures proper visual stacking
+        const sortedLayers = [...layerTree].sort((a, b) => b.depth - a.depth);
+
+        sortedLayers.forEach((node, index) => {
+            this.ctx.save();
+
+            // Calculate opacity fade based on depth
+            const alpha = Math.max(0.3, 1 - node.depth * 0.15);
+            this.ctx.globalAlpha = alpha;
+
+            // Translate to base glyph position
+            this.ctx.translate(baseX, baseY);
+
+            // Apply accumulated transform for this component instance
+            this.ctx.transform(
+                node.transform[0],
+                node.transform[1],
+                node.transform[2],
+                node.transform[3],
+                node.transform[4],
+                node.transform[5]
+            );
+
+            // Apply vertical offset for this layer
+            this.ctx.translate(0, node.yOffset);
+
+            // Apply tilt transform (skew leftward)
+            // Matrix: [1, 0, tan(angle), 1, 0, 0] for horizontal skew
+            // Negative tan for leftward tilt
+            this.ctx.transform(1, 0, -Math.tan(tiltRadians), 1, 0, 0);
+
+            // Draw this component instance
+            this.drawComponentInstance(node);
+
+            this.ctx.restore();
+        });
+    }
+
+    /**
+     * Draw a single component instance in stack preview mode
+     * Renders the component's layer data without applying transforms again
+     */
+    drawComponentInstance(node: any): void {
+        const layerData = node.componentLayerData;
+        if (!layerData || !layerData.shapes) return;
+
+        const invScale = 1 / this.viewportManager.scale;
+        const isDarkTheme =
+            document.documentElement.getAttribute('data-theme') !== 'light';
+
+        // Draw filled background for paths
+        this.ctx.save();
+        this.ctx.beginPath();
+
+        layerData.shapes.forEach((shape: any) => {
+            if ('Component' in shape) return;
+
+            let nodes = 'nodes' in shape ? shape.nodes : undefined;
+            if (!nodes && 'Path' in shape && shape.Path.nodes) {
+                nodes = LayerDataNormalizer.parseNodes(shape.Path.nodes);
+            }
+
+            if (nodes && nodes.length > 0) {
+                this.buildPathFromNodes(nodes);
+                this.ctx.closePath();
+            }
+        });
+
+        this.ctx.fillStyle = isDarkTheme
+            ? 'rgba(255, 255, 255, 0.015)'
+            : 'rgba(0, 0, 0, 0.015)';
+        this.ctx.fill();
+        this.ctx.restore();
+
+        // Draw paths (outlines only)
+        layerData.shapes.forEach((shape: any, index: number) => {
+            if ('Component' in shape) return;
+            this.drawShape(shape, index, false);
+        });
+
+        // Draw blue boxes for nested components
+        // The component's CONTENT is in separate layer tree nodes, but we show the blue box here
+        const colors = isDarkTheme
+            ? APP_SETTINGS.OUTLINE_EDITOR.COLORS_DARK
+            : APP_SETTINGS.OUTLINE_EDITOR.COLORS_LIGHT;
+
+        layerData.shapes.forEach((shape: any) => {
+            if (!('Component' in shape)) return;
+
+            const component = shape.Component;
+            if (!component.layerData || !component.layerData.shapes) return;
+
+            // Apply component's transform to position the blue box
+            const transform = component.transform || [1, 0, 0, 1, 0, 0];
+            const [a, b, c, d, tx, ty] = transform;
+
+            this.ctx.save();
+            this.ctx.transform(a, b, c, d, tx, ty);
+
+            // Draw flattened component outlines (blue box)
+            this.drawComponentWithOutlines(
+                component.layerData.shapes,
+                false,
+                false,
+                false,
+                invScale,
+                isDarkTheme
+            );
+
+            // Draw component origin marker
+            if (
+                APP_SETTINGS.OUTLINE_EDITOR.SHOW_COMPONENT_ORIGIN_MARKERS &&
+                this.viewportManager.scale >=
+                    APP_SETTINGS.OUTLINE_EDITOR.MIN_ZOOM_FOR_HANDLES
+            ) {
+                const markerSize =
+                    APP_SETTINGS.OUTLINE_EDITOR.COMPONENT_MARKER_SIZE *
+                    invScale;
+
+                this.ctx.strokeStyle = colors.COMPONENT_NORMAL;
+                this.ctx.lineWidth = 2 * invScale;
+                this.ctx.beginPath();
+                this.ctx.moveTo(-markerSize, 0);
+                this.ctx.lineTo(markerSize, 0);
+                this.ctx.moveTo(0, -markerSize);
+                this.ctx.lineTo(0, markerSize);
+                this.ctx.stroke();
+
+                this.ctx.beginPath();
+                this.ctx.arc(0, 0, markerSize, 0, Math.PI * 2);
+                this.ctx.stroke();
+            }
+
+            this.ctx.restore();
+        });
+    }
+
+    /**
+     * Render layer shapes (paths and components)
+     * Extracted from main render loop for reuse in stack preview
+     */
+    private renderLayerShapes(
+        layerData: any,
+        invScale: number,
+        isDarkTheme: boolean,
+        enableInteraction: boolean
+    ): void {
+        // Draw filled background
+        this.ctx.save();
+        this.ctx.beginPath();
+
+        layerData.shapes.forEach((shape: any) => {
+            if ('Component' in shape) return;
+
+            let nodes = 'nodes' in shape ? shape.nodes : undefined;
+            if (!nodes && 'Path' in shape && shape.Path.nodes) {
+                nodes = LayerDataNormalizer.parseNodes(shape.Path.nodes);
+            }
+
+            if (nodes && nodes.length > 0) {
+                this.buildPathFromNodes(nodes);
+                this.ctx.closePath();
+            }
+        });
+
+        this.ctx.fillStyle = isDarkTheme
+            ? 'rgba(255, 255, 255, 0.015)'
+            : 'rgba(0, 0, 0, 0.015)';
+        this.ctx.fill();
+        this.ctx.restore();
+
+        // Draw paths
+        layerData.shapes.forEach((shape: any, index: number) =>
+            this.drawShape(shape, index, false)
+        );
+
+        // Draw components
+        layerData.shapes.forEach((shape: any, index: number) => {
+            if (!('Component' in shape)) return;
+
+            const component = shape.Component;
+            if (!component.layerData || !component.layerData.shapes) return;
+
+            // Get selection/hover state (only if interaction is enabled)
+            const isHovered =
+                enableInteraction &&
+                this.glyphCanvas.outlineEditor.hoveredComponentIndex === index;
+            const isSelected =
+                enableInteraction &&
+                this.glyphCanvas.outlineEditor.selectedComponents.includes(
+                    index
+                );
+
+            // Get component transform
+            const transform = component.transform || [1, 0, 0, 1, 0, 0];
+            const [a, b, c, d, tx, ty] = transform;
+
+            this.ctx.save();
+            this.ctx.transform(a, b, c, d, tx, ty);
+
+            // Draw component outlines
+            this.drawComponentWithOutlines(
+                component.layerData.shapes,
+                isSelected,
+                isHovered,
+                false,
+                invScale,
+                isDarkTheme
+            );
+
+            // Draw component marker
+            if (
+                APP_SETTINGS.OUTLINE_EDITOR.SHOW_COMPONENT_ORIGIN_MARKERS &&
+                this.viewportManager.scale >=
+                    APP_SETTINGS.OUTLINE_EDITOR.MIN_ZOOM_FOR_HANDLES
+            ) {
+                const colors = isDarkTheme
+                    ? APP_SETTINGS.OUTLINE_EDITOR.COLORS_DARK
+                    : APP_SETTINGS.OUTLINE_EDITOR.COLORS_LIGHT;
+                const markerSize =
+                    APP_SETTINGS.OUTLINE_EDITOR.COMPONENT_MARKER_SIZE *
+                    invScale;
+                const markerStrokeColor = isSelected
+                    ? colors.COMPONENT_SELECTED
+                    : isHovered
+                      ? adjustColorHueAndLightness(
+                            colors.COMPONENT_NORMAL,
+                            0,
+                            -20
+                        )
+                      : colors.COMPONENT_NORMAL;
+
+                this.ctx.strokeStyle = markerStrokeColor;
+                this.ctx.lineWidth = 2 * invScale;
+                this.ctx.beginPath();
+                this.ctx.moveTo(-markerSize, 0);
+                this.ctx.lineTo(markerSize, 0);
+                this.ctx.moveTo(0, -markerSize);
+                this.ctx.lineTo(0, markerSize);
+                this.ctx.stroke();
+
+                this.ctx.beginPath();
+                this.ctx.arc(0, 0, markerSize, 0, Math.PI * 2);
+                this.ctx.stroke();
+            }
+
+            this.ctx.restore();
+        });
+    }
+
+    /**
+     * Draw component with flattened outline shapes (blue filled boxes)
+     * Reusable method for both normal editing mode and stack preview
+     */
+    private drawComponentWithOutlines(
+        shapes: any[],
+        isSelected: boolean,
+        isHovered: boolean,
+        isInterpolated: boolean,
+        invScale: number,
+        isDarkTheme: boolean
+    ): void {
+        // Collect all outline shapes (non-component shapes with nodes) at each nesting level
+        const collectOutlineShapes = (
+            shapes: any[],
+            transform: number[] | null = null
+        ): Array<{ nodes: any[]; transform: number[] | null }> => {
+            const outlineShapes: Array<{
+                nodes: any[];
+                transform: number[] | null;
+            }> = [];
+
+            shapes.forEach((componentShape) => {
+                if ('Component' in componentShape) {
+                    let nestedTransform = transform;
+                    if (
+                        componentShape.Component.transform &&
+                        Array.isArray(componentShape.Component.transform)
+                    ) {
+                        const t = componentShape.Component.transform;
+                        if (transform) {
+                            const [a1, b1, c1, d1, tx1, ty1] = transform;
+                            const [a2, b2, c2, d2, tx2, ty2] = [
+                                t[0] || 1,
+                                t[1] || 0,
+                                t[2] || 0,
+                                t[3] || 1,
+                                t[4] || 0,
+                                t[5] || 0
+                            ];
+                            nestedTransform = [
+                                a1 * a2 + b1 * c2,
+                                a1 * b2 + b1 * d2,
+                                c1 * a2 + d1 * c2,
+                                c1 * b2 + d1 * d2,
+                                a1 * tx2 + c1 * ty2 + tx1,
+                                b1 * tx2 + d1 * ty2 + ty1
+                            ];
+                        } else {
+                            nestedTransform = [
+                                t[0] || 1,
+                                t[1] || 0,
+                                t[2] || 0,
+                                t[3] || 1,
+                                t[4] || 0,
+                                t[5] || 0
+                            ];
+                        }
+                    }
+
+                    if (
+                        componentShape.Component.layerData &&
+                        componentShape.Component.layerData.shapes
+                    ) {
+                        outlineShapes.push(
+                            ...collectOutlineShapes(
+                                componentShape.Component.layerData.shapes,
+                                nestedTransform
+                            )
+                        );
+                    }
+                } else if (
+                    componentShape.nodes &&
+                    componentShape.nodes.length > 0
+                ) {
+                    outlineShapes.push({
+                        nodes: componentShape.nodes,
+                        transform: transform
+                    });
+                }
+            });
+
+            return outlineShapes;
+        };
+
+        const outlineShapes = collectOutlineShapes(shapes);
+
+        if (outlineShapes.length === 0) return;
+
+        const colors = isDarkTheme
+            ? APP_SETTINGS.OUTLINE_EDITOR.COLORS_DARK
+            : APP_SETTINGS.OUTLINE_EDITOR.COLORS_LIGHT;
+
+        const baseStrokeColor = isSelected
+            ? colors.COMPONENT_SELECTED
+            : colors.COMPONENT_NORMAL;
+        let strokeColor = isHovered
+            ? adjustColorHueAndLightness(baseStrokeColor, 0, 50)
+            : baseStrokeColor;
+
+        const baseFillColor = isSelected
+            ? colors.COMPONENT_FILL_SELECTED
+            : colors.COMPONENT_FILL_NORMAL;
+        let fillColor = isHovered
+            ? adjustColorHueAndLightness(baseFillColor, 0, 50)
+            : baseFillColor;
+
+        if (isInterpolated) {
+            strokeColor = desaturateColor(strokeColor);
+            fillColor = desaturateColor(fillColor);
+        }
+
+        // Glow
+        if (isDarkTheme) {
+            const { glowColor, glowStrokeWidth, glowBlur } =
+                this.calculateGlowParams(strokeColor, invScale, 1.0);
+
+            this.ctx.save();
+            this.ctx.shadowBlur = glowBlur;
+            this.ctx.shadowColor = glowColor;
+            this.ctx.shadowOffsetX = 0;
+            this.ctx.shadowOffsetY = 0;
+            this.ctx.strokeStyle = glowColor;
+            this.ctx.lineWidth = glowStrokeWidth;
+
+            this.ctx.beginPath();
+            outlineShapes.forEach(({ nodes, transform }) => {
+                if (transform) {
+                    this.ctx.save();
+                    this.ctx.transform(
+                        transform[0],
+                        transform[1],
+                        transform[2],
+                        transform[3],
+                        transform[4],
+                        transform[5]
+                    );
+                }
+                this.buildPathFromNodes(nodes);
+                this.ctx.closePath();
+                if (transform) this.ctx.restore();
+            });
+            this.ctx.stroke();
+            this.ctx.restore();
+        }
+
+        // Fill
+        this.ctx.shadowBlur = 0;
+        this.ctx.shadowColor = 'transparent';
+        this.ctx.beginPath();
+        outlineShapes.forEach(({ nodes, transform }) => {
+            if (transform) {
+                this.ctx.save();
+                this.ctx.transform(
+                    transform[0],
+                    transform[1],
+                    transform[2],
+                    transform[3],
+                    transform[4],
+                    transform[5]
+                );
+            }
+            this.buildPathFromNodes(nodes);
+            this.ctx.closePath();
+            if (transform) this.ctx.restore();
+        });
+        this.ctx.fillStyle = fillColor;
+        this.ctx.fill();
+
+        // Stroke
+        this.ctx.beginPath();
+        outlineShapes.forEach(({ nodes, transform }) => {
+            if (transform) {
+                this.ctx.save();
+                this.ctx.transform(
+                    transform[0],
+                    transform[1],
+                    transform[2],
+                    transform[3],
+                    transform[4],
+                    transform[5]
+                );
+            }
+            this.buildPathFromNodes(nodes);
+            this.ctx.closePath();
+            if (transform) this.ctx.restore();
+        });
+        this.ctx.strokeStyle = strokeColor;
+        this.ctx.lineWidth = 1 * invScale;
+        this.ctx.stroke();
     }
 }

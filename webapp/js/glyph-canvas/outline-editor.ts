@@ -271,6 +271,9 @@ export class OutlineEditor {
             return; // Don't handle Escape if editor view is not focused
         }
 
+        // Priority -1: Exit stack preview mode if active (handled in glyph-canvas.ts)
+        // This is checked before reaching here
+
         // Priority 0: Stop any active loop animations (play button sine waves)
         if (this.glyphCanvas.axesManager?.isLoopAnimating) {
             e.preventDefault();
