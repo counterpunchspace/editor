@@ -1,6 +1,8 @@
 // File Browser for in-browser memfs
 // Shows the Pyodide file system in view 3
 
+import tippy, { Instance as TippyInstance } from 'tippy.js';
+import 'tippy.js/dist/tippy.css';
 import {
     FileSystemAdapter,
     isFileSystemAccessSupported,
@@ -10,7 +12,8 @@ import { showCriticalError } from './critical-error-handler';
 import {
     pluginRegistry,
     FilesystemPlugin,
-    DiskPlugin
+    DiskPlugin,
+    TitleBarMenuItem
 } from './filesystem-plugins';
 
 const LAST_CONTEXT_KEY = 'last-filesystem-context';
@@ -105,6 +108,95 @@ function isSupportedFontFormat(name: string, isDir: boolean): boolean {
     ];
 
     return supportedExtensions.some((ext) => name.endsWith(ext));
+}
+
+// Helper functions for plugin menu dropdowns
+function createPluginMenuHtml(menuItems: TitleBarMenuItem[]): string {
+    const items = menuItems
+        .map(
+            (item) => `
+        <div class="plugin-menu-item" data-action="${item.label}">
+            ${item.icon ? `<span class="material-symbols-outlined">${item.icon}</span>` : ''}
+            <span>${item.label}</span>
+        </div>
+    `
+        )
+        .join('');
+    return `<div class="plugin-menu">${items}</div>`;
+}
+
+function setupMenuItemHandlers(
+    tippyInstance: TippyInstance,
+    menuItems: TitleBarMenuItem[]
+): void {
+    const menu = tippyInstance.popper.querySelector('.plugin-menu');
+    if (!menu) return;
+
+    menu.querySelectorAll('.plugin-menu-item').forEach((item, index) => {
+        item.addEventListener('click', async () => {
+            tippyInstance.hide();
+            await menuItems[index].action();
+        });
+    });
+
+    // Keyboard navigation
+    let focusedIndex = 0;
+    const items = Array.from(menu.querySelectorAll('.plugin-menu-item'));
+
+    const updateFocus = () => {
+        items.forEach((el, i) => {
+            el.classList.toggle('focused', i === focusedIndex);
+        });
+    };
+
+    menu.addEventListener('keydown', (e: Event) => {
+        const keyEvent = e as KeyboardEvent;
+        if (keyEvent.key === 'ArrowDown') {
+            e.preventDefault();
+            focusedIndex = (focusedIndex + 1) % items.length;
+            updateFocus();
+        } else if (keyEvent.key === 'ArrowUp') {
+            e.preventDefault();
+            focusedIndex = (focusedIndex - 1 + items.length) % items.length;
+            updateFocus();
+        } else if (keyEvent.key === 'Enter') {
+            e.preventDefault();
+            (items[focusedIndex] as HTMLElement).click();
+        }
+    });
+
+    updateFocus();
+    (menu as HTMLElement).focus();
+}
+
+function getTheme(): string {
+    const root = document.documentElement;
+    const theme = root.getAttribute('data-theme');
+    return theme === 'light' ? 'light' : 'dark';
+}
+
+function updatePluginMenuButtonVisibility(plugin: FilesystemPlugin): void {
+    const pluginId = plugin.getId();
+    const button = document.querySelector(
+        `.context-tab[data-plugin-id="${pluginId}"]`
+    ) as HTMLElement;
+
+    if (!button || !(button as any)._hasMenu) return;
+
+    const dropdownIcon = button.querySelector(
+        '.plugin-dropdown-icon'
+    ) as HTMLElement;
+    if (!dropdownIcon) return;
+
+    // Show dropdown icon only if plugin is active and ready
+    const isActive = button.classList.contains('active');
+    if (isActive) {
+        plugin.isReady().then((isReady) => {
+            dropdownIcon.style.display = isReady ? 'inline-flex' : 'none';
+        });
+    } else {
+        dropdownIcon.style.display = 'none';
+    }
 }
 
 async function openFont(path: string, fileHandle?: FileSystemFileHandle) {
@@ -287,6 +379,11 @@ async function switchContext(pluginId: string) {
         }
     });
 
+    // Update dropdown icon visibility for all plugins
+    pluginRegistry.getAll().forEach((p) => {
+        updatePluginMenuButtonVisibility(p);
+    });
+
     // Try to activate plugin (may fail if setup needed)
     const activated = await plugin.onActivate();
     if (!activated) {
@@ -310,23 +407,8 @@ async function switchContext(pluginId: string) {
         hideUnsupportedBrowserUI
     });
 
-    // Show/hide close button based on plugin capabilities
-    console.log(
-        '[FileBrowser]',
-        'Checking close button visibility - canClose:',
-        plugin.canClose()
-    );
-    if (plugin.canClose()) {
-        const isReady = await plugin.isReady();
-        console.log('[FileBrowser]', 'Plugin isReady:', isReady);
-        if (isReady) {
-            showCloseFolderButton();
-        } else {
-            hideCloseFolderButton();
-        }
-    } else {
-        hideCloseFolderButton();
-    }
+    // Update dropdown menu button visibility based on plugin capabilities
+    updatePluginMenuButtonVisibility(plugin);
 
     // Navigate to plugin's default path
     const defaultPath = plugin.getDefaultPath();
@@ -351,58 +433,6 @@ async function selectDiskFolder() {
     } catch (error: any) {
         console.error('[FileBrowser]', 'Error selecting folder:', error);
         alert(`Error selecting folder: ${error.message}`);
-    }
-}
-
-// Close folder access (disk plugin only)
-async function closeFolderAccess() {
-    const { currentPlugin } = fileSystemCache;
-
-    if (!currentPlugin || !currentPlugin.canClose()) {
-        console.warn('[FileBrowser]', 'Current plugin cannot be closed');
-        return;
-    }
-
-    try {
-        console.log('[FileBrowser]', 'Closing folder access...');
-
-        // Close plugin (clears directory handle)
-        await currentPlugin.close();
-
-        // Update UI
-        showOpenFolderUI();
-        hideCloseFolderButton();
-
-        console.log('[FileBrowser]', 'Folder access closed');
-    } catch (error: any) {
-        console.error('[FileBrowser]', 'Error closing folder access:', error);
-        alert(`Error closing folder: ${error.message}`);
-    }
-}
-
-function showCloseFolderButton() {
-    const button = document.getElementById('close-folder-button');
-    console.log(
-        '[FileBrowser]',
-        'showCloseFolderButton - button exists:',
-        !!button
-    );
-    if (button) {
-        button.style.display = 'flex';
-        console.log('[FileBrowser]', 'Close button display set to flex');
-    }
-}
-
-function hideCloseFolderButton() {
-    const button = document.getElementById('close-folder-button');
-    console.log(
-        '[FileBrowser]',
-        'hideCloseFolderButton - button exists:',
-        !!button
-    );
-    if (button) {
-        button.style.display = 'none';
-        console.log('[FileBrowser]', 'Close button display set to none');
     }
 }
 
@@ -861,42 +891,118 @@ async function initFileBrowser() {
         }
 
         // Generate context tabs dynamically from plugin registry
-        const tabsContainer = document.querySelector('.file-context-tabs');
-        if (tabsContainer) {
-            tabsContainer.innerHTML = ''; // Clear existing tabs
+        const titleBarRight = document.querySelector(
+            '.view-files .view-title-right'
+        );
+        if (titleBarRight) {
+            // Clear existing content
+            titleBarRight.innerHTML = '';
 
             const plugins = pluginRegistry.getAll();
             plugins.forEach((plugin) => {
                 const button = document.createElement('button');
-                button.className = 'context-tab';
+                button.className = 'view-title-button context-tab';
                 button.setAttribute('data-plugin-id', plugin.getId());
-                button.textContent = `${plugin.getIcon()} ${plugin.getName()}`;
+                button.innerHTML = `${plugin.getIcon()} ${plugin.getName()}`;
 
                 // Mark default plugin as active
                 if (plugin.getId() === pluginRegistry.getDefaultId()) {
                     button.classList.add('active');
                 }
 
-                // Add click handler
-                button.addEventListener('click', async () => {
-                    await switchContext(plugin.getId());
-                });
+                // Add dropdown menu button if plugin has menu items
+                const menuItems = plugin.getTitleBarMenuItems();
+                if (menuItems.length > 0) {
+                    // Add dropdown icon to button
+                    const dropdownIcon = document.createElement('span');
+                    dropdownIcon.className =
+                        'material-symbols-outlined plugin-dropdown-icon';
+                    dropdownIcon.textContent = 'expand_more';
+                    dropdownIcon.style.display = 'none'; // Initially hidden
+                    button.appendChild(dropdownIcon);
 
-                tabsContainer.appendChild(button);
+                    // Create backdrop for modal-like behavior
+                    const backdrop = document.createElement('div');
+                    backdrop.className = 'plugin-menu-backdrop';
+                    backdrop.addEventListener('click', () => {
+                        const tippyInstance = (button as any)._tippy;
+                        if (tippyInstance) {
+                            tippyInstance.hide();
+                        }
+                    });
+                    document.body.appendChild(backdrop);
+
+                    // Create tippy menu on the button itself
+                    const menuHtml = createPluginMenuHtml(menuItems);
+                    const tippyInstance = tippy(button, {
+                        content: menuHtml,
+                        allowHTML: true,
+                        trigger: 'manual', // We'll control it manually
+                        interactive: true,
+                        placement: 'bottom-end',
+                        theme: getTheme(),
+                        arrow: false,
+                        offset: [0, 0],
+                        hideOnClick: false, // Prevent automatic hiding
+                        zIndex: 9999, // Above backdrop
+                        onShow: () => {
+                            backdrop.classList.add('visible');
+                        },
+                        onShown: (instance) => {
+                            setupMenuItemHandlers(instance, menuItems);
+                        },
+                        onHide: () => {
+                            backdrop.classList.remove('visible');
+                        }
+                    });
+
+                    // Store tippy instance and menu items
+                    (button as any)._tippy = tippyInstance;
+                    (button as any)._hasMenu = true;
+
+                    // Handle clicks: show menu on dropdown icon, switch context on button area
+                    button.addEventListener('click', async (e) => {
+                        const target = e.target as HTMLElement;
+                        const isDropdownIcon =
+                            target.classList.contains('plugin-dropdown-icon') ||
+                            target.closest('.plugin-dropdown-icon');
+
+                        if (
+                            isDropdownIcon &&
+                            button.classList.contains('active')
+                        ) {
+                            // Click on dropdown icon when active - toggle menu
+                            e.preventDefault();
+                            e.stopImmediatePropagation();
+
+                            // Capture state immediately
+                            const wasVisible = tippyInstance.state.isVisible;
+
+                            if (wasVisible) {
+                                tippyInstance.hide();
+                            } else {
+                                tippyInstance.show();
+                            }
+                            return;
+                        } else if (!isDropdownIcon) {
+                            // Click on button area - switch context
+                            await switchContext(plugin.getId());
+                        }
+                    });
+                } else {
+                    // No menu items - simple click to switch context
+                    button.addEventListener('click', async () => {
+                        await switchContext(plugin.getId());
+                    });
+                }
+
+                titleBarRight.appendChild(button);
             });
 
             console.log(
                 '[FileBrowser]',
                 `Generated ${plugins.length} context tabs`
             );
-        }
-
-        // Set up close button click handler
-        const closeButton = document.getElementById('close-folder-button');
-        if (closeButton) {
-            closeButton.addEventListener('click', async () => {
-                await closeFolderAccess();
-            });
         }
 
         // Restore last used context from localStorage
@@ -989,17 +1095,8 @@ async function initFileBrowser() {
 
             await navigateToPath(startPath);
 
-            // Show/hide close button based on default plugin capabilities
-            if (defaultPlugin.canClose()) {
-                const isReady = await defaultPlugin.isReady();
-                if (isReady) {
-                    showCloseFolderButton();
-                } else {
-                    hideCloseFolderButton();
-                }
-            } else {
-                hideCloseFolderButton();
-            }
+            // Update plugin menu button visibility
+            updatePluginMenuButtonVisibility(defaultPlugin);
         }
 
         console.log('[FileBrowser]', 'File browser initialized');
@@ -1016,6 +1113,48 @@ async function initFileBrowser() {
 document.addEventListener('DOMContentLoaded', () => {
     setTimeout(initFileBrowser, 1500); // Wait a bit longer for Pyodide to be ready
 });
+
+// Close any open Tippy menu on Escape key
+document.addEventListener('keydown', (e: KeyboardEvent) => {
+    if (e.key === 'Escape') {
+        const allButtons = document.querySelectorAll('.context-tab');
+        allButtons.forEach((button) => {
+            const tippyInstance = (button as any)._tippy;
+            if (tippyInstance && tippyInstance.state.isVisible) {
+                tippyInstance.hide();
+            }
+        });
+    }
+});
+
+// Listen for plugin folder closed event
+window.addEventListener('pluginFolderClosed', async () => {
+    console.log('[FileBrowser]', 'Plugin folder closed, updating UI...');
+    const { currentPlugin } = fileSystemCache;
+    if (currentPlugin) {
+        await currentPlugin.updateUI({
+            showOpenFolderUI,
+            hideOpenFolderUI,
+            showPermissionBanner,
+            showUnsupportedBrowserUI,
+            hideUnsupportedBrowserUI
+        });
+        updatePluginMenuButtonVisibility(currentPlugin);
+    }
+});
+
+// Listen for plugin title bar redraw event
+window.addEventListener('pluginTitleBarRedraw', ((e: CustomEvent) => {
+    const { pluginId } = e.detail;
+    const plugin = pluginRegistry.get(pluginId);
+    if (plugin) {
+        console.log(
+            '[FileBrowser]',
+            `Redrawing title bar for plugin: ${pluginId}`
+        );
+        updatePluginMenuButtonVisibility(plugin);
+    }
+}) as EventListener);
 
 // Wrapper function to get file handle from global map
 async function openFontWithHandle(path: string) {
@@ -1037,5 +1176,4 @@ window.openFont = openFont;
 (window as any).switchContext = switchContext;
 (window as any).selectDiskFolder = selectDiskFolder;
 (window as any).reEnableAccess = reEnableAccess;
-(window as any).closeFolderAccess = closeFolderAccess;
 window.downloadFile = downloadFile;

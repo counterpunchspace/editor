@@ -507,7 +507,7 @@ kbd + kbd {
     justify-content: space-between;
     padding: 0 0 0 8px;
     border-bottom: 1px solid var(--border-primary);
-    font-family: var(--font-families-mono);
+    font-family: var(--font-families-sans);
     font-size: 11px;
     background-color: inherit;
     flex-shrink: 0;
@@ -518,6 +518,13 @@ kbd + kbd {
     display: flex;
     align-items: center;
     gap: 6px;
+}
+
+.view-title-right {
+    display: flex;
+    align-items: center;
+    gap: 0;
+    height: 100%;
 }
 
 .view-title-name {
@@ -681,14 +688,19 @@ kbd + kbd {
     padding: 0 8px;
     border-radius: 0;
     cursor: pointer;
-    font-family: var(--font-families-mono);
+    font-family: var(--font-families-sans);
     font-size: 10px;
     font-weight: normal;
+    letter-spacing: 0.03em;
     transition: all 0.2s ease;
     height: 100%;
     display: flex;
     align-items: center;
     gap: 3px;
+}
+
+.view-title-button .material-symbols-outlined {
+    font-size: 18px;
 }
 
 .view-title-button:hover {
@@ -1796,67 +1808,95 @@ kbd + kbd {
 }
 
 /* File System Context Tabs */
-.file-browser-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 8px;
-    margin-bottom: 8px;
-    border-bottom: 1px solid var(--border-primary);
-}
-
-.file-context-tabs {
-    display: flex;
-    gap: 0;
-    flex: 1;
-}
-
-.close-folder-button {
-    background: transparent;
-    border: none;
-    color: var(--text-secondary);
-    padding: 4px 8px;
-    cursor: pointer;
-    transition: all 0.15s ease;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    border-radius: 3px;
-    margin-right: 4px;
-}
-
-.close-folder-button:hover {
-    background: var(--input-bg);
-    color: var(--text-primary);
-}
-
-.close-folder-button .material-symbols-outlined {
-    font-size: 16px;
-}
-
 .context-tab {
-    background: transparent;
-    border: none;
-    border-bottom: 2px solid transparent;
-    color: var(--text-secondary);
-    padding: 6px 12px;
-    cursor: pointer;
-    font-family: var(--font-families-mono);
-    font-size: 11px;
-    font-weight: 500;
-    transition: all 0.15s ease;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-}
-
-.context-tab:hover {
-    background: var(--input-bg);
-    color: var(--text-primary);
+    color: var(--text-muted) !important;
 }
 
 .context-tab.active {
-    color: var(--accent-cyan);
-    border-bottom-color: var(--accent-cyan);
+    background-color: var(--input-bg);
+    color: var(--text-primary) !important;
+}
+
+/* Plugin Dropdown Icon within Context Tab */
+.plugin-dropdown-icon {
+    margin-left: 2px;
+    font-size: 16px !important;
+    display: inline-flex;
+    align-items: center;
+    opacity: 0.7;
+    transition: opacity 0.15s ease;
+}
+
+.context-tab:hover .plugin-dropdown-icon {
+    opacity: 1;
+}
+
+/* Plugin Menu (Tippy Content) */
+.plugin-menu {
+    background: var(--background-secondary);
+    border: 1px solid var(--border-primary);
+    border-radius: 3px;
+    min-width: 180px;
+    font-family: var(--font-families-sans);
+    font-size: 11px;
+}
+
+.plugin-menu-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 12px;
+    cursor: pointer;
+    transition: background-color 0.15s ease;
+    color: var(--text-primary);
+}
+
+.plugin-menu-item:hover,
+.plugin-menu-item.focused {
+    background-color: var(--input-bg);
+}
+
+.plugin-menu-item .material-symbols-outlined {
+    font-size: 16px;
+    color: var(--text-secondary);
+}
+
+/* Plugin Menu Backdrop */
+.plugin-menu-backdrop {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: transparent;
+    z-index: 9998;
+    display: none;
+}
+
+.plugin-menu-backdrop.visible {
+    display: block;
+}
+
+/* Tippy.js Theme - Dark */
+:root:not([data-theme='light']) .tippy-box[data-theme='dark'] {
+    background-color: var(--background-secondary);
+    border: 1px solid var(--border-primary);
+    border-radius: 3px;
+}
+
+:root:not([data-theme='light']) .tippy-box[data-theme='dark'] .tippy-content {
+    padding: 0;
+}
+
+/* Tippy.js Theme - Light */
+:root[data-theme='light'] .tippy-box[data-theme='light'] {
+    background-color: var(--background-secondary);
+    border: 1px solid var(--border-primary);
+    border-radius: 3px;
+}
+
+:root[data-theme='light'] .tippy-box[data-theme='light'] .tippy-content {
+    padding: 0;
 }
 
 /* Permission Banner */

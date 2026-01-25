@@ -5,6 +5,15 @@ import type { FileSystemAdapter } from './file-system-adapter';
 import { OPFSAdapter, NativeAdapter } from './file-system-adapter';
 
 /**
+ * Title bar menu item for plugin-specific actions
+ */
+export interface TitleBarMenuItem {
+    label: string;
+    action: () => Promise<void>;
+    icon?: string; // Optional Material icon name
+}
+
+/**
  * Abstract base class for filesystem plugins
  * Each plugin represents a different method of accessing files (OPFS, disk, cloud, etc.)
  */
@@ -110,6 +119,27 @@ export abstract class FilesystemPlugin {
         uiCallbacks.showPermissionBanner(false);
         uiCallbacks.hideUnsupportedBrowserUI();
     }
+
+    /**
+     * Get title bar menu items for this plugin
+     * @returns Array of menu items to display in dropdown, or empty array if no menu
+     */
+    getTitleBarMenuItems(): TitleBarMenuItem[] {
+        return []; // Default: no menu items
+    }
+
+    /**
+     * Trigger a redraw of the title bar buttons for this plugin
+     * Call this when plugin state changes and UI needs to update
+     */
+    redrawTitleBarButtons(): void {
+        // Dispatch custom event that file-browser will listen for
+        window.dispatchEvent(
+            new CustomEvent('pluginTitleBarRedraw', {
+                detail: { pluginId: this.getId() }
+            })
+        );
+    }
 }
 
 /**
@@ -129,7 +159,7 @@ export class MemoryPlugin extends FilesystemPlugin {
     }
 
     getIcon(): string {
-        return '🧠';
+        return '<span class="material-symbols-outlined">memory</span>';
     }
 
     getDefaultPath(): string {
@@ -158,7 +188,7 @@ export class DiskPlugin extends FilesystemPlugin {
     }
 
     getIcon(): string {
-        return '💾';
+        return '<span class="material-symbols-outlined">hard_drive</span>';
     }
 
     requiresPermission(): boolean {
@@ -187,6 +217,8 @@ export class DiskPlugin extends FilesystemPlugin {
         // Show directory picker
         try {
             await this.nativeAdapter.selectDirectory();
+            // Trigger title bar redraw to show dropdown button
+            this.redrawTitleBarButtons();
             return true;
         } catch (error) {
             console.error('[DiskPlugin] Setup cancelled or failed:', error);
@@ -221,6 +253,20 @@ export class DiskPlugin extends FilesystemPlugin {
     async close(): Promise<void> {
         await this.nativeAdapter.clearDirectory();
         console.log('[DiskPlugin]', 'Folder access closed');
+    }
+
+    getTitleBarMenuItems(): TitleBarMenuItem[] {
+        return [
+            {
+                label: 'Close Folder Access',
+                icon: 'close',
+                action: async () => {
+                    await this.close();
+                    // Trigger UI update via event
+                    window.dispatchEvent(new CustomEvent('pluginFolderClosed'));
+                }
+            }
+        ];
     }
 
     async updateUI(uiCallbacks: {
