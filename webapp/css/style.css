@@ -591,8 +591,7 @@ kbd + kbd {
 }
 
 .view-files .view-content {
-    margin: 12px;
-    margin-top: 2px;
+    margin: 0px;
 }
 
 /* Hide scrollbar for view-content */
