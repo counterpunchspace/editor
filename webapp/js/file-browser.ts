@@ -42,6 +42,41 @@ function formatFileSize(bytes: number): string {
     return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
 }
 
+function truncatePathMiddle(
+    path: string,
+    availableWidth: number,
+    fontSize = 10
+): string {
+    // Estimate characters that fit (using average character width for Inter font)
+    // Inter at 10px has roughly 5px average character width (narrower than 0.6 ratio)
+    const avgCharWidth = fontSize * 0.52;
+    const maxChars = Math.floor(availableWidth / avgCharWidth);
+
+    if (path.length <= maxChars || maxChars < 10) return path;
+
+    // Calculate how much to show on each side
+    const ellipsis = '...';
+    const charsToShow = maxChars - ellipsis.length;
+    const charsStart = Math.ceil(charsToShow * 0.4); // 40% at start
+    const charsEnd = Math.floor(charsToShow * 0.6); // 60% at end
+
+    const start = path.substring(0, charsStart);
+    const end = path.substring(path.length - charsEnd);
+
+    return `${start}${ellipsis}${end}`;
+}
+
+function updatePathDisplay(path: string) {
+    const pathTextElement = document.querySelector(
+        '.file-path-text'
+    ) as HTMLElement;
+    if (!pathTextElement) return;
+
+    const availableWidth = pathTextElement.offsetWidth;
+    const displayPath = truncatePathMiddle(path, availableWidth, 10);
+    pathTextElement.textContent = displayPath;
+}
+
 function getFileIcon(filename: string, isDir: boolean): string {
     if (isDir) return '📁';
 
@@ -664,35 +699,8 @@ async function buildFileTree(rootPath = '/') {
     const items = await scanDirectory(rootPath);
     let html = '';
 
-    // Parent directory button (if not at root)
-    const parentBtn =
-        rootPath !== '/'
-            ? (() => {
-                  const parentPath =
-                      rootPath.substring(0, rootPath.lastIndexOf('/')) || '/';
-                  return `<button onclick="navigateToPath('${parentPath}')" class="file-action-btn" title="Go to parent directory">
-                <span class="material-symbols-outlined">arrow_upward</span> Up
-            </button>`;
-              })()
-            : '';
-
-    // Toolbar with actions
-    html += `<div class="file-toolbar">
-        ${parentBtn}
-        <button onclick="createFolder()" class="file-action-btn" title="Create new folder">
-            <span class="material-symbols-outlined">create_new_folder</span> New Folder
-        </button>
-        <button onclick="document.getElementById('file-upload-input').click()" class="file-action-btn" title="Upload files">
-            <span class="material-symbols-outlined">upload_file</span> Upload Files
-        </button>
-        <button onclick="document.getElementById('folder-upload-input').click()" class="file-action-btn" title="Upload folder with structure">
-            <span class="material-symbols-outlined">drive_folder_upload</span> Upload Folder
-        </button>
-        <button onclick="refreshFileSystem()" class="file-action-btn" title="Refresh">
-            <span class="material-symbols-outlined">refresh</span> Refresh
-        </button>
-    </div>
-    <input type="file" id="file-upload-input" multiple style="display: none;" 
+    // Hidden file inputs for upload functionality
+    html += `<input type="file" id="file-upload-input" multiple style="display: none;" 
            onchange="handleFileUpload(event)">
     <input type="file" id="folder-upload-input" webkitdirectory directory multiple style="display: none;" 
            onchange="handleFileUpload(event)">`;
@@ -751,10 +759,63 @@ async function navigateToPath(path: string) {
         fileTree!.innerHTML = '<div style="color: #888;">Loading...</div>';
 
         const html = await buildFileTree(path);
-        fileTree!.innerHTML = `
-            <div class="file-path">Current path: ${path}</div>
-            ${html}
+
+        // Update path header with toolbar buttons
+        let pathHeader = document.getElementById('file-path-header');
+        if (!pathHeader) {
+            pathHeader = document.createElement('div');
+            pathHeader.id = 'file-path-header';
+            const fileBrowser = document.getElementById('file-browser');
+            fileBrowser!.insertBefore(pathHeader, fileBrowser!.firstChild);
+        }
+
+        // Generate toolbar buttons
+        const parentPath = path.substring(0, path.lastIndexOf('/')) || '/';
+        const parentBtn =
+            path !== '/'
+                ? `<button onclick="navigateToPath('${parentPath}')" class="file-header-btn" title="Go to parent directory">
+                <span class="material-symbols-outlined">arrow_upward</span>
+            </button>`
+                : '';
+
+        pathHeader.innerHTML = `
+            <span class="file-path-text" title="${path}" data-full-path="${path}">${path}</span>
+            <div class="file-header-actions">
+                ${parentBtn}
+                <button onclick="createFolder()" class="file-header-btn" title="Create new folder">
+                    <span class="material-symbols-outlined">create_new_folder</span>
+                </button>
+                <button onclick="document.getElementById('file-upload-input').click()" class="file-header-btn" title="Upload files">
+                    <span class="material-symbols-outlined">upload_file</span>
+                </button>
+                <button onclick="document.getElementById('folder-upload-input').click()" class="file-header-btn" title="Upload folder">
+                    <span class="material-symbols-outlined">drive_folder_upload</span>
+                </button>
+                <button onclick="refreshFileSystem()" class="file-header-btn" title="Refresh">
+                    <span class="material-symbols-outlined">refresh</span>
+                </button>
+            </div>
         `;
+
+        // Update path display after DOM is ready
+        setTimeout(() => updatePathDisplay(path), 0);
+
+        // Set up ResizeObserver to update path on container resize
+        const pathTextElement = pathHeader.querySelector(
+            '.file-path-text'
+        ) as HTMLElement;
+        if (pathTextElement && !(pathTextElement as any)._resizeObserver) {
+            const resizeObserver = new ResizeObserver(() => {
+                const fullPath =
+                    pathTextElement.getAttribute('data-full-path') || path;
+                updatePathDisplay(fullPath);
+            });
+            resizeObserver.observe(pathTextElement);
+            (pathTextElement as any)._resizeObserver = resizeObserver;
+        }
+
+        // Update file tree content
+        fileTree!.innerHTML = html;
 
         // Cache the current path
         fileSystemCache.currentPath = path;
