@@ -443,6 +443,10 @@ class FontManager {
             window.glyphCanvas.initialFontLoaded = false;
         }
 
+        // Update window title with font file name
+        const fileName = path.split('/').pop() || 'Untitled';
+        document.title = fileName;
+
         // Compile typing font immediately
         await this.compileTypingFont();
 
