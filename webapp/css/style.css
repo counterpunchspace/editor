@@ -2102,6 +2102,22 @@ kbd + kbd {
     color: var(--accent-yellow);
 }
 
+/* Currently opened font highlighting */
+.file-item.current-font {
+    background-color: var(--text-primary);
+    color: var(--background-primary);
+}
+
+.file-item.current-font:hover {
+    background-color: var(--text-primary);
+    color: var(--background-primary);
+}
+
+.file-item.current-font .file-size {
+    color: var(--background-primary);
+    opacity: 0.7;
+}
+
 .file-item .file-size {
     color: var(--text-secondary);
     font-size: 11px;

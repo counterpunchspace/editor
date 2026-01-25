@@ -919,6 +919,9 @@ async function buildFileTree(rootPath = '/') {
         return a.localeCompare(b);
     });
 
+    // Get current font path for highlighting
+    const currentFontPath = window.fontManager?.currentFont?.path || null;
+
     for (const [name, data] of sortedItems) {
         const icon = getFileIcon(name, data.is_dir);
         const fileClass = getFileClass(name, data.is_dir);
@@ -930,7 +933,11 @@ async function buildFileTree(rootPath = '/') {
             ? `navigateToPath('${data.path}')`
             : `selectFile('${data.path}')`;
 
-        html += `<div class="file-item ${fileClass}" onclick="${clickHandler}" data-path="${data.path}" data-name="${name}" data-is-dir="${data.is_dir}">
+        // Add 'current-font' class if this is the opened font
+        const isCurrentFont = !data.is_dir && currentFontPath === data.path;
+        const currentFontClass = isCurrentFont ? 'current-font' : '';
+
+        html += `<div class="file-item ${fileClass} ${currentFontClass}" onclick="${clickHandler}" data-path="${data.path}" data-name="${name}" data-is-dir="${data.is_dir}">
             <span class="file-name">${icon} ${name}</span>${sizeText}
         </div>`;
     }
@@ -1392,6 +1399,13 @@ window.addEventListener('pluginFolderClosed', async () => {
         });
         updatePluginMenuButtonVisibility(currentPlugin);
     }
+});
+
+// Listen for font loaded event to refresh file browser highlighting
+window.addEventListener('fontLoaded', () => {
+    // Refresh current directory to update highlighting
+    const currentPath = fileSystemCache.currentPath || '/';
+    navigateToPath(currentPath);
 });
 
 // Listen for plugin title bar redraw event
