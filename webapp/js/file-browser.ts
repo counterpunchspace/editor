@@ -256,6 +256,12 @@ function createFileContextMenuHtml(
                 <span>Open</span>
             </div>
         `);
+        items.push(`
+            <div class="plugin-menu-item" data-action="open-new-tab">
+                <span class="material-symbols-outlined">open_in_new</span>
+                <span>Open in New Tab</span>
+            </div>
+        `);
     }
 
     // Download (for files only)
@@ -364,6 +370,9 @@ function setupFileContextMenus() {
                                 case 'open':
                                     await openFont(path);
                                     break;
+                                case 'open-new-tab':
+                                    openFontInNewTab(path);
+                                    break;
                                 case 'download':
                                     await downloadFile(path, name);
                                     break;
@@ -439,6 +448,20 @@ function updatePluginMenuButtonVisibility(plugin: FilesystemPlugin): void {
     } else {
         dropdownIcon.style.display = 'none';
     }
+}
+
+function openFontInNewTab(path: string) {
+    const pluginId = fileSystemCache.currentPlugin.getId();
+    const params = new URLSearchParams();
+    params.set('plugin', pluginId);
+    params.set('path', path);
+
+    const url = `${window.location.origin}${window.location.pathname}?${params.toString()}`;
+    window.open(url, '_blank');
+    console.log(
+        '[FileBrowser]',
+        `Opening font in new tab: ${path} (plugin: ${pluginId})`
+    );
 }
 
 async function openFont(path: string, fileHandle?: FileSystemFileHandle) {
@@ -1181,6 +1204,20 @@ async function navigateToCurrentFont() {
     // Navigate to the directory containing the font
     const dirPath = fontPath.substring(0, fontPath.lastIndexOf('/')) || '/';
     await navigateToPath(dirPath);
+
+    // Scroll the current font into view with smooth scrolling
+    setTimeout(() => {
+        const fileTree = document.getElementById('file-tree');
+        const currentFontItem = fileTree?.querySelector(
+            '.file-item.current-font'
+        );
+        if (currentFontItem) {
+            (currentFontItem as HTMLElement).scrollIntoView({
+                block: 'center',
+                behavior: 'smooth'
+            });
+        }
+    }, 100); // Small delay to ensure DOM is updated
 }
 
 function updateHomeButtonVisibility() {
@@ -1463,6 +1500,57 @@ async function initFileBrowser() {
 // Auto-initialize when DOM is loaded
 document.addEventListener('DOMContentLoaded', () => {
     setTimeout(initFileBrowser, 1500); // Wait a bit longer for Pyodide to be ready
+
+    // Handle URL parameters for opening fonts in new tabs
+    const urlParams = new URLSearchParams(window.location.search);
+    const pluginId = urlParams.get('plugin');
+    const fontPath = urlParams.get('path');
+
+    if (pluginId && fontPath) {
+        console.log(
+            '[FileBrowser]',
+            `URL params detected: plugin=${pluginId}, path=${fontPath}`
+        );
+
+        // Wait for everything to initialize before switching and opening
+        setTimeout(async () => {
+            try {
+                // Switch to the specified plugin
+                await switchContext(pluginId);
+
+                // Navigate to the directory containing the font
+                const dirPath =
+                    fontPath.substring(0, fontPath.lastIndexOf('/')) || '/';
+                await navigateToPath(dirPath);
+
+                // Open the font
+                await openFont(fontPath);
+
+                // Show home button since we opened from URL
+                updateHomeButtonVisibility();
+
+                // Scroll the opened file into view
+                setTimeout(() => {
+                    const fileTree = document.getElementById('file-tree');
+                    const currentFontItem = fileTree?.querySelector(
+                        '.file-item.current-font'
+                    );
+                    if (currentFontItem) {
+                        (currentFontItem as HTMLElement).scrollIntoView({
+                            block: 'center',
+                            behavior: 'auto'
+                        });
+                    }
+                }, 100); // Small delay to ensure DOM is updated
+            } catch (error) {
+                console.error(
+                    '[FileBrowser]',
+                    'Failed to open font from URL params:',
+                    error
+                );
+            }
+        }, 3000); // Wait for plugins and Pyodide to be ready
+    }
 });
 
 // Close any open Tippy menu on Escape key
