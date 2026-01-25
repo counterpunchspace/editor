@@ -160,6 +160,44 @@ function createPluginMenuHtml(menuItems: TitleBarMenuItem[]): string {
     return `<div class="plugin-menu">${items}</div>`;
 }
 
+function createFileContextMenuHtml(
+    path: string,
+    name: string,
+    isDir: boolean
+): string {
+    const items: string[] = [];
+
+    // Open (for supported font formats)
+    if (!isDir && isSupportedFontFormat(name, false)) {
+        items.push(`
+            <div class="plugin-menu-item" data-action="open">
+                <span class="material-symbols-outlined">folder_open</span>
+                <span>Open</span>
+            </div>
+        `);
+    }
+
+    // Download (for files only)
+    if (!isDir) {
+        items.push(`
+            <div class="plugin-menu-item" data-action="download">
+                <span class="material-symbols-outlined">download</span>
+                <span>Download</span>
+            </div>
+        `);
+    }
+
+    // Delete (for both files and folders)
+    items.push(`
+        <div class="plugin-menu-item" data-action="delete">
+            <span class="material-symbols-outlined">delete</span>
+            <span>Delete</span>
+        </div>
+    `);
+
+    return `<div class="plugin-menu">${items.join('')}</div>`;
+}
+
 function setupMenuItemHandlers(
     tippyInstance: TippyInstance,
     menuItems: TitleBarMenuItem[]
@@ -202,6 +240,127 @@ function setupMenuItemHandlers(
 
     updateFocus();
     (menu as HTMLElement).focus();
+}
+
+function setupFileContextMenus() {
+    const fileItems = document.querySelectorAll('.file-item');
+
+    fileItems.forEach((item) => {
+        const element = item as HTMLElement;
+        const path = element.getAttribute('data-path') || '';
+        const name = element.getAttribute('data-name') || '';
+        const isDir = element.getAttribute('data-is-dir') === 'true';
+
+        // Create backdrop for modal-like behavior (shared across all menus)
+        let backdrop = document.querySelector(
+            '.file-context-menu-backdrop'
+        ) as HTMLElement;
+        if (!backdrop) {
+            backdrop = document.createElement('div');
+            backdrop.className =
+                'plugin-menu-backdrop file-context-menu-backdrop';
+            document.body.appendChild(backdrop);
+        }
+
+        // Create Tippy context menu
+        const tippyInstance = tippy(element, {
+            content: createFileContextMenuHtml(path, name, isDir),
+            allowHTML: true,
+            interactive: true,
+            trigger: 'manual',
+            theme: getTheme(),
+            placement: 'right-start',
+            arrow: false,
+            offset: [0, 0],
+            appendTo: document.body,
+            hideOnClick: false,
+            zIndex: 9999,
+            getReferenceClientRect: null as any, // Will be set on show
+            onShow: () => {
+                backdrop.classList.add('visible');
+            },
+            onShown: (instance) => {
+                const menu = instance.popper.querySelector('.plugin-menu');
+                if (!menu) return;
+
+                // Setup click handlers for menu items
+                menu.querySelectorAll('.plugin-menu-item').forEach(
+                    (menuItem) => {
+                        menuItem.addEventListener('click', async () => {
+                            const action = menuItem.getAttribute('data-action');
+                            instance.hide();
+
+                            switch (action) {
+                                case 'open':
+                                    await openFont(path);
+                                    break;
+                                case 'download':
+                                    await downloadFile(path, name);
+                                    break;
+                                case 'delete':
+                                    await deleteItem(path, name, isDir);
+                                    break;
+                            }
+                        });
+                    }
+                );
+
+                // Add keyboard support
+                const handleKeydown = (e: KeyboardEvent) => {
+                    if (e.key === 'Escape') {
+                        instance.hide();
+                        document.removeEventListener('keydown', handleKeydown);
+                    }
+                };
+                document.addEventListener('keydown', handleKeydown);
+
+                // Store handler for cleanup
+                (instance as any)._keydownHandler = handleKeydown;
+            },
+            onHide: () => {
+                backdrop.classList.remove('visible');
+
+                // Clean up keyboard listener
+                const handler = (tippyInstance as any)._keydownHandler;
+                if (handler) {
+                    document.removeEventListener('keydown', handler);
+                }
+            }
+        });
+
+        // Handle backdrop clicks
+        backdrop.addEventListener('click', () => {
+            if (tippyInstance.state.isVisible) {
+                tippyInstance.hide();
+            }
+        });
+
+        // Prevent default context menu and show Tippy menu at mouse position
+        element.addEventListener('contextmenu', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+
+            // Set position to mouse cursor
+            tippyInstance.setProps({
+                getReferenceClientRect: () => ({
+                    width: 0,
+                    height: 0,
+                    top: e.clientY,
+                    bottom: e.clientY,
+                    left: e.clientX,
+                    right: e.clientX,
+                    x: e.clientX,
+                    y: e.clientY,
+                    toJSON: () => ({})
+                })
+            });
+
+            tippyInstance.show();
+        });
+
+        // Store tippy instance for cleanup
+        (element as any)._tippy = tippyInstance;
+    });
 }
 
 function getTheme(): string {
@@ -723,21 +882,8 @@ async function buildFileTree(rootPath = '/') {
             ? `navigateToPath('${data.path}')`
             : `selectFile('${data.path}')`;
 
-        // Add download button for files
-        const downloadBtn = !data.is_dir
-            ? `<button class="download-btn" onclick="event.stopPropagation(); downloadFile('${data.path}', '${name}')" title="Download"><span class="material-symbols-outlined">download</span></button>`
-            : '';
-
-        const deleteBtn = `<button class="delete-btn" onclick="event.stopPropagation(); deleteItem('${data.path}', '${name}', ${data.is_dir})" title="Delete"><span class="material-symbols-outlined">delete</span></button>`;
-
-        // Add "Open" button for supported font formats
-        const isSupported = isSupportedFontFormat(name, data.is_dir);
-        const openBtn = isSupported
-            ? `<button class="open-font-btn" onclick="event.stopPropagation(); openFont('${data.path}')" title="Open font"><span class="material-symbols-outlined">folder_open</span> Open</button>`
-            : '';
-
-        html += `<div class="file-item ${fileClass}" onclick="${clickHandler}">
-            <span class="file-name">${icon} ${name}</span>${sizeText}${openBtn}${downloadBtn}${deleteBtn}
+        html += `<div class="file-item ${fileClass}" onclick="${clickHandler}" data-path="${data.path}" data-name="${name}" data-is-dir="${data.is_dir}">
+            <span class="file-name">${icon} ${name}</span>${sizeText}
         </div>`;
     }
 
@@ -816,6 +962,11 @@ async function navigateToPath(path: string) {
 
         // Update file tree content
         fileTree!.innerHTML = html;
+
+        // Setup context menus for file items (defer to ensure DOM is ready)
+        requestAnimationFrame(() => {
+            setupFileContextMenus();
+        });
 
         // Cache the current path
         fileSystemCache.currentPath = path;
