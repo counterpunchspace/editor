@@ -182,6 +182,8 @@ function addTippyBackdropSupport(
     backdrop: HTMLElement,
     options?: {
         onEscape?: () => void;
+        targetElement?: HTMLElement;
+        activeClass?: string;
     }
 ): void {
     // Handle backdrop clicks
@@ -203,6 +205,9 @@ function addTippyBackdropSupport(
     tippyInstance.setProps({
         onShow: (instance: any) => {
             backdrop.classList.add('visible');
+            if (options?.targetElement && options?.activeClass) {
+                options.targetElement.classList.add(options.activeClass);
+            }
             if (originalOnShow) originalOnShow(instance);
         },
         onShown: (instance: any) => {
@@ -221,6 +226,9 @@ function addTippyBackdropSupport(
         },
         onHide: (instance: any) => {
             backdrop.classList.remove('visible');
+            if (options?.targetElement && options?.activeClass) {
+                options.targetElement.classList.remove(options.activeClass);
+            }
 
             // Clean up keyboard listener
             const handler = (instance as any)._keydownHandler;
@@ -370,7 +378,10 @@ function setupFileContextMenus() {
         });
 
         // Add backdrop and keyboard support
-        addTippyBackdropSupport(tippyInstance, backdrop);
+        addTippyBackdropSupport(tippyInstance, backdrop, {
+            targetElement: element,
+            activeClass: 'file-item-active'
+        });
 
         // Prevent default context menu and show Tippy menu at mouse position
         element.addEventListener('contextmenu', (e) => {

@@ -2084,7 +2084,8 @@ kbd + kbd {
     transition: background-color 0.2s ease;
 }
 
-.file-item:hover {
+.file-item:hover,
+.file-item-active {
     background-color: var(--input-bg);
 }
 
