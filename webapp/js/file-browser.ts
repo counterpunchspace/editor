@@ -937,7 +937,14 @@ async function buildFileTree(rootPath = '/') {
         const isCurrentFont = !data.is_dir && currentFontPath === data.path;
         const currentFontClass = isCurrentFont ? 'current-font' : '';
 
-        html += `<div class="file-item ${fileClass} ${currentFontClass}" onclick="${clickHandler}" data-path="${data.path}" data-name="${name}" data-is-dir="${data.is_dir}">
+        // Add 'in-font-path' class if this is a directory in the path to the current font
+        const isInFontPath =
+            data.is_dir &&
+            currentFontPath &&
+            currentFontPath.startsWith(data.path + '/');
+        const fontPathClass = isInFontPath ? 'in-font-path' : '';
+
+        html += `<div class="file-item ${fileClass} ${currentFontClass} ${fontPathClass}" onclick="${clickHandler}" data-path="${data.path}" data-name="${name}" data-is-dir="${data.is_dir}">
             <span class="file-name">${icon} ${name}</span>${sizeText}
         </div>`;
     }
@@ -954,11 +961,21 @@ function handleFileUpload(event: Event) {
     (event.target as HTMLInputElement).value = '';
 }
 
-async function navigateToPath(path: string) {
+async function navigateToParent() {
+    const currentPath = fileSystemCache.currentPath || '/';
+    const parentPath =
+        currentPath.substring(0, currentPath.lastIndexOf('/')) || '/';
+    const previousFolderName = currentPath.substring(
+        currentPath.lastIndexOf('/') + 1
+    );
+    await navigateToPath(parentPath, previousFolderName);
+}
+
+async function navigateToPath(path: string, highlightFolder?: string) {
     try {
         const fileTree = document.getElementById('file-tree');
-        fileTree!.innerHTML = '<div style="color: #888;">Loading...</div>';
-
+        
+        // Build content first (off-screen)
         const html = await buildFileTree(path);
 
         // Update path header with toolbar buttons
@@ -971,10 +988,9 @@ async function navigateToPath(path: string) {
         }
 
         // Generate toolbar buttons
-        const parentPath = path.substring(0, path.lastIndexOf('/')) || '/';
         const parentBtn =
             path !== '/'
-                ? `<button onclick="navigateToPath('${parentPath}')" class="file-header-btn" title="Go to parent directory">
+                ? `<button onclick="navigateToParent()" class="file-header-btn" title="Go to parent directory">
                 <span class="material-symbols-outlined">arrow_upward</span>
             </button>`
                 : '';
@@ -1015,12 +1031,47 @@ async function navigateToPath(path: string) {
             (pathTextElement as any)._resizeObserver = resizeObserver;
         }
 
-        // Update file tree content
-        fileTree!.innerHTML = html;
-
-        // Setup context menus for file items (defer to ensure DOM is ready)
+        // Update file tree content in a single frame to prevent flickering
         requestAnimationFrame(() => {
-            setupFileContextMenus();
+            fileTree!.innerHTML = html;
+            
+            // Setup context menus for file items (defer to next frame to ensure DOM is ready)
+            requestAnimationFrame(() => {
+                setupFileContextMenus();
+
+                // Highlight and scroll to specific folder if provided
+                if (highlightFolder) {
+                    const folderItem = Array.from(
+                        fileTree!.querySelectorAll('.file-item')
+                    ).find(
+                    (item) =>
+                        item.getAttribute('data-name') === highlightFolder &&
+                        item.getAttribute('data-is-dir') === 'true'
+                ) as HTMLElement;
+
+                if (folderItem) {
+                    folderItem.scrollIntoView({
+                        block: 'center',
+                        behavior: 'auto'
+                    });
+                    folderItem.classList.add('folder-highlight');
+                    setTimeout(() => {
+                        folderItem.classList.remove('folder-highlight');
+                    }, 600);
+                }
+            } else {
+                // Scroll in-path folder into view if it exists
+                const inPathItem = fileTree!.querySelector(
+                    '.file-item.in-font-path'
+                );
+                if (inPathItem) {
+                    inPathItem.scrollIntoView({
+                        block: 'center',
+                        behavior: 'auto'
+                    });
+                }
+            }
+            });
         });
 
         // Cache the current path
@@ -1111,6 +1162,34 @@ async function refreshFileSystem() {
     console.log('[FileBrowser]', 'File system refreshed');
 }
 
+async function navigateToCurrentFont() {
+    const currentFont = window.fontManager?.currentFont;
+    if (!currentFont) {
+        console.warn('[FileBrowser]', 'No font currently open');
+        return;
+    }
+
+    const fontPath = currentFont.path;
+    const fontPlugin = currentFont.sourcePlugin;
+
+    // Switch to the plugin if needed
+    if (fileSystemCache.currentPlugin.getId() !== fontPlugin.getId()) {
+        await switchContext(fontPlugin.getId());
+    }
+
+    // Navigate to the directory containing the font
+    const dirPath = fontPath.substring(0, fontPath.lastIndexOf('/')) || '/';
+    await navigateToPath(dirPath);
+}
+
+function updateHomeButtonVisibility() {
+    const homeBtn = document.getElementById('file-browser-home-btn');
+    if (!homeBtn) return;
+
+    const currentFont = window.fontManager?.currentFont;
+    homeBtn.style.display = currentFont ? 'flex' : 'none';
+}
+
 // Initialize file browser when Pyodide is ready
 async function initFileBrowser() {
     try {
@@ -1164,6 +1243,16 @@ async function initFileBrowser() {
         if (titleBarRight) {
             // Clear existing content
             titleBarRight.innerHTML = '';
+
+            // Add home button (navigate to current font)
+            const homeBtn = document.createElement('button');
+            homeBtn.id = 'file-browser-home-btn';
+            homeBtn.className = 'view-title-button';
+            homeBtn.title = 'Go to opened font';
+            homeBtn.innerHTML = `<span class="material-symbols-outlined">home</span>`;
+            homeBtn.style.display = 'none'; // Initially hidden
+            homeBtn.addEventListener('click', navigateToCurrentFont);
+            titleBarRight.appendChild(homeBtn);
 
             const plugins = pluginRegistry.getAll();
             plugins.forEach((plugin) => {
@@ -1355,6 +1444,9 @@ async function initFileBrowser() {
 
             // Update plugin menu button visibility
             updatePluginMenuButtonVisibility(defaultPlugin);
+
+            // Update home button visibility
+            updateHomeButtonVisibility();
         }
 
         console.log('[FileBrowser]', 'File browser initialized');
@@ -1408,6 +1500,11 @@ window.addEventListener('fontLoaded', () => {
     navigateToPath(currentPath);
 });
 
+// Listen for fontReady event (fires after FontManager.loadFont completes)
+window.addEventListener('fontReady', () => {
+    updateHomeButtonVisibility();
+});
+
 // Listen for plugin title bar redraw event
 window.addEventListener('pluginTitleBarRedraw', ((e: CustomEvent) => {
     const { pluginId } = e.detail;
@@ -1430,9 +1527,12 @@ async function openFontWithHandle(path: string) {
 // Export functions for global access
 window.refreshFileSystem = refreshFileSystem;
 window.navigateToPath = navigateToPath;
+window.navigateToParent = navigateToParent;
 window.selectFile = selectFile;
 window.initFileBrowser = initFileBrowser;
 window.createFolder = createFolder;
+window.navigateToCurrentFont = navigateToCurrentFont;
+window.updateHomeButtonVisibility = updateHomeButtonVisibility;
 window.deleteItem = deleteItem;
 window.uploadFiles = uploadFiles;
 window.handleFileUpload = handleFileUpload;

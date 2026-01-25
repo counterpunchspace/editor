@@ -2104,24 +2104,51 @@ kbd + kbd {
 
 /* Currently opened font highlighting */
 .file-item.current-font {
-    background-color: var(--text-primary);
-    color: var(--background-primary);
+    background-color: var(--background-active);
 }
 
 .file-item.current-font:hover {
-    background-color: var(--text-primary);
-    color: var(--background-primary);
+    background-color: var(--background-active);
 }
 
-.file-item.current-font .file-size {
-    color: var(--background-primary);
-    opacity: 0.7;
+/* Folders in path to current font */
+.file-item.in-font-path {
+    background-color: var(--background-hover);
+    color: var(--text-secondary);
+}
+
+.file-item.in-font-path:hover {
+    background-color: var(--background-hover);
+    color: var(--text-primary);
 }
 
 .file-item .file-size {
     color: var(--text-secondary);
     font-size: 11px;
     margin-left: 10px;
+}
+
+@keyframes folder-highlight-fade {
+    from {
+        background-color: var(--background-secondary);
+    }
+    to {
+        background-color: transparent;
+    }
+}
+
+.file-item.folder-highlight {
+    animation: folder-highlight-fade 600ms ease-out forwards;
+}
+
+.file-item.folder-highlight.current-font {
+    animation: none;
+    background-color: var(--background-active);
+}
+
+.file-item.folder-highlight.in-font-path {
+    animation: none;
+    background-color: var(--background-hover);
 }
 
 #file-path-header {

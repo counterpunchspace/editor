@@ -1118,6 +1118,11 @@ window.addEventListener('fontLoaded', async (event: Event) => {
             detail.directoryHandle
         );
 
+        // Dispatch fontReady event (font is loaded, currentFont is set)
+        window.dispatchEvent(
+            new CustomEvent('fontReady', { detail: { path: detail.path } })
+        );
+
         // Update dropdown
         await fontManager!.onOpened();
 

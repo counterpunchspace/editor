@@ -82,7 +82,13 @@ declare global {
         };
 
         // From file-browser.js
-        navigateToPath: (path: string) => Promise<void>;
+        navigateToPath: (
+            path: string,
+            highlightFolder?: string
+        ) => Promise<void>;
+        navigateToParent: () => Promise<void>;
+        navigateToCurrentFont: () => Promise<void>;
+        updateHomeButtonVisibility: () => void;
         selectFile: (filePath: string) => void;
         initFileBrowser: () => Promise<void>;
         uploadFiles: (files: File[], targetPath?: string) => Promise<void>;
