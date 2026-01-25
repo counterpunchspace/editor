@@ -974,7 +974,7 @@ async function navigateToParent() {
 async function navigateToPath(path: string, highlightFolder?: string) {
     try {
         const fileTree = document.getElementById('file-tree');
-        
+
         // Build content first (off-screen)
         const html = await buildFileTree(path);
 
@@ -1034,7 +1034,7 @@ async function navigateToPath(path: string, highlightFolder?: string) {
         // Update file tree content in a single frame to prevent flickering
         requestAnimationFrame(() => {
             fileTree!.innerHTML = html;
-            
+
             // Setup context menus for file items (defer to next frame to ensure DOM is ready)
             requestAnimationFrame(() => {
                 setupFileContextMenus();
@@ -1044,33 +1044,34 @@ async function navigateToPath(path: string, highlightFolder?: string) {
                     const folderItem = Array.from(
                         fileTree!.querySelectorAll('.file-item')
                     ).find(
-                    (item) =>
-                        item.getAttribute('data-name') === highlightFolder &&
-                        item.getAttribute('data-is-dir') === 'true'
-                ) as HTMLElement;
+                        (item) =>
+                            item.getAttribute('data-name') ===
+                                highlightFolder &&
+                            item.getAttribute('data-is-dir') === 'true'
+                    ) as HTMLElement;
 
-                if (folderItem) {
-                    folderItem.scrollIntoView({
-                        block: 'center',
-                        behavior: 'auto'
-                    });
-                    folderItem.classList.add('folder-highlight');
-                    setTimeout(() => {
-                        folderItem.classList.remove('folder-highlight');
-                    }, 600);
+                    if (folderItem) {
+                        folderItem.scrollIntoView({
+                            block: 'center',
+                            behavior: 'auto'
+                        });
+                        folderItem.classList.add('folder-highlight');
+                        setTimeout(() => {
+                            folderItem.classList.remove('folder-highlight');
+                        }, 600);
+                    }
+                } else {
+                    // Scroll in-path folder into view if it exists
+                    const inPathItem = fileTree!.querySelector(
+                        '.file-item.in-font-path'
+                    );
+                    if (inPathItem) {
+                        inPathItem.scrollIntoView({
+                            block: 'center',
+                            behavior: 'auto'
+                        });
+                    }
                 }
-            } else {
-                // Scroll in-path folder into view if it exists
-                const inPathItem = fileTree!.querySelector(
-                    '.file-item.in-font-path'
-                );
-                if (inPathItem) {
-                    inPathItem.scrollIntoView({
-                        block: 'center',
-                        behavior: 'auto'
-                    });
-                }
-            }
             });
         });
 
