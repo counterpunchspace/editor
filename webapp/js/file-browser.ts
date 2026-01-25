@@ -160,6 +160,79 @@ function createPluginMenuHtml(menuItems: TitleBarMenuItem[]): string {
     return `<div class="plugin-menu">${items}</div>`;
 }
 
+/**
+ * Create or get a backdrop element for modal-like menu behavior
+ */
+function getOrCreateBackdrop(className: string): HTMLElement {
+    let backdrop = document.querySelector(`.${className}`) as HTMLElement;
+    if (!backdrop) {
+        backdrop = document.createElement('div');
+        backdrop.className = `plugin-menu-backdrop ${className}`;
+        document.body.appendChild(backdrop);
+    }
+    return backdrop;
+}
+
+/**
+ * Add backdrop and keyboard support to a Tippy instance
+ * Returns the backdrop element for further customization
+ */
+function addTippyBackdropSupport(
+    tippyInstance: any,
+    backdrop: HTMLElement,
+    options?: {
+        onEscape?: () => void;
+    }
+): void {
+    // Handle backdrop clicks
+    const handleBackdropClick = () => {
+        if (tippyInstance.state.isVisible) {
+            tippyInstance.hide();
+        }
+    };
+    backdrop.addEventListener('click', handleBackdropClick);
+
+    // Store handler for potential cleanup
+    (backdrop as any)._clickHandler = handleBackdropClick;
+
+    // Add to existing onShow/onShown/onHide handlers
+    const originalOnShow = tippyInstance.props.onShow;
+    const originalOnShown = tippyInstance.props.onShown;
+    const originalOnHide = tippyInstance.props.onHide;
+
+    tippyInstance.setProps({
+        onShow: (instance: any) => {
+            backdrop.classList.add('visible');
+            if (originalOnShow) originalOnShow(instance);
+        },
+        onShown: (instance: any) => {
+            // Add keyboard support
+            const handleKeydown = (e: KeyboardEvent) => {
+                if (e.key === 'Escape') {
+                    instance.hide();
+                    if (options?.onEscape) options.onEscape();
+                    document.removeEventListener('keydown', handleKeydown);
+                }
+            };
+            document.addEventListener('keydown', handleKeydown);
+            (instance as any)._keydownHandler = handleKeydown;
+
+            if (originalOnShown) originalOnShown(instance);
+        },
+        onHide: (instance: any) => {
+            backdrop.classList.remove('visible');
+
+            // Clean up keyboard listener
+            const handler = (instance as any)._keydownHandler;
+            if (handler) {
+                document.removeEventListener('keydown', handler);
+            }
+
+            if (originalOnHide) originalOnHide(instance);
+        }
+    });
+}
+
 function createFileContextMenuHtml(
     path: string,
     name: string,
@@ -245,22 +318,14 @@ function setupMenuItemHandlers(
 function setupFileContextMenus() {
     const fileItems = document.querySelectorAll('.file-item');
 
+    // Create shared backdrop for all file context menus
+    const backdrop = getOrCreateBackdrop('file-context-menu-backdrop');
+
     fileItems.forEach((item) => {
         const element = item as HTMLElement;
         const path = element.getAttribute('data-path') || '';
         const name = element.getAttribute('data-name') || '';
         const isDir = element.getAttribute('data-is-dir') === 'true';
-
-        // Create backdrop for modal-like behavior (shared across all menus)
-        let backdrop = document.querySelector(
-            '.file-context-menu-backdrop'
-        ) as HTMLElement;
-        if (!backdrop) {
-            backdrop = document.createElement('div');
-            backdrop.className =
-                'plugin-menu-backdrop file-context-menu-backdrop';
-            document.body.appendChild(backdrop);
-        }
 
         // Create Tippy context menu
         const tippyInstance = tippy(element, {
@@ -276,9 +341,6 @@ function setupFileContextMenus() {
             hideOnClick: false,
             zIndex: 9999,
             getReferenceClientRect: null as any, // Will be set on show
-            onShow: () => {
-                backdrop.classList.add('visible');
-            },
             onShown: (instance) => {
                 const menu = instance.popper.querySelector('.plugin-menu');
                 if (!menu) return;
@@ -304,36 +366,11 @@ function setupFileContextMenus() {
                         });
                     }
                 );
-
-                // Add keyboard support
-                const handleKeydown = (e: KeyboardEvent) => {
-                    if (e.key === 'Escape') {
-                        instance.hide();
-                        document.removeEventListener('keydown', handleKeydown);
-                    }
-                };
-                document.addEventListener('keydown', handleKeydown);
-
-                // Store handler for cleanup
-                (instance as any)._keydownHandler = handleKeydown;
-            },
-            onHide: () => {
-                backdrop.classList.remove('visible');
-
-                // Clean up keyboard listener
-                const handler = (tippyInstance as any)._keydownHandler;
-                if (handler) {
-                    document.removeEventListener('keydown', handler);
-                }
             }
         });
 
-        // Handle backdrop clicks
-        backdrop.addEventListener('click', () => {
-            if (tippyInstance.state.isVisible) {
-                tippyInstance.hide();
-            }
-        });
+        // Add backdrop and keyboard support
+        addTippyBackdropSupport(tippyInstance, backdrop);
 
         // Prevent default context menu and show Tippy menu at mouse position
         element.addEventListener('contextmenu', (e) => {
@@ -1134,39 +1171,30 @@ async function initFileBrowser() {
                     button.appendChild(dropdownIcon);
 
                     // Create backdrop for modal-like behavior
-                    const backdrop = document.createElement('div');
-                    backdrop.className = 'plugin-menu-backdrop';
-                    backdrop.addEventListener('click', () => {
-                        const tippyInstance = (button as any)._tippy;
-                        if (tippyInstance) {
-                            tippyInstance.hide();
-                        }
-                    });
-                    document.body.appendChild(backdrop);
+                    const backdrop = getOrCreateBackdrop(
+                        `plugin-menu-backdrop-${plugin.getId()}`
+                    );
 
                     // Create tippy menu on the button itself
                     const menuHtml = createPluginMenuHtml(menuItems);
                     const tippyInstance = tippy(button, {
                         content: menuHtml,
                         allowHTML: true,
-                        trigger: 'manual', // We'll control it manually
+                        trigger: 'manual',
                         interactive: true,
                         placement: 'bottom-end',
                         theme: getTheme(),
                         arrow: false,
                         offset: [0, 0],
-                        hideOnClick: false, // Prevent automatic hiding
-                        zIndex: 9999, // Above backdrop
-                        onShow: () => {
-                            backdrop.classList.add('visible');
-                        },
+                        hideOnClick: false,
+                        zIndex: 9999,
                         onShown: (instance) => {
                             setupMenuItemHandlers(instance, menuItems);
-                        },
-                        onHide: () => {
-                            backdrop.classList.remove('visible');
                         }
                     });
+
+                    // Add backdrop and keyboard support
+                    addTippyBackdropSupport(tippyInstance, backdrop);
 
                     // Store tippy instance and menu items
                     (button as any)._tippy = tippyInstance;
