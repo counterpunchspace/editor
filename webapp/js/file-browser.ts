@@ -1084,15 +1084,21 @@ async function navigateToPath(path: string, highlightFolder?: string) {
                         }, 600);
                     }
                 } else {
-                    // Scroll in-path folder into view if it exists
-                    const inPathItem = fileTree!.querySelector(
-                        '.file-item.in-font-path'
-                    );
-                    if (inPathItem) {
-                        inPathItem.scrollIntoView({
-                            block: 'center',
-                            behavior: 'auto'
-                        });
+                    // Only scroll to in-path folder if there's a current font open
+                    const currentFont = window.fontManager?.currentFont;
+                    if (currentFont) {
+                        const inPathItem = fileTree!.querySelector(
+                            '.file-item.in-font-path'
+                        );
+                        if (inPathItem) {
+                            inPathItem.scrollIntoView({
+                                block: 'center',
+                                behavior: 'auto'
+                            });
+                        }
+                    } else {
+                        // No font open - reset scroll to top
+                        fileTree!.scrollTop = 0;
                     }
                 }
             });
