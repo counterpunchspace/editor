@@ -675,10 +675,27 @@ async function switchContext(pluginId: string) {
     // Update dropdown menu button visibility based on plugin capabilities
     updatePluginMenuButtonVisibility(plugin);
 
-    // Navigate to plugin's default path
-    const defaultPath = plugin.getDefaultPath();
-    fileSystemCache.currentPath = defaultPath;
-    await navigateToPath(defaultPath);
+    // Restore last visited path for this plugin, or use default path
+    let targetPath = plugin.getDefaultPath();
+    try {
+        const savedPath = localStorage.getItem(getPathStorageKey(pluginId));
+        if (savedPath) {
+            targetPath = savedPath;
+            console.log(
+                '[FileBrowser]',
+                `Restored last path for ${pluginId}: ${savedPath}`
+            );
+        }
+    } catch (e) {
+        console.warn(
+            '[FileBrowser]',
+            'Failed to restore path from localStorage:',
+            e
+        );
+    }
+
+    fileSystemCache.currentPath = targetPath;
+    await navigateToPath(targetPath);
 }
 
 async function selectDiskFolder() {
