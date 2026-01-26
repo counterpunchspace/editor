@@ -27,7 +27,7 @@ This is a WebAssembly-based font editor using Rust (fontc/babelfont) compiled to
 - All console.log statements MUST be prefixed with a [Descriptor] tag that identifies the code section (e.g., `console.log('[FontCompilation]', ...)`). Use descriptive prefixes like [GlyphCanvas], [PythonExec], [FileManager], etc. to enable efficient filtering and debugging
 - Decide intelligently in which JavaScript file to place new code. Infer target files from each file name or comments at the file header and only create new files if a topic is entirely new.
 - The font object is available under `window.currentFontModel`
-- **Tippy Menus**: Use `getOrCreateBackdrop(className)` and `addTippyBackdropSupport(tippyInstance, backdrop)` from file-browser.ts for modal menus with backdrop, Escape key, and click-outside support. Create Tippy with `trigger: 'manual'`, `hideOnClick: false`, `zIndex: 9999`.
+- **Tippy Menus**: Use `getOrCreateBackdrop(className)` and `addTippyBackdropSupport(tippyInstance, backdrop)` from file-browser.ts for modal menus with backdrop, Escape key, and click-outside support. Create Tippy with `trigger: 'manual'`, `hideOnClick: false`, `zIndex: 9999`. When multiple Tippy instances share a backdrop, set up a single backdrop click handler after creating all instances (not per-instance) to prevent listener accumulation. See files context menu for example.
 
 ### Rust
 

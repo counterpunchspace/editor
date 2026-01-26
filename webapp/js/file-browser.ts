@@ -186,17 +186,6 @@ function addTippyBackdropSupport(
         activeClass?: string;
     }
 ): void {
-    // Handle backdrop clicks
-    const handleBackdropClick = () => {
-        if (tippyInstance.state.isVisible) {
-            tippyInstance.hide();
-        }
-    };
-    backdrop.addEventListener('click', handleBackdropClick);
-
-    // Store handler for potential cleanup
-    (backdrop as any)._clickHandler = handleBackdropClick;
-
     // Add to existing onShow/onShown/onHide handlers
     const originalOnShow = tippyInstance.props.onShow;
     const originalOnShown = tippyInstance.props.onShown;
@@ -335,6 +324,9 @@ function setupFileContextMenus() {
     // Create shared backdrop for all file context menus
     const backdrop = getOrCreateBackdrop('file-context-menu-backdrop');
 
+    // Track all tippy instances for this backdrop
+    const tippyInstances: any[] = [];
+
     fileItems.forEach((item) => {
         const element = item as HTMLElement;
         const path = element.getAttribute('data-path') || '';
@@ -367,7 +359,7 @@ function setupFileContextMenus() {
 
                             // Hide menu and backdrop immediately
                             instance.hide();
-                            backdrop.style.display = 'none';
+                            backdrop.classList.remove('visible');
                             element.classList.remove('file-item-active');
 
                             switch (action) {
@@ -389,6 +381,9 @@ function setupFileContextMenus() {
                 );
             }
         });
+
+        // Add to instances array
+        tippyInstances.push(tippyInstance);
 
         // Add backdrop and keyboard support
         addTippyBackdropSupport(tippyInstance, backdrop, {
@@ -422,6 +417,25 @@ function setupFileContextMenus() {
         // Store tippy instance for cleanup
         (element as any)._tippy = tippyInstance;
     });
+
+    // Set up a single backdrop click handler for all instances
+    // Remove old handler if exists
+    const oldHandler = (backdrop as any)._clickHandler;
+    if (oldHandler) {
+        backdrop.removeEventListener('click', oldHandler);
+    }
+
+    // Add new handler that hides all visible tippy instances
+    const handleBackdropClick = () => {
+        tippyInstances.forEach((instance) => {
+            if (instance.state.isVisible) {
+                instance.hide();
+            }
+        });
+    };
+
+    backdrop.addEventListener('click', handleBackdropClick);
+    (backdrop as any)._clickHandler = handleBackdropClick;
 }
 
 function getTheme(): string {
