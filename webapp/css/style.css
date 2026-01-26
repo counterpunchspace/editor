@@ -122,6 +122,11 @@ kbd + kbd {
     position: relative;
     top: -50px;
     border-radius: 20%;
+    opacity: 0;
+}
+
+.loading-icon.fade-in {
+    opacity: 1;
 }
 
 .loading-status {
@@ -150,6 +155,15 @@ kbd + kbd {
     line-height: 1;
     position: relative;
     top: -50px;
+    opacity: 0;
+}
+
+.loading-logo.fade-in {
+    opacity: 1;
+}
+
+.loading-logo.fade-out {
+    opacity: 0;
 }
 
 @keyframes pulse {

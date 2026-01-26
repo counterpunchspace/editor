@@ -183,6 +183,60 @@
                     );
             })();
         </script>
+
+        <!-- Bootstrap Loading Animation -->
+        <script>
+            // Fade in loading screen when DOM is ready, before heavy scripts load
+            (function() {
+                let animationComplete = false;
+                
+                function fadeInLoadingScreen() {
+                    if (animationComplete) return;
+                    
+                    const loadingIcon = document.querySelector('.loading-icon');
+                    const loadingLogo = document.querySelector('.loading-logo');
+                    
+                    if (loadingIcon && loadingLogo) {
+                        console.log('[Bootstrap] Starting fade-in animation');
+                        
+                        // Set transition properties
+                        loadingIcon.style.transition = 'opacity 0.8s cubic-bezier(0.4, 0, 0.2, 1)';
+                        loadingLogo.style.transition = 'opacity 0.8s cubic-bezier(0.4, 0, 0.2, 1)';
+                        
+                        // First frame: ensure opacity is 0
+                        requestAnimationFrame(() => {
+                            loadingIcon.style.opacity = '0';
+                            loadingLogo.style.opacity = '0';
+                            
+                            // Second frame: trigger fade to opacity 1
+                            requestAnimationFrame(() => {
+                                loadingIcon.style.opacity = '1';
+                                loadingLogo.style.opacity = '1';
+                                animationComplete = true;
+                                
+                                // After animation, show bootstrapping message
+                                setTimeout(() => {
+                                    console.log('[Bootstrap] Fade-in complete');
+                                    const statusElement = document.getElementById('loading-status');
+                                    if (statusElement && statusElement.textContent === '') {
+                                        setTimeout(() => {
+                                            if (statusElement.textContent === '') {
+                                                statusElement.textContent = 'Bootstrapping...';
+                                            }
+                                        }, 100);
+                                    }
+                                }, 800);
+                            });
+                        });
+                    } else {
+                        console.warn('[Bootstrap] Loading elements not found');
+                    }
+                }
+                
+                // Always wait for DOMContentLoaded to ensure elements exist
+                document.addEventListener('DOMContentLoaded', fadeInLoadingScreen);
+            })();
+        </script>
     </head>
 
     <body>
@@ -250,8 +304,8 @@
         <!-- Loading overlay -->
         <div id="loading-overlay" class="loading-overlay">
             <div class="loading-content">
-                <img src="assets/icons/icon.svg" class="loading-icon" alt="Counterpunch icon" />
-                <h1 class="loading-logo">Counterpunch</h1>
+                <img src="assets/icons/icon.svg" class="loading-icon" alt="Counterpunch icon" style="opacity: 0;" />
+                <h1 class="loading-logo" style="opacity: 0;">Counterpunch</h1>
             </div>
             <div id="loading-status" class="loading-status"></div>
         </div>

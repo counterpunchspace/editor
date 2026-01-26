@@ -150,6 +150,13 @@ async function initFontEditor() {
         // Hide loading overlay with animation
         const hideLoadingOverlay = () => {
             const loadingOverlay = document.getElementById('loading-overlay');
+            const loadingLogo = document.querySelector('.loading-logo');
+
+            // Fade logo color back to red before hiding overlay
+            if (loadingLogo) {
+                loadingLogo.classList.add('fade-out');
+            }
+
             if (loadingOverlay) {
                 loadingOverlay.classList.add('hidden');
             }

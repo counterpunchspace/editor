@@ -19,19 +19,18 @@ window.updateLoadingStatus = function (
     }
 };
 
-// Clear initial message and show "Bootstrapping..." after 2 seconds
-const initBootstrappingMessage = () => {
-    const statusElement = document.getElementById('loading-status');
-    const loadingContent = document.querySelector(
-        '.loading-content'
-    ) as HTMLElement;
-    const loadingOverlay = document.getElementById('loading-overlay');
-
-    // Check if opening a font from URL params
+// Handle URL-based font opening special case
+const handleURLFontOpen = () => {
     const urlParams = new URLSearchParams(window.location.search);
     const fontPath = urlParams.get('path');
 
     if (fontPath) {
+        const loadingContent = document.querySelector(
+            '.loading-content'
+        ) as HTMLElement;
+        const statusElement = document.getElementById('loading-status');
+        const loadingOverlay = document.getElementById('loading-overlay');
+
         // Hide logo, icon, and status label
         if (loadingContent) {
             loadingContent.style.display = 'none';
@@ -58,25 +57,14 @@ const initBootstrappingMessage = () => {
         if (loadingOverlay) {
             loadingOverlay.appendChild(fontLoadingLabel);
         }
-    } else if (statusElement) {
-        // Normal startup flow
-        // Clear the initial message immediately
-        statusElement.textContent = '';
-
-        // Show "Bootstrapping..." after 2 seconds if no other message has been set
-        setTimeout(() => {
-            if (statusElement.textContent === '') {
-                statusElement.textContent = 'Bootstrapping...';
-            }
-        }, 2000);
     }
 };
 
-// Initialize bootstrapping message when DOM is ready
+// Initialize on DOM ready
 if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', initBootstrappingMessage);
+    document.addEventListener('DOMContentLoaded', handleURLFontOpen);
 } else {
-    initBootstrappingMessage();
+    handleURLFontOpen();
 }
 
 import './auth-manager.js'; // Authentication with fonteditorwebsite
