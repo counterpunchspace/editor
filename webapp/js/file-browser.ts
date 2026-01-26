@@ -1078,6 +1078,12 @@ async function navigateToPath(path: string, highlightFolder?: string) {
         // Update file tree content in a single frame to prevent flickering
         requestAnimationFrame(() => {
             fileTree!.innerHTML = html;
+            
+            // Reset scroll to top immediately when no font is open (before any other scroll logic)
+            const currentFont = window.fontManager?.currentFont;
+            if (!currentFont && !highlightFolder) {
+                fileTree!.scrollTop = 0;
+            }
 
             // Setup context menus for file items (defer to next frame to ensure DOM is ready)
             requestAnimationFrame(() => {
@@ -1104,22 +1110,16 @@ async function navigateToPath(path: string, highlightFolder?: string) {
                             folderItem.classList.remove('folder-highlight');
                         }, 600);
                     }
-                } else {
+                } else if (currentFont) {
                     // Only scroll to in-path folder if there's a current font open
-                    const currentFont = window.fontManager?.currentFont;
-                    if (currentFont) {
-                        const inPathItem = fileTree!.querySelector(
-                            '.file-item.in-font-path'
-                        );
-                        if (inPathItem) {
-                            inPathItem.scrollIntoView({
-                                block: 'center',
-                                behavior: 'auto'
-                            });
-                        }
-                    } else {
-                        // No font open - reset scroll to top
-                        fileTree!.scrollTop = 0;
+                    const inPathItem = fileTree!.querySelector(
+                        '.file-item.in-font-path'
+                    );
+                    if (inPathItem) {
+                        inPathItem.scrollIntoView({
+                            block: 'center',
+                            behavior: 'auto'
+                        });
                     }
                 }
             });
