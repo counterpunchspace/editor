@@ -295,7 +295,9 @@ class OpenedFont {
 }
 
 class FontManager {
-    dropdown: HTMLSelectElement | null;
+    fontDisplay: HTMLElement | null;
+    fontIconElement: HTMLElement | null;
+    fontNameElement: HTMLElement | null;
     dirtyIndicator: HTMLElement | null;
 
     openedFonts: Map<string, OpenedFont>; // Record of fontId to OpenedFont
@@ -308,7 +310,9 @@ class FontManager {
     glyphOrderCache: string[] | null;
 
     constructor() {
-        this.dropdown = null;
+        this.fontDisplay = null;
+        this.fontIconElement = null;
+        this.fontNameElement = null;
         this.dirtyIndicator = null;
         this.openedFonts = new Map<string, OpenedFont>();
         this.typingFont = null; // Uint8Array of compiled typing font
@@ -319,21 +323,12 @@ class FontManager {
         this.glyphOrderCache = null; // Cache for glyph order to avoid re-parsing
     }
     init() {
-        this.dropdown = document.getElementById(
-            'open-fonts-dropdown'
-        ) as HTMLSelectElement;
+        this.fontDisplay = document.getElementById('current-font-display');
+        this.fontIconElement =
+            this.fontDisplay?.querySelector('.font-icon') || null;
+        this.fontNameElement =
+            this.fontDisplay?.querySelector('.font-name') || null;
         this.dirtyIndicator = document.getElementById('file-dirty-indicator');
-        this.setupEventListeners();
-    }
-
-    setupEventListeners() {
-        // Handle dropdown selection changes
-        this.dropdown!.addEventListener('change', (e: Event) => {
-            const selectedFontId = (e.target as HTMLSelectElement).value;
-            if (selectedFontId) {
-                this.currentFontId = selectedFontId;
-            }
-        });
     }
 
     get currentFont(): OpenedFont | null {
@@ -351,34 +346,28 @@ class FontManager {
         return null;
     }
 
-    populateDropdown() {
-        this.dropdown!.innerHTML = '';
+    updateFontDisplay() {
+        if (!this.fontIconElement || !this.fontNameElement) return;
 
-        if (this.openedFonts.size === 0) {
+        if (this.openedFonts.size === 0 || !this.currentFontId) {
             // No fonts open
-            const option = document.createElement('option');
-            option.value = '';
-            option.textContent = 'No fonts open';
-            this.dropdown!.appendChild(option);
-            this.dropdown!.disabled = true;
+            this.fontIconElement.innerHTML = '';
+            this.fontNameElement.textContent = 'No fonts open';
+            if (this.fontDisplay) {
+                this.fontDisplay.title = '';
+            }
         } else {
-            // Add font options
-            this.dropdown!.disabled = false;
-            this.openedFonts.forEach((openedFont, fontId) => {
-                const option = document.createElement('option');
-                option.value = fontId;
-                const sourceIcon = openedFont.sourcePlugin.getIcon() + ' ';
-                const sourceName = openedFont.sourcePlugin.getName();
-                option.textContent = sourceIcon + openedFont.name;
-                option.title = `${openedFont.path} (${sourceName})`; // Show path and context on hover
-
-                // Select the current font
-                if (fontId === this.currentFontId) {
-                    option.selected = true;
+            // Display current font
+            const currentFont = this.openedFonts.get(this.currentFontId);
+            if (currentFont) {
+                const sourceIcon = currentFont.sourcePlugin.getIcon();
+                const sourceName = currentFont.sourcePlugin.getName();
+                this.fontIconElement.innerHTML = sourceIcon;
+                this.fontNameElement.textContent = currentFont.name;
+                if (this.fontDisplay) {
+                    this.fontDisplay.title = `${currentFont.path} (${sourceName})`;
                 }
-
-                this.dropdown!.appendChild(option);
-            });
+            }
         }
     }
 
@@ -392,7 +381,7 @@ class FontManager {
     }
 
     async onOpened() {
-        await this.populateDropdown();
+        await this.updateFontDisplay();
         // Update save button state
         if (window.saveButton) {
             window.saveButton.updateButtonState();
@@ -1127,7 +1116,7 @@ window.addEventListener('fontLoaded', async (event: Event) => {
             new CustomEvent('fontReady', { detail: { path: detail.path } })
         );
 
-        // Update dropdown
+        // Update display
         await fontManager!.onOpened();
 
         // Compile initial editing font

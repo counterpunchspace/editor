@@ -215,10 +215,8 @@ class TabLifecycleManager {
                 return true;
             }
 
-            // Also check if there are any open fonts (via the dropdown)
-            const dropdown = document.getElementById('open-fonts-dropdown');
-            if (dropdown && dropdown.options.length > 1) {
-                // More than "No fonts open"
+            // Also check if there are any open fonts (via the font manager)
+            if (window.fontManager && window.fontManager.openedFonts.size > 0) {
                 // Assume if fonts are open, they might have changes
                 return true;
             }

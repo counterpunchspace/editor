@@ -331,7 +331,7 @@ kbd + kbd {
     text-decoration: underline;
 }
 
-.font-dropdown-container {
+.font-display-container {
     position: relative;
     display: flex;
     align-items: center;
@@ -354,33 +354,26 @@ kbd + kbd {
     opacity: 1;
 }
 
-.fonts-dropdown {
-    background-color: var(--button-bg);
-    border: 1px solid var(--button-border);
+.current-font-display {
     color: var(--button-text);
     padding: 6px 12px 6px 28px;
-    border-radius: 4px;
     font-family: var(--font-families-mono);
     font-size: 13px;
-    cursor: pointer;
-    min-width: 200px;
-    transition: all 0.2s ease;
+    display: flex;
+    align-items: center;
+    gap: 4px;
 }
 
-.fonts-dropdown:hover {
-    border-color: var(--accent-cyan);
-    background-color: var(--button-hover-bg);
+.current-font-display .font-icon {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
 }
 
-.fonts-dropdown:focus {
-    outline: none;
-    border-color: var(--accent-magenta);
-    box-shadow: 0 0 8px rgba(255, 0, 255, 0.3);
-}
-
-.fonts-dropdown option {
-    background-color: var(--button-bg);
-    color: var(--button-text);
+.current-font-display .font-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .container {

@@ -214,16 +214,17 @@
                 >
                     Save
                 </button>
-                <div class="font-dropdown-container">
+                <div class="font-display-container">
                     <span
                         id="file-dirty-indicator"
                         class="file-dirty-indicator"
                         title="File has unsaved changes"
                         >●</span
                     >
-                    <select id="open-fonts-dropdown" class="fonts-dropdown">
-                        <option value="">No fonts open</option>
-                    </select>
+                    <div id="current-font-display" class="current-font-display">
+                        <span class="font-icon"></span>
+                        <span class="font-name">No fonts open</span>
+                    </div>
                 </div>
                 <button
                     id="fullscreen-btn"

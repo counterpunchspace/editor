@@ -154,12 +154,8 @@ class SaveButton {
      * Update button state based on current font
      */
     updateButtonState() {
-        const dropdown = document.getElementById('open-fonts-dropdown');
         const hasFontOpen =
-            dropdown &&
-            dropdown.options.length > 0 &&
-            dropdown.value !== '' &&
-            dropdown.options[0].textContent !== 'No fonts open';
+            window.fontManager && window.fontManager.currentFont;
 
         if (this.isSaving) {
             this.button.prop('disabled', true).text('Saving...');
