@@ -364,7 +364,11 @@ function setupFileContextMenus() {
                     (menuItem) => {
                         menuItem.addEventListener('click', async () => {
                             const action = menuItem.getAttribute('data-action');
+
+                            // Hide menu and backdrop immediately
                             instance.hide();
+                            backdrop.style.display = 'none';
+                            element.classList.remove('file-item-active');
 
                             switch (action) {
                                 case 'open':
