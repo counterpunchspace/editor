@@ -291,6 +291,9 @@ class OpenedFont {
                 `✅ Saved font to ${pluginId}: ${this.path}`
             );
         }
+
+        // Clear dirty flag after successful save
+        this.dirty = false;
     }
 }
 
@@ -372,11 +375,21 @@ class FontManager {
     }
 
     async updateDirtyIndicator() {
-        // Simply show or hide based on dirty state
+        // Update visual indicator
         if (this.currentFont?.dirty) {
             this.dirtyIndicator!.classList.add('visible');
         } else {
             this.dirtyIndicator!.classList.remove('visible');
+        }
+
+        // Update document title
+        const baseTitle = 'Counterpunch Editor';
+        if (this.currentFont?.dirty && this.currentFont?.name) {
+            document.title = `● ${this.currentFont.name} - ${baseTitle}`;
+        } else if (this.currentFont?.name) {
+            document.title = `${this.currentFont.name} - ${baseTitle}`;
+        } else {
+            document.title = baseTitle;
         }
     }
 
@@ -587,8 +600,7 @@ class FontManager {
      */
     async recompileEditingFont() {
         await this.compileEditingFont(this.currentText, this.selectedFeatures);
-        this.currentFont!.dirty = false;
-        await this.updateDirtyIndicator();
+        // Don't clear dirty flag - that should only happen on save
         return;
     }
 

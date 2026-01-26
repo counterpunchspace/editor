@@ -46,12 +46,9 @@ class SaveButton {
                     `🟢 afterSave callback: ${fname} (Python reported: ${duration.toFixed(2)}s)`
                 );
 
-                // Hide dirty indicator immediately (font was just saved, so it's clean)
-                // No need to check via Python - we know it's clean!
-                if (window.fontDropdown && window.fontDropdown.dirtyIndicator) {
-                    window.fontDropdown.dirtyIndicator.classList.remove(
-                        'visible'
-                    );
+                // Update dirty indicator (font was just saved, so it's clean)
+                if (window.fontManager) {
+                    window.fontManager.updateDirtyIndicator();
                 }
 
                 // Play done sound
@@ -116,6 +113,11 @@ class SaveButton {
 
             // Save via plugin
             await currentFont.save();
+
+            // Update dirty indicator
+            if (window.fontManager) {
+                await window.fontManager.updateDirtyIndicator();
+            }
 
             const duration = (performance.now() - saveOperationStart) / 1000;
             console.log(
