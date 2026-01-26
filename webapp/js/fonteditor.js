@@ -162,7 +162,7 @@ async function initFontEditor() {
             }
         };
 
-        // Wait at least 1 second after "Ready" appears before starting fadeout
+        // Wait briefly after "Ready" appears before starting fadeout
         setTimeout(() => {
             // Request animation to stop (it will drain particles first, then trigger fade)
             if (window.WarpSpeedAnimation) {
@@ -190,7 +190,7 @@ async function initFontEditor() {
                 // Fallback if animation not available
                 hideLoadingOverlay();
             }
-        }, 1000); // Wait 1 second after "Ready" appears
+        }, 200); // Wait 200ms after "Ready" appears
 
         return true;
     } catch (error) {
