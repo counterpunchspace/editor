@@ -43,6 +43,11 @@ export abstract class FilesystemPlugin {
         return true; // Default: all plugins can save
     }
 
+    /** Whether this plugin supports uploading files and folders */
+    supportsUpload(): boolean {
+        return true; // Default: all plugins support upload
+    }
+
     /** Whether this plugin requires user permission/authentication */
     requiresPermission(): boolean {
         return false; // Default: no permission needed
@@ -232,6 +237,10 @@ export class DiskPlugin extends FilesystemPlugin {
 
     getDefaultPath(): string {
         return '/'; // Disk context starts at root of selected folder
+    }
+
+    supportsUpload(): boolean {
+        return false; // Disk plugin does not support file/folder uploads
     }
 
     /** Get the name of the selected directory */

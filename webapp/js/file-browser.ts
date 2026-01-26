@@ -1039,6 +1039,18 @@ async function navigateToPath(path: string, highlightFolder?: string) {
             </button>`
                 : '';
 
+        const supportsUpload = fileSystemCache.currentPlugin.supportsUpload();
+        const uploadButtons = supportsUpload
+            ? `
+                <button onclick="document.getElementById('file-upload-input').click()" class="file-header-btn" title="Upload files">
+                    <span class="material-symbols-outlined">upload_file</span>
+                </button>
+                <button onclick="document.getElementById('folder-upload-input').click()" class="file-header-btn" title="Upload folder">
+                    <span class="material-symbols-outlined">drive_folder_upload</span>
+                </button>
+            `
+            : '';
+
         pathHeader.innerHTML = `
             <span class="file-path-text" title="${path}" data-full-path="${path}">${path}</span>
             <div class="file-header-actions">
@@ -1046,12 +1058,7 @@ async function navigateToPath(path: string, highlightFolder?: string) {
                 <button onclick="createFolder()" class="file-header-btn" title="Create new folder">
                     <span class="material-symbols-outlined">create_new_folder</span>
                 </button>
-                <button onclick="document.getElementById('file-upload-input').click()" class="file-header-btn" title="Upload files">
-                    <span class="material-symbols-outlined">upload_file</span>
-                </button>
-                <button onclick="document.getElementById('folder-upload-input').click()" class="file-header-btn" title="Upload folder">
-                    <span class="material-symbols-outlined">drive_folder_upload</span>
-                </button>
+                ${uploadButtons}
                 <button onclick="refreshFileSystem()" class="file-header-btn" title="Refresh">
                     <span class="material-symbols-outlined">refresh</span>
                 </button>
@@ -1078,7 +1085,7 @@ async function navigateToPath(path: string, highlightFolder?: string) {
         // Update file tree content in a single frame to prevent flickering
         requestAnimationFrame(() => {
             fileTree!.innerHTML = html;
-            
+
             // Reset scroll to top immediately when no font is open (before any other scroll logic)
             const currentFont = window.fontManager?.currentFont;
             if (!currentFont && !highlightFolder) {
@@ -1140,8 +1147,12 @@ async function navigateToPath(path: string, highlightFolder?: string) {
             );
         }
 
-        // Setup drag & drop on the file tree
-        setupDragAndDrop();
+        // Setup drag & drop on the file tree (only if plugin supports upload)
+        if (fileSystemCache.currentPlugin.supportsUpload()) {
+            setupDragAndDrop();
+        } else {
+            teardownDragAndDrop();
+        }
     } catch (error: any) {
         console.error('[FileBrowser]', 'Error navigating to path:', error);
         document.getElementById('file-tree')!.innerHTML = `
@@ -1150,42 +1161,74 @@ async function navigateToPath(path: string, highlightFolder?: string) {
     }
 }
 
+let dragCounter = 0;
+let dragHandlers: {
+    dragenter: (e: DragEvent) => void;
+    dragover: (e: DragEvent) => void;
+    dragleave: (e: DragEvent) => void;
+    drop: (e: DragEvent) => void;
+} | null = null;
+
 function setupDragAndDrop() {
     const fileBrowser = document.getElementById('file-browser')!;
-    let dragCounter = 0;
 
-    fileBrowser.addEventListener('dragenter', (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        dragCounter++;
-        fileBrowser.classList.add('drag-over');
-    });
+    // Remove existing handlers if any
+    teardownDragAndDrop();
 
-    fileBrowser.addEventListener('dragover', (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-    });
+    dragCounter = 0;
 
-    fileBrowser.addEventListener('dragleave', (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        dragCounter--;
-        if (dragCounter === 0) {
+    const handlers = {
+        dragenter: (e: DragEvent) => {
+            e.preventDefault();
+            e.stopPropagation();
+            dragCounter++;
+            fileBrowser.classList.add('drag-over');
+        },
+        dragover: (e: DragEvent) => {
+            e.preventDefault();
+            e.stopPropagation();
+        },
+        dragleave: (e: DragEvent) => {
+            e.preventDefault();
+            e.stopPropagation();
+            dragCounter--;
+            if (dragCounter === 0) {
+                fileBrowser.classList.remove('drag-over');
+            }
+        },
+        drop: async (e: DragEvent) => {
+            e.preventDefault();
+            e.stopPropagation();
+            dragCounter = 0;
             fileBrowser.classList.remove('drag-over');
-        }
-    });
 
-    fileBrowser.addEventListener('drop', async (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        dragCounter = 0;
-        fileBrowser.classList.remove('drag-over');
-
-        const files = Array.from(e.dataTransfer!.files);
-        if (files.length > 0) {
-            await uploadFiles(files);
+            const files = Array.from(e.dataTransfer!.files);
+            if (files.length > 0) {
+                await uploadFiles(files);
+            }
         }
-    });
+    };
+
+    fileBrowser.addEventListener('dragenter', handlers.dragenter);
+    fileBrowser.addEventListener('dragover', handlers.dragover);
+    fileBrowser.addEventListener('dragleave', handlers.dragleave);
+    fileBrowser.addEventListener('drop', handlers.drop);
+
+    dragHandlers = handlers;
+}
+
+function teardownDragAndDrop() {
+    const fileBrowser = document.getElementById('file-browser');
+    if (!fileBrowser || !dragHandlers) return;
+
+    fileBrowser.removeEventListener('dragenter', dragHandlers.dragenter);
+    fileBrowser.removeEventListener('dragover', dragHandlers.dragover);
+    fileBrowser.removeEventListener('dragleave', dragHandlers.dragleave);
+    fileBrowser.removeEventListener('drop', dragHandlers.drop);
+
+    fileBrowser.classList.remove('drag-over');
+    dragCounter = 0;
+    dragHandlers = null;
 }
 
 function selectFile(filePath: string) {
