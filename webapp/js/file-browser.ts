@@ -973,9 +973,8 @@ async function buildFileTree(rootPath = '/') {
             ? ''
             : `<span class="file-size">${formatFileSize(data.size)}</span>`;
 
-        const clickHandler = data.is_dir
-            ? `navigateToPath('${data.path}')`
-            : `selectFile('${data.path}')`;
+        // Check if this is a supported font file
+        const isFontFile = isSupportedFontFormat(name, data.is_dir);
 
         // Add 'current-font' class if this is the opened font
         const isCurrentFont = !data.is_dir && currentFontPath === data.path;
@@ -988,7 +987,7 @@ async function buildFileTree(rootPath = '/') {
             currentFontPath.startsWith(data.path + '/');
         const fontPathClass = isInFontPath ? 'in-font-path' : '';
 
-        html += `<div class="file-item ${fileClass} ${currentFontClass} ${fontPathClass}" onclick="${clickHandler}" data-path="${data.path}" data-name="${name}" data-is-dir="${data.is_dir}">
+        html += `<div class="file-item ${fileClass} ${currentFontClass} ${fontPathClass}" data-path="${data.path}" data-name="${name}" data-is-dir="${data.is_dir}" data-is-font="${isFontFile}">
             <span class="file-name">${icon} ${name}</span>${sizeText}
         </div>`;
     }
@@ -1095,6 +1094,7 @@ async function navigateToPath(path: string, highlightFolder?: string) {
             // Setup context menus for file items (defer to next frame to ensure DOM is ready)
             requestAnimationFrame(() => {
                 setupFileContextMenus();
+                setupFileItemClickHandlers();
 
                 // Highlight and scroll to specific folder if provided
                 if (highlightFolder) {
@@ -1234,6 +1234,68 @@ function teardownDragAndDrop() {
 function selectFile(filePath: string) {
     console.log('[FileBrowser]', 'Selected file:', filePath);
     // TODO: Add file selection handling (e.g., show content, download, etc.)
+}
+
+// Click tracking for single vs double-click distinction
+let clickTimer: number | null = null;
+let clickPrevent = false;
+const CLICK_DELAY = 250; // ms to wait for double-click
+
+function setupFileItemClickHandlers() {
+    const fileTree = document.getElementById('file-tree');
+    if (!fileTree) return;
+
+    const fileItems = fileTree.querySelectorAll('.file-item');
+    fileItems.forEach((item) => {
+        const element = item as HTMLElement;
+        const path = element.dataset.path!;
+        const isDir = element.dataset.isDir === 'true';
+        const isFont = element.dataset.isFont === 'true';
+
+        element.addEventListener('click', (e: Event) => {
+            e.preventDefault();
+            e.stopPropagation();
+
+            if (clickPrevent) {
+                return;
+            }
+
+            if (clickTimer) {
+                // Double-click detected
+                clearTimeout(clickTimer);
+                clickTimer = null;
+                clickPrevent = true;
+
+                // Handle double-click
+                if (isDir) {
+                    navigateToPath(path);
+                } else if (isFont) {
+                    console.log(
+                        '[FileBrowser]',
+                        'Double-click opening font:',
+                        path
+                    );
+                    openFont(path);
+                }
+
+                setTimeout(() => {
+                    clickPrevent = false;
+                }, CLICK_DELAY);
+            } else {
+                // First click - wait for potential double-click
+                clickTimer = window.setTimeout(() => {
+                    clickTimer = null;
+
+                    // Handle single-click
+                    if (isDir) {
+                        navigateToPath(path);
+                    } else {
+                        selectFile(path);
+                    }
+                }, CLICK_DELAY);
+            }
+        });
+    });
 }
 
 async function refreshFileSystem() {

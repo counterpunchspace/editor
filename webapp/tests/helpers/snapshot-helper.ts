@@ -144,7 +144,7 @@ export async function waitForCanvasReady(page: any) {
                 loadingOverlay && loadingOverlay.classList.contains('hidden')
             );
         },
-        { timeout: 120000 } // 2 minutes for slower browsers like WebKit
+        { timeout: 10000 } // 2 minutes for slower browsers like WebKit
     );
 
     // Additional check to ensure canvas is actually ready
@@ -156,7 +156,7 @@ export async function waitForCanvasReady(page: any) {
                 window.glyphCanvas.renderer
             );
         },
-        { timeout: 10000 }
+        { timeout: 5000 }
     );
 }
 
@@ -164,13 +164,25 @@ export async function waitForCanvasReady(page: any) {
  * Wait for font to be loaded
  */
 export async function waitForFontLoaded(page: any) {
+    console.log('[Test] Waiting for fontReady event');
+    // Wait for fontReady event to be dispatched
+    await page.evaluate(() => {
+        return new Promise((resolve) => {
+            window.addEventListener('fontReady', resolve, { once: true });
+        });
+    });
+
+    console.log('[Test] Waiting for font model to be ready');
     await page.waitForFunction(
         () => {
             return window.currentFontModel && window.fontManager?.currentFont;
         },
-        { timeout: 15000 }
+        { timeout: 5000 }
     );
 
+    console.log(
+        '[Test] Wait for features and axes to be populated with actual data'
+    );
     // Wait for features and axes to be populated with actual data
     await page.waitForFunction(
         () => {
@@ -193,7 +205,7 @@ export async function waitForFontLoaded(page: any) {
 
             return hasFeatureKeys;
         },
-        { timeout: 10000 }
+        { timeout: 5000 }
     );
 
     // Extra stabilization time for async initialization

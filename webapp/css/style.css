@@ -2089,6 +2089,8 @@ kbd + kbd {
     /* padding-left: 8px; */
     /* margin: 1px 0; */
     transition: background-color 0.2s ease;
+    user-select: none;
+    -webkit-user-select: none;
 }
 
 .file-item:hover,

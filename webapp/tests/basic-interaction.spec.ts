@@ -70,12 +70,11 @@ test.describe('Font Editor Basic Workflow', () => {
         await page.keyboard.press('Meta+Shift+F');
         await page.waitForTimeout(200);
 
-        // Load font
-        console.log('[Test] Clicking Open button');
-        await page
-            .getByRole('button', { name: 'folder_open Open' })
-            .first()
-            .click();
+        // Load font by right-clicking on a file and selecting "Open" from context menu
+        console.log('[Test] Right-clicking on first .glyphs file');
+        await page.getByText('✏️ Fustat.glyphs').dblclick();
+        await page.waitForTimeout(200);
+
         console.log('[Test] Waiting for font to load');
         await waitForFontLoaded(page);
 
