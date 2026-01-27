@@ -99,6 +99,89 @@ class ResizableViews {
         }
     }
 
+    /**
+     * Handle window resize: lock collapsed views to fixed width and adjust others
+     */
+    handleWindowResize() {
+        // Process top row (horizontal layout)
+        const topRow = document.querySelector('.top-row');
+        if (topRow) {
+            const views = Array.from(topRow.querySelectorAll('.view'));
+            const threshold = 5;
+
+            let totalFixedWidth = 0;
+            const collapsedViews = [];
+            const nonCollapsedViews = [];
+
+            // Identify collapsed and non-collapsed views
+            views.forEach((view) => {
+                const rect = view.getBoundingClientRect();
+                const minWidth = this.getMinWidth(view);
+                const isCollapsed = rect.width <= minWidth + threshold;
+
+                if (isCollapsed) {
+                    collapsedViews.push({ view, width: minWidth });
+                    totalFixedWidth += minWidth;
+                } else {
+                    nonCollapsedViews.push({ view, width: rect.width });
+                }
+            });
+
+            if (collapsedViews.length > 0 && nonCollapsedViews.length > 0) {
+                // Lock collapsed views to fixed width
+                collapsedViews.forEach(({ view, width }) => {
+                    view.style.flex = `0 0 ${width}px`;
+                });
+
+                // Set non-collapsed views to flexible with proper proportions
+                const containerWidth = topRow.offsetWidth;
+                const availableWidth = containerWidth - totalFixedWidth;
+
+                let totalNonCollapsedWidth = 0;
+                nonCollapsedViews.forEach(({ width }) => {
+                    totalNonCollapsedWidth += width;
+                });
+
+                nonCollapsedViews.forEach(({ view, width }) => {
+                    const proportion = width / totalNonCollapsedWidth;
+                    const targetWidth = availableWidth * proportion;
+                    view.style.flex = `${targetWidth}`;
+                });
+            }
+        }
+
+        // Process bottom row (horizontal layout)
+        const bottomRow = document.querySelector('.bottom-row');
+        if (bottomRow) {
+            const views = Array.from(bottomRow.querySelectorAll('.view'));
+            const threshold = 5;
+
+            let totalFixedHeight = 0;
+            const collapsedViews = [];
+            const nonCollapsedViews = [];
+
+            // Identify collapsed and non-collapsed views
+            views.forEach((view) => {
+                const rect = view.getBoundingClientRect();
+                const minHeight = this.getMinHeight(view);
+                const isCollapsed = rect.height <= minHeight + threshold;
+
+                if (isCollapsed) {
+                    collapsedViews.push({ view, height: minHeight });
+                    totalFixedHeight += minHeight;
+                } else {
+                    nonCollapsedViews.push({ view, height: rect.height });
+                }
+            });
+
+            // For bottom row, we mainly care about horizontal resizing, not vertical
+            // So we don't need to lock heights, just update collapsed states
+        }
+
+        // Update collapsed state classes
+        this.updateCollapsedStates();
+    }
+
     init() {
         // Add event listeners for all dividers
         const verticalDividers = document.querySelectorAll('.vertical-divider');
@@ -541,6 +624,6 @@ if (document.readyState === 'loading') {
 // Handle window resize to maintain proportions and collapsed states
 window.addEventListener('resize', () => {
     if (window.resizableViews) {
-        window.resizableViews.updateCollapsedStates();
+        window.resizableViews.handleWindowResize();
     }
 });
