@@ -581,6 +581,9 @@ class FontManager {
                 })
             );
 
+            // Reset loading cursor
+            document.body.classList.remove('font-loading');
+
             return this.editingFont;
         } catch (error) {
             console.error(
@@ -591,6 +594,8 @@ class FontManager {
             const errorMessage =
                 error instanceof Error ? error.message : String(error);
             sidebarErrorDisplay.showError(errorMessage);
+            // Reset cursor on error
+            document.body.classList.remove('font-loading');
             throw error;
         }
     }

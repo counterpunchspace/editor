@@ -41,6 +41,12 @@ body {
         color 0.3s ease;
 }
 
+/* Loading cursor override for all elements when font is loading */
+body.font-loading,
+body.font-loading * {
+    cursor: wait !important;
+}
+
 /* Material Symbols */
 .material-symbols-outlined {
     font-family: 'Material Symbols Outlined';
