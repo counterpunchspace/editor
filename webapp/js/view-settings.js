@@ -18,6 +18,13 @@ const VIEW_SETTINGS = {
             displayModifiers: ['⌘', '⇧'],
             secondaryBehavior: 'expandToTarget' // Expand to target if smaller
         },
+        'view-overview': {
+            // Overview view
+            key: 'o',
+            modifiers: { cmd: true, shift: true },
+            displayModifiers: ['⌘', '⇧'],
+            secondaryBehavior: 'expandToTarget'
+        },
         'view-scripts': {
             // Scripts view
             key: 's',
@@ -81,6 +88,11 @@ const VIEW_SETTINGS = {
         },
         'view-fontinfo': {
             // Font Info view (no secondary resize)
+            width: 0.33,
+            height: 0.7
+        },
+        'view-overview': {
+            // Overview view (no secondary resize)
             width: 0.33,
             height: 0.7
         },

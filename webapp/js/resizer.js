@@ -29,7 +29,10 @@ class ResizableViews {
         if (view.classList.contains('view-editor')) {
             return ResizableViews.PRIMARY_MIN_WIDTH;
         }
-        if (view.classList.contains('view-fontinfo')) {
+        if (
+            view.classList.contains('view-fontinfo') ||
+            view.classList.contains('view-overview')
+        ) {
             return ResizableViews.FONTINFO_MIN_WIDTH;
         }
         return ResizableViews.SECONDARY_MIN_WIDTH;
@@ -42,7 +45,10 @@ class ResizableViews {
         if (view.classList.contains('view-editor')) {
             return ResizableViews.PRIMARY_MIN_HEIGHT;
         }
-        if (view.classList.contains('view-fontinfo')) {
+        if (
+            view.classList.contains('view-fontinfo') ||
+            view.classList.contains('view-overview')
+        ) {
             return ResizableViews.FONTINFO_MIN_HEIGHT;
         }
         return ResizableViews.SECONDARY_MIN_HEIGHT;
@@ -53,6 +59,8 @@ class ResizableViews {
      */
     updateCollapsedStates() {
         const views = document.querySelectorAll('.view');
+        let shouldFocusEditor = false;
+
         views.forEach((view) => {
             // Skip the editor (primary view)
             if (view.classList.contains('view-editor')) return;
@@ -61,12 +69,21 @@ class ResizableViews {
             const titleBarHeight = ResizableViews.TITLE_BAR_HEIGHT;
             const threshold = 5; // Tolerance for float comparison
 
-            if (view.classList.contains('view-fontinfo')) {
-                // Font info collapses by width
+            if (
+                view.classList.contains('view-fontinfo') ||
+                view.classList.contains('view-overview')
+            ) {
+                // Font info and overview collapse by width
                 const isWidthCollapsed =
                     rect.width <= ResizableViews.FONTINFO_MIN_WIDTH + threshold;
+                const wasCollapsed = view.classList.contains('collapsed-width');
                 view.classList.toggle('collapsed-width', isWidthCollapsed);
                 view.classList.remove('collapsed');
+
+                // If this view just became collapsed, mark to focus editor
+                if (isWidthCollapsed && !wasCollapsed) {
+                    shouldFocusEditor = true;
+                }
             } else {
                 // Other secondary views collapse by height
                 const isHeightCollapsed =
@@ -75,6 +92,11 @@ class ResizableViews {
                 view.classList.remove('collapsed-width');
             }
         });
+
+        // Focus editor if fontinfo or overview was just collapsed
+        if (shouldFocusEditor && window.focusView) {
+            window.focusView('view-editor');
+        }
     }
 
     init() {
@@ -234,7 +256,11 @@ class ResizableViews {
         const views = container.querySelectorAll('.view');
 
         views.forEach((view, index) => {
-            this.startWidths[index] = view.offsetWidth;
+            const actualWidth = view.offsetWidth;
+            const minWidth = this.getMinWidth(view);
+            // If view is collapsed, lock to exact minimum width to prevent drift
+            const isCollapsed = actualWidth <= minWidth + 5;
+            this.startWidths[index] = isCollapsed ? minWidth : actualWidth;
         });
     }
 
@@ -272,121 +298,128 @@ class ResizableViews {
         const dividerIndex = dividers.indexOf(this.currentDivider);
         if (dividerIndex === -1) return;
 
-        // Determine which side to resize based on drag direction
-        if (deltaX < 0) {
-            // Dragging left - resize left views proportionally, only the immediate right view changes
-            const leftViews = views.slice(0, dividerIndex + 1);
-            const rightView = views[dividerIndex + 1];
+        // Get the view to the left of the divider
+        const leftView = views[dividerIndex];
+        if (!leftView) return;
 
-            if (leftViews.length === 0 || !rightView) return;
+        // Get all views to the right
+        const rightViews = views.slice(dividerIndex + 1);
+        if (rightViews.length === 0) return;
 
-            // Calculate total width of left group
-            let leftTotalWidth = 0;
-            leftViews.forEach((view, i) => {
-                leftTotalWidth += this.startWidths[i];
+        // Filter out collapsed views from the right side
+        const nonCollapsedRightViews = rightViews.filter((view) => {
+            const index = views.indexOf(view);
+            const minWidth = this.getMinWidth(view);
+            return this.startWidths[index] > minWidth + 5;
+        });
+
+        if (nonCollapsedRightViews.length === 0) return;
+
+        // Calculate current widths
+        const leftStartWidth = this.startWidths[dividerIndex];
+        let newLeftWidth = leftStartWidth + deltaX;
+
+        // Check minimums
+        const leftMinWidth = this.getMinWidth(leftView);
+
+        // Snap to minimum if within 10 pixels
+        const snapThreshold = 10;
+        if (Math.abs(newLeftWidth - leftMinWidth) < snapThreshold) {
+            newLeftWidth = leftMinWidth;
+        }
+
+        // Calculate total width of non-collapsed right views
+        let rightTotalWidth = 0;
+        nonCollapsedRightViews.forEach((view) => {
+            const index = views.indexOf(view);
+            rightTotalWidth += this.startWidths[index];
+        });
+
+        const newRightTotalWidth =
+            rightTotalWidth - (newLeftWidth - leftStartWidth);
+
+        let minRightTotalWidth = 0;
+        nonCollapsedRightViews.forEach((view) => {
+            minRightTotalWidth += this.getMinWidth(view);
+        });
+
+        if (
+            newLeftWidth >= leftMinWidth &&
+            newRightTotalWidth >= minRightTotalWidth
+        ) {
+            // Calculate new widths
+            const newWidths = {};
+
+            // Set new left width
+            newWidths[dividerIndex] = newLeftWidth;
+
+            // Scale non-collapsed right views proportionally
+            const rightScale = newRightTotalWidth / rightTotalWidth;
+            nonCollapsedRightViews.forEach((view) => {
+                const index = views.indexOf(view);
+                newWidths[index] = this.startWidths[index] * rightScale;
             });
 
-            const rightStartWidth = this.startWidths[dividerIndex + 1];
-            const newLeftTotalWidth = leftTotalWidth + deltaX;
-            const newRightWidth = rightStartWidth - deltaX;
-
-            // Check minimums using dynamic min widths
-            let minLeftTotalWidth = 0;
-            leftViews.forEach((view) => {
-                minLeftTotalWidth += this.getMinWidth(view);
-            });
-            const rightMinWidth = this.getMinWidth(rightView);
-
-            if (
-                newLeftTotalWidth >= minLeftTotalWidth &&
-                newRightWidth >= rightMinWidth
-            ) {
-                // Scale left views proportionally
-                const leftScale = newLeftTotalWidth / leftTotalWidth;
-
-                const newWidths = {};
-                leftViews.forEach((view, i) => {
-                    newWidths[i] = this.startWidths[i] * leftScale;
-                });
-                newWidths[dividerIndex + 1] = newRightWidth;
-
-                // Keep other views unchanged
-                for (let i = dividerIndex + 2; i < views.length; i++) {
-                    newWidths[i] = this.startWidths[i];
+            // Lock all other views to minimum width if collapsed, otherwise keep unchanged
+            views.forEach((view, index) => {
+                if (!(index in newWidths)) {
+                    const minWidth = this.getMinWidth(view);
+                    const isCollapsed = this.startWidths[index] <= minWidth + 5;
+                    newWidths[index] = isCollapsed
+                        ? minWidth
+                        : this.startWidths[index];
                 }
-
-                // Calculate total and set flex
-                let totalWidth = 0;
-                views.forEach((view, index) => {
-                    totalWidth += newWidths[index];
-                });
-
-                views.forEach((view, index) => {
-                    view.style.flex = `${newWidths[index] / totalWidth}`;
-                });
-
-                // Update collapsed states
-                this.updateCollapsedStates();
-            }
-        } else if (deltaX > 0) {
-            // Dragging right - resize right views proportionally, only the immediate left view changes
-            const leftView = views[dividerIndex];
-            const rightViews = views.slice(dividerIndex + 1);
-
-            if (!leftView || rightViews.length === 0) return;
-
-            const leftStartWidth = this.startWidths[dividerIndex];
-
-            // Calculate total width of right group
-            let rightTotalWidth = 0;
-            rightViews.forEach((view, i) => {
-                rightTotalWidth += this.startWidths[dividerIndex + 1 + i];
             });
 
-            const newLeftWidth = leftStartWidth + deltaX;
-            const newRightTotalWidth = rightTotalWidth - deltaX;
-
-            // Check minimums using dynamic min widths
-            const leftMinWidth = this.getMinWidth(leftView);
-            let minRightTotalWidth = 0;
-            rightViews.forEach((view) => {
-                minRightTotalWidth += this.getMinWidth(view);
+            // Calculate total and set flex
+            let totalWidth = 0;
+            views.forEach((view, index) => {
+                totalWidth += newWidths[index];
             });
 
-            if (
-                newLeftWidth >= leftMinWidth &&
-                newRightTotalWidth >= minRightTotalWidth
-            ) {
-                // Scale right views proportionally
-                const rightScale = newRightTotalWidth / rightTotalWidth;
+            // Ensure editor view (last view) is at least 33% of total width
+            const editorIndex = views.length - 1;
+            const editorMinRatio = 0.33;
+            const editorNewWidth = newWidths[editorIndex];
 
-                const newWidths = {};
+            if (editorNewWidth / totalWidth < editorMinRatio) {
+                // Editor is too narrow, recalculate to enforce minimum
+                const requiredEditorWidth = totalWidth * editorMinRatio;
+                const editorShortfall = requiredEditorWidth - editorNewWidth;
 
-                // Keep left views unchanged except the immediate one
-                for (let i = 0; i < dividerIndex; i++) {
-                    newWidths[i] = this.startWidths[i];
+                // Reduce other non-collapsed views proportionally to give space to editor
+                const otherNonCollapsedIndices = [];
+                let otherNonCollapsedTotal = 0;
+
+                views.forEach((view, index) => {
+                    if (index !== editorIndex) {
+                        const minWidth = this.getMinWidth(view);
+                        const isCollapsed = newWidths[index] <= minWidth + 5;
+                        if (!isCollapsed) {
+                            otherNonCollapsedIndices.push(index);
+                            otherNonCollapsedTotal += newWidths[index];
+                        }
+                    }
+                });
+
+                if (otherNonCollapsedTotal > editorShortfall) {
+                    // Reduce others proportionally
+                    otherNonCollapsedIndices.forEach((index) => {
+                        const reduction =
+                            (newWidths[index] / otherNonCollapsedTotal) *
+                            editorShortfall;
+                        newWidths[index] -= reduction;
+                    });
+                    newWidths[editorIndex] = requiredEditorWidth;
                 }
-                newWidths[dividerIndex] = newLeftWidth;
-
-                // Scale right views
-                rightViews.forEach((view, i) => {
-                    const index = dividerIndex + 1 + i;
-                    newWidths[index] = this.startWidths[index] * rightScale;
-                });
-
-                // Calculate total and set flex
-                let totalWidth = 0;
-                views.forEach((view, index) => {
-                    totalWidth += newWidths[index];
-                });
-
-                views.forEach((view, index) => {
-                    view.style.flex = `${newWidths[index] / totalWidth}`;
-                });
-
-                // Update collapsed states
-                this.updateCollapsedStates();
             }
+
+            views.forEach((view, index) => {
+                view.style.flex = `${newWidths[index] / totalWidth}`;
+            });
+
+            // Update collapsed states
+            this.updateCollapsedStates();
         }
     }
 

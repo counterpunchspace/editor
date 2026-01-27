@@ -450,6 +450,12 @@ kbd + kbd {
     min-height: 100px;
 }
 
+/* Overview view special case - collapses to width instead of height */
+.view-overview {
+    min-width: 24px;
+    min-height: 100px;
+}
+
 .view.focused {
     background-color: var(--background-primary);
     color: var(--text-primary);
@@ -508,6 +514,41 @@ kbd + kbd {
 
 .view-fontinfo.collapsed-width .view-title-bar .view-title-button,
 .view-fontinfo.collapsed-width .view-title-bar .ai-info-button {
+    display: none;
+}
+
+/* Overview view - rotated title bar when collapsed to minimum width */
+.view-overview.collapsed-width {
+    overflow: hidden;
+}
+
+.view-overview.collapsed-width .view-content {
+    display: none;
+}
+
+.view-overview.collapsed-width .view-title-bar {
+    writing-mode: vertical-rl;
+    text-orientation: mixed;
+    transform: rotate(180deg);
+    height: 100%;
+    width: 24px;
+    border-bottom: none;
+    border-right: 1px solid var(--border-primary);
+    padding: 8px 0 0 0;
+    justify-content: flex-end; /* Align to top when rotated (flex-end because of 180deg rotation) */
+    position: relative;
+    top: 4px;
+    left: -2px;
+}
+
+.view-overview.collapsed-width .view-title-bar .view-title-left {
+    flex-direction: row; /* Keep title and shortcut on same line */
+    gap: 6px;
+    white-space: nowrap;
+}
+
+.view-overview.collapsed-width .view-title-bar .view-title-button,
+.view-overview.collapsed-width .view-title-bar .ai-info-button {
     display: none;
 }
 
@@ -667,6 +708,11 @@ kbd + kbd {
 /* View specific colors for better distinction - Cyberpunk style */
 .view-fontinfo {
     border-left: 4px solid var(--view-fontinfo);
+    flex: 1;
+}
+
+.view-overview {
+    border-left: 4px solid var(--view-overview);
     flex: 1;
 }
 
@@ -4115,6 +4161,13 @@ kbd + kbd {
 
 /* Only apply to editor view when canvas is present */
 .view-editor:has(#glyph-canvas-container) .view-content {
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+}
+
+/* Only apply to overview view when main container is present */
+.view-overview:has(#overview-main) .view-content {
     margin: 0;
     padding: 0;
     overflow: hidden;

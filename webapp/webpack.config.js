@@ -44,6 +44,10 @@ module.exports = {
                 {
                     from: 'js/translations.js',
                     to: 'js/translations.js'
+                },
+                {
+                    from: 'js/overview-view.js',
+                    to: 'js/overview-view.js'
                 }
             ]
         })
