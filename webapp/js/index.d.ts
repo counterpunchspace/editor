@@ -103,6 +103,9 @@ declare global {
         downloadFile: (filePath: string, fileName: string) => Promise<void>;
         selectDiskFolder: () => Promise<void>;
         reEnableAccess: () => Promise<void>;
+        parseFileUri: (
+            uri: string
+        ) => { pluginId: string; path: string } | null;
 
         // From font-compilation.js
         fontCompilation: FontCompilation;

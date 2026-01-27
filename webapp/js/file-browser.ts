@@ -66,6 +66,50 @@ function truncatePathMiddle(
     return `${start}${ellipsis}${end}`;
 }
 
+/**
+ * Create a file URI from plugin ID and path
+ * Format: pluginId:///path/to/file
+ */
+function createFileUri(pluginId: string, path: string): string {
+    return `${pluginId}:///${path.startsWith('/') ? path.slice(1) : path}`;
+}
+
+/**
+ * Parse a file URI into plugin ID and path
+ * Format: pluginId:///path/to/file
+ */
+function parseFileUri(uri: string): { pluginId: string; path: string } | null {
+    const match = uri.match(/^([^:]+):\/\/\/(.*)$/);
+    if (!match) return null;
+    return {
+        pluginId: match[1],
+        path: '/' + match[2]
+    };
+}
+
+/**
+ * Update URL with current parameters (file, and future settings)
+ * Call this whenever application state changes that should be reflected in URL
+ */
+function updateUrl(params: { file?: string | null; [key: string]: any }) {
+    const url = new URL(window.location.href);
+    const searchParams = new URLSearchParams(url.search);
+
+    // Update or remove parameters
+    for (const [key, value] of Object.entries(params)) {
+        if (value === null || value === undefined) {
+            searchParams.delete(key);
+        } else {
+            searchParams.set(key, String(value));
+        }
+    }
+
+    // Update URL without reload
+    const newUrl = `${url.pathname}${searchParams.toString() ? '?' + searchParams.toString() : ''}`;
+    window.history.replaceState(null, '', newUrl);
+    console.log('[FileBrowser]', `URL updated:`, newUrl);
+}
+
 function updatePathDisplay(path: string) {
     const pathTextElement = document.querySelector(
         '.file-path-text'
@@ -470,16 +514,13 @@ function updatePluginMenuButtonVisibility(plugin: FilesystemPlugin): void {
 
 function openFontInNewTab(path: string) {
     const pluginId = fileSystemCache.currentPlugin.getId();
+    const fileUri = createFileUri(pluginId, path);
     const params = new URLSearchParams();
-    params.set('plugin', pluginId);
-    params.set('path', path);
+    params.set('file', fileUri);
 
     const url = `${window.location.origin}${window.location.pathname}?${params.toString()}`;
     window.open(url, '_blank');
-    console.log(
-        '[FileBrowser]',
-        `Opening font in new tab: ${path} (plugin: ${pluginId})`
-    );
+    console.log('[FileBrowser]', `Opening font in new tab: ${fileUri}`);
 }
 
 async function openFont(path: string, fileHandle?: FileSystemFileHandle) {
@@ -608,6 +649,11 @@ async function openFont(path: string, fileHandle?: FileSystemFileHandle) {
                 }
             })
         );
+
+        // Update URL to reflect current file
+        const pluginId = fileSystemCache.currentPlugin.getId();
+        const fileUri = createFileUri(pluginId, path);
+        updateUrl({ file: fileUri });
 
         // Play done sound
         if (window.playSound) {
@@ -1654,15 +1700,37 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Handle URL parameters for opening fonts in new tabs
     const urlParams = new URLSearchParams(window.location.search);
-    const pluginId = urlParams.get('plugin');
-    const fontPath = urlParams.get('path');
+    const fileParam = urlParams.get('file');
 
-    if (pluginId && fontPath) {
+    // Also support legacy format for backwards compatibility
+    const legacyPluginId = urlParams.get('plugin');
+    const legacyPath = urlParams.get('path');
+
+    let pluginId: string | null = null;
+    let fontPath: string | null = null;
+
+    // Try new format first
+    if (fileParam) {
+        const parsed = parseFileUri(fileParam);
+        if (parsed) {
+            pluginId = parsed.pluginId;
+            fontPath = parsed.path;
+            console.log(
+                '[FileBrowser]',
+                `URL file param detected: ${fileParam}`
+            );
+        }
+    } else if (legacyPluginId && legacyPath) {
+        // Fall back to legacy format
+        pluginId = legacyPluginId;
+        fontPath = legacyPath;
         console.log(
             '[FileBrowser]',
-            `URL params detected: plugin=${pluginId}, path=${fontPath}`
+            `Legacy URL params detected: plugin=${pluginId}, path=${fontPath}`
         );
+    }
 
+    if (pluginId && fontPath) {
         // Wait for everything to initialize before switching and opening
         setTimeout(async () => {
             try {
@@ -1781,4 +1849,5 @@ window.openFont = openFont;
 (window as any).switchContext = switchContext;
 (window as any).selectDiskFolder = selectDiskFolder;
 (window as any).reEnableAccess = reEnableAccess;
+(window as any).parseFileUri = parseFileUri;
 window.downloadFile = downloadFile;

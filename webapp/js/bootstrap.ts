@@ -22,7 +22,23 @@ window.updateLoadingStatus = function (
 // Handle URL-based font opening special case
 const handleURLFontOpen = () => {
     const urlParams = new URLSearchParams(window.location.search);
-    const fontPath = urlParams.get('path');
+    const fileParam = urlParams.get('file');
+    const legacyPath = urlParams.get('path');
+
+    let fontPath: string | null = null;
+
+    // Try new file URI format first
+    if (fileParam) {
+        // parseFileUri will be available after file-browser.ts loads
+        // For bootstrap, parse inline to avoid dependency
+        const match = fileParam.match(/^([^:]+):\/\/\/(.*)$/);
+        if (match) {
+            fontPath = '/' + match[2];
+        }
+    } else if (legacyPath) {
+        // Fall back to legacy format
+        fontPath = legacyPath;
+    }
 
     if (fontPath) {
         const loadingContent = document.querySelector(
