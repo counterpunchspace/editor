@@ -1712,13 +1712,53 @@ document.addEventListener('DOMContentLoaded', () => {
         // Wait for everything to initialize before switching and opening
         setTimeout(async () => {
             try {
+                // Check if plugin exists
+                const plugin = pluginRegistry.get(pluginId);
+                if (!plugin) {
+                    alert(
+                        `Error: File system plugin "${pluginId}" not found.\n\nThe requested file cannot be loaded because the plugin is not available.`
+                    );
+                    console.error(
+                        '[FileBrowser]',
+                        `Plugin '${pluginId}' not found for URL param`
+                    );
+                    return;
+                }
+
                 // Switch to the specified plugin
                 await switchContext(pluginId);
 
                 // Navigate to the directory containing the font
                 const dirPath =
                     fontPath.substring(0, fontPath.lastIndexOf('/')) || '/';
-                await navigateToPath(dirPath);
+
+                try {
+                    await navigateToPath(dirPath);
+                } catch (navError) {
+                    alert(
+                        `Error: Cannot access directory "${dirPath}" in "${plugin.getName()}" plugin.\n\nThe requested directory does not exist or is not accessible.`
+                    );
+                    console.error(
+                        '[FileBrowser]',
+                        `Cannot navigate to directory: ${dirPath}`,
+                        navError
+                    );
+                    return;
+                }
+
+                // Check if file exists
+                const exists =
+                    await fileSystemCache.activeAdapter.fileExists(fontPath);
+                if (!exists) {
+                    alert(
+                        `Error: File not found at "${fontPath}" in "${plugin.getName()}" plugin.\n\nThe requested file does not exist or is not accessible.`
+                    );
+                    console.error(
+                        '[FileBrowser]',
+                        `File not found: ${fontPath}`
+                    );
+                    return;
+                }
 
                 // Open the font
                 await openFont(fontPath);
@@ -1739,7 +1779,9 @@ document.addEventListener('DOMContentLoaded', () => {
                         });
                     }
                 }, 100); // Small delay to ensure DOM is updated
-            } catch (error) {
+            } catch (error: any) {
+                const errorMessage = error?.message || String(error);
+                alert(`Error opening file from URL:\n\n${errorMessage}`);
                 console.error(
                     '[FileBrowser]',
                     'Failed to open font from URL params:',

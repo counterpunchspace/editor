@@ -18,6 +18,7 @@ export interface FileSystemAdapter {
     writeFile(path: string, content: string | Uint8Array): Promise<void>;
     createFolder(path: string): Promise<void>;
     deleteItem(path: string, isDir: boolean): Promise<void>;
+    fileExists(path: string): Promise<boolean>;
     checkPermission?(): Promise<PermissionState>;
     requestPermission?(): Promise<PermissionState>;
 }
@@ -91,6 +92,16 @@ export class OPFSAdapter implements FileSystemAdapter {
     async deleteItem(path: string, isDir: boolean): Promise<void> {
         const fs = await this.getFS();
         await fs.remove(path, { recursive: isDir });
+    }
+
+    async fileExists(path: string): Promise<boolean> {
+        try {
+            const fs = await this.getFS();
+            await fs.stat(path);
+            return true;
+        } catch (error) {
+            return false;
+        }
     }
 }
 
@@ -349,6 +360,15 @@ export class NativeAdapter implements FileSystemAdapter {
             );
         }
         return null;
+    }
+
+    async fileExists(path: string): Promise<boolean> {
+        try {
+            await this.getHandleAtPath(path);
+            return true;
+        } catch (error) {
+            return false;
+        }
     }
 }
 
