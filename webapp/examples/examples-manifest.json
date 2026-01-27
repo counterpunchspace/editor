@@ -5,10 +5,6 @@
         {
             "source": "examples/Fustat.glyphs",
             "destination": "/user/Fustat.glyphs"
-        },
-        {
-            "source": "examples/YanoneKaffeesatz.glyphs",
-            "destination": "/user/YanoneKaffeesatz.glyphs"
         }
     ]
 }
