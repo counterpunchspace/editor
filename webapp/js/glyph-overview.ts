@@ -38,6 +38,8 @@ class GlyphOverview {
         descender: number;
         upm: number;
     } | null = null;
+    // Currently highlighted editing glyph
+    private highlightedGlyphName: string | null = null;
 
     constructor(parentElement: HTMLElement) {
         this.init(parentElement);
@@ -70,6 +72,12 @@ class GlyphOverview {
 
         // Listen for glyph changes to update tiles
         window.addEventListener('glyphChanged', this.onGlyphChanged.bind(this));
+
+        // Listen for glyph stack changes to update highlight immediately
+        window.addEventListener(
+            'glyphStackChanged',
+            this.onGlyphStackChanged.bind(this)
+        );
 
         console.log('[GlyphOverview]', 'Glyph overview container initialized');
     }
@@ -296,6 +304,103 @@ class GlyphOverview {
                 error
             );
         }
+    }
+
+    /**
+     * Handle glyph stack change events for immediate highlight updates
+     */
+    private onGlyphStackChanged(event: Event): void {
+        const detail = (event as CustomEvent).detail;
+        const glyphStack = detail?.glyphStack;
+        if (!glyphStack) {
+            this.setEditingHighlight(null);
+            return;
+        }
+
+        // Parse the stack to get the last glyph (deepest component being edited)
+        const glyphCanvas = (window as any).glyphCanvas;
+        if (glyphCanvas?.outlineEditor?.parseGlyphStack) {
+            const parsed = glyphCanvas.outlineEditor.parseGlyphStack();
+            if (parsed.length > 0) {
+                const editingGlyph = parsed[parsed.length - 1].glyphName;
+                this.setEditingHighlight(editingGlyph);
+            } else {
+                this.setEditingHighlight(null);
+            }
+        }
+    }
+
+    /**
+     * Set the editing highlight on a specific glyph tile
+     */
+    private setEditingHighlight(glyphName: string | null): void {
+        if (glyphName === this.highlightedGlyphName) return;
+
+        // Remove highlight from previous tile
+        if (this.highlightedGlyphName) {
+            for (const tile of this.tiles.values()) {
+                if (tile.glyphName === this.highlightedGlyphName) {
+                    tile.element.style.boxShadow = '';
+                    break;
+                }
+            }
+        }
+
+        // Add highlight to new tile and scroll into view
+        this.highlightedGlyphName = glyphName;
+        if (glyphName) {
+            for (const tile of this.tiles.values()) {
+                if (tile.glyphName === glyphName) {
+                    tile.element.style.boxShadow =
+                        'inset 0 0 0 2px var(--accent-blue)';
+                    this.scrollToTile(tile.element);
+                    break;
+                }
+            }
+        }
+    }
+
+    /**
+     * Fast smooth scroll to tile element
+     */
+    private scrollToTile(element: HTMLElement): void {
+        if (!this.container) return;
+
+        const containerRect = this.container.getBoundingClientRect();
+        const elementRect = element.getBoundingClientRect();
+
+        // Check if element is already fully visible
+        if (
+            elementRect.top >= containerRect.top &&
+            elementRect.bottom <= containerRect.bottom
+        ) {
+            return;
+        }
+
+        // Calculate target scroll position
+        const elementTop =
+            elementRect.top - containerRect.top + this.container.scrollTop;
+        const targetScroll =
+            elementTop - containerRect.height / 2 + elementRect.height / 2;
+
+        // Animate scroll with 150ms duration
+        const startScroll = this.container.scrollTop;
+        const distance = targetScroll - startScroll;
+        const duration = 150;
+        const startTime = performance.now();
+
+        const animateScroll = (currentTime: number) => {
+            const elapsed = currentTime - startTime;
+            const progress = Math.min(elapsed / duration, 1);
+            // Ease out quad
+            const eased = 1 - (1 - progress) * (1 - progress);
+            this.container!.scrollTop = startScroll + distance * eased;
+            if (progress < 1) {
+                requestAnimationFrame(animateScroll);
+            }
+        };
+
+        requestAnimationFrame(animateScroll);
     }
 
     private setupLazyLoading(): void {

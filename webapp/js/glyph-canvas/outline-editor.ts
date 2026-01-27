@@ -199,6 +199,11 @@ export class OutlineEditor {
 
         this.glyphStack = stack;
         console.log('[GlyphStack] Built stack:', this.glyphStack);
+        window.dispatchEvent(
+            new CustomEvent('glyphStackChanged', {
+                detail: { glyphStack: this.glyphStack }
+            })
+        );
     }
 
     /**
@@ -238,6 +243,11 @@ export class OutlineEditor {
         console.log(
             '[GlyphStack] Rebuilt stack with new layer ID:',
             this.glyphStack
+        );
+        window.dispatchEvent(
+            new CustomEvent('glyphStackChanged', {
+                detail: { glyphStack: this.glyphStack }
+            })
         );
     }
 
