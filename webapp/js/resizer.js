@@ -135,7 +135,11 @@ class ResizableViews {
         try {
             const saved = localStorage.getItem('viewLayout');
             if (!saved) {
-                console.log('[Resizer]', 'No saved view layout found');
+                console.log(
+                    '[Resizer]',
+                    'No saved view layout found - applying defaults'
+                );
+                this.applyDefaultLayout();
                 return;
             }
 
@@ -191,6 +195,37 @@ class ResizableViews {
         } catch (e) {
             console.warn('[Resizer]', 'Failed to load view layout:', e);
         }
+    }
+
+    applyDefaultLayout() {
+        console.log('[Resizer]', 'Applying default view layout');
+
+        const topRow = document.querySelector('.top-row');
+        const topViews = topRow?.querySelectorAll('.view');
+
+        if (topViews && topViews.length === 3) {
+            // fontinfo: collapsed (24px), overview: 35%, editor: 65%
+            // Assuming container width, calculate flex ratios
+            // For collapsed fontinfo, use minimal flex
+            const fontinfoFlex = 0.01; // Very small flex for collapsed state
+            const overviewFlex = 0.35;
+            const editorFlex = 0.65;
+            const total = fontinfoFlex + overviewFlex + editorFlex;
+
+            topViews[0].style.flex = `${fontinfoFlex / total}`; // fontinfo
+            topViews[1].style.flex = `${overviewFlex / total}`; // overview
+            topViews[2].style.flex = `${editorFlex / total}`; // editor
+
+            console.log(
+                '[Resizer]',
+                'Applied default top row layout: fontinfo collapsed, overview 35%, editor 65%'
+            );
+        }
+
+        // Update collapsed states to reflect the collapsed fontinfo
+        setTimeout(() => {
+            this.updateCollapsedStates();
+        }, 100);
     }
 
     saveLayout() {
