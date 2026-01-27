@@ -71,10 +71,10 @@ const VIEW_SETTINGS = {
         },
         // Editor view (primary)
         editor: {
-            widthThreshold: 0.6, // If width < 60% of top row (3/5)
-            heightThreshold: 0.6, // If height < 60% of container (3/5)
-            widthTarget: 0.7, // Expand to 70% width (3/5)
-            heightTarget: 0.7 // Expand to 70% height (3/5)
+            widthThreshold: 0.5, // If width < 50% of top row
+            heightThreshold: 0.5, // If height < 50% of container
+            widthTarget: 0.5, // Expand to 50% width
+            heightTarget: 0.5 // Expand to 50% height
         }
     },
 
