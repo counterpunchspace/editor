@@ -81,6 +81,19 @@ class GlyphOverview {
             'editorModeChanged',
             this.onModeChanged.bind(this)
         );
+
+        // Listen for theme changes to re-render tiles
+        const observer = new MutationObserver((mutations) => {
+            mutations.forEach((mutation) => {
+                if (
+                    mutation.type === 'attributes' &&
+                    mutation.attributeName === 'data-theme'
+                ) {
+                    this.onThemeChanged();
+                }
+            });
+        });
+        observer.observe(document.documentElement, { attributes: true });
     }
 
     private initSizeControl(): void {
@@ -506,6 +519,19 @@ class GlyphOverview {
             // Clear editing highlight when switching to text mode
             this.setEditingHighlight(null);
         }
+    }
+
+    /**
+     * Handle theme changes to re-render tiles with new colors
+     */
+    private onThemeChanged(): void {
+        // Re-render all tiles with cached data
+        const dims = this.getTileDimensions();
+        this.tiles.forEach((tile) => {
+            if (tile.cachedData) {
+                this.renderTile(tile, tile.cachedData, dims.width, dims.height);
+            }
+        });
     }
 
     /**

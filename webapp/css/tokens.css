@@ -76,7 +76,8 @@
     --button-hover-bg: #333333;
     --button-border: #555555;
     --button-bg: #2a2a2a;
-    --glyph-overview-component-color: #00ffff;
+    --glyph-overview-component-color: #49b9deff;
+    --glyph-overview-path-color: #ffffff;
 }
 
 /* Light theme */
@@ -151,4 +152,5 @@
     --button-border: #b0b0b0;
     --button-bg: #f0f0f0;
     --glyph-overview-component-color: #49b9deff;
+    --glyph-overview-path-color: #000000;
 }

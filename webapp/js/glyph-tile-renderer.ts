@@ -110,14 +110,14 @@ export class GlyphTileRenderer {
 
         // Detect theme and get colors from CSS variables
         const computedStyle = getComputedStyle(document.documentElement);
-        const isDarkTheme =
-            document.documentElement.getAttribute('data-theme') !== 'light';
         const componentColor = computedStyle
             .getPropertyValue('--glyph-overview-component-color')
             .trim();
-        const pathColor = isDarkTheme ? '#ffffff' : 'currentColor';
+        const pathColor = computedStyle
+            .getPropertyValue('--glyph-overview-path-color')
+            .trim();
 
-        // Draw shapes - paths in white (dark) or currentColor (light), components in blue
+        // Draw shapes - paths in theme color, components in blue
         this.drawShapes(
             ctx,
             glyphData.shapes,
@@ -152,11 +152,9 @@ export class GlyphTileRenderer {
         // First pass: draw all regular paths (not components)
         ctx.beginPath();
         this.buildPathsOnly(ctx, shapes, parentTransform);
-        if (ctx.isPointInPath(0, 0) !== undefined) {
-            // Check if path was created
-            ctx.fillStyle = insideComponent ? componentColor : pathColor;
-            ctx.fill();
-        }
+        // Fill regular paths with appropriate color
+        ctx.fillStyle = insideComponent ? componentColor : pathColor;
+        ctx.fill();
 
         // Second pass: combine ALL component paths at this level, then fill once
         // This allows components to interact via nonzero winding (e.g., circle + number)
