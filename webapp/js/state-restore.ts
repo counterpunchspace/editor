@@ -113,17 +113,16 @@ export async function restoreStateFromUrl(
 
             if (state.mode === 'edit') {
                 // Enter editing mode
-                // Ensure a glyph is selected first
-                if (glyphCanvas.textRunEditor!.selectedGlyphIndex < 0) {
-                    // Select the glyph at cursor
-                    const glyphIndex =
-                        glyphCanvas.textRunEditor!.getGlyphIndexAtCursorPosition();
-                    if (glyphIndex !== undefined && glyphIndex >= 0) {
-                        await glyphCanvas.textRunEditor!.selectGlyphByIndex(
-                            glyphIndex
-                        );
-                    }
-                }
+                // Use cursor position to select the glyph (cursor in edit mode = glyph index)
+                let glyphIndex = state.cursor ?? 0;
+
+                // Ensure glyph index is within bounds
+                const maxIndex =
+                    glyphCanvas.textRunEditor!.shapedGlyphs.length - 1;
+                glyphIndex = Math.max(0, Math.min(glyphIndex, maxIndex));
+
+                console.log('Selecting glyph at index:', glyphIndex);
+                await glyphCanvas.textRunEditor!.selectGlyphByIndex(glyphIndex);
 
                 // Activate editing mode
                 if (glyphCanvas.textRunEditor!.selectedGlyphIndex >= 0) {

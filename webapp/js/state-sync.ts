@@ -61,6 +61,19 @@ export function initStateSync(glyphCanvas: GlyphCanvas) {
         });
     }
 
+    // Monitor glyph selection in editing mode
+    window.addEventListener('editorModeChanged', ((e: CustomEvent) => {
+        if (!syncEnabled) return;
+
+        // When in editing mode, sync the selected glyph index as cursor
+        if (e.detail.mode === 'edit' && glyphCanvas.textRunEditor) {
+            const cursor = glyphCanvas.textRunEditor.selectedGlyphIndex;
+            if (cursor >= 0) {
+                updateUrlState({ cursor });
+            }
+        }
+    }) as EventListener);
+
     // Monitor axis/location changes
     if (glyphCanvas.axesManager) {
         glyphCanvas.axesManager.on('axisChanged', () => {

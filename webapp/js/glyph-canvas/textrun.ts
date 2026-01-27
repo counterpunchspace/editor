@@ -268,6 +268,15 @@ export class TextRunEditor {
         const previousIndex = this.selectedGlyphIndex;
 
         if (glyphIndex >= 0 && glyphIndex < this.shapedGlyphs.length) {
+            // Update selected glyph index
+            this.selectedGlyphIndex = glyphIndex;
+
+            // Dispatch event for URL sync (in editing mode, cursor = glyph index)
+            window.dispatchEvent(
+                new CustomEvent('editorModeChanged', {
+                    detail: { mode: 'edit' }
+                })
+            );
             this.selectedGlyphIndex = glyphIndex;
 
             // Set logical cursor position to the start of this glyph's cluster
