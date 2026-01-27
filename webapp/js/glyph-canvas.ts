@@ -388,6 +388,7 @@ class GlyphCanvas {
         this.setupSidebarFocusHandlers();
         this.setupAxesManagerEventHandlers();
         this.featuresManager!.on('change', async () => {
+            console.log('[GlyphCanvas]', 'Features changed, reshaping text');
             // Capture anchor before reshaping (cursor in text mode, bbox in editing mode)
             if (
                 this.outlineEditor.active &&
@@ -401,6 +402,11 @@ class GlyphCanvas {
             }
 
             // Reshape text with new features (skip render in text mode)
+            console.log(
+                '[GlyphCanvas]',
+                'Calling shapeText with skipRender:',
+                !this.outlineEditor.active
+            );
             this.textRunEditor!.shapeText(!this.outlineEditor.active);
 
             if (

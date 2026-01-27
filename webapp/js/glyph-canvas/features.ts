@@ -11,7 +11,7 @@ export class FeaturesManager {
     fontBytes: Uint8Array | null;
     featuresSection: HTMLElement | null;
     featureResetButton: HTMLButtonElement | null;
-    callbacks: Record<string, Function>;
+    callbacks: Record<string, Function[]>;
 
     constructor() {
         this.featureSettings = {}; // Store OpenType feature on/off states
@@ -23,12 +23,17 @@ export class FeaturesManager {
     }
 
     on(event: string, callback: Function) {
-        this.callbacks[event] = callback;
+        if (!this.callbacks[event]) {
+            this.callbacks[event] = [];
+        }
+        this.callbacks[event].push(callback);
     }
 
     call(event: string, ...args: any[]) {
         if (this.callbacks[event]) {
-            this.callbacks[event](...args);
+            for (const callback of this.callbacks[event]) {
+                callback(...args);
+            }
         }
     }
 
@@ -188,13 +193,19 @@ export class FeaturesManager {
             tagButton.classList.toggle('enabled', isEnabled);
 
             tagButton.addEventListener('click', () => {
+                console.log('[Features]', `Toggling feature ${feature.tag}`);
                 this.featureSettings[feature.tag] =
                     !this.featureSettings[feature.tag];
                 tagButton.classList.toggle(
                     'enabled',
                     this.featureSettings[feature.tag]
                 );
+                console.log(
+                    '[Features]',
+                    `Feature ${feature.tag} is now ${this.featureSettings[feature.tag] ? 'enabled' : 'disabled'}`
+                );
                 this.updateFeatureResetButton();
+                console.log('[Features]', 'Calling change callback');
                 this.call('change');
             });
 
