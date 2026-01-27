@@ -6,7 +6,7 @@
     --tile-height: 50px;
     display: flex;
     flex-wrap: wrap;
-    gap: 1px;
+    gap: 2px;
     padding: 2px;
     align-content: flex-start;
     width: 100%;
@@ -20,9 +20,7 @@
 .glyph-tile {
     width: var(--tile-width);
     height: var(--tile-height);
-    background-color: var(--background-secondary);
-    border: 1px solid var(--border-primary);
-    border-radius: 0px;
+    border-radius: 3px;
     position: relative;
     cursor: pointer;
     display: flex;
@@ -39,19 +37,19 @@
 
 /* Lighter background for unselected tiles when overview view is focused */
 .view-overview.focused .glyph-tile {
-    background-color: color-mix(in srgb, var(--background-secondary) 70%, white);
+//    background-color: color-mix(in srgb, var(--background-secondary) 70%, white);
 }
 
 /* Selected state */
 .glyph-tile.selected {
-    background-color: color-mix(in srgb, var(--background-secondary) 70%, white);
-    border-color: var(--accent-primary);
+    background-color: var(--background-active);
+    border: 0px solid var(--border-primary);
 }
 
 /* Lighter background for unselected tiles when overview view is focused */
 .view-overview.focused .glyph-tile.selected,
 .view-overview.focused .glyph-tile.selected .glyph-tile-label {
-    background-color: var(--background-primary);
+    background-color: var(--background-secondary);
 }
 
 /* Glyph tile label */
@@ -64,7 +62,7 @@
     text-overflow: ellipsis;
     white-space: nowrap;
     line-height: 1;
-    background-color: color-mix(in srgb, var(--background-secondary) 80%, transparent);
+//    background-color: color-mix(in srgb, var(--background-secondary) 80%, transparent);
     border-radius: 0px;
     position: relative;
     z-index: 1;
