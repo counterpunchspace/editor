@@ -582,7 +582,7 @@ class FontManager {
             );
 
             // Reset loading cursor
-            document.body.classList.remove('font-loading');
+            document.body.classList.remove('loading');
 
             return this.editingFont;
         } catch (error) {
@@ -595,7 +595,7 @@ class FontManager {
                 error instanceof Error ? error.message : String(error);
             sidebarErrorDisplay.showError(errorMessage);
             // Reset cursor on error
-            document.body.classList.remove('font-loading');
+            document.body.classList.remove('loading');
             throw error;
         }
     }

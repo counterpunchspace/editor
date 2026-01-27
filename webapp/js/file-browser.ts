@@ -489,7 +489,7 @@ async function openFont(path: string, fileHandle?: FileSystemFileHandle) {
     }
 
     // Set loading cursor
-    document.body.classList.add('font-loading');
+    document.body.classList.add('loading');
 
     try {
         const startTime = performance.now();
@@ -628,7 +628,7 @@ async function openFont(path: string, fileHandle?: FileSystemFileHandle) {
         console.error('[FileBrowser]', 'Error opening font:', error);
         alert(`Error opening font: ${error.message}`);
         // Reset cursor on error
-        document.body.classList.remove('font-loading');
+        document.body.classList.remove('loading');
     }
 }
 

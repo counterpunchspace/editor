@@ -41,9 +41,9 @@ body {
         color 0.3s ease;
 }
 
-/* Loading cursor override for all elements when font is loading */
-body.font-loading,
-body.font-loading * {
+/* Loading cursor override for all elements */
+body.loading,
+body.loading * {
     cursor: wait !important;
 }
 
