@@ -63,6 +63,7 @@ Users will see an orange update notification button in the title bar within 10 m
 **`babelfont-ts` object model integration — Counterpunch becomes an analysis tool**
 
 - ✅ User file sytem I/O
+- ✅ App state saved in URL, can be shared and restored
 - ✅ .glyphs I/O
 - ✅ .vfj I/O
 - ◻️ .vfb I/O
@@ -70,8 +71,8 @@ Users will see an orange update notification button in the title bar within 10 m
 - ◻️ .ufo/.designspace I/O
 - ✅ .babelfont I/O
 - ◻️ Python scripts I/O
-- ◻️ Glyph overview
-- ◻️ Glyph search and filtering
+- ✅ Glyph overview
+- ✅ Glyph search and filtering
 - ◻️ Glyph filtering plugins
 - ◻️ Insert glyphs into editor text
 - ◻️ OpenType feature code editor
