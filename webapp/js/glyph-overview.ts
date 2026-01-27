@@ -79,6 +79,12 @@ class GlyphOverview {
             this.onGlyphStackChanged.bind(this)
         );
 
+        // Listen for mode changes to clear border when switching to text mode
+        window.addEventListener(
+            'editorModeChanged',
+            this.onModeChanged.bind(this)
+        );
+
         console.log('[GlyphOverview]', 'Glyph overview container initialized');
     }
 
@@ -317,8 +323,17 @@ class GlyphOverview {
             return;
         }
 
-        // Parse the stack to get the last glyph (deepest component being edited)
+        // Only show editing highlight when in edit mode (outline editor active)
         const glyphCanvas = (window as any).glyphCanvas;
+        const isEditMode = glyphCanvas?.outlineEditor?.active;
+
+        if (!isEditMode) {
+            // In text mode, don't show the editing border
+            this.setEditingHighlight(null);
+            return;
+        }
+
+        // Parse the stack to get the last glyph (deepest component being edited)
         if (glyphCanvas?.outlineEditor?.parseGlyphStack) {
             const parsed = glyphCanvas.outlineEditor.parseGlyphStack();
             if (parsed.length > 0) {
@@ -327,6 +342,19 @@ class GlyphOverview {
             } else {
                 this.setEditingHighlight(null);
             }
+        }
+    }
+
+    /**
+     * Handle mode changes to clear border when switching to text mode
+     */
+    private onModeChanged(event: Event): void {
+        const detail = (event as CustomEvent).detail;
+        const mode = detail?.mode;
+
+        if (mode === 'text') {
+            // Clear editing highlight when switching to text mode
+            this.setEditingHighlight(null);
         }
     }
 
