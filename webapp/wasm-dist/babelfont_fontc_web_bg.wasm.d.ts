@@ -1,6 +1,11 @@
 /* tslint:disable */
 /* eslint-disable */
 export const memory: WebAssembly.Memory;
+export const get_font_axes: (a: number, b: number) => [number, number, number, number];
+export const get_font_features: (a: number, b: number) => [number, number, number, number];
+export const get_glyph_name: (a: number, b: number, c: number) => [number, number, number, number];
+export const get_glyph_order: (a: number, b: number) => [number, number, number, number];
+export const get_stylistic_set_names: (a: number, b: number) => [number, number, number, number];
 export const clear_font_cache: () => void;
 export const compile_babelfont: (a: number, b: number, c: any) => [number, number, number, number];
 export const compile_cached_font: (a: any) => [number, number, number, number];
@@ -11,11 +16,6 @@ export const interpolate_glyph: (a: number, b: number, c: number, d: number) => 
 export const open_font_file: (a: number, b: number, c: number, d: number) => [number, number, number, number];
 export const store_font: (a: number, b: number) => [number, number];
 export const version: () => [number, number];
-export const get_font_axes: (a: number, b: number) => [number, number, number, number];
-export const get_font_features: (a: number, b: number) => [number, number, number, number];
-export const get_glyph_name: (a: number, b: number, c: number) => [number, number, number, number];
-export const get_glyph_order: (a: number, b: number) => [number, number, number, number];
-export const get_stylistic_set_names: (a: number, b: number) => [number, number, number, number];
 export const __wbindgen_malloc: (a: number, b: number) => number;
 export const __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;
 export const __wbindgen_free: (a: number, b: number, c: number) => void;

@@ -32,6 +32,9 @@
     box-sizing: border-box;
     overflow: hidden;
     transition: background-color 0.15s ease;
+    /* Performance: skip rendering of off-screen tiles */
+    content-visibility: auto;
+    contain-intrinsic-size: var(--tile-width) var(--tile-height);
 }
 
 /* Lighter background for unselected tiles when overview view is focused */
@@ -70,7 +73,7 @@
 }
 
 
-/* Canvas inside tile */
+/* Legacy canvas inside tile (kept for compatibility) */
 .glyph-tile canvas {
     position: absolute;
     top: 0;

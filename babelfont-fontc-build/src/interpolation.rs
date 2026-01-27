@@ -2,10 +2,12 @@
 //
 // This module provides functions for interpolating glyphs at specific locations
 // in the design space, with special handling for glyphs containing components.
+// Optimized with per-request caching for batch operations.
 
 use babelfont::{Layer, Shape};
 use fontdrasil::coords::{DesignCoord, DesignLocation, UserCoord};
 use serde_json::Value as JsonValue;
+use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::str::FromStr;
 use wasm_bindgen::prelude::*;
@@ -506,6 +508,120 @@ pub fn serialize_layer_with_components(
     // Track visited glyphs to prevent infinite recursion
     let mut visited = HashSet::new();
     serialize_layer_recursive(layer, font, location, &mut visited)
+}
+
+/// Serialize a layer with cached interpolation - for batch operations
+/// Uses shared caches for interpolated layers and serialized JSON to avoid redundant work
+pub fn serialize_layer_with_components_cached(
+    layer: &Layer,
+    font: &babelfont::Font,
+    location: &DesignLocation,
+    layer_cache: &RefCell<HashMap<String, Layer>>,
+    json_cache: &RefCell<HashMap<String, JsonValue>>,
+) -> Result<JsonValue, String> {
+    // Track visited glyphs to prevent infinite recursion in this call
+    let mut visited = HashSet::new();
+    serialize_layer_recursive_cached(layer, font, location, &mut visited, layer_cache, json_cache)
+}
+
+/// Recursive helper with caching
+fn serialize_layer_recursive_cached(
+    layer: &Layer,
+    font: &babelfont::Font,
+    location: &DesignLocation,
+    visited: &mut HashSet<String>,
+    layer_cache: &RefCell<HashMap<String, Layer>>,
+    json_cache: &RefCell<HashMap<String, JsonValue>>,
+) -> Result<JsonValue, String> {
+    // First serialize the layer to JSON
+    let mut layer_json: JsonValue = serde_json::to_value(layer)
+        .map_err(|e| format!("Failed to serialize layer: {}", e))?;
+
+    // Get mutable access to shapes array
+    if let Some(shapes) = layer_json.get_mut("shapes") {
+        if let Some(shapes_array) = shapes.as_array_mut() {
+            // Process each shape
+            for shape_json in shapes_array.iter_mut() {
+                // Check if this is a component
+                if let Some(component) = shape_json.get_mut("Component") {
+                    let reference_opt = component
+                        .get("reference")
+                        .and_then(|r| r.as_str())
+                        .map(|s| s.to_string());
+
+                    if let Some(reference) = reference_opt {
+                        // Prevent infinite recursion
+                        if visited.contains(&reference) {
+                            continue;
+                        }
+
+                        // Check JSON cache first for this component's layer data
+                        {
+                            let cache = json_cache.borrow();
+                            if let Some(cached_json) = cache.get(&reference) {
+                                component
+                                    .as_object_mut()
+                                    .unwrap()
+                                    .insert("layerData".to_string(), cached_json.clone());
+                                continue;
+                            }
+                        }
+
+                        visited.insert(reference.clone());
+
+                        // Get interpolated layer from cache or interpolate
+                        let component_layer = {
+                            let cache = layer_cache.borrow();
+                            if let Some(cached) = cache.get(&reference) {
+                                cached.clone()
+                            } else {
+                                drop(cache);
+                                match font.interpolate_glyph(&reference, location) {
+                                    Ok(interpolated) => {
+                                        layer_cache.borrow_mut().insert(reference.clone(), interpolated.clone());
+                                        interpolated
+                                    }
+                                    Err(_) => {
+                                        visited.remove(&reference);
+                                        continue;
+                                    }
+                                }
+                            }
+                        };
+
+                        // Recursively serialize - this returns the shapes array
+                        match serialize_layer_recursive_cached(
+                            &component_layer,
+                            font,
+                            location,
+                            visited,
+                            layer_cache,
+                            json_cache,
+                        ) {
+                            Ok(component_shapes_json) => {
+                                // Build layerData object with shapes field
+                                let layer_data = serde_json::json!({
+                                    "shapes": component_shapes_json
+                                });
+                                // Cache the layerData (not just shapes)
+                                json_cache.borrow_mut().insert(reference.clone(), layer_data.clone());
+                                component
+                                    .as_object_mut()
+                                    .unwrap()
+                                    .insert("layerData".to_string(), layer_data);
+                            }
+                            Err(_) => {}
+                        }
+
+                        visited.remove(&reference);
+                    }
+                }
+            }
+        }
+    }
+
+    // Return shapes array directly
+    Ok(layer_json.get("shapes").cloned().unwrap_or(serde_json::json!([])))
 }
 
 /// Recursive helper that serializes a layer and adds layerData to components

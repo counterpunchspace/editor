@@ -1,8 +1,14 @@
-// Glyph Tile Renderer
-// Renders glyph outlines into small canvas tiles for the overview
-// Reuses LayerDataNormalizer for node parsing and path building
+// Fast Glyph Tile Renderer
+// Renders glyph outlines directly to canvas elements without data URL conversion
+// Uses a shared offscreen canvas for path building, then draws to target canvases
 
 import { LayerDataNormalizer } from './layer-data-normalizer';
+
+interface RenderMetrics {
+    ascender: number;
+    descender: number;
+    upm: number;
+}
 
 interface GlyphOutlineData {
     name: string;
@@ -16,115 +22,122 @@ interface GlyphOutlineData {
     };
 }
 
-interface RenderMetrics {
-    ascender: number;
-    descender: number;
-    upm: number;
-}
+class FastGlyphTileRenderer {
+    private componentColor: string = '';
+    private pathColor: string = '';
+    private colorsInitialized: boolean = false;
 
-export class GlyphTileRenderer {
-    private tileWidth: number;
-    private tileHeight: number;
-    private padding: number;
-
-    constructor(
-        tileWidth: number = 30,
-        tileHeight: number = 50,
-        padding: number = 2
-    ) {
-        this.tileWidth = tileWidth;
-        this.tileHeight = tileHeight;
-        this.padding = padding;
+    constructor() {
+        // Colors will be initialized lazily on first render
     }
 
     /**
-     * Render a glyph outline into a canvas element
-     * @param glyphData - Glyph outline data with shapes and bounds
-     * @param metrics - Optional ascender/descender/upm for consistent sizing. Defaults to 750/-250 for 1000upm.
-     * @param tileWidth - Override tile width (optional)
-     * @param tileHeight - Override tile height (optional)
+     * Update cached theme colors from CSS variables
      */
-    public renderGlyph(
+    public updateThemeColors(): void {
+        const computedStyle = getComputedStyle(document.documentElement);
+        this.componentColor = computedStyle
+            .getPropertyValue('--glyph-overview-component-color')
+            .trim();
+        this.pathColor = computedStyle
+            .getPropertyValue('--glyph-overview-path-color')
+            .trim();
+        this.colorsInitialized = true;
+    }
+
+    /**
+     * Ensure colors are initialized before rendering
+     */
+    private ensureColorsInitialized(): void {
+        if (
+            !this.colorsInitialized ||
+            !this.componentColor ||
+            !this.pathColor
+        ) {
+            this.updateThemeColors();
+        }
+    }
+
+    /**
+     * Render a glyph directly to a canvas element
+     * Reuses existing canvas if provided, creates new one otherwise
+     */
+    public renderToCanvas(
         glyphData: GlyphOutlineData,
-        metrics?: RenderMetrics,
-        tileWidth?: number,
-        tileHeight?: number
+        metrics: RenderMetrics | undefined,
+        width: number,
+        height: number,
+        existingCanvas?: HTMLCanvasElement
     ): HTMLCanvasElement {
-        const width = tileWidth ?? this.tileWidth;
-        const height = tileHeight ?? this.tileHeight;
+        this.ensureColorsInitialized();
+
         const dpr = window.devicePixelRatio || 1;
-        const canvas = document.createElement('canvas');
+        const canvasWidth = Math.round(width * dpr);
+        const canvasHeight = Math.round(height * dpr);
 
-        // Set canvas size for hi-dpi
-        canvas.width = width * dpr;
-        canvas.height = height * dpr;
-        canvas.style.width = `${width}px`;
-        canvas.style.height = `${height}px`;
+        // Reuse existing canvas or create new one
+        const canvas = existingCanvas || document.createElement('canvas');
 
-        const ctx = canvas.getContext('2d');
+        // Only resize if dimensions changed
+        if (canvas.width !== canvasWidth || canvas.height !== canvasHeight) {
+            canvas.width = canvasWidth;
+            canvas.height = canvasHeight;
+            canvas.style.width = `${width}px`;
+            canvas.style.height = `${height}px`;
+        }
+
+        const ctx = canvas.getContext('2d', { alpha: true });
         if (!ctx) {
-            console.error(
-                '[GlyphTileRenderer]',
-                'Failed to get canvas context'
-            );
             return canvas;
         }
 
-        // Scale context for hi-dpi
+        // Clear and reset transform
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        ctx.clearRect(0, 0, canvasWidth, canvasHeight);
+
+        // Scale for hi-dpi
         ctx.scale(dpr, dpr);
 
         // Calculate drawing area (reserve space at bottom for label)
-        const labelHeight = Math.max(8, height * 0.16); // Scale label height
+        const labelHeight = Math.max(8, height * 0.16);
         const drawHeight = height - labelHeight;
         const drawWidth = width;
+        const padding = 2;
 
-        // Use provided metrics or calculate defaults based on upm
+        // Use provided metrics or calculate defaults
         const upm = metrics?.upm || 1000;
-        const ascender = metrics?.ascender ?? upm * 0.75; // Default: 750 for 1000upm
-        const descender = metrics?.descender ?? -(upm * 0.25); // Default: -250 for 1000upm
-
-        // Total vertical range from descender to ascender
+        const ascender = metrics?.ascender ?? upm * 0.75;
+        const descender = metrics?.descender ?? -(upm * 0.25);
         const metricsHeight = ascender - descender;
 
         if (metricsHeight === 0) {
             return canvas;
         }
 
-        // Scale to fit metrics height in drawing area (with padding)
-        const scale = (drawHeight - this.padding * 2) / metricsHeight;
+        // Scale to fit metrics height in drawing area
+        const scale = (drawHeight - padding * 2) / metricsHeight;
 
-        // Center horizontally based on glyph visual bounds (not advance width)
+        // Center horizontally based on glyph visual bounds
         const bounds = glyphData.bounds;
         const glyphVisualCenterX = (bounds.xMin + bounds.xMax) / 2;
         const tileCenterX = drawWidth / 2;
         const offsetX = tileCenterX - glyphVisualCenterX * scale;
 
         // Y offset: position so ascender is at top of drawing area
-        // In canvas, Y increases downward, but font coords have Y up
-        // After flipping: ascender should be at padding from top
-        const offsetY = this.padding + ascender * scale;
+        const offsetY = padding + ascender * scale;
 
         ctx.save();
-        ctx.translate(offsetX, offsetY); // Position origin
-        ctx.scale(scale, -scale); // Flip Y axis (font coords: Y up)
+        ctx.translate(offsetX, offsetY);
+        ctx.scale(scale, -scale); // Flip Y axis
 
-        // Detect theme and get colors from CSS variables
-        const computedStyle = getComputedStyle(document.documentElement);
-        const componentColor = computedStyle
-            .getPropertyValue('--glyph-overview-component-color')
-            .trim();
-        const pathColor = computedStyle
-            .getPropertyValue('--glyph-overview-path-color')
-            .trim();
-
-        // Draw shapes - paths in theme color, components in blue
+        // Draw shapes
         this.drawShapes(
             ctx,
             glyphData.shapes,
-            componentColor,
-            pathColor,
-            null, // No transform for root level
-            false // Not inside a component
+            this.componentColor,
+            this.pathColor,
+            null,
+            false
         );
 
         ctx.restore();
@@ -134,12 +147,6 @@ export class GlyphTileRenderer {
 
     /**
      * Recursively draw shapes (paths and components)
-     * @param ctx - Canvas rendering context
-     * @param shapes - Array of shape objects (Path or Component)
-     * @param componentColor - Color for component outlines
-     * @param pathColor - Color for regular path outlines
-     * @param parentTransform - Optional parent transformation matrix [a, b, c, d, tx, ty]
-     * @param insideComponent - Whether we're currently inside a component
      */
     private drawShapes(
         ctx: CanvasRenderingContext2D,
@@ -149,15 +156,13 @@ export class GlyphTileRenderer {
         parentTransform: number[] | null,
         insideComponent: boolean
     ): void {
-        // First pass: draw all regular paths (not components)
+        // First pass: draw all regular paths
         ctx.beginPath();
-        this.buildPathsOnly(ctx, shapes, parentTransform);
-        // Fill regular paths with appropriate color
+        this.buildPathsOnly(ctx, shapes);
         ctx.fillStyle = insideComponent ? componentColor : pathColor;
         ctx.fill();
 
-        // Second pass: combine ALL component paths at this level, then fill once
-        // This allows components to interact via nonzero winding (e.g., circle + number)
+        // Second pass: combine ALL component paths, then fill once
         const hasComponents = shapes.some((s) => s.Component);
         if (hasComponents) {
             ctx.beginPath();
@@ -180,7 +185,6 @@ export class GlyphTileRenderer {
                             finalTransform[4],
                             finalTransform[5]
                         );
-                        // Build all paths from this component into the combined path
                         this.buildComponentPaths(
                             ctx,
                             component.layerData.shapes
@@ -189,16 +193,13 @@ export class GlyphTileRenderer {
                     }
                 }
             }
-            // Fill all components at once - nonzero winding handles counters
             ctx.fillStyle = componentColor;
             ctx.fill();
         }
     }
 
     /**
-     * Build all paths from component shapes recursively (for combined component rendering)
-     * @param ctx - Canvas rendering context
-     * @param shapes - Array of shape objects
+     * Build all paths from component shapes recursively
      */
     private buildComponentPaths(
         ctx: CanvasRenderingContext2D,
@@ -210,16 +211,13 @@ export class GlyphTileRenderer {
                 if (typeof nodes === 'string') {
                     nodes = LayerDataNormalizer.parseNodes(nodes);
                 }
-
                 if (nodes && nodes.length > 0) {
                     LayerDataNormalizer.buildPathFromNodes(nodes, ctx);
                     ctx.closePath();
                 }
             } else if (shape.Component) {
-                // Nested component
                 const component = shape.Component;
                 const transform = component.transform || [1, 0, 0, 1, 0, 0];
-
                 if (component.layerData && component.layerData.shapes) {
                     ctx.save();
                     ctx.transform(
@@ -238,23 +236,15 @@ export class GlyphTileRenderer {
     }
 
     /**
-     * Build combined path from regular paths only (skip components)
-     * @param ctx - Canvas rendering context
-     * @param shapes - Array of shape objects
-     * @param parentTransform - Optional parent transformation matrix
+     * Build combined path from regular paths only
      */
-    private buildPathsOnly(
-        ctx: CanvasRenderingContext2D,
-        shapes: any[],
-        parentTransform: number[] | null
-    ): void {
+    private buildPathsOnly(ctx: CanvasRenderingContext2D, shapes: any[]): void {
         for (const shape of shapes) {
             if (shape.Path) {
                 let nodes = shape.Path.nodes;
                 if (typeof nodes === 'string') {
                     nodes = LayerDataNormalizer.parseNodes(nodes);
                 }
-
                 if (nodes && nodes.length > 0) {
                     LayerDataNormalizer.buildPathFromNodes(nodes, ctx);
                     ctx.closePath();
@@ -265,9 +255,6 @@ export class GlyphTileRenderer {
 
     /**
      * Multiply two transformation matrices
-     * @param t1 - First transform [a, b, c, d, tx, ty]
-     * @param t2 - Second transform [a, b, c, d, tx, ty]
-     * @returns Combined transform
      */
     private multiplyTransforms(t1: number[], t2: number[]): number[] {
         const [a1, b1, c1, d1, tx1, ty1] = t1;
@@ -284,4 +271,4 @@ export class GlyphTileRenderer {
 }
 
 // Export singleton instance
-export const glyphTileRenderer = new GlyphTileRenderer();
+export const fastGlyphTileRenderer = new FastGlyphTileRenderer();

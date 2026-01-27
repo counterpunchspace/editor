@@ -1,7 +1,8 @@
 // Glyph Overview
 // Displays grid of glyph tiles with selection support
+// Uses direct canvas rendering for fast display
 
-import { glyphTileRenderer } from './glyph-tile-renderer';
+import { fastGlyphTileRenderer } from './glyph-tile-renderer-fast';
 
 // Use the shared fontCompilation instance from window (set by bootstrap)
 // Do NOT import from './font-compilation' as this is a separate webpack entry point
@@ -14,6 +15,7 @@ interface GlyphTile {
     glyphName: string;
     selected: boolean;
     cachedData?: any; // Cached glyph outline data for resizing
+    canvas?: HTMLCanvasElement; // Reusable canvas element
 }
 
 class GlyphOverview {
@@ -314,25 +316,13 @@ class GlyphOverview {
                 `Parsed ${outlines.length} glyph outlines`
             );
 
-            // Debug: Check first glyph shapes
-            if (
-                outlines.length > 0 &&
-                outlines[0].shapes &&
-                outlines[0].shapes.length > 0
-            ) {
-                console.log(
-                    '[GlyphOverview]',
-                    'First glyph first shape keys:',
-                    Object.keys(outlines[0].shapes[0])
-                );
-            }
-
+            // Render all tiles - direct canvas rendering is fast, no chunking needed
+            const dims = this.getTileDimensions();
             outlines.forEach((glyphData: any, index: number) => {
                 const glyphId = glyphIds[index];
                 const tile = this.tiles.get(glyphId);
                 if (tile) {
-                    tile.cachedData = glyphData; // Cache for resizing
-                    const dims = this.getTileDimensions();
+                    tile.cachedData = glyphData;
                     this.renderTile(tile, glyphData, dims.width, dims.height);
                 }
             });
@@ -386,12 +376,6 @@ class GlyphOverview {
         width?: number,
         height?: number
     ): void {
-        // Remove existing canvas if any
-        const existingCanvas = tile.element.querySelector('canvas');
-        if (existingCanvas) {
-            existingCanvas.remove();
-        }
-
         // Cache data for future resizing
         tile.cachedData = glyphData;
 
@@ -399,20 +383,26 @@ class GlyphOverview {
         const dims =
             width && height ? { width, height } : this.getTileDimensions();
 
-        // Render new canvas with metrics and current size
-        const canvas = glyphTileRenderer.renderGlyph(
+        // Render directly to canvas (reuse existing canvas if available)
+        const canvas = fastGlyphTileRenderer.renderToCanvas(
             glyphData,
             this.renderMetrics || undefined,
             dims.width,
-            dims.height
+            dims.height,
+            tile.canvas
         );
 
-        // Insert before label
-        const label = tile.element.querySelector('.glyph-tile-label');
-        if (label) {
-            tile.element.insertBefore(canvas, label);
-        } else {
-            tile.element.appendChild(canvas);
+        // Store canvas reference for reuse
+        tile.canvas = canvas;
+
+        // Add to DOM if not already there
+        if (!canvas.parentElement) {
+            const label = tile.element.querySelector('.glyph-tile-label');
+            if (label) {
+                tile.element.insertBefore(canvas, label);
+            } else {
+                tile.element.appendChild(canvas);
+            }
         }
     }
 
@@ -525,6 +515,9 @@ class GlyphOverview {
      * Handle theme changes to re-render tiles with new colors
      */
     private onThemeChanged(): void {
+        // Update theme colors in renderer
+        fastGlyphTileRenderer.updateThemeColors();
+
         // Re-render all tiles with cached data
         const dims = this.getTileDimensions();
         this.tiles.forEach((tile) => {
