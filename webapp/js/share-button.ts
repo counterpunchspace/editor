@@ -137,7 +137,7 @@ function sendByEmail() {
         `I wanted to share this font with you:\n\n` +
             `Font: ${fontName}\n` +
             `Path: ${fontPath}\n` +
-            `Plugin: ${pluginName}\n\n` +
+            `File Plugin: ${pluginName}\n\n` +
             `View and edit in Counterpunch Font Editor:\n` +
             `${url}\n\n` +
             `IMPORTANT: To open this font, you need to have the file at the same path (${fontPath}) in your "${pluginName}" file system. The URL only contains the editor state, not the font file itself.\n\n` +
