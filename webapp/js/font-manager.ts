@@ -352,12 +352,17 @@ class FontManager {
     updateFontDisplay() {
         if (!this.fontIconElement || !this.fontNameElement) return;
 
+        const shareButton = document.getElementById('share-btn');
+
         if (this.openedFonts.size === 0 || !this.currentFontId) {
             // No fonts open
             this.fontIconElement.innerHTML = '';
             this.fontNameElement.textContent = 'No fonts open';
             if (this.fontDisplay) {
                 this.fontDisplay.title = '';
+            }
+            if (shareButton) {
+                shareButton.classList.remove('visible');
             }
         } else {
             // Display current font
@@ -369,6 +374,9 @@ class FontManager {
                 this.fontNameElement.textContent = currentFont.name;
                 if (this.fontDisplay) {
                     this.fontDisplay.title = `${currentFont.path} (${sourceName})`;
+                }
+                if (shareButton) {
+                    shareButton.classList.add('visible');
                 }
             }
         }

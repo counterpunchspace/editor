@@ -396,6 +396,42 @@ kbd + kbd {
     white-space: nowrap;
 }
 
+.share-button {
+    background: transparent;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    padding: 0;
+    width: 32px;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 4px;
+    transition: all 0.2s ease;
+    opacity: 0;
+    pointer-events: none;
+}
+
+.share-button.visible {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+.share-button:hover {
+    background: var(--input-bg);
+    color: var(--text-primary);
+}
+
+.share-button.share-button-active {
+    background: var(--input-bg);
+    color: var(--text-primary);
+}
+
+.share-button .material-symbols-outlined {
+    font-size: 24px;
+}
+
 .container {
     display: flex;
     flex-direction: column;
@@ -1901,11 +1937,11 @@ kbd + kbd {
 /* Plugin Menu (Tippy Content) */
 .plugin-menu {
     background: var(--background-secondary);
-    border: 1px solid var(--border-primary);
-    border-radius: 3px;
     min-width: 180px;
     font-family: var(--font-families-sans);
     font-size: 11px;
+    border-radius: 3px;
+    overflow: hidden;
 }
 
 .plugin-menu-item {
@@ -1945,25 +1981,21 @@ kbd + kbd {
 }
 
 /* Tippy.js Theme - Dark */
-:root:not([data-theme='light']) .tippy-box[data-theme='dark'] {
+.tippy-box[data-theme='dark'] {
     background-color: var(--background-secondary);
     border: 1px solid var(--border-primary);
     border-radius: 3px;
-}
-
-:root:not([data-theme='light']) .tippy-box[data-theme='dark'] .tippy-content {
-    padding: 0;
 }
 
 /* Tippy.js Theme - Light */
-:root[data-theme='light'] .tippy-box[data-theme='light'] {
+.tippy-box[data-theme='light'] {
     background-color: var(--background-secondary);
     border: 1px solid var(--border-primary);
     border-radius: 3px;
 }
 
-:root[data-theme='light'] .tippy-box[data-theme='light'] .tippy-content {
-    padding: 0;
+.tippy-content {
+    padding: 1px !important;
 }
 
 /* Permission Banner */

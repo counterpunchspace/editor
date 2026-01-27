@@ -108,6 +108,7 @@ import './python-post-execution';
 import './resizer.js';
 import './save-button.js';
 import './script-editor.js';
+import './share-button';
 import './sound-preloader.js';
 import './theme-switcher.js';
 import './view-settings.js';

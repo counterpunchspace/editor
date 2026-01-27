@@ -187,7 +187,33 @@ class TabLifecycleManager {
     }
 
     setupBeforeUnloadWarning() {
+        // Track mailto: clicks to exclude from beforeunload warning
+        let isMailtoNavigation = false;
+
+        document.addEventListener(
+            'click',
+            (e) => {
+                const target = e.target.closest('a');
+                if (
+                    target &&
+                    target.href &&
+                    target.href.startsWith('mailto:')
+                ) {
+                    isMailtoNavigation = true;
+                    setTimeout(() => {
+                        isMailtoNavigation = false;
+                    }, 100);
+                }
+            },
+            true
+        );
+
         window.addEventListener('beforeunload', (e) => {
+            // Don't warn for mailto: links - they don't navigate away
+            if (isMailtoNavigation) {
+                return;
+            }
+
             // Check if there are unsaved changes
             const hasUnsavedChanges = this.checkUnsavedChanges();
 

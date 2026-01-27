@@ -1,5 +1,6 @@
 # Unreleased
 
+- **Share Button**: Added share button (material symbol) next to font name in title bar. Opens tippy menu with options to copy URL or send by email with pre-filled subject and body text.
 - **Glyph Overview Border Fix**: Active glyph border in glyph overview now only appears in editing mode, not in text mode.
 - **URL State Management**: Application state (file path, text mode/editing mode, text content, cursor position, designspace location, active OpenType features) now syncs to URL in real-time and restores on page load. Enables shareable deep links to specific editor states and preserves work across browser refreshes/tab closures. State sync disabled during font loading to prevent default values from overwriting URL parameters.
 - **Filesystem Plugin Architecture**: Extensible plugin system for file access (MemoryPlugin for OPFS browser storage, DiskPlugin for File System Access API). Dynamic UI generation from plugin metadata (icons, names). Unified save flow through plugin adapters. Enables future CloudPlugin, GitPlugin, etc. without core code changes.
