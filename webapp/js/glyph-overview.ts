@@ -15,6 +15,7 @@ interface GlyphTile {
     glyphId: string;
     glyphName: string;
     selected: boolean;
+    cachedData?: any; // Cached glyph outline data for resizing
 }
 
 class GlyphOverview {
@@ -40,9 +41,13 @@ class GlyphOverview {
     } | null = null;
     // Currently highlighted editing glyph
     private highlightedGlyphName: string | null = null;
+    // Tile size control
+    private currentSizeStep: number = 2; // Default to middle (step 2 of 11)
+    private sizeSlider: HTMLInputElement | null = null;
 
     constructor(parentElement: HTMLElement) {
         this.init(parentElement);
+        this.initSizeControl();
     }
 
     private init(parentElement: HTMLElement): void {
@@ -76,6 +81,90 @@ class GlyphOverview {
         );
 
         console.log('[GlyphOverview]', 'Glyph overview container initialized');
+    }
+
+    private initSizeControl(): void {
+        // Load saved size from localStorage
+        const savedSize = localStorage.getItem('glyphOverviewSize');
+        if (savedSize !== null) {
+            const parsedSize = parseInt(savedSize, 10);
+            if (!isNaN(parsedSize) && parsedSize >= 0 && parsedSize <= 10) {
+                this.currentSizeStep = parsedSize;
+            }
+        }
+
+        // Find slider in DOM
+        this.sizeSlider = document.getElementById(
+            'overview-size-slider'
+        ) as HTMLInputElement;
+        if (this.sizeSlider) {
+            this.sizeSlider.value = String(this.currentSizeStep);
+            this.updateSliderProgress();
+
+            // Listen for size changes
+            this.sizeSlider.addEventListener('input', (e) => {
+                const newSize = parseInt(
+                    (e.target as HTMLInputElement).value,
+                    10
+                );
+                this.currentSizeStep = newSize;
+                this.updateSliderProgress();
+                this.updateTileSize();
+                localStorage.setItem('glyphOverviewSize', String(newSize));
+            });
+        }
+
+        // Set initial tile dimensions
+        const dims = this.getTileDimensions();
+        if (this.container) {
+            this.container.style.setProperty('--tile-width', `${dims.width}px`);
+            this.container.style.setProperty(
+                '--tile-height',
+                `${dims.height}px`
+            );
+        }
+    }
+
+    private updateSliderProgress(): void {
+        if (!this.sizeSlider) return;
+        const percent = (this.currentSizeStep / 10) * 100;
+        this.sizeSlider.style.setProperty('--value-percent', `${percent}%`);
+    }
+
+    private getTileDimensions(): { width: number; height: number } {
+        // Smallest: 25x42 (a bit smaller than current 30x50)
+        // Largest: 200x250
+        // Interpolate between them
+        const minWidth = 25;
+        const maxWidth = 200;
+        const minHeight = 42;
+        const maxHeight = 250;
+
+        const t = this.currentSizeStep / 10; // 0 to 1
+        const width = Math.round(minWidth + (maxWidth - minWidth) * t);
+        const height = Math.round(minHeight + (maxHeight - minHeight) * t);
+
+        return { width, height };
+    }
+
+    private updateTileSize(): void {
+        const dims = this.getTileDimensions();
+
+        // Update CSS custom properties for tile sizing
+        if (this.container) {
+            this.container.style.setProperty('--tile-width', `${dims.width}px`);
+            this.container.style.setProperty(
+                '--tile-height',
+                `${dims.height}px`
+            );
+        }
+
+        // Re-render all tiles with new size using cached data
+        this.tiles.forEach((tile) => {
+            if (tile.cachedData) {
+                this.renderTile(tile, tile.cachedData, dims.width, dims.height);
+            }
+        });
     }
 
     private isViewActive(): boolean {
@@ -169,7 +258,9 @@ class GlyphOverview {
                 const glyphId = glyphIds[index];
                 const tile = this.tiles.get(glyphId);
                 if (tile) {
-                    this.renderTile(tile, glyphData);
+                    tile.cachedData = glyphData; // Cache for resizing
+                    const dims = this.getTileDimensions();
+                    this.renderTile(tile, glyphData, dims.width, dims.height);
                 }
             });
 
@@ -222,17 +313,31 @@ class GlyphOverview {
         console.log('[GlyphOverview]', 'Render metrics:', this.renderMetrics);
     }
 
-    private renderTile(tile: GlyphTile, glyphData: any): void {
+    private renderTile(
+        tile: GlyphTile,
+        glyphData: any,
+        width?: number,
+        height?: number
+    ): void {
         // Remove existing canvas if any
         const existingCanvas = tile.element.querySelector('canvas');
         if (existingCanvas) {
             existingCanvas.remove();
         }
 
-        // Render new canvas with metrics
+        // Cache data for future resizing
+        tile.cachedData = glyphData;
+
+        // Use provided dimensions or get current size
+        const dims =
+            width && height ? { width, height } : this.getTileDimensions();
+
+        // Render new canvas with metrics and current size
         const canvas = glyphTileRenderer.renderGlyph(
             glyphData,
-            this.renderMetrics || undefined
+            this.renderMetrics || undefined,
+            dims.width,
+            dims.height
         );
 
         // Insert before label
@@ -286,7 +391,13 @@ class GlyphOverview {
 
             const outlines = JSON.parse(response.outlinesJson);
             if (outlines.length > 0) {
-                this.renderTile(targetTile, outlines[0]);
+                const dims = this.getTileDimensions();
+                this.renderTile(
+                    targetTile,
+                    outlines[0],
+                    dims.width,
+                    dims.height
+                );
             }
         } catch (error) {
             console.error(
@@ -529,13 +640,20 @@ class GlyphOverview {
             );
 
             // Render each tile
+            const dims = this.getTileDimensions();
             outlines.forEach((glyphData: any) => {
                 // Find tile by glyph name
                 for (const [glyphId, name] of glyphIdToName) {
                     if (name === glyphData.name) {
                         const tile = this.tiles.get(glyphId);
                         if (tile) {
-                            this.renderTile(tile, glyphData);
+                            tile.cachedData = glyphData; // Cache for resizing
+                            this.renderTile(
+                                tile,
+                                glyphData,
+                                dims.width,
+                                dims.height
+                            );
                         }
                         break;
                     }

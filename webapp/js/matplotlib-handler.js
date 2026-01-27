@@ -100,7 +100,14 @@
                         node.parentNode === document.body
                     ) {
                         // WebAgg creates a div with no id/class containing the plot
-                        if (!node.id && !node.className) {
+                        // Skip if it's part of view controls or UI elements
+                        if (
+                            !node.id &&
+                            !node.className &&
+                            !node.closest(
+                                '.view-title-bar, .overview-size-control'
+                            )
+                        ) {
                             console.log(
                                 '[MatplotlibHandler]',
                                 '📊 Detected potential WebAgg plot div:',
@@ -173,6 +180,15 @@
             return;
         }
 
+        // Skip divs in UI controls or view elements
+        if (
+            div.closest(
+                '.view-title-bar, .overview-size-control, #glyph-overview-container'
+            )
+        ) {
+            return;
+        }
+
         // Check if this div contains a canvas (WebAgg pattern)
         const canvases = div.querySelectorAll('canvas');
         if (canvases.length > 0) {
@@ -221,6 +237,11 @@
 
         // Skip the glyph editor canvas
         if (canvas.closest('#glyph-canvas-container')) {
+            return false;
+        }
+
+        // Skip glyph overview canvases
+        if (canvas.closest('#glyph-overview-container')) {
             return false;
         }
 

@@ -43,19 +43,25 @@ export class GlyphTileRenderer {
      * Render a glyph outline into a canvas element
      * @param glyphData - Glyph outline data with shapes and bounds
      * @param metrics - Optional ascender/descender/upm for consistent sizing. Defaults to 750/-250 for 1000upm.
+     * @param tileWidth - Override tile width (optional)
+     * @param tileHeight - Override tile height (optional)
      */
     public renderGlyph(
         glyphData: GlyphOutlineData,
-        metrics?: RenderMetrics
+        metrics?: RenderMetrics,
+        tileWidth?: number,
+        tileHeight?: number
     ): HTMLCanvasElement {
+        const width = tileWidth ?? this.tileWidth;
+        const height = tileHeight ?? this.tileHeight;
         const dpr = window.devicePixelRatio || 1;
         const canvas = document.createElement('canvas');
 
         // Set canvas size for hi-dpi
-        canvas.width = this.tileWidth * dpr;
-        canvas.height = this.tileHeight * dpr;
-        canvas.style.width = `${this.tileWidth}px`;
-        canvas.style.height = `${this.tileHeight}px`;
+        canvas.width = width * dpr;
+        canvas.height = height * dpr;
+        canvas.style.width = `${width}px`;
+        canvas.style.height = `${height}px`;
 
         const ctx = canvas.getContext('2d');
         if (!ctx) {
@@ -70,9 +76,9 @@ export class GlyphTileRenderer {
         ctx.scale(dpr, dpr);
 
         // Calculate drawing area (reserve space at bottom for label)
-        const labelHeight = 8;
-        const drawHeight = this.tileHeight - labelHeight;
-        const drawWidth = this.tileWidth;
+        const labelHeight = Math.max(8, height * 0.16); // Scale label height
+        const drawHeight = height - labelHeight;
+        const drawWidth = width;
 
         // Use provided metrics or calculate defaults based on upm
         const upm = metrics?.upm || 1000;
