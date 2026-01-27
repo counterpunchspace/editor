@@ -1061,6 +1061,26 @@ class FontManager {
         this.currentFont!.dirty = true;
         window.autoCompileManager.checkAndSchedule();
         await this.updateDirtyIndicator();
+
+        // Update worker's font cache so glyph overview renders correctly
+        try {
+            await fontCompilation.sendMessage({
+                type: 'storeFontJson',
+                babelfontJson: this.currentFont!.babelfontJson
+            });
+        } catch (error) {
+            console.error(
+                '[FontManager] Error updating worker font cache:',
+                error
+            );
+        }
+
+        // Dispatch event for glyph overview to update tile
+        window.dispatchEvent(
+            new CustomEvent('glyphChanged', {
+                detail: { glyphName, layerId }
+            })
+        );
     }
 }
 

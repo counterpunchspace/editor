@@ -68,6 +68,9 @@ class GlyphOverview {
         document.addEventListener('mousemove', this.onMouseMove.bind(this));
         document.addEventListener('mouseup', this.onMouseUp.bind(this));
 
+        // Listen for glyph changes to update tiles
+        window.addEventListener('glyphChanged', this.onGlyphChanged.bind(this));
+
         console.log('[GlyphOverview]', 'Glyph overview container initialized');
     }
 
@@ -242,6 +245,59 @@ class GlyphOverview {
         }
     }
 
+    /**
+     * Handle glyph change events - re-render the affected tile
+     */
+    private async onGlyphChanged(event: Event): Promise<void> {
+        const detail = (event as CustomEvent).detail;
+        const glyphName = detail?.glyphName;
+        if (!glyphName) return;
+
+        // Find tile by glyph name
+        let targetTile: GlyphTile | undefined;
+        for (const tile of this.tiles.values()) {
+            if (tile.glyphName === glyphName) {
+                targetTile = tile;
+                break;
+            }
+        }
+
+        if (!targetTile) return;
+
+        // Re-fetch and render the glyph outline
+        try {
+            const fontComp = window.fontCompilation;
+            if (!fontComp) return;
+
+            const response = await fontComp.sendMessage({
+                type: 'getGlyphOutlines',
+                glyphNames: [glyphName],
+                location: this.currentLocation,
+                flattenComponents: true
+            });
+
+            if (response.error) {
+                console.error(
+                    '[GlyphOverview]',
+                    `Failed to refresh tile for ${glyphName}:`,
+                    response.error
+                );
+                return;
+            }
+
+            const outlines = JSON.parse(response.outlinesJson);
+            if (outlines.length > 0) {
+                this.renderTile(targetTile, outlines[0]);
+            }
+        } catch (error) {
+            console.error(
+                '[GlyphOverview]',
+                `Error refreshing tile for ${glyphName}:`,
+                error
+            );
+        }
+    }
+
     private setupLazyLoading(): void {
         if (this.intersectionObserver) {
             this.intersectionObserver.disconnect();
@@ -395,6 +451,7 @@ class GlyphOverview {
         tileElement.style.justifyContent = 'flex-end';
         tileElement.style.padding = '2px';
         tileElement.style.boxSizing = 'border-box';
+        tileElement.style.overflow = 'hidden';
         tileElement.dataset.glyphId = glyphId;
         tileElement.dataset.glyphName = glyphName;
 
@@ -411,6 +468,11 @@ class GlyphOverview {
         label.style.whiteSpace = 'nowrap';
         label.style.lineHeight = '1';
         label.style.pointerEvents = 'none';
+        label.style.backgroundColor =
+            'color-mix(in srgb, var(--background-secondary) 80%, transparent)';
+        label.style.borderRadius = '2px';
+        label.style.position = 'relative';
+        label.style.zIndex = '1';
 
         tileElement.appendChild(label);
 
@@ -640,6 +702,10 @@ class GlyphOverview {
             this.intersectionObserver.disconnect();
             this.intersectionObserver = null;
         }
+        window.removeEventListener(
+            'glyphChanged',
+            this.onGlyphChanged.bind(this)
+        );
         if (this.container) {
             this.container.remove();
         }
