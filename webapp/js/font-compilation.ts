@@ -41,14 +41,14 @@ const COMPILATION_TARGETS: Record<string, CompilationOptions> = {
         dont_use_production_names: false
     },
 
-    // Only compile outlines (glyf/gvar tables), skip everything else
-    glyph_overview: {
-        skip_kerning: true,
-        skip_features: true,
-        skip_metrics: false,
-        skip_outlines: false,
-        dont_use_production_names: true
-    },
+    // // Only compile outlines (glyf/gvar tables), skip everything else
+    // glyph_overview: {
+    //     skip_kerning: true,
+    //     skip_features: true,
+    //     skip_metrics: false,
+    //     skip_outlines: false,
+    //     dont_use_production_names: true
+    // },
 
     // No outlines, kerning, or metrics - used to retrieve glyph names from input strings
     typing: {
