@@ -88,12 +88,18 @@ class ResizableViews {
                 // Other secondary views collapse by height
                 const isHeightCollapsed =
                     rect.height <= titleBarHeight + threshold;
+                const wasCollapsed = view.classList.contains('collapsed');
                 view.classList.toggle('collapsed', isHeightCollapsed);
                 view.classList.remove('collapsed-width');
+
+                // If this view just became collapsed, mark to focus editor
+                if (isHeightCollapsed && !wasCollapsed) {
+                    shouldFocusEditor = true;
+                }
             }
         });
 
-        // Focus editor if fontinfo or overview was just collapsed
+        // Focus editor if any secondary view was just collapsed
         if (shouldFocusEditor && window.focusView) {
             window.focusView('view-editor');
         }

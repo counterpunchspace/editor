@@ -136,8 +136,15 @@
             const widthRatio = currentWidth / containerWidth;
 
             if (widthRatio < config.widthThreshold) {
-                // Expand width
-                const targetWidth = containerWidth * config.widthTarget;
+                // Determine target width based on whether overview is also open
+                const overviewView = topRow.querySelector('.view-overview');
+                const isOverviewOpen =
+                    overviewView && overviewView.offsetWidth > 24 + 5;
+                const targetWidthRatio = isOverviewOpen
+                    ? config.widthTargetBothOpen
+                    : config.widthTargetSingleOpen;
+                const targetWidth = containerWidth * targetWidthRatio;
+
                 const otherViews = topRowViews.filter(
                     (v, i) => i !== viewIndex
                 );
@@ -188,8 +195,15 @@
             const widthRatio = currentWidth / containerWidth;
 
             if (widthRatio < config.widthThreshold) {
-                // Expand width
-                const targetWidth = containerWidth * config.widthTarget;
+                // Determine target width based on whether fontinfo is also open
+                const fontinfoView = topRow.querySelector('.view-fontinfo');
+                const isFontinfoOpen =
+                    fontinfoView && fontinfoView.offsetWidth > 24 + 5;
+                const targetWidthRatio = isFontinfoOpen
+                    ? config.widthTargetBothOpen
+                    : config.widthTargetSingleOpen;
+                const targetWidth = containerWidth * targetWidthRatio;
+
                 const otherViews = topRowViews.filter(
                     (v, i) => i !== viewIndex
                 );
@@ -366,7 +380,7 @@
         } else if (secondaryBehavior === 'expandToTarget') {
             // Expand to activation target if smaller (for secondary views)
             if (viewId === 'view-fontinfo' || viewId === 'view-overview') {
-                // Font info or Overview - expand width to target if smaller
+                // Font info or Overview - expand width to secondary target if smaller (50%)
                 const config = settings.activation.fontinfo;
                 const topRow = view.closest('.top-row');
                 const topRowViews = Array.from(
@@ -374,7 +388,8 @@
                 );
                 const viewIndex = topRowViews.indexOf(view);
                 const currentWidth = view.offsetWidth;
-                const targetWidth = containerWidth * config.widthTarget;
+                const targetWidth =
+                    containerWidth * config.widthTargetSecondary;
 
                 if (currentWidth < targetWidth) {
                     const otherViews = topRowViews.filter(
@@ -642,8 +657,8 @@
                 if (window.resizableViews) {
                     window.resizableViews.saveLayout();
                 }
-                // Focus editor if we collapsed fontinfo or overview
-                if (viewId === 'view-fontinfo' || viewId === 'view-overview') {
+                // Focus editor if we collapsed any view (except editor itself)
+                if (viewId !== 'view-editor') {
                     focusView('view-editor');
                 }
             }, settings.animation.duration);
@@ -652,8 +667,8 @@
             if (window.resizableViews) {
                 window.resizableViews.saveLayout();
             }
-            // Focus editor if we collapsed fontinfo or overview
-            if (viewId === 'view-fontinfo' || viewId === 'view-overview') {
+            // Focus editor if we collapsed any view (except editor itself)
+            if (viewId !== 'view-editor') {
                 focusView('view-editor');
             }
         }

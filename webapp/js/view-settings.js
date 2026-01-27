@@ -67,7 +67,9 @@ const VIEW_SETTINGS = {
         // Font info view - expand by width
         fontinfo: {
             widthThreshold: 0.25, // If width < 25% of top row
-            widthTarget: 0.5 // Expand to 50% of top row
+            widthTargetSingleOpen: 0.35, // Expand to 35% when only one of fontinfo/overview is open
+            widthTargetBothOpen: 0.2, // Expand to 20% when both fontinfo and overview are open
+            widthTargetSecondary: 0.5 // Expand to 50% on secondary resize
         },
         // Editor view (primary)
         editor: {
