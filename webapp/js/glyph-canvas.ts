@@ -872,6 +872,8 @@ class GlyphCanvas {
                 this.textRunEditor!.clearSelection();
                 this.textRunEditor!.cursorPosition = clickedPos;
                 this.textRunEditor!.updateCursorVisualPosition();
+                // Fire cursormoved event for URL sync
+                this.textRunEditor!.call('cursormoved');
                 this.render();
                 // Keep text cursor
                 this.canvas!.style.cursor = 'text';
