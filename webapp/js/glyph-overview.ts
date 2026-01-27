@@ -32,6 +32,12 @@ class GlyphOverview {
     private pendingGlyphIds: Set<string> = new Set();
     private batchDebounceTimer: number | null = null;
     private isBatchRendering: boolean = false;
+    // Cached metrics for tile rendering
+    private renderMetrics: {
+        ascender: number;
+        descender: number;
+        upm: number;
+    } | null = null;
 
     constructor(parentElement: HTMLElement) {
         this.init(parentElement);
@@ -100,6 +106,10 @@ class GlyphOverview {
         }
 
         this.currentLocation = location;
+
+        // Cache metrics from font model for consistent tile sizing
+        this.updateRenderMetrics();
+
         const glyphIds = Array.from(this.tiles.keys());
         const glyphNames = Array.from(this.tiles.values()).map(
             (t) => t.glyphName
@@ -169,24 +179,53 @@ class GlyphOverview {
         }
     }
 
-    private renderTile(tile: GlyphTile, glyphData: any): void {
-        console.log(
-            '[GlyphOverview]',
-            `Rendering tile for ${tile.glyphName}`,
-            glyphData
-        );
+    /**
+     * Update cached render metrics from font model
+     */
+    private updateRenderMetrics(): void {
+        const font = (window as any).currentFontModel;
+        if (!font) {
+            this.renderMetrics = null;
+            return;
+        }
 
+        const upm = font.upm || 1000;
+        // Default ascender/descender: 75%/25% of upm
+        let ascender = upm * 0.75;
+        let descender = -(upm * 0.25);
+
+        // Try to get metrics from first master
+        const master = font.masters?.[0];
+        if (master?.metrics) {
+            // Look for Ascender/Descender in metrics (case may vary)
+            const metrics = master.metrics;
+            if (metrics.Ascender !== undefined) {
+                ascender = metrics.Ascender;
+            } else if (metrics.ascender !== undefined) {
+                ascender = metrics.ascender;
+            }
+            if (metrics.Descender !== undefined) {
+                descender = metrics.Descender;
+            } else if (metrics.descender !== undefined) {
+                descender = metrics.descender;
+            }
+        }
+
+        this.renderMetrics = { ascender, descender, upm };
+        console.log('[GlyphOverview]', 'Render metrics:', this.renderMetrics);
+    }
+
+    private renderTile(tile: GlyphTile, glyphData: any): void {
         // Remove existing canvas if any
         const existingCanvas = tile.element.querySelector('canvas');
         if (existingCanvas) {
             existingCanvas.remove();
         }
 
-        // Render new canvas
-        const canvas = glyphTileRenderer.renderGlyph(glyphData);
-        console.log(
-            '[GlyphOverview]',
-            `Canvas created: ${canvas.width}x${canvas.height}`
+        // Render new canvas with metrics
+        const canvas = glyphTileRenderer.renderGlyph(
+            glyphData,
+            this.renderMetrics || undefined
         );
         canvas.style.position = 'absolute';
         canvas.style.top = '0';
@@ -198,16 +237,8 @@ class GlyphOverview {
         const label = tile.element.querySelector('.glyph-tile-label');
         if (label) {
             tile.element.insertBefore(canvas, label);
-            console.log(
-                '[GlyphOverview]',
-                `Canvas inserted before label for ${tile.glyphName}`
-            );
         } else {
             tile.element.appendChild(canvas);
-            console.log(
-                '[GlyphOverview]',
-                `Canvas appended for ${tile.glyphName}`
-            );
         }
     }
 

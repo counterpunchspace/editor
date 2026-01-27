@@ -18,6 +18,12 @@ interface GlyphOutlineData {
     };
 }
 
+interface RenderMetrics {
+    ascender: number;
+    descender: number;
+    upm: number;
+}
+
 export class GlyphTileRenderer {
     private tileWidth: number;
     private tileHeight: number;
@@ -35,11 +41,21 @@ export class GlyphTileRenderer {
 
     /**
      * Render a glyph outline into a canvas element
+     * @param glyphData - Glyph outline data with shapes and bounds
+     * @param metrics - Optional ascender/descender/upm for consistent sizing. Defaults to 750/-250 for 1000upm.
      */
-    public renderGlyph(glyphData: GlyphOutlineData): HTMLCanvasElement {
+    public renderGlyph(
+        glyphData: GlyphOutlineData,
+        metrics?: RenderMetrics
+    ): HTMLCanvasElement {
+        const dpr = window.devicePixelRatio || 1;
         const canvas = document.createElement('canvas');
-        canvas.width = this.tileWidth;
-        canvas.height = this.tileHeight;
+
+        // Set canvas size for hi-dpi
+        canvas.width = this.tileWidth * dpr;
+        canvas.height = this.tileHeight * dpr;
+        canvas.style.width = `${this.tileWidth}px`;
+        canvas.style.height = `${this.tileHeight}px`;
 
         const ctx = canvas.getContext('2d');
         if (!ctx) {
@@ -50,34 +66,43 @@ export class GlyphTileRenderer {
             return canvas;
         }
 
+        // Scale context for hi-dpi
+        ctx.scale(dpr, dpr);
+
         // Calculate drawing area (reserve space at bottom for label)
         const labelHeight = 8;
         const drawHeight = this.tileHeight - labelHeight;
         const drawWidth = this.tileWidth;
 
-        // Calculate scale to fit glyph in tile
-        const bounds = glyphData.bounds;
-        const glyphWidth = bounds.xMax - bounds.xMin;
-        const glyphHeight = bounds.yMax - bounds.yMin;
+        // Use provided metrics or calculate defaults based on upm
+        const upm = metrics?.upm || 1000;
+        const ascender = metrics?.ascender ?? upm * 0.75; // Default: 750 for 1000upm
+        const descender = metrics?.descender ?? -(upm * 0.25); // Default: -250 for 1000upm
 
-        if (glyphWidth === 0 || glyphHeight === 0) {
-            // Empty glyph
+        // Total vertical range from descender to ascender
+        const metricsHeight = ascender - descender;
+
+        if (metricsHeight === 0) {
             return canvas;
         }
 
-        const scaleX = (drawWidth - this.padding * 2) / glyphWidth;
-        const scaleY = (drawHeight - this.padding * 2) / glyphHeight;
-        const scale = Math.min(scaleX, scaleY);
+        // Scale to fit metrics height in drawing area (with padding)
+        const scale = (drawHeight - this.padding * 2) / metricsHeight;
 
-        // Center the glyph
-        const offsetX =
-            (drawWidth - glyphWidth * scale) / 2 - bounds.xMin * scale;
-        const offsetY =
-            (drawHeight - glyphHeight * scale) / 2 - bounds.yMin * scale;
+        // Center horizontally based on glyph visual bounds (not advance width)
+        const bounds = glyphData.bounds;
+        const glyphVisualCenterX = (bounds.xMin + bounds.xMax) / 2;
+        const tileCenterX = drawWidth / 2;
+        const offsetX = tileCenterX - glyphVisualCenterX * scale;
+
+        // Y offset: position so ascender is at top of drawing area
+        // In canvas, Y increases downward, but font coords have Y up
+        // After flipping: ascender should be at padding from top
+        const offsetY = this.padding + ascender * scale;
 
         ctx.save();
-        ctx.translate(offsetX, drawHeight - offsetY); // Flip Y axis
-        ctx.scale(scale, -scale);
+        ctx.translate(offsetX, offsetY); // Position origin
+        ctx.scale(scale, -scale); // Flip Y axis (font coords: Y up)
 
         // Draw shapes using LayerDataNormalizer utilities
         ctx.fillStyle = 'currentColor';
