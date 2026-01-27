@@ -1,5 +1,6 @@
 # Unreleased
 
+- **URL State Management**: Application state (file path, text mode/editing mode, text content, cursor position, designspace location, active OpenType features) now syncs to URL in real-time and restores on page load. Enables shareable deep links to specific editor states and preserves work across browser refreshes/tab closures. State sync disabled during font loading to prevent default values from overwriting URL parameters.
 - **Filesystem Plugin Architecture**: Extensible plugin system for file access (MemoryPlugin for OPFS browser storage, DiskPlugin for File System Access API). Dynamic UI generation from plugin metadata (icons, names). Unified save flow through plugin adapters. Enables future CloudPlugin, GitPlugin, etc. without core code changes.
 - **Direct Disk Access**: File System Access API implementation allows opening/saving fonts directly from local filesystem via directory picker. File handles cached in IndexedDB for persistence. Binary mode consistency across OPFS and disk contexts.
 - **Plugin Upload Control**: Plugins can now define whether file/folder uploads are supported via `supportsUpload()` method. DiskPlugin disables uploads (upload buttons and drag-and-drop overlay hidden), while MemoryPlugin supports uploads.
