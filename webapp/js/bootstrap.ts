@@ -94,6 +94,8 @@ import './file-browser';
 import './font-interpolation';
 import './font-manager';
 import './fonteditor.js';
+import './state-sync'; // URL state synchronization
+import './state-restore'; // URL state restoration
 import './glyph-canvas';
 import './keyboard-navigation.js';
 import './matplotlib-handler.js';

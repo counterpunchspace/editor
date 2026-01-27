@@ -771,6 +771,12 @@ class GlyphCanvas {
 
                 if (ix != -1) {
                     this.outlineEditor.active = true;
+                    // Dispatch mode change event for URL sync
+                    window.dispatchEvent(
+                        new CustomEvent('editorModeChanged', {
+                            detail: { mode: 'edit' }
+                        })
+                    );
                 }
                 // Update breadcrumb (will hide it since component stack is now empty)
                 // Need to await doUIUpdate if we want to pan to glyph afterward
@@ -1319,6 +1325,13 @@ class GlyphCanvas {
         this.outlineEditor.active = false;
         this.textRunEditor!.selectedGlyphIndex = -1;
         this.outlineEditor.selectedLayerId = null;
+
+        // Dispatch mode change event for URL sync
+        window.dispatchEvent(
+            new CustomEvent('editorModeChanged', {
+                detail: { mode: 'text' }
+            })
+        );
 
         // Clear outline editor state
         this.outlineEditor.clearState();

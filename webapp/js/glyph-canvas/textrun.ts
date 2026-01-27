@@ -605,6 +605,7 @@ export class TextRunEditor {
         // Left arrow = backward in logical order (decrease position)
         this.moveCursorLogicalBackward();
         this.call('cursormoved');
+        this.call('render');
     }
 
     moveCursorRight() {
@@ -614,6 +615,7 @@ export class TextRunEditor {
         // Right arrow = forward in logical order (increase position)
         this.moveCursorLogicalForward();
         this.call('cursormoved');
+        this.call('render');
     }
 
     // ==================== Selection Methods ====================
@@ -678,6 +680,7 @@ export class TextRunEditor {
         }
 
         this.call('cursormoved');
+        this.call('render');
     }
 
     moveCursorRightWithSelection() {
@@ -702,6 +705,7 @@ export class TextRunEditor {
             );
         }
         this.call('cursormoved');
+        this.call('render');
     }
 
     moveToStartWithSelection() {

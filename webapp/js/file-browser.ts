@@ -15,6 +15,7 @@ import {
     DiskPlugin,
     TitleBarMenuItem
 } from './filesystem-plugins';
+import { updateUrlState } from './url-state';
 
 const LAST_CONTEXT_KEY = 'last-filesystem-context';
 
@@ -85,29 +86,6 @@ function parseFileUri(uri: string): { pluginId: string; path: string } | null {
         pluginId: match[1],
         path: '/' + match[2]
     };
-}
-
-/**
- * Update URL with current parameters (file, and future settings)
- * Call this whenever application state changes that should be reflected in URL
- */
-function updateUrl(params: { file?: string | null; [key: string]: any }) {
-    const url = new URL(window.location.href);
-    const searchParams = new URLSearchParams(url.search);
-
-    // Update or remove parameters
-    for (const [key, value] of Object.entries(params)) {
-        if (value === null || value === undefined) {
-            searchParams.delete(key);
-        } else {
-            searchParams.set(key, String(value));
-        }
-    }
-
-    // Update URL without reload
-    const newUrl = `${url.pathname}${searchParams.toString() ? '?' + searchParams.toString() : ''}`;
-    window.history.replaceState(null, '', newUrl);
-    console.log('[FileBrowser]', `URL updated:`, newUrl);
 }
 
 function updatePathDisplay(path: string) {
@@ -653,7 +631,7 @@ async function openFont(path: string, fileHandle?: FileSystemFileHandle) {
         // Update URL to reflect current file
         const pluginId = fileSystemCache.currentPlugin.getId();
         const fileUri = createFileUri(pluginId, path);
-        updateUrl({ file: fileUri });
+        updateUrlState({ file: fileUri });
 
         // Play done sound
         if (window.playSound) {
@@ -1809,8 +1787,29 @@ window.addEventListener('fontLoaded', () => {
 });
 
 // Listen for fontReady event (fires after FontManager.loadFont completes)
-window.addEventListener('fontReady', () => {
+window.addEventListener('fontReady', async () => {
     updateHomeButtonVisibility();
+
+    // Initialize state synchronization and restore state from URL
+    if (
+        window.glyphCanvas &&
+        !(window.glyphCanvas as any).hasInitializedStateSync
+    ) {
+        // Mark as initialized to avoid duplicate initialization
+        (window.glyphCanvas as any).hasInitializedStateSync = true;
+
+        // Initialize state sync (must come first)
+        if ((window as any).initStateSync) {
+            (window as any).initStateSync(window.glyphCanvas);
+        }
+
+        // Restore state from URL after a short delay to ensure everything is ready
+        setTimeout(async () => {
+            if ((window as any).restoreStateFromUrl && window.glyphCanvas) {
+                await (window as any).restoreStateFromUrl(window.glyphCanvas);
+            }
+        }, 500);
+    }
 });
 
 // Listen for plugin title bar redraw event
