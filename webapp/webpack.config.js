@@ -8,7 +8,8 @@ module.exports = {
     mode: 'development',
     entry: {
         'bootstrap': './js/bootstrap.ts',
-        'fontc-worker': './js/fontc-worker.ts'
+        'fontc-worker': './js/fontc-worker.ts',
+        'glyph-overview': './js/glyph-overview.ts'
     },
     output: {
         path: path.resolve(__dirname, 'build'),

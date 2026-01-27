@@ -1,7 +1,9 @@
 // Overview View
-// Handles overview view initialization with sidebar
+// Handles overview view initialization with sidebar and glyph overview
 
 console.log('[OverviewView]', 'overview-view.js loaded');
+
+let glyphOverviewInstance = null;
 
 function initOverviewView() {
     const overviewContent = document.querySelector(
@@ -35,7 +37,28 @@ function initOverviewView() {
         mainContent.style.flex = '1';
         mainContent.style.height = '100%';
         mainContent.style.position = 'relative';
-        mainContent.style.padding = '12px';
+        mainContent.style.overflow = 'hidden';
+
+        // Initialize glyph overview
+        if (window.GlyphOverview) {
+            glyphOverviewInstance = new window.GlyphOverview(mainContent);
+
+            // Populate with current font glyphs if available
+            if (window.currentFontModel?.glyphs) {
+                const glyphData = window.currentFontModel.glyphs.map(
+                    (glyph, index) => ({
+                        id: String(index),
+                        name: glyph.name
+                    })
+                );
+                glyphOverviewInstance.updateGlyphs(glyphData);
+            }
+        } else {
+            console.warn(
+                '[OverviewView]',
+                'GlyphOverview class not available yet'
+            );
+        }
 
         // Assemble layout (sidebar, main content)
         mainContainer.appendChild(leftSidebar);
@@ -82,6 +105,28 @@ function initOverviewView() {
         setTimeout(initOverviewView, 100);
     }
 }
+
+// Update glyph overview when font is loaded
+window.addEventListener('fontLoaded', () => {
+    console.log('[OverviewView]', 'Font loaded, updating glyph overview');
+
+    // Wait a bit for currentFontModel to be set
+    setTimeout(() => {
+        if (glyphOverviewInstance && window.currentFontModel?.glyphs) {
+            const glyphData = window.currentFontModel.glyphs.map(
+                (glyph, index) => ({
+                    id: String(index),
+                    name: glyph.name
+                })
+            );
+            glyphOverviewInstance.updateGlyphs(glyphData);
+            console.log(
+                '[OverviewView]',
+                `Updated with ${glyphData.length} glyphs`
+            );
+        }
+    }, 100);
+});
 
 // Initialize when DOM is ready
 if (document.readyState === 'loading') {
