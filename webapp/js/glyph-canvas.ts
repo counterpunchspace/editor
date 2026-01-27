@@ -15,6 +15,8 @@ import { Logger } from './logger';
 import APP_SETTINGS from './settings';
 import { designspaceToUserspace, userspaceToDesignspace } from './locations';
 import { Glyph, Layer } from './babelfont-model';
+import { updateUrlState, encodeLocation } from './url-state';
+import { isSyncEnabled } from './state-sync';
 
 let console: Logger = new Logger('GlyphCanvas', true);
 
@@ -1629,6 +1631,13 @@ class GlyphCanvas {
 
         // Clear auto-pan anchor after animation
         this.textModeAutoPanAnchorScreen = null;
+
+        // Update URL with new location after animation completes (only if sync enabled)
+        if (isSyncEnabled()) {
+            updateUrlState({
+                location: encodeLocation(this.axesManager!.variationSettings)
+            });
+        }
     }
 
     async cycleMasters(moveUp: boolean): Promise<void> {

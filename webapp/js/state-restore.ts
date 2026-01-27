@@ -23,10 +23,8 @@ export async function restoreStateFromUrl(
 
     console.log('Restoring state from URL:', state);
 
-    // Temporarily disable sync to avoid circular updates
-    if ((window as any).disableSync) {
-        (window as any).disableSync();
-    }
+    // Note: Sync is already disabled during initialization
+    // It will be re-enabled after this function completes
 
     try {
         // 1. Restore features FIRST (before text, as it affects shaping)
@@ -78,8 +76,13 @@ export async function restoreStateFromUrl(
                     glyphCanvas.axesManager.setAxisValue(tag, value);
                 }
 
-                // This will trigger layer update
-                await glyphCanvas.axesManager.call('axisChanged');
+                // Update UI and trigger layer selection if in editing mode
+                glyphCanvas.axesManager.updateAxisSliders();
+
+                // If we're going to be in editing mode (check state.mode), select matching layer
+                if (state.mode === 'edit' && glyphCanvas.outlineEditor) {
+                    await glyphCanvas.outlineEditor.autoSelectMatchingLayer();
+                }
             }
         }
 
@@ -139,11 +142,6 @@ export async function restoreStateFromUrl(
         console.log('State restoration complete');
     } catch (error) {
         console.error('Error restoring state from URL:', error);
-    } finally {
-        // Re-enable sync
-        if ((window as any).enableSync) {
-            (window as any).enableSync();
-        }
     }
 }
 

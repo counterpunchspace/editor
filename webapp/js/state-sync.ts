@@ -9,7 +9,7 @@ import type fontManager from './font-manager';
 const console = new Logger('StateSync', true);
 
 let isInitialized = false;
-let syncEnabled = true; // Can be disabled temporarily during restoration
+let syncEnabled = false; // Start disabled - will be enabled after state restoration
 
 /**
  * Disable URL synchronization temporarily (e.g., during state restoration)
@@ -25,6 +25,13 @@ export function disableSync() {
 export function enableSync() {
     syncEnabled = true;
     console.log('URL sync enabled');
+}
+
+/**
+ * Check if URL synchronization is enabled
+ */
+export function isSyncEnabled(): boolean {
+    return syncEnabled;
 }
 
 /**
@@ -76,7 +83,8 @@ export function initStateSync(glyphCanvas: GlyphCanvas) {
 
     // Monitor axis/location changes
     if (glyphCanvas.axesManager) {
-        glyphCanvas.axesManager.on('axisChanged', () => {
+        // Listen to animation complete - this fires when sliders finish moving
+        glyphCanvas.axesManager.on('animationComplete', () => {
             if (!syncEnabled) return;
 
             const location = glyphCanvas.axesManager!.variationSettings;

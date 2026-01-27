@@ -1808,6 +1808,10 @@ window.addEventListener('fontReady', async () => {
             if ((window as any).restoreStateFromUrl && window.glyphCanvas) {
                 await (window as any).restoreStateFromUrl(window.glyphCanvas);
             }
+            // Enable sync after restoration is complete
+            if ((window as any).enableSync) {
+                (window as any).enableSync();
+            }
         }, 500);
     }
 });
