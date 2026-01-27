@@ -585,7 +585,10 @@ kbd + kbd {
 }
 
 .view-overview.collapsed-width .view-title-bar .view-title-button,
-.view-overview.collapsed-width .view-title-bar .ai-info-button {
+.view-overview.collapsed-width .view-title-bar .ai-info-button,
+.view-overview.collapsed-width .view-title-bar .overview-search-control,
+.view-overview.collapsed-width .view-title-bar .overview-size-control,
+.view-overview.collapsed-width .view-title-bar .view-title-right {
     display: none;
 }
 

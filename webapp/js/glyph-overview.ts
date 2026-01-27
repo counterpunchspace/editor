@@ -44,10 +44,14 @@ class GlyphOverview {
     // Tile size control
     private currentSizeStep: number = 2; // Default to middle (step 2 of 11)
     private sizeSlider: HTMLInputElement | null = null;
+    // Search control
+    private searchInput: HTMLInputElement | null = null;
+    private searchTerms: string[] = [];
 
     constructor(parentElement: HTMLElement) {
         this.init(parentElement);
         this.initSizeControl();
+        this.initSearchControl();
     }
 
     private init(parentElement: HTMLElement): void {
@@ -131,6 +135,61 @@ class GlyphOverview {
         this.sizeSlider.style.setProperty('--value-percent', `${percent}%`);
     }
 
+    private initSearchControl(): void {
+        // Find search input in DOM
+        this.searchInput = document.getElementById(
+            'overview-search-input'
+        ) as HTMLInputElement;
+
+        if (this.searchInput) {
+            // Listen for input changes
+            this.searchInput.addEventListener('input', (e) => {
+                const value = (e.target as HTMLInputElement).value.trim();
+                this.searchTerms = value
+                    .split(/\s+/)
+                    .filter((term) => term.length > 0)
+                    .map((term) => term.toLowerCase());
+                this.applySearchFilter();
+            });
+        }
+
+        // Listen for keyboard shortcut (Cmd+F)
+        document.addEventListener('keydown', (e) => {
+            if (
+                (e.metaKey || e.ctrlKey) &&
+                e.key === 'f' &&
+                this.isViewActive()
+            ) {
+                e.preventDefault();
+                if (this.searchInput) {
+                    this.searchInput.focus();
+                    this.searchInput.select();
+                }
+            }
+        });
+    }
+
+    private applySearchFilter(): void {
+        if (!this.container) return;
+
+        // If no search terms, show all tiles
+        if (this.searchTerms.length === 0) {
+            this.tiles.forEach((tile) => {
+                tile.element.style.display = '';
+            });
+            return;
+        }
+
+        // Filter tiles: show only those matching ALL search terms (AND search)
+        this.tiles.forEach((tile) => {
+            const glyphNameLower = tile.glyphName.toLowerCase();
+            const matchesAllTerms = this.searchTerms.every((term) =>
+                glyphNameLower.includes(term)
+            );
+            tile.element.style.display = matchesAllTerms ? '' : 'none';
+        });
+    }
+
     private getTileDimensions(): { width: number; height: number } {
         // Smallest: 25x42 (a bit smaller than current 30x50)
         // Largest: 200x250
@@ -187,6 +246,9 @@ class GlyphOverview {
         });
 
         console.log('[GlyphOverview]', `Created ${glyphs.length} glyph tiles`);
+
+        // Apply search filter to new glyphs
+        this.applySearchFilter();
     }
 
     /**
