@@ -270,4 +270,106 @@ export class LayerDataNormalizer {
         const prevIndex = (currentIndex - 1 + nodes.length) % nodes.length;
         return nodes[prevIndex];
     }
+
+    /**
+     * Build a canvas path from a nodes array.
+     * Standalone utility function extracted from Renderer.buildPathFromNodes.
+     *
+     * @param nodes - Array of Babelfont.Node objects
+     * @param target - Canvas context or Path2D to draw to
+     * @returns The start index for use in drawing direction arrows, or -1 if empty
+     */
+    static buildPathFromNodes(
+        nodes: Babelfont.Node[],
+        target: CanvasRenderingContext2D | Path2D
+    ): number {
+        if (!nodes || nodes.length === 0) {
+            return -1;
+        }
+
+        // Find first on-curve point to start
+        let startIdx = 0;
+        for (let i = 0; i < nodes.length; i++) {
+            const { nodetype: type } = nodes[i];
+            if (
+                type === 'c' ||
+                type === 'cs' ||
+                type === 'l' ||
+                type === 'ls'
+            ) {
+                startIdx = i;
+                break;
+            }
+        }
+
+        const { x: startX, y: startY } = nodes[startIdx];
+        target.moveTo(startX, startY);
+
+        // Draw contour by looking ahead for control points
+        let i = 0;
+        while (i < nodes.length) {
+            const idx = (startIdx + i) % nodes.length;
+            const nextIdx = (startIdx + i + 1) % nodes.length;
+            const next2Idx = (startIdx + i + 2) % nodes.length;
+            const next3Idx = (startIdx + i + 3) % nodes.length;
+
+            const { nodetype: type } = nodes[idx];
+            const {
+                x: next1X,
+                y: next1Y,
+                nodetype: next1Type
+            } = nodes[nextIdx];
+
+            if (
+                type === 'l' ||
+                type === 'c' ||
+                type === 'cs' ||
+                type === 'ls'
+            ) {
+                // We're at an on-curve point, look ahead for next segment
+                if (next1Type === 'o') {
+                    // Next is off-curve - check if cubic (two consecutive off-curve)
+                    const {
+                        x: next2X,
+                        y: next2Y,
+                        nodetype: next2Type
+                    } = nodes[next2Idx];
+                    const { x: next3X, y: next3Y } = nodes[next3Idx];
+
+                    if (next2Type === 'o') {
+                        // Cubic bezier: two off-curve control points + on-curve endpoint
+                        target.bezierCurveTo(
+                            next1X,
+                            next1Y,
+                            next2X,
+                            next2Y,
+                            next3X,
+                            next3Y
+                        );
+                        i += 3;
+                    } else {
+                        // Single off-curve - shouldn't happen with cubic, just draw line
+                        target.lineTo(next2X, next2Y);
+                        i += 2;
+                    }
+                } else if (
+                    next1Type === 'l' ||
+                    next1Type === 'ls' ||
+                    next1Type === 'c' ||
+                    next1Type === 'cs'
+                ) {
+                    // Next is on-curve - draw line
+                    target.lineTo(next1X, next1Y);
+                    i++;
+                } else {
+                    i++;
+                }
+            } else {
+                // Skip off-curve points (handled by looking ahead)
+                i++;
+            }
+        }
+
+        return startIdx;
+    }
 }

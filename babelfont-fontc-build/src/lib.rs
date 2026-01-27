@@ -18,6 +18,9 @@ pub use font_reader::{get_font_axes, get_font_features, get_glyph_name, get_glyp
 // Interpolation module
 mod interpolation;
 
+// Glyph outlines module
+mod glyph_outlines;
+
 // Global storage for cached fonts
 // Use a Mutex to allow safe mutable access from multiple calls
 static FONT_CACHE: Mutex<Option<babelfont::Font>> = Mutex::new(None);
@@ -235,6 +238,35 @@ pub fn interpolate_glyph(glyph_name: &str, location_json: &str) -> Result<String
     
     // Call the interpolation module function
     interpolation::interpolate_glyph(font, glyph_name, location_json)
+}
+
+/// Get outlines for multiple glyphs with optional component flattening
+///
+/// Requires that a font has been stored via store_font() first.
+///
+/// # Arguments
+/// * `glyph_names_json` - JSON array of glyph names, e.g., '["A", "B", "C"]'
+/// * `location_json` - JSON object with axis tags and values in USER SPACE, e.g., '{"wght": 400.0}'. Empty object '{}' uses default location.
+/// * `flatten_components` - If true, resolves and flattens all components into paths
+///
+/// # Returns
+/// * `String` - JSON array of glyph outline data: '[{"name": "A", "width": 600, "shapes": [...], "bounds": {...}}, ...]'
+#[wasm_bindgen]
+pub fn get_glyphs_outlines(
+    glyph_names_json: &str,
+    location_json: &str,
+    flatten_components: bool,
+) -> Result<String, JsValue> {
+    let cache = FONT_CACHE.lock().unwrap();
+    let font = cache.as_ref()
+        .ok_or_else(|| JsValue::from_str("No font cached. Call store_font() first."))?;
+    
+    // Parse glyph names array
+    let glyph_names: Vec<String> = serde_json::from_str(glyph_names_json)
+        .map_err(|e| JsValue::from_str(&format!("Failed to parse glyph names: {}", e)))?;
+    
+    // Call the glyph outlines module function
+    glyph_outlines::get_glyphs_outlines(font, &glyph_names, location_json, flatten_components)
 }
 
 /// Compile the cached font to TTF

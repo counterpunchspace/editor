@@ -105,6 +105,21 @@ export function get_glyph_name(font_bytes: Uint8Array, glyph_id: number): string
 export function get_glyph_order(font_bytes: Uint8Array): string[];
 
 /**
+ * Get outlines for multiple glyphs with optional component flattening
+ *
+ * Requires that a font has been stored via store_font() first.
+ *
+ * # Arguments
+ * * `glyph_names_json` - JSON array of glyph names, e.g., '["A", "B", "C"]'
+ * * `location_json` - JSON object with axis tags and values in USER SPACE, e.g., '{"wght": 400.0}'. Empty object '{}' uses default location.
+ * * `flatten_components` - If true, resolves and flattens all components into paths
+ *
+ * # Returns
+ * * `String` - JSON array of glyph outline data: '[{"name": "A", "width": 600, "shapes": [...], "bounds": {...}}, ...]'
+ */
+export function get_glyphs_outlines(glyph_names_json: string, location_json: string, flatten_components: boolean): string;
+
+/**
  * Get stylistic set names from compiled font bytes
  *
  * Returns a JSON string with structure:
@@ -182,6 +197,7 @@ export interface InitOutput {
   readonly compile_babelfont: (a: number, b: number, c: any) => [number, number, number, number];
   readonly compile_cached_font: (a: any) => [number, number, number, number];
   readonly compile_glyphs: (a: number, b: number) => [number, number, number, number];
+  readonly get_glyphs_outlines: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
   readonly init: () => void;
   readonly interpolate_glyph: (a: number, b: number, c: number, d: number) => [number, number, number, number];
   readonly open_font_file: (a: number, b: number, c: number, d: number) => [number, number, number, number];

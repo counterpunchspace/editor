@@ -1119,6 +1119,39 @@ window.addEventListener('fontLoaded', async (event: Event) => {
             `📦 Received font JSON (${detail.babelfontJson.length} bytes from ${pluginName})`
         );
 
+        // Store font in worker's Rust instance for glyph operations
+        // This ensures the font is cached BEFORE fontReady fires
+        console.log('[FontManager]', '🔧 Caching font in worker...');
+        try {
+            const storeResult = await fontCompilation.sendMessage({
+                type: 'storeFontJson',
+                babelfontJson: detail.babelfontJson
+            });
+            console.log(
+                '[FontManager]',
+                '✅ Font cached in worker:',
+                storeResult
+            );
+            if (storeResult.error) {
+                throw new Error(
+                    `Failed to cache font in worker: ${storeResult.error}`
+                );
+            }
+            if (storeResult.cachedSize) {
+                console.log(
+                    '[FontManager]',
+                    `📦 Worker cache size: ${storeResult.cachedSize} bytes, message: ${storeResult.message}`
+                );
+            }
+        } catch (error) {
+            console.error(
+                '[FontManager]',
+                '❌ Failed to cache font in worker:',
+                error
+            );
+            throw error;
+        }
+
         // Load font into font manager
         await fontManager!.loadFont(
             detail.babelfontJson,

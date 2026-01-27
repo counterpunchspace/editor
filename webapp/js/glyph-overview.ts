@@ -1,6 +1,13 @@
 // Glyph Overview
 // Displays grid of glyph tiles with selection support
 
+import { glyphTileRenderer } from './glyph-tile-renderer';
+
+// Use the shared fontCompilation instance from window (set by bootstrap)
+// Do NOT import from './font-compilation' as this is a separate webpack entry point
+// and would create a separate worker instance with its own cache
+declare const window: Window & { fontCompilation?: any };
+
 console.log('[GlyphOverview]', 'glyph-overview.ts loaded');
 
 interface GlyphTile {
@@ -18,6 +25,13 @@ class GlyphOverview {
     private dragStartX = 0;
     private dragStartY = 0;
     private selectionBox: HTMLDivElement | null = null;
+    private currentLocation: Record<string, number> = {};
+    private intersectionObserver: IntersectionObserver | null = null;
+    private lazyLoadEnabled: boolean = false;
+    // Batched lazy loading
+    private pendingGlyphIds: Set<string> = new Set();
+    private batchDebounceTimer: number | null = null;
+    private isBatchRendering: boolean = false;
 
     constructor(parentElement: HTMLElement) {
         this.init(parentElement);
@@ -71,6 +85,268 @@ class GlyphOverview {
         });
 
         console.log('[GlyphOverview]', `Created ${glyphs.length} glyph tiles`);
+    }
+
+    /**
+     * Render glyph outlines at a specific location in designspace
+     * @param location - Axis location object, e.g., { wght: 400 }. Empty object uses default location.
+     */
+    public async renderGlyphOutlines(
+        location: Record<string, number> = {}
+    ): Promise<void> {
+        if (!this.container) {
+            console.warn('[GlyphOverview]', 'No container, cannot render');
+            return;
+        }
+
+        this.currentLocation = location;
+        const glyphIds = Array.from(this.tiles.keys());
+        const glyphNames = Array.from(this.tiles.values()).map(
+            (t) => t.glyphName
+        );
+
+        console.log(
+            '[GlyphOverview]',
+            `Starting renderGlyphOutlines for ${glyphNames.length} glyphs`
+        );
+
+        // Enable lazy loading for large fonts
+        if (glyphNames.length > 1000) {
+            this.lazyLoadEnabled = true;
+            this.setupLazyLoading();
+            console.log(
+                '[GlyphOverview]',
+                `Font has ${glyphNames.length} glyphs, using lazy loading`
+            );
+            return;
+        }
+
+        try {
+            // Use worker to get glyph outlines (font is already cached in worker)
+            const fontComp = window.fontCompilation;
+            if (!fontComp) {
+                throw new Error('fontCompilation not available on window');
+            }
+            const response = await fontComp.sendMessage({
+                type: 'getGlyphOutlines',
+                glyphNames: glyphNames,
+                location: location,
+                flattenComponents: true
+            });
+
+            if (response.error) {
+                throw new Error(response.error);
+            }
+
+            console.log(
+                '[GlyphOverview]',
+                `Received outlines JSON from worker, length: ${response.outlinesJson.length} bytes`
+            );
+            const outlines = JSON.parse(response.outlinesJson);
+            console.log(
+                '[GlyphOverview]',
+                `Parsed ${outlines.length} glyph outlines`
+            );
+
+            outlines.forEach((glyphData: any, index: number) => {
+                const glyphId = glyphIds[index];
+                const tile = this.tiles.get(glyphId);
+                if (tile) {
+                    this.renderTile(tile, glyphData);
+                }
+            });
+
+            console.log(
+                '[GlyphOverview]',
+                `Rendered ${outlines.length} glyph outlines`
+            );
+        } catch (error) {
+            console.error(
+                '[GlyphOverview]',
+                'Failed to render glyph outlines:',
+                error
+            );
+        }
+    }
+
+    private renderTile(tile: GlyphTile, glyphData: any): void {
+        console.log(
+            '[GlyphOverview]',
+            `Rendering tile for ${tile.glyphName}`,
+            glyphData
+        );
+
+        // Remove existing canvas if any
+        const existingCanvas = tile.element.querySelector('canvas');
+        if (existingCanvas) {
+            existingCanvas.remove();
+        }
+
+        // Render new canvas
+        const canvas = glyphTileRenderer.renderGlyph(glyphData);
+        console.log(
+            '[GlyphOverview]',
+            `Canvas created: ${canvas.width}x${canvas.height}`
+        );
+        canvas.style.position = 'absolute';
+        canvas.style.top = '0';
+        canvas.style.left = '0';
+        canvas.style.pointerEvents = 'none';
+        canvas.style.color = 'var(--text-primary)';
+
+        // Insert before label
+        const label = tile.element.querySelector('.glyph-tile-label');
+        if (label) {
+            tile.element.insertBefore(canvas, label);
+            console.log(
+                '[GlyphOverview]',
+                `Canvas inserted before label for ${tile.glyphName}`
+            );
+        } else {
+            tile.element.appendChild(canvas);
+            console.log(
+                '[GlyphOverview]',
+                `Canvas appended for ${tile.glyphName}`
+            );
+        }
+    }
+
+    private setupLazyLoading(): void {
+        if (this.intersectionObserver) {
+            this.intersectionObserver.disconnect();
+        }
+
+        console.log(
+            '[GlyphOverview]',
+            'Setting up lazy loading with Intersection Observer (batched)'
+        );
+
+        this.intersectionObserver = new IntersectionObserver(
+            (entries) => {
+                let addedCount = 0;
+                entries.forEach((entry) => {
+                    if (entry.isIntersecting) {
+                        const glyphId = (entry.target as HTMLElement).dataset
+                            .glyphId;
+                        if (glyphId) {
+                            const tile = this.tiles.get(glyphId);
+                            // Only add if not already rendered
+                            if (tile && !tile.element.querySelector('canvas')) {
+                                this.pendingGlyphIds.add(glyphId);
+                                addedCount++;
+                            }
+                        }
+                    }
+                });
+                if (addedCount > 0) {
+                    this.scheduleBatchRender();
+                }
+            },
+            { root: this.container, rootMargin: '100px' }
+        );
+
+        // Observe all tiles
+        this.tiles.forEach((tile) => {
+            this.intersectionObserver!.observe(tile.element);
+        });
+        console.log('[GlyphOverview]', `Observing ${this.tiles.size} tiles`);
+    }
+
+    private scheduleBatchRender(): void {
+        // Debounce: wait 16ms (one frame) to collect more tiles before rendering
+        if (this.batchDebounceTimer !== null) {
+            return; // Already scheduled
+        }
+        this.batchDebounceTimer = window.setTimeout(() => {
+            this.batchDebounceTimer = null;
+            this.processBatchRender();
+        }, 16);
+    }
+
+    private async processBatchRender(): Promise<void> {
+        if (this.isBatchRendering || this.pendingGlyphIds.size === 0) {
+            return;
+        }
+
+        this.isBatchRendering = true;
+
+        // Take a batch of pending glyphs (max 50 at a time for memory)
+        const batchSize = 50;
+        const glyphIds = Array.from(this.pendingGlyphIds).slice(0, batchSize);
+        glyphIds.forEach((id) => this.pendingGlyphIds.delete(id));
+
+        // Build glyph name list
+        const glyphNames: string[] = [];
+        const glyphIdToName: Map<string, string> = new Map();
+        for (const glyphId of glyphIds) {
+            const tile = this.tiles.get(glyphId);
+            if (tile && !tile.element.querySelector('canvas')) {
+                glyphNames.push(tile.glyphName);
+                glyphIdToName.set(glyphId, tile.glyphName);
+            }
+        }
+
+        if (glyphNames.length === 0) {
+            this.isBatchRendering = false;
+            if (this.pendingGlyphIds.size > 0) {
+                this.scheduleBatchRender();
+            }
+            return;
+        }
+
+        const startTime = performance.now();
+        console.log(
+            '[GlyphOverview]',
+            `Batch rendering ${glyphNames.length} glyphs...`
+        );
+
+        try {
+            const fontComp = window.fontCompilation;
+            if (!fontComp) {
+                throw new Error('fontCompilation not available on window');
+            }
+            const response = await fontComp.sendMessage({
+                type: 'getGlyphOutlines',
+                glyphNames: glyphNames,
+                location: this.currentLocation,
+                flattenComponents: true
+            });
+
+            if (response.error) {
+                throw new Error(response.error);
+            }
+
+            const outlines = JSON.parse(response.outlinesJson);
+            const elapsed = performance.now() - startTime;
+            console.log(
+                '[GlyphOverview]',
+                `Batch received ${outlines.length} outlines in ${elapsed.toFixed(1)}ms (${(elapsed / outlines.length).toFixed(1)}ms/glyph)`
+            );
+
+            // Render each tile
+            outlines.forEach((glyphData: any) => {
+                // Find tile by glyph name
+                for (const [glyphId, name] of glyphIdToName) {
+                    if (name === glyphData.name) {
+                        const tile = this.tiles.get(glyphId);
+                        if (tile) {
+                            this.renderTile(tile, glyphData);
+                        }
+                        break;
+                    }
+                }
+            });
+        } catch (error) {
+            const msg = error instanceof Error ? error.message : String(error);
+            console.error('[GlyphOverview]', `Batch render failed: ${msg}`);
+        }
+
+        this.isBatchRendering = false;
+
+        // Process remaining pending glyphs
+        if (this.pendingGlyphIds.size > 0) {
+            this.scheduleBatchRender();
+        }
     }
 
     private createGlyphTile(glyphId: string, glyphName: string): GlyphTile {
@@ -329,6 +605,10 @@ class GlyphOverview {
     }
 
     public destroy(): void {
+        if (this.intersectionObserver) {
+            this.intersectionObserver.disconnect();
+            this.intersectionObserver = null;
+        }
         if (this.container) {
             this.container.remove();
         }

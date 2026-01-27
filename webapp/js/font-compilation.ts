@@ -337,7 +337,13 @@ class FontCompilation {
             if (error) {
                 reject(new Error(error));
             } else {
-                resolve({ result, time_taken, filename });
+                // For compilation messages, wrap in { result, time_taken, filename }
+                // For other message types, return the full data
+                if (result !== undefined) {
+                    resolve({ result, time_taken, filename });
+                } else {
+                    resolve(e.data);
+                }
             }
         }
     }
@@ -347,6 +353,27 @@ class FontCompilation {
         if (window.term) {
             window.term.error(`Worker error: ${e.message}`);
         }
+    }
+
+    /**
+     * Send a generic message to the worker and wait for response
+     */
+    async sendMessage(data: any): Promise<any> {
+        if (!this.worker) {
+            throw new Error('Worker not initialized');
+        }
+
+        return new Promise((resolve, reject) => {
+            const id = this.compilationId++;
+
+            this.pendingCompilations.set(id, {
+                resolve,
+                reject,
+                filename: data.filename || 'unknown'
+            });
+
+            this.worker!.postMessage({ ...data, id });
+        });
     }
 
     /**

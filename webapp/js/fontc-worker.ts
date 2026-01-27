@@ -8,10 +8,12 @@ import init, {
     interpolate_glyph,
     clear_font_cache,
     open_font_file,
+    get_glyphs_outlines,
     version
 } from '../wasm-dist/babelfont_fontc_web.js';
 
 let initialized = false;
+let cachedBabelfontJson: string | null = null; // Cache babelfont JSON for re-use
 
 console.log('[Fontc Worker] Starting...');
 
@@ -113,6 +115,64 @@ self.onmessage = async (event) => {
                 id: data.id,
                 error: error.message,
                 stack: error.stack
+            });
+        }
+        return;
+    }
+
+    // Handle store font JSON request (before auto-init to ensure it's cached early)
+    if (data.type === 'storeFontJson') {
+        const { id, babelfontJson } = data;
+
+        console.log(
+            `[Fontc Worker] ⭐ storeFontJson handler called, id: ${id}, hasJson: ${!!babelfontJson}`
+        );
+
+        if (!babelfontJson) {
+            self.postMessage({
+                id,
+                type: 'storeFontJson',
+                error: 'Missing babelfontJson'
+            });
+            return;
+        }
+
+        try {
+            // Ensure WASM is initialized before calling store_font
+            if (!initialized) {
+                console.log(
+                    '[Fontc Worker] Initializing WASM before storing font...'
+                );
+                await initializeWasm();
+            }
+
+            console.log(
+                `[Fontc Worker] Storing font JSON (${babelfontJson.length} bytes)`
+            );
+
+            // Store in cache (both in WASM and in worker)
+            store_font(babelfontJson);
+            cachedBabelfontJson = babelfontJson;
+            console.log(
+                '[Fontc Worker] ✅ Font JSON cached in worker memory, cachedBabelfontJson is now:',
+                cachedBabelfontJson
+                    ? `${cachedBabelfontJson.length} bytes`
+                    : 'NULL'
+            );
+
+            self.postMessage({
+                id,
+                type: 'storeFontJson',
+                success: true,
+                cachedSize: cachedBabelfontJson?.length || 0,
+                message: `Font cached: ${cachedBabelfontJson?.length || 0} bytes`
+            });
+        } catch (e: any) {
+            console.error(`[Fontc Worker] Error storing font JSON:`, e);
+            self.postMessage({
+                id,
+                type: 'storeFontJson',
+                error: e.toString()
             });
         }
         return;
@@ -240,8 +300,10 @@ self.onmessage = async (event) => {
                 `[Fontc Worker] Successfully converted to babelfont JSON (${babelfontJson.length} bytes)`
             );
 
-            // Store in cache
+            // Store in cache (both in WASM and in worker)
             store_font(babelfontJson);
+            cachedBabelfontJson = babelfontJson;
+            console.log('[Fontc Worker] Font cached in worker memory');
 
             self.postMessage({
                 id,
@@ -254,6 +316,71 @@ self.onmessage = async (event) => {
             self.postMessage({
                 id,
                 type: 'openFont',
+                error: e.toString()
+            });
+        }
+        return;
+    }
+
+    // Handle get glyph outlines request
+    if (data.type === 'getGlyphOutlines') {
+        const { id, glyphNames, location, flattenComponents } = data;
+
+        try {
+            console.log(
+                `[Fontc Worker] Getting outlines for ${glyphNames.length} glyphs`
+            );
+            console.log(
+                `[Fontc Worker] cachedBabelfontJson state: ${cachedBabelfontJson ? `${cachedBabelfontJson.length} bytes` : 'NULL'}`
+            );
+            console.log(`[Fontc Worker] initialized: ${initialized}`);
+
+            // Ensure font is cached before getting outlines
+            if (!cachedBabelfontJson) {
+                const errorMsg = 'No font loaded in worker. Open a font first.';
+                console.error(`[Fontc Worker] ERROR: ${errorMsg}`);
+                self.postMessage({
+                    id,
+                    type: 'getGlyphOutlines',
+                    error: errorMsg,
+                    debugInfo: {
+                        cacheState: 'null',
+                        initialized: initialized,
+                        timestamp: Date.now()
+                    }
+                });
+                return;
+            }
+
+            // Re-store font to ensure it's in WASM cache (defensive)
+            console.log('[Fontc Worker] Ensuring font is cached in WASM...');
+            store_font(cachedBabelfontJson);
+
+            const locationJson =
+                Object.keys(location).length > 0
+                    ? JSON.stringify(location)
+                    : '{}';
+            const glyphNamesJson = JSON.stringify(glyphNames);
+            const outlinesJson = get_glyphs_outlines(
+                glyphNamesJson,
+                locationJson,
+                flattenComponents
+            );
+
+            console.log(
+                `[Fontc Worker] Successfully got outlines, JSON length: ${outlinesJson.length}`
+            );
+
+            self.postMessage({
+                id,
+                type: 'getGlyphOutlines',
+                outlinesJson
+            });
+        } catch (e: any) {
+            console.error(`[Fontc Worker] Error getting glyph outlines:`, e);
+            self.postMessage({
+                id,
+                type: 'getGlyphOutlines',
                 error: e.toString()
             });
         }
@@ -298,6 +425,7 @@ self.onmessage = async (event) => {
             // STEP 1: Store font in WASM cache for interpolation
             try {
                 store_font(babelfontJson);
+                cachedBabelfontJson = babelfontJson; // Also cache in worker memory
                 console.log('[Fontc Worker] ✅ Font cached in WASM memory');
             } catch (cacheError) {
                 console.warn(

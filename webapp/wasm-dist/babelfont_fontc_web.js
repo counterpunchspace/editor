@@ -352,6 +352,46 @@ export function get_glyph_order(font_bytes) {
 }
 
 /**
+ * Get outlines for multiple glyphs with optional component flattening
+ *
+ * Requires that a font has been stored via store_font() first.
+ *
+ * # Arguments
+ * * `glyph_names_json` - JSON array of glyph names, e.g., '["A", "B", "C"]'
+ * * `location_json` - JSON object with axis tags and values in USER SPACE, e.g., '{"wght": 400.0}'. Empty object '{}' uses default location.
+ * * `flatten_components` - If true, resolves and flattens all components into paths
+ *
+ * # Returns
+ * * `String` - JSON array of glyph outline data: '[{"name": "A", "width": 600, "shapes": [...], "bounds": {...}}, ...]'
+ * @param {string} glyph_names_json
+ * @param {string} location_json
+ * @param {boolean} flatten_components
+ * @returns {string}
+ */
+export function get_glyphs_outlines(glyph_names_json, location_json, flatten_components) {
+    let deferred4_0;
+    let deferred4_1;
+    try {
+        const ptr0 = passStringToWasm0(glyph_names_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(location_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ret = wasm.get_glyphs_outlines(ptr0, len0, ptr1, len1, flatten_components);
+        var ptr3 = ret[0];
+        var len3 = ret[1];
+        if (ret[3]) {
+            ptr3 = 0; len3 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred4_0 = ptr3;
+        deferred4_1 = len3;
+        return getStringFromWasm0(ptr3, len3);
+    } finally {
+        wasm.__wbindgen_free(deferred4_0, deferred4_1, 1);
+    }
+}
+
+/**
  * Get stylistic set names from compiled font bytes
  *
  * Returns a JSON string with structure:

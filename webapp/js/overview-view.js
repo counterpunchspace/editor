@@ -52,6 +52,24 @@ function initOverviewView() {
                     })
                 );
                 glyphOverviewInstance.updateGlyphs(glyphData);
+
+                // Render glyphs if font is already compiled
+                // (font needs to be cached in Rust via store_font before rendering)
+                setTimeout(async () => {
+                    try {
+                        await glyphOverviewInstance.renderGlyphOutlines();
+                        console.log(
+                            '[OverviewView]',
+                            `Initial render: ${glyphData.length} glyph tiles`
+                        );
+                    } catch (error) {
+                        console.error(
+                            '[OverviewView]',
+                            'Failed to render glyphs on init:',
+                            error
+                        );
+                    }
+                }, 500);
             }
         } else {
             console.warn(
@@ -107,11 +125,11 @@ function initOverviewView() {
 }
 
 // Update glyph overview when font is loaded
-window.addEventListener('fontLoaded', () => {
-    console.log('[OverviewView]', 'Font loaded, updating glyph overview');
+window.addEventListener('fontReady', async () => {
+    console.log('[OverviewView]', 'Font ready, updating glyph overview');
 
     // Wait a bit for currentFontModel to be set
-    setTimeout(() => {
+    setTimeout(async () => {
         if (glyphOverviewInstance && window.currentFontModel?.glyphs) {
             const glyphData = window.currentFontModel.glyphs.map(
                 (glyph, index) => ({
@@ -120,10 +138,22 @@ window.addEventListener('fontLoaded', () => {
                 })
             );
             glyphOverviewInstance.updateGlyphs(glyphData);
-            console.log(
-                '[OverviewView]',
-                `Updated with ${glyphData.length} glyphs`
-            );
+
+            // Render glyph outlines at default location
+            // Font is now cached in worker, safe to render
+            try {
+                await glyphOverviewInstance.renderGlyphOutlines();
+                console.log(
+                    '[OverviewView]',
+                    `Rendered ${glyphData.length} glyph tiles`
+                );
+            } catch (error) {
+                console.error(
+                    '[OverviewView]',
+                    'Failed to render glyphs:',
+                    error
+                );
+            }
         }
     }, 100);
 });
