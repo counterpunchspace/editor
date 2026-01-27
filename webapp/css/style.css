@@ -1,5 +1,6 @@
 /* Design tokens imported from tokens.css (generated from tokens.json) */
 @import url('tokens.css');
+@import url('glyph-overview.css');
 
 /* Additional CSS variable overrides not in tokens */
 :root {

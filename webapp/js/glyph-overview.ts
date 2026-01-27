@@ -49,16 +49,6 @@ class GlyphOverview {
         // Create main container for glyph tiles
         this.container = document.createElement('div');
         this.container.id = 'glyph-overview-container';
-        this.container.style.display = 'flex';
-        this.container.style.flexWrap = 'wrap';
-        this.container.style.gap = '3px';
-        this.container.style.padding = '6px';
-        this.container.style.alignContent = 'flex-start';
-        this.container.style.width = '100%';
-        this.container.style.height = '100%';
-        this.container.style.overflow = 'auto';
-        this.container.style.position = 'relative';
-        this.container.style.userSelect = 'none';
 
         parentElement.appendChild(this.container);
 
@@ -244,11 +234,6 @@ class GlyphOverview {
             glyphData,
             this.renderMetrics || undefined
         );
-        canvas.style.position = 'absolute';
-        canvas.style.top = '0';
-        canvas.style.left = '0';
-        canvas.style.pointerEvents = 'none';
-        canvas.style.color = 'var(--text-primary)';
 
         // Insert before label
         const label = tile.element.querySelector('.glyph-tile-label');
@@ -572,19 +557,6 @@ class GlyphOverview {
     private createGlyphTile(glyphId: string, glyphName: string): GlyphTile {
         const tileElement = document.createElement('div');
         tileElement.className = 'glyph-tile';
-        tileElement.style.width = '30px';
-        tileElement.style.height = '50px';
-        tileElement.style.backgroundColor = 'var(--background-secondary)';
-        tileElement.style.border = '1px solid var(--border-primary)';
-        tileElement.style.borderRadius = '3px';
-        tileElement.style.position = 'relative';
-        tileElement.style.cursor = 'pointer';
-        tileElement.style.display = 'flex';
-        tileElement.style.flexDirection = 'column';
-        tileElement.style.justifyContent = 'flex-end';
-        tileElement.style.padding = '2px';
-        tileElement.style.boxSizing = 'border-box';
-        tileElement.style.overflow = 'hidden';
         tileElement.dataset.glyphId = glyphId;
         tileElement.dataset.glyphName = glyphName;
 
@@ -592,20 +564,6 @@ class GlyphOverview {
         const label = document.createElement('div');
         label.className = 'glyph-tile-label';
         label.textContent = glyphName;
-        label.style.fontSize = '6px';
-        label.style.fontFamily = 'Inter, sans-serif';
-        label.style.color = 'var(--text-primary)';
-        label.style.textAlign = 'center';
-        label.style.overflow = 'hidden';
-        label.style.textOverflow = 'ellipsis';
-        label.style.whiteSpace = 'nowrap';
-        label.style.lineHeight = '1';
-        label.style.pointerEvents = 'none';
-        label.style.backgroundColor =
-            'color-mix(in srgb, var(--background-secondary) 80%, transparent)';
-        label.style.borderRadius = '2px';
-        label.style.position = 'relative';
-        label.style.zIndex = '1';
 
         tileElement.appendChild(label);
 
@@ -693,8 +651,7 @@ class GlyphOverview {
         if (!tile || tile.selected) return;
 
         tile.selected = true;
-        tile.element.style.backgroundColor = 'var(--accent-primary)';
-        tile.element.style.borderColor = 'var(--accent-primary)';
+        tile.element.classList.add('selected');
     }
 
     private deselectTile(glyphId: string): void {
@@ -702,8 +659,7 @@ class GlyphOverview {
         if (!tile || !tile.selected) return;
 
         tile.selected = false;
-        tile.element.style.backgroundColor = 'var(--background-secondary)';
-        tile.element.style.borderColor = 'var(--border-primary)';
+        tile.element.classList.remove('selected');
     }
 
     private clearSelection(): void {

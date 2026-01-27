@@ -1,0 +1,79 @@
+/* Glyph Overview Styles */
+
+/* Main container for glyph tiles */
+#glyph-overview-container {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1px;
+    padding: 1px;
+    align-content: flex-start;
+    width: 100%;
+    height: 100%;
+    overflow: auto;
+    position: relative;
+    user-select: none;
+}
+
+/* Glyph tile base styles */
+.glyph-tile {
+    width: 30px;
+    height: 50px;
+    background-color: var(--background-secondary);
+    border: 1px solid var(--border-primary);
+    border-radius: 0px;
+    position: relative;
+    cursor: pointer;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+    padding: 0px;
+    box-sizing: border-box;
+    overflow: hidden;
+    transition: background-color 0.15s ease;
+}
+
+/* Lighter background for unselected tiles when overview view is focused */
+.view-overview.focused .glyph-tile {
+    background-color: color-mix(in srgb, var(--background-secondary) 70%, white);
+}
+
+/* Selected state */
+.glyph-tile.selected {
+    background-color: color-mix(in srgb, var(--background-secondary) 70%, white);
+    border-color: var(--accent-primary);
+}
+
+/* Lighter background for unselected tiles when overview view is focused */
+.view-overview.focused .glyph-tile.selected,
+.view-overview.focused .glyph-tile.selected .glyph-tile-label {
+    background-color: var(--background-primary);
+}
+
+/* Glyph tile label */
+.glyph-tile-label {
+    font-size: 6px;
+    font-family: Inter, sans-serif;
+    color: var(--text-primary);
+    text-align: center;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    line-height: 1;
+    pointer-events: none;
+    background-color: color-mix(in srgb, var(--background-secondary) 80%, transparent);
+    border-radius: 0px;
+    position: relative;
+    z-index: 1;
+    margin: 2px;
+    padding: 1px;
+}
+
+
+/* Canvas inside tile */
+.glyph-tile canvas {
+    position: absolute;
+    top: 0;
+    left: 0;
+    pointer-events: none;
+    color: var(--text-primary);
+}
