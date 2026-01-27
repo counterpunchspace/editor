@@ -61,7 +61,6 @@
     text-overflow: ellipsis;
     white-space: nowrap;
     line-height: 1;
-    pointer-events: none;
     background-color: color-mix(in srgb, var(--background-secondary) 80%, transparent);
     border-radius: 0px;
     position: relative;

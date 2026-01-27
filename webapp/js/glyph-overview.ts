@@ -8,8 +8,6 @@ import { glyphTileRenderer } from './glyph-tile-renderer';
 // and would create a separate worker instance with its own cache
 declare const window: Window & { fontCompilation?: any };
 
-console.log('[GlyphOverview]', 'glyph-overview.ts loaded');
-
 interface GlyphTile {
     element: HTMLDivElement;
     glyphId: string;
@@ -83,8 +81,6 @@ class GlyphOverview {
             'editorModeChanged',
             this.onModeChanged.bind(this)
         );
-
-        console.log('[GlyphOverview]', 'Glyph overview container initialized');
     }
 
     private initSizeControl(): void {
@@ -245,8 +241,6 @@ class GlyphOverview {
             this.container!.appendChild(tile.element);
         });
 
-        console.log('[GlyphOverview]', `Created ${glyphs.length} glyph tiles`);
-
         // Apply search filter to new glyphs
         this.applySearchFilter();
     }
@@ -273,19 +267,10 @@ class GlyphOverview {
             (t) => t.glyphName
         );
 
-        console.log(
-            '[GlyphOverview]',
-            `Starting renderGlyphOutlines for ${glyphNames.length} glyphs`
-        );
-
         // Enable lazy loading for large fonts
         if (glyphNames.length > 1000) {
             this.lazyLoadEnabled = true;
             this.setupLazyLoading();
-            console.log(
-                '[GlyphOverview]',
-                `Font has ${glyphNames.length} glyphs, using lazy loading`
-            );
             return;
         }
 
@@ -299,7 +284,7 @@ class GlyphOverview {
                 type: 'getGlyphOutlines',
                 glyphNames: glyphNames,
                 location: location,
-                flattenComponents: true
+                flattenComponents: false // Don't flatten - preserve component structure with layerData
             });
 
             if (response.error) {
@@ -316,6 +301,19 @@ class GlyphOverview {
                 `Parsed ${outlines.length} glyph outlines`
             );
 
+            // Debug: Check first glyph shapes
+            if (
+                outlines.length > 0 &&
+                outlines[0].shapes &&
+                outlines[0].shapes.length > 0
+            ) {
+                console.log(
+                    '[GlyphOverview]',
+                    'First glyph first shape keys:',
+                    Object.keys(outlines[0].shapes[0])
+                );
+            }
+
             outlines.forEach((glyphData: any, index: number) => {
                 const glyphId = glyphIds[index];
                 const tile = this.tiles.get(glyphId);
@@ -325,11 +323,6 @@ class GlyphOverview {
                     this.renderTile(tile, glyphData, dims.width, dims.height);
                 }
             });
-
-            console.log(
-                '[GlyphOverview]',
-                `Rendered ${outlines.length} glyph outlines`
-            );
         } catch (error) {
             console.error(
                 '[GlyphOverview]',
@@ -372,7 +365,6 @@ class GlyphOverview {
         }
 
         this.renderMetrics = { ascender, descender, upm };
-        console.log('[GlyphOverview]', 'Render metrics:', this.renderMetrics);
     }
 
     private renderTile(
@@ -439,7 +431,7 @@ class GlyphOverview {
                 type: 'getGlyphOutlines',
                 glyphNames: [glyphName],
                 location: this.currentLocation,
-                flattenComponents: true
+                flattenComponents: false // Don't flatten - preserve component structure with layerData
             });
 
             if (response.error) {
@@ -594,11 +586,6 @@ class GlyphOverview {
             this.intersectionObserver.disconnect();
         }
 
-        console.log(
-            '[GlyphOverview]',
-            'Setting up lazy loading with Intersection Observer (batched)'
-        );
-
         this.intersectionObserver = new IntersectionObserver(
             (entries) => {
                 let addedCount = 0;
@@ -627,7 +614,6 @@ class GlyphOverview {
         this.tiles.forEach((tile) => {
             this.intersectionObserver!.observe(tile.element);
         });
-        console.log('[GlyphOverview]', `Observing ${this.tiles.size} tiles`);
     }
 
     private scheduleBatchRender(): void {
@@ -672,12 +658,6 @@ class GlyphOverview {
             return;
         }
 
-        const startTime = performance.now();
-        console.log(
-            '[GlyphOverview]',
-            `Batch rendering ${glyphNames.length} glyphs...`
-        );
-
         try {
             const fontComp = window.fontCompilation;
             if (!fontComp) {
@@ -687,7 +667,7 @@ class GlyphOverview {
                 type: 'getGlyphOutlines',
                 glyphNames: glyphNames,
                 location: this.currentLocation,
-                flattenComponents: true
+                flattenComponents: false // Don't flatten - preserve component structure with layerData
             });
 
             if (response.error) {
@@ -695,11 +675,6 @@ class GlyphOverview {
             }
 
             const outlines = JSON.parse(response.outlinesJson);
-            const elapsed = performance.now() - startTime;
-            console.log(
-                '[GlyphOverview]',
-                `Batch received ${outlines.length} outlines in ${elapsed.toFixed(1)}ms (${(elapsed / outlines.length).toFixed(1)}ms/glyph)`
-            );
 
             // Render each tile
             const dims = this.getTileDimensions();
@@ -744,6 +719,7 @@ class GlyphOverview {
         const label = document.createElement('div');
         label.className = 'glyph-tile-label';
         label.textContent = glyphName;
+        label.title = glyphName; // Tooltip for truncated names
 
         tileElement.appendChild(label);
 
@@ -783,12 +759,6 @@ class GlyphOverview {
             this.clearSelection();
             this.selectTile(glyphName);
         }
-
-        console.log(
-            '[GlyphOverview]',
-            'Selected glyphs:',
-            this.getSelectedGlyphs()
-        );
     }
 
     private handleRangeSelection(glyphId: string): void {

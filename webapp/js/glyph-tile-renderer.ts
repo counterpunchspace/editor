@@ -4,8 +4,6 @@
 
 import { LayerDataNormalizer } from './layer-data-normalizer';
 
-console.log('[GlyphTileRenderer]', 'glyph-tile-renderer.ts loaded');
-
 interface GlyphOutlineData {
     name: string;
     width: number;
@@ -110,28 +108,130 @@ export class GlyphTileRenderer {
         ctx.translate(offsetX, offsetY); // Position origin
         ctx.scale(scale, -scale); // Flip Y axis (font coords: Y up)
 
-        // Draw shapes using LayerDataNormalizer utilities
-        ctx.fillStyle = 'currentColor';
-        ctx.beginPath();
+        // Detect theme and get colors from CSS variables
+        const computedStyle = getComputedStyle(document.documentElement);
+        const isDarkTheme =
+            document.documentElement.getAttribute('data-theme') !== 'light';
+        const componentColor = computedStyle
+            .getPropertyValue('--glyph-overview-component-color')
+            .trim();
+        const pathColor = isDarkTheme ? '#ffffff' : 'currentColor';
 
-        for (const shape of glyphData.shapes) {
-            // Extract nodes from shape - handle both {Path: {nodes: ...}} and {nodes: ...} formats
-            let nodes = shape.nodes;
-            if (!nodes && shape.Path?.nodes) {
-                // Parse string nodes format from babelfont-rs
-                nodes = LayerDataNormalizer.parseNodes(shape.Path.nodes);
-            }
+        // Draw shapes - paths in white (dark) or currentColor (light), components in blue
+        this.drawShapes(
+            ctx,
+            glyphData.shapes,
+            componentColor,
+            pathColor,
+            null, // No transform for root level
+            false // Not inside a component
+        );
 
-            if (nodes && nodes.length > 0) {
-                LayerDataNormalizer.buildPathFromNodes(nodes, ctx);
-                ctx.closePath();
-            }
-        }
-
-        ctx.fill();
         ctx.restore();
 
         return canvas;
+    }
+
+    /**
+     * Recursively draw shapes (paths and components)
+     * @param ctx - Canvas rendering context
+     * @param shapes - Array of shape objects (Path or Component)
+     * @param componentColor - Color for component outlines
+     * @param pathColor - Color for regular path outlines
+     * @param parentTransform - Optional parent transformation matrix [a, b, c, d, tx, ty]
+     * @param insideComponent - Whether we're currently inside a component
+     */
+    private drawShapes(
+        ctx: CanvasRenderingContext2D,
+        shapes: any[],
+        componentColor: string,
+        pathColor: string,
+        parentTransform: number[] | null,
+        insideComponent: boolean
+    ): void {
+        // First pass: draw all regular paths (not components)
+        ctx.beginPath();
+        this.buildPathsOnly(ctx, shapes, parentTransform);
+        ctx.fillStyle = insideComponent ? componentColor : pathColor;
+        ctx.fill();
+
+        // Second pass: draw all components
+        for (const shape of shapes) {
+            if (shape.Component) {
+                const component = shape.Component;
+                const transform = component.transform || [1, 0, 0, 1, 0, 0];
+
+                const finalTransform = parentTransform
+                    ? this.multiplyTransforms(parentTransform, transform)
+                    : transform;
+
+                if (component.layerData && component.layerData.shapes) {
+                    ctx.save();
+                    ctx.transform(
+                        finalTransform[0],
+                        finalTransform[1],
+                        finalTransform[2],
+                        finalTransform[3],
+                        finalTransform[4],
+                        finalTransform[5]
+                    );
+                    this.drawShapes(
+                        ctx,
+                        component.layerData.shapes,
+                        componentColor,
+                        pathColor,
+                        null,
+                        true // Inside a component
+                    );
+                    ctx.restore();
+                }
+            }
+        }
+    }
+
+    /**
+     * Build combined path from regular paths only (skip components)
+     * @param ctx - Canvas rendering context
+     * @param shapes - Array of shape objects
+     * @param parentTransform - Optional parent transformation matrix
+     */
+    private buildPathsOnly(
+        ctx: CanvasRenderingContext2D,
+        shapes: any[],
+        parentTransform: number[] | null
+    ): void {
+        for (const shape of shapes) {
+            if (shape.Path) {
+                let nodes = shape.Path.nodes;
+                if (typeof nodes === 'string') {
+                    nodes = LayerDataNormalizer.parseNodes(nodes);
+                }
+
+                if (nodes && nodes.length > 0) {
+                    LayerDataNormalizer.buildPathFromNodes(nodes, ctx);
+                    ctx.closePath();
+                }
+            }
+        }
+    }
+
+    /**
+     * Multiply two transformation matrices
+     * @param t1 - First transform [a, b, c, d, tx, ty]
+     * @param t2 - Second transform [a, b, c, d, tx, ty]
+     * @returns Combined transform
+     */
+    private multiplyTransforms(t1: number[], t2: number[]): number[] {
+        const [a1, b1, c1, d1, tx1, ty1] = t1;
+        const [a2, b2, c2, d2, tx2, ty2] = t2;
+        return [
+            a1 * a2 + b1 * c2,
+            a1 * b2 + b1 * d2,
+            c1 * a2 + d1 * c2,
+            c1 * b2 + d1 * d2,
+            a1 * tx2 + c1 * ty2 + tx1,
+            b1 * tx2 + d1 * ty2 + ty1
+        ];
     }
 }
 

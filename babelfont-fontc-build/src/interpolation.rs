@@ -498,7 +498,7 @@ fn interpolate_affine(
 /// Serialize a layer with recursively interpolated component data
 /// This matches the Python fetchLayerData behavior where each component
 /// includes its interpolated layer data in a `layerData` field
-fn serialize_layer_with_components(
+pub fn serialize_layer_with_components(
     layer: &Layer,
     font: &babelfont::Font,
     location: &DesignLocation,

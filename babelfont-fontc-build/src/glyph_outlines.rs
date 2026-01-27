@@ -6,11 +6,13 @@
 use babelfont::{Layer, Shape, Node};
 use fontdrasil::coords::{DesignCoord, DesignLocation, UserCoord};
 use serde_json::Value as JsonValue;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::str::FromStr;
 use wasm_bindgen::prelude::*;
 use write_fonts::types::Tag;
 use kurbo::{Affine, Point};
+
+use crate::interpolation::serialize_layer_with_components;
 
 /// Get outlines for multiple glyphs with optional component flattening
 ///
@@ -28,6 +30,9 @@ pub fn get_glyphs_outlines(
     location_json: &str,
     flatten_components: bool,
 ) -> Result<String, JsValue> {
+    // Debug: Log the flatten_components parameter
+    web_sys::console::log_1(&format!("[Rust] get_glyphs_outlines called with flatten_components: {}", flatten_components).into());
+    
     // Parse location
     let location_map: HashMap<String, f64> = if location_json.trim().is_empty() || location_json == "{}" {
         HashMap::new()
@@ -86,20 +91,49 @@ pub fn get_glyphs_outlines(
         let layer = font.interpolate_glyph(glyph_name, &design_location)
             .map_err(|e| JsValue::from_str(&format!("Interpolation failed for '{}': {:?}", glyph_name, e)))?;
         
-        let shapes = if flatten_components {
-            flatten_layer_components(font, &layer, &design_location)?
+        let (shapes, shapes_json) = if flatten_components {
+            // For flattened mode, use the old flattening logic and simple JSON serialization
+            let flattened = flatten_layer_components(font, &layer, &design_location)?;
+            let json = serde_json::to_value(&flattened)
+                .map_err(|e| JsValue::from_str(&format!("Serialization failed: {}", e)))?;
+            (flattened, json)
         } else {
-            layer.shapes.clone()
+            // For non-flattened mode, preserve components with nested layerData
+            // Use serialize_layer_with_components to include nested component data
+            let layer_json_str = serialize_layer_with_components(&layer, font, &design_location)
+                .map_err(|e| JsValue::from_str(&format!("Layer serialization failed: {}", e)))?;
+            let layer_json: JsonValue = serde_json::from_str(&layer_json_str)
+                .map_err(|e| JsValue::from_str(&format!("JSON parse failed: {}", e)))?;
+            
+            // Extract shapes from the serialized layer
+            let shapes_json = layer_json.get("shapes").cloned()
+                .unwrap_or(serde_json::json!([]));
+            
+            // Debug: Log what we got
+            web_sys::console::log_1(&format!("[Rust] shapes_json type: {}", 
+                if shapes_json.is_array() { "array" } else { "not array" }).into());
+            if let Some(arr) = shapes_json.as_array() {
+                web_sys::console::log_1(&format!("[Rust] shapes_json has {} items", arr.len()).into());
+                if arr.len() > 0 {
+                    web_sys::console::log_1(&format!("[Rust] First shape keys: {:?}", 
+                        arr[0].as_object().map(|o| o.keys().collect::<Vec<_>>())).into());
+                }
+            }
+            
+            // For bounds calculation, we need flattened shapes since calculate_bounds only handles paths
+            let flattened_for_bounds = flatten_layer_components(font, &layer, &design_location)?;
+            
+            (flattened_for_bounds, shapes_json)
         };
         
-        // Calculate bounds
+        // Calculate bounds from the actual shapes (flattened paths)
         let bounds = calculate_bounds(&shapes);
         
-        // Build result object
+        // Build result object with the appropriate shapes JSON
         let result = serde_json::json!({
             "name": glyph_name,
             "width": layer.width,
-            "shapes": shapes,
+            "shapes": shapes_json,
             "bounds": bounds,
         });
         
