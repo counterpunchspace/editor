@@ -152,37 +152,87 @@ export class GlyphTileRenderer {
         // First pass: draw all regular paths (not components)
         ctx.beginPath();
         this.buildPathsOnly(ctx, shapes, parentTransform);
-        ctx.fillStyle = insideComponent ? componentColor : pathColor;
-        ctx.fill();
+        if (ctx.isPointInPath(0, 0) !== undefined) {
+            // Check if path was created
+            ctx.fillStyle = insideComponent ? componentColor : pathColor;
+            ctx.fill();
+        }
 
-        // Second pass: draw all components
+        // Second pass: combine ALL component paths at this level, then fill once
+        // This allows components to interact via nonzero winding (e.g., circle + number)
+        const hasComponents = shapes.some((s) => s.Component);
+        if (hasComponents) {
+            ctx.beginPath();
+            for (const shape of shapes) {
+                if (shape.Component) {
+                    const component = shape.Component;
+                    const transform = component.transform || [1, 0, 0, 1, 0, 0];
+
+                    const finalTransform = parentTransform
+                        ? this.multiplyTransforms(parentTransform, transform)
+                        : transform;
+
+                    if (component.layerData && component.layerData.shapes) {
+                        ctx.save();
+                        ctx.transform(
+                            finalTransform[0],
+                            finalTransform[1],
+                            finalTransform[2],
+                            finalTransform[3],
+                            finalTransform[4],
+                            finalTransform[5]
+                        );
+                        // Build all paths from this component into the combined path
+                        this.buildComponentPaths(
+                            ctx,
+                            component.layerData.shapes
+                        );
+                        ctx.restore();
+                    }
+                }
+            }
+            // Fill all components at once - nonzero winding handles counters
+            ctx.fillStyle = componentColor;
+            ctx.fill();
+        }
+    }
+
+    /**
+     * Build all paths from component shapes recursively (for combined component rendering)
+     * @param ctx - Canvas rendering context
+     * @param shapes - Array of shape objects
+     */
+    private buildComponentPaths(
+        ctx: CanvasRenderingContext2D,
+        shapes: any[]
+    ): void {
         for (const shape of shapes) {
-            if (shape.Component) {
+            if (shape.Path) {
+                let nodes = shape.Path.nodes;
+                if (typeof nodes === 'string') {
+                    nodes = LayerDataNormalizer.parseNodes(nodes);
+                }
+
+                if (nodes && nodes.length > 0) {
+                    LayerDataNormalizer.buildPathFromNodes(nodes, ctx);
+                    ctx.closePath();
+                }
+            } else if (shape.Component) {
+                // Nested component
                 const component = shape.Component;
                 const transform = component.transform || [1, 0, 0, 1, 0, 0];
-
-                const finalTransform = parentTransform
-                    ? this.multiplyTransforms(parentTransform, transform)
-                    : transform;
 
                 if (component.layerData && component.layerData.shapes) {
                     ctx.save();
                     ctx.transform(
-                        finalTransform[0],
-                        finalTransform[1],
-                        finalTransform[2],
-                        finalTransform[3],
-                        finalTransform[4],
-                        finalTransform[5]
+                        transform[0],
+                        transform[1],
+                        transform[2],
+                        transform[3],
+                        transform[4],
+                        transform[5]
                     );
-                    this.drawShapes(
-                        ctx,
-                        component.layerData.shapes,
-                        componentColor,
-                        pathColor,
-                        null,
-                        true // Inside a component
-                    );
+                    this.buildComponentPaths(ctx, component.layerData.shapes);
                     ctx.restore();
                 }
             }
