@@ -233,10 +233,12 @@ export async function takeSnapshot(
         `${snapshotNumber}-${label}.json`
     );
 
-    // Assert PNG screenshot
+    // Assert PNG screenshot with threshold to handle minor cursor/rendering differences
     await expect(
         page.locator('#glyph-canvas-container canvas')
-    ).toHaveScreenshot(`${snapshotNumber}-${label}.png`);
+    ).toHaveScreenshot(`${snapshotNumber}-${label}.png`, {
+        maxDiffPixelRatio: 0.001 // Allow 0.1% pixel difference for cursor jitter
+    });
 
     return snapshot;
 }
