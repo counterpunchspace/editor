@@ -1112,7 +1112,7 @@ class GlyphOverview {
                 // Apply as CSS custom property for blending with selection
                 tile.element.style.setProperty(
                     '--filter-color',
-                    this.hexToRgba(result.color, 0.25)
+                    this.cssColorToRgba(result.color, 0.25)
                 );
             } else {
                 tile.filterColor = undefined;
@@ -1132,25 +1132,33 @@ class GlyphOverview {
     }
 
     /**
-     * Convert hex color to rgba with alpha
+     * Convert any CSS color to rgba with alpha
+     * Handles: hex (#fff, #ffffff), rgb(), rgba(), hsl(), hsla(), named colors (red, blue, etc.)
      */
-    private hexToRgba(hex: string, alpha: number): string {
-        // Remove # if present
-        hex = hex.replace(/^#/, '');
+    private cssColorToRgba(color: string, alpha: number): string {
+        // Use a temporary element to parse CSS colors
+        const tempEl = document.createElement('div');
+        tempEl.style.color = color;
+        document.body.appendChild(tempEl);
 
-        // Parse hex values
-        let r: number, g: number, b: number;
-        if (hex.length === 3) {
-            r = parseInt(hex[0] + hex[0], 16);
-            g = parseInt(hex[1] + hex[1], 16);
-            b = parseInt(hex[2] + hex[2], 16);
-        } else {
-            r = parseInt(hex.slice(0, 2), 16);
-            g = parseInt(hex.slice(2, 4), 16);
-            b = parseInt(hex.slice(4, 6), 16);
+        // Get computed color (always returns rgb/rgba format)
+        const computedColor = getComputedStyle(tempEl).color;
+        document.body.removeChild(tempEl);
+
+        // Parse rgb/rgba values
+        const match = computedColor.match(
+            /rgba?\((\d+),\s*(\d+),\s*(\d+)(?:,\s*([\d.]+))?\)/
+        );
+
+        if (match) {
+            const r = match[1];
+            const g = match[2];
+            const b = match[3];
+            return `rgba(${r}, ${g}, ${b}, ${alpha})`;
         }
 
-        return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+        // Fallback: return transparent if parsing fails
+        return 'transparent';
     }
 
     public destroy(): void {
