@@ -572,7 +572,7 @@ kbd + kbd {
     border-bottom: none;
     border-right: 1px solid var(--border-primary);
     padding: 8px 0 0 0;
-    justify-content: flex-end; /* Align to top when rotated (flex-end because of 180deg rotation) */
+    justify-content: flex-start; /* Align to top when rotated */
     position: relative;
     top: 4px;
     left: -2px;
@@ -587,8 +587,7 @@ kbd + kbd {
 .view-overview.collapsed-width .view-title-bar .view-title-button,
 .view-overview.collapsed-width .view-title-bar .ai-info-button,
 .view-overview.collapsed-width .view-title-bar .overview-search-control,
-.view-overview.collapsed-width .view-title-bar .overview-size-control,
-.view-overview.collapsed-width .view-title-bar .view-title-right {
+.view-overview.collapsed-width .view-title-bar .overview-size-control {
     display: none;
 }
 
