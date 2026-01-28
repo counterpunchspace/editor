@@ -11,6 +11,8 @@ on:
 permissions:
   contents: read
   deployments: write
+  pages: write
+  id-token: write
 
 jobs:
   build:
@@ -56,6 +58,21 @@ jobs:
             webapp/playwright-report/
             webapp/test-results/
           retention-days: 14
+
+      - name: Setup Pages
+        if: always()
+        uses: actions/configure-pages@v4
+
+      - name: Upload Pages artifact
+        if: always()
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: webapp/playwright-report/
+
+      - name: Deploy to GitHub Pages
+        if: always()
+        id: deployment
+        uses: actions/deploy-pages@v4
 
       - name: Check code formatting with Prettier
         run: cd webapp && npx prettier -c .
