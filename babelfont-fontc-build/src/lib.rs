@@ -128,6 +128,9 @@ pub fn store_font(babelfont_json: &str) -> Result<(), JsValue> {
     let mut cache = FONT_CACHE.lock().unwrap();
     *cache = Some(font);
     
+    // Clear the outline cache since font changed
+    glyph_outlines::clear_outline_cache();
+    
     Ok(())
 }
 
@@ -136,6 +139,9 @@ pub fn store_font(babelfont_json: &str) -> Result<(), JsValue> {
 pub fn clear_font_cache() {
     let mut cache = FONT_CACHE.lock().unwrap();
     *cache = None;
+    
+    // Also clear the outline cache
+    glyph_outlines::clear_outline_cache();
 }
 
 /// Open a font file from various formats

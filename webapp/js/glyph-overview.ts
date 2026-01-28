@@ -229,11 +229,18 @@ class GlyphOverview {
             );
         }
 
-        // Re-render all tiles with new size using cached data
-        this.tiles.forEach((tile) => {
-            if (tile.cachedData) {
-                this.renderTile(tile, tile.cachedData, dims.width, dims.height);
-            }
+        // Re-render all tiles with new size in a single frame
+        requestAnimationFrame(() => {
+            this.tiles.forEach((tile) => {
+                if (tile.cachedData) {
+                    this.renderTileCanvas(
+                        tile,
+                        tile.cachedData,
+                        dims.width,
+                        dims.height
+                    );
+                }
+            });
         });
     }
 
@@ -316,15 +323,22 @@ class GlyphOverview {
                 `Parsed ${outlines.length} glyph outlines`
             );
 
-            // Render all tiles - direct canvas rendering is fast, no chunking needed
+            // Batch all renders in a single animation frame for smooth painting
             const dims = this.getTileDimensions();
-            outlines.forEach((glyphData: any, index: number) => {
-                const glyphId = glyphIds[index];
-                const tile = this.tiles.get(glyphId);
-                if (tile) {
-                    tile.cachedData = glyphData;
-                    this.renderTile(tile, glyphData, dims.width, dims.height);
-                }
+            requestAnimationFrame(() => {
+                outlines.forEach((glyphData: any, index: number) => {
+                    const glyphId = glyphIds[index];
+                    const tile = this.tiles.get(glyphId);
+                    if (tile) {
+                        tile.cachedData = glyphData;
+                        this.renderTileCanvas(
+                            tile,
+                            glyphData,
+                            dims.width,
+                            dims.height
+                        );
+                    }
+                });
             });
         } catch (error) {
             console.error(
@@ -370,6 +384,34 @@ class GlyphOverview {
         this.renderMetrics = { ascender, descender, upm };
     }
 
+    /**
+     * Render glyph data to tile's pre-existing canvas (no DOM manipulation)
+     */
+    private renderTileCanvas(
+        tile: GlyphTile,
+        glyphData: any,
+        width?: number,
+        height?: number
+    ): void {
+        // Use provided dimensions or get current size
+        const dims =
+            width && height ? { width, height } : this.getTileDimensions();
+
+        // Render directly to the tile's pre-existing canvas
+        if (tile.canvas) {
+            fastGlyphTileRenderer.renderToCanvas(
+                glyphData,
+                this.renderMetrics || undefined,
+                dims.width,
+                dims.height,
+                tile.canvas
+            );
+        }
+    }
+
+    /**
+     * Legacy renderTile for compatibility - updates cache and calls renderTileCanvas
+     */
     private renderTile(
         tile: GlyphTile,
         glyphData: any,
@@ -378,32 +420,7 @@ class GlyphOverview {
     ): void {
         // Cache data for future resizing
         tile.cachedData = glyphData;
-
-        // Use provided dimensions or get current size
-        const dims =
-            width && height ? { width, height } : this.getTileDimensions();
-
-        // Render directly to canvas (reuse existing canvas if available)
-        const canvas = fastGlyphTileRenderer.renderToCanvas(
-            glyphData,
-            this.renderMetrics || undefined,
-            dims.width,
-            dims.height,
-            tile.canvas
-        );
-
-        // Store canvas reference for reuse
-        tile.canvas = canvas;
-
-        // Add to DOM if not already there
-        if (!canvas.parentElement) {
-            const label = tile.element.querySelector('.glyph-tile-label');
-            if (label) {
-                tile.element.insertBefore(canvas, label);
-            } else {
-                tile.element.appendChild(canvas);
-            }
-        }
+        this.renderTileCanvas(tile, glyphData, width, height);
     }
 
     /**
@@ -518,12 +535,19 @@ class GlyphOverview {
         // Update theme colors in renderer
         fastGlyphTileRenderer.updateThemeColors();
 
-        // Re-render all tiles with cached data
+        // Re-render all tiles with cached data in a single frame
         const dims = this.getTileDimensions();
-        this.tiles.forEach((tile) => {
-            if (tile.cachedData) {
-                this.renderTile(tile, tile.cachedData, dims.width, dims.height);
-            }
+        requestAnimationFrame(() => {
+            this.tiles.forEach((tile) => {
+                if (tile.cachedData) {
+                    this.renderTileCanvas(
+                        tile,
+                        tile.cachedData,
+                        dims.width,
+                        dims.height
+                    );
+                }
+            });
         });
     }
 
@@ -614,8 +638,8 @@ class GlyphOverview {
                             .glyphId;
                         if (glyphId) {
                             const tile = this.tiles.get(glyphId);
-                            // Only add if not already rendered
-                            if (tile && !tile.element.querySelector('canvas')) {
+                            // Only add if not already rendered (check for cachedData instead of canvas presence)
+                            if (tile && !tile.cachedData) {
                                 this.pendingGlyphIds.add(glyphId);
                                 addedCount++;
                             }
@@ -653,8 +677,9 @@ class GlyphOverview {
 
         this.isBatchRendering = true;
 
-        // Take a batch of pending glyphs (max 50 at a time for memory)
-        const batchSize = 50;
+        // Large batch size - Rust processes efficiently and layer cache persists
+        // Larger batches reduce worker message passing overhead
+        const batchSize = 500;
         const glyphIds = Array.from(this.pendingGlyphIds).slice(0, batchSize);
         glyphIds.forEach((id) => this.pendingGlyphIds.delete(id));
 
@@ -663,7 +688,8 @@ class GlyphOverview {
         const glyphIdToName: Map<string, string> = new Map();
         for (const glyphId of glyphIds) {
             const tile = this.tiles.get(glyphId);
-            if (tile && !tile.element.querySelector('canvas')) {
+            // Check cachedData instead of canvas presence (canvas is now pre-created)
+            if (tile && !tile.cachedData) {
                 glyphNames.push(tile.glyphName);
                 glyphIdToName.set(glyphId, tile.glyphName);
             }
@@ -695,25 +721,27 @@ class GlyphOverview {
 
             const outlines = JSON.parse(response.outlinesJson);
 
-            // Render each tile
+            // Batch all renders in a single animation frame
             const dims = this.getTileDimensions();
-            outlines.forEach((glyphData: any) => {
-                // Find tile by glyph name
-                for (const [glyphId, name] of glyphIdToName) {
-                    if (name === glyphData.name) {
-                        const tile = this.tiles.get(glyphId);
-                        if (tile) {
-                            tile.cachedData = glyphData; // Cache for resizing
-                            this.renderTile(
-                                tile,
-                                glyphData,
-                                dims.width,
-                                dims.height
-                            );
+            requestAnimationFrame(() => {
+                outlines.forEach((glyphData: any) => {
+                    // Find tile by glyph name
+                    for (const [glyphId, name] of glyphIdToName) {
+                        if (name === glyphData.name) {
+                            const tile = this.tiles.get(glyphId);
+                            if (tile) {
+                                tile.cachedData = glyphData; // Cache for resizing
+                                this.renderTileCanvas(
+                                    tile,
+                                    glyphData,
+                                    dims.width,
+                                    dims.height
+                                );
+                            }
+                            break;
                         }
-                        break;
                     }
-                }
+                });
             });
         } catch (error) {
             const msg = error instanceof Error ? error.message : String(error);
@@ -733,6 +761,11 @@ class GlyphOverview {
         tileElement.className = 'glyph-tile';
         tileElement.dataset.glyphId = glyphId;
         tileElement.dataset.glyphName = glyphName;
+
+        // Pre-create canvas to avoid DOM insertion during render
+        const canvas = document.createElement('canvas');
+        canvas.className = 'glyph-tile-canvas';
+        tileElement.appendChild(canvas);
 
         // Create label for glyph name (display name, not ID)
         const label = document.createElement('div');
@@ -759,7 +792,8 @@ class GlyphOverview {
             element: tileElement,
             glyphId: glyphId,
             glyphName: glyphName,
-            selected: false
+            selected: false,
+            canvas: canvas
         };
     }
 

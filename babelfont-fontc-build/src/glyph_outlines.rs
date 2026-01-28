@@ -2,7 +2,7 @@
 //
 // This module provides functions for extracting glyph outlines with component flattening
 // for efficient batch rendering in the overview.
-// Optimized with per-request caching for interpolated component glyphs.
+// Optimized with persistent caching across requests for the same location.
 
 use babelfont::{Layer, Shape, Node};
 use fontdrasil::coords::{DesignCoord, DesignLocation, UserCoord};
@@ -10,11 +10,42 @@ use serde_json::Value as JsonValue;
 use std::collections::{HashMap, HashSet};
 use std::cell::RefCell;
 use std::str::FromStr;
+use std::sync::Mutex;
 use wasm_bindgen::prelude::*;
 use write_fonts::types::Tag;
 use kurbo::{Affine, Point};
 
 use crate::interpolation::serialize_layer_with_components_cached;
+
+// Global persistent cache for glyph outline results
+// Key: glyph_name, Value: complete result JSON object
+static OUTLINE_CACHE: Mutex<Option<OutlineCache>> = Mutex::new(None);
+
+// Global persistent cache for interpolated layers (components)
+// This dramatically speeds up composite glyphs that share base components
+static LAYER_CACHE: Mutex<Option<LayerCache>> = Mutex::new(None);
+
+struct OutlineCache {
+    location_json: String,
+    results: HashMap<String, JsonValue>,
+}
+
+struct LayerCache {
+    location_json: String,
+    layers: HashMap<String, Layer>,
+}
+
+/// Clear all caches (call when font changes)
+pub fn clear_outline_cache() {
+    {
+        let mut cache = OUTLINE_CACHE.lock().unwrap();
+        *cache = None;
+    }
+    {
+        let mut cache = LAYER_CACHE.lock().unwrap();
+        *cache = None;
+    }
+}
 
 /// Get outlines for multiple glyphs with optional component flattening
 ///
@@ -32,6 +63,53 @@ pub fn get_glyphs_outlines(
     location_json: &str,
     flatten_components: bool,
 ) -> Result<String, JsValue> {
+    // Normalize location for cache key comparison
+    let normalized_location = if location_json.trim().is_empty() { "{}" } else { location_json };
+    
+    // Check if location changed - clear both caches if so
+    {
+        let mut cache_guard = OUTLINE_CACHE.lock().unwrap();
+        if let Some(ref cache) = *cache_guard {
+            if cache.location_json != normalized_location {
+                // Location changed, clear cache
+                *cache_guard = None;
+            }
+        }
+    }
+    {
+        let mut cache_guard = LAYER_CACHE.lock().unwrap();
+        if let Some(ref cache) = *cache_guard {
+            if cache.location_json != normalized_location {
+                // Location changed, clear layer cache too
+                *cache_guard = None;
+            }
+        }
+    }
+    
+    // Check how many glyphs are already in persistent cache
+    let mut cached_results: Vec<JsonValue> = Vec::new();
+    let mut glyphs_to_process: Vec<String> = Vec::new();
+    {
+        let cache_guard = OUTLINE_CACHE.lock().unwrap();
+        if let Some(ref cache) = *cache_guard {
+            for glyph_name in glyph_names {
+                if let Some(cached) = cache.results.get(glyph_name) {
+                    cached_results.push(cached.clone());
+                } else {
+                    glyphs_to_process.push(glyph_name.clone());
+                }
+            }
+        } else {
+            glyphs_to_process = glyph_names.to_vec();
+        }
+    }
+    
+    // If all glyphs are cached, return immediately
+    if glyphs_to_process.is_empty() {
+        return serde_json::to_string(&cached_results)
+            .map_err(|e| JsValue::from_str(&format!("Failed to serialize results: {}", e)));
+    }
+    
     // Parse location
     let location_map: HashMap<String, f64> = if location_json.trim().is_empty() || location_json == "{}" {
         HashMap::new()
@@ -74,16 +152,31 @@ pub fn get_glyphs_outlines(
             .collect()
     };
     
-    // Create per-request caches for interpolated layers and serialized JSON
-    // These caches are shared across all glyphs in this batch request
-    let layer_cache: RefCell<HashMap<String, Layer>> = RefCell::new(HashMap::new());
+    // Get or create persistent layer cache
+    // This cache persists across requests for the same location
+    let layer_cache: RefCell<HashMap<String, Layer>> = {
+        let mut cache_guard = LAYER_CACHE.lock().unwrap();
+        if let Some(ref cache) = *cache_guard {
+            // Return existing layers from persistent cache
+            RefCell::new(cache.layers.clone())
+        } else {
+            // Initialize new cache
+            *cache_guard = Some(LayerCache {
+                location_json: normalized_location.to_string(),
+                layers: HashMap::new(),
+            });
+            RefCell::new(HashMap::new())
+        }
+    };
+    
+    // Per-request JSON cache (not persisted, just for this batch)
     let json_cache: RefCell<HashMap<String, JsonValue>> = RefCell::new(HashMap::new());
     
-    let mut results = Vec::with_capacity(glyph_names.len());
+    let mut new_results: Vec<(String, JsonValue)> = Vec::with_capacity(glyphs_to_process.len());
     
-    for glyph_name in glyph_names {
+    for glyph_name in &glyphs_to_process {
         // Get glyph
-        let glyph = match font.glyphs.get(glyph_name) {
+        let _glyph = match font.glyphs.get(glyph_name) {
             Some(g) => g,
             None => {
                 continue; // Skip missing glyphs
@@ -106,7 +199,7 @@ pub fn get_glyphs_outlines(
         
         let (shapes, shapes_json) = if flatten_components {
             // For flattened mode, use cached flattening
-            let flattened = flatten_layer_components_cached(font, &layer, &design_location, &layer_cache)?;
+            let (flattened, _, _) = flatten_layer_components_cached(font, &layer, &design_location, &layer_cache)?;
             let json = serde_json::to_value(&flattened)
                 .map_err(|e| JsValue::from_str(&format!("Serialization failed: {}", e)))?;
             (flattened, json)
@@ -117,7 +210,7 @@ pub fn get_glyphs_outlines(
             ).map_err(|e| JsValue::from_str(&e))?;
             
             // For bounds calculation, we need flattened shapes
-            let flattened_for_bounds = flatten_layer_components_cached(font, &layer, &design_location, &layer_cache)?;
+            let (flattened_for_bounds, _, _) = flatten_layer_components_cached(font, &layer, &design_location, &layer_cache)?;
             
             (flattened_for_bounds, shapes_json)
         };
@@ -133,21 +226,75 @@ pub fn get_glyphs_outlines(
             "bounds": bounds,
         });
         
-        results.push(result);
+        // Store in new_results for adding to persistent cache
+        new_results.push((glyph_name.clone(), result));
     }
     
-    serde_json::to_string(&results)
-        .map_err(|e| JsValue::from_str(&format!("Failed to serialize results: {}", e)))
+    // Add new results to persistent cache
+    {
+        let mut cache_guard = OUTLINE_CACHE.lock().unwrap();
+        if cache_guard.is_none() {
+            *cache_guard = Some(OutlineCache {
+                location_json: normalized_location.to_string(),
+                results: HashMap::new(),
+            });
+        }
+        if let Some(ref mut cache) = *cache_guard {
+            for (name, result) in &new_results {
+                cache.results.insert(name.clone(), result.clone());
+            }
+        }
+    }
+    
+    // Save layer cache back to persistent storage
+    {
+        let layer_map = layer_cache.borrow();
+        if !layer_map.is_empty() {
+            let mut cache_guard = LAYER_CACHE.lock().unwrap();
+            if cache_guard.is_none() {
+                *cache_guard = Some(LayerCache {
+                    location_json: normalized_location.to_string(),
+                    layers: HashMap::new(),
+                });
+            }
+            if let Some(ref mut cache) = *cache_guard {
+                for (name, layer) in layer_map.iter() {
+                    cache.layers.insert(name.clone(), layer.clone());
+                }
+            }
+        }
+    }
+    
+    // Combine cached results with new results in original order
+    let mut final_results = Vec::with_capacity(glyph_names.len());
+    {
+        let cache_guard = OUTLINE_CACHE.lock().unwrap();
+        if let Some(ref cache) = *cache_guard {
+            for glyph_name in glyph_names {
+                if let Some(result) = cache.results.get(glyph_name) {
+                    final_results.push(result.clone());
+                }
+            }
+        }
+    }
+    
+    let result_json = serde_json::to_string(&final_results)
+        .map_err(|e| JsValue::from_str(&format!("Failed to serialize results: {}", e)))?;
+    
+    Ok(result_json)
 }
 
 /// Flatten all components in a layer into paths, using a cache for interpolated layers
+/// Returns (flattened_shapes, component_cache_hits, component_cache_misses)
 fn flatten_layer_components_cached(
     font: &babelfont::Font,
     layer: &Layer,
     location: &DesignLocation,
     layer_cache: &RefCell<HashMap<String, Layer>>,
-) -> Result<Vec<Shape>, JsValue> {
+) -> Result<(Vec<Shape>, usize, usize), JsValue> {
     let mut flattened_shapes = Vec::new();
+    let mut comp_hits = 0usize;
+    let mut comp_misses = 0usize;
     
     for shape in &layer.shapes {
         match shape {
@@ -160,9 +307,11 @@ fn flatten_layer_components_cached(
                 let ref_layer = {
                     let cache = layer_cache.borrow();
                     if let Some(cached) = cache.get(&ref_key) {
+                        comp_hits += 1;
                         cached.clone()
                     } else {
                         drop(cache);
+                        comp_misses += 1;
                         let interpolated = font.interpolate_glyph(&component.reference, location)
                             .map_err(|e| JsValue::from_str(&format!("Failed to interpolate component '{}': {:?}", component.reference, e)))?;
                         layer_cache.borrow_mut().insert(ref_key.clone(), interpolated.clone());
@@ -171,7 +320,9 @@ fn flatten_layer_components_cached(
                 };
                 
                 // Recursively flatten components in the referenced glyph
-                let ref_shapes = flatten_layer_components_cached(font, &ref_layer, location, layer_cache)?;
+                let (ref_shapes, sub_hits, sub_misses) = flatten_layer_components_cached(font, &ref_layer, location, layer_cache)?;
+                comp_hits += sub_hits;
+                comp_misses += sub_misses;
                 
                 // Apply component transformation to each shape
                 for ref_shape in ref_shapes {
@@ -185,7 +336,7 @@ fn flatten_layer_components_cached(
         }
     }
     
-    Ok(flattened_shapes)
+    Ok((flattened_shapes, comp_hits, comp_misses))
 }
 
 /// Transform path nodes by a transformation matrix

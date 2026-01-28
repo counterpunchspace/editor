@@ -352,9 +352,8 @@ self.onmessage = async (event) => {
                 return;
             }
 
-            // Re-store font to ensure it's in WASM cache (defensive)
-            console.log('[Fontc Worker] Ensuring font is cached in WASM...');
-            store_font(cachedBabelfontJson);
+            // Note: Don't call store_font here - it clears the outline cache!
+            // The font is already stored when opened.
 
             const locationJson =
                 Object.keys(location).length > 0

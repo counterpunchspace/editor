@@ -58,15 +58,6 @@ pub fn interpolate_glyph(
         .into_iter()
         .collect();
 
-    // Log the design location for debugging
-    web_sys::console::log_1(
-        &format!(
-            "[Rust] Interpolating '{}' at USER location: {:?}, DESIGN location: {:?}",
-            glyph_name, location_map, design_location
-        )
-        .into(),
-    );
-
     // Get the glyph to check if it has components
     let glyph = font
         .glyphs
@@ -83,13 +74,6 @@ pub fn interpolate_glyph(
 
     let interpolated_layer = if has_components {
         // For glyphs with components, manually interpolate to preserve component transforms
-        web_sys::console::log_1(
-            &format!(
-                "[Rust] Glyph '{}' has components, using manual interpolation",
-                glyph_name
-            )
-            .into(),
-        );
         manually_interpolate_layer(font, glyph, &design_location)
             .map_err(|e| JsValue::from_str(&format!("Manual interpolation failed: {}", e)))?
     } else {
@@ -149,25 +133,9 @@ fn manually_interpolate_layer(
         })
         .collect();
 
-    web_sys::console::log_1(
-        &format!(
-            "[Rust] Found {} master layers for manual interpolation",
-            masters.len()
-        )
-        .into(),
-    );
-
     if masters.is_empty() {
         return Err("No master layers found with locations".to_string());
     }
-
-    web_sys::console::log_1(
-        &format!(
-            "[Rust] Reference layer has {} shapes",
-            masters[0].0.shapes.len()
-        )
-        .into(),
-    );
 
     // Get target value for first axis
     let target_value = target_location
@@ -182,19 +150,6 @@ fn manually_interpolate_layer(
 
     // Interpolate each shape
     for (shape_idx, reference_shape) in reference_layer.shapes.iter().enumerate() {
-        web_sys::console::log_1(
-            &format!(
-                "[Rust] Processing shape {}: {:?}",
-                shape_idx,
-                match reference_shape {
-                    Shape::Component(c) => format!("Component({})", c.reference),
-                    Shape::Path(_) => "Path".to_string(),
-                    _ => "Other".to_string(),
-                }
-            )
-            .into(),
-        );
-
         match reference_shape {
             Shape::Component(ref_comp) => {
                 // Collect transforms from all masters for this component
@@ -210,25 +165,6 @@ fn manually_interpolate_layer(
                         })
                     })
                     .collect();
-
-                web_sys::console::log_1(
-                    &format!(
-                        "[Rust] Collected {} transforms for component '{}'",
-                        master_transforms.len(),
-                        ref_comp.reference
-                    )
-                    .into(),
-                );
-
-                if !master_transforms.is_empty() {
-                    web_sys::console::log_1(
-                        &format!(
-                            "[Rust] First transform: {:?}",
-                            master_transforms[0].0.as_coeffs()
-                        )
-                        .into(),
-                    );
-                }
 
                 // Interpolate the transform
                 let interpolated_transform = if master_transforms.len() >= 2 {
@@ -634,27 +570,6 @@ fn serialize_layer_recursive(
     // First serialize the layer to JSON
     let mut layer_json: JsonValue = serde_json::to_value(layer)
         .map_err(|e| format!("Failed to serialize layer: {}", e))?;
-
-    // Log to verify component transforms are preserved in JSON
-    if let Some(shapes) = layer_json.get("shapes") {
-        if let Some(shapes_array) = shapes.as_array() {
-            for (i, shape_json) in shapes_array.iter().enumerate() {
-                if let Some(component) = shape_json.get("Component") {
-                    if let Some(reference) = component.get("reference") {
-                        if let Some(transform) = component.get("transform") {
-                            web_sys::console::log_1(
-                                &format!(
-                                    "[Rust] After JSON serialization: Component {} '{}' has transform: {:?}",
-                                    i, reference, transform
-                                )
-                                .into(),
-                            );
-                        }
-                    }
-                }
-            }
-        }
-    }
 
     // Get mutable access to shapes array
     if let Some(shapes) = layer_json.get_mut("shapes") {
