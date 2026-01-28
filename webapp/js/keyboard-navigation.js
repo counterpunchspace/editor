@@ -657,8 +657,8 @@
                 if (window.resizableViews) {
                     window.resizableViews.saveLayout();
                 }
-                // Focus editor if we collapsed any view (except editor itself)
-                if (viewId !== 'view-editor') {
+                // Focus editor only if we collapsed the currently active view
+                if (viewId === currentFocusedView && viewId !== 'view-editor') {
                     focusView('view-editor');
                 }
             }, settings.animation.duration);
@@ -667,8 +667,8 @@
             if (window.resizableViews) {
                 window.resizableViews.saveLayout();
             }
-            // Focus editor if we collapsed any view (except editor itself)
-            if (viewId !== 'view-editor') {
+            // Focus editor only if we collapsed the currently active view
+            if (viewId === currentFocusedView && viewId !== 'view-editor') {
                 focusView('view-editor');
             }
         }
@@ -1491,6 +1491,7 @@
         init();
     }
 
-    // Expose focusView globally for other scripts
+    // Expose focusView and getCurrentFocusedView globally for other scripts
     window.focusView = focusView;
+    window.getCurrentFocusedView = () => currentFocusedView;
 })();
