@@ -64,6 +64,8 @@
     --background-custom-name-highlight: rgba(255, 255, 255, 0.1);
     --background-hover: #333333;
     --background-editor-sidebar: #141414;
+    --glyph-tile-selected-active: #4a4a4a;
+    --glyph-tile-selected-inactive: #3B3B3B;
     --view-editor: #00aeef;
     --view-assistant: #ef4136;
     --view-console: #fbc540;
@@ -139,6 +141,8 @@
     --background-custom-name-highlight: rgba(0, 0, 0, 0.1);
     --background-hover: #d8d8d8;
     --background-editor-sidebar: #fcfcfc;
+    --glyph-tile-selected-active: #eeeeee;
+    --glyph-tile-selected-inactive: #dbdbdb;
     --view-editor: #00aeef;
     --view-assistant: #ef4136;
     --view-console: #fbc540;

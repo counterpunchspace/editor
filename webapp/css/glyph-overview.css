@@ -40,16 +40,16 @@
 //    background-color: color-mix(in srgb, var(--background-secondary) 70%, white);
 }
 
-/* Selected state */
+/* Selected state (inactive view) */
 .glyph-tile.selected {
-    background-color: var(--background-active);
+    background-color: var(--glyph-tile-selected-inactive);
     border: 0px solid var(--border-primary);
 }
 
-/* Lighter background for unselected tiles when overview view is focused */
+/* Selected state (active/focused view) */
 .view-overview.focused .glyph-tile.selected,
 .view-overview.focused .glyph-tile.selected .glyph-tile-label {
-    background-color: var(--background-secondary);
+    background-color: var(--glyph-tile-selected-active);
 }
 
 /* Glyph tile label */
