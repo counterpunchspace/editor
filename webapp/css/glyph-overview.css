@@ -213,11 +213,11 @@
 }
 
 .glyph-filter-legend-item:hover {
-    background-color: var(--background-hover);
+    background-color: var(--background-tertiary);
 }
 
 .glyph-filter-legend-item.active {
-    background-color: var(--background-tertiary);
+    background-color: var(--background-hover);
 }
 
 .glyph-filter-legend-circle {
@@ -266,10 +266,6 @@
     user-select: none;
 }
 
-.glyph-filter-node-header:hover {
-    background-color: var(--background-hover);
-}
-
 .glyph-filter-toggle {
     font-size: 14px;
     color: var(--text-secondary);
@@ -289,7 +285,7 @@
 .glyph-filter-node-label {
     font-size: 9px;
     font-weight: 700;
-    color: var(--text-secondary);
+    color: var(--text-faint);
     text-transform: uppercase;
     letter-spacing: 0.5px;
 }
@@ -311,16 +307,16 @@
 }
 
 .glyph-filter-item:hover {
-    background-color: var(--background-hover);
+    background-color: color-mix(in srgb, var(--background-hover) 50%, transparent);
 }
 
 .glyph-filter-item.active {
-    background-color: var(--accent-blue);
+    background-color: var(--background-hover);
 }
 
 .glyph-filter-item.active .glyph-filter-item-label,
 .glyph-filter-item.active .glyph-filter-item-count {
-    color: #ffffff;
+    color: var(--text-primary);
 }
 
 .glyph-filter-item-label {
