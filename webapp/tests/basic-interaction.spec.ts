@@ -62,7 +62,8 @@ test.describe('Font Editor Basic Workflow', () => {
             page,
             '01',
             'initial-state',
-            expect
+            expect,
+            0.02
         );
 
         // Activate files view with Cmd+Shift+F

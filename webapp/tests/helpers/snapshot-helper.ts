@@ -220,7 +220,8 @@ export async function takeSnapshot(
     page: any,
     snapshotNumber: string,
     label: string,
-    expect: any
+    expect: any,
+    maxDiffPixelRatio?: number
 ): Promise<any> {
     // Wait 100ms for rendering to stabilize
     await page.waitForTimeout(100);
@@ -233,12 +234,13 @@ export async function takeSnapshot(
         `${snapshotNumber}-${label}.json`
     );
 
-    // Assert PNG screenshot with threshold to handle minor cursor/rendering differences
+    // Assert PNG screenshot with optional threshold
+    const screenshotOptions =
+        maxDiffPixelRatio !== undefined ? { maxDiffPixelRatio } : {};
+
     await expect(
         page.locator('#glyph-canvas-container canvas')
-    ).toHaveScreenshot(`${snapshotNumber}-${label}.png`, {
-        maxDiffPixelRatio: 0.001 // Allow 0.1% pixel difference for cursor jitter
-    });
+    ).toHaveScreenshot(`${snapshotNumber}-${label}.png`, screenshotOptions);
 
     return snapshot;
 }
