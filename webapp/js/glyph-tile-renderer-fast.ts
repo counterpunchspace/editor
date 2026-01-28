@@ -114,8 +114,8 @@ class FastGlyphTileRenderer {
             return canvas;
         }
 
-        // Scale to fit metrics height in drawing area
-        const scale = (drawHeight - padding * 2) / metricsHeight;
+        // Scale to fit metrics height in drawing area (0.7 factor to draw 30% smaller)
+        const scale = ((drawHeight - padding * 2) / metricsHeight) * 0.7;
 
         // Center horizontally based on glyph visual bounds
         const bounds = glyphData.bounds;
@@ -123,8 +123,8 @@ class FastGlyphTileRenderer {
         const tileCenterX = drawWidth / 2;
         const offsetX = tileCenterX - glyphVisualCenterX * scale;
 
-        // Y offset: position so ascender is at top of drawing area
-        const offsetY = padding + ascender * scale;
+        // Y offset: position so ascender is at top of drawing area, shifted down 20% of tile height
+        const offsetY = padding + ascender * scale + height * 0.2;
 
         ctx.save();
         ctx.translate(offsetX, offsetY);
