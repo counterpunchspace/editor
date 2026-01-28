@@ -3,6 +3,9 @@
 // Uses direct canvas rendering for fast display
 
 import { fastGlyphTileRenderer } from './glyph-tile-renderer-fast';
+// Import filter manager to bundle it with glyph-overview entry point
+// It self-registers on window.glyphOverviewFilterManager
+import './glyph-overview-filters';
 
 // Use the shared fontCompilation instance from window (set by bootstrap)
 // Do NOT import from './font-compilation' as this is a separate webpack entry point
@@ -16,6 +19,15 @@ interface GlyphTile {
     selected: boolean;
     cachedData?: any; // Cached glyph outline data for resizing
     canvas?: HTMLCanvasElement; // Reusable canvas element
+    filterColor?: string; // Background overlay color from active filter
+}
+
+/**
+ * Filter result from glyph filter plugins
+ */
+export interface FilterResult {
+    glyph_name: string;
+    color?: string;
 }
 
 class GlyphOverview {
@@ -47,6 +59,10 @@ class GlyphOverview {
     // Search control
     private searchInput: HTMLInputElement | null = null;
     private searchTerms: string[] = [];
+    // Active filter
+    private activeFilterResults: Map<string, FilterResult> | null = null;
+    // Error overlay for filter errors
+    private errorOverlay: HTMLDivElement | null = null;
 
     constructor(parentElement: HTMLElement) {
         this.init(parentElement);
@@ -183,21 +199,24 @@ class GlyphOverview {
     private applySearchFilter(): void {
         if (!this.container) return;
 
-        // If no search terms, show all tiles
-        if (this.searchTerms.length === 0) {
-            this.tiles.forEach((tile) => {
-                tile.element.style.display = '';
-            });
-            return;
-        }
-
-        // Filter tiles: show only those matching ALL search terms (AND search)
         this.tiles.forEach((tile) => {
-            const glyphNameLower = tile.glyphName.toLowerCase();
-            const matchesAllTerms = this.searchTerms.every((term) =>
-                glyphNameLower.includes(term)
-            );
-            tile.element.style.display = matchesAllTerms ? '' : 'none';
+            // Check filter first
+            const passesFilter =
+                this.activeFilterResults === null ||
+                this.activeFilterResults.has(tile.glyphName);
+
+            // Check search terms
+            let passesSearch = true;
+            if (this.searchTerms.length > 0) {
+                const glyphNameLower = tile.glyphName.toLowerCase();
+                passesSearch = this.searchTerms.every((term) =>
+                    glyphNameLower.includes(term)
+                );
+            }
+
+            // Must pass both filter AND search
+            tile.element.style.display =
+                passesFilter && passesSearch ? '' : 'none';
         });
     }
 
@@ -987,6 +1006,151 @@ class GlyphOverview {
                 this.selectTile(tile.glyphId);
             }
         });
+    }
+
+    /**
+     * Show a filter error overlay instead of glyphs
+     * @param pluginName - Name of the plugin that errored
+     * @param error - Error message or object
+     */
+    public showFilterError(pluginName: string, error: any): void {
+        this.clearFilterError();
+
+        // Create error overlay
+        this.errorOverlay = document.createElement('div');
+        this.errorOverlay.className = 'glyph-overview-error-overlay';
+
+        const errorContent = document.createElement('div');
+        errorContent.className = 'glyph-overview-error-content';
+
+        const icon = document.createElement('span');
+        icon.className = 'material-symbols-outlined glyph-overview-error-icon';
+        icon.textContent = 'error';
+
+        const title = document.createElement('div');
+        title.className = 'glyph-overview-error-title';
+        title.textContent = `Filter "${pluginName}" Error`;
+
+        const message = document.createElement('pre');
+        message.className = 'glyph-overview-error-message';
+        // Extract error message
+        let errorText = '';
+        if (error instanceof Error) {
+            errorText = error.message;
+            if (error.stack) {
+                errorText += '\n\n' + error.stack;
+            }
+        } else if (typeof error === 'string') {
+            errorText = error;
+        } else if (error && error.toString) {
+            errorText = error.toString();
+        } else {
+            errorText = JSON.stringify(error, null, 2);
+        }
+        message.textContent = errorText;
+
+        errorContent.appendChild(icon);
+        errorContent.appendChild(title);
+        errorContent.appendChild(message);
+        this.errorOverlay.appendChild(errorContent);
+
+        // Hide tiles and show error
+        if (this.container) {
+            this.container.style.display = 'none';
+            this.container.parentElement?.appendChild(this.errorOverlay);
+        }
+    }
+
+    /**
+     * Clear the filter error overlay and show tiles again
+     */
+    public clearFilterError(): void {
+        if (this.errorOverlay) {
+            this.errorOverlay.remove();
+            this.errorOverlay = null;
+        }
+        if (this.container) {
+            this.container.style.display = '';
+        }
+    }
+
+    /**
+     * Set the active filter and apply visibility/colors
+     * @param results - Array of filter results or null to clear filter
+     */
+    public setActiveFilter(results: FilterResult[] | null): void {
+        // Clear any previous error
+        this.clearFilterError();
+
+        if (results === null) {
+            // Clear filter
+            this.activeFilterResults = null;
+            this.clearFilterColors();
+        } else {
+            // Build map for fast lookup by glyph name
+            this.activeFilterResults = new Map();
+            for (const result of results) {
+                this.activeFilterResults.set(result.glyph_name, result);
+            }
+            this.applyFilterColors();
+        }
+
+        // Re-apply combined filter + search
+        this.applySearchFilter();
+    }
+
+    /**
+     * Apply filter colors to tiles as background overlay
+     */
+    private applyFilterColors(): void {
+        if (!this.activeFilterResults) return;
+
+        this.tiles.forEach((tile) => {
+            const result = this.activeFilterResults!.get(tile.glyphName);
+            if (result && result.color) {
+                tile.filterColor = result.color;
+                // Apply as CSS custom property for blending with selection
+                tile.element.style.setProperty(
+                    '--filter-color',
+                    this.hexToRgba(result.color, 0.25)
+                );
+            } else {
+                tile.filterColor = undefined;
+                tile.element.style.setProperty('--filter-color', 'transparent');
+            }
+        });
+    }
+
+    /**
+     * Clear filter colors from all tiles
+     */
+    private clearFilterColors(): void {
+        this.tiles.forEach((tile) => {
+            tile.filterColor = undefined;
+            tile.element.style.setProperty('--filter-color', 'transparent');
+        });
+    }
+
+    /**
+     * Convert hex color to rgba with alpha
+     */
+    private hexToRgba(hex: string, alpha: number): string {
+        // Remove # if present
+        hex = hex.replace(/^#/, '');
+
+        // Parse hex values
+        let r: number, g: number, b: number;
+        if (hex.length === 3) {
+            r = parseInt(hex[0] + hex[0], 16);
+            g = parseInt(hex[1] + hex[1], 16);
+            b = parseInt(hex[2] + hex[2], 16);
+        } else {
+            r = parseInt(hex.slice(0, 2), 16);
+            g = parseInt(hex.slice(2, 4), 16);
+            b = parseInt(hex.slice(4, 6), 16);
+        }
+
+        return `rgba(${r}, ${g}, ${b}, ${alpha})`;
     }
 
     public destroy(): void {

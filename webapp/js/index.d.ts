@@ -81,6 +81,20 @@ declare global {
             updatePluginList: () => void;
         };
 
+        // From glyph-overview-filters.ts
+        glyphOverviewFilterManager: {
+            initialize: (
+                sidebarContainer: HTMLElement,
+                glyphOverview: any
+            ) => void;
+            discoverPlugins: () => Promise<void>;
+            refreshPlugins: () => Promise<void>;
+            getPlugins: () => any[];
+            isLoaded: () => boolean;
+            getActiveFilter: () => any | null;
+            clearActiveFilter: () => void;
+        };
+
         // From file-browser.js
         navigateToPath: (
             path: string,

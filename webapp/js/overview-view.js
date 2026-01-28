@@ -1,5 +1,7 @@
 // Overview View
 // Handles overview view initialization with sidebar and glyph overview
+// Note: glyphOverviewFilterManager is loaded via glyph-overview.ts bundle
+// and available on window.glyphOverviewFilterManager
 
 console.log('[OverviewView]', 'overview-view.js loaded');
 
@@ -31,17 +33,39 @@ function initOverviewView() {
         leftSidebar.style.gap = '12px';
         leftSidebar.style.flexShrink = '0'; // Prevent sidebar from shrinking
 
-        // Create main content area
+        // Create filter sidebar container
+        const filterSidebarContainer = document.createElement('div');
+        filterSidebarContainer.id = 'overview-filters';
+        leftSidebar.appendChild(filterSidebarContainer);
+
+        // Create main content area with flex column layout
         const mainContent = document.createElement('div');
         mainContent.id = 'overview-main';
         mainContent.style.flex = '1';
         mainContent.style.height = '100%';
         mainContent.style.position = 'relative';
         mainContent.style.overflow = 'hidden';
+        mainContent.style.display = 'flex';
+        mainContent.style.flexDirection = 'column';
 
-        // Initialize glyph overview
+        // Create color legend container (hidden by default, shown when filter has colors)
+        const colorLegendContainer = document.createElement('div');
+        colorLegendContainer.id = 'overview-color-legend';
+        colorLegendContainer.className = 'glyph-filter-legend';
+        colorLegendContainer.style.display = 'none';
+        mainContent.appendChild(colorLegendContainer);
+
+        // Create glyph container that will hold the glyph overview
+        const glyphContainer = document.createElement('div');
+        glyphContainer.id = 'overview-glyph-container';
+        glyphContainer.style.flex = '1';
+        glyphContainer.style.overflow = 'hidden';
+        glyphContainer.style.position = 'relative';
+        mainContent.appendChild(glyphContainer);
+
+        // Initialize glyph overview in the glyph container
         if (window.GlyphOverview) {
-            glyphOverviewInstance = new window.GlyphOverview(mainContent);
+            glyphOverviewInstance = new window.GlyphOverview(glyphContainer);
 
             // Populate with current font glyphs if available
             if (window.currentFontModel?.glyphs) {
@@ -75,6 +99,15 @@ function initOverviewView() {
             console.warn(
                 '[OverviewView]',
                 'GlyphOverview class not available yet'
+            );
+        }
+
+        // Initialize filter manager with sidebar and glyph overview
+        if (glyphOverviewInstance && window.glyphOverviewFilterManager) {
+            window.glyphOverviewFilterManager.initialize(
+                filterSidebarContainer,
+                glyphOverviewInstance,
+                colorLegendContainer
             );
         }
 
@@ -147,6 +180,11 @@ window.addEventListener('fontReady', async () => {
                     '[OverviewView]',
                     `Rendered ${glyphData.length} glyph tiles`
                 );
+
+                // Refresh filter plugins after font load
+                if (window.glyphOverviewFilterManager?.isLoaded()) {
+                    await window.glyphOverviewFilterManager.refreshPlugins();
+                }
             } catch (error) {
                 console.error(
                     '[OverviewView]',

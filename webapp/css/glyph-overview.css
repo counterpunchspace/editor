@@ -18,6 +18,7 @@
 
 /* Glyph tile base styles */
 .glyph-tile {
+    --filter-color: transparent;
     width: var(--tile-width);
     height: var(--tile-height);
     border-radius: 3px;
@@ -29,6 +30,7 @@
     padding: 0px;
     box-sizing: border-box;
     overflow: hidden;
+    background-color: var(--filter-color);
     /* No transition - instant color changes prevent flickering on view focus change */
     /* Performance: skip rendering of off-screen tiles */
     content-visibility: auto;
@@ -42,14 +44,16 @@
 
 /* Selected state (inactive view) */
 .glyph-tile.selected {
-    background-color: var(--glyph-tile-selected-inactive);
+    background-color: color-mix(in srgb, var(--filter-color), var(--glyph-tile-selected-inactive));
     border: 0px solid var(--border-primary);
 }
 
 /* Selected state (active/focused view) */
-.view-overview.focused .glyph-tile.selected,
+.view-overview.focused .glyph-tile.selected {
+    background-color: color-mix(in srgb, var(--filter-color), var(--glyph-tile-selected-active));
+}
 .view-overview.focused .glyph-tile.selected .glyph-tile-label {
-    background-color: var(--glyph-tile-selected-active);
+    background-color: transparent;
 }
 
 /* Glyph tile label */
@@ -185,3 +189,217 @@
     color: var(--text-faint);
     opacity: 0.5;
 }
+
+/* ========================================
+   Glyph Filter Sidebar Styles
+   ======================================== */
+
+/* Color Legend */
+.glyph-filter-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 8px;
+    padding: 6px 6px;
+    border-bottom: 1px solid var(--border-primary);
+}
+
+.glyph-filter-legend-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 8px;
+    border-radius: 4px;
+    transition: background-color 0.1s ease;
+}
+
+.glyph-filter-legend-item:hover {
+    background-color: var(--background-hover);
+}
+
+.glyph-filter-legend-item.active {
+    background-color: var(--background-tertiary);
+}
+
+.glyph-filter-legend-circle {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    flex-shrink: 0;
+}
+
+.glyph-filter-legend-label {
+    font-size: 11px;
+    color: var(--text-primary);
+    white-space: nowrap;
+}
+
+.glyph-filter-legend-count {
+    font-size: 10px;
+    background-color: var(--background-tertiary);
+    color: var(--text-secondary);
+    padding: 1px 5px;
+    border-radius: 8px;
+    margin-left: auto;
+}
+
+.glyph-filter-tree {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    margin-left: -9px;
+    margin-right: -9px;
+    margin-top: 10px;
+}
+
+.glyph-filter-node {
+    display: flex;
+    flex-direction: column;
+}
+
+.glyph-filter-node-header {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    padding: 3px 4px;
+    cursor: pointer;
+    border-radius: 4px;
+    user-select: none;
+}
+
+.glyph-filter-node-header:hover {
+    background-color: var(--background-hover);
+}
+
+.glyph-filter-toggle {
+    font-size: 14px;
+    color: var(--text-secondary);
+    flex-shrink: 0;
+    width: 14px;
+    height: 14px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.glyph-filter-node-label {
+    font-size: 9px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.glyph-filter-node-content {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+}
+
+.glyph-filter-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 3px 6px;
+    cursor: pointer;
+    border-radius: 4px;
+    user-select: none;
+    transition: background-color 0.1s ease;
+}
+
+.glyph-filter-item:hover {
+    background-color: var(--background-hover);
+}
+
+.glyph-filter-item.active {
+    background-color: var(--accent-blue);
+}
+
+.glyph-filter-item.active .glyph-filter-item-label,
+.glyph-filter-item.active .glyph-filter-item-count {
+    color: #ffffff;
+}
+
+.glyph-filter-item-label {
+    font-size: 11px;
+    color: var(--text-primary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.glyph-filter-item-count {
+    font-size: 10px;
+    color: var(--text-secondary);
+    background-color: var(--background-tertiary);
+    padding: 1px 5px;
+    border-radius: 8px;
+    min-width: 20px;
+    text-align: center;
+    flex-shrink: 0;
+}
+
+.glyph-filter-item-count.has-error {
+    background-color: transparent;
+    padding: 0;
+    min-width: auto;
+}
+
+.glyph-filter-error-icon {
+    font-size: 16px;
+    color: var(--status-error);
+}
+
+.glyph-filter-item.active .glyph-filter-item-count {
+    background-color: rgba(255, 255, 255, 0.2);
+}
+
+/* Filter Error Overlay */
+.glyph-overview-error-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background-color: var(--background-primary);
+    overflow: auto;
+    padding: 20px;
+}
+
+.glyph-overview-error-content {
+    max-width: 600px;
+    text-align: center;
+}
+
+.glyph-overview-error-icon {
+    font-size: 48px;
+    color: var(--status-error);
+    margin-bottom: 12px;
+}
+
+.glyph-overview-error-title {
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin-bottom: 12px;
+}
+
+.glyph-overview-error-message {
+    font-family: 'SF Mono', Menlo, Monaco, 'Courier New', monospace;
+    font-size: 12px;
+    color: var(--text-secondary);
+    background-color: var(--background-secondary);
+    border: 1px solid var(--border-primary);
+    border-radius: 6px;
+    padding: 12px 16px;
+    text-align: left;
+    white-space: pre-wrap;
+    word-break: break-word;
+    overflow-x: auto;
+    max-height: 400px;
+    overflow-y: auto;
+    margin: 0;
+}
+

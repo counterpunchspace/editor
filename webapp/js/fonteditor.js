@@ -123,6 +123,23 @@ async function initFontEditor() {
             }
         }
 
+        // Discover glyph filter plugins
+        if (window.updateLoadingStatus) {
+            window.updateLoadingStatus('Loading glyph filter plugins...');
+        }
+        if (window.glyphOverviewFilterManager) {
+            try {
+                await window.glyphOverviewFilterManager.discoverPlugins();
+            } catch (error) {
+                console.error(
+                    '[FontEditor]',
+                    'Failed to discover glyph filter plugins:',
+                    error
+                );
+                // Continue anyway - plugins are optional
+            }
+        }
+
         // Load example fonts into /user folder
         if (window.loadExampleFonts) {
             try {
