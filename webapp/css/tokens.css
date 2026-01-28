@@ -76,8 +76,8 @@
     --button-hover-bg: #333333;
     --button-border: #555555;
     --button-bg: #2a2a2a;
-    --glyph-overview-component-color: #49b9deff;
-    --glyph-overview-path-color: #dddddd;
+    --glyph-overview-component-color: #75b5c6;
+    --glyph-overview-path-color: #aaaaaa;
 }
 
 /* Light theme */
@@ -151,6 +151,6 @@
     --button-hover-bg: #e0e0e0;
     --button-border: #b0b0b0;
     --button-bg: #f0f0f0;
-    --glyph-overview-component-color: #49b9deff;
-    --glyph-overview-path-color: #222222;
+    --glyph-overview-component-color: #75b5c6;
+    --glyph-overview-path-color: #777777;
 }
