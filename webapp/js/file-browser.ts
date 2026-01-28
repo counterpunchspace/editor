@@ -19,6 +19,9 @@ import { updateUrlState } from './url-state';
 
 const LAST_CONTEXT_KEY = 'last-filesystem-context';
 
+// Files/folders to hide from the file browser (applies to all plugins)
+const HIDDEN_FILES: string[] = ['.DS_Store'];
+
 function getPathStorageKey(pluginId: string): string {
     return `last-path-${pluginId}`;
 }
@@ -285,6 +288,14 @@ function createFileContextMenuHtml(
         `);
     }
 
+    // Rename (for both files and folders)
+    items.push(`
+        <div class="plugin-menu-item" data-action="rename">
+            <span class="material-symbols-outlined">edit</span>
+            <span>Rename</span>
+        </div>
+    `);
+
     // Delete (for both files and folders)
     items.push(`
         <div class="plugin-menu-item" data-action="delete">
@@ -393,6 +404,9 @@ function setupFileContextMenus() {
                                     break;
                                 case 'download':
                                     await downloadFile(path, name);
+                                    break;
+                                case 'rename':
+                                    await renameItem(path, name, isDir);
                                     break;
                                 case 'delete':
                                     await deleteItem(path, name, isDir);
@@ -938,6 +952,32 @@ async function deleteItem(itemPath: string, itemName: string, isDir: boolean) {
     }
 }
 
+async function renameItem(itemPath: string, itemName: string, isDir: boolean) {
+    const itemType = isDir ? 'folder' : 'file';
+    const newName = prompt(`Rename ${itemType} "${itemName}" to:`, itemName);
+
+    if (!newName || newName === itemName) return;
+
+    // Validate new name
+    if (newName.includes('/') || newName.includes('\\')) {
+        alert('Name cannot contain / or \\ characters');
+        return;
+    }
+
+    try {
+        await fileSystemCache.activeAdapter.renameItem(
+            itemPath,
+            newName,
+            isDir
+        );
+        console.log('[FileBrowser]', `Renamed: ${itemPath} -> ${newName}`);
+        await refreshFileSystem();
+    } catch (error: any) {
+        console.error('[FileBrowser]', 'Error renaming item:', error);
+        alert(`Error renaming item: ${error.message}`);
+    }
+}
+
 async function uploadFiles(
     files: File[] | FileList,
     directory: string | null = null
@@ -999,12 +1039,14 @@ async function buildFileTree(rootPath = '/') {
     <input type="file" id="folder-upload-input" webkitdirectory directory multiple style="display: none;" 
            onchange="handleFileUpload(event)">`;
 
-    // Sort: directories first, then files
-    const sortedItems = Object.entries(items).sort(([a, aData], [b, bData]) => {
-        if (aData.is_dir && !bData.is_dir) return -1;
-        if (!aData.is_dir && bData.is_dir) return 1;
-        return a.localeCompare(b);
-    });
+    // Filter out hidden files, then sort: directories first, then files
+    const sortedItems = Object.entries(items)
+        .filter(([name]) => !HIDDEN_FILES.includes(name))
+        .sort(([a, aData], [b, bData]) => {
+            if (aData.is_dir && !bData.is_dir) return -1;
+            if (!aData.is_dir && bData.is_dir) return 1;
+            return a.localeCompare(b);
+        });
 
     // Get current font path for highlighting
     const currentFontPath = window.fontManager?.currentFont?.path || null;
@@ -1819,6 +1861,54 @@ window.addEventListener('pluginFolderClosed', async () => {
         });
         updatePluginMenuButtonVisibility(currentPlugin);
     }
+});
+
+// Listen for disk file system changes (FileSystemObserver)
+window.addEventListener('diskFilesChanged', async () => {
+    const { currentPlugin, currentPath, activeAdapter } = fileSystemCache;
+
+    // Only respond if we're currently in disk context
+    if (currentPlugin.getId() !== 'disk') {
+        return;
+    }
+
+    console.log('[FileBrowser]', 'Disk files changed, refreshing...');
+
+    // Check if current path still exists, walk up if not
+    let targetPath = currentPath;
+    while (targetPath !== '/') {
+        try {
+            const exists = await activeAdapter.fileExists(targetPath);
+            if (exists) {
+                break;
+            }
+        } catch {
+            // Path doesn't exist or error checking
+        }
+        // Walk up to parent
+        targetPath =
+            targetPath.substring(0, targetPath.lastIndexOf('/')) || '/';
+        console.log(
+            '[FileBrowser]',
+            `Current folder gone, trying parent: ${targetPath}`
+        );
+    }
+
+    // Update cached path if we had to walk up
+    if (targetPath !== currentPath) {
+        fileSystemCache.currentPath = targetPath;
+        try {
+            localStorage.setItem(
+                getPathStorageKey(currentPlugin.getId()),
+                targetPath
+            );
+        } catch (e) {
+            // Ignore localStorage errors
+        }
+    }
+
+    // Refresh the view
+    await navigateToPath(targetPath);
 });
 
 // Listen for font loaded event to refresh file browser highlighting

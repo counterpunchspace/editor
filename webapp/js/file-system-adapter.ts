@@ -18,6 +18,7 @@ export interface FileSystemAdapter {
     writeFile(path: string, content: string | Uint8Array): Promise<void>;
     createFolder(path: string): Promise<void>;
     deleteItem(path: string, isDir: boolean): Promise<void>;
+    renameItem(oldPath: string, newName: string, isDir: boolean): Promise<void>;
     fileExists(path: string): Promise<boolean>;
     checkPermission?(): Promise<PermissionState>;
     requestPermission?(): Promise<PermissionState>;
@@ -92,6 +93,19 @@ export class OPFSAdapter implements FileSystemAdapter {
     async deleteItem(path: string, isDir: boolean): Promise<void> {
         const fs = await this.getFS();
         await fs.remove(path, { recursive: isDir });
+    }
+
+    async renameItem(
+        oldPath: string,
+        newName: string,
+        isDir: boolean
+    ): Promise<void> {
+        const fs = await this.getFS();
+        const parentPath =
+            oldPath.substring(0, oldPath.lastIndexOf('/')) || '/';
+        const newPath =
+            parentPath === '/' ? `/${newName}` : `${parentPath}/${newName}`;
+        await fs.rename(oldPath, newPath);
     }
 
     async fileExists(path: string): Promise<boolean> {
@@ -344,6 +358,41 @@ export class NativeAdapter implements FileSystemAdapter {
         }
 
         await currentHandle.removeEntry(fileName, { recursive: isDir });
+    }
+
+    async renameItem(
+        oldPath: string,
+        newName: string,
+        isDir: boolean
+    ): Promise<void> {
+        if (!this.directoryHandle) {
+            throw new Error('No directory selected');
+        }
+
+        const normalizedPath = oldPath.replace(/^\/+/, '');
+        const parts = normalizedPath.split('/');
+        const oldName = parts.pop()!;
+
+        // Get parent directory handle
+        let parentHandle: FileSystemDirectoryHandle = this.directoryHandle;
+        for (const part of parts) {
+            parentHandle = await parentHandle.getDirectoryHandle(part);
+        }
+
+        // File System Access API doesn't have a rename method
+        // We need to use move() which is available in modern browsers
+        const sourceHandle = isDir
+            ? await parentHandle.getDirectoryHandle(oldName)
+            : await parentHandle.getFileHandle(oldName);
+
+        // Use the move() method (Chrome 110+)
+        if ('move' in sourceHandle) {
+            await (sourceHandle as any).move(newName);
+        } else {
+            throw new Error(
+                'Rename not supported in this browser. Please use Chrome 110+ or Edge 110+.'
+            );
+        }
     }
 
     async getFileHandle(path: string): Promise<FileSystemFileHandle | null> {

@@ -177,6 +177,8 @@ export class MemoryPlugin extends FilesystemPlugin {
  */
 export class DiskPlugin extends FilesystemPlugin {
     private nativeAdapter: NativeAdapter;
+    private fileSystemObserver: any = null;
+    private observerSupported: boolean = 'FileSystemObserver' in window;
 
     constructor() {
         const adapter = new NativeAdapter();
@@ -215,7 +217,76 @@ export class DiskPlugin extends FilesystemPlugin {
             return false;
         }
 
+        // Set up file system observer
+        await this.setupFileSystemObserver();
+
         return true;
+    }
+
+    async onDeactivate(): Promise<void> {
+        this.disconnectObserver();
+    }
+
+    /**
+     * Set up FileSystemObserver to watch for changes in the selected directory
+     */
+    private async setupFileSystemObserver(): Promise<void> {
+        this.disconnectObserver();
+
+        if (!this.observerSupported) {
+            console.log(
+                '[DiskPlugin] FileSystemObserver not supported, changes require manual refresh'
+            );
+            return;
+        }
+
+        try {
+            const rootHandle = await this.nativeAdapter.getHandleAtPath('/');
+            if (!rootHandle || rootHandle.kind !== 'directory') {
+                console.log(
+                    '[DiskPlugin] Cannot get root directory handle for observer'
+                );
+                return;
+            }
+
+            const FileSystemObserver = (window as any).FileSystemObserver;
+            this.fileSystemObserver = new FileSystemObserver(
+                async (records: any[]) => {
+                    console.log(
+                        '[DiskPlugin] FileSystemObserver detected changes:',
+                        records.length
+                    );
+                    // Dispatch event that file-browser listens for
+                    window.dispatchEvent(new CustomEvent('diskFilesChanged'));
+                }
+            );
+
+            await this.fileSystemObserver.observe(rootHandle, {
+                recursive: true
+            });
+            console.log(
+                '[DiskPlugin] FileSystemObserver watching root directory'
+            );
+        } catch (error) {
+            console.error(
+                '[DiskPlugin] Failed to set up FileSystemObserver:',
+                error
+            );
+        }
+    }
+
+    /**
+     * Disconnect the FileSystemObserver
+     */
+    private disconnectObserver(): void {
+        if (this.fileSystemObserver) {
+            try {
+                this.fileSystemObserver.disconnect();
+            } catch (e) {
+                // Ignore disconnect errors
+            }
+            this.fileSystemObserver = null;
+        }
     }
 
     async showSetupUI(): Promise<boolean> {
@@ -224,6 +295,8 @@ export class DiskPlugin extends FilesystemPlugin {
             await this.nativeAdapter.selectDirectory();
             // Trigger title bar redraw to show dropdown button
             this.redrawTitleBarButtons();
+            // Set up file system observer for new directory
+            await this.setupFileSystemObserver();
             return true;
         } catch (error) {
             console.error('[DiskPlugin] Setup cancelled or failed:', error);
@@ -260,6 +333,7 @@ export class DiskPlugin extends FilesystemPlugin {
 
     /** Close access to current disk folder */
     async close(): Promise<void> {
+        this.disconnectObserver();
         await this.nativeAdapter.clearDirectory();
         console.log('[DiskPlugin]', 'Folder access closed');
     }
