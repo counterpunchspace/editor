@@ -29,7 +29,7 @@
     padding: 0px;
     box-sizing: border-box;
     overflow: hidden;
-    transition: background-color 0.15s ease;
+    /* No transition - instant color changes prevent flickering on view focus change */
     /* Performance: skip rendering of off-screen tiles */
     content-visibility: auto;
     contain-intrinsic-size: var(--tile-width) var(--tile-height);
