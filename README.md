@@ -73,7 +73,7 @@ Users will see an orange update notification button in the title bar within 10 m
 - ◻️ Python scripts I/O
 - ✅ Glyph overview
 - ✅ Glyph search and filtering
-- ◻️ Glyph filtering plugins
+- ✅ Glyph filtering plugins
 - ◻️ Insert glyphs into editor text
 - ◻️ OpenType feature code editor
 - ◻️ Fontspector integration (incl. glyph-level messages)
