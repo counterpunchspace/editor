@@ -60,7 +60,9 @@ class ResizableViews {
     updateCollapsedStates() {
         const views = document.querySelectorAll('.view');
         let shouldFocusEditor = false;
-        const currentFocusedView = window.getCurrentFocusedView ? window.getCurrentFocusedView() : null;
+        const currentFocusedView = window.getCurrentFocusedView
+            ? window.getCurrentFocusedView()
+            : null;
 
         views.forEach((view) => {
             // Skip the editor (primary view)
@@ -82,7 +84,11 @@ class ResizableViews {
                 view.classList.remove('collapsed');
 
                 // If this view just became collapsed and it was the focused view, mark to focus editor
-                if (isWidthCollapsed && !wasCollapsed && view.id === currentFocusedView) {
+                if (
+                    isWidthCollapsed &&
+                    !wasCollapsed &&
+                    view.id === currentFocusedView
+                ) {
                     shouldFocusEditor = true;
                 }
             } else {
@@ -94,7 +100,11 @@ class ResizableViews {
                 view.classList.remove('collapsed-width');
 
                 // If this view just became collapsed and it was the focused view, mark to focus editor
-                if (isHeightCollapsed && !wasCollapsed && view.id === currentFocusedView) {
+                if (
+                    isHeightCollapsed &&
+                    !wasCollapsed &&
+                    view.id === currentFocusedView
+                ) {
                     shouldFocusEditor = true;
                 }
             }
