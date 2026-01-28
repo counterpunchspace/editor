@@ -909,10 +909,23 @@ export class GlyphOverviewFilterManager {
                     return;
                 }
 
-                // Get font via CurrentFont() and pass to plugin
-                const font =
-                    await window.pyodide.runPythonAsync(`CurrentFont()`);
-                const resultsProxy = await instance.filter_glyphs(font);
+                // Store instance in Python global for wrapper to access
+                (window as any).pyodide.globals.set(
+                    '_plugin_instance',
+                    instance
+                );
+
+                // Execute filter and handle generator/list result
+                const resultsProxy = await window.pyodide.runPythonAsync(`
+import types
+_font = CurrentFont()
+_result = _plugin_instance.filter_glyphs(_font)
+# Convert generator to list if needed
+list(_result) if isinstance(_result, types.GeneratorType) else _result
+`);
+
+                // Clean up global
+                (window as any).pyodide.globals.delete('_plugin_instance');
 
                 // Convert results to JS
                 if (resultsProxy && resultsProxy.toJs) {
@@ -924,7 +937,7 @@ export class GlyphOverviewFilterManager {
                 colors = plugin.colors || {};
             }
 
-            // Collect used color keywords before resolving
+            // Collect used color keywords (only those with definitions for legend)
             const usedColorKeywords = new Set<string>();
             results.forEach((result) => {
                 if (result.color && colors[result.color]) {
@@ -933,12 +946,18 @@ export class GlyphOverviewFilterManager {
             });
 
             // Resolve color keywords to actual colors
+            // Priority: 1) Match color definition key → use its color value
+            //           2) No match → treat as raw CSS color value
             results = results.map((result) => {
-                if (result.color && colors[result.color]) {
-                    return {
-                        ...result,
-                        color: colors[result.color].color
-                    };
+                if (result.color) {
+                    if (colors[result.color]) {
+                        // Color matches a definition key, use the definition's color
+                        return {
+                            ...result,
+                            color: colors[result.color].color
+                        };
+                    }
+                    // No definition match, keep as raw CSS color
                 }
                 return result;
             });
@@ -999,6 +1018,7 @@ export class GlyphOverviewFilterManager {
             const result = await window.pyodide.runPythonAsync(`
 import sys
 from io import StringIO
+import types
 
 # Capture any print output
 _captured_output = StringIO()
@@ -1022,6 +1042,10 @@ try:
     
     _font = CurrentFont()
     _results = _filter_func(_font)
+    
+    # Handle generator (yield) or list (return)
+    if isinstance(_results, types.GeneratorType):
+        _results = list(_results)
     
     # Store results and colors
     _filter_result = {"results": _results, "colors": _colors}
@@ -1221,10 +1245,23 @@ _filter_result
                 const instance = plugin.instance;
                 if (!instance || !instance.filter_glyphs) return;
 
-                // Get font via CurrentFont() and pass to plugin
-                const font =
-                    await window.pyodide.runPythonAsync(`CurrentFont()`);
-                const resultsProxy = await instance.filter_glyphs(font);
+                // Store instance in Python global for wrapper to access
+                (window as any).pyodide.globals.set(
+                    '_plugin_instance',
+                    instance
+                );
+
+                // Execute filter and handle generator/list result
+                const resultsProxy = await window.pyodide.runPythonAsync(`
+import types
+_font = CurrentFont()
+_result = _plugin_instance.filter_glyphs(_font)
+# Convert generator to list if needed
+list(_result) if isinstance(_result, types.GeneratorType) else _result
+`);
+
+                // Clean up global
+                (window as any).pyodide.globals.delete('_plugin_instance');
 
                 if (resultsProxy && resultsProxy.toJs) {
                     results = resultsProxy.toJs({
