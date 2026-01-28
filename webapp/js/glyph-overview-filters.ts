@@ -2,6 +2,8 @@
 // Manages hierarchical filter sidebar with Python plugin-based dynamic filters
 
 import { Logger } from './logger';
+import { pluginRegistry } from './filesystem-plugins';
+import { NativeAdapter } from './file-system-adapter';
 
 const console = new Logger('GlyphOverviewFilters', true);
 
@@ -43,6 +45,9 @@ interface GlyphFilterPlugin {
     lastResults?: FilterResult[];
     glyphCount?: number;
     hasError?: boolean; // True if last run resulted in an error
+    isUserFilter?: boolean; // True if this is a user-defined filter from disk
+    filePath?: string; // Path to .py file for user filters
+    pythonCode?: string; // Source code for user filters
 }
 
 /**
@@ -59,6 +64,7 @@ interface TreeNode {
 
 export class GlyphOverviewFilterManager {
     private plugins: GlyphFilterPlugin[] = [];
+    private userFilters: GlyphFilterPlugin[] = [];
     private loaded: boolean = false;
     private sidebarContainer: HTMLElement | null = null;
     private colorLegendContainer: HTMLElement | null = null;
@@ -66,10 +72,15 @@ export class GlyphOverviewFilterManager {
     private activeFilter: GlyphFilterPlugin | null = null;
     private activeColorFilters: Set<string> = new Set(); // Selected color hex values for filtering
     private rootNode: TreeNode;
+    private userFiltersNode: TreeNode;
     private readonly STORAGE_KEY = 'glyphFilterActive';
+    private readonly USER_FILTERS_PATH = '/Counterpunch/Filters';
+    private fileSystemObserver: any = null; // FileSystemObserver instance
+    private observerSupported: boolean = 'FileSystemObserver' in window;
 
     constructor() {
         this.rootNode = this.buildEmptyTree();
+        this.userFiltersNode = this.buildUserFiltersTree();
         this.loadActiveState();
     }
 
@@ -108,6 +119,19 @@ export class GlyphOverviewFilterManager {
         }
 
         return root;
+    }
+
+    /**
+     * Build empty tree structure for user filters
+     */
+    private buildUserFiltersTree(): TreeNode {
+        return {
+            path: 'user',
+            displayName: 'User Filters',
+            children: new Map(),
+            plugins: [],
+            expanded: true
+        };
     }
 
     /**
@@ -322,10 +346,283 @@ export class GlyphOverviewFilterManager {
                     }
                 }
             }
+
+            // Discover user filters from disk
+            await this.discoverUserFilters();
         } catch (error) {
             console.error('Failed to discover plugins:', error);
             this.plugins = [];
         }
+    }
+
+    /**
+     * Discover user-defined filters from /Counterpunch/Filters/ on disk
+     */
+    async discoverUserFilters(): Promise<void> {
+        // Remember active user filter keyword to restore after reload
+        const activeUserFilterKeyword = this.activeFilter?.isUserFilter
+            ? this.activeFilter.keyword
+            : null;
+
+        // Reset user filters tree
+        this.userFiltersNode = this.buildUserFiltersTree();
+        this.userFilters = [];
+
+        // Get disk adapter
+        const diskPlugin = pluginRegistry.get('disk');
+        if (!diskPlugin) {
+            console.log('Disk plugin not available');
+            return;
+        }
+
+        const adapter = diskPlugin.getAdapter();
+        if (!(adapter instanceof NativeAdapter)) {
+            console.log('Disk adapter is not NativeAdapter');
+            return;
+        }
+
+        // Ensure adapter is initialized (restores directory handle from IndexedDB)
+        if (!adapter.hasDirectory()) {
+            await adapter.initialize();
+        }
+
+        // Check if disk folder is selected
+        if (!adapter.hasDirectory()) {
+            console.log('No disk folder selected');
+            return;
+        }
+
+        try {
+            // Check if /Counterpunch/Filters exists
+            const filtersPath = this.USER_FILTERS_PATH;
+            const exists = await adapter.fileExists(filtersPath);
+            if (!exists) {
+                console.log(`${filtersPath} does not exist`);
+                return;
+            }
+
+            // Scan for .py files recursively (max 3 levels)
+            const files = await adapter.listFilesRecursive(filtersPath, 3);
+            const pyFiles = files.filter((f) => f.path.endsWith('.py'));
+
+            console.log(`Found ${pyFiles.length} user filter file(s)`);
+
+            for (const file of pyFiles) {
+                try {
+                    // Read file content
+                    const content = await adapter.readFile(file.path);
+                    const code =
+                        typeof content === 'string'
+                            ? content
+                            : new TextDecoder().decode(content);
+
+                    // Extract relative path from /Counterpunch/Filters/
+                    const relativePath = file.path
+                        .substring(filtersPath.length + 1)
+                        .replace(/\.py$/, '');
+                    const pathParts = relativePath.split('/');
+                    const fileName = pathParts.pop()!;
+                    const folderPath = pathParts.join('/');
+
+                    // Parse COLORS from code (simple regex extraction)
+                    let colors: Record<string, ColorDefinition> = {};
+                    try {
+                        const colorsMatch = code.match(
+                            /COLORS\s*=\s*(\{[\s\S]*?\n\})/
+                        );
+                        if (colorsMatch) {
+                            // We'll parse colors at runtime in Python
+                        }
+                    } catch (e) {
+                        // Ignore color parsing errors
+                    }
+
+                    // Create user filter plugin
+                    const userFilter: GlyphFilterPlugin = {
+                        path: folderPath ? `user/${folderPath}` : 'user',
+                        keyword: `user.${relativePath.replace(/\//g, '.')}`,
+                        display_name: fileName,
+                        instance: null, // Will be created at runtime
+                        colors: colors,
+                        isUserFilter: true,
+                        filePath: file.path,
+                        pythonCode: code
+                    };
+
+                    this.userFilters.push(userFilter);
+
+                    // Add to user filters tree
+                    this.addUserFilterToTree(userFilter, folderPath);
+                } catch (error) {
+                    console.error(
+                        `Error loading user filter ${file.path}:`,
+                        error
+                    );
+                }
+            }
+
+            console.log(
+                `Loaded ${this.userFilters.length} user filter(s):`,
+                this.userFilters.map((f) => f.display_name)
+            );
+
+            // Restore active user filter reference if it still exists
+            if (activeUserFilterKeyword) {
+                const restoredFilter = this.userFilters.find(
+                    (f) => f.keyword === activeUserFilterKeyword
+                );
+                if (restoredFilter) {
+                    this.activeFilter = restoredFilter;
+                } else {
+                    // Filter was renamed/deleted, fall back to "All Glyphs"
+                    const allGlyphsFilter = this.plugins.find(
+                        (p) => p.keyword === 'com.context.allglyphs'
+                    );
+                    if (allGlyphsFilter) {
+                        this.activeFilter = allGlyphsFilter;
+                        // Run the filter to update glyph overview
+                        if (window.currentFontModel) {
+                            await this.runFilter(allGlyphsFilter);
+                        }
+                    }
+                }
+            }
+
+            // Re-render sidebar
+            this.renderSidebar();
+
+            // Update counts for user filters if font is loaded
+            if (window.currentFontModel) {
+                for (const filter of this.userFilters) {
+                    await this.runPluginForCount(filter);
+                }
+            }
+
+            // Set up file system observer for auto-refresh
+            await this.setupFileSystemObserver(adapter);
+        } catch (error) {
+            console.error('Error discovering user filters:', error);
+        }
+    }
+
+    /**
+     * Set up FileSystemObserver to watch for changes in the filters directory
+     */
+    private async setupFileSystemObserver(
+        adapter: NativeAdapter
+    ): Promise<void> {
+        // Disconnect existing observer if any
+        if (this.fileSystemObserver) {
+            try {
+                this.fileSystemObserver.disconnect();
+            } catch (e) {
+                // Ignore disconnect errors
+            }
+            this.fileSystemObserver = null;
+        }
+
+        // Check if FileSystemObserver is supported (Chrome 133+)
+        if (!this.observerSupported) {
+            console.log(
+                'FileSystemObserver not supported, using manual refresh'
+            );
+            return;
+        }
+
+        try {
+            // Get the filters directory handle
+            const filtersPath = this.USER_FILTERS_PATH;
+            const handle = await (adapter as any).getHandleAtPath(filtersPath);
+            if (!handle || handle.kind !== 'directory') {
+                console.log('Cannot get directory handle for observer');
+                return;
+            }
+
+            // Create observer
+            const FileSystemObserver = (window as any).FileSystemObserver;
+            this.fileSystemObserver = new FileSystemObserver(
+                async (records: any[]) => {
+                    // Check if any .py files were affected
+                    let needsRefresh = false;
+                    for (const record of records) {
+                        const name = record.changedHandle?.name || '';
+                        if (
+                            name.endsWith('.py') ||
+                            record.type === 'appeared' ||
+                            record.type === 'disappeared'
+                        ) {
+                            needsRefresh = true;
+                            break;
+                        }
+                    }
+
+                    if (needsRefresh) {
+                        console.log(
+                            'File system change detected, refreshing user filters'
+                        );
+                        // Remember if active filter is a user filter
+                        const activeUserFilterKeyword = this.activeFilter
+                            ?.isUserFilter
+                            ? this.activeFilter.keyword
+                            : null;
+
+                        // discoverUserFilters updates counts for ALL user filters
+                        await this.discoverUserFilters();
+
+                        // Also update glyph list if active filter is a user filter
+                        if (activeUserFilterKeyword) {
+                            const updatedFilter = this.userFilters.find(
+                                (f) => f.keyword === activeUserFilterKeyword
+                            );
+                            if (updatedFilter) {
+                                this.activeFilter = updatedFilter;
+                                await this.runFilter(updatedFilter);
+                            }
+                        }
+                    }
+                }
+            );
+
+            // Start observing the filters directory
+            await this.fileSystemObserver.observe(handle, { recursive: true });
+            console.log('FileSystemObserver watching', filtersPath);
+        } catch (error) {
+            console.error('Failed to set up FileSystemObserver:', error);
+        }
+    }
+
+    /**
+     * Add a user filter to the user filters tree structure
+     */
+    private addUserFilterToTree(
+        filter: GlyphFilterPlugin,
+        folderPath: string
+    ): void {
+        if (!folderPath) {
+            // Add directly to user filters root
+            this.userFiltersNode.plugins.push(filter);
+            return;
+        }
+
+        // Navigate/create path in user filters tree
+        const parts = folderPath.split('/');
+        let currentNode = this.userFiltersNode;
+
+        for (let i = 0; i < parts.length; i++) {
+            const part = parts[i];
+            if (!currentNode.children.has(part)) {
+                currentNode.children.set(part, {
+                    path: `user/${parts.slice(0, i + 1).join('/')}`,
+                    displayName: part,
+                    children: new Map(),
+                    plugins: [],
+                    expanded: true
+                });
+            }
+            currentNode = currentNode.children.get(part)!;
+        }
+
+        currentNode.plugins.push(filter);
     }
 
     /**
@@ -368,11 +665,76 @@ export class GlyphOverviewFilterManager {
         header.textContent = 'Filters';
         this.sidebarContainer.appendChild(header);
 
-        // Render tree nodes
+        // Render tree nodes for built-in plugins
         const treeContainer = document.createElement('div');
         treeContainer.className = 'glyph-filter-tree';
         this.renderTreeNode(this.rootNode, treeContainer, 0);
         this.sidebarContainer.appendChild(treeContainer);
+
+        // Render User Filters section
+        this.renderUserFiltersSection();
+    }
+
+    /**
+     * Render the User Filters section with refresh button
+     */
+    private renderUserFiltersSection(): void {
+        if (!this.sidebarContainer) return;
+
+        // Check if disk is available
+        const diskPlugin = pluginRegistry.get('disk');
+        const hasDisk =
+            diskPlugin &&
+            diskPlugin.getAdapter() instanceof NativeAdapter &&
+            (diskPlugin.getAdapter() as NativeAdapter).hasDirectory();
+
+        // Create header with refresh button
+        const header = document.createElement('div');
+        header.className = 'editor-section-title glyph-filter-user-header';
+
+        const titleSpan = document.createElement('span');
+        titleSpan.textContent = 'User Filters';
+        header.appendChild(titleSpan);
+
+        if (hasDisk) {
+            const refreshBtn = document.createElement('button');
+            refreshBtn.className = 'glyph-filter-refresh-btn';
+            refreshBtn.title = 'Refresh user filters';
+            refreshBtn.innerHTML =
+                '<span class="material-symbols-outlined">refresh</span>';
+            refreshBtn.addEventListener('click', async (e) => {
+                e.stopPropagation();
+                refreshBtn.classList.add('spinning');
+                await this.discoverUserFilters();
+                refreshBtn.classList.remove('spinning');
+            });
+            header.appendChild(refreshBtn);
+        }
+
+        this.sidebarContainer.appendChild(header);
+
+        // Render user filters tree
+        const userTreeContainer = document.createElement('div');
+        userTreeContainer.className =
+            'glyph-filter-tree glyph-filter-user-tree';
+
+        if (!hasDisk) {
+            const noAccessMsg = document.createElement('div');
+            noAccessMsg.className = 'glyph-filter-no-access';
+            noAccessMsg.textContent =
+                'Select a Disk folder to enable user filters';
+            userTreeContainer.appendChild(noAccessMsg);
+        } else if (this.userFilters.length === 0) {
+            const emptyMsg = document.createElement('div');
+            emptyMsg.className = 'glyph-filter-empty';
+            emptyMsg.textContent = `No filters in ${this.USER_FILTERS_PATH}`;
+            userTreeContainer.appendChild(emptyMsg);
+        } else {
+            // Render user filters tree (root-level plugins first, then folders)
+            this.renderUserFiltersTree(this.userFiltersNode, userTreeContainer);
+        }
+
+        this.sidebarContainer.appendChild(userTreeContainer);
     }
 
     /**
@@ -433,14 +795,23 @@ export class GlyphOverviewFilterManager {
             container.appendChild(nodeElement);
             childNode.element = nodeElement;
         }
+    }
 
-        // Render plugins directly under this node (for root level)
-        if (depth === 0) {
-            for (const plugin of node.plugins) {
-                const pluginElement = this.renderPluginItem(plugin, depth);
-                container.appendChild(pluginElement);
-            }
+    /**
+     * Render user filters tree with root-level plugins first, then folders
+     */
+    private renderUserFiltersTree(
+        node: TreeNode,
+        container: HTMLElement
+    ): void {
+        // Render root-level plugins first (filters directly in /Counterpunch/Filters/)
+        for (const plugin of node.plugins) {
+            const pluginElement = this.renderPluginItem(plugin, 0);
+            container.appendChild(pluginElement);
         }
+
+        // Then render child nodes (subfolders)
+        this.renderTreeNode(node, container, 0);
     }
 
     /**
@@ -519,50 +890,54 @@ export class GlyphOverviewFilterManager {
         try {
             console.log(`Running filter: ${plugin.display_name}`);
 
-            // Call the plugin's filter_glyphs method
-            const instance = plugin.instance;
-            if (!instance || !instance.filter_glyphs) {
-                console.error(
-                    `Plugin ${plugin.display_name} has no filter_glyphs method`
-                );
-                return;
-            }
-
-            // Get font via CurrentFont() and pass to plugin
-            const font = await window.pyodide.runPythonAsync(`CurrentFont()`);
-            const resultsProxy = await instance.filter_glyphs(font);
-
-            // Convert results to JS
             let results: FilterResult[] = [];
-            if (resultsProxy && resultsProxy.toJs) {
-                results = resultsProxy.toJs({
-                    dict_converter: Object.fromEntries
-                });
-                resultsProxy.destroy();
+            let colors: Record<string, ColorDefinition> = {};
+
+            if (plugin.isUserFilter && plugin.pythonCode) {
+                // Execute user filter with timeout
+                const execResult = await this.executeUserFilter(plugin);
+                results = execResult.results;
+                colors = execResult.colors;
+                plugin.colors = colors;
+            } else {
+                // Call the plugin's filter_glyphs method
+                const instance = plugin.instance;
+                if (!instance || !instance.filter_glyphs) {
+                    console.error(
+                        `Plugin ${plugin.display_name} has no filter_glyphs method`
+                    );
+                    return;
+                }
+
+                // Get font via CurrentFont() and pass to plugin
+                const font =
+                    await window.pyodide.runPythonAsync(`CurrentFont()`);
+                const resultsProxy = await instance.filter_glyphs(font);
+
+                // Convert results to JS
+                if (resultsProxy && resultsProxy.toJs) {
+                    results = resultsProxy.toJs({
+                        dict_converter: Object.fromEntries
+                    });
+                    resultsProxy.destroy();
+                }
+                colors = plugin.colors || {};
             }
 
             // Collect used color keywords before resolving
             const usedColorKeywords = new Set<string>();
             results.forEach((result) => {
-                if (
-                    result.color &&
-                    plugin.colors &&
-                    plugin.colors[result.color]
-                ) {
+                if (result.color && colors[result.color]) {
                     usedColorKeywords.add(result.color);
                 }
             });
 
             // Resolve color keywords to actual colors
             results = results.map((result) => {
-                if (
-                    result.color &&
-                    plugin.colors &&
-                    plugin.colors[result.color]
-                ) {
+                if (result.color && colors[result.color]) {
                     return {
                         ...result,
-                        color: plugin.colors[result.color].color
+                        color: colors[result.color].color
                     };
                 }
                 return result;
@@ -598,6 +973,79 @@ export class GlyphOverviewFilterManager {
                 this.glyphOverview.showFilterError(plugin.display_name, error);
             }
         }
+    }
+
+    /**
+     * Execute a user-defined filter with sandboxing and timeout
+     */
+    private async executeUserFilter(plugin: GlyphFilterPlugin): Promise<{
+        results: FilterResult[];
+        colors: Record<string, ColorDefinition>;
+    }> {
+        const TIMEOUT_MS = 5000;
+        const code = plugin.pythonCode!;
+
+        // Create a promise that rejects on timeout
+        const timeoutPromise = new Promise<never>((_, reject) => {
+            setTimeout(
+                () => reject(new Error('Filter execution timed out (5s)')),
+                TIMEOUT_MS
+            );
+        });
+
+        // Execute the filter
+        const execPromise = (async () => {
+            // Execute the user filter code and call filter_glyphs
+            const result = await window.pyodide.runPythonAsync(`
+import sys
+from io import StringIO
+
+# Capture any print output
+_captured_output = StringIO()
+_old_stdout = sys.stdout
+sys.stdout = _captured_output
+
+_filter_result = {"results": [], "colors": {}}
+try:
+    # Execute user filter code
+    _user_code = ${JSON.stringify(code)}
+    _user_globals = {}
+    exec(_user_code, _user_globals)
+    
+    # Get COLORS if defined
+    _colors = _user_globals.get('COLORS', {})
+    
+    # Get and call filter_glyphs
+    _filter_func = _user_globals.get('filter_glyphs')
+    if _filter_func is None:
+        raise ValueError("filter_glyphs function not found in filter file")
+    
+    _font = CurrentFont()
+    _results = _filter_func(_font)
+    
+    # Store results and colors
+    _filter_result = {"results": _results, "colors": _colors}
+finally:
+    sys.stdout = _old_stdout
+
+_filter_result
+`);
+
+            if (result && result.toJs) {
+                const jsResult = result.toJs({
+                    dict_converter: Object.fromEntries
+                });
+                result.destroy();
+                return {
+                    results: jsResult.results || [],
+                    colors: jsResult.colors || {}
+                };
+            }
+            return { results: [], colors: {} };
+        })();
+
+        // Race between execution and timeout
+        return Promise.race([execPromise, timeoutPromise]);
     }
 
     /**
@@ -739,9 +1187,14 @@ export class GlyphOverviewFilterManager {
      * Refresh all plugins (re-run active filter and update counts)
      */
     async refreshPlugins(): Promise<void> {
-        // Run all plugins to update counts
+        // Run all built-in plugins to update counts
         for (const plugin of this.plugins) {
             await this.runPluginForCount(plugin);
+        }
+
+        // Run all user filters to update counts
+        for (const filter of this.userFilters) {
+            await this.runPluginForCount(filter);
         }
 
         // Re-run active filter
@@ -757,28 +1210,40 @@ export class GlyphOverviewFilterManager {
         if (!window.pyodide || !window.currentFontModel) return;
 
         try {
-            const instance = plugin.instance;
-            if (!instance || !instance.filter_glyphs) return;
-
-            // Get font via CurrentFont() and pass to plugin
-            const font = await window.pyodide.runPythonAsync(`CurrentFont()`);
-            const resultsProxy = await instance.filter_glyphs(font);
-
             let results: FilterResult[] = [];
-            if (resultsProxy && resultsProxy.toJs) {
-                results = resultsProxy.toJs({
-                    dict_converter: Object.fromEntries
-                });
-                resultsProxy.destroy();
+
+            if (plugin.isUserFilter && plugin.pythonCode) {
+                // Execute user filter
+                const execResult = await this.executeUserFilter(plugin);
+                results = execResult.results;
+                plugin.colors = execResult.colors;
+            } else {
+                const instance = plugin.instance;
+                if (!instance || !instance.filter_glyphs) return;
+
+                // Get font via CurrentFont() and pass to plugin
+                const font =
+                    await window.pyodide.runPythonAsync(`CurrentFont()`);
+                const resultsProxy = await instance.filter_glyphs(font);
+
+                if (resultsProxy && resultsProxy.toJs) {
+                    results = resultsProxy.toJs({
+                        dict_converter: Object.fromEntries
+                    });
+                    resultsProxy.destroy();
+                }
             }
 
             plugin.glyphCount = results.length;
+            plugin.hasError = false;
             this.updatePluginCount(plugin);
         } catch (error) {
             console.error(
                 `Error running plugin ${plugin.display_name} for count:`,
                 error
             );
+            plugin.hasError = true;
+            this.updatePluginCount(plugin);
         }
     }
 

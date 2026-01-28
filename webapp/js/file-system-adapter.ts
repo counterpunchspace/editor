@@ -210,7 +210,7 @@ export class NativeAdapter implements FileSystemAdapter {
         }
     }
 
-    private async getHandleAtPath(
+    async getHandleAtPath(
         path: string
     ): Promise<FileSystemFileHandle | FileSystemDirectoryHandle> {
         if (!this.directoryHandle) {
@@ -369,6 +369,76 @@ export class NativeAdapter implements FileSystemAdapter {
         } catch (error) {
             return false;
         }
+    }
+
+    /**
+     * Recursively list all files in a directory up to maxDepth levels
+     * @param path Starting path
+     * @param maxDepth Maximum depth to traverse (default 3)
+     * @returns Array of FileInfo for all files found
+     */
+    async listFilesRecursive(
+        path: string = '/',
+        maxDepth: number = 3
+    ): Promise<FileInfo[]> {
+        if (!this.directoryHandle) {
+            return [];
+        }
+
+        const results: FileInfo[] = [];
+
+        const scanDir = async (
+            dirPath: string,
+            depth: number
+        ): Promise<void> => {
+            if (depth > maxDepth) return;
+
+            try {
+                const handle = await this.getHandleAtPath(dirPath);
+                if (!(handle instanceof FileSystemDirectoryHandle)) {
+                    return;
+                }
+
+                for await (const [name, childHandle] of (
+                    handle as any
+                ).entries()) {
+                    const isDir = childHandle.kind === 'directory';
+                    const itemPath =
+                        dirPath === '/' ? `/${name}` : `${dirPath}/${name}`;
+
+                    if (isDir) {
+                        await scanDir(itemPath, depth + 1);
+                    } else {
+                        let size = 0;
+                        let mtime = '';
+                        try {
+                            const file = await childHandle.getFile();
+                            size = file.size;
+                            mtime = new Date(file.lastModified).toISOString();
+                        } catch (e) {
+                            continue;
+                        }
+                        results.push({
+                            path: itemPath,
+                            is_dir: false,
+                            size,
+                            mtime,
+                            handle: childHandle
+                        });
+                    }
+                }
+            } catch (error) {
+                // Directory doesn't exist or can't be read
+                console.log(
+                    '[NativeAdapter]',
+                    `Cannot scan ${dirPath}:`,
+                    error
+                );
+            }
+        };
+
+        await scanDir(path, 1);
+        return results;
     }
 }
 

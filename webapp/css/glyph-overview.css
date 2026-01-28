@@ -281,9 +281,14 @@
     justify-content: center;
 }
 
+.glyph-filter-toggle.material-symbols-outlined {
+    font-size: 14px;
+}
+
+
 .glyph-filter-node-label {
     font-size: 9px;
-    font-weight: 600;
+    font-weight: 700;
     color: var(--text-secondary);
     text-transform: uppercase;
     letter-spacing: 0.5px;
@@ -401,5 +406,52 @@
     max-height: 400px;
     overflow-y: auto;
     margin: 0;
+}
+
+/* User Filters Section */
+.glyph-filter-user-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-top: 16px;
+}
+
+.glyph-filter-refresh-btn {
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 2px;
+    color: var(--text-secondary);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 4px;
+    transition: background-color 0.1s ease;
+}
+
+.glyph-filter-refresh-btn:hover {
+    background-color: var(--background-hover);
+    color: var(--text-primary);
+}
+
+.glyph-filter-refresh-btn .material-symbols-outlined {
+    font-size: 16px;
+}
+
+.glyph-filter-refresh-btn.spinning .material-symbols-outlined {
+    animation: spin 0.5s linear infinite;
+}
+
+@keyframes spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+}
+
+.glyph-filter-no-access,
+.glyph-filter-empty {
+    font-size: 11px;
+    color: var(--text-tertiary);
+    padding: 8px 12px;
+    font-style: italic;
 }
 
