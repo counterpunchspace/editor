@@ -3,7 +3,7 @@
 /**
  * Clean up Python error traceback by removing Pyodide internal frames
  * and keeping only the relevant user code traceback.
- * 
+ *
  * @param {string} errorMessage - The full Python error message/traceback
  * @returns {string} - Cleaned traceback with only user-relevant frames
  */
@@ -30,12 +30,15 @@ window.cleanPythonTraceback = function cleanPythonTraceback(errorMessage) {
         }
 
         // Check if this is a frame we want to keep (user code)
-        if (line.includes('File "<string>"') || line.includes('File "<exec>"')) {
+        if (
+            line.includes('File "<string>"') ||
+            line.includes('File "<exec>"')
+        ) {
             // Only keep <exec> frames that come after we've started seeing user code
             if (line.includes('File "<string>"')) {
                 foundUserCode = true;
             }
-            
+
             if (foundUserCode || line.includes('File "<string>"')) {
                 inPyodideFrame = false;
             }
@@ -44,7 +47,10 @@ window.cleanPythonTraceback = function cleanPythonTraceback(errorMessage) {
         // Keep the line if we're not in a Pyodide frame
         if (!inPyodideFrame || foundUserCode) {
             // If this is the first line and it's "Traceback...", always keep it
-            if (cleanedLines.length === 0 && line.startsWith('Traceback (most recent call last):')) {
+            if (
+                cleanedLines.length === 0 &&
+                line.startsWith('Traceback (most recent call last):')
+            ) {
                 cleanedLines.push(line);
             } else if (cleanedLines.length > 0) {
                 cleanedLines.push(line);

@@ -288,9 +288,10 @@
             console.error('[ScriptEditor]', 'Script execution error:', error);
 
             // Clean the traceback to remove Pyodide internal frames
-            const fullTraceback = error.constructor?.name === 'PythonError'
-                ? window.cleanPythonTraceback(error.message)
-                : error.message;
+            const fullTraceback =
+                error.constructor?.name === 'PythonError'
+                    ? window.cleanPythonTraceback(error.message)
+                    : error.message;
 
             // Display error in the terminal console
             if (window.consoleError) {
