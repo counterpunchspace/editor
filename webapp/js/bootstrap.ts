@@ -100,6 +100,7 @@ import './glyph-canvas';
 import './keyboard-navigation.js';
 import './matplotlib-handler.js';
 import './memory-monitor.js';
+import './python-utils.js';
 import './pyodide-official-console.js';
 import './python-execution-wrapper.js';
 import './python-package-lazy-loader.js';

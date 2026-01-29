@@ -287,20 +287,22 @@
         } catch (error) {
             console.error('[ScriptEditor]', 'Script execution error:', error);
 
-            // Store the full traceback for the AI assistant
-            const fullTraceback = error.message;
+            // Clean the traceback to remove Pyodide internal frames
+            const fullTraceback = error.constructor?.name === 'PythonError'
+                ? window.cleanPythonTraceback(error.message)
+                : error.message;
 
             // Display error in the terminal console
             if (window.consoleError) {
                 // Use the global console error function
-                window.consoleError(error.message);
+                window.consoleError(fullTraceback);
             } else if (window.term) {
                 // Fallback to direct term.error
                 try {
                     if (window.term.paused) {
                         window.term.resume();
                     }
-                    window.term.error(error.message);
+                    window.term.error(fullTraceback);
                 } catch (e) {
                     console.error(
                         '[ScriptEditor]',
@@ -312,7 +314,7 @@
                 console.error(
                     '[ScriptEditor]',
                     'Script error (terminal not available):',
-                    error.message
+                    fullTraceback
                 );
             }
 

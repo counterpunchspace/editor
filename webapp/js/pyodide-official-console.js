@@ -151,7 +151,8 @@ async function initPyodideConsole() {
                     );
                     if (e.constructor.name === 'PythonError') {
                         const message = fut.formatted_error || e.message;
-                        term.error(message.trimEnd());
+                        const cleanedMessage = window.cleanPythonTraceback(message);
+                        term.error(cleanedMessage.trimEnd());
                     } else {
                         throw e;
                     }

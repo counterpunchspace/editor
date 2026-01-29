@@ -1046,6 +1046,10 @@ class GlyphOverview {
             if (error.stack && error.constructor.name !== 'PythonError') {
                 errorText += '\n\n' + error.stack;
             }
+            // Clean Python traceback to remove Pyodide internal frames
+            if (error.constructor.name === 'PythonError') {
+                errorText = window.cleanPythonTraceback(errorText);
+            }
         } else if (typeof error === 'string') {
             errorText = error;
         } else if (error && error.toString) {

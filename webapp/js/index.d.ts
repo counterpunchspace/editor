@@ -44,6 +44,9 @@ declare global {
         cacheManager: CacheManager;
         cacheStats: () => { size: number; itemCount: number };
 
+        // From python-utils.js
+        cleanPythonTraceback: (errorMessage: string) => string;
+
         // From critical-error-handler.ts
         showCriticalError: (
             title: string,

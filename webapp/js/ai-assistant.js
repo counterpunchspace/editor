@@ -1554,10 +1554,12 @@ class AIAssistant {
     }
 
     addErrorFixMessage(errorTraceback, scriptCode) {
+        // Clean the traceback to remove Pyodide internal frames
+        const cleanedTraceback = window.cleanPythonTraceback(errorTraceback);
         // Check if we're already showing or about to show an error fix message
         if (this.isShowingErrorFix) {
             // Just update the traceback for the existing/pending message
-            this.currentErrorTraceback = errorTraceback;
+            this.currentErrorTraceback = cleanedTraceback;
             return;
         }
 
@@ -1572,7 +1574,7 @@ class AIAssistant {
             lastMessage.classList.contains('ai-message-error-fix')
         ) {
             // Update the existing message with new traceback and make it blink again
-            this.currentErrorTraceback = errorTraceback;
+            this.currentErrorTraceback = cleanedTraceback;
 
             // Delay to avoid overlap with error sound (same delay as first time)
             setTimeout(() => {
@@ -1597,7 +1599,7 @@ class AIAssistant {
         this.isShowingErrorFix = true;
 
         // Store the current error traceback
-        this.currentErrorTraceback = errorTraceback;
+        this.currentErrorTraceback = cleanedTraceback;
 
         // Delay showing the message by 1.5 seconds + estimated sound duration (attention.wav ~1 second)
         setTimeout(() => {
