@@ -36,6 +36,14 @@ class EncodedGlyphsFilter:
             "multiple_codepoints": {
                 "description": "Multiple Codepoints",
                 "color": "#22c55e"
+            },
+            "bmp": {
+                "description": "Basic Multilingual Plane (BMP)",
+                "color": "#3b82f6"
+            },
+            "supplementary": {
+                "description": "Supplementary Planes",
+                "color": "#a855f7"
             }
         }
     
@@ -55,9 +63,28 @@ class EncodedGlyphsFilter:
             # Check for unicode codepoints
             codepoints = getattr(glyph, 'codepoints', None)
             if codepoints and len(codepoints) > 0:
+                # Build list of groups this glyph belongs to
+                groups = []
+                
+                # Check for multiple codepoints
                 if len(codepoints) > 1:
-                    results.append({"glyph_name": glyph_name, "group": "multiple_codepoints"})
-                else:
-                    results.append({"glyph_name": glyph_name})
+                    groups.append("multiple_codepoints")
+                
+                # Check Unicode plane (BMP vs Supplementary)
+                # A glyph can be in both if it has codepoints in both planes
+                has_bmp = False
+                has_supplementary = False
+                for cp in codepoints:
+                    if cp <= 0xFFFF:
+                        has_bmp = True
+                    else:
+                        has_supplementary = True
+                
+                if has_bmp:
+                    groups.append("bmp")
+                if has_supplementary:
+                    groups.append("supplementary")
+                
+                results.append({"glyph_name": glyph_name, "groups": groups})
         
         return results

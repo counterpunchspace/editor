@@ -93,14 +93,22 @@ class BaseGlyphFilterPlugin:
         Filter glyphs from the font and return results.
         
         This is the main filter method. The font object is passed in as a parameter.
-        Should return a list of dicts, each containing:
+        Should return (or yield) a list of dicts, each containing:
         - glyph_name: Name of the glyph
-        - group (optional): Either a group keyword (from get_groups) or a hex color
+        - group (optional): A single group keyword (from get_groups)
+        - groups (optional): A list of group keywords (for multi-group support)
+        
+        A glyph can belong to multiple groups in two ways:
+        1. Using the 'groups' key with a list of keywords
+        2. Yielding the same glyph multiple times with different 'group' values
+           (results are automatically merged by glyph_name)
+        
+        When filtering by groups in the UI, glyphs will appear if they match ANY of the selected groups.
         
         Args:
             font: The font object (babelfont model)
             
-        Example:
+        Example (single group):
             def filter_glyphs(self, font):
                 results = []
                 for glyph in font.glyphs:
@@ -110,8 +118,32 @@ class BaseGlyphFilterPlugin:
                             "group": "error"
                         })
                 return results
+        
+        Example (multiple groups using 'groups' list):
+            def filter_glyphs(self, font):
+                results = []
+                for glyph in font.glyphs:
+                    groups = []
+                    if has_error(glyph):
+                        groups.append("error")
+                    if has_warning(glyph):
+                        groups.append("warning")
+                    results.append({
+                        "glyph_name": glyph.name,
+                        "groups": groups  # Can be empty, one, or multiple groups
+                    })
+                return results
+        
+        Example (multiple groups via yield - same glyph emitted multiple times):
+            def filter_glyphs(self, font):
+                for glyph in font.glyphs:
+                    if has_error(glyph):
+                        yield {"glyph_name": glyph.name, "group": "error"}
+                    if has_warning(glyph):
+                        yield {"glyph_name": glyph.name, "group": "warning"}
+                    # If glyph has both, it will appear once with both groups merged
             
         Returns:
-            List of filter result dicts
+            List of filter result dicts (or generator yielding them)
         """
         return []

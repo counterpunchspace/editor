@@ -19,7 +19,8 @@ interface GlyphTile {
     selected: boolean;
     cachedData?: any; // Cached glyph outline data for resizing
     canvas?: HTMLCanvasElement; // Reusable canvas element
-    filterColor?: string; // Background overlay color from active filter
+    filterColor?: string; // Primary background overlay color from active filter
+    filterColors?: string[]; // All unique colors for multi-group display
 }
 
 /**
@@ -27,7 +28,10 @@ interface GlyphTile {
  */
 export interface FilterResult {
     glyph_name: string;
-    color?: string;
+    group?: string; // Single group keyword
+    groups?: string[]; // Array of group keywords for multi-group support
+    color?: string; // Primary color for display
+    colors?: string[]; // All colors for multi-group
 }
 
 class GlyphOverview {
@@ -1101,24 +1105,74 @@ class GlyphOverview {
 
     /**
      * Apply filter colors to tiles as background overlay
+     * For glyphs with multiple groups, displays horizontal stripes
      */
     private applyFilterColors(): void {
         if (!this.activeFilterResults) return;
 
         this.tiles.forEach((tile) => {
             const result = this.activeFilterResults!.get(tile.glyphName);
-            if (result && result.color) {
+            if (result && result.colors && result.colors.length > 0) {
+                // Deduplicate colors while preserving order
+                const uniqueColors = [...new Set(result.colors)];
+                tile.filterColors = uniqueColors;
+                tile.filterColor = uniqueColors[0];
+
+                if (uniqueColors.length === 1) {
+                    // Single color - use solid background
+                    tile.element.style.setProperty(
+                        '--filter-color',
+                        this.cssColorToRgba(uniqueColors[0], 0.25)
+                    );
+                    tile.element.style.backgroundImage = 'none';
+                } else {
+                    // Multiple colors - create horizontal stripe gradient
+                    const stripeGradient = this.buildStripeGradient(
+                        uniqueColors,
+                        0.25
+                    );
+                    tile.element.style.setProperty(
+                        '--filter-color',
+                        'transparent'
+                    );
+                    tile.element.style.backgroundImage = stripeGradient;
+                }
+            } else if (result && result.color) {
+                // Fallback to single color if colors array not present
                 tile.filterColor = result.color;
-                // Apply as CSS custom property for blending with selection
+                tile.filterColors = [result.color];
                 tile.element.style.setProperty(
                     '--filter-color',
                     this.cssColorToRgba(result.color, 0.25)
                 );
+                tile.element.style.backgroundImage = 'none';
             } else {
                 tile.filterColor = undefined;
+                tile.filterColors = undefined;
                 tile.element.style.setProperty('--filter-color', 'transparent');
+                tile.element.style.backgroundImage = 'none';
             }
         });
+    }
+
+    /**
+     * Build a horizontal stripe gradient from multiple colors
+     */
+    private buildStripeGradient(colors: string[], alpha: number): string {
+        const stripeCount = colors.length;
+        const stripePercent = 100 / stripeCount;
+        const stops: string[] = [];
+
+        colors.forEach((color, index) => {
+            const rgbaColor = this.cssColorToRgba(color, alpha);
+            const startPercent = index * stripePercent;
+            const endPercent = (index + 1) * stripePercent;
+            // Hard stops for crisp stripes (no blending between colors)
+            stops.push(`${rgbaColor} ${startPercent}%`);
+            stops.push(`${rgbaColor} ${endPercent}%`);
+        });
+
+        return `linear-gradient(to right, ${stops.join(', ')})`;
     }
 
     /**
@@ -1127,7 +1181,9 @@ class GlyphOverview {
     private clearFilterColors(): void {
         this.tiles.forEach((tile) => {
             tile.filterColor = undefined;
+            tile.filterColors = undefined;
             tile.element.style.setProperty('--filter-color', 'transparent');
+            tile.element.style.backgroundImage = 'none';
         });
     }
 

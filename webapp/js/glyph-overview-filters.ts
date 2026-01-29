@@ -22,8 +22,10 @@ const FILTER_PATHS: Record<string, string> = {
  */
 export interface FilterResult {
     glyph_name: string;
-    group?: string; // Group keyword from get_groups (used by plugin)
-    color?: string; // Resolved hex color (used internally for display/filtering)
+    group?: string; // Single group keyword
+    groups?: string[]; // Array of group keywords (for multi-group support)
+    color?: string; // Primary resolved hex color (used for display)
+    colors?: string[]; // Array of resolved hex colors for all groups
 }
 
 /**
@@ -71,7 +73,7 @@ export class GlyphOverviewFilterManager {
     private groupLegendContainer: HTMLElement | null = null;
     private glyphOverview: any = null;
     private activeFilter: GlyphFilterPlugin | null = null;
-    private activeGroupFilters: Set<string> = new Set(); // Selected group hex colors for filtering
+    private activeGroupFilters: Set<string> = new Set(); // Selected group keywords for filtering (not colors)
     private rootNode: TreeNode;
     private userFiltersNode: TreeNode;
     private readonly STORAGE_KEY = 'glyphFilterActive';
@@ -938,34 +940,10 @@ list(_result) if isinstance(_result, types.GeneratorType) else _result
                 groups = plugin.groups || {};
             }
 
-            // Collect used group keywords (only those with definitions for legend)
-            const usedGroupKeywords = new Set<string>();
-            results.forEach((result) => {
-                if (result.group && groups[result.group]) {
-                    usedGroupKeywords.add(result.group);
-                }
-            });
-
-            // Resolve group keywords to actual colors
-            // Priority: 1) Match group definition key → use its color value
-            //           2) No match → treat as raw CSS color value
-            results = results.map((result) => {
-                if (result.group) {
-                    if (groups[result.group]) {
-                        // Group matches a definition key, use the definition's color
-                        return {
-                            ...result,
-                            color: groups[result.group].color
-                        };
-                    }
-                    // No definition match, keep as raw CSS color
-                    return {
-                        ...result,
-                        color: result.group
-                    };
-                }
-                return result;
-            });
+            // Process results (consolidate duplicates, normalize groups, resolve colors)
+            const { results: processedResults, usedGroupKeywords } =
+                this.processFilterResults(results, groups);
+            results = processedResults;
 
             // Store results
             plugin.lastResults = results;
@@ -1078,6 +1056,81 @@ _filter_result
     }
 
     /**
+     * Process filter results: consolidate duplicates, normalize groups, resolve colors
+     * This is used by both runFilter and runPluginForCount to ensure consistent handling.
+     */
+    private processFilterResults(
+        results: FilterResult[],
+        groups: Record<string, GroupDefinition>
+    ): { results: FilterResult[]; usedGroupKeywords: Set<string> } {
+        // Consolidate results: merge entries for the same glyph name
+        // This handles the case where a glyph is yielded multiple times with different groups
+        const consolidatedMap = new Map<string, FilterResult>();
+        for (const result of results) {
+            const existing = consolidatedMap.get(result.glyph_name);
+            if (existing) {
+                // Merge groups from both entries
+                const existingGroups =
+                    existing.groups || (existing.group ? [existing.group] : []);
+                const newGroups =
+                    result.groups || (result.group ? [result.group] : []);
+                // Combine and deduplicate groups
+                const mergedGroups = [
+                    ...new Set([...existingGroups, ...newGroups])
+                ];
+                existing.groups = mergedGroups;
+                // Clear 'group' field since we now have 'groups' array
+                delete existing.group;
+            } else {
+                consolidatedMap.set(result.glyph_name, { ...result });
+            }
+        }
+        let processedResults = Array.from(consolidatedMap.values());
+
+        // Normalize results: ensure 'groups' array and resolve colors
+        // and collect all used group keywords
+        const usedGroupKeywords = new Set<string>();
+        processedResults = processedResults.map((result) => {
+            // Build the groups array from either 'groups' or 'group'
+            let resultGroups: string[] = [];
+            if (result.groups && Array.isArray(result.groups)) {
+                resultGroups = result.groups;
+            } else if (result.group) {
+                resultGroups = [result.group];
+            }
+
+            // Collect used groups that have definitions
+            for (const g of resultGroups) {
+                if (groups[g]) {
+                    usedGroupKeywords.add(g);
+                }
+            }
+
+            // Resolve group keywords to colors
+            // Priority: 1) Match group definition key → use its color
+            //           2) No match → treat as raw CSS color value
+            const resolvedColors: string[] = [];
+            for (const g of resultGroups) {
+                if (groups[g]) {
+                    resolvedColors.push(groups[g].color);
+                } else {
+                    // No definition match, treat as raw CSS color
+                    resolvedColors.push(g);
+                }
+            }
+
+            return {
+                ...result,
+                groups: resultGroups,
+                color: resolvedColors[0] || undefined, // Primary color for display
+                colors: resolvedColors.length > 0 ? resolvedColors : undefined
+            };
+        });
+
+        return { results: processedResults, usedGroupKeywords };
+    }
+
+    /**
      * Update the glyph count display for a plugin
      */
     private updatePluginCount(plugin: GlyphFilterPlugin): void {
@@ -1119,15 +1172,17 @@ _filter_result
             return;
         }
 
-        // Count glyphs per group
+        // Count glyphs per group keyword (a glyph can be counted in multiple groups)
         const groupCounts = new Map<string, number>();
         if (plugin.lastResults) {
             for (const result of plugin.lastResults) {
-                if (result.color) {
-                    groupCounts.set(
-                        result.color,
-                        (groupCounts.get(result.color) || 0) + 1
-                    );
+                if (result.groups) {
+                    for (const groupKeyword of result.groups) {
+                        groupCounts.set(
+                            groupKeyword,
+                            (groupCounts.get(groupKeyword) || 0) + 1
+                        );
+                    }
                 }
             }
         }
@@ -1141,7 +1196,8 @@ _filter_result
 
             const item = document.createElement('div');
             item.className = 'glyph-filter-legend-item';
-            item.dataset.groupHex = groupDef.color;
+            item.dataset.groupKeyword = keyword; // Store keyword for filtering
+            item.dataset.groupHex = groupDef.color; // Keep color for reference
             item.style.cursor = 'pointer';
 
             const circle = document.createElement('span');
@@ -1154,15 +1210,15 @@ _filter_result
 
             const count = document.createElement('span');
             count.className = 'glyph-filter-legend-count';
-            count.textContent = String(groupCounts.get(groupDef.color) || 0);
+            count.textContent = String(groupCounts.get(keyword) || 0);
 
             item.appendChild(circle);
             item.appendChild(label);
             item.appendChild(count);
 
-            // Click to toggle group filter
+            // Click to toggle group filter by keyword
             item.addEventListener('click', () => {
-                this.toggleGroupFilter(groupDef.color, item);
+                this.toggleGroupFilter(keyword, item);
             });
 
             this.groupLegendContainer.appendChild(item);
@@ -1170,17 +1226,17 @@ _filter_result
     }
 
     /**
-     * Toggle a group filter on/off
+     * Toggle a group filter on/off by keyword
      */
     private toggleGroupFilter(
-        colorHex: string,
+        groupKeyword: string,
         itemElement: HTMLElement
     ): void {
-        if (this.activeGroupFilters.has(colorHex)) {
-            this.activeGroupFilters.delete(colorHex);
+        if (this.activeGroupFilters.has(groupKeyword)) {
+            this.activeGroupFilters.delete(groupKeyword);
             itemElement.classList.remove('active');
         } else {
-            this.activeGroupFilters.add(colorHex);
+            this.activeGroupFilters.add(groupKeyword);
             itemElement.classList.add('active');
         }
 
@@ -1203,10 +1259,13 @@ _filter_result
             return;
         }
 
-        // Filter to only glyphs matching selected groups (OR logic)
+        // Filter to only glyphs matching selected groups by keyword (OR logic)
+        // A glyph passes if any of its groups match any of the selected group keywords
         const filteredResults = results.filter((result) => {
-            if (!result.color) return false;
-            return this.activeGroupFilters.has(result.color);
+            if (!result.groups || result.groups.length === 0) return false;
+            return result.groups.some((groupKeyword) =>
+                this.activeGroupFilters.has(groupKeyword)
+            );
         });
 
         this.glyphOverview.setActiveFilter(filteredResults);
@@ -1276,7 +1335,14 @@ list(_result) if isinstance(_result, types.GeneratorType) else _result
                 }
             }
 
-            plugin.glyphCount = results.length;
+            // Process results (consolidate duplicates, normalize groups)
+            const groups = plugin.groups || {};
+            const { results: processedResults } = this.processFilterResults(
+                results,
+                groups
+            );
+
+            plugin.glyphCount = processedResults.length;
             plugin.hasError = false;
             this.updatePluginCount(plugin);
         } catch (error) {
