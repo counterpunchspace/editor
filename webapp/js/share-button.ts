@@ -3,97 +3,13 @@
 
 import tippy, { Instance as TippyInstance } from 'tippy.js';
 import 'tippy.js/dist/tippy.css';
+import {
+    getOrCreateBackdrop,
+    addTippyBackdropSupport,
+    getTheme
+} from './tippy-utils';
 
 let shareMenuInstance: TippyInstance | null = null;
-
-/**
- * Create or recreate backdrop for share menu
- */
-function getOrCreateBackdrop(className: string): HTMLElement {
-    let backdrop = document.querySelector(`.${className}`) as HTMLElement;
-    if (!backdrop) {
-        backdrop = document.createElement('div');
-        backdrop.className = `plugin-menu-backdrop ${className}`;
-        document.body.appendChild(backdrop);
-    }
-    return backdrop;
-}
-
-/**
- * Add backdrop and keyboard support to a Tippy instance
- */
-function addTippyBackdropSupport(
-    tippyInstance: any,
-    backdrop: HTMLElement,
-    options?: {
-        onEscape?: () => void;
-        targetElement?: HTMLElement;
-        activeClass?: string;
-    }
-): void {
-    const originalOnShow = tippyInstance.props.onShow;
-    const originalOnShown = tippyInstance.props.onShown;
-    const originalOnHide = tippyInstance.props.onHide;
-
-    // Add backdrop click handler to close menu
-    const handleBackdropClick = () => {
-        if (tippyInstance.state.isVisible) {
-            tippyInstance.hide();
-        }
-    };
-
-    tippyInstance.setProps({
-        onShow: (instance: any) => {
-            backdrop.classList.add('visible');
-            if (options?.targetElement && options?.activeClass) {
-                options.targetElement.classList.add(options.activeClass);
-            }
-
-            // Add backdrop click handler
-            backdrop.addEventListener('click', handleBackdropClick);
-
-            if (originalOnShow) originalOnShow(instance);
-        },
-        onShown: (instance: any) => {
-            const handleKeydown = (e: KeyboardEvent) => {
-                if (e.key === 'Escape') {
-                    instance.hide();
-                    if (options?.onEscape) options.onEscape();
-                    document.removeEventListener('keydown', handleKeydown);
-                }
-            };
-            document.addEventListener('keydown', handleKeydown);
-            (instance as any)._keydownHandler = handleKeydown;
-
-            if (originalOnShown) originalOnShown(instance);
-        },
-        onHide: (instance: any) => {
-            backdrop.classList.remove('visible');
-            if (options?.targetElement && options?.activeClass) {
-                options.targetElement.classList.remove(options.activeClass);
-            }
-
-            const handler = (instance as any)._keydownHandler;
-            if (handler) {
-                document.removeEventListener('keydown', handler);
-            }
-
-            // Remove backdrop click handler
-            backdrop.removeEventListener('click', handleBackdropClick);
-
-            if (originalOnHide) originalOnHide(instance);
-        }
-    });
-}
-
-/**
- * Get current theme for tippy menus
- */
-function getTheme(): string {
-    const root = document.documentElement;
-    const theme = root.getAttribute('data-theme');
-    return theme === 'light' ? 'light' : 'dark';
-}
 
 /**
  * Get the current URL for sharing

@@ -16,6 +16,11 @@ import {
     TitleBarMenuItem
 } from './filesystem-plugins';
 import { updateUrlState } from './url-state';
+import {
+    getOrCreateBackdrop,
+    addTippyBackdropSupport,
+    getTheme
+} from './tippy-utils';
 
 const LAST_CONTEXT_KEY = 'last-filesystem-context';
 
@@ -183,90 +188,6 @@ function createPluginMenuHtml(menuItems: TitleBarMenuItem[]): string {
         )
         .join('');
     return `<div class="plugin-menu">${items}</div>`;
-}
-
-/**
- * Create or get a backdrop element for modal-like menu behavior
- */
-function getOrCreateBackdrop(className: string): HTMLElement {
-    let backdrop = document.querySelector(`.${className}`) as HTMLElement;
-    if (!backdrop) {
-        backdrop = document.createElement('div');
-        backdrop.className = `plugin-menu-backdrop ${className}`;
-        document.body.appendChild(backdrop);
-    }
-    return backdrop;
-}
-
-/**
- * Add backdrop and keyboard support to a Tippy instance
- * Returns the backdrop element for further customization
- */
-function addTippyBackdropSupport(
-    tippyInstance: any,
-    backdrop: HTMLElement,
-    options?: {
-        onEscape?: () => void;
-        targetElement?: HTMLElement;
-        activeClass?: string;
-    }
-): void {
-    // Add to existing onShow/onShown/onHide handlers
-    const originalOnShow = tippyInstance.props.onShow;
-    const originalOnShown = tippyInstance.props.onShown;
-    const originalOnHide = tippyInstance.props.onHide;
-
-    // Add backdrop click handler to close menu
-    const handleBackdropClick = () => {
-        if (tippyInstance.state.isVisible) {
-            tippyInstance.hide();
-        }
-    };
-
-    tippyInstance.setProps({
-        onShow: (instance: any) => {
-            backdrop.classList.add('visible');
-            if (options?.targetElement && options?.activeClass) {
-                options.targetElement.classList.add(options.activeClass);
-            }
-
-            // Add backdrop click handler
-            backdrop.addEventListener('click', handleBackdropClick);
-
-            if (originalOnShow) originalOnShow(instance);
-        },
-        onShown: (instance: any) => {
-            // Add keyboard support
-            const handleKeydown = (e: KeyboardEvent) => {
-                if (e.key === 'Escape') {
-                    instance.hide();
-                    if (options?.onEscape) options.onEscape();
-                    document.removeEventListener('keydown', handleKeydown);
-                }
-            };
-            document.addEventListener('keydown', handleKeydown);
-            (instance as any)._keydownHandler = handleKeydown;
-
-            if (originalOnShown) originalOnShown(instance);
-        },
-        onHide: (instance: any) => {
-            backdrop.classList.remove('visible');
-            if (options?.targetElement && options?.activeClass) {
-                options.targetElement.classList.remove(options.activeClass);
-            }
-
-            // Clean up keyboard listener
-            const handler = (instance as any)._keydownHandler;
-            if (handler) {
-                document.removeEventListener('keydown', handler);
-            }
-
-            // Remove backdrop click handler
-            backdrop.removeEventListener('click', handleBackdropClick);
-
-            if (originalOnHide) originalOnHide(instance);
-        }
-    });
 }
 
 function createFileContextMenuHtml(
@@ -486,12 +407,6 @@ function setupFileContextMenus() {
 
     backdrop.addEventListener('click', handleBackdropClick);
     (backdrop as any)._clickHandler = handleBackdropClick;
-}
-
-function getTheme(): string {
-    const root = document.documentElement;
-    const theme = root.getAttribute('data-theme');
-    return theme === 'light' ? 'light' : 'dark';
 }
 
 function updatePluginMenuButtonVisibility(plugin: FilesystemPlugin): void {
