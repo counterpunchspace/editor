@@ -1602,8 +1602,8 @@ _filter_result
             item.appendChild(count);
 
             // Click to toggle group filter by keyword
-            item.addEventListener('click', () => {
-                this.toggleGroupFilter(keyword, item);
+            item.addEventListener('click', (e) => {
+                this.toggleGroupFilter(keyword, item, e);
             });
 
             this.groupLegendContainer.appendChild(item);
@@ -1611,16 +1611,39 @@ _filter_result
     }
 
     /**
-     * Toggle a group filter on/off by keyword
+     * Toggle a group filter on/off by keyword.
+     * Normal click: selects only the clicked group.
+     * Cmd/Ctrl click: adds/removes the clicked group from multi-selection.
      */
     private toggleGroupFilter(
         groupKeyword: string,
-        itemElement: HTMLElement
+        itemElement: HTMLElement,
+        event?: MouseEvent
     ): void {
-        if (this.activeGroupFilters.has(groupKeyword)) {
-            this.activeGroupFilters.delete(groupKeyword);
-            itemElement.classList.remove('active');
+        const isMultiSelect = event?.metaKey || event?.ctrlKey;
+
+        if (isMultiSelect) {
+            // Multi-select mode: toggle individual group
+            if (this.activeGroupFilters.has(groupKeyword)) {
+                this.activeGroupFilters.delete(groupKeyword);
+                itemElement.classList.remove('active');
+            } else {
+                this.activeGroupFilters.add(groupKeyword);
+                itemElement.classList.add('active');
+            }
         } else {
+            // Single-select mode: select only this group
+            // Clear all active filters first
+            this.activeGroupFilters.clear();
+
+            // Remove active class from all legend items
+            if (this.groupLegendContainer) {
+                this.groupLegendContainer
+                    .querySelectorAll('.glyph-filter-legend-item.active')
+                    .forEach((el) => el.classList.remove('active'));
+            }
+
+            // Add this group
             this.activeGroupFilters.add(groupKeyword);
             itemElement.classList.add('active');
         }
