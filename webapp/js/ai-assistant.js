@@ -1020,6 +1020,9 @@ class AIAssistant {
                 } else {
                     body = `<div class="ai-message-content">${this.escapeHtml(content)}</div>`;
                 }
+            } else if (role === 'error') {
+                // Error messages use markdown formatting for code blocks
+                body = `<div class="ai-markdown-explanation">${this.formatMarkdown(content)}</div>`;
             } else {
                 body = `<div class="ai-message-content">${this.escapeHtml(content)}</div>`;
             }
@@ -1378,7 +1381,12 @@ class AIAssistant {
                 window.playSound('done');
             }
         } catch (error) {
-            window.term.error('Error: ' + error.message);
+            // Clean the traceback before displaying
+            const cleanedError =
+                error?.constructor?.name === 'PythonError'
+                    ? window.cleanPythonTraceback(error.message)
+                    : error?.message || String(error);
+            window.term.error('Error: ' + cleanedError);
             throw error;
         }
     }
@@ -1935,8 +1943,15 @@ ${errorTraceback}
                 error
             );
 
-            // Add error message
-            this.addMessage('error', `Execution error: ${error.message}`);
+            // Clean the error message if it's a Python error
+            const cleanedError =
+                error?.constructor?.name === 'PythonError'
+                    ? window.cleanPythonTraceback(error.message)
+                    : error?.message || String(error);
+
+            // Add error message with traceback in code block
+            const formattedError = `The script encountered an error during execution:\n\n\`\`\`\n${cleanedError}\n\`\`\``;
+            this.addMessage('error', formattedError);
 
             // Only retry in font mode with auto-run (never retry in script context since we don't execute)
             if (
@@ -1951,7 +1966,7 @@ ${errorTraceback}
                 await this.executeWithRetry(
                     originalPrompt,
                     attemptNumber + 1,
-                    error.message
+                    cleanedError
                 );
             } else {
                 throw error;
