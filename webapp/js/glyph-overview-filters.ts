@@ -1117,19 +1117,12 @@ _filter_result
                     // Has a definition, use it
                     usedGroupKeywords.add(g);
                 } else if (g) {
-                    // No definition - check if it looks like a color value
-                    // If it starts with # or is a named color, treat as raw color
-                    // Otherwise create a group with no color
+                    // No definition - check if the browser recognizes it as a valid CSS color
                     if (!augmentedGroups[g]) {
-                        // Check if it looks like a CSS color (starts with #, rgb, hsl, or is short)
-                        const looksLikeColor =
-                            g.startsWith('#') ||
-                            g.startsWith('rgb') ||
-                            g.startsWith('hsl') ||
-                            /^[a-z]+$/i.test(g); // Named colors like 'red', 'lightblue'
+                        const isValidColor = this.isValidCssColor(g);
                         augmentedGroups[g] = {
                             description: g,
-                            color: looksLikeColor ? g : '' // Empty string = no color
+                            color: isValidColor ? g : '' // Empty string = no color
                         };
                     }
                     usedGroupKeywords.add(g);
@@ -1160,6 +1153,20 @@ _filter_result
             usedGroupKeywords,
             augmentedGroups
         };
+    }
+
+    /**
+     * Check if a string is a valid CSS color by asking the browser to parse it
+     * Returns true for hex, rgb(), hsl(), and named colors like 'red', 'lightblue'
+     */
+    private isValidCssColor(value: string): boolean {
+        // Use a temporary element to test if browser recognizes the color
+        const tempEl = document.createElement('div');
+        tempEl.style.color = '';
+        tempEl.style.color = value;
+        // If the browser accepted the color, the style won't be empty
+        // Note: invalid colors result in empty string
+        return tempEl.style.color !== '';
     }
 
     /**
