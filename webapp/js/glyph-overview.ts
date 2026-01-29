@@ -1040,8 +1040,10 @@ class GlyphOverview {
         // Extract error message
         let errorText = '';
         if (error instanceof Error) {
+            // For PythonError from Pyodide, message already contains full Python traceback
+            // Don't append stack (which contains JS/WASM traces)
             errorText = error.message;
-            if (error.stack) {
+            if (error.stack && error.constructor.name !== 'PythonError') {
                 errorText += '\n\n' + error.stack;
             }
         } else if (typeof error === 'string') {
