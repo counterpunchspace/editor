@@ -216,12 +216,23 @@ function addTippyBackdropSupport(
     const originalOnShown = tippyInstance.props.onShown;
     const originalOnHide = tippyInstance.props.onHide;
 
+    // Add backdrop click handler to close menu
+    const handleBackdropClick = () => {
+        if (tippyInstance.state.isVisible) {
+            tippyInstance.hide();
+        }
+    };
+
     tippyInstance.setProps({
         onShow: (instance: any) => {
             backdrop.classList.add('visible');
             if (options?.targetElement && options?.activeClass) {
                 options.targetElement.classList.add(options.activeClass);
             }
+
+            // Add backdrop click handler
+            backdrop.addEventListener('click', handleBackdropClick);
+
             if (originalOnShow) originalOnShow(instance);
         },
         onShown: (instance: any) => {
@@ -249,6 +260,9 @@ function addTippyBackdropSupport(
             if (handler) {
                 document.removeEventListener('keydown', handler);
             }
+
+            // Remove backdrop click handler
+            backdrop.removeEventListener('click', handleBackdropClick);
 
             if (originalOnHide) originalOnHide(instance);
         }
