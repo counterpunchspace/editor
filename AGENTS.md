@@ -15,16 +15,16 @@ Counterpunch (also known as "Context Font Editor") is a browser-based font edito
 
 ## Technology Stack
 
-| Component | Technology |
-|-----------|------------|
-| **Frontend** | TypeScript, JavaScript (ES6+), HTML5, CSS3 |
+| Component            | Technology                                                   |
+| -------------------- | ------------------------------------------------------------ |
+| **Frontend**         | TypeScript, JavaScript (ES6+), HTML5, CSS3                   |
 | **Font Compilation** | Rust (fontc/babelfont) compiled to WebAssembly via wasm-pack |
-| **Python Runtime** | Pyodide (WASM-based Python in browser) |
-| **Text Shaping** | HarfBuzz.js |
-| **Build System** | Webpack 5, Babel, TypeScript compiler |
-| **Testing** | Jest (unit), Playwright (E2E) |
-| **Deployment** | Cloudflare Pages, GitHub Actions |
-| **AI Proxy** | Cloudflare Workers (Anthropic API relay) |
+| **Python Runtime**   | Pyodide (WASM-based Python in browser)                       |
+| **Text Shaping**     | HarfBuzz.js                                                  |
+| **Build System**     | Webpack 5, Babel, TypeScript compiler                        |
+| **Testing**          | Jest (unit), Playwright (E2E)                                |
+| **Deployment**       | Cloudflare Pages, GitHub Actions                             |
+| **AI Proxy**         | Cloudflare Workers (Anthropic API relay)                     |
 
 ## Project Structure
 
@@ -36,6 +36,7 @@ Counterpunch (also known as "Context Font Editor") is a browser-based font edito
 │   │   ├── bootstrap.ts       # Application entry point
 │   │   ├── font-manager.ts    # Font loading/saving
 │   │   ├── babelfont-model.ts # Font object model
+│   │   ├── tippy-utils.ts     # Shared tippy menu utilities
 │   │   └── ...
 │   ├── css/                   # Stylesheets
 │   │   ├── style.css          # Main styles
@@ -124,6 +125,7 @@ npm run test:update-snapshots
 ```
 
 This script:
+
 1. Updates version in `webapp/coi-serviceworker.js` and `API.md`
 2. Extracts release notes from `CHANGELOG.md`
 3. Commits version changes
@@ -155,24 +157,64 @@ This script:
 All `console.log` statements MUST be prefixed with a [Descriptor] tag:
 
 ```javascript
-console.log('[FontCompilation]', 'Compiling font...');
-console.log('[GlyphCanvas]', 'Rendering glyph:', glyphName);
-console.warn('[PythonExec]', 'Script execution failed', error);
+console.log("[FontCompilation]", "Compiling font...");
+console.log("[GlyphCanvas]", "Rendering glyph:", glyphName);
+console.warn("[PythonExec]", "Script execution failed", error);
 ```
 
 **DOM Update Pattern (prevent flickering):**
 
 ```javascript
 // Build off-screen first
-const tempContainer = document.createElement('div');
+const tempContainer = document.createElement("div");
 // ... populate tempContainer ...
 
 // Swap in single paint cycle
 requestAnimationFrame(() => {
-    container.innerHTML = '';
-    container.appendChild(tempContainer);
+  container.innerHTML = "";
+  container.appendChild(tempContainer);
 });
 ```
+
+**Tippy.js Menus (Dropdowns & Context Menus):**
+
+All tippy menus MUST use the shared utilities from `js/tippy-utils.ts`:
+
+```typescript
+import {
+  getOrCreateBackdrop,
+  addTippyBackdropSupport,
+  getTheme,
+} from "./tippy-utils";
+
+// Create backdrop
+const backdrop = getOrCreateBackdrop("my-menu-backdrop");
+
+// Create tippy instance
+const tippyInstance = tippy(element, {
+  content: menuHtml,
+  allowHTML: true,
+  trigger: "manual",
+  interactive: true,
+  theme: getTheme(),
+  // ... other options
+});
+
+// Add backdrop support (enables click-outside-to-close + Escape key)
+addTippyBackdropSupport(tippyInstance, backdrop, {
+  targetElement: element, // Optional: element to add active class
+  activeClass: "menu-active", // Optional: class to add when menu shown
+  onEscape: () => {
+    /* ... */
+  }, // Optional: additional Escape handler
+});
+```
+
+**DO NOT:**
+
+- Duplicate `getOrCreateBackdrop`, `addTippyBackdropSupport`, or `getTheme` functions
+- Implement custom backdrop click handlers separately
+- Create tippy menus without backdrop support
 
 ### CSS
 
@@ -180,17 +222,23 @@ requestAnimationFrame(() => {
 
 ```css
 /* WRONG */
-.button { background-color: #ff00ff; }
+.button {
+  background-color: #ff00ff;
+}
 
 /* CORRECT */
-.button { background-color: var(--accent-magenta); }
+.button {
+  background-color: var(--accent-magenta);
+}
 ```
 
 Colors are defined in `webapp/css/style.css` in two theme blocks:
+
 - **Dark Theme (Default)**: `:root { ... }`
 - **Light Theme**: `:root[data-theme="light"] { ... }`
 
 Variable naming: Use semantic names (purpose, not color):
+
 - ✅ `--text-primary`, `--background-hover`, `--accent-green`
 - ❌ `--dark-gray`, `--light-blue`, `--color-1`
 
@@ -223,6 +271,7 @@ Design tokens are defined in `css/tokens.json` and generated to `css/tokens.css`
 ### Code Formatting
 
 Prettier configuration in `webapp/.prettierrc`:
+
 - Print width: 80
 - Tab width: 4 spaces
 - Single quotes
@@ -237,6 +286,7 @@ Check formatting: `cd webapp && npx prettier -c .`
 ### Font Object Model
 
 The font data model is defined in `babelfont-model.ts` with classes:
+
 - `Font` - Main font class
 - `Glyph` - Individual glyphs
 - `Layer` - Master/intermediate designs
@@ -249,6 +299,7 @@ The model is accessible via `window.currentFontModel` and exposed to Python thro
 ### File I/O
 
 Supported formats (via `font-manager.ts`):
+
 - `.babelfont` - Native JSON format
 - `.glyphs` - Glyphs.app format
 - `.vfj` - FontLab format
@@ -270,6 +321,7 @@ Plugins are discovered dynamically from the `plugins/` directory.
 ## MCP Server for Development
 
 The MCP (Model Context Protocol) server in `mcp-server/` provides:
+
 - Console log capture and querying
 - Runtime data inspection
 - JavaScript execution in webapp context
@@ -288,6 +340,7 @@ WebSocket port: 9876
 ## Global Window Objects
 
 Key globals exposed on `window` (see `js/index.d.ts` for full list):
+
 - `window.currentFontModel` - Current font object model
 - `window.fontManager` - Font loading/management
 - `window.glyphCanvas` - Main canvas editor
