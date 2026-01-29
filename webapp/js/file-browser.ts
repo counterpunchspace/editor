@@ -271,14 +271,24 @@ function setupMenuItemHandlers(
     setupMenuKeyboardNav(menu);
 }
 
+// Track file context menu tippy instances for cleanup
+let fileContextMenuTippyInstances: any[] = [];
+
 function setupFileContextMenus() {
+    // Destroy old tippy instances to prevent orphaned poppers
+    fileContextMenuTippyInstances.forEach((instance) => {
+        try {
+            instance.destroy();
+        } catch (e) {
+            // Ignore errors from already-destroyed instances
+        }
+    });
+    fileContextMenuTippyInstances = [];
+
     const fileItems = document.querySelectorAll('.file-item');
 
     // Create shared backdrop for all file context menus
     const backdrop = getOrCreateBackdrop('file-context-menu-backdrop');
-
-    // Track all tippy instances for this backdrop
-    const tippyInstances: any[] = [];
 
     fileItems.forEach((item) => {
         const element = item as HTMLElement;
@@ -319,6 +329,12 @@ function setupFileContextMenus() {
                             backdrop.classList.remove('visible');
                             element.classList.remove('file-item-active');
 
+                            // Wait for menu to fully hide before executing action
+                            // This ensures the DOM is clean before rename input is shown
+                            await new Promise((resolve) =>
+                                requestAnimationFrame(resolve)
+                            );
+
                             switch (action) {
                                 case 'open':
                                     await openFont(path);
@@ -345,8 +361,8 @@ function setupFileContextMenus() {
             }
         });
 
-        // Add to instances array
-        tippyInstances.push(tippyInstance);
+        // Add to instances array for cleanup
+        fileContextMenuTippyInstances.push(tippyInstance);
 
         // Add backdrop and keyboard support
         addTippyBackdropSupport(tippyInstance, backdrop, {
@@ -377,28 +393,9 @@ function setupFileContextMenus() {
             tippyInstance.show();
         });
 
-        // Store tippy instance for cleanup
+        // Store tippy instance on element (for debugging access)
         (element as any)._tippy = tippyInstance;
     });
-
-    // Set up a single backdrop click handler for all instances
-    // Remove old handler if exists
-    const oldHandler = (backdrop as any)._clickHandler;
-    if (oldHandler) {
-        backdrop.removeEventListener('click', oldHandler);
-    }
-
-    // Add new handler that hides all visible tippy instances
-    const handleBackdropClick = () => {
-        tippyInstances.forEach((instance) => {
-            if (instance.state.isVisible) {
-                instance.hide();
-            }
-        });
-    };
-
-    backdrop.addEventListener('click', handleBackdropClick);
-    (backdrop as any)._clickHandler = handleBackdropClick;
 }
 
 function updatePluginMenuButtonVisibility(plugin: FilesystemPlugin): void {
@@ -945,52 +942,131 @@ async function deleteItem(itemPath: string, itemName: string, isDir: boolean) {
 }
 
 async function renameItem(itemPath: string, itemName: string, isDir: boolean) {
-    const itemType = isDir ? 'folder' : 'file';
-    const newName = prompt(`Rename ${itemType} "${itemName}" to:`, itemName);
-
-    if (!newName || newName === itemName) return;
-
-    // Validate new name
-    if (newName.includes('/') || newName.includes('\\')) {
-        alert('Name cannot contain / or \\ characters');
+    // Find the file item element
+    const fileItem = document.querySelector(
+        `.file-item[data-path="${itemPath}"]`
+    ) as HTMLElement;
+    if (!fileItem) {
+        console.error('[FileBrowser]', 'File item not found for rename');
         return;
     }
 
-    try {
-        await fileSystemCache.activeAdapter.renameItem(
-            itemPath,
-            newName,
-            isDir
-        );
-        console.log('[FileBrowser]', `Renamed: ${itemPath} -> ${newName}`);
+    // Find the name element
+    const nameElement = fileItem.querySelector('.file-name') as HTMLElement;
+    if (!nameElement) {
+        console.error('[FileBrowser]', 'File name element not found');
+        return;
+    }
 
-        // If this file is open in the script editor, update the path there
-        if (!isDir && window.scriptEditor) {
-            const pluginId = fileSystemCache.currentPlugin.getId();
-            if (
-                window.scriptEditor.currentFilePath === itemPath &&
-                window.scriptEditor.currentPluginId === pluginId
-            ) {
-                // Compute new path
-                const parentPath = itemPath.substring(
-                    0,
-                    itemPath.lastIndexOf('/')
-                );
-                const newPath = parentPath + '/' + newName;
-                window.scriptEditor.updateFilePath(newPath);
-                console.log(
-                    '[FileBrowser]',
-                    'Updated script editor file path to:',
-                    newPath
-                );
-            }
+    // Store original name for cancel
+    const originalName = itemName;
+
+    // Create inline input
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'file-rename-input';
+    input.value = itemName;
+
+    // For files with extension, select only the name part
+    const lastDotIndex = itemName.lastIndexOf('.');
+    const hasExtension = !isDir && lastDotIndex > 0;
+
+    // Replace name element with input
+    nameElement.style.display = 'none';
+    nameElement.parentNode!.insertBefore(input, nameElement.nextSibling);
+    input.focus();
+
+    // Select filename without extension
+    if (hasExtension) {
+        input.setSelectionRange(0, lastDotIndex);
+    } else {
+        input.select();
+    }
+
+    // Prevent click from propagating to parent
+    input.addEventListener('click', (e) => e.stopPropagation());
+
+    // Handle rename completion
+    const completeRename = async () => {
+        const newName = input.value.trim();
+
+        // Remove input, restore name element
+        input.remove();
+        nameElement.style.display = '';
+
+        if (!newName || newName === originalName) {
+            return;
         }
 
-        await refreshFileSystem();
-    } catch (error: any) {
-        console.error('[FileBrowser]', 'Error renaming item:', error);
-        alert(`Error renaming item: ${error.message}`);
-    }
+        // Validate new name
+        if (newName.includes('/') || newName.includes('\\')) {
+            alert('Name cannot contain / or \\ characters');
+            return;
+        }
+
+        try {
+            await fileSystemCache.activeAdapter.renameItem(
+                itemPath,
+                newName,
+                isDir
+            );
+            console.log('[FileBrowser]', `Renamed: ${itemPath} -> ${newName}`);
+
+            // If this file is open in the script editor, update the path there
+            if (!isDir && window.scriptEditor) {
+                const pluginId = fileSystemCache.currentPlugin.getId();
+                if (
+                    window.scriptEditor.currentFilePath === itemPath &&
+                    window.scriptEditor.currentPluginId === pluginId
+                ) {
+                    // Compute new path
+                    const parentPath = itemPath.substring(
+                        0,
+                        itemPath.lastIndexOf('/')
+                    );
+                    const newPath = parentPath + '/' + newName;
+                    window.scriptEditor.updateFilePath(newPath);
+                    console.log(
+                        '[FileBrowser]',
+                        'Updated script editor file path to:',
+                        newPath
+                    );
+                }
+            }
+
+            await refreshFileSystem();
+        } catch (error: any) {
+            console.error('[FileBrowser]', 'Error renaming item:', error);
+            alert(`Error renaming item: ${error.message}`);
+        }
+    };
+
+    // Handle cancel
+    const cancelRename = () => {
+        input.remove();
+        nameElement.style.display = '';
+    };
+
+    // Enter to confirm, Escape to cancel
+    input.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            completeRename();
+        } else if (e.key === 'Escape') {
+            e.preventDefault();
+            cancelRename();
+        }
+    });
+
+    // Blur to confirm (like most file browsers)
+    input.addEventListener('blur', () => {
+        // Small delay to allow for click on other elements
+        setTimeout(() => {
+            if (document.body.contains(input)) {
+                completeRename();
+            }
+        }, 100);
+    });
 }
 
 async function uploadFiles(

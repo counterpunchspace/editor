@@ -2437,6 +2437,26 @@ kbd + kbd {
     white-space: nowrap;
 }
 
+/* Inline rename input */
+.file-rename-input {
+    flex: 1;
+    font-family: inherit;
+    font-size: inherit;
+    padding: 2px 4px;
+    margin: -2px 0;
+    border: 1px solid var(--accent-cyan);
+    border-radius: 3px;
+    background: var(--input-bg);
+    color: var(--text-primary);
+    outline: none;
+    min-width: 0;
+}
+
+.file-rename-input:focus {
+    border-color: var(--accent-cyan);
+    box-shadow: 0 0 0 1px var(--accent-cyan);
+}
+
 /* Drag and Drop Styling */
 #file-browser.drag-over {
     background-color: var(--input-bg);
