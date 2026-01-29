@@ -110,6 +110,7 @@ declare global {
         initFileBrowser: () => Promise<void>;
         uploadFiles: (files: File[], targetPath?: string) => Promise<void>;
         createFolder: () => Promise<void>;
+        createFile: () => Promise<void>;
         deleteItem: (
             itemPath: string,
             itemName: string,
@@ -201,7 +202,28 @@ declare global {
         ace: any; // Ace
         scriptEditor: {
             runScript: () => void;
+            openFile: (path: string, pluginId: string) => Promise<boolean>;
+            openFileFromUri: (uri: string) => Promise<boolean>;
+            newFile: () => Promise<void>;
+            save: () => Promise<boolean>;
+            saveAs: () => Promise<boolean>;
+            updateFilePath: (newPath: string) => void;
             get editor(): any; // Ace Editor instance
+            get isModified(): boolean;
+            get currentFilePath(): string | null;
+            get currentPluginId(): string | null;
+        };
+
+        // From file-browser.ts
+        pluginRegistry: {
+            get: (id: string) => any;
+            getDefault: () => any;
+            getAll: () => any[];
+            getIds: () => string[];
+        };
+        fileBrowser: {
+            getCurrentPlugin: () => any;
+            getCurrentPath: () => string;
         };
 
         // From index.html (inline script)

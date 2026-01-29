@@ -1749,6 +1749,117 @@ kbd + kbd {
     background-color: rgba(0, 144, 0, 0.08) !important;
 }
 
+/* Script Editor File Menu */
+.script-editor-buttons {
+    display: flex;
+    align-items: stretch;
+    gap: 0;
+    height: 100%;
+    margin-left: auto;
+}
+
+.script-file-dropdown-btn {
+    background-color: transparent;
+    border: none;
+    border-left: 1px solid var(--border-primary);
+    color: var(--text-primary);
+    padding: 0 8px;
+    border-radius: 0;
+    cursor: pointer;
+    font-family: var(--font-families-mono);
+    font-size: 10px;
+    font-weight: normal;
+    transition: all 0.2s ease;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    gap: 3px;
+}
+
+.script-file-dropdown-btn:hover {
+    background-color: var(--input-bg);
+    border-left-color: var(--text-primary);
+}
+
+.script-file-dropdown-btn .material-symbols-outlined {
+    font-size: 14px;
+}
+
+.script-modified-indicator {
+    color: var(--accent-yellow);
+    font-size: 10px;
+    margin-right: 2px;
+}
+
+/* Script File Menu (via Tippy) */
+.script-file-menu {
+    background: var(--background-secondary);
+    min-width: 200px;
+    font-family: var(--font-families-sans);
+    font-size: 11px;
+    border-radius: 3px;
+    overflow: hidden;
+}
+
+.script-file-menu-path {
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border-primary);
+    color: var(--text-secondary);
+    font-family: var(--font-families-mono);
+    font-size: 10px;
+    word-break: break-all;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.script-file-menu-path .script-modified-indicator {
+    color: var(--accent-yellow);
+}
+
+.script-file-menu-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 12px;
+    cursor: pointer;
+    transition: background-color 0.15s ease;
+    color: var(--text-primary);
+}
+
+.script-file-menu-item:hover,
+.script-file-menu-item.focused {
+    background-color: var(--input-bg);
+}
+
+.script-file-menu-item.disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+.script-file-menu-item.disabled:hover {
+    background-color: transparent;
+}
+
+.script-file-menu-item .material-symbols-outlined {
+    font-size: 16px;
+    color: var(--text-secondary);
+}
+
+.script-file-menu-shortcut {
+    margin-left: auto;
+    font-family: var(--font-families-mono);
+    font-size: 10px;
+    color: var(--text-faint);
+    display: flex;
+    align-items: center;
+}
+
+.script-file-menu-shortcut .material-symbols-outlined {
+    font-size: 12px;
+    color: var(--text-faint);
+}
+
 /* Official Pyodide Console Styles */
 
 @supports (--css: variables) {

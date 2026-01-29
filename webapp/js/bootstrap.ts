@@ -83,6 +83,52 @@ if (document.readyState === 'loading') {
     handleURLFontOpen();
 }
 
+// Disable default browser context menu in production
+// Allow only on elements with custom tippy menus (marked with data-has-context-menu)
+// or text input elements where selection context menu is useful
+const disableDefaultContextMenu = () => {
+    if (window.isProduction && window.isProduction()) {
+        document.addEventListener(
+            'contextmenu',
+            (e) => {
+                const target = e.target as HTMLElement;
+
+                // Allow on text input/textarea for copy/paste
+                if (
+                    target.tagName === 'INPUT' ||
+                    target.tagName === 'TEXTAREA'
+                ) {
+                    return;
+                }
+
+                // Allow on contenteditable elements
+                if (target.isContentEditable) {
+                    return;
+                }
+
+                // Allow on Ace editor (has its own context menu)
+                if (target.closest('.ace_editor')) {
+                    return;
+                }
+
+                // Block default context menu everywhere else
+                e.preventDefault();
+            },
+            true
+        );
+        console.log(
+            '[Bootstrap]',
+            'Default context menu disabled in production'
+        );
+    }
+};
+
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', disableDefaultContextMenu);
+} else {
+    disableDefaultContextMenu();
+}
+
 import './auth-manager.js'; // Authentication with fonteditorwebsite
 import './ai-assistant.js';
 import './auto-compile-manager';
@@ -108,7 +154,7 @@ import './python-ui-sync.js';
 import './python-post-execution';
 import './resizer.js';
 import './save-button.js';
-import './script-editor.js';
+import './script-editor';
 import './share-button';
 import './sound-preloader.js';
 import './theme-switcher.js';

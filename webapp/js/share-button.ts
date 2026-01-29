@@ -6,7 +6,8 @@ import 'tippy.js/dist/tippy.css';
 import {
     getOrCreateBackdrop,
     addTippyBackdropSupport,
-    getTheme
+    getTheme,
+    setupMenuKeyboardNav
 } from './tippy-utils';
 
 let shareMenuInstance: TippyInstance | null = null;
@@ -124,9 +125,8 @@ export function initShareButton(): void {
 
                 const action = menuItem.getAttribute('data-action');
 
-                // Hide menu and backdrop immediately
+                // Hide menu immediately
                 instance.hide();
-                backdrop.classList.remove('visible');
 
                 switch (action) {
                     case 'copy-url':
@@ -148,6 +148,12 @@ export function initShareButton(): void {
                         break;
                 }
             });
+        },
+        onShown: (instance) => {
+            const menu = instance.popper.querySelector('.plugin-menu');
+            if (menu) {
+                setupMenuKeyboardNav(menu);
+            }
         }
     });
 
@@ -168,16 +174,6 @@ export function initShareButton(): void {
             shareMenuInstance?.show();
         }
     });
-
-    // Set up backdrop click handler
-    const handleBackdropClick = () => {
-        if (shareMenuInstance?.state.isVisible) {
-            shareMenuInstance.hide();
-        }
-    };
-
-    backdrop.addEventListener('click', handleBackdropClick);
-    (backdrop as any)._clickHandler = handleBackdropClick;
 
     console.log('[ShareButton]', 'Share button initialized');
 }

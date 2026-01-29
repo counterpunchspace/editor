@@ -761,20 +761,33 @@
                                 >
                             </button>
                         </div>
-                        <button
-                            id="run-script-btn"
-                            class="view-title-button"
-                            title="Run script (Cmd+Alt+R)"
-                        >
-                            Run
-                            <span class="button-shortcut" style="opacity: 0.5"
-                                ><span class="material-symbols-outlined"
-                                    >keyboard_command_key</span
-                                ><span class="material-symbols-outlined"
-                                    >keyboard_option_key</span
-                                >R</span
+                        <div class="view-title-right script-editor-buttons">
+                            <button
+                                id="script-file-btn"
+                                class="script-file-dropdown-btn"
+                                title="File operations"
                             >
-                        </button>
+                                <span id="script-file-modified-indicator" class="script-modified-indicator" style="display: none;">●</span>
+                                File
+                                <span class="material-symbols-outlined"
+                                    >expand_more</span
+                                >
+                            </button>
+                            <button
+                                id="run-script-btn"
+                                class="view-title-button"
+                                title="Run script (Cmd+Alt+R)"
+                            >
+                                Run
+                                <span class="button-shortcut" style="opacity: 0.5"
+                                    ><span class="material-symbols-outlined"
+                                        >keyboard_command_key</span
+                                    ><span class="material-symbols-outlined"
+                                        >keyboard_option_key</span
+                                    >R</span
+                                >
+                            </button>
+                        </div>
                     </div>
                     <div id="script-editor"></div>
                 </div>

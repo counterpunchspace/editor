@@ -1,9 +1,17 @@
 // Glyph Overview Filters
 // Manages hierarchical filter sidebar with Python plugin-based dynamic filters
 
+import tippy, { Instance as TippyInstance } from 'tippy.js';
+import 'tippy.js/dist/tippy.css';
 import { Logger } from './logger';
 import { pluginRegistry } from './filesystem-plugins';
 import { NativeAdapter } from './file-system-adapter';
+import {
+    getOrCreateBackdrop,
+    addTippyBackdropSupport,
+    getTheme,
+    setupMenuKeyboardNav
+} from './tippy-utils';
 
 const console = new Logger('GlyphOverviewFilters', true);
 
@@ -80,6 +88,7 @@ export class GlyphOverviewFilterManager {
     private readonly USER_FILTERS_PATH = '/Counterpunch/Filters';
     private fileSystemObserver: any = null; // FileSystemObserver instance
     private observerSupported: boolean = 'FileSystemObserver' in window;
+    private tippyInstances: TippyInstance[] = []; // Context menu instances
 
     constructor() {
         this.rootNode = this.buildEmptyTree();
@@ -360,8 +369,13 @@ export class GlyphOverviewFilterManager {
 
     /**
      * Discover user-defined filters from /Counterpunch/Filters/ on disk
+     * @param skipObserverSetup - If true, skip setting up file system observer (used when called from observer callback)
+     * @param renamedToDisplayName - If provided, look for filter with this display_name when keyword match fails (for renames)
      */
-    async discoverUserFilters(): Promise<void> {
+    async discoverUserFilters(
+        skipObserverSetup: boolean = false,
+        renamedToDisplayName: string | null = null
+    ): Promise<void> {
         // Remember active user filter keyword to restore after reload
         const activeUserFilterKeyword = this.activeFilter?.isUserFilter
             ? this.activeFilter.keyword
@@ -471,9 +485,17 @@ export class GlyphOverviewFilterManager {
 
             // Restore active user filter reference if it still exists
             if (activeUserFilterKeyword) {
-                const restoredFilter = this.userFilters.find(
+                let restoredFilter = this.userFilters.find(
                     (f) => f.keyword === activeUserFilterKeyword
                 );
+
+                // If not found by keyword but we have a rename target, find by display_name
+                if (!restoredFilter && renamedToDisplayName) {
+                    restoredFilter = this.userFilters.find(
+                        (f) => f.display_name === renamedToDisplayName
+                    );
+                }
+
                 if (restoredFilter) {
                     this.activeFilter = restoredFilter;
                 } else {
@@ -501,8 +523,10 @@ export class GlyphOverviewFilterManager {
                 }
             }
 
-            // Set up file system observer for auto-refresh
-            await this.setupFileSystemObserver(adapter);
+            // Set up file system observer for auto-refresh (skip if called from observer)
+            if (!skipObserverSetup) {
+                await this.setupFileSystemObserver(adapter);
+            }
         } catch (error) {
             console.error('Error discovering user filters:', error);
         }
@@ -545,42 +569,137 @@ export class GlyphOverviewFilterManager {
             const FileSystemObserver = (window as any).FileSystemObserver;
             this.fileSystemObserver = new FileSystemObserver(
                 async (records: any[]) => {
+                    // Log all records for debugging (full object)
+                    for (const r of records) {
+                        console.log(
+                            '[GlyphOverviewFilters]',
+                            'Record:',
+                            JSON.stringify({
+                                type: r.type,
+                                changedHandleName: r.changedHandle?.name,
+                                relativePathComponents:
+                                    r.relativePathComponents,
+                                relativePathMovedFrom: r.relativePathMovedFrom,
+                                root: r.root?.name
+                            })
+                        );
+                    }
+
                     // Check if any .py files were affected
                     let needsRefresh = false;
+                    const movedPy: { oldName: string; newName: string }[] = [];
+                    const disappearedPy: string[] = [];
+                    const appearedPy: string[] = [];
+                    const modifiedPy: string[] = [];
+
                     for (const record of records) {
                         const name = record.changedHandle?.name || '';
-                        if (
-                            name.endsWith('.py') ||
+                        if (name.endsWith('.py')) {
+                            needsRefresh = true;
+                            if (record.type === 'disappeared') {
+                                disappearedPy.push(name);
+                            } else if (record.type === 'appeared') {
+                                appearedPy.push(name);
+                            } else if (record.type === 'moved') {
+                                // For moved/renamed files, relativePathMovedFrom contains the old path
+                                const oldPath = record.relativePathMovedFrom;
+                                if (oldPath && oldPath.length > 0) {
+                                    const oldName = oldPath[oldPath.length - 1];
+                                    movedPy.push({ oldName, newName: name });
+                                }
+                            } else if (record.type === 'modified') {
+                                modifiedPy.push(name);
+                            }
+                        } else if (
                             record.type === 'appeared' ||
                             record.type === 'disappeared'
                         ) {
                             needsRefresh = true;
-                            break;
                         }
                     }
 
                     if (needsRefresh) {
                         console.log(
+                            '[GlyphOverviewFilters]',
                             'File system change detected, refreshing user filters'
                         );
-                        // Remember if active filter is a user filter
+                        console.log(
+                            '[GlyphOverviewFilters]',
+                            'Moved .py files:',
+                            movedPy
+                        );
+
+                        // Remember active user filter info
                         const activeUserFilterKeyword = this.activeFilter
                             ?.isUserFilter
                             ? this.activeFilter.keyword
                             : null;
+                        const activeUserFilterDisplayName = this.activeFilter
+                            ?.isUserFilter
+                            ? this.activeFilter.display_name
+                            : null;
+
+                        console.log(
+                            '[GlyphOverviewFilters]',
+                            'Active user filter keyword:',
+                            activeUserFilterKeyword,
+                            'display_name:',
+                            activeUserFilterDisplayName
+                        );
+
+                        // Detect rename from 'moved' records
+                        let renamedToName: string | null = null;
+                        if (movedPy.length > 0 && activeUserFilterDisplayName) {
+                            // Check if any moved file matches the active filter
+                            for (const moved of movedPy) {
+                                const oldDisplayName = moved.oldName.replace(
+                                    /\.py$/,
+                                    ''
+                                );
+                                console.log(
+                                    '[GlyphOverviewFilters]',
+                                    'Checking moved: oldName =',
+                                    oldDisplayName,
+                                    'vs activeUserFilterDisplayName =',
+                                    activeUserFilterDisplayName
+                                );
+                                if (
+                                    activeUserFilterDisplayName ===
+                                    oldDisplayName
+                                ) {
+                                    renamedToName = moved.newName.replace(
+                                        /\.py$/,
+                                        ''
+                                    );
+                                    console.log(
+                                        '[GlyphOverviewFilters]',
+                                        `Detected rename of active filter: ${oldDisplayName} -> ${renamedToName}`
+                                    );
+                                    break;
+                                }
+                            }
+                        }
 
                         // discoverUserFilters updates counts for ALL user filters
-                        await this.discoverUserFilters();
+                        // Skip observer setup since we're already observing
+                        // Pass renamedToName so it can find the renamed filter
+                        await this.discoverUserFilters(true, renamedToName);
 
-                        // Also update glyph list if active filter is a user filter
-                        if (activeUserFilterKeyword) {
-                            const updatedFilter = this.userFilters.find(
-                                (f) => f.keyword === activeUserFilterKeyword
+                        // Check if active filter was modified
+                        const activeFilterModified =
+                            activeUserFilterDisplayName &&
+                            modifiedPy.some(
+                                (name) =>
+                                    name.replace(/\.py$/, '') ===
+                                    activeUserFilterDisplayName
                             );
-                            if (updatedFilter) {
-                                this.activeFilter = updatedFilter;
-                                await this.runFilter(updatedFilter);
-                            }
+
+                        // Run the filter if it was renamed or modified
+                        if (
+                            (renamedToName || activeFilterModified) &&
+                            this.activeFilter?.isUserFilter
+                        ) {
+                            await this.runFilter(this.activeFilter);
                         }
                     }
                 }
@@ -658,6 +777,10 @@ export class GlyphOverviewFilterManager {
      */
     private renderSidebar(): void {
         if (!this.sidebarContainer) return;
+
+        // Clean up existing tippy instances
+        this.tippyInstances.forEach((instance) => instance.destroy());
+        this.tippyInstances = [];
 
         // Clear existing content
         this.sidebarContainer.innerHTML = '';
@@ -849,7 +972,184 @@ export class GlyphOverviewFilterManager {
             await this.activateFilter(plugin, item);
         });
 
+        // Add context menu for user filters
+        if (plugin.isUserFilter && plugin.filePath) {
+            this.setupUserFilterContextMenu(item, plugin);
+        }
+
         return item;
+    }
+
+    /**
+     * Setup context menu for a user filter item
+     */
+    private setupUserFilterContextMenu(
+        element: HTMLElement,
+        plugin: GlyphFilterPlugin
+    ): void {
+        const filePath = plugin.filePath!;
+
+        // Build menu HTML (using same structure as file-browser context menus)
+        const menuHtml = `
+            <div class="plugin-menu">
+                <div class="plugin-menu-item" data-action="locate">
+                    <span class="material-symbols-outlined">folder_open</span>
+                    <span>Locate in Files</span>
+                </div>
+                <div class="plugin-menu-item" data-action="open-script-editor">
+                    <span class="material-symbols-outlined">code</span>
+                    <span>Open in Script Editor</span>
+                </div>
+            </div>
+        `;
+
+        const backdrop = getOrCreateBackdrop('user-filter-context-backdrop');
+
+        const tippyInstance = tippy(element, {
+            content: menuHtml,
+            allowHTML: true,
+            trigger: 'manual',
+            interactive: true,
+            placement: 'right-start',
+            theme: getTheme(),
+            arrow: false,
+            offset: [0, 0],
+            appendTo: document.body,
+            hideOnClick: false,
+            zIndex: 9999,
+            getReferenceClientRect: null as any,
+            onShown: (instance) => {
+                const menu = instance.popper.querySelector('.plugin-menu');
+                if (!menu) return;
+
+                // Setup keyboard navigation
+                setupMenuKeyboardNav(menu);
+
+                // Skip if handlers already set up
+                if ((menu as any)._handlersSetup) return;
+                (menu as any)._handlersSetup = true;
+
+                menu.querySelectorAll('.plugin-menu-item').forEach(
+                    (menuItem) => {
+                        menuItem.addEventListener('click', async () => {
+                            const action = menuItem.getAttribute('data-action');
+
+                            // Hide menu immediately
+                            instance.hide();
+                            backdrop.classList.remove('visible');
+                            element.classList.remove('context-menu-active');
+
+                            switch (action) {
+                                case 'locate':
+                                    await this.locateFilterInFiles(filePath);
+                                    break;
+                                case 'open-script-editor':
+                                    await this.openFilterInScriptEditor(
+                                        filePath
+                                    );
+                                    break;
+                            }
+                        });
+                    }
+                );
+            }
+        });
+
+        this.tippyInstances.push(tippyInstance);
+
+        addTippyBackdropSupport(tippyInstance, backdrop, {
+            targetElement: element,
+            activeClass: 'context-menu-active'
+        });
+
+        // Right-click to show context menu
+        element.addEventListener('contextmenu', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+
+            // Position at mouse cursor
+            tippyInstance.setProps({
+                getReferenceClientRect: () => ({
+                    width: 0,
+                    height: 0,
+                    top: e.clientY,
+                    bottom: e.clientY,
+                    left: e.clientX,
+                    right: e.clientX,
+                    x: e.clientX,
+                    y: e.clientY,
+                    toJSON: () => ({})
+                })
+            });
+
+            tippyInstance.show();
+        });
+    }
+
+    /**
+     * Locate a user filter file in the Files view
+     */
+    private async locateFilterInFiles(filePath: string): Promise<void> {
+        // Switch to files view
+        const filesView = document.getElementById('view-files');
+        if (filesView) {
+            filesView.click();
+        }
+
+        // Get directory path
+        const dirPath = filePath.substring(0, filePath.lastIndexOf('/'));
+        const fileName = filePath.substring(filePath.lastIndexOf('/') + 1);
+
+        // Switch to disk plugin if needed
+        const currentPlugin = (window as any).fileBrowser?.getCurrentPlugin?.();
+        if (currentPlugin?.getId() !== 'disk') {
+            await (window as any).switchContext?.('disk');
+        }
+
+        // Navigate to the directory and highlight the file
+        if ((window as any).navigateToPath) {
+            await (window as any).navigateToPath(dirPath);
+            // Select the file
+            setTimeout(() => {
+                if ((window as any).selectFile) {
+                    (window as any).selectFile(filePath);
+                }
+            }, 100);
+        }
+    }
+
+    /**
+     * Open a user filter file in the Script Editor
+     */
+    private async openFilterInScriptEditor(filePath: string): Promise<void> {
+        if (window.scriptEditor && window.scriptEditor.openFile) {
+            // Check if already open
+            if (
+                window.scriptEditor.currentFilePath === filePath &&
+                window.scriptEditor.currentPluginId === 'disk'
+            ) {
+                // Just switch to scripts view
+                const scriptView = document.getElementById('view-scripts');
+                if (scriptView) {
+                    scriptView.click();
+                }
+                return;
+            }
+
+            try {
+                await window.scriptEditor.openFile(filePath, 'disk');
+                console.log(`Opened ${filePath} in Script Editor`);
+            } catch (error) {
+                console.error('Error opening in Script Editor:', error);
+                alert(
+                    'Failed to open file in Script Editor: ' +
+                        (error as Error).message
+                );
+            }
+        } else {
+            console.error('Script Editor not available');
+            alert('Script Editor not available');
+        }
     }
 
     /**

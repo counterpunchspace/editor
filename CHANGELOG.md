@@ -1,5 +1,6 @@
 # Unreleased
 
+- **Script Editor File I/O**: The script editor allows opening/saving files.
 - **Component Coloring in Overview**: Components in glyph overview now render in theme-specific blue (dark: cyan, light: blue) with proper counter cutting via nonzero winding. Paths render in white (dark mode) or black (light mode). Rust preserves component structure with nested layerData for accurate recursive rendering.
 - **Glyph Overview Search**: Added search field with loupe icon in overview title bar. Filters glyphs by name as you type, supporting space-separated AND search terms. Activated via Cmd+F keyboard shortcut when overview view is focused. Search persists across font reloads.
 - **Share Button**: Added share button (material symbol) next to font name in title bar. Opens tippy menu with options to copy URL or send by email with pre-filled subject and body text.

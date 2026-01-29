@@ -145,6 +145,53 @@ export abstract class FilesystemPlugin {
             })
         );
     }
+
+    // ==========================================
+    // Script Editor File Capabilities
+    // ==========================================
+
+    /**
+     * Whether this plugin supports opening files via a file picker dialog
+     * If false, files can only be opened via the Files view context menu
+     */
+    supportsOpenFilePicker(): boolean {
+        return false; // Default: no file picker support
+    }
+
+    /**
+     * Whether this plugin supports Save As via a file picker dialog
+     * If false, only Save (to existing path) is supported
+     */
+    supportsSaveAsFilePicker(): boolean {
+        return false; // Default: no save-as picker support
+    }
+
+    /**
+     * Open a file picker dialog and return the selected file path
+     * Only called if supportsOpenFilePicker() returns true
+     * @param options Options for the file picker
+     * @returns The selected file path, or null if cancelled
+     */
+    async showOpenFilePicker(options?: {
+        types?: { description: string; accept: Record<string, string[]> }[];
+        startIn?: string;
+    }): Promise<string | null> {
+        return null; // Default: not implemented
+    }
+
+    /**
+     * Show a save file picker dialog and return the selected file path
+     * Only called if supportsSaveAsFilePicker() returns true
+     * @param options Options for the file picker
+     * @returns The selected file path, or null if cancelled
+     */
+    async showSaveFilePicker(options?: {
+        suggestedName?: string;
+        types?: { description: string; accept: Record<string, string[]> }[];
+        startIn?: string;
+    }): Promise<string | null> {
+        return null; // Default: not implemented
+    }
 }
 
 /**
@@ -389,6 +436,136 @@ export class DiskPlugin extends FilesystemPlugin {
     /** Clear the selected directory */
     async clearDirectory(): Promise<void> {
         await this.nativeAdapter.clearDirectory();
+    }
+
+    // ==========================================
+    // Script Editor File Capabilities
+    // ==========================================
+
+    supportsOpenFilePicker(): boolean {
+        // Only support file picker when a folder is selected
+        return this.nativeAdapter.hasDirectory();
+    }
+
+    supportsSaveAsFilePicker(): boolean {
+        // Only support save-as picker when a folder is selected
+        return this.nativeAdapter.hasDirectory();
+    }
+
+    async showOpenFilePicker(options?: {
+        types?: { description: string; accept: Record<string, string[]> }[];
+        startIn?: string;
+    }): Promise<string | null> {
+        if (!this.nativeAdapter.hasDirectory()) {
+            return null;
+        }
+
+        try {
+            const pickerOptions: any = {
+                multiple: false
+            };
+
+            if (options?.types) {
+                pickerOptions.types = options.types;
+            }
+
+            // Try to start in the specified directory, or root
+            const startPath = options?.startIn || '/';
+            const startHandle =
+                await this.nativeAdapter.getHandleAtPath(startPath);
+            if (startHandle) {
+                pickerOptions.startIn = startHandle;
+            }
+
+            const [fileHandle] = await (window as any).showOpenFilePicker(
+                pickerOptions
+            );
+
+            // Get the path relative to our root
+            const relativePath = await this.getRelativePath(fileHandle);
+            return relativePath;
+        } catch (error: any) {
+            if (error.name === 'AbortError') {
+                console.log('[DiskPlugin] Open file picker cancelled');
+                return null;
+            }
+            console.error('[DiskPlugin] Error opening file picker:', error);
+            return null;
+        }
+    }
+
+    async showSaveFilePicker(options?: {
+        suggestedName?: string;
+        types?: { description: string; accept: Record<string, string[]> }[];
+        startIn?: string;
+    }): Promise<string | null> {
+        if (!this.nativeAdapter.hasDirectory()) {
+            return null;
+        }
+
+        try {
+            const pickerOptions: any = {};
+
+            if (options?.suggestedName) {
+                pickerOptions.suggestedName = options.suggestedName;
+            }
+
+            if (options?.types) {
+                pickerOptions.types = options.types;
+            }
+
+            // Try to start in the specified directory, or root
+            const startPath = options?.startIn || '/';
+            const startHandle =
+                await this.nativeAdapter.getHandleAtPath(startPath);
+            if (startHandle) {
+                pickerOptions.startIn = startHandle;
+            }
+
+            const fileHandle = await (window as any).showSaveFilePicker(
+                pickerOptions
+            );
+
+            // Get the path relative to our root
+            const relativePath = await this.getRelativePath(fileHandle);
+            return relativePath;
+        } catch (error: any) {
+            if (error.name === 'AbortError') {
+                console.log('[DiskPlugin] Save file picker cancelled');
+                return null;
+            }
+            console.error('[DiskPlugin] Error saving file picker:', error);
+            return null;
+        }
+    }
+
+    /**
+     * Get the path of a file handle relative to our root directory
+     * Returns null if the file is outside our root
+     */
+    private async getRelativePath(
+        fileHandle: FileSystemFileHandle
+    ): Promise<string | null> {
+        try {
+            const rootHandle = await this.nativeAdapter.getHandleAtPath('/');
+            if (!rootHandle || rootHandle.kind !== 'directory') {
+                return null;
+            }
+
+            const pathParts = await (rootHandle as any).resolve(fileHandle);
+            if (pathParts === null) {
+                // File is outside our root directory
+                console.warn(
+                    '[DiskPlugin] Selected file is outside the root directory'
+                );
+                return null;
+            }
+
+            return '/' + pathParts.join('/');
+        } catch (error) {
+            console.error('[DiskPlugin] Error resolving path:', error);
+            return null;
+        }
     }
 }
 

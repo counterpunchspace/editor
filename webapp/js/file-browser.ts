@@ -19,7 +19,8 @@ import { updateUrlState } from './url-state';
 import {
     getOrCreateBackdrop,
     addTippyBackdropSupport,
-    getTheme
+    getTheme,
+    setupMenuKeyboardNav
 } from './tippy-utils';
 
 const LAST_CONTEXT_KEY = 'last-filesystem-context';
@@ -213,6 +214,16 @@ function createFileContextMenuHtml(
         `);
     }
 
+    // Open in Script Editor (for Python files)
+    if (!isDir && name.endsWith('.py')) {
+        items.push(`
+            <div class="plugin-menu-item" data-action="open-in-script-editor">
+                <span class="material-symbols-outlined">code</span>
+                <span>Open in Script Editor</span>
+            </div>
+        `);
+    }
+
     // Download (for files only)
     if (!isDir) {
         items.push(`
@@ -256,34 +267,8 @@ function setupMenuItemHandlers(
         });
     });
 
-    // Keyboard navigation
-    let focusedIndex = 0;
-    const items = Array.from(menu.querySelectorAll('.plugin-menu-item'));
-
-    const updateFocus = () => {
-        items.forEach((el, i) => {
-            el.classList.toggle('focused', i === focusedIndex);
-        });
-    };
-
-    menu.addEventListener('keydown', (e: Event) => {
-        const keyEvent = e as KeyboardEvent;
-        if (keyEvent.key === 'ArrowDown') {
-            e.preventDefault();
-            focusedIndex = (focusedIndex + 1) % items.length;
-            updateFocus();
-        } else if (keyEvent.key === 'ArrowUp') {
-            e.preventDefault();
-            focusedIndex = (focusedIndex - 1 + items.length) % items.length;
-            updateFocus();
-        } else if (keyEvent.key === 'Enter') {
-            e.preventDefault();
-            (items[focusedIndex] as HTMLElement).click();
-        }
-    });
-
-    updateFocus();
-    (menu as HTMLElement).focus();
+    // Use shared keyboard navigation utility
+    setupMenuKeyboardNav(menu);
 }
 
 function setupFileContextMenus() {
@@ -319,6 +304,10 @@ function setupFileContextMenus() {
                 const menu = instance.popper.querySelector('.plugin-menu');
                 if (!menu) return;
 
+                // Skip if handlers already set up
+                if ((menu as any)._handlersSetup) return;
+                (menu as any)._handlersSetup = true;
+
                 // Setup click handlers for menu items
                 menu.querySelectorAll('.plugin-menu-item').forEach(
                     (menuItem) => {
@@ -336,6 +325,9 @@ function setupFileContextMenus() {
                                     break;
                                 case 'open-new-tab':
                                     openFontInNewTab(path);
+                                    break;
+                                case 'open-in-script-editor':
+                                    await openInScriptEditor(path);
                                     break;
                                 case 'download':
                                     await downloadFile(path, name);
@@ -442,6 +434,50 @@ function openFontInNewTab(path: string) {
     const url = `${window.location.origin}${window.location.pathname}?${params.toString()}`;
     window.open(url, '_blank');
     console.log('[FileBrowser]', `Opening font in new tab: ${fileUri}`);
+}
+
+/**
+ * Open a Python file in the Script Editor
+ */
+async function openInScriptEditor(path: string) {
+    const pluginId = fileSystemCache.currentPlugin.getId();
+
+    if (window.scriptEditor && window.scriptEditor.openFile) {
+        // Check if this file is already open
+        if (
+            window.scriptEditor.currentFilePath === path &&
+            window.scriptEditor.currentPluginId === pluginId
+        ) {
+            alert('This file is already open in the Script Editor.');
+            // Switch to scripts view
+            const scriptView = document.getElementById('view-scripts');
+            if (scriptView) {
+                scriptView.click();
+            }
+            return;
+        }
+
+        try {
+            await window.scriptEditor.openFile(path, pluginId);
+            console.log(
+                '[FileBrowser]',
+                `Opened ${path} in Script Editor (plugin: ${pluginId})`
+            );
+        } catch (error) {
+            console.error(
+                '[FileBrowser]',
+                'Error opening in Script Editor:',
+                error
+            );
+            alert(
+                'Failed to open file in Script Editor: ' +
+                    (error as Error).message
+            );
+        }
+    } else {
+        console.error('[FileBrowser]', 'Script Editor not available');
+        alert('Script Editor not available');
+    }
 }
 
 async function openFont(path: string, fileHandle?: FileSystemFileHandle) {
@@ -828,6 +864,33 @@ async function createFolder() {
     }
 }
 
+async function createFile() {
+    const currentPath = fileSystemCache.currentPath || '/';
+    const fileName = prompt('Enter file name:');
+
+    if (!fileName) return;
+
+    // Validate file name
+    if (fileName.includes('/') || fileName.includes('\\')) {
+        alert('File name cannot contain / or \\');
+        return;
+    }
+
+    try {
+        const newPath = `${currentPath}/${fileName}`;
+        // Create empty file
+        await fileSystemCache.activeAdapter.writeFile(
+            newPath,
+            new Uint8Array(0)
+        );
+        console.log('[FileBrowser]', `Created file: ${newPath}`);
+        await refreshFileSystem();
+    } catch (error: any) {
+        console.error('[FileBrowser]', 'Error creating file:', error);
+        alert(`Error creating file: ${error.message}`);
+    }
+}
+
 async function downloadFile(filePath: string, fileName: string) {
     try {
         // Get the file content
@@ -900,6 +963,29 @@ async function renameItem(itemPath: string, itemName: string, isDir: boolean) {
             isDir
         );
         console.log('[FileBrowser]', `Renamed: ${itemPath} -> ${newName}`);
+
+        // If this file is open in the script editor, update the path there
+        if (!isDir && window.scriptEditor) {
+            const pluginId = fileSystemCache.currentPlugin.getId();
+            if (
+                window.scriptEditor.currentFilePath === itemPath &&
+                window.scriptEditor.currentPluginId === pluginId
+            ) {
+                // Compute new path
+                const parentPath = itemPath.substring(
+                    0,
+                    itemPath.lastIndexOf('/')
+                );
+                const newPath = parentPath + '/' + newName;
+                window.scriptEditor.updateFilePath(newPath);
+                console.log(
+                    '[FileBrowser]',
+                    'Updated script editor file path to:',
+                    newPath
+                );
+            }
+        }
+
         await refreshFileSystem();
     } catch (error: any) {
         console.error('[FileBrowser]', 'Error renaming item:', error);
@@ -1068,6 +1154,9 @@ async function navigateToPath(path: string, highlightFolder?: string) {
             <span class="file-path-text" title="${path}" data-full-path="${path}">${path}</span>
             <div class="file-header-actions">
                 ${parentBtn}
+                <button onclick="createFile()" class="file-header-btn" title="Create new file">
+                    <span class="material-symbols-outlined">note_add</span>
+                </button>
                 <button onclick="createFolder()" class="file-header-btn" title="Create new folder">
                     <span class="material-symbols-outlined">create_new_folder</span>
                 </button>
@@ -1903,6 +1992,7 @@ window.navigateToParent = navigateToParent;
 window.selectFile = selectFile;
 window.initFileBrowser = initFileBrowser;
 window.createFolder = createFolder;
+window.createFile = createFile;
 window.navigateToCurrentFont = navigateToCurrentFont;
 window.updateHomeButtonVisibility = updateHomeButtonVisibility;
 window.deleteItem = deleteItem;
@@ -1915,3 +2005,10 @@ window.openFont = openFont;
 (window as any).reEnableAccess = reEnableAccess;
 (window as any).parseFileUri = parseFileUri;
 window.downloadFile = downloadFile;
+
+// Export plugin registry and current plugin getter for script editor
+(window as any).pluginRegistry = pluginRegistry;
+(window as any).fileBrowser = {
+    getCurrentPlugin: () => fileSystemCache.currentPlugin,
+    getCurrentPath: () => fileSystemCache.currentPath
+};
