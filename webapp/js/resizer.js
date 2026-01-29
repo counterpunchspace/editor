@@ -516,48 +516,56 @@ class ResizableViews {
             totalWidth += newWidths[index];
         });
 
-        // Enforce 1/6 minimum ratio constraint per view
-        const minRatio = 1 / 6;
+        // Check if we're in the bottom row - only apply 1/6 ratio there
+        const isBottomRow = container.classList.contains('bottom-row');
         const adjustedWidths = { ...newWidths };
-        
-        views.forEach((view, viewIndex) => {
-            const viewWidth = adjustedWidths[viewIndex];
-            const minRequiredWidth = totalWidth * minRatio;
-            
-            if (viewWidth < minRequiredWidth) {
-                // This view is below minimum, lock it at minimum ratio
-                adjustedWidths[viewIndex] = minRequiredWidth;
-                
-                // Take the shortfall from other non-minimal views proportionally
-                const shortfall = minRequiredWidth - viewWidth;
-                const otherIndices = [];
-                let otherTotal = 0;
-                
-                views.forEach((otherView, otherIndex) => {
-                    if (otherIndex !== viewIndex) {
-                        const otherWidth = adjustedWidths[otherIndex];
-                        const otherMinWidth = totalWidth * minRatio;
-                        // Only take from views that have room to give
-                        if (otherWidth > otherMinWidth + 1) {
-                            otherIndices.push(otherIndex);
-                            otherTotal += otherWidth - otherMinWidth;
+
+        if (isBottomRow) {
+            // Enforce 1/6 minimum ratio constraint per view in bottom row only
+            const minRatio = 1 / 6;
+
+            views.forEach((view, viewIndex) => {
+                const viewWidth = adjustedWidths[viewIndex];
+                const minRequiredWidth = totalWidth * minRatio;
+
+                if (viewWidth < minRequiredWidth) {
+                    // This view is below minimum, lock it at minimum ratio
+                    adjustedWidths[viewIndex] = minRequiredWidth;
+
+                    // Take the shortfall from other non-minimal views proportionally
+                    const shortfall = minRequiredWidth - viewWidth;
+                    const otherIndices = [];
+                    let otherTotal = 0;
+
+                    views.forEach((otherView, otherIndex) => {
+                        if (otherIndex !== viewIndex) {
+                            const otherWidth = adjustedWidths[otherIndex];
+                            const otherMinWidth = totalWidth * minRatio;
+                            // Only take from views that have room to give
+                            if (otherWidth > otherMinWidth + 1) {
+                                otherIndices.push(otherIndex);
+                                otherTotal += otherWidth - otherMinWidth;
+                            }
                         }
-                    }
-                });
-                
-                // Distribute the shortfall proportionally
-                if (otherTotal >= shortfall) {
-                    otherIndices.forEach((otherIndex) => {
-                        const available = adjustedWidths[otherIndex] - (totalWidth * minRatio);
-                        const reduction = (available / otherTotal) * shortfall;
-                        adjustedWidths[otherIndex] -= reduction;
                     });
-                } else {
-                    // Can't satisfy constraint, reject this resize
-                    return;
+
+                    // Distribute the shortfall proportionally
+                    if (otherTotal >= shortfall) {
+                        otherIndices.forEach((otherIndex) => {
+                            const available =
+                                adjustedWidths[otherIndex] -
+                                totalWidth * minRatio;
+                            const reduction =
+                                (available / otherTotal) * shortfall;
+                            adjustedWidths[otherIndex] -= reduction;
+                        });
+                    } else {
+                        // Can't satisfy constraint, reject this resize
+                        return;
+                    }
                 }
-            }
-        });
+            });
+        }
 
         // Apply the adjusted widths
         views.forEach((view, index) => {
