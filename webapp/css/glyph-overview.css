@@ -201,6 +201,7 @@
     gap: 3px 3px;
     padding: 7px;
     border-bottom: 1px solid var(--border-primary);
+    user-select: none;
 }
 
 .glyph-filter-legend-item {
@@ -210,6 +211,7 @@
     padding: 3px 6px;
     border-radius: 4px;
     transition: background-color 0.1s ease;
+    user-select: none;
 }
 
 .glyph-filter-legend-item:hover {
