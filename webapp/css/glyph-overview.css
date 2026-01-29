@@ -403,6 +403,21 @@
     margin: 0;
 }
 
+/* Notice variants (info and warning) */
+.glyph-overview-notice-info .glyph-overview-error-icon {
+    color: var(--accent-blue);
+}
+
+.glyph-overview-notice-warning .glyph-overview-error-icon {
+    color: var(--status-warning);
+}
+
+.glyph-overview-notice-message {
+    font-family: var(--font-sans);
+    font-size: 13px;
+    line-height: 1.6;
+}
+
 /* User Filters Section */
 .glyph-filter-user-header {
     display: flex;

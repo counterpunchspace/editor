@@ -56,6 +56,7 @@ interface GlyphFilterPlugin {
     lastResults?: FilterResult[];
     glyphCount?: number;
     hasError?: boolean; // True if last run resulted in an error
+    hasNoFilterFunction?: boolean; // True if plugin has no filter_glyphs method
     isUserFilter?: boolean; // True if this is a user-defined filter from disk
     filePath?: string; // Path to .py file for user filters
     pythonCode?: string; // Source code for user filters
@@ -1195,20 +1196,46 @@ export class GlyphOverviewFilterManager {
 
             let results: FilterResult[] = [];
             let groups: Record<string, GroupDefinition> = {};
+            let status: string = 'ok';
 
             if (plugin.isUserFilter && plugin.pythonCode) {
                 // Execute user filter with timeout
                 const execResult = await this.executeUserFilter(plugin);
                 results = execResult.results;
                 groups = execResult.groups;
+                status = execResult.status || 'ok';
                 plugin.groups = groups;
+
+                // Check for no filter_glyphs function
+                if (status === 'no_filter_function') {
+                    plugin.glyphCount = 0;
+                    plugin.hasError = false;
+                    plugin.hasNoFilterFunction = true;
+                    this.updatePluginCount(plugin);
+                    if (this.glyphOverview) {
+                        this.glyphOverview.showFilterNotice(
+                            plugin.display_name,
+                            'No filter_glyphs() function found in the filter file.\n\nDefine a function like:\n\ndef filter_glyphs(font):\n    for glyph in font.glyphs:\n        yield {"glyph_name": glyph.name}',
+                            'warning'
+                        );
+                    }
+                    return;
+                }
             } else {
                 // Call the plugin's filter_glyphs method
                 const instance = plugin.instance;
                 if (!instance || !instance.filter_glyphs) {
-                    console.error(
-                        `Plugin ${plugin.display_name} has no filter_glyphs method`
-                    );
+                    plugin.glyphCount = 0;
+                    plugin.hasError = false;
+                    plugin.hasNoFilterFunction = true;
+                    this.updatePluginCount(plugin);
+                    if (this.glyphOverview) {
+                        this.glyphOverview.showFilterNotice(
+                            plugin.display_name,
+                            'Plugin has no filter_glyphs() method.',
+                            'warning'
+                        );
+                    }
                     return;
                 }
 
@@ -1253,6 +1280,7 @@ list(_result) if isinstance(_result, types.GeneratorType) else _result
             plugin.groups = augmentedGroups;
             plugin.glyphCount = results.length;
             plugin.hasError = false;
+            plugin.hasNoFilterFunction = false;
 
             // Update count in sidebar
             this.updatePluginCount(plugin);
@@ -1264,7 +1292,16 @@ list(_result) if isinstance(_result, types.GeneratorType) else _result
 
             // Apply to overview
             if (this.glyphOverview) {
-                this.glyphOverview.setActiveFilter(results);
+                // Check for no results
+                if (results.length === 0) {
+                    this.glyphOverview.showFilterNotice(
+                        plugin.display_name,
+                        'Filter executed successfully but returned no results.',
+                        'info'
+                    );
+                } else {
+                    this.glyphOverview.setActiveFilter(results);
+                }
             }
         } catch (error) {
             console.error(
@@ -1287,6 +1324,7 @@ list(_result) if isinstance(_result, types.GeneratorType) else _result
     private async executeUserFilter(plugin: GlyphFilterPlugin): Promise<{
         results: FilterResult[];
         groups: Record<string, GroupDefinition>;
+        status: string;
     }> {
         const TIMEOUT_MS = 5000;
         const code = plugin.pythonCode!;
@@ -1312,7 +1350,7 @@ _captured_output = StringIO()
 _old_stdout = sys.stdout
 sys.stdout = _captured_output
 
-_filter_result = {"results": [], "groups": {}}
+_filter_result = {"results": [], "groups": {}, "status": "ok"}
 try:
     # Execute user filter code
     _user_code = ${JSON.stringify(code)}
@@ -1325,17 +1363,17 @@ try:
     # Get and call filter_glyphs
     _filter_func = _user_globals.get('filter_glyphs')
     if _filter_func is None:
-        raise ValueError("filter_glyphs function not found in filter file")
-    
-    _font = CurrentFont()
-    _results = _filter_func(_font)
-    
-    # Handle generator (yield) or list (return)
-    if isinstance(_results, types.GeneratorType):
-        _results = list(_results)
-    
-    # Store results and groups
-    _filter_result = {"results": _results, "groups": _groups}
+        _filter_result = {"results": [], "groups": {}, "status": "no_filter_function"}
+    else:
+        _font = CurrentFont()
+        _results = _filter_func(_font)
+        
+        # Handle generator (yield) or list (return)
+        if isinstance(_results, types.GeneratorType):
+            _results = list(_results)
+        
+        # Store results and groups
+        _filter_result = {"results": _results, "groups": _groups, "status": "ok"}
 finally:
     sys.stdout = _old_stdout
 
@@ -1349,10 +1387,11 @@ _filter_result
                 result.destroy();
                 return {
                     results: jsResult.results || [],
-                    groups: jsResult.groups || {}
+                    groups: jsResult.groups || {},
+                    status: jsResult.status || 'ok'
                 };
             }
-            return { results: [], groups: {} };
+            return { results: [], groups: {}, status: 'ok' };
         })();
 
         // Race between execution and timeout
@@ -1485,6 +1524,9 @@ _filter_result
                 count.innerHTML =
                     '<span class="material-symbols-outlined glyph-filter-error-icon">warning</span>';
                 count.classList.add('has-error');
+            } else if (plugin.hasNoFilterFunction) {
+                count.textContent = '—';
+                count.classList.remove('has-error');
             } else {
                 count.textContent = String(plugin.glyphCount ?? '—');
                 count.classList.remove('has-error');

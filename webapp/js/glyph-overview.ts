@@ -1072,6 +1072,51 @@ class GlyphOverview {
     }
 
     /**
+     * Show a filter notice overlay (info, not error)
+     * @param pluginName - Name of the plugin
+     * @param message - Notice message to display
+     * @param type - 'info' or 'warning'
+     */
+    public showFilterNotice(
+        pluginName: string,
+        message: string,
+        type: 'info' | 'warning' = 'info'
+    ): void {
+        this.clearFilterError();
+
+        // Create notice overlay
+        this.errorOverlay = document.createElement('div');
+        this.errorOverlay.className = `glyph-overview-error-overlay glyph-overview-notice-${type}`;
+
+        const noticeContent = document.createElement('div');
+        noticeContent.className = 'glyph-overview-error-content';
+
+        const icon = document.createElement('span');
+        icon.className = 'material-symbols-outlined glyph-overview-error-icon';
+        icon.textContent = type === 'warning' ? 'warning' : 'info';
+
+        const title = document.createElement('div');
+        title.className = 'glyph-overview-error-title';
+        title.textContent = `Filter "${pluginName}"`;
+
+        const messageEl = document.createElement('div');
+        messageEl.className =
+            'glyph-overview-error-message glyph-overview-notice-message';
+        messageEl.textContent = message;
+
+        noticeContent.appendChild(icon);
+        noticeContent.appendChild(title);
+        noticeContent.appendChild(messageEl);
+        this.errorOverlay.appendChild(noticeContent);
+
+        // Hide tiles and show notice
+        if (this.container) {
+            this.container.style.display = 'none';
+            this.container.parentElement?.appendChild(this.errorOverlay);
+        }
+    }
+
+    /**
      * Clear the filter error overlay and show tiles again
      */
     public clearFilterError(): void {
