@@ -48,12 +48,12 @@ function initOverviewView() {
         mainContent.style.display = 'flex';
         mainContent.style.flexDirection = 'column';
 
-        // Create color legend container (hidden by default, shown when filter has colors)
-        const colorLegendContainer = document.createElement('div');
-        colorLegendContainer.id = 'overview-color-legend';
-        colorLegendContainer.className = 'glyph-filter-legend';
-        colorLegendContainer.style.display = 'none';
-        mainContent.appendChild(colorLegendContainer);
+        // Create group legend container (hidden by default, shown when filter has groups)
+        const groupLegendContainer = document.createElement('div');
+        groupLegendContainer.id = 'overview-group-legend';
+        groupLegendContainer.className = 'glyph-filter-legend';
+        groupLegendContainer.style.display = 'none';
+        mainContent.appendChild(groupLegendContainer);
 
         // Create glyph container that will hold the glyph overview
         const glyphContainer = document.createElement('div');
@@ -107,7 +107,7 @@ function initOverviewView() {
             window.glyphOverviewFilterManager.initialize(
                 filterSidebarContainer,
                 glyphOverviewInstance,
-                colorLegendContainer
+                groupLegendContainer
             );
         }
 

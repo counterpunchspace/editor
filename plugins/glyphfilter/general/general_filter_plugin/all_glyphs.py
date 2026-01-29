@@ -31,7 +31,7 @@ class AllGlyphsFilter:
     def visible(self):
         return True
     
-    def get_colors(self):
+    def get_groups(self):
         return {}
     
     def filter_glyphs(self, font):

@@ -31,7 +31,7 @@ class EncodedGlyphsFilter:
     def visible(self):
         return True
     
-    def get_colors(self):
+    def get_groups(self):
         return {
             "multiple_codepoints": {
                 "description": "Multiple Codepoints",
@@ -56,7 +56,7 @@ class EncodedGlyphsFilter:
             codepoints = getattr(glyph, 'codepoints', None)
             if codepoints and len(codepoints) > 0:
                 if len(codepoints) > 1:
-                    results.append({"glyph_name": glyph_name, "color": "multiple_codepoints"})
+                    results.append({"glyph_name": glyph_name, "group": "multiple_codepoints"})
                 else:
                     results.append({"glyph_name": glyph_name})
         

@@ -25,7 +25,7 @@ class BaseGlyphFilterPlugin:
     Base template for glyph filter plugins.
     
     Glyph filter plugins define filters that return subsets of glyphs
-    with optional color coding. They appear in the glyph overview sidebar.
+    with optional group coding. They appear in the glyph overview sidebar.
     
     Required attributes:
     - path: The category path where this filter appears (must match a registered path)
@@ -33,7 +33,7 @@ class BaseGlyphFilterPlugin:
     - display_name: Human-readable name shown in the sidebar
     
     Required methods:
-    - get_colors(): Return color definitions for color keywords
+    - get_groups(): Return group definitions for group keywords
     - filter_glyphs(font): Return list of glyphs matching the filter
     """
     
@@ -63,13 +63,13 @@ class BaseGlyphFilterPlugin:
         """
         return False
     
-    def get_colors(self):
+    def get_groups(self):
         """
-        Return color definitions for color keywords.
+        Return group definitions for group keywords.
         
-        Each color has a keyword key, with a dict containing:
-        - description: Human-readable description of what this color means
-        - color: Hex color value
+        Each group has a keyword key, with a dict containing:
+        - description: Human-readable description of what this group means
+        - color: Hex color value for visual identification
         
         Example:
             {
@@ -84,7 +84,7 @@ class BaseGlyphFilterPlugin:
             }
         
         Returns:
-            Dict mapping color keywords to color definitions
+            Dict mapping group keywords to group definitions
         """
         return {}
     
@@ -95,7 +95,7 @@ class BaseGlyphFilterPlugin:
         This is the main filter method. The font object is passed in as a parameter.
         Should return a list of dicts, each containing:
         - glyph_name: Name of the glyph
-        - color (optional): Either a color keyword (from get_colors) or a hex color
+        - group (optional): Either a group keyword (from get_groups) or a hex color
         
         Args:
             font: The font object (babelfont model)
@@ -107,7 +107,7 @@ class BaseGlyphFilterPlugin:
                     if some_condition(glyph):
                         results.append({
                             "glyph_name": glyph.name,
-                            "color": "error"
+                            "group": "error"
                         })
                 return results
             

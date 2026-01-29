@@ -22,13 +22,14 @@ const FILTER_PATHS: Record<string, string> = {
  */
 export interface FilterResult {
     glyph_name: string;
-    color?: string; // Either a color keyword or hex color
+    group?: string; // Group keyword from get_groups (used by plugin)
+    color?: string; // Resolved hex color (used internally for display/filtering)
 }
 
 /**
- * Color definition from a plugin
+ * Group definition from a plugin
  */
-export interface ColorDefinition {
+export interface GroupDefinition {
     description: string;
     color: string; // Hex color
 }
@@ -41,7 +42,7 @@ interface GlyphFilterPlugin {
     keyword: string;
     display_name: string;
     instance: any; // Python plugin instance
-    colors?: Record<string, ColorDefinition>;
+    groups?: Record<string, GroupDefinition>;
     lastResults?: FilterResult[];
     glyphCount?: number;
     hasError?: boolean; // True if last run resulted in an error
@@ -67,10 +68,10 @@ export class GlyphOverviewFilterManager {
     private userFilters: GlyphFilterPlugin[] = [];
     private loaded: boolean = false;
     private sidebarContainer: HTMLElement | null = null;
-    private colorLegendContainer: HTMLElement | null = null;
+    private groupLegendContainer: HTMLElement | null = null;
     private glyphOverview: any = null;
     private activeFilter: GlyphFilterPlugin | null = null;
-    private activeColorFilters: Set<string> = new Set(); // Selected color hex values for filtering
+    private activeGroupFilters: Set<string> = new Set(); // Selected group hex colors for filtering
     private rootNode: TreeNode;
     private userFiltersNode: TreeNode;
     private readonly STORAGE_KEY = 'glyphFilterActive';
@@ -171,11 +172,11 @@ export class GlyphOverviewFilterManager {
     initialize(
         sidebarContainer: HTMLElement,
         glyphOverview: any,
-        colorLegendContainer?: HTMLElement
+        groupLegendContainer?: HTMLElement
     ): void {
         this.sidebarContainer = sidebarContainer;
         this.glyphOverview = glyphOverview;
-        this.colorLegendContainer = colorLegendContainer || null;
+        this.groupLegendContainer = groupLegendContainer || null;
 
         // Render initial sidebar structure
         this.renderSidebar();
@@ -234,7 +235,7 @@ export class GlyphOverviewFilterManager {
                 });
             }
 
-            // Validate plugin paths and load color definitions
+            // Validate plugin paths and load group definitions
             this.plugins = [];
             for (const plugin of rawPlugins) {
                 // Check if plugin is visible
@@ -265,27 +266,27 @@ export class GlyphOverviewFilterManager {
                     continue;
                 }
 
-                // Load color definitions
+                // Load group definitions
                 try {
                     const instance = plugin.instance;
-                    if (instance && instance.get_colors) {
-                        const colorsResult = instance.get_colors();
-                        if (colorsResult && colorsResult.toJs) {
-                            plugin.colors = colorsResult.toJs({
+                    if (instance && instance.get_groups) {
+                        const groupsResult = instance.get_groups();
+                        if (groupsResult && groupsResult.toJs) {
+                            plugin.groups = groupsResult.toJs({
                                 dict_converter: Object.fromEntries
                             });
                         } else {
-                            plugin.colors = {};
+                            plugin.groups = {};
                         }
                     } else {
-                        plugin.colors = {};
+                        plugin.groups = {};
                     }
                 } catch (error) {
                     console.error(
-                        `Error getting colors for ${plugin.display_name}:`,
+                        `Error getting groups for ${plugin.display_name}:`,
                         error
                     );
-                    plugin.colors = {};
+                    plugin.groups = {};
                 }
 
                 this.plugins.push(plugin as GlyphFilterPlugin);
@@ -424,17 +425,17 @@ export class GlyphOverviewFilterManager {
                     const fileName = pathParts.pop()!;
                     const folderPath = pathParts.join('/');
 
-                    // Parse COLORS from code (simple regex extraction)
-                    let colors: Record<string, ColorDefinition> = {};
+                    // Parse GROUPS from code (simple regex extraction)
+                    let groups: Record<string, GroupDefinition> = {};
                     try {
-                        const colorsMatch = code.match(
-                            /COLORS\s*=\s*(\{[\s\S]*?\n\})/
+                        const groupsMatch = code.match(
+                            /GROUPS\s*=\s*(\{[\s\S]*?\n\})/
                         );
-                        if (colorsMatch) {
-                            // We'll parse colors at runtime in Python
+                        if (groupsMatch) {
+                            // We'll parse groups at runtime in Python
                         }
                     } catch (e) {
-                        // Ignore color parsing errors
+                        // Ignore group parsing errors
                     }
 
                     // Create user filter plugin
@@ -443,7 +444,7 @@ export class GlyphOverviewFilterManager {
                         keyword: `user.${relativePath.replace(/\//g, '.')}`,
                         display_name: fileName,
                         instance: null, // Will be created at runtime
-                        colors: colors,
+                        groups: groups,
                         isUserFilter: true,
                         filePath: file.path,
                         pythonCode: code
@@ -891,14 +892,14 @@ export class GlyphOverviewFilterManager {
             console.log(`Running filter: ${plugin.display_name}`);
 
             let results: FilterResult[] = [];
-            let colors: Record<string, ColorDefinition> = {};
+            let groups: Record<string, GroupDefinition> = {};
 
             if (plugin.isUserFilter && plugin.pythonCode) {
                 // Execute user filter with timeout
                 const execResult = await this.executeUserFilter(plugin);
                 results = execResult.results;
-                colors = execResult.colors;
-                plugin.colors = colors;
+                groups = execResult.groups;
+                plugin.groups = groups;
             } else {
                 // Call the plugin's filter_glyphs method
                 const instance = plugin.instance;
@@ -934,30 +935,34 @@ list(_result) if isinstance(_result, types.GeneratorType) else _result
                     });
                     resultsProxy.destroy();
                 }
-                colors = plugin.colors || {};
+                groups = plugin.groups || {};
             }
 
-            // Collect used color keywords (only those with definitions for legend)
-            const usedColorKeywords = new Set<string>();
+            // Collect used group keywords (only those with definitions for legend)
+            const usedGroupKeywords = new Set<string>();
             results.forEach((result) => {
-                if (result.color && colors[result.color]) {
-                    usedColorKeywords.add(result.color);
+                if (result.group && groups[result.group]) {
+                    usedGroupKeywords.add(result.group);
                 }
             });
 
-            // Resolve color keywords to actual colors
-            // Priority: 1) Match color definition key → use its color value
+            // Resolve group keywords to actual colors
+            // Priority: 1) Match group definition key → use its color value
             //           2) No match → treat as raw CSS color value
             results = results.map((result) => {
-                if (result.color) {
-                    if (colors[result.color]) {
-                        // Color matches a definition key, use the definition's color
+                if (result.group) {
+                    if (groups[result.group]) {
+                        // Group matches a definition key, use the definition's color
                         return {
                             ...result,
-                            color: colors[result.color].color
+                            color: groups[result.group].color
                         };
                     }
                     // No definition match, keep as raw CSS color
+                    return {
+                        ...result,
+                        color: result.group
+                    };
                 }
                 return result;
             });
@@ -970,8 +975,8 @@ list(_result) if isinstance(_result, types.GeneratorType) else _result
             // Update count in sidebar
             this.updatePluginCount(plugin);
 
-            // Update color legend
-            this.updateColorLegend(plugin, usedColorKeywords);
+            // Update group legend
+            this.updateGroupLegend(plugin, usedGroupKeywords);
 
             console.log(`Filter returned ${results.length} glyphs`);
 
@@ -999,7 +1004,7 @@ list(_result) if isinstance(_result, types.GeneratorType) else _result
      */
     private async executeUserFilter(plugin: GlyphFilterPlugin): Promise<{
         results: FilterResult[];
-        colors: Record<string, ColorDefinition>;
+        groups: Record<string, GroupDefinition>;
     }> {
         const TIMEOUT_MS = 5000;
         const code = plugin.pythonCode!;
@@ -1025,15 +1030,15 @@ _captured_output = StringIO()
 _old_stdout = sys.stdout
 sys.stdout = _captured_output
 
-_filter_result = {"results": [], "colors": {}}
+_filter_result = {"results": [], "groups": {}}
 try:
     # Execute user filter code
     _user_code = ${JSON.stringify(code)}
     _user_globals = {}
     exec(_user_code, _user_globals)
     
-    # Get COLORS if defined
-    _colors = _user_globals.get('COLORS', {})
+    # Get GROUPS if defined
+    _groups = _user_globals.get('GROUPS', {})
     
     # Get and call filter_glyphs
     _filter_func = _user_globals.get('filter_glyphs')
@@ -1047,8 +1052,8 @@ try:
     if isinstance(_results, types.GeneratorType):
         _results = list(_results)
     
-    # Store results and colors
-    _filter_result = {"results": _results, "colors": _colors}
+    # Store results and groups
+    _filter_result = {"results": _results, "groups": _groups}
 finally:
     sys.stdout = _old_stdout
 
@@ -1062,10 +1067,10 @@ _filter_result
                 result.destroy();
                 return {
                     results: jsResult.results || [],
-                    colors: jsResult.colors || {}
+                    groups: jsResult.groups || {}
                 };
             }
-            return { results: [], colors: {} };
+            return { results: [], groups: {} };
         })();
 
         // Race between execution and timeout
@@ -1096,112 +1101,112 @@ _filter_result
     }
 
     /**
-     * Update the color legend section based on filter results
+     * Update the group legend section based on filter results
      */
-    private updateColorLegend(
+    private updateGroupLegend(
         plugin: GlyphFilterPlugin,
-        usedColorKeywords: Set<string>
+        usedGroupKeywords: Set<string>
     ): void {
-        if (!this.colorLegendContainer) return;
+        if (!this.groupLegendContainer) return;
 
-        // Clear existing content and reset color filters
-        this.colorLegendContainer.innerHTML = '';
-        this.activeColorFilters.clear();
+        // Clear existing content and reset group filters
+        this.groupLegendContainer.innerHTML = '';
+        this.activeGroupFilters.clear();
 
-        // If no colors used, hide the container
-        if (usedColorKeywords.size === 0 || !plugin.colors) {
-            this.colorLegendContainer.style.display = 'none';
+        // If no groups used, hide the container
+        if (usedGroupKeywords.size === 0 || !plugin.groups) {
+            this.groupLegendContainer.style.display = 'none';
             return;
         }
 
-        // Count glyphs per color
-        const colorCounts = new Map<string, number>();
+        // Count glyphs per group
+        const groupCounts = new Map<string, number>();
         if (plugin.lastResults) {
             for (const result of plugin.lastResults) {
                 if (result.color) {
-                    colorCounts.set(
+                    groupCounts.set(
                         result.color,
-                        (colorCounts.get(result.color) || 0) + 1
+                        (groupCounts.get(result.color) || 0) + 1
                     );
                 }
             }
         }
 
         // Show container and add legend items
-        this.colorLegendContainer.style.display = '';
+        this.groupLegendContainer.style.display = '';
 
-        for (const keyword of usedColorKeywords) {
-            const colorDef = plugin.colors[keyword];
-            if (!colorDef) continue;
+        for (const keyword of usedGroupKeywords) {
+            const groupDef = plugin.groups[keyword];
+            if (!groupDef) continue;
 
             const item = document.createElement('div');
             item.className = 'glyph-filter-legend-item';
-            item.dataset.colorHex = colorDef.color;
+            item.dataset.groupHex = groupDef.color;
             item.style.cursor = 'pointer';
 
             const circle = document.createElement('span');
             circle.className = 'glyph-filter-legend-circle';
-            circle.style.backgroundColor = colorDef.color;
+            circle.style.backgroundColor = groupDef.color;
 
             const label = document.createElement('span');
             label.className = 'glyph-filter-legend-label';
-            label.textContent = colorDef.description;
+            label.textContent = groupDef.description;
 
             const count = document.createElement('span');
             count.className = 'glyph-filter-legend-count';
-            count.textContent = String(colorCounts.get(colorDef.color) || 0);
+            count.textContent = String(groupCounts.get(groupDef.color) || 0);
 
             item.appendChild(circle);
             item.appendChild(label);
             item.appendChild(count);
 
-            // Click to toggle color filter
+            // Click to toggle group filter
             item.addEventListener('click', () => {
-                this.toggleColorFilter(colorDef.color, item);
+                this.toggleGroupFilter(groupDef.color, item);
             });
 
-            this.colorLegendContainer.appendChild(item);
+            this.groupLegendContainer.appendChild(item);
         }
     }
 
     /**
-     * Toggle a color filter on/off
+     * Toggle a group filter on/off
      */
-    private toggleColorFilter(
+    private toggleGroupFilter(
         colorHex: string,
         itemElement: HTMLElement
     ): void {
-        if (this.activeColorFilters.has(colorHex)) {
-            this.activeColorFilters.delete(colorHex);
+        if (this.activeGroupFilters.has(colorHex)) {
+            this.activeGroupFilters.delete(colorHex);
             itemElement.classList.remove('active');
         } else {
-            this.activeColorFilters.add(colorHex);
+            this.activeGroupFilters.add(colorHex);
             itemElement.classList.add('active');
         }
 
-        // Apply color filter to glyph overview
-        this.applyColorFilter();
+        // Apply group filter to glyph overview
+        this.applyGroupFilter();
     }
 
     /**
-     * Apply color filter to show only glyphs matching selected colors
+     * Apply group filter to show only glyphs matching selected groups
      */
-    private applyColorFilter(): void {
+    private applyGroupFilter(): void {
         if (!this.glyphOverview || !this.activeFilter) return;
 
         const results = this.activeFilter.lastResults;
         if (!results) return;
 
-        // If no colors selected, show all filter results
-        if (this.activeColorFilters.size === 0) {
+        // If no groups selected, show all filter results
+        if (this.activeGroupFilters.size === 0) {
             this.glyphOverview.setActiveFilter(results);
             return;
         }
 
-        // Filter to only glyphs matching selected colors (OR logic)
+        // Filter to only glyphs matching selected groups (OR logic)
         const filteredResults = results.filter((result) => {
             if (!result.color) return false;
-            return this.activeColorFilters.has(result.color);
+            return this.activeGroupFilters.has(result.color);
         });
 
         this.glyphOverview.setActiveFilter(filteredResults);
@@ -1240,7 +1245,7 @@ _filter_result
                 // Execute user filter
                 const execResult = await this.executeUserFilter(plugin);
                 results = execResult.results;
-                plugin.colors = execResult.colors;
+                plugin.groups = execResult.groups;
             } else {
                 const instance = plugin.instance;
                 if (!instance || !instance.filter_glyphs) return;
