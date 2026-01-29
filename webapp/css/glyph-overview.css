@@ -198,8 +198,8 @@
 .glyph-filter-legend {
     display: flex;
     flex-wrap: wrap;
-    gap: 4px 8px;
-    padding: 6px 6px;
+    gap: 3px 3px;
+    padding: 7px;
     border-bottom: 1px solid var(--border-primary);
 }
 
@@ -207,7 +207,7 @@
     display: flex;
     align-items: center;
     gap: 6px;
-    padding: 4px 8px;
+    padding: 3px 6px;
     border-radius: 4px;
     transition: background-color 0.1s ease;
 }
