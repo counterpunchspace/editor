@@ -478,84 +478,94 @@ class ResizableViews {
             minRightTotalWidth += this.getMinWidth(view);
         });
 
+        // Basic minimum checks
         if (
-            newLeftWidth >= leftMinWidth &&
-            newRightTotalWidth >= minRightTotalWidth
+            newLeftWidth < leftMinWidth ||
+            newRightTotalWidth < minRightTotalWidth
         ) {
-            // Calculate new widths
-            const newWidths = {};
+            return;
+        }
 
-            // Set new left width
-            newWidths[dividerIndex] = newLeftWidth;
+        // Calculate new widths
+        const newWidths = {};
 
-            // Scale non-collapsed right views proportionally
-            const rightScale = newRightTotalWidth / rightTotalWidth;
-            nonCollapsedRightViews.forEach((view) => {
-                const index = views.indexOf(view);
-                newWidths[index] = this.startWidths[index] * rightScale;
-            });
+        // Set new left width
+        newWidths[dividerIndex] = newLeftWidth;
 
-            // Lock all other views to minimum width if collapsed, otherwise keep unchanged
-            views.forEach((view, index) => {
-                if (!(index in newWidths)) {
-                    const minWidth = this.getMinWidth(view);
-                    const isCollapsed = this.startWidths[index] <= minWidth + 5;
-                    newWidths[index] = isCollapsed
-                        ? minWidth
-                        : this.startWidths[index];
-                }
-            });
+        // Scale non-collapsed right views proportionally
+        const rightScale = newRightTotalWidth / rightTotalWidth;
+        nonCollapsedRightViews.forEach((view) => {
+            const index = views.indexOf(view);
+            newWidths[index] = this.startWidths[index] * rightScale;
+        });
 
-            // Calculate total and set flex
-            let totalWidth = 0;
-            views.forEach((view, index) => {
-                totalWidth += newWidths[index];
-            });
+        // Lock all other views to minimum width if collapsed, otherwise keep unchanged
+        views.forEach((view, index) => {
+            if (!(index in newWidths)) {
+                const minWidth = this.getMinWidth(view);
+                const isCollapsed = this.startWidths[index] <= minWidth + 5;
+                newWidths[index] = isCollapsed
+                    ? minWidth
+                    : this.startWidths[index];
+            }
+        });
 
-            // Ensure editor view (last view) is at least 33% of total width
-            const editorIndex = views.length - 1;
-            const editorMinRatio = 0.33;
-            const editorNewWidth = newWidths[editorIndex];
+        // Calculate total width
+        let totalWidth = 0;
+        views.forEach((view, index) => {
+            totalWidth += newWidths[index];
+        });
 
-            if (editorNewWidth / totalWidth < editorMinRatio) {
-                // Editor is too narrow, recalculate to enforce minimum
-                const requiredEditorWidth = totalWidth * editorMinRatio;
-                const editorShortfall = requiredEditorWidth - editorNewWidth;
-
-                // Reduce other non-collapsed views proportionally to give space to editor
-                const otherNonCollapsedIndices = [];
-                let otherNonCollapsedTotal = 0;
-
-                views.forEach((view, index) => {
-                    if (index !== editorIndex) {
-                        const minWidth = this.getMinWidth(view);
-                        const isCollapsed = newWidths[index] <= minWidth + 5;
-                        if (!isCollapsed) {
-                            otherNonCollapsedIndices.push(index);
-                            otherNonCollapsedTotal += newWidths[index];
+        // Enforce 1/6 minimum ratio constraint per view
+        const minRatio = 1 / 6;
+        const adjustedWidths = { ...newWidths };
+        
+        views.forEach((view, viewIndex) => {
+            const viewWidth = adjustedWidths[viewIndex];
+            const minRequiredWidth = totalWidth * minRatio;
+            
+            if (viewWidth < minRequiredWidth) {
+                // This view is below minimum, lock it at minimum ratio
+                adjustedWidths[viewIndex] = minRequiredWidth;
+                
+                // Take the shortfall from other non-minimal views proportionally
+                const shortfall = minRequiredWidth - viewWidth;
+                const otherIndices = [];
+                let otherTotal = 0;
+                
+                views.forEach((otherView, otherIndex) => {
+                    if (otherIndex !== viewIndex) {
+                        const otherWidth = adjustedWidths[otherIndex];
+                        const otherMinWidth = totalWidth * minRatio;
+                        // Only take from views that have room to give
+                        if (otherWidth > otherMinWidth + 1) {
+                            otherIndices.push(otherIndex);
+                            otherTotal += otherWidth - otherMinWidth;
                         }
                     }
                 });
-
-                if (otherNonCollapsedTotal > editorShortfall) {
-                    // Reduce others proportionally
-                    otherNonCollapsedIndices.forEach((index) => {
-                        const reduction =
-                            (newWidths[index] / otherNonCollapsedTotal) *
-                            editorShortfall;
-                        newWidths[index] -= reduction;
+                
+                // Distribute the shortfall proportionally
+                if (otherTotal >= shortfall) {
+                    otherIndices.forEach((otherIndex) => {
+                        const available = adjustedWidths[otherIndex] - (totalWidth * minRatio);
+                        const reduction = (available / otherTotal) * shortfall;
+                        adjustedWidths[otherIndex] -= reduction;
                     });
-                    newWidths[editorIndex] = requiredEditorWidth;
+                } else {
+                    // Can't satisfy constraint, reject this resize
+                    return;
                 }
             }
+        });
 
-            views.forEach((view, index) => {
-                view.style.flex = `${newWidths[index] / totalWidth}`;
-            });
+        // Apply the adjusted widths
+        views.forEach((view, index) => {
+            view.style.flex = `${adjustedWidths[index] / totalWidth}`;
+        });
 
-            // Update collapsed states
-            this.updateCollapsedStates();
-        }
+        // Update collapsed states
+        this.updateCollapsedStates();
     }
 
     resizeHorizontal(e) {
