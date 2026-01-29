@@ -1613,14 +1613,14 @@ _filter_result
     /**
      * Toggle a group filter on/off by keyword.
      * Normal click: selects only the clicked group.
-     * Cmd/Ctrl click: adds/removes the clicked group from multi-selection.
+     * Shift/Cmd/Ctrl click: adds/removes the clicked group from multi-selection.
      */
     private toggleGroupFilter(
         groupKeyword: string,
         itemElement: HTMLElement,
         event?: MouseEvent
     ): void {
-        const isMultiSelect = event?.metaKey || event?.ctrlKey;
+        const isMultiSelect = event?.shiftKey || event?.metaKey || event?.ctrlKey;
 
         if (isMultiSelect) {
             // Multi-select mode: toggle individual group
