@@ -649,6 +649,13 @@ import {
         localStorage.setItem('python_script', editor.getValue());
 
         console.log('[ScriptEditor]', 'New file created');
+
+        // Dispatch event for file change
+        window.dispatchEvent(
+            new CustomEvent('scriptEditorFileChanged', {
+                detail: { pluginId: null, filePath: null }
+            })
+        );
     }
 
     /**
@@ -742,6 +749,17 @@ import {
             setModified(false);
 
             console.log('[ScriptEditor]', 'File saved:', currentFilePath);
+
+            // Dispatch event for file change (path may have changed via Save As)
+            window.dispatchEvent(
+                new CustomEvent('scriptEditorFileChanged', {
+                    detail: {
+                        pluginId: currentPluginId,
+                        filePath: currentFilePath
+                    }
+                })
+            );
+
             return true;
         } catch (error: any) {
             console.error('[ScriptEditor]', 'Error saving file:', error);
@@ -887,6 +905,13 @@ import {
             localStorage.setItem('python_script_uri', `${pluginId}://${path}`);
 
             console.log('[ScriptEditor]', 'File opened:', path);
+
+            // Dispatch event for file change
+            window.dispatchEvent(
+                new CustomEvent('scriptEditorFileChanged', {
+                    detail: { pluginId: pluginId, filePath: path }
+                })
+            );
 
             // Focus the scripts view
             const scriptView = document.getElementById('view-scripts');

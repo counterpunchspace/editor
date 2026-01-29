@@ -39,13 +39,24 @@ class ChatSessionManager {
 
     /**
      * Generate context icon HTML
-     * @param {string} contextType - 'font' or 'script'
+     * @param {string} contextType - 'font', 'script', or 'glyphfilter'
      * @returns {string} HTML for context icon
      */
     static getContextIconHTML(contextType) {
-        const icon = contextType === 'font' ? 'font_download' : 'code';
-        const contextClass =
-            contextType === 'font' ? 'font-context' : 'script-context';
+        let icon, contextClass;
+        switch (contextType) {
+            case 'script':
+                icon = 'code';
+                contextClass = 'script-context';
+                break;
+            case 'glyphfilter':
+                icon = 'filter_alt';
+                contextClass = 'glyphfilter-context';
+                break;
+            default:
+                icon = 'font_download';
+                contextClass = 'font-context';
+        }
         return `
             <div class="ai-context-selection-icon ${contextClass}">
                 <span class="material-symbols-outlined">${icon}</span>
@@ -54,10 +65,32 @@ class ChatSessionManager {
     }
 
     /**
+     * Check if a glyph filter file is currently open in the script editor
+     * @returns {boolean} True if a filter file is open
+     */
+    static isGlyphFilterFileOpen() {
+        if (!window.scriptEditor) return false;
+        const pluginId = window.scriptEditor.currentPluginId;
+        const filePath = window.scriptEditor.currentFilePath;
+
+        // Check if it's a disk file under /Counterpunch/Filters
+        return (
+            pluginId === 'disk' &&
+            filePath &&
+            filePath.startsWith('/Counterpunch/Filters/') &&
+            filePath.endsWith('.py')
+        );
+    }
+
+    /**
      * Generate context selection buttons HTML
      * @returns {string} HTML for context selection buttons
      */
     static getContextSelectionButtonsHTML() {
+        const isFilterFileOpen = ChatSessionManager.isGlyphFilterFileOpen();
+        const filterDisabledClass = isFilterFileOpen ? '' : 'disabled';
+        const filterDisabledAttr = isFilterFileOpen ? '' : 'disabled';
+
         return `
             <button class="ai-context-selection-btn" data-context="font">
                 ${ChatSessionManager.getContextIconHTML('font')}
@@ -69,6 +102,27 @@ class ChatSessionManager {
                 <span class="label">Script Context</span>
                 <span class="description">Create or edit reusable scripts</span>
             </button>
+            <button class="ai-context-selection-btn ${filterDisabledClass}" data-context="glyphfilter" ${filterDisabledAttr}>
+                ${ChatSessionManager.getContextIconHTML('glyphfilter')}
+                <span class="label">Glyph Filter Context</span>
+                <span class="description">Create or edit glyph filter scripts</span>
+            </button>
+        `;
+    }
+
+    /**
+     * Generate explainer HTML for glyph filter context
+     * @returns {string} HTML for the explainer (always rendered, visibility controlled dynamically)
+     */
+    static getGlyphFilterExplainerHTML() {
+        const isFilterFileOpen = ChatSessionManager.isGlyphFilterFileOpen();
+        const hiddenStyle = isFilterFileOpen ? 'style="display: none;"' : '';
+
+        return `
+            <div class="ai-context-explainer" ${hiddenStyle}>
+                <span class="material-symbols-outlined">info</span>
+                <span>To use Glyph Filter Context, first create or open a <code>.py</code> file under <code>Disk → Counterpunch/Filters/</code> in the Script Editor.</span>
+            </div>
         `;
     }
 
@@ -86,10 +140,41 @@ class ChatSessionManager {
                 <div class="ai-context-selection-buttons">
                     ${ChatSessionManager.getContextSelectionButtonsHTML()}
                 </div>
+                ${ChatSessionManager.getGlyphFilterExplainerHTML()}
             </div>
         `;
 
         this.aiAssistant.messagesContainer.appendChild(messageDiv);
+
+        // Function to update the glyph filter button state
+        const updateGlyphFilterButtonState = () => {
+            const glyphFilterBtn = messageDiv.querySelector(
+                '.ai-context-selection-btn[data-context="glyphfilter"]'
+            );
+            const explainer = messageDiv.querySelector('.ai-context-explainer');
+
+            if (glyphFilterBtn) {
+                const isFilterOpen = ChatSessionManager.isGlyphFilterFileOpen();
+                if (isFilterOpen) {
+                    glyphFilterBtn.disabled = false;
+                    glyphFilterBtn.classList.remove('disabled');
+                } else {
+                    glyphFilterBtn.disabled = true;
+                    glyphFilterBtn.classList.add('disabled');
+                }
+            }
+
+            if (explainer) {
+                const isFilterOpen = ChatSessionManager.isGlyphFilterFileOpen();
+                explainer.style.display = isFilterOpen ? 'none' : 'flex';
+            }
+        };
+
+        // Listen for script editor file changes
+        const fileChangeHandler = () => {
+            updateGlyphFilterButtonState();
+        };
+        window.addEventListener('scriptEditorFileChanged', fileChangeHandler);
 
         // Add event listeners to buttons
         const buttons = messageDiv.querySelectorAll(
@@ -97,7 +182,15 @@ class ChatSessionManager {
         );
         buttons.forEach((btn) => {
             btn.addEventListener('click', (e) => {
+                // Skip if button is disabled
+                if (btn.disabled) return;
+
                 const context = btn.getAttribute('data-context');
+                // Clean up event listener
+                window.removeEventListener(
+                    'scriptEditorFileChanged',
+                    fileChangeHandler
+                );
                 this.selectContext(context);
                 messageDiv.remove();
             });
@@ -117,17 +210,26 @@ class ChatSessionManager {
         const messageDiv = document.createElement('div');
         messageDiv.className = 'ai-message ai-message-system';
 
-        const contextLabel =
-            context === 'font' ? 'Font Context' : 'Script Context';
-        const contextDescription =
-            context === 'font'
-                ? 'Working directly on the current font'
-                : 'Creating or editing reusable scripts';
-        const contextIcon = context === 'font' ? 'font_download' : 'code';
-        const contextClass =
-            context === 'font'
-                ? 'ai-context-tag-font'
-                : 'ai-context-tag-script';
+        let contextLabel, contextDescription, contextIcon, contextClass;
+        switch (context) {
+            case 'script':
+                contextLabel = 'Script Context';
+                contextDescription = 'Creating or editing reusable scripts';
+                contextIcon = 'code';
+                contextClass = 'ai-context-tag-script';
+                break;
+            case 'glyphfilter':
+                contextLabel = 'Glyph Filter Context';
+                contextDescription = 'Creating or editing glyph filter scripts';
+                contextIcon = 'filter_alt';
+                contextClass = 'ai-context-tag-glyphfilter';
+                break;
+            default:
+                contextLabel = 'Font Context';
+                contextDescription = 'Working directly on the current font';
+                contextIcon = 'font_download';
+                contextClass = 'ai-context-tag-font';
+        }
 
         messageDiv.innerHTML = `
             <div class="ai-system-message">
@@ -200,18 +302,23 @@ class ChatSessionManager {
             if (contextSelector) contextSelector.classList.add('hidden');
             if (contextDisplay) {
                 contextDisplay.classList.remove('hidden');
-                const contextLabel =
-                    data.chatSession.contextType === 'font'
-                        ? 'Font Context'
-                        : 'Script Context';
-                const contextIcon =
-                    data.chatSession.contextType === 'font'
-                        ? 'font_download'
-                        : 'code';
-                const contextClass =
-                    data.chatSession.contextType === 'font'
-                        ? 'ai-context-tag-font'
-                        : 'ai-context-tag-script';
+                let contextLabel, contextIcon, contextClass;
+                switch (data.chatSession.contextType) {
+                    case 'script':
+                        contextLabel = 'Script Context';
+                        contextIcon = 'code';
+                        contextClass = 'ai-context-tag-script';
+                        break;
+                    case 'glyphfilter':
+                        contextLabel = 'Glyph Filter Context';
+                        contextIcon = 'filter_alt';
+                        contextClass = 'ai-context-tag-glyphfilter';
+                        break;
+                    default:
+                        contextLabel = 'Font Context';
+                        contextIcon = 'font_download';
+                        contextClass = 'ai-context-tag-font';
+                }
                 contextDisplay.innerHTML = `<span class="ai-context-display-icon ${contextClass}"><span class="material-symbols-outlined">${contextIcon}</span></span><span class="ai-context-display-text">${contextLabel}</span><span class="ai-context-display-hint">Start a new chat to change context</span>`;
             }
 
@@ -308,6 +415,8 @@ class ChatSessionManager {
                         response.status
                     );
                 }
+                // Show context selection for new chat
+                this.showContextSelection();
                 return;
             }
 
@@ -315,6 +424,8 @@ class ChatSessionManager {
 
             if (!data.chatSession) {
                 console.log('[ChatSession] No chat history found');
+                // Show context selection for new chat
+                this.showContextSelection();
                 return;
             }
 
@@ -335,18 +446,23 @@ class ChatSessionManager {
             if (contextSelector) contextSelector.classList.add('hidden');
             if (contextDisplay) {
                 contextDisplay.classList.remove('hidden');
-                const contextLabel =
-                    data.chatSession.contextType === 'font'
-                        ? 'Font Context'
-                        : 'Script Context';
-                const contextIcon =
-                    data.chatSession.contextType === 'font'
-                        ? 'font_download'
-                        : 'code';
-                const contextClass =
-                    data.chatSession.contextType === 'font'
-                        ? 'ai-context-tag-font'
-                        : 'ai-context-tag-script';
+                let contextLabel, contextIcon, contextClass;
+                switch (data.chatSession.contextType) {
+                    case 'script':
+                        contextLabel = 'Script Context';
+                        contextIcon = 'code';
+                        contextClass = 'ai-context-tag-script';
+                        break;
+                    case 'glyphfilter':
+                        contextLabel = 'Glyph Filter Context';
+                        contextIcon = 'filter_alt';
+                        contextClass = 'ai-context-tag-glyphfilter';
+                        break;
+                    default:
+                        contextLabel = 'Font Context';
+                        contextIcon = 'font_download';
+                        contextClass = 'ai-context-tag-font';
+                }
                 contextDisplay.innerHTML = `<span class="ai-context-display-icon ${contextClass}"><span class="material-symbols-outlined">${contextIcon}</span></span><span class="ai-context-display-text">${contextLabel}</span><span class="ai-context-display-hint">Start a new chat to change context</span>`;
             }
 
@@ -605,11 +721,17 @@ class ChatSessionManager {
             }
 
             const contextIcon =
-                session.contextType === 'font' ? 'font_download' : 'code';
+                session.contextType === 'font'
+                    ? 'font_download'
+                    : session.contextType === 'glyphfilter'
+                      ? 'filter_alt'
+                      : 'code';
             const contextClass =
                 session.contextType === 'font'
                     ? 'font-context'
-                    : 'script-context';
+                    : session.contextType === 'glyphfilter'
+                      ? 'glyphfilter-context'
+                      : 'script-context';
 
             // Handle date parsing more robustly
             let timeAgo = 'Unknown';

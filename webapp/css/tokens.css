@@ -56,6 +56,10 @@
     --script-context-focused-bg: #f7941d;
     --script-context-text: rgba(255, 255, 255, 0.8);
     --script-context-focused-text: #1a1a1a;
+    --glyphfilter-context-bg: #4a0e4a;
+    --glyphfilter-context-focused-bg: #9c27b0;
+    --glyphfilter-context-text: rgba(255, 255, 255, 0.8);
+    --glyphfilter-context-focused-text: #ffffff;
     --background-tertiary: #252525;
     --background-loading: #000000;
     --background-primary: #181818;
@@ -132,6 +136,10 @@
     --script-context-focused-bg: #f7941d;
     --script-context-text: #5c3509;
     --script-context-focused-text: #ffffff;
+    --glyphfilter-context-bg: #e1bee7;
+    --glyphfilter-context-focused-bg: #9c27b0;
+    --glyphfilter-context-text: #4a0e4a;
+    --glyphfilter-context-focused-text: #ffffff;
     --background-tertiary: #f0f0f0;
     --background-loading: #ffffff;
     --background-primary: #ffffff;

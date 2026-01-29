@@ -2931,6 +2931,11 @@ kbd + kbd {
     color: var(--font-context-text);
 }
 
+.ai-context-tag-glyphfilter {
+    background-color: var(--glyphfilter-context-bg);
+    color: var(--glyphfilter-context-text);
+}
+
 .ai-code-toggle-link {
     color: var(--text-muted);
     cursor: pointer;
@@ -4870,6 +4875,11 @@ kbd + kbd {
     color: var(--script-context-text);
 }
 
+.ai-chat-history-item-icon.glyphfilter-context {
+    background-color: var(--glyphfilter-context-bg);
+    color: var(--glyphfilter-context-text);
+}
+
 .ai-chat-history-item-icon .material-symbols-outlined {
     font-size: 18px;
 }
@@ -4958,8 +4968,10 @@ kbd + kbd {
 
 .ai-context-selection-buttons {
     display: flex;
-    gap: 16px;
+    gap: 10px;
     justify-content: center;
+    margin-left: -5px;
+    margin-right: -5px;
 }
 
 .ai-context-selection-btn {
@@ -5004,6 +5016,11 @@ kbd + kbd {
     color: var(--script-context-text);
 }
 
+.ai-context-selection-icon.glyphfilter-context {
+    background-color: var(--glyphfilter-context-bg);
+    color: var(--glyphfilter-context-text);
+}
+
 .ai-context-selection-icon .material-symbols-outlined {
     font-size: 48px;
 }
@@ -5020,6 +5037,48 @@ kbd + kbd {
     font-size: 12px;
     color: var(--text-secondary);
     text-align: center;
+}
+
+/* Disabled context button */
+.ai-context-selection-btn.disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.ai-context-selection-btn.disabled:hover {
+    transform: none;
+    box-shadow: none;
+    border-color: var(--border-primary);
+}
+
+/* Context selection explainer */
+.ai-context-explainer {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    margin-top: 20px;
+    padding: 12px 16px;
+    background-color: var(--input-bg);
+    border: 1px solid var(--border-primary);
+    border-radius: 8px;
+    font-family: var(--font-families-sans);
+    font-size: 12px;
+    color: var(--text-secondary);
+    line-height: 1.5;
+}
+
+.ai-context-explainer .material-symbols-outlined {
+    font-size: 18px;
+    flex-shrink: 0;
+    color: var(--text-muted);
+}
+
+.ai-context-explainer code {
+    font-family: var(--font-families-mono);
+    font-size: 11px;
+    background-color: var(--background-secondary);
+    padding: 2px 4px;
+    border-radius: 3px;
 }
 
 /* System Messages */
@@ -5209,6 +5268,11 @@ kbd + kbd {
 .ai-context-display-icon.ai-context-tag-script {
     background-color: var(--script-context-bg);
     color: var(--script-context-text);
+}
+
+.ai-context-display-icon.ai-context-tag-glyphfilter {
+    background-color: var(--glyphfilter-context-bg);
+    color: var(--glyphfilter-context-text);
 }
 
 .ai-context-display-icon .material-symbols-outlined {

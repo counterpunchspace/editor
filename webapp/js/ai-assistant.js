@@ -222,8 +222,11 @@ class AIAssistant {
             ) {
                 event.preventDefault();
 
-                if (this.context === 'script') {
-                    // In script context: trigger Review Changes button
+                if (
+                    this.context === 'script' ||
+                    this.context === 'glyphfilter'
+                ) {
+                    // In script/glyphfilter context: trigger Review Changes button
                     const reviewButtons = document.querySelectorAll(
                         '.ai-review-changes-btn'
                     );
@@ -327,7 +330,7 @@ class AIAssistant {
     }
 
     /**
-     * Set the context (font or script) and update all related UI
+     * Set the context (font, script, or glyphfilter) and update all related UI
      */
     setContext(context) {
         this.context = context;
@@ -338,7 +341,8 @@ class AIAssistant {
         const scriptRadio = document.getElementById('ai-context-radio-script');
         if (fontRadio && scriptRadio) {
             fontRadio.checked = context === 'font';
-            scriptRadio.checked = context === 'script';
+            scriptRadio.checked =
+                context === 'script' || context === 'glyphfilter';
         }
 
         // Update context display
@@ -347,13 +351,23 @@ class AIAssistant {
         if (contextSelector) contextSelector.classList.add('hidden');
         if (contextDisplay) {
             contextDisplay.classList.remove('hidden');
-            const contextLabel =
-                context === 'font' ? 'Font Context' : 'Script Context';
-            const contextIcon = context === 'font' ? 'font_download' : 'code';
-            const contextClass =
-                context === 'font'
-                    ? 'ai-context-tag-font'
-                    : 'ai-context-tag-script';
+            let contextLabel, contextIcon, contextClass;
+            switch (context) {
+                case 'script':
+                    contextLabel = 'Script Context';
+                    contextIcon = 'code';
+                    contextClass = 'ai-context-tag-script';
+                    break;
+                case 'glyphfilter':
+                    contextLabel = 'Glyph Filter Context';
+                    contextIcon = 'filter_alt';
+                    contextClass = 'ai-context-tag-glyphfilter';
+                    break;
+                default:
+                    contextLabel = 'Font Context';
+                    contextIcon = 'font_download';
+                    contextClass = 'ai-context-tag-font';
+            }
             contextDisplay.innerHTML = `<span class="ai-context-display-icon ${contextClass}"><span class="material-symbols-outlined">${contextIcon}</span></span><span class="ai-context-display-text">${contextLabel}</span><span class="ai-context-display-hint">Start a new chat to change context</span>`;
         }
 
@@ -556,7 +570,9 @@ class AIAssistant {
         if (newChatBtn) {
             newChatBtn.addEventListener('click', (event) => {
                 event.stopPropagation();
-                this.startNewChat();
+                if (this.sessionManager) {
+                    this.sessionManager.startNewChat();
+                }
             });
         }
 
@@ -629,41 +645,6 @@ class AIAssistant {
                 }
             }
         });
-    }
-
-    startNewChat() {
-        if (this.messages.length > 0) {
-            if (!confirm('Start a new chat? The current chat will be saved.')) {
-                return;
-            }
-        }
-
-        // Reset chat state
-        if (this.sessionManager) {
-            this.sessionManager.currentChatId = null;
-            this.sessionManager.isContextLocked = false;
-        }
-
-        // Clear messages
-        this.messages = [];
-        this.messagesContainer.innerHTML = '';
-
-        // Show context selector again
-        const contextSelector = document.getElementById('ai-context-selector');
-        const contextDisplay = document.getElementById('ai-context-display');
-        if (contextSelector) {
-            contextSelector.classList.remove('hidden');
-        }
-        if (contextDisplay) {
-            contextDisplay.classList.add('hidden');
-        }
-
-        // Focus input
-        if (this.promptInput) {
-            this.promptInput.focus();
-        }
-
-        console.log('[AIAssistant] New chat started');
     }
 
     setupAutoRunCheckbox() {
@@ -1227,8 +1208,8 @@ class AIAssistant {
 
         // Show appropriate buttons based on context
         let buttonContainerHtml = '';
-        if (this.context === 'script') {
-            // Script context: show both Review Changes and Open in Script Editor buttons
+        if (this.context === 'script' || this.context === 'glyphfilter') {
+            // Script/glyphfilter context: show both Review Changes and Open in Script Editor buttons
             const directOpenBtnId =
                 'direct-open-' +
                 Date.now() +
@@ -1274,8 +1255,8 @@ class AIAssistant {
         // Add event listeners for buttons if they exist
         const openBtn = document.getElementById(openBtnId);
         if (openBtn) {
-            if (this.context === 'script') {
-                // In script context, this is the Review Changes button
+            if (this.context === 'script' || this.context === 'glyphfilter') {
+                // In script/glyphfilter context, this is the Review Changes button
                 openBtn.addEventListener('click', (event) => {
                     event.stopPropagation(); // Prevent view focus
                     this.showDiffReview(code, markdownText);
@@ -1289,8 +1270,8 @@ class AIAssistant {
             }
         }
 
-        // Handle direct open button in script context
-        if (this.context === 'script') {
+        // Handle direct open button in script/glyphfilter context
+        if (this.context === 'script' || this.context === 'glyphfilter') {
             const directOpenBtnId = messageDiv.querySelector(
                 '.ai-button-group .ai-open-in-editor-btn'
             )?.id;
@@ -1303,7 +1284,11 @@ class AIAssistant {
             }
         }
 
-        if (showRunButton && this.context !== 'script') {
+        if (
+            showRunButton &&
+            this.context !== 'script' &&
+            this.context !== 'glyphfilter'
+        ) {
             const runBtn = document.getElementById(runBtnId);
             if (runBtn) {
                 runBtn.addEventListener('click', async (event) => {
@@ -1833,14 +1818,23 @@ ${errorTraceback}
             contextSelector.classList.add('hidden');
             if (contextDisplay) {
                 contextDisplay.classList.remove('hidden');
-                const contextLabel =
-                    this.context === 'font' ? 'Font Context' : 'Script Context';
-                const contextIcon =
-                    this.context === 'font' ? 'font_download' : 'code';
-                const contextClass =
-                    this.context === 'font'
-                        ? 'ai-context-tag-font'
-                        : 'ai-context-tag-script';
+                let contextLabel, contextIcon, contextClass;
+                switch (this.context) {
+                    case 'script':
+                        contextLabel = 'Script Context';
+                        contextIcon = 'code';
+                        contextClass = 'ai-context-tag-script';
+                        break;
+                    case 'glyphfilter':
+                        contextLabel = 'Glyph Filter Context';
+                        contextIcon = 'filter_alt';
+                        contextClass = 'ai-context-tag-glyphfilter';
+                        break;
+                    default:
+                        contextLabel = 'Font Context';
+                        contextIcon = 'font_download';
+                        contextClass = 'ai-context-tag-font';
+                }
                 contextDisplay.innerHTML = `<span class="ai-context-display-icon ${contextClass}"><span class="material-symbols-outlined">${contextIcon}</span></span><span class="ai-context-display-text">${contextLabel}</span><span class="ai-context-display-hint">Start a new chat to change context</span>`;
             }
             // Lock context in session manager
@@ -1902,9 +1896,9 @@ ${errorTraceback}
                 attemptNumber
             );
 
-            // In script context, never auto-run - only show code with "Open in Script Editor" button
-            if (this.context === 'script') {
-                // Script mode: Just show the code, no execution
+            // In script/glyphfilter context, never auto-run - only show code with "Open in Script Editor" button
+            if (this.context === 'script' || this.context === 'glyphfilter') {
+                // Script/glyphfilter mode: Just show the code, no execution
                 this.addOutputWithCode('', pythonCode, markdownText, false);
 
                 // Play incoming message sound
@@ -1966,10 +1960,10 @@ ${errorTraceback}
     }
 
     async callClaude(userPrompt, previousError = null, attemptNumber = 0) {
-        // Get current script content if in script mode
+        // Get current script content if in script/glyphfilter mode
         let currentScript = null;
         if (
-            this.context === 'script' &&
+            (this.context === 'script' || this.context === 'glyphfilter') &&
             window.scriptEditor &&
             window.scriptEditor.editor
         ) {
