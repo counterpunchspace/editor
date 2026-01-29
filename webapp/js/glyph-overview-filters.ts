@@ -992,13 +992,13 @@ export class GlyphOverviewFilterManager {
         // Build menu HTML (using same structure as file-browser context menus)
         const menuHtml = `
             <div class="plugin-menu">
-                <div class="plugin-menu-item" data-action="locate">
-                    <span class="material-symbols-outlined">folder_open</span>
-                    <span>Locate in Files</span>
-                </div>
                 <div class="plugin-menu-item" data-action="open-script-editor">
                     <span class="material-symbols-outlined">code</span>
                     <span>Open in Script Editor</span>
+                </div>
+                <div class="plugin-menu-item" data-action="locate">
+                    <span class="material-symbols-outlined">folder_open</span>
+                    <span>Locate in Files</span>
                 </div>
             </div>
         `;
