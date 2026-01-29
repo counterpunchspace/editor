@@ -1902,19 +1902,20 @@ document.addEventListener('DOMContentLoaded', () => {
                 // Show home button since we opened from URL
                 updateHomeButtonVisibility();
 
-                // Scroll the opened file into view
-                setTimeout(() => {
-                    const fileTree = document.getElementById('file-tree');
-                    const currentFontItem = fileTree?.querySelector(
-                        '.file-item.current-font'
-                    );
-                    if (currentFontItem) {
-                        (currentFontItem as HTMLElement).scrollIntoView({
-                            block: 'center',
-                            behavior: 'auto'
-                        });
-                    }
-                }, 100); // Small delay to ensure DOM is updated
+                // Wait a bit for the fontLoaded event handler to refresh the file list,
+                // then scroll the opened file into view
+                await new Promise((resolve) => setTimeout(resolve, 200));
+
+                const fileTree = document.getElementById('file-tree');
+                const currentFontItem = fileTree?.querySelector(
+                    '.file-item.current-font'
+                );
+                if (currentFontItem) {
+                    (currentFontItem as HTMLElement).scrollIntoView({
+                        block: 'center',
+                        behavior: 'auto'
+                    });
+                }
             } catch (error: any) {
                 const errorMessage = error?.message || String(error);
                 alert(`Error opening file from URL:\n\n${errorMessage}`);
@@ -2005,11 +2006,12 @@ window.addEventListener('diskFilesChanged', async () => {
     await navigateToPath(targetPath);
 });
 
-// Listen for font loaded event to refresh file browser highlighting
-window.addEventListener('fontLoaded', () => {
+// Listen for font ready event to refresh file browser highlighting
+// (fontReady fires after fontManager.loadFont completes and currentFont is set)
+window.addEventListener('fontReady', async () => {
     // Refresh current directory to update highlighting
     const currentPath = fileSystemCache.currentPath || '/';
-    navigateToPath(currentPath);
+    await navigateToPath(currentPath);
 });
 
 // Listen for fontReady event (fires after FontManager.loadFont completes)
