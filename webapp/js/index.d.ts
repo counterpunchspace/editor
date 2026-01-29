@@ -45,7 +45,16 @@ declare global {
         cacheStats: () => { size: number; itemCount: number };
 
         // From python-utils.js
-        cleanPythonTraceback: (errorMessage: string) => string;
+        cleanPythonTraceback: (
+            errorMessage: string,
+            options?: number | { lineOffset?: number; skipExecFrames?: boolean }
+        ) => string;
+        adjustTracebackLineNumbers: (
+            errorMessage: string,
+            lineOffset: number,
+            framePatterns?: string[]
+        ) => string;
+        countCodeLines: (code: string) => number;
 
         // From critical-error-handler.ts
         showCriticalError: (

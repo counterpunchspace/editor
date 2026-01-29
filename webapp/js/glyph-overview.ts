@@ -1017,7 +1017,17 @@ class GlyphOverview {
      * @param pluginName - Name of the plugin that errored
      * @param error - Error message or object
      */
-    public showFilterError(pluginName: string, error: any): void {
+    /**
+     * Show a filter error overlay instead of glyphs
+     * @param pluginName - Name of the plugin that errored
+     * @param error - Error message or object
+     * @param lineOffset - Number of wrapper lines to subtract from line numbers (for user code errors)
+     */
+    public showFilterError(
+        pluginName: string,
+        error: any,
+        lineOffset: number = 0
+    ): void {
         this.clearFilterError();
 
         // Create error overlay
@@ -1046,9 +1056,12 @@ class GlyphOverview {
             if (error.stack && error.constructor.name !== 'PythonError') {
                 errorText += '\n\n' + error.stack;
             }
-            // Clean Python traceback to remove Pyodide internal frames
+            // Clean Python traceback to remove Pyodide internal frames and adjust line numbers
             if (error.constructor.name === 'PythonError') {
-                errorText = window.cleanPythonTraceback(errorText);
+                errorText = window.cleanPythonTraceback(errorText, {
+                    lineOffset,
+                    skipExecFrames: true
+                });
             }
         } else if (typeof error === 'string') {
             errorText = error;

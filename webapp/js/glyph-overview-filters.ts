@@ -1352,10 +1352,11 @@ sys.stdout = _captured_output
 
 _filter_result = {"results": [], "groups": {}, "status": "ok"}
 try:
-    # Execute user filter code
+    # Compile and execute user filter code with custom filename for correct line numbers
     _user_code = ${JSON.stringify(code)}
+    _compiled_code = compile(_user_code, '<filter>', 'exec')
     _user_globals = {}
-    exec(_user_code, _user_globals)
+    exec(_compiled_code, _user_globals)
     
     # Get GROUPS if defined
     _groups = _user_globals.get('GROUPS', {})
