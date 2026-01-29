@@ -95,29 +95,42 @@ class BaseGlyphFilterPlugin:
         This is the main filter method. The font object is passed in as a parameter.
         Should return (or yield) a list of dicts, each containing:
         - glyph_name: Name of the glyph
-        - group (optional): A single group keyword (from get_groups)
-        - groups (optional): A list of group keywords (for multi-group support)
+        - group (optional): A single group keyword (from get_groups) or a raw CSS color
+        - groups (optional): A list of group keywords or raw CSS colors
         
         A glyph can belong to multiple groups in two ways:
         1. Using the 'groups' key with a list of keywords
         2. Yielding the same glyph multiple times with different 'group' values
            (results are automatically merged by glyph_name)
         
+        Group values can be:
+        - A keyword matching a key in get_groups() → uses the defined color
+        - A raw CSS color (hex, named, rgb(), etc.) → auto-generates a group for the legend
+        
         When filtering by groups in the UI, glyphs will appear if they match ANY of the selected groups.
         
         Args:
             font: The font object (babelfont model)
             
-        Example (single group):
+        Example (single group with definition):
             def filter_glyphs(self, font):
                 results = []
                 for glyph in font.glyphs:
                     if some_condition(glyph):
                         results.append({
                             "glyph_name": glyph.name,
-                            "group": "error"
+                            "group": "error"  # Must match a key in get_groups()
                         })
                 return results
+        
+        Example (raw colors without group definitions):
+            # No GROUPS definition needed - colors become legend entries automatically
+            def filter_glyphs(self, font):
+                for glyph in font.glyphs:
+                    if glyph.name.startswith("A"):
+                        yield {"glyph_name": glyph.name, "group": "#ff6600"}
+                    elif glyph.name.startswith("B"):
+                        yield {"glyph_name": glyph.name, "group": "lightblue"}
         
         Example (multiple groups using 'groups' list):
             def filter_glyphs(self, font):

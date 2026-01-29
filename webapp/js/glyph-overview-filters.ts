@@ -941,19 +941,23 @@ list(_result) if isinstance(_result, types.GeneratorType) else _result
             }
 
             // Process results (consolidate duplicates, normalize groups, resolve colors)
-            const { results: processedResults, usedGroupKeywords } =
-                this.processFilterResults(results, groups);
+            const {
+                results: processedResults,
+                usedGroupKeywords,
+                augmentedGroups
+            } = this.processFilterResults(results, groups);
             results = processedResults;
 
-            // Store results
+            // Store results and augmented groups (includes auto-generated color groups)
             plugin.lastResults = results;
+            plugin.groups = augmentedGroups;
             plugin.glyphCount = results.length;
             plugin.hasError = false;
 
             // Update count in sidebar
             this.updatePluginCount(plugin);
 
-            // Update group legend
+            // Update group legend (uses augmentedGroups via plugin.groups)
             this.updateGroupLegend(plugin, usedGroupKeywords);
 
             console.log(`Filter returned ${results.length} glyphs`);
@@ -1058,11 +1062,16 @@ _filter_result
     /**
      * Process filter results: consolidate duplicates, normalize groups, resolve colors
      * This is used by both runFilter and runPluginForCount to ensure consistent handling.
+     * Also auto-generates group definitions for raw colors without definitions.
      */
     private processFilterResults(
         results: FilterResult[],
         groups: Record<string, GroupDefinition>
-    ): { results: FilterResult[]; usedGroupKeywords: Set<string> } {
+    ): {
+        results: FilterResult[];
+        usedGroupKeywords: Set<string>;
+        augmentedGroups: Record<string, GroupDefinition>;
+    } {
         // Consolidate results: merge entries for the same glyph name
         // This handles the case where a glyph is yielded multiple times with different groups
         const consolidatedMap = new Map<string, FilterResult>();
@@ -1087,6 +1096,9 @@ _filter_result
         }
         let processedResults = Array.from(consolidatedMap.values());
 
+        // Create augmented groups that includes auto-generated definitions for raw colors
+        const augmentedGroups: Record<string, GroupDefinition> = { ...groups };
+
         // Normalize results: ensure 'groups' array and resolve colors
         // and collect all used group keywords
         const usedGroupKeywords = new Set<string>();
@@ -1099,24 +1111,40 @@ _filter_result
                 resultGroups = [result.group];
             }
 
-            // Collect used groups that have definitions
+            // Collect used groups and auto-generate definitions for raw colors
             for (const g of resultGroups) {
                 if (groups[g]) {
+                    // Has a definition, use it
+                    usedGroupKeywords.add(g);
+                } else if (g) {
+                    // No definition - check if it looks like a color value
+                    // If it starts with # or is a named color, treat as raw color
+                    // Otherwise create a group with no color
+                    if (!augmentedGroups[g]) {
+                        // Check if it looks like a CSS color (starts with #, rgb, hsl, or is short)
+                        const looksLikeColor =
+                            g.startsWith('#') ||
+                            g.startsWith('rgb') ||
+                            g.startsWith('hsl') ||
+                            /^[a-z]+$/i.test(g); // Named colors like 'red', 'lightblue'
+                        augmentedGroups[g] = {
+                            description: g,
+                            color: looksLikeColor ? g : '' // Empty string = no color
+                        };
+                    }
                     usedGroupKeywords.add(g);
                 }
             }
 
             // Resolve group keywords to colors
-            // Priority: 1) Match group definition key → use its color
-            //           2) No match → treat as raw CSS color value
+            // Priority: 1) Match group definition key → use its color (if defined)
+            //           2) No color defined → skip (no coloration)
             const resolvedColors: string[] = [];
             for (const g of resultGroups) {
-                if (groups[g]) {
-                    resolvedColors.push(groups[g].color);
-                } else {
-                    // No definition match, treat as raw CSS color
-                    resolvedColors.push(g);
+                if (augmentedGroups[g] && augmentedGroups[g].color) {
+                    resolvedColors.push(augmentedGroups[g].color);
                 }
+                // If no color defined, don't add anything - no coloration for this group
             }
 
             return {
@@ -1127,7 +1155,11 @@ _filter_result
             };
         });
 
-        return { results: processedResults, usedGroupKeywords };
+        return {
+            results: processedResults,
+            usedGroupKeywords,
+            augmentedGroups
+        };
     }
 
     /**
@@ -1197,12 +1229,16 @@ _filter_result
             const item = document.createElement('div');
             item.className = 'glyph-filter-legend-item';
             item.dataset.groupKeyword = keyword; // Store keyword for filtering
-            item.dataset.groupHex = groupDef.color; // Keep color for reference
+            item.dataset.groupHex = groupDef.color || ''; // Keep color for reference
             item.style.cursor = 'pointer';
 
-            const circle = document.createElement('span');
-            circle.className = 'glyph-filter-legend-circle';
-            circle.style.backgroundColor = groupDef.color;
+            // Only show circle if there's a color defined
+            if (groupDef.color) {
+                const circle = document.createElement('span');
+                circle.className = 'glyph-filter-legend-circle';
+                circle.style.backgroundColor = groupDef.color;
+                item.appendChild(circle);
+            }
 
             const label = document.createElement('span');
             label.className = 'glyph-filter-legend-label';
@@ -1212,7 +1248,6 @@ _filter_result
             count.className = 'glyph-filter-legend-count';
             count.textContent = String(groupCounts.get(keyword) || 0);
 
-            item.appendChild(circle);
             item.appendChild(label);
             item.appendChild(count);
 
