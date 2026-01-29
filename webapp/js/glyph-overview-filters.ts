@@ -997,7 +997,7 @@ export class GlyphOverviewFilterManager {
                     <span>Open in Script Editor</span>
                 </div>
                 <div class="plugin-menu-item" data-action="locate">
-                    <span class="material-symbols-outlined">folder_open</span>
+                    <span class="material-symbols-outlined">my_location</span>
                     <span>Locate in Files</span>
                 </div>
             </div>

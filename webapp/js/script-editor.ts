@@ -552,6 +552,25 @@ import {
             `;
         }
 
+        // Locate in Files (only if file has a path and is from disk plugin)
+        const canLocate =
+            currentFilePath !== null && currentPluginId === 'disk';
+        if (canLocate) {
+            html += `
+                <div class="script-file-menu-item" data-action="locate">
+                    <span class="material-symbols-outlined">my_location</span>
+                    <span>Locate in Files</span>
+                </div>
+            `;
+        } else {
+            html += `
+                <div class="script-file-menu-item disabled" title="No file open from disk">
+                    <span class="material-symbols-outlined">my_location</span>
+                    <span>Locate in Files</span>
+                </div>
+            `;
+        }
+
         html += `</div>`;
         return html;
     }
@@ -590,6 +609,9 @@ import {
                             break;
                         case 'save-as':
                             await handleSaveAs();
+                            break;
+                        case 'locate':
+                            await handleLocateInFiles();
                             break;
                     }
                 });
@@ -788,6 +810,45 @@ import {
             console.error('[ScriptEditor]', 'Error in Save As:', error);
             alert('Failed to save file: ' + (error?.message || String(error)));
             return false;
+        }
+    }
+
+    /**
+     * Handle Locate in Files
+     * Switches to Files view and navigates to the current file
+     */
+    async function handleLocateInFiles(): Promise<void> {
+        if (!currentFilePath || currentPluginId !== 'disk') {
+            return;
+        }
+
+        // Switch to files view
+        const filesView = document.getElementById('view-files');
+        if (filesView) {
+            filesView.click();
+        }
+
+        // Get directory path
+        const dirPath = currentFilePath.substring(
+            0,
+            currentFilePath.lastIndexOf('/')
+        );
+
+        // Switch to disk plugin if needed
+        const currentPlugin = (window as any).fileBrowser?.getCurrentPlugin?.();
+        if (currentPlugin?.getId() !== 'disk') {
+            await (window as any).switchContext?.('disk');
+        }
+
+        // Navigate to the directory and highlight the file
+        if ((window as any).navigateToPath) {
+            await (window as any).navigateToPath(dirPath);
+            // Select the file
+            setTimeout(() => {
+                if ((window as any).selectFile) {
+                    (window as any).selectFile(currentFilePath);
+                }
+            }, 100);
         }
     }
 
