@@ -66,6 +66,12 @@ class ChatSessionManager {
         // Clear localStorage when starting new chat
         localStorage.removeItem('ai_last_chat_id');
 
+        // Hide input container until context is selected
+        const inputContainer = document.getElementById('ai-input-container');
+        if (inputContainer) {
+            inputContainer.style.display = 'none';
+        }
+
         // Show context selection
         this.showContextSelection();
 
@@ -154,6 +160,12 @@ class ChatSessionManager {
      * Show context selection at the start of a new chat
      */
     showContextSelection() {
+        // Hide input container until context is selected
+        const inputContainer = document.getElementById('ai-input-container');
+        if (inputContainer) {
+            inputContainer.style.display = 'none';
+        }
+
         const messageDiv = document.createElement('div');
         messageDiv.className = 'ai-message ai-message-context-selection';
 
@@ -232,6 +244,12 @@ class ChatSessionManager {
 
         this.aiAssistant.messagesContainer.appendChild(messageDiv);
         this.aiAssistant.scrollToBottom();
+
+        // Show input container
+        const inputContainer = document.getElementById('ai-input-container');
+        if (inputContainer) {
+            inputContainer.style.display = 'flex';
+        }
 
         // Focus the input
         this.aiAssistant.promptInput.focus();
@@ -338,6 +356,13 @@ class ChatSessionManager {
             });
 
             this.aiAssistant.scrollToBottom();
+
+            // Show input container when loading a chat
+            const inputContainer =
+                document.getElementById('ai-input-container');
+            if (inputContainer) {
+                inputContainer.style.display = 'flex';
+            }
 
             console.log(`[ChatSession] Loaded chat: ${chatId}`);
         } catch (error) {
@@ -477,6 +502,13 @@ class ChatSessionManager {
             });
 
             this.aiAssistant.scrollToBottom();
+
+            // Show input container when loading last chat
+            const inputContainer =
+                document.getElementById('ai-input-container');
+            if (inputContainer) {
+                inputContainer.style.display = 'flex';
+            }
 
             console.log(
                 `[ChatSession] Loaded last chat: ${this.currentChatId}`

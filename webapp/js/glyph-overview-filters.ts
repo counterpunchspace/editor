@@ -2269,6 +2269,12 @@ def filter_glyphs(font):
         sessionManager.updateFilePathDisplay();
         aiAssistant.scrollToBottom();
 
+        // Show input container
+        const inputContainer = document.getElementById('ai-input-container');
+        if (inputContainer) {
+            inputContainer.style.display = 'flex';
+        }
+
         // Switch to assistant view
         const assistantView = document.getElementById('view-assistant');
         if (assistantView) {
