@@ -1022,11 +1022,15 @@ class GlyphOverview {
      * @param pluginName - Name of the plugin that errored
      * @param error - Error message or object
      * @param lineOffset - Number of wrapper lines to subtract from line numbers (for user code errors)
+     * @param filePath - Optional file path for user filters (to enable "Fix with AI" button)
+     * @param pythonCode - Optional Python code that caused the error
      */
     public showFilterError(
         pluginName: string,
         error: any,
-        lineOffset: number = 0
+        lineOffset: number = 0,
+        filePath?: string,
+        pythonCode?: string
     ): void {
         this.clearFilterError();
 
@@ -1075,6 +1079,23 @@ class GlyphOverview {
         errorContent.appendChild(icon);
         errorContent.appendChild(title);
         errorContent.appendChild(message);
+
+        // Add "Fix error with assistant" button for user filters
+        if (filePath && pythonCode) {
+            const fixButton = document.createElement('button');
+            fixButton.className = 'glyph-overview-fix-error-btn ai-btn';
+            fixButton.innerHTML =
+                '<span class="material-symbols-outlined">auto_fix_high</span>Fix error with assistant';
+            fixButton.addEventListener('click', async () => {
+                await this.fixFilterErrorWithAssistant(
+                    filePath,
+                    pythonCode,
+                    errorText
+                );
+            });
+            errorContent.appendChild(fixButton);
+        }
+
         this.errorOverlay.appendChild(errorContent);
 
         // Hide tiles and show error
@@ -1082,6 +1103,91 @@ class GlyphOverview {
             this.container.style.display = 'none';
             this.container.parentElement?.appendChild(this.errorOverlay);
         }
+    }
+
+    /**
+     * Fix a filter error using the AI assistant
+     */
+    private async fixFilterErrorWithAssistant(
+        filePath: string,
+        pythonCode: string,
+        errorTraceback: string
+    ): Promise<void> {
+        // Check if AI assistant is available
+        if (!window.aiAssistant || !window.aiAssistant.sessionManager) {
+            alert('AI Assistant not available');
+            return;
+        }
+
+        const aiAssistant = window.aiAssistant;
+        const sessionManager = aiAssistant.sessionManager;
+
+        // Check if there's already a session linked to this file
+        const currentLinkedPath = sessionManager.getLinkedFilePath();
+        const hasExistingSession =
+            currentLinkedPath === filePath && sessionManager.currentChatId;
+
+        if (!hasExistingSession) {
+            // Start a new chat session for this file
+            // Confirm if there's an active chat
+            if (
+                sessionManager.currentChatId &&
+                aiAssistant.messages.length > 0
+            ) {
+                if (
+                    !confirm(
+                        'Start a new chat for this filter? The current chat will be saved.'
+                    )
+                ) {
+                    return;
+                }
+            }
+
+            // Reset chat state
+            sessionManager.currentChatId = null;
+            sessionManager.isContextLocked = true;
+            sessionManager.setLinkedFilePath(filePath);
+            aiAssistant.messages = [];
+            aiAssistant.messagesContainer.innerHTML = '';
+            localStorage.removeItem('ai_last_chat_id');
+
+            // Set context to glyphfilter
+            aiAssistant.setContext('glyphfilter');
+
+            // Add a system message indicating the linked file
+            const messageDiv = document.createElement('div');
+            messageDiv.className = 'ai-message ai-message-system';
+
+            const fileName = filePath.split('/').pop();
+            messageDiv.innerHTML = `
+                <div class="ai-system-message">
+                    <span class="ai-context-display-icon ai-context-tag-glyphfilter"><span class="material-symbols-outlined">filter_alt</span></span>
+                    <div>
+                        <strong>Glyph Filter Context selected</strong>
+                        <p>Creating or editing glyph filter: ${fileName}</p>
+                    </div>
+                </div>
+            `;
+
+            aiAssistant.messagesContainer.appendChild(messageDiv);
+            sessionManager.updateFilePathDisplay();
+            aiAssistant.scrollToBottom();
+        }
+
+        // Switch to assistant view
+        const assistantView = document.getElementById('view-assistant');
+        if (assistantView) {
+            assistantView.click();
+        }
+
+        // Send error fix message
+        const fixPrompt = `The filter script has an error. Here is the current code:\n\n\`\`\`python\n${pythonCode}\n\`\`\`\n\nError traceback:\n\`\`\`\n${errorTraceback}\n\`\`\`\n\nPlease fix the error and provide the corrected code.`;
+
+        // Set the prompt and trigger send
+        aiAssistant.promptInput.value = fixPrompt;
+        await aiAssistant.sendMessage();
+
+        console.log('[GlyphOverview] Sent error fix request to AI assistant');
     }
 
     /**

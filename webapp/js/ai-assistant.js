@@ -373,6 +373,11 @@ class AIAssistant {
 
         // Update auto-run visibility
         this.updateAutoRunVisibility();
+
+        // Update file path display
+        if (this.sessionManager) {
+            this.sessionManager.updateFilePathDisplay();
+        }
     }
 
     async setDefaultModel() {
@@ -1211,8 +1216,8 @@ class AIAssistant {
 
         // Show appropriate buttons based on context
         let buttonContainerHtml = '';
-        if (this.context === 'script' || this.context === 'glyphfilter') {
-            // Script/glyphfilter context: show both Review Changes and Open in Script Editor buttons
+        if (this.context === 'script') {
+            // Script context: show both Review Changes and Open in Script Editor buttons
             const directOpenBtnId =
                 'direct-open-' +
                 Date.now() +
@@ -1222,6 +1227,9 @@ class AIAssistant {
                     <button class="ai-btn ai-review-changes-btn" id="${openBtnId}" title="${window.translations.ai.buttons.reviewChanges.title}"><span class="material-symbols-outlined">visibility</span>${window.translations.ai.buttons.reviewChanges.text}</button>
                     <button class="ai-btn ai-open-in-editor-btn" id="${directOpenBtnId}" title="${window.translations.ai.buttons.openInEditor.title}"><span class="material-symbols-outlined">edit</span>${window.translations.ai.buttons.openInEditor.text}</button>
                 </div>`;
+        } else if (this.context === 'glyphfilter') {
+            // Glyph filter context: no buttons - code is auto-saved to file
+            buttonContainerHtml = '';
         } else if (showRunButton) {
             // Font context: show both buttons
             buttonContainerHtml = `
@@ -1258,13 +1266,13 @@ class AIAssistant {
         // Add event listeners for buttons if they exist
         const openBtn = document.getElementById(openBtnId);
         if (openBtn) {
-            if (this.context === 'script' || this.context === 'glyphfilter') {
-                // In script/glyphfilter context, this is the Review Changes button
+            if (this.context === 'script') {
+                // In script context, this is the Review Changes button
                 openBtn.addEventListener('click', (event) => {
                     event.stopPropagation(); // Prevent view focus
                     this.showDiffReview(code, markdownText);
                 });
-            } else {
+            } else if (this.context !== 'glyphfilter') {
                 // In font context, open directly in editor
                 openBtn.addEventListener('click', (event) => {
                     event.stopPropagation(); // Prevent view focus
@@ -1273,8 +1281,8 @@ class AIAssistant {
             }
         }
 
-        // Handle direct open button in script/glyphfilter context
-        if (this.context === 'script' || this.context === 'glyphfilter') {
+        // Handle direct open button in script context
+        if (this.context === 'script') {
             const directOpenBtnId = messageDiv.querySelector(
                 '.ai-button-group .ai-open-in-editor-btn'
             )?.id;
@@ -1906,7 +1914,17 @@ ${errorTraceback}
 
             // In script/glyphfilter context, never auto-run - only show code with "Open in Script Editor" button
             if (this.context === 'script' || this.context === 'glyphfilter') {
+                // Glyph filter mode: Auto-save code to linked file
+                if (this.context === 'glyphfilter' && this.sessionManager) {
+                    const linkedFilePath =
+                        this.sessionManager.getLinkedFilePath();
+                    if (linkedFilePath) {
+                        await this.saveCodeToFile(pythonCode, linkedFilePath);
+                    }
+                }
+
                 // Script/glyphfilter mode: Just show the code, no execution
+                // For glyphfilter context, don't show the "review" and "open in editor" buttons
                 this.addOutputWithCode('', pythonCode, markdownText, false);
 
                 // Play incoming message sound
@@ -2148,6 +2166,30 @@ ${errorTraceback}
         }
 
         return { pythonCode, markdownText };
+    }
+
+    async saveCodeToFile(code, filePath) {
+        try {
+            const diskPlugin = window.pluginRegistry?.get('disk');
+            if (!diskPlugin) {
+                console.error('[AIAssistant] Disk plugin not available');
+                return;
+            }
+
+            const adapter = diskPlugin.getAdapter();
+            if (!adapter) {
+                console.error('[AIAssistant] Adapter not available');
+                return;
+            }
+
+            await adapter.writeFile(filePath, code);
+            console.log('[AIAssistant] Saved code to:', filePath);
+
+            // File system observer will automatically trigger filter reload
+        } catch (error) {
+            console.error('[AIAssistant] Error saving code to file:', error);
+            // Don't show error to user - file will just not auto-save
+        }
     }
 
     async executePython(code) {
