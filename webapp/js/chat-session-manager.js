@@ -172,7 +172,7 @@ class ChatSessionManager {
         messageDiv.innerHTML = `
             <div class="ai-context-selection-container">
                 <h3>Choose your working context</h3>
-                <p>Select whether you want to work on the font or a script. This cannot be changed during the chat.</p>
+                <p>Select whether you want to work on the font, or a script in the script editor, or a glyph filter script in the sidebar. This cannot be changed during the chat.</p>
                 <div class="ai-context-selection-buttons">
                     ${ChatSessionManager.getContextSelectionButtonsHTML()}
                 </div>
