@@ -1010,7 +1010,7 @@ export class GlyphOverviewFilterManager {
         const menuHtml = `
             <div class="plugin-menu">
                 <div class="plugin-menu-item" data-action="chat-session">
-                    <span class="material-symbols-outlined">chat</span>
+                    <span class="material-symbols-outlined">attach_file</span>
                     <span>Open Chat Session</span>
                 </div>
                 <div class="plugin-menu-item" data-action="open-script-editor">
