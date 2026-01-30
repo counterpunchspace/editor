@@ -1025,6 +1025,11 @@ export class GlyphOverviewFilterManager {
                     <span class="material-symbols-outlined">my_location</span>
                     <span>Locate in Files</span>
                 </div>
+                <div class="plugin-menu-divider"></div>
+                <div class="plugin-menu-item plugin-menu-item-danger" data-action="delete">
+                    <span class="material-symbols-outlined">delete</span>
+                    <span>Delete</span>
+                </div>
             </div>
         `;
 
@@ -1078,6 +1083,9 @@ export class GlyphOverviewFilterManager {
                                     break;
                                 case 'rename':
                                     await this.renameFilter(plugin, element);
+                                    break;
+                                case 'delete':
+                                    await this.deleteFilter(plugin);
                                     break;
                             }
                         });
@@ -2113,6 +2121,60 @@ def filter_glyphs(font):
 
         // Blur to confirm
         input.addEventListener('blur', completeRename);
+    }
+
+    /**
+     * Delete a filter file
+     */
+    private async deleteFilter(plugin: GlyphFilterPlugin): Promise<void> {
+        const filePath = plugin.filePath;
+        if (!filePath) return;
+
+        const fileName = filePath.split('/').pop() || '';
+
+        // Confirm deletion
+        if (
+            !confirm(`Delete filter "${fileName}"?\n\nThis cannot be undone.`)
+        ) {
+            return;
+        }
+
+        const diskPlugin = pluginRegistry.get('disk');
+        if (!diskPlugin) return;
+
+        const adapter = diskPlugin.getAdapter();
+        if (!(adapter instanceof NativeAdapter)) return;
+
+        try {
+            await adapter.deleteItem(filePath, false);
+            console.log('[GlyphOverviewFilters] Deleted:', filePath);
+
+            // If this filter is currently active, clear it
+            if (this.activeFilter === plugin) {
+                this.clearActiveFilter();
+            }
+
+            // Clear chat session link if one exists for this file
+            if (window.aiAssistant?.sessionManager) {
+                const sessionManager = window.aiAssistant.sessionManager;
+                const linkedPath = sessionManager.getLinkedFilePath();
+                if (linkedPath === filePath) {
+                    sessionManager.setLinkedFilePath(null);
+                    console.log(
+                        '[GlyphOverviewFilters] Cleared chat session link'
+                    );
+                }
+            }
+
+            // Refresh filters (file system observer will pick it up)
+            await this.discoverUserFilters();
+        } catch (error: any) {
+            console.error(
+                '[GlyphOverviewFilters] Error deleting filter:',
+                error
+            );
+            alert(`Error deleting filter: ${error.message}`);
+        }
     }
 
     /**
