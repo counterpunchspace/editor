@@ -13,6 +13,7 @@ import {
     let editor: any = null;
     let runButton: HTMLButtonElement | null = null;
     let fileButton: HTMLButtonElement | null = null;
+    let reloadButton: HTMLButtonElement | null = null;
     let isScriptViewFocused = false;
     let tippyInstance: TippyInstance | null = null;
 
@@ -21,6 +22,11 @@ import {
     let currentPluginId: string | null = null; // Plugin ID (memory, disk)
     let isModified = false;
     let savedContent = ''; // Content when last saved/opened
+
+    // File watcher state
+    let fileWatcherInterval: number | null = null;
+    let lastModifiedTime: number | null = null;
+    let hasExternalChanges = false;
 
     /**
      * Update the modified indicator in UI
@@ -35,11 +41,29 @@ import {
     }
 
     /**
+     * Update the reload button visibility
+     */
+    function updateReloadButton() {
+        if (reloadButton) {
+            // Show reload button only if there are external changes AND unsaved changes
+            const shouldShow = hasExternalChanges && isModified;
+            reloadButton.style.display = shouldShow ? 'flex' : 'none';
+        }
+    }
+
+    /**
      * Set the modified state
      */
     function setModified(modified: boolean): void {
         isModified = modified;
         updateModifiedIndicator();
+        updateReloadButton();
+
+        // If no longer modified and no external changes, hide reload button
+        if (!modified && !hasExternalChanges) {
+            hasExternalChanges = false;
+            updateReloadButton();
+        }
     }
 
     /**
@@ -108,6 +132,9 @@ import {
         ) as HTMLButtonElement | null;
         fileButton = document.getElementById(
             'script-file-btn'
+        ) as HTMLButtonElement | null;
+        reloadButton = document.getElementById(
+            'script-file-reload-btn'
         ) as HTMLButtonElement | null;
 
         if (!container || !runButton) {
@@ -306,6 +333,13 @@ import {
         // Run button click handler
         runButton.addEventListener('click', runScript);
 
+        // Reload button click handler
+        if (reloadButton) {
+            reloadButton.addEventListener('click', async () => {
+                await handleReloadExternalChanges();
+            });
+        }
+
         // Handle keyboard shortcuts when script view is focused
         document.addEventListener('keydown', (event) => {
             // Skip if event already handled
@@ -404,6 +438,95 @@ import {
             '[ScriptEditor]',
             'Script editor initialized with Ace Editor'
         );
+
+        // Start file watcher if we have a restored file association
+        // Only for disk files and only if the adapter is ready
+        if (currentFilePath && currentPluginId) {
+            console.log(
+                '[ScriptEditor]',
+                'Attempting to start file watcher on init for:',
+                currentPluginId,
+                currentFilePath
+            );
+            if (currentPluginId === 'disk') {
+                // Disk adapter may not be ready yet (still restoring from IndexedDB)
+                // Retry a few times with delays
+                const tryStartWatcher = async (attempts: number = 0) => {
+                    const plugin = getPluginById(currentPluginId!);
+                    if (!plugin) {
+                        console.warn(
+                            '[ScriptEditor]',
+                            'Plugin not found:',
+                            currentPluginId
+                        );
+                        return;
+                    }
+
+                    const adapter = plugin.getAdapter();
+                    const hasDir = (adapter as any).hasDirectory?.();
+                    console.log(
+                        '[ScriptEditor]',
+                        'Disk adapter hasDirectory (attempt',
+                        attempts + 1,
+                        '):',
+                        hasDir
+                    );
+
+                    if (hasDir !== false) {
+                        // Adapter is ready - check if file changed while app was closed
+                        try {
+                            const fileInfo = await getFileInfo(
+                                adapter,
+                                currentFilePath!
+                            );
+                            if (fileInfo) {
+                                // Compare file timestamp with localStorage timestamp
+                                const localStorageTimestamp =
+                                    localStorage.getItem(
+                                        'python_script_timestamp'
+                                    );
+                                const shouldReload =
+                                    !localStorageTimestamp ||
+                                    fileInfo.lastModified >
+                                        parseInt(localStorageTimestamp);
+
+                                if (shouldReload) {
+                                    console.log(
+                                        '[ScriptEditor]',
+                                        'File changed while app was closed - reloading from disk'
+                                    );
+                                    await reloadFileFromDisk();
+                                } else {
+                                    console.log(
+                                        '[ScriptEditor]',
+                                        'File unchanged since last session'
+                                    );
+                                }
+                            }
+                        } catch (error) {
+                            console.error(
+                                '[ScriptEditor]',
+                                'Error checking file on init:',
+                                error
+                            );
+                        }
+
+                        // Start file watcher
+                        startFileWatcher(currentFilePath!, currentPluginId!);
+                    } else if (attempts < 10) {
+                        // Retry after a delay (up to 10 attempts = ~5 seconds)
+                        setTimeout(() => tryStartWatcher(attempts + 1), 500);
+                    } else {
+                        console.log(
+                            '[ScriptEditor]',
+                            'Gave up waiting for disk adapter to be ready'
+                        );
+                    }
+                };
+
+                tryStartWatcher();
+            }
+        }
     }
 
     /**
@@ -637,11 +760,15 @@ import {
             }
         }
 
+        // Stop file watcher
+        stopFileWatcher();
+
         // Clear editor
         editor.setValue('# New Python script\n', -1);
         savedContent = editor.getValue();
         currentFilePath = null;
         currentPluginId = null;
+        hasExternalChanges = false;
         setModified(false);
 
         // Clear file association from localStorage
@@ -746,7 +873,28 @@ import {
             await adapter.writeFile(currentFilePath, data);
 
             savedContent = content;
+            hasExternalChanges = false;
             setModified(false);
+
+            // Update lastModifiedTime after save to prevent false external change detection
+            const savedPath = currentFilePath;
+            setTimeout(async () => {
+                if (!savedPath) return;
+                const fileInfo = await getFileInfo(adapter, savedPath);
+                if (fileInfo) {
+                    lastModifiedTime = fileInfo.lastModified;
+                    // Save timestamp to localStorage
+                    localStorage.setItem(
+                        'python_script_timestamp',
+                        fileInfo.lastModified.toString()
+                    );
+                    console.log(
+                        '[ScriptEditor]',
+                        'Updated mtime after save:',
+                        new Date(fileInfo.lastModified).toISOString()
+                    );
+                }
+            }, 500); // Wait a bit for filesystem to update
 
             console.log('[ScriptEditor]', 'File saved:', currentFilePath);
 
@@ -823,7 +971,14 @@ import {
             currentPluginId = plugin.getId();
 
             // Save the file
-            return await handleSave();
+            const success = await handleSave();
+
+            // Start file watcher if save succeeded
+            if (success) {
+                await startFileWatcher(path, plugin.getId());
+            }
+
+            return success;
         } catch (error: any) {
             console.error('[ScriptEditor]', 'Error in Save As:', error);
             alert('Failed to save file: ' + (error?.message || String(error)));
@@ -898,11 +1053,27 @@ import {
             savedContent = content;
             currentFilePath = path;
             currentPluginId = pluginId;
+
+            // Reset external changes state
+            hasExternalChanges = false;
+            updateReloadButton();
+
+            // Start file watcher if plugin is disk
+            await startFileWatcher(path, pluginId);
             setModified(false);
 
             // Save to localStorage for persistence (content and file association)
             localStorage.setItem('python_script', content);
             localStorage.setItem('python_script_uri', `${pluginId}://${path}`);
+
+            // Save file timestamp
+            const fileInfo = await getFileInfo(adapter, path);
+            if (fileInfo) {
+                localStorage.setItem(
+                    'python_script_timestamp',
+                    fileInfo.lastModified.toString()
+                );
+            }
 
             console.log('[ScriptEditor]', 'File opened:', path);
 
@@ -1034,6 +1205,263 @@ import {
             runButton!.innerHTML =
                 'Run <span style="opacity: 0.5;"><span class="material-symbols-outlined">keyboard_command_key</span><span class="material-symbols-outlined">keyboard_option_key</span>R</span>';
         }
+    }
+
+    /**
+     * Start watching a file for external changes
+     */
+    async function startFileWatcher(
+        path: string,
+        pluginId: string
+    ): Promise<void> {
+        console.log(
+            '[ScriptEditor]',
+            'startFileWatcher called for:',
+            pluginId,
+            path
+        );
+
+        // Stop any existing watcher
+        stopFileWatcher();
+
+        // Only watch disk files (memory files can't change externally)
+        if (pluginId !== 'disk') {
+            console.log(
+                '[ScriptEditor]',
+                'Skipping file watcher - not a disk file'
+            );
+            return;
+        }
+
+        try {
+            const plugin = getPluginById(pluginId);
+            if (!plugin) {
+                return;
+            }
+
+            const adapter = plugin.getAdapter();
+
+            // Check if adapter is ready (for NativeAdapter, check if directory is selected)
+            if (
+                (adapter as any).hasDirectory &&
+                !(adapter as any).hasDirectory()
+            ) {
+                console.log(
+                    '[ScriptEditor]',
+                    'Adapter not ready yet, will not start file watcher'
+                );
+                return;
+            }
+
+            // Get initial file modification time
+            const fileInfo = await getFileInfo(adapter, path);
+            if (fileInfo) {
+                lastModifiedTime = fileInfo.lastModified;
+                console.log(
+                    '[ScriptEditor]',
+                    'Initial file mtime:',
+                    new Date(fileInfo.lastModified).toISOString()
+                );
+            } else {
+                console.warn(
+                    '[ScriptEditor]',
+                    'Could not get initial file info for:',
+                    path
+                );
+            }
+
+            // Poll for changes every 2 seconds
+            fileWatcherInterval = window.setInterval(async () => {
+                await checkForExternalChanges();
+            }, 2000);
+
+            console.log('[ScriptEditor]', 'File watcher started for:', path);
+        } catch (error) {
+            console.error(
+                '[ScriptEditor]',
+                'Error starting file watcher:',
+                error
+            );
+        }
+    }
+
+    /**
+     * Stop watching the current file
+     */
+    function stopFileWatcher(): void {
+        if (fileWatcherInterval !== null) {
+            window.clearInterval(fileWatcherInterval);
+            fileWatcherInterval = null;
+            lastModifiedTime = null;
+            console.log('[ScriptEditor]', 'File watcher stopped');
+        }
+    }
+
+    /**
+     * Get file information including modification time
+     */
+    async function getFileInfo(
+        adapter: any,
+        path: string
+    ): Promise<{ lastModified: number } | null> {
+        try {
+            // Check if adapter is ready
+            if (adapter.hasDirectory && !adapter.hasDirectory()) {
+                return null;
+            }
+
+            // For NativeAdapter, we can get the file handle
+            if (adapter.getHandleAtPath) {
+                const handle = await adapter.getHandleAtPath(path);
+                if (handle && handle.getFile) {
+                    const file = await handle.getFile();
+                    return { lastModified: file.lastModified };
+                }
+            }
+
+            // Fallback: scan directory and get file info
+            const parentPath = path.substring(0, path.lastIndexOf('/')) || '/';
+            const fileName = path.substring(path.lastIndexOf('/') + 1);
+            const dirContents = await adapter.scanDirectory(parentPath);
+
+            if (dirContents[fileName] && dirContents[fileName].mtime) {
+                const mtimeDate = new Date(dirContents[fileName].mtime);
+                return { lastModified: mtimeDate.getTime() };
+            }
+
+            return null;
+        } catch (error) {
+            console.error('[ScriptEditor]', 'Error getting file info:', error);
+            return null;
+        }
+    }
+
+    /**
+     * Check if the file has been modified externally
+     */
+    async function checkForExternalChanges(): Promise<void> {
+        if (
+            !currentFilePath ||
+            !currentPluginId ||
+            currentPluginId !== 'disk'
+        ) {
+            return;
+        }
+
+        try {
+            const plugin = getPluginById(currentPluginId);
+            if (!plugin) {
+                return;
+            }
+
+            const adapter = plugin.getAdapter();
+            const fileInfo = await getFileInfo(adapter, currentFilePath);
+
+            if (!fileInfo) {
+                console.warn(
+                    '[ScriptEditor]',
+                    'Could not get file info during check'
+                );
+                return;
+            }
+
+            if (!lastModifiedTime) {
+                console.warn(
+                    '[ScriptEditor]',
+                    'No lastModifiedTime set, initializing'
+                );
+                lastModifiedTime = fileInfo.lastModified;
+                return;
+            }
+
+            // Check if file was modified since we last checked
+            if (fileInfo.lastModified > lastModifiedTime) {
+                console.log(
+                    '[ScriptEditor]',
+                    'External changes detected - old:',
+                    new Date(lastModifiedTime).toISOString(),
+                    'new:',
+                    new Date(fileInfo.lastModified).toISOString()
+                );
+                lastModifiedTime = fileInfo.lastModified;
+
+                // If no unsaved changes, reload automatically
+                if (!isModified) {
+                    await reloadFileFromDisk();
+                } else {
+                    // Has unsaved changes - show reload button
+                    hasExternalChanges = true;
+                    updateReloadButton();
+                }
+            }
+        } catch (error) {
+            console.error(
+                '[ScriptEditor]',
+                'Error checking for external changes:',
+                error
+            );
+        }
+    }
+
+    /**
+     * Reload the file from disk
+     */
+    async function reloadFileFromDisk(): Promise<void> {
+        if (!currentFilePath || !currentPluginId) {
+            return;
+        }
+
+        try {
+            const plugin = getPluginById(currentPluginId);
+            if (!plugin) {
+                return;
+            }
+
+            const adapter = plugin.getAdapter();
+            const data = await adapter.readFile(currentFilePath);
+
+            // Convert Uint8Array to string
+            let content: string;
+            if (data instanceof Uint8Array) {
+                const decoder = new TextDecoder();
+                content = decoder.decode(data);
+            } else {
+                content = data as string;
+            }
+
+            // Update editor
+            editor.setValue(content, -1);
+            savedContent = content;
+            hasExternalChanges = false;
+            setModified(false);
+
+            console.log('[ScriptEditor]', 'File reloaded from disk');
+
+            // Update localStorage
+            localStorage.setItem('python_script', content);
+
+            // Save current file timestamp
+            const fileInfo = await getFileInfo(adapter, currentFilePath);
+            if (fileInfo) {
+                lastModifiedTime = fileInfo.lastModified;
+                localStorage.setItem(
+                    'python_script_timestamp',
+                    fileInfo.lastModified.toString()
+                );
+            }
+        } catch (error: any) {
+            console.error('[ScriptEditor]', 'Error reloading file:', error);
+            alert(
+                'Failed to reload file: ' + (error?.message || String(error))
+            );
+        }
+    }
+
+    /**
+     * Handle reload button click
+     */
+    async function handleReloadExternalChanges(): Promise<void> {
+        await reloadFileFromDisk();
     }
 
     // Initialize when DOM is ready

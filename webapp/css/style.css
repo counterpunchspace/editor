@@ -1791,6 +1791,32 @@ kbd + kbd {
     margin-right: 2px;
 }
 
+.script-file-reload-btn {
+    background-color: transparent;
+    border: none;
+    border-left: 1px solid var(--border-primary);
+    color: var(--text-primary);
+    padding: 0 8px;
+    border-radius: 0;
+    cursor: pointer;
+    font-family: var(--font-families-mono);
+    font-size: 10px;
+    font-weight: normal;
+    transition: all 0.2s ease;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.script-file-reload-btn:hover {
+    background-color: var(--input-bg);
+}
+
+.script-file-reload-btn .material-symbols-outlined {
+    font-size: 14px;
+}
+
 /* Script File Menu (via Tippy) */
 .script-file-menu {
     background: var(--background-secondary);
