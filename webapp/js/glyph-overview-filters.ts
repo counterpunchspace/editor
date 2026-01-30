@@ -1889,10 +1889,15 @@ list(_result) if isinstance(_result, types.GeneratorType) else _result
             });
 
             // Get the relative path from the root
-            const filePath = await this.getRelativePathFromHandle(
+            let filePath = await this.getRelativePathFromHandle(
                 dirHandle,
                 fileHandle
             );
+
+            // Ensure .py extension
+            if (!filePath.endsWith('.py')) {
+                filePath += '.py';
+            }
 
             if (!filePath.startsWith(this.USER_FILTERS_PATH)) {
                 alert(`Filter must be saved under ${this.USER_FILTERS_PATH}`);
