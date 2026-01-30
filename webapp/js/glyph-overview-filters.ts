@@ -1879,7 +1879,7 @@ list(_result) if isinstance(_result, types.GeneratorType) else _result
             // Show save file picker starting from Filters directory
             const fileHandle = await (window as any).showSaveFilePicker({
                 startIn: currentHandle,
-                suggestedName: 'new_filter.py',
+                suggestedName: 'New Filter.py',
                 types: [
                     {
                         description: 'Python Files',
@@ -1928,9 +1928,19 @@ def filter_glyphs(font):
             // Trigger refresh (file system observer will pick it up)
             await this.discoverUserFilters();
 
-            // Open in script editor after a short delay
-            setTimeout(async () => {
-                await this.openFilterInScriptEditor(filePath);
+            // Select the newly created filter
+            setTimeout(() => {
+                const newFilter = this.userFilters.find(
+                    (f) => f.filePath === filePath
+                );
+                if (newFilter) {
+                    const filterElement = this.sidebarContainer?.querySelector(
+                        `.glyph-filter-item[data-plugin-keyword="${newFilter.keyword}"]`
+                    ) as HTMLElement;
+                    if (filterElement) {
+                        this.activateFilter(newFilter, filterElement);
+                    }
+                }
             }, 300);
         } catch (error: any) {
             if (error.name === 'AbortError') {
