@@ -2142,8 +2142,7 @@ def filter_glyphs(font):
                     }
                 }
 
-                // Refresh filters (file system observer will pick it up)
-                await this.discoverUserFilters();
+                // File system observer will detect the rename and refresh automatically
             } catch (error: any) {
                 console.error(
                     '[GlyphOverviewFilters] Error renaming filter:',
