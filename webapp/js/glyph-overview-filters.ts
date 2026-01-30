@@ -1904,19 +1904,38 @@ list(_result) if isinstance(_result, types.GeneratorType) else _result
             const filterName = fileName.replace(/\.py$/, '');
 
             // Create empty filter file with template
-            const template = `# ${filterName} Filter
+            const template = `# "${filterName}" Filter
 # Define your filter function below
+
+# Optional: Define groups with colors
+# GROUPS = {
+#     "uppercase": {"description": "Uppercase letters", "color": "#ff6b6b"},
+#     "lowercase": {"description": "Lowercase letters", "color": "#4ecdc4"}
+# }
 
 def filter_glyphs(font):
     """Filter glyphs and return results.
     
     Yield or return a list of dictionaries with 'glyph_name' keys.
-    Optional: 'group' and 'color' keys for grouping.
+    Optional: 'group' keys for grouping.
     """
     for glyph in font.glyphs:
         # Example: yield all glyphs
         yield {"glyph_name": glyph.name}
-`;
+        
+        # Example with group (defined in GROUPS above):
+        # yield {"glyph_name": glyph.name, "group": "uppercase"}
+
+        # Example with just color:
+        # yield {"glyph_name": glyph.name, "group": "#ff6b6b"}
+
+        # A glyph can belong to multiple groups by yielding 'groups' list...
+        # yield {"glyph_name": glyph.name, "groups": ["uppercase", "#ff6b6b"]}
+
+        # ...or by yielding multiple times with different groups
+        # yield {"glyph_name": glyph.name, "group": "uppercase"}
+        # yield {"glyph_name": glyph.name, "group": "#ff6b6b"}
+        `;
 
             // Write file using the file handle
             const writable = await fileHandle.createWritable();
