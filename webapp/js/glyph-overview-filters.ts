@@ -888,8 +888,12 @@ export class GlyphOverviewFilterManager {
         container: HTMLElement,
         depth: number
     ): void {
-        // Render child nodes (categories)
-        for (const [key, childNode] of node.children) {
+        // Render child nodes (categories) - sorted alphabetically
+        const sortedChildren = Array.from(node.children.entries()).sort(
+            ([keyA], [keyB]) =>
+                keyA.localeCompare(keyB, undefined, { sensitivity: 'base' })
+        );
+        for (const [key, childNode] of sortedChildren) {
             const nodeElement = document.createElement('div');
             nodeElement.className = 'glyph-filter-node';
             nodeElement.style.paddingLeft = `${depth * 8}px`;
@@ -925,8 +929,13 @@ export class GlyphOverviewFilterManager {
             childContent.className = 'glyph-filter-node-content';
             childContent.style.display = childNode.expanded ? '' : 'none';
 
-            // Render plugins in this node
-            for (const plugin of childNode.plugins) {
+            // Render plugins in this node - sorted alphabetically
+            const sortedPlugins = [...childNode.plugins].sort((a, b) =>
+                a.display_name.localeCompare(b.display_name, undefined, {
+                    sensitivity: 'base'
+                })
+            );
+            for (const plugin of sortedPlugins) {
                 const pluginElement = this.renderPluginItem(plugin, depth + 1);
                 childContent.appendChild(pluginElement);
             }
@@ -948,13 +957,25 @@ export class GlyphOverviewFilterManager {
         container: HTMLElement
     ): void {
         // Render root-level plugins first (filters directly in /Counterpunch/Filters/)
-        for (const plugin of node.plugins) {
+        // Sort alphabetically
+        const sortedPlugins = [...node.plugins].sort((a, b) =>
+            a.display_name.localeCompare(b.display_name, undefined, {
+                sensitivity: 'base'
+            })
+        );
+        for (const plugin of sortedPlugins) {
             const pluginElement = this.renderPluginItem(plugin, 0);
             container.appendChild(pluginElement);
         }
 
-        // Then render child nodes (subfolders)
-        this.renderTreeNode(node, container, 0);
+        // Then render child nodes (subfolders) - also sorted
+        const sortedChildren = Array.from(node.children.entries()).sort(
+            ([keyA], [keyB]) =>
+                keyA.localeCompare(keyB, undefined, { sensitivity: 'base' })
+        );
+        for (const [, childNode] of sortedChildren) {
+            this.renderTreeNode(childNode, container, 0);
+        }
     }
 
     /**
@@ -2166,8 +2187,8 @@ def filter_glyphs(font):
                 }
             }
 
-            // Refresh filters (file system observer will pick it up)
-            await this.discoverUserFilters();
+            // File system observer will automatically detect the deletion and refresh
+            // No need to manually call discoverUserFilters() here
         } catch (error: any) {
             console.error(
                 '[GlyphOverviewFilters] Error deleting filter:',
