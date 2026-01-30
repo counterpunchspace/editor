@@ -9,6 +9,40 @@ class ChatSessionManager {
         this.currentChatId = null;
         this.chatHistory = []; // Last 50 chats for the menu
         this.isContextLocked = false; // Lock context after first message
+        this.linkedFilePath = null; // File path for glyph filter context (session only)
+    }
+
+    /**
+     * Set the linked file path for glyph filter context
+     */
+    setLinkedFilePath(filePath) {
+        this.linkedFilePath = filePath;
+        console.log('[ChatSession] Linked file path set to:', filePath);
+        // Update file path display if visible
+        this.updateFilePathDisplay();
+    }
+
+    /**
+     * Get the linked file path for glyph filter context
+     */
+    getLinkedFilePath() {
+        return this.linkedFilePath;
+    }
+
+    /**
+     * Update the file path display at the bottom of the chat
+     */
+    updateFilePathDisplay() {
+        const display = document.getElementById('ai-linked-file-path');
+        if (!display) return;
+
+        if (this.linkedFilePath && this.aiAssistant.context === 'glyphfilter') {
+            const fileName = this.linkedFilePath.split('/').pop();
+            display.innerHTML = `<span class="material-symbols-outlined">link</span><span class="ai-linked-file-name">${fileName}</span><span class="ai-linked-file-full-path">${this.linkedFilePath}</span>`;
+            display.style.display = 'flex';
+        } else {
+            display.style.display = 'none';
+        }
     }
 
     /**
@@ -25,6 +59,7 @@ class ChatSessionManager {
         // Reset chat state
         this.currentChatId = null;
         this.isContextLocked = false;
+        this.linkedFilePath = null;
         this.aiAssistant.messages = [];
         this.aiAssistant.messagesContainer.innerHTML = '';
 
@@ -67,19 +102,11 @@ class ChatSessionManager {
     /**
      * Check if a glyph filter file is currently open in the script editor
      * @returns {boolean} True if a filter file is open
+     * NOTE: This is now deprecated - glyph filter context is only invoked from sidebar
      */
     static isGlyphFilterFileOpen() {
-        if (!window.scriptEditor) return false;
-        const pluginId = window.scriptEditor.currentPluginId;
-        const filePath = window.scriptEditor.currentFilePath;
-
-        // Check if it's a disk file under /Counterpunch/Filters
-        return (
-            pluginId === 'disk' &&
-            filePath &&
-            filePath.startsWith('/Counterpunch/Filters/') &&
-            filePath.endsWith('.py')
-        );
+        // Always return false - glyph filter context is only invoked from sidebar
+        return false;
     }
 
     /**
@@ -112,16 +139,13 @@ class ChatSessionManager {
 
     /**
      * Generate explainer HTML for glyph filter context
-     * @returns {string} HTML for the explainer (always rendered, visibility controlled dynamically)
+     * @returns {string} HTML for the explainer (always shown for glyph filter button)
      */
     static getGlyphFilterExplainerHTML() {
-        const isFilterFileOpen = ChatSessionManager.isGlyphFilterFileOpen();
-        const hiddenStyle = isFilterFileOpen ? 'style="display: none;"' : '';
-
         return `
-            <div class="ai-context-explainer" ${hiddenStyle}>
+            <div class="ai-context-explainer">
                 <span class="material-symbols-outlined">info</span>
-                <span>To use Glyph Filter Context, first create or open a <code>.py</code> file under <code>Disk → Counterpunch/Filters/</code> in the Script Editor.</span>
+                <span>Glyph Filter Context chats can only be started from the sidebar. Right-click on a filter file in the User Filters section and select "Open Chat Session".</span>
             </div>
         `;
     }
@@ -146,36 +170,6 @@ class ChatSessionManager {
 
         this.aiAssistant.messagesContainer.appendChild(messageDiv);
 
-        // Function to update the glyph filter button state
-        const updateGlyphFilterButtonState = () => {
-            const glyphFilterBtn = messageDiv.querySelector(
-                '.ai-context-selection-btn[data-context="glyphfilter"]'
-            );
-            const explainer = messageDiv.querySelector('.ai-context-explainer');
-
-            if (glyphFilterBtn) {
-                const isFilterOpen = ChatSessionManager.isGlyphFilterFileOpen();
-                if (isFilterOpen) {
-                    glyphFilterBtn.disabled = false;
-                    glyphFilterBtn.classList.remove('disabled');
-                } else {
-                    glyphFilterBtn.disabled = true;
-                    glyphFilterBtn.classList.add('disabled');
-                }
-            }
-
-            if (explainer) {
-                const isFilterOpen = ChatSessionManager.isGlyphFilterFileOpen();
-                explainer.style.display = isFilterOpen ? 'none' : 'flex';
-            }
-        };
-
-        // Listen for script editor file changes
-        const fileChangeHandler = () => {
-            updateGlyphFilterButtonState();
-        };
-        window.addEventListener('scriptEditorFileChanged', fileChangeHandler);
-
         // Add event listeners to buttons
         const buttons = messageDiv.querySelectorAll(
             '.ai-context-selection-btn'
@@ -186,11 +180,6 @@ class ChatSessionManager {
                 if (btn.disabled) return;
 
                 const context = btn.getAttribute('data-context');
-                // Clean up event listener
-                window.removeEventListener(
-                    'scriptEditorFileChanged',
-                    fileChangeHandler
-                );
                 this.selectContext(context);
                 messageDiv.remove();
             });

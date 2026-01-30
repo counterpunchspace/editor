@@ -824,6 +824,20 @@ export class GlyphOverviewFilterManager {
         header.appendChild(titleSpan);
 
         if (hasDisk) {
+            const buttonContainer = document.createElement('div');
+            buttonContainer.className = 'glyph-filter-header-buttons';
+
+            const newBtn = document.createElement('button');
+            newBtn.className = 'glyph-filter-new-btn';
+            newBtn.title = 'Create new filter';
+            newBtn.innerHTML =
+                '<span class="material-symbols-outlined">add</span>';
+            newBtn.addEventListener('click', async (e) => {
+                e.stopPropagation();
+                await this.createNewFilter();
+            });
+            buttonContainer.appendChild(newBtn);
+
             const refreshBtn = document.createElement('button');
             refreshBtn.className = 'glyph-filter-refresh-btn';
             refreshBtn.title = 'Refresh user filters';
@@ -835,7 +849,9 @@ export class GlyphOverviewFilterManager {
                 await this.discoverUserFilters();
                 refreshBtn.classList.remove('spinning');
             });
-            header.appendChild(refreshBtn);
+            buttonContainer.appendChild(refreshBtn);
+
+            header.appendChild(buttonContainer);
         }
 
         this.sidebarContainer.appendChild(header);
@@ -993,9 +1009,17 @@ export class GlyphOverviewFilterManager {
         // Build menu HTML (using same structure as file-browser context menus)
         const menuHtml = `
             <div class="plugin-menu">
+                <div class="plugin-menu-item" data-action="chat-session">
+                    <span class="material-symbols-outlined">chat</span>
+                    <span>Open Chat Session</span>
+                </div>
                 <div class="plugin-menu-item" data-action="open-script-editor">
                     <span class="material-symbols-outlined">code</span>
                     <span>Open in Script Editor</span>
+                </div>
+                <div class="plugin-menu-item" data-action="rename">
+                    <span class="material-symbols-outlined">edit</span>
+                    <span>Rename</span>
                 </div>
                 <div class="plugin-menu-item" data-action="locate">
                     <span class="material-symbols-outlined">my_location</span>
@@ -1041,6 +1065,9 @@ export class GlyphOverviewFilterManager {
                             element.classList.remove('context-menu-active');
 
                             switch (action) {
+                                case 'chat-session':
+                                    await this.openOrCreateChatSession(plugin);
+                                    break;
                                 case 'locate':
                                     await this.locateFilterInFiles(filePath);
                                     break;
@@ -1048,6 +1075,9 @@ export class GlyphOverviewFilterManager {
                                     await this.openFilterInScriptEditor(
                                         filePath
                                     );
+                                    break;
+                                case 'rename':
+                                    await this.renameFilter(plugin, element);
                                     break;
                             }
                         });
@@ -1313,7 +1343,25 @@ list(_result) if isinstance(_result, types.GeneratorType) else _result
             this.updatePluginCount(plugin);
             // Show error inline in glyph overview
             if (this.glyphOverview) {
-                this.glyphOverview.showFilterError(plugin.display_name, error);
+                // For user filters, pass file path and code to enable "Fix with AI" button
+                if (
+                    plugin.isUserFilter &&
+                    plugin.filePath &&
+                    plugin.pythonCode
+                ) {
+                    this.glyphOverview.showFilterError(
+                        plugin.display_name,
+                        error,
+                        0,
+                        plugin.filePath,
+                        plugin.pythonCode
+                    );
+                } else {
+                    this.glyphOverview.showFilterError(
+                        plugin.display_name,
+                        error
+                    );
+                }
             }
         }
     }
@@ -1620,7 +1668,8 @@ _filter_result
         itemElement: HTMLElement,
         event?: MouseEvent
     ): void {
-        const isMultiSelect = event?.shiftKey || event?.metaKey || event?.ctrlKey;
+        const isMultiSelect =
+            event?.shiftKey || event?.metaKey || event?.ctrlKey;
 
         if (isMultiSelect) {
             // Multi-select mode: toggle individual group
@@ -1761,6 +1810,395 @@ list(_result) if isinstance(_result, types.GeneratorType) else _result
             plugin.hasError = true;
             this.updatePluginCount(plugin);
         }
+    }
+
+    /**
+     * Create a new filter file using file picker
+     */
+    private async createNewFilter(): Promise<void> {
+        const diskPlugin = pluginRegistry.get('disk');
+        if (!diskPlugin) {
+            alert('Disk plugin not available');
+            return;
+        }
+
+        const adapter = diskPlugin.getAdapter();
+        if (!(adapter instanceof NativeAdapter) || !adapter.hasDirectory()) {
+            alert('Disk directory not available');
+            return;
+        }
+
+        try {
+            // Get the directory handle
+            const dirHandle = (adapter as any).directoryHandle;
+            if (!dirHandle) {
+                alert('Directory handle not available');
+                return;
+            }
+
+            // Navigate to Filters directory (create if doesn't exist)
+            const filtersDirParts = this.USER_FILTERS_PATH.split('/').filter(
+                (p) => p
+            );
+            let currentHandle = dirHandle;
+            for (const part of filtersDirParts) {
+                currentHandle = await currentHandle.getDirectoryHandle(part, {
+                    create: true
+                });
+            }
+
+            // Show save file picker starting from Filters directory
+            const fileHandle = await (window as any).showSaveFilePicker({
+                startIn: currentHandle,
+                suggestedName: 'new_filter.py',
+                types: [
+                    {
+                        description: 'Python Files',
+                        accept: { 'text/x-python': ['.py'] }
+                    }
+                ]
+            });
+
+            // Get the relative path from the root
+            const filePath = await this.getRelativePathFromHandle(
+                dirHandle,
+                fileHandle
+            );
+
+            if (!filePath.startsWith(this.USER_FILTERS_PATH)) {
+                alert(`Filter must be saved under ${this.USER_FILTERS_PATH}`);
+                return;
+            }
+
+            // Extract filter name from file path
+            const fileName = filePath.split('/').pop() || 'filter';
+            const filterName = fileName.replace(/\.py$/, '');
+
+            // Create empty filter file with template
+            const template = `# ${filterName} Filter
+# Define your filter function below
+
+def filter_glyphs(font):
+    """Filter glyphs and return results.
+    
+    Yield or return a list of dictionaries with 'glyph_name' keys.
+    Optional: 'group' and 'color' keys for grouping.
+    """
+    for glyph in font.glyphs:
+        # Example: yield all glyphs
+        yield {"glyph_name": glyph.name}
+`;
+
+            // Write file using the file handle
+            const writable = await fileHandle.createWritable();
+            await writable.write(template);
+            await writable.close();
+
+            console.log('[GlyphOverviewFilters] Created new filter:', filePath);
+
+            // Trigger refresh (file system observer will pick it up)
+            await this.discoverUserFilters();
+
+            // Open in script editor after a short delay
+            setTimeout(async () => {
+                await this.openFilterInScriptEditor(filePath);
+            }, 300);
+        } catch (error: any) {
+            if (error.name === 'AbortError') {
+                console.log('[GlyphOverviewFilters] File creation cancelled');
+                return;
+            }
+            console.error(
+                '[GlyphOverviewFilters] Error creating filter:',
+                error
+            );
+            alert(`Error creating filter: ${error.message}`);
+        }
+    }
+
+    /**
+     * Get relative path from root directory handle to a file handle
+     */
+    private async getRelativePathFromHandle(
+        rootHandle: FileSystemDirectoryHandle,
+        targetHandle: FileSystemFileHandle
+    ): Promise<string> {
+        // Try to resolve the path by checking if we can get to the target from root
+        const path = await this.resolvePathRecursive(
+            rootHandle,
+            targetHandle,
+            '/'
+        );
+        if (path) return path;
+        throw new Error('Could not resolve file path');
+    }
+
+    /**
+     * Recursively search for a file handle starting from a directory
+     */
+    private async resolvePathRecursive(
+        dirHandle: FileSystemDirectoryHandle,
+        targetHandle: FileSystemFileHandle,
+        currentPath: string
+    ): Promise<string | null> {
+        for await (const [name, handle] of (dirHandle as any).entries()) {
+            const itemPath =
+                currentPath === '/' ? `/${name}` : `${currentPath}/${name}`;
+
+            if (
+                handle.kind === 'file' &&
+                (await this.isSameHandle(handle, targetHandle))
+            ) {
+                return itemPath;
+            } else if (handle.kind === 'directory') {
+                const result = await this.resolvePathRecursive(
+                    handle,
+                    targetHandle,
+                    itemPath
+                );
+                if (result) return result;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Check if two file handles point to the same file
+     */
+    private async isSameHandle(
+        handle1: FileSystemFileHandle,
+        handle2: FileSystemFileHandle
+    ): Promise<boolean> {
+        try {
+            return await handle1.isSameEntry(handle2);
+        } catch {
+            return false;
+        }
+    }
+
+    /**
+     * Rename a filter file
+     */
+    private async renameFilter(
+        plugin: GlyphFilterPlugin,
+        element: HTMLElement
+    ): Promise<void> {
+        const filePath = plugin.filePath;
+        if (!filePath) return;
+
+        const diskPlugin = pluginRegistry.get('disk');
+        if (!diskPlugin) return;
+
+        const adapter = diskPlugin.getAdapter();
+        if (!(adapter instanceof NativeAdapter)) return;
+
+        // Find the label element
+        const labelElement = element.querySelector(
+            '.glyph-filter-item-label'
+        ) as HTMLElement;
+        if (!labelElement) return;
+
+        const originalName = plugin.display_name;
+        const fileName = filePath.split('/').pop() || '';
+
+        // Create inline input
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.className = 'glyph-filter-rename-input';
+        input.value = fileName;
+
+        // Select filename without extension
+        const lastDotIndex = fileName.lastIndexOf('.');
+        const hasExtension = lastDotIndex > 0;
+
+        // Replace label with input
+        labelElement.style.display = 'none';
+        labelElement.parentNode!.insertBefore(input, labelElement.nextSibling);
+        input.focus();
+
+        if (hasExtension) {
+            input.setSelectionRange(0, lastDotIndex);
+        } else {
+            input.select();
+        }
+
+        // Prevent click from propagating
+        input.addEventListener('click', (e) => e.stopPropagation());
+
+        // Flag to prevent multiple completions
+        let isCompleting = false;
+
+        // Handle rename completion
+        const completeRename = async () => {
+            if (isCompleting) return;
+            isCompleting = true;
+
+            const newName = input.value.trim();
+
+            // Remove input, restore label (check if still in DOM)
+            if (input.parentNode) {
+                input.remove();
+            }
+            labelElement.style.display = '';
+
+            if (!newName || newName === fileName) {
+                return;
+            }
+
+            // Validate new name
+            if (newName.includes('/') || newName.includes('\\')) {
+                alert('Name cannot contain / or \\ characters');
+                return;
+            }
+
+            try {
+                await adapter.renameItem(filePath, newName, false);
+                console.log(
+                    '[GlyphOverviewFilters] Renamed:',
+                    filePath,
+                    '->',
+                    newName
+                );
+
+                // Update chat session link if one exists
+                if (window.aiAssistant?.sessionManager) {
+                    const sessionManager = window.aiAssistant.sessionManager;
+                    const linkedPath = sessionManager.getLinkedFilePath();
+                    if (linkedPath === filePath) {
+                        const parentPath = filePath.substring(
+                            0,
+                            filePath.lastIndexOf('/')
+                        );
+                        const newPath = parentPath + '/' + newName;
+                        sessionManager.setLinkedFilePath(newPath);
+                        console.log(
+                            '[GlyphOverviewFilters] Updated chat session link to:',
+                            newPath
+                        );
+                    }
+                }
+
+                // Refresh filters (file system observer will pick it up)
+                await this.discoverUserFilters();
+            } catch (error: any) {
+                console.error(
+                    '[GlyphOverviewFilters] Error renaming filter:',
+                    error
+                );
+                alert(`Error renaming filter: ${error.message}`);
+            }
+        };
+
+        // Handle cancel
+        const cancelRename = () => {
+            if (isCompleting) return;
+            isCompleting = true;
+
+            if (input.parentNode) {
+                input.remove();
+            }
+            labelElement.style.display = '';
+        };
+
+        // Enter to confirm, Escape to cancel
+        input.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                completeRename();
+            } else if (e.key === 'Escape') {
+                e.preventDefault();
+                cancelRename();
+            }
+        });
+
+        // Blur to confirm
+        input.addEventListener('blur', completeRename);
+    }
+
+    /**
+     * Open or create chat session for a filter file
+     */
+    private async openOrCreateChatSession(
+        plugin: GlyphFilterPlugin
+    ): Promise<void> {
+        const filePath = plugin.filePath;
+        if (!filePath) return;
+
+        // Check if AI assistant is available
+        if (!window.aiAssistant || !window.aiAssistant.sessionManager) {
+            alert('AI Assistant not available');
+            return;
+        }
+
+        const aiAssistant = window.aiAssistant;
+        const sessionManager = aiAssistant.sessionManager;
+
+        // Check if there's already a session linked to this file
+        const currentLinkedPath = sessionManager.getLinkedFilePath();
+        if (currentLinkedPath === filePath && sessionManager.currentChatId) {
+            // Already in this session, just switch to assistant view
+            const assistantView = document.getElementById('view-assistant');
+            if (assistantView) {
+                assistantView.click();
+            }
+            return;
+        }
+
+        // Start a new chat session for this file
+        // Confirm if there's an active chat
+        if (sessionManager.currentChatId && aiAssistant.messages.length > 0) {
+            if (
+                !confirm(
+                    'Start a new chat for this filter? The current chat will be saved.'
+                )
+            ) {
+                return;
+            }
+        }
+
+        // Reset chat state
+        sessionManager.currentChatId = null;
+        sessionManager.isContextLocked = true; // Lock to glyphfilter context
+        sessionManager.setLinkedFilePath(filePath);
+        aiAssistant.messages = [];
+        aiAssistant.messagesContainer.innerHTML = '';
+        localStorage.removeItem('ai_last_chat_id');
+
+        // Set context to glyphfilter
+        aiAssistant.setContext('glyphfilter');
+
+        // Add a system message indicating the linked file
+        const messageDiv = document.createElement('div');
+        messageDiv.className = 'ai-message ai-message-system';
+
+        const fileName = filePath.split('/').pop();
+        messageDiv.innerHTML = `
+            <div class="ai-system-message">
+                <span class="ai-context-display-icon ai-context-tag-glyphfilter"><span class="material-symbols-outlined">filter_alt</span></span>
+                <div>
+                    <strong>Glyph Filter Context selected</strong>
+                    <p>Creating or editing glyph filter: ${fileName}</p>
+                </div>
+            </div>
+        `;
+
+        aiAssistant.messagesContainer.appendChild(messageDiv);
+        sessionManager.updateFilePathDisplay();
+        aiAssistant.scrollToBottom();
+
+        // Switch to assistant view
+        const assistantView = document.getElementById('view-assistant');
+        if (assistantView) {
+            assistantView.click();
+        }
+
+        // Focus the input
+        aiAssistant.promptInput.focus();
+
+        console.log(
+            '[GlyphOverviewFilters] Started chat session for:',
+            filePath
+        );
     }
 
     /**

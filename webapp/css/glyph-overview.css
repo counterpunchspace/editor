@@ -467,3 +467,52 @@
     font-style: italic;
 }
 
+/* Filter header buttons container */
+.glyph-filter-header-buttons {
+    display: flex;
+    gap: 4px;
+}
+
+/* New filter button */
+.glyph-filter-new-btn {
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 2px;
+    color: var(--text-secondary);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 4px;
+    transition: background-color 0.1s ease;
+}
+
+.glyph-filter-new-btn:hover {
+    background-color: var(--background-hover);
+    color: var(--text-primary);
+}
+
+.glyph-filter-new-btn .material-symbols-outlined {
+    font-size: 16px;
+}
+
+/* Rename input */
+.glyph-filter-rename-input {
+    font-size: 12px;
+    padding: 2px 4px;
+    border: 1px solid var(--accent-green);
+    border-radius: 2px;
+    background-color: var(--background-primary);
+    color: var(--text-primary);
+    outline: none;
+    font-family: inherit;
+    width: 100%;
+}
+
+/* Fix error button in error overlay */
+.glyph-overview-fix-error-btn {
+    margin-top: 16px;
+    padding: 8px 16px;
+    font-size: 13px;
+}
+
