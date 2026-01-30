@@ -2064,26 +2064,22 @@ def filter_glyphs(font):
         const originalName = plugin.display_name;
         const fileName = filePath.split('/').pop() || '';
 
+        // Strip .py extension for display
+        const displayName = fileName.endsWith('.py')
+            ? fileName.slice(0, -3)
+            : fileName;
+
         // Create inline input
         const input = document.createElement('input');
         input.type = 'text';
         input.className = 'glyph-filter-rename-input';
-        input.value = fileName;
-
-        // Select filename without extension
-        const lastDotIndex = fileName.lastIndexOf('.');
-        const hasExtension = lastDotIndex > 0;
+        input.value = displayName;
 
         // Replace label with input
         labelElement.style.display = 'none';
         labelElement.parentNode!.insertBefore(input, labelElement.nextSibling);
         input.focus();
-
-        if (hasExtension) {
-            input.setSelectionRange(0, lastDotIndex);
-        } else {
-            input.select();
-        }
+        input.select();
 
         // Prevent click from propagating
         input.addEventListener('click', (e) => e.stopPropagation());
@@ -2096,7 +2092,7 @@ def filter_glyphs(font):
             if (isCompleting) return;
             isCompleting = true;
 
-            const newName = input.value.trim();
+            let newName = input.value.trim();
 
             // Remove input, restore label (check if still in DOM)
             if (input.parentNode) {
@@ -2104,8 +2100,13 @@ def filter_glyphs(font):
             }
             labelElement.style.display = '';
 
-            if (!newName || newName === fileName) {
+            if (!newName || newName === displayName) {
                 return;
+            }
+
+            // Add .py extension if not present
+            if (!newName.endsWith('.py')) {
+                newName += '.py';
             }
 
             // Validate new name
