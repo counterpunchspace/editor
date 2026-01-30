@@ -1429,8 +1429,18 @@ import {
                 content = data as string;
             }
 
+            // Save cursor position
+            const cursorPosition = editor.getCursorPosition();
+            const scrollTop = editor.session.getScrollTop();
+            
             // Update editor
             editor.setValue(content, -1);
+            
+            // Restore cursor position
+            editor.moveCursorToPosition(cursorPosition);
+            editor.clearSelection();
+            editor.session.setScrollTop(scrollTop);
+            
             savedContent = content;
             hasExternalChanges = false;
             setModified(false);
