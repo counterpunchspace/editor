@@ -196,6 +196,13 @@ class GlyphOverview {
                     this.searchInput.focus();
                     this.searchInput.select();
                 }
+            } else if (e.key === 'Escape' && this.isViewActive()) {
+                // Clear all glyph and group selections
+                e.preventDefault();
+                this.clearSelection();
+                if (window.glyphOverviewFilterManager) {
+                    window.glyphOverviewFilterManager.clearGroupSelection();
+                }
             }
         });
     }

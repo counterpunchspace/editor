@@ -1752,6 +1752,23 @@ _filter_result
     }
 
     /**
+     * Clear all group filter selections
+     */
+    public clearGroupSelection(): void {
+        this.activeGroupFilters.clear();
+
+        // Remove active class from all legend items
+        if (this.groupLegendContainer) {
+            this.groupLegendContainer
+                .querySelectorAll('.glyph-filter-legend-item.active')
+                .forEach((el) => el.classList.remove('active'));
+        }
+
+        // Re-apply filter to show all results
+        this.applyGroupFilter();
+    }
+
+    /**
      * Apply group filter to show only glyphs matching selected groups
      */
     private applyGroupFilter(): void {

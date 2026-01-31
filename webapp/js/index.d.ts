@@ -106,6 +106,7 @@ declare global {
             getActiveFilter: () => any | null;
             clearActiveFilter: () => void;
             updateSelectedGlyphGroups: (groups: Set<string>) => void;
+            clearGroupSelection: () => void;
         };
 
         // From file-browser.js
