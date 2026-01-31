@@ -1710,20 +1710,29 @@ _filter_result
                 itemElement.classList.add('active');
             }
         } else {
-            // Single-select mode: select only this group
-            // Clear all active filters first
-            this.activeGroupFilters.clear();
+            // Single-select mode: toggle if already selected, otherwise select only this group
+            if (
+                this.activeGroupFilters.has(groupKeyword) &&
+                this.activeGroupFilters.size === 1
+            ) {
+                // Clicking on the only selected group - unselect it
+                this.activeGroupFilters.clear();
+                itemElement.classList.remove('active');
+            } else {
+                // Clear all active filters first
+                this.activeGroupFilters.clear();
 
-            // Remove active class from all legend items
-            if (this.groupLegendContainer) {
-                this.groupLegendContainer
-                    .querySelectorAll('.glyph-filter-legend-item.active')
-                    .forEach((el) => el.classList.remove('active'));
+                // Remove active class from all legend items
+                if (this.groupLegendContainer) {
+                    this.groupLegendContainer
+                        .querySelectorAll('.glyph-filter-legend-item.active')
+                        .forEach((el) => el.classList.remove('active'));
+                }
+
+                // Add this group
+                this.activeGroupFilters.add(groupKeyword);
+                itemElement.classList.add('active');
             }
-
-            // Add this group
-            this.activeGroupFilters.add(groupKeyword);
-            itemElement.classList.add('active');
         }
 
         // Apply group filter to glyph overview
