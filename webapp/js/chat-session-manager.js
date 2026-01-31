@@ -378,14 +378,44 @@ class ChatSessionManager {
 
             this.aiAssistant.scrollToBottom();
 
-            // Show input container when loading a chat
-            const inputContainer =
-                document.getElementById('ai-input-container');
-            if (inputContainer) {
-                inputContainer.style.display = 'flex';
-            }
+            // Check if this is a glyphfilter context without a linked file
+            if (
+                data.chatSession.contextType === 'glyphfilter' &&
+                !this.linkedFilePath
+            ) {
+                // Disable input and show info message
+                const inputContainer =
+                    document.getElementById('ai-input-container');
+                if (inputContainer) {
+                    inputContainer.style.display = 'none';
+                }
 
-            console.log(`[ChatSession] Loaded chat: ${chatId}`);
+                // Add info message
+                const infoDiv = document.createElement('div');
+                infoDiv.className = 'ai-message ai-message-system';
+                infoDiv.innerHTML = `
+                    <div class="ai-system-message" style="background: var(--surface-secondary); border-left: 4px solid var(--text-muted);">
+                        <span class="material-symbols-outlined" style="color: var(--text-muted);">info</span>
+                        <div>
+                            <p style="margin: 0;">To continue working on a glyph filter, start a new chat from the sidebar by right-clicking on a filter file and selecting "Open Chat Session".</p>
+                        </div>
+                    </div>
+                `;
+                this.aiAssistant.messagesContainer.appendChild(infoDiv);
+                this.aiAssistant.scrollToBottom();
+
+                console.log(
+                    `[ChatSession] Loaded glyphfilter chat without linked file: ${chatId}`
+                );
+            } else {
+                // Show input container for normal chats
+                const inputContainer =
+                    document.getElementById('ai-input-container');
+                if (inputContainer) {
+                    inputContainer.style.display = 'flex';
+                }
+                console.log(`[ChatSession] Loaded chat: ${chatId}`);
+            }
         } catch (error) {
             console.error('[ChatSession] Failed to load chat session:', error);
             alert(`Failed to load chat: ${error.message}`);
