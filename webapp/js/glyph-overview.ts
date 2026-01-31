@@ -203,6 +203,12 @@ class GlyphOverview {
                 if (window.glyphOverviewFilterManager) {
                     window.glyphOverviewFilterManager.clearGroupSelection();
                 }
+            } else if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) {
+                // Handle arrow key navigation for glyph selection
+                if (this.isViewActive()) {
+                    e.preventDefault();
+                    this.handleArrowKeyNavigation(e.key);
+                }
             }
         });
     }
@@ -917,6 +923,131 @@ class GlyphOverview {
         return Array.from(this.tiles.values())
             .filter((tile) => tile.selected)
             .map((tile) => tile.glyphId);
+    }
+
+    /**
+     * Handle arrow key navigation for glyph selection
+     * Navigates to adjacent glyphs based on visual grid layout
+     */
+    private handleArrowKeyNavigation(key: string): void {
+        const selectedGlyphs = this.getSelectedGlyphs();
+        
+        // Get the current glyph to navigate from
+        let currentGlyphId: string | null = null;
+        
+        if (selectedGlyphs.length === 0) {
+            // No selection yet, select the first visible glyph
+            const firstVisibleTile = this.findFirstVisibleTile();
+            if (firstVisibleTile) {
+                this.selectTile(firstVisibleTile.glyphId);
+                this.scrollToTile(firstVisibleTile.element);
+            }
+            return;
+        } else {
+            // Use the appropriate selected glyph as reference based on direction
+            if (key === 'ArrowLeft') {
+                // When moving left, use the leftmost (first) selected glyph
+                currentGlyphId = selectedGlyphs[0];
+            } else {
+                // For all other directions, use the rightmost (last) selected glyph
+                currentGlyphId = selectedGlyphs[selectedGlyphs.length - 1];
+            }
+        }
+
+        if (!currentGlyphId) return;
+
+        // Calculate the number of columns based on container width
+        const columns = this.getGridColumns();
+        if (columns === 0) return;
+
+        // Get all visible glyph IDs in order
+        const visibleGlyphIds = this.getVisibleGlyphIds();
+        if (visibleGlyphIds.length === 0) return;
+
+        // Find current position in the visible glyphs array
+        const currentIndex = visibleGlyphIds.indexOf(currentGlyphId);
+        if (currentIndex === -1) return;
+
+        // Calculate target index based on arrow key
+        let targetIndex = -1;
+
+        switch (key) {
+            case 'ArrowRight':
+                targetIndex = currentIndex + 1;
+                break;
+            case 'ArrowLeft':
+                targetIndex = currentIndex - 1;
+                break;
+            case 'ArrowDown':
+                targetIndex = currentIndex + columns;
+                break;
+            case 'ArrowUp':
+                targetIndex = currentIndex - columns;
+                break;
+        }
+
+        // Ensure target index is within bounds
+        if (targetIndex >= 0 && targetIndex < visibleGlyphIds.length) {
+            const targetGlyphId = visibleGlyphIds[targetIndex];
+            const targetTile = this.tiles.get(targetGlyphId);
+            
+            if (targetTile) {
+                // Clear previous selection and select the new glyph
+                this.clearSelection();
+                this.selectTile(targetGlyphId);
+                this.scrollToTile(targetTile.element);
+            }
+        }
+    }
+
+    /**
+     * Get the number of columns in the grid based on container width
+     */
+    private getGridColumns(): number {
+        if (!this.container) return 0;
+
+        const containerWidth = this.container.clientWidth;
+        const tileWidth = parseFloat(
+            getComputedStyle(this.container).getPropertyValue('--tile-width') || '30'
+        );
+        const gap = 2; // From CSS: gap: 2px
+        const padding = 4; // From CSS: padding: 2px on each side
+        
+        if (tileWidth === 0) return 0;
+        
+        // Calculate how many tiles fit per row
+        const availableWidth = containerWidth - padding;
+        const columns = Math.floor((availableWidth + gap) / (tileWidth + gap));
+        
+        return Math.max(1, columns);
+    }
+
+    /**
+     * Get an array of all visible (not hidden) glyph IDs in order
+     */
+    private getVisibleGlyphIds(): string[] {
+        const visibleIds: string[] = [];
+        
+        this.tiles.forEach((tile, glyphId) => {
+            // Check if the tile is visible (not hidden by filter/search)
+            if (tile.element.style.display !== 'none') {
+                visibleIds.push(glyphId);
+            }
+        });
+        
+        return visibleIds;
+    }
+
+    /**
+     * Find the first visible tile in the grid
+     */
+    private findFirstVisibleTile(): GlyphTile | null {
+        for (const [glyphId, tile] of this.tiles) {
+            if (tile.element.style.display !== 'none') {
+                return tile;
+            }
+        }
+        return null;
     }
 
     /**
