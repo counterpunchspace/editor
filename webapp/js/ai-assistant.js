@@ -1992,20 +1992,53 @@ ${errorTraceback}
         }
     }
 
+    /**
+     * Read the content of a glyph filter file
+     * @param {string} filePath - Path to the .py file
+     * @returns {Promise<string>} File content
+     */
+    async readGlyphFilterFile(filePath) {
+        const diskPlugin = window.pluginRegistry?.get('disk');
+        if (!diskPlugin) {
+            throw new Error('Disk plugin not available');
+        }
+
+        const adapter = diskPlugin.getAdapter();
+        if (!adapter) {
+            throw new Error('Disk adapter not available');
+        }
+
+        // Ensure adapter is initialized
+        if (!adapter.hasDirectory && adapter.initialize) {
+            await adapter.initialize();
+        }
+
+        const content = await adapter.readFile(filePath);
+        return typeof content === 'string' ? content : new TextDecoder().decode(content);
+    }
+
     async callClaude(userPrompt, previousError = null, attemptNumber = 0) {
         // Get current script content if in script/glyphfilter mode
         let currentScript = null;
-        if (
-            (this.context === 'script' || this.context === 'glyphfilter') &&
-            window.scriptEditor &&
-            window.scriptEditor.editor
-        ) {
+        if (this.context === 'script' && window.scriptEditor && window.scriptEditor.editor) {
             currentScript = window.scriptEditor.editor.getValue();
+        } else if (this.context === 'glyphfilter' && this.sessionManager) {
+            // For glyph filter context, read the linked file content
+            const linkedFilePath = this.sessionManager.getLinkedFilePath();
+            if (linkedFilePath) {
+                try {
+                    currentScript = await this.readGlyphFilterFile(linkedFilePath);
+                } catch (error) {
+                    console.error('[AIAssistant] Failed to read glyph filter file:', error);
+                }
+            }
         }
 
         // Build prompt with error context if retrying
         let fullPrompt = userPrompt;
-        if (currentScript && currentScript.trim()) {
+        // Only prepend script content if it's not already included in the prompt
+        // (e.g., when using "Fix error with assistant" button, the code is already in the prompt)
+        if (currentScript && currentScript.trim() && !userPrompt.includes(currentScript.substring(0, 100))) {
             fullPrompt = `Current script in editor:\n\`\`\`python\n${currentScript}\n\`\`\`\n\nUser request: ${userPrompt}`;
         }
 
