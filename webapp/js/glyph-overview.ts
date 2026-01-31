@@ -67,6 +67,8 @@ class GlyphOverview {
     private activeFilterResults: Map<string, FilterResult> | null = null;
     // Error overlay for filter errors
     private errorOverlay: HTMLDivElement | null = null;
+    // Track the last glyph clicked by mouse (for keyboard navigation reference)
+    private lastClickedGlyphId: string | null = null;
 
     constructor(parentElement: HTMLElement) {
         this.init(parentElement);
@@ -833,20 +835,23 @@ class GlyphOverview {
         };
     }
 
-    private handleTileClick(glyphName: string, event: MouseEvent): void {
-        const tile = this.tiles.get(glyphName);
+    private handleTileClick(glyphId: string, event: MouseEvent): void {
+        const tile = this.tiles.get(glyphId);
         if (!tile) return;
+
+        // Track this glyph as the last clicked (for keyboard navigation reference)
+        this.lastClickedGlyphId = glyphId;
 
         if (event.shiftKey) {
             // Shift+click: range selection
-            this.handleRangeSelection(glyphName);
+            this.handleRangeSelection(glyphId);
         } else if (event.metaKey || event.ctrlKey) {
             // Cmd/Ctrl+click: toggle selection
-            this.toggleSelection(glyphName);
+            this.toggleSelection(glyphId);
         } else {
             // Regular click: select only this tile
             this.clearSelection();
-            this.selectTile(glyphName);
+            this.selectTile(glyphId);
         }
     }
 
@@ -948,9 +953,18 @@ class GlyphOverview {
             if (key === 'ArrowLeft') {
                 // When moving left, use the leftmost (first) selected glyph
                 currentGlyphId = selectedGlyphs[0];
-            } else {
-                // For all other directions, use the rightmost (last) selected glyph
+            } else if (key === 'ArrowRight') {
+                // When moving right, use the rightmost (last) selected glyph
                 currentGlyphId = selectedGlyphs[selectedGlyphs.length - 1];
+            } else {
+                // For up/down, prefer the last clicked glyph if it's in the selection
+                // This handles shift+click range selections properly
+                if (this.lastClickedGlyphId && selectedGlyphs.includes(this.lastClickedGlyphId)) {
+                    currentGlyphId = this.lastClickedGlyphId;
+                } else {
+                    // Fall back to the rightmost selected glyph
+                    currentGlyphId = selectedGlyphs[selectedGlyphs.length - 1];
+                }
             }
         }
 
@@ -995,6 +1009,8 @@ class GlyphOverview {
                 // Clear previous selection and select the new glyph
                 this.clearSelection();
                 this.selectTile(targetGlyphId);
+                // Update the last clicked glyph to the new selection
+                this.lastClickedGlyphId = targetGlyphId;
                 this.scrollToTile(targetTile.element);
             }
         }
