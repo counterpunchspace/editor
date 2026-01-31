@@ -62,7 +62,22 @@ export default defineConfig({
                 ...devices['Desktop Chrome'],
                 // Enable SharedArrayBuffer (required for your WASM/Pyodide)
                 launchOptions: {
-                    args: ['--enable-features=SharedArrayBuffer']
+                    args: [
+                        '--enable-features=SharedArrayBuffer',
+                        '--disable-extensions', // Don't load Chrome extensions
+                        '--disable-component-extensions-with-background-pages',
+                        '--disable-background-networking',
+                        '--disable-sync', // Don't sync with Chrome profile
+                        '--no-default-browser-check',
+                        '--no-first-run'
+                    ],
+                    // Force clean browser context (no user data)
+                    chromiumSandbox: true
+                },
+                // Ensure isolated context
+                contextOptions: {
+                    clearCookies: true,
+                    clearCache: true
                 }
             }
         }
@@ -84,6 +99,9 @@ export default defineConfig({
             : 'https://localhost:8000',
         reuseExistingServer: !process.env.CI,
         timeout: 120000, // 2 minutes to start dev server
-        ignoreHTTPSErrors: true // Self-signed cert for dev server
+        ignoreHTTPSErrors: true, // Self-signed cert for dev server
+        env: {
+            PLAYWRIGHT_TEST: 'true' // Disable webpack HMR/overlay during tests
+        }
     }
 });

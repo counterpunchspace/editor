@@ -60,6 +60,23 @@
                 const urlParams = new URLSearchParams(window.location.search);
                 return urlParams.has('test');
             };
+            window.isTest = function () {
+                // Detect automated test environment (Playwright/Selenium)
+                return !!window.navigator.webdriver;
+            };
+
+            // Prevent webpack dev server reload errors during tests
+            if (window.isTest()) {
+                // Webpack's overlay/HMR client uses self.location.reload()
+                // In test mode, prevent this from causing errors
+                if (typeof self !== 'undefined' && !self.location) {
+                    Object.defineProperty(self, 'location', {
+                        value: window.location,
+                        writable: false,
+                        configurable: false
+                    });
+                }
+            }
         </script>
         <!-- COI Service Worker for GitHub Pages (adds COOP/COEP headers) -->
         <!-- In development (localhost:8000), skip service worker - webpack provides headers -->

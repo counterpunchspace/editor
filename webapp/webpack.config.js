@@ -91,8 +91,19 @@ module.exports = {
         ],
         port: 8000,
         server: 'https',
-        hot: true,
-        liveReload: true,
+        hot: process.env.PLAYWRIGHT_TEST !== 'true',
+        liveReload: process.env.PLAYWRIGHT_TEST !== 'true',
+        client: {
+            overlay: process.env.PLAYWRIGHT_TEST !== 'true',
+            webSocketURL: {
+                hostname: 'localhost',
+                pathname: '/ws',
+                port: 8000,
+                protocol: 'wss'
+            },
+            // Disable reconnect during tests to prevent reload loops
+            reconnect: process.env.PLAYWRIGHT_TEST !== 'true'
+        },
         headers: {
             'Cross-Origin-Embedder-Policy': 'require-corp',
             'Cross-Origin-Opener-Policy': 'same-origin',
@@ -105,7 +116,9 @@ module.exports = {
             // Watch tokens.json and regenerate tokens.css on change
             const chokidar = require('chokidar');
             const tokensPath = path.join(__dirname, 'css/tokens.json');
-            chokidar.watch(tokensPath).on('change', () => {
+            const watcher = chokidar.watch(tokensPath);
+            
+            watcher.on('change', () => {
                 console.log('[Tokens] tokens.json changed, regenerating...');
                 try {
                     execSync('node scripts/generate-css-tokens.js', {
@@ -116,6 +129,14 @@ module.exports = {
                     console.error('[Tokens] Failed to regenerate:', e.message);
                 }
             });
+
+            // Cleanup on server shutdown
+            process.on('SIGINT', async () => {
+                console.log('\n[Webpack] Shutting down gracefully...');
+                await watcher.close();
+                process.exit(0);
+            });
+
             return middlewares;
         }
     }

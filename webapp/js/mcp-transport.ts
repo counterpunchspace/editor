@@ -275,7 +275,8 @@ const mcpTransport = new MCPLogTransport();
 
 // Auto-connect and intercept console in development mode only
 // Use the global isDevelopment function from index.html
-if (window.isDevelopment?.()) {
+// Disable during automated tests to avoid interference
+if (window.isDevelopment?.() && !window.isTest?.()) {
     mcpTransport.connect();
     mcpTransport.interceptConsole();
 }

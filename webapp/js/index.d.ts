@@ -21,6 +21,12 @@ declare global {
         hbjs: any; // HarfBuzz.js
         hbInit: () => Promise<void>; // HarfBuzz.js
 
+        // From index.html helper functions
+        isDevelopment: () => boolean;
+        isProduction: () => boolean;
+        isTestMode: () => boolean;
+        isTest: () => boolean;
+
         // From mcp-transport.js
         mcpTransport: MCPLogTransport;
 
