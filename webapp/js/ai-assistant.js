@@ -1028,6 +1028,9 @@ class AIAssistant {
             } else if (role === 'error') {
                 // Error messages use markdown formatting for code blocks
                 body = `<div class="ai-markdown-explanation">${this.formatMarkdown(content)}</div>`;
+            } else if (role === 'assistant') {
+                // Assistant messages use markdown formatting
+                body = `<div class="ai-markdown-explanation">${this.formatMarkdown(content)}</div>`;
             } else {
                 body = `<div class="ai-message-content">${this.escapeHtml(content)}</div>`;
             }
@@ -1912,6 +1915,24 @@ ${errorTraceback}
                 attemptNumber
             );
 
+            // Check if Python code was actually provided
+            const hasCode = pythonCode && pythonCode.trim().length > 0;
+
+            // If no code was provided, just show the markdown response
+            if (!hasCode) {
+                // Just a conversational response with no code
+                this.addMessage('assistant', markdownText);
+
+                // Play incoming message sound
+                if (window.playSound) {
+                    window.playSound('incoming_message');
+                }
+
+                // Add reuse buttons to previous user messages
+                this.addReuseButtonsToOldMessages();
+                return;
+            }
+
             // In script/glyphfilter context, never auto-run - only show code with "Open in Script Editor" button
             if (this.context === 'script' || this.context === 'glyphfilter') {
                 // Glyph filter mode: Auto-save code to linked file
@@ -2014,22 +2035,32 @@ ${errorTraceback}
         }
 
         const content = await adapter.readFile(filePath);
-        return typeof content === 'string' ? content : new TextDecoder().decode(content);
+        return typeof content === 'string'
+            ? content
+            : new TextDecoder().decode(content);
     }
 
     async callClaude(userPrompt, previousError = null, attemptNumber = 0) {
         // Get current script content if in script/glyphfilter mode
         let currentScript = null;
-        if (this.context === 'script' && window.scriptEditor && window.scriptEditor.editor) {
+        if (
+            this.context === 'script' &&
+            window.scriptEditor &&
+            window.scriptEditor.editor
+        ) {
             currentScript = window.scriptEditor.editor.getValue();
         } else if (this.context === 'glyphfilter' && this.sessionManager) {
             // For glyph filter context, read the linked file content
             const linkedFilePath = this.sessionManager.getLinkedFilePath();
             if (linkedFilePath) {
                 try {
-                    currentScript = await this.readGlyphFilterFile(linkedFilePath);
+                    currentScript =
+                        await this.readGlyphFilterFile(linkedFilePath);
                 } catch (error) {
-                    console.error('[AIAssistant] Failed to read glyph filter file:', error);
+                    console.error(
+                        '[AIAssistant] Failed to read glyph filter file:',
+                        error
+                    );
                 }
             }
         }
@@ -2038,7 +2069,11 @@ ${errorTraceback}
         let fullPrompt = userPrompt;
         // Only prepend script content if it's not already included in the prompt
         // (e.g., when using "Fix error with assistant" button, the code is already in the prompt)
-        if (currentScript && currentScript.trim() && !userPrompt.includes(currentScript.substring(0, 100))) {
+        if (
+            currentScript &&
+            currentScript.trim() &&
+            !userPrompt.includes(currentScript.substring(0, 100))
+        ) {
             fullPrompt = `Current script in editor:\n\`\`\`python\n${currentScript}\n\`\`\`\n\nUser request: ${userPrompt}`;
         }
 
