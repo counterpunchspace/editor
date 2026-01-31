@@ -29,19 +29,19 @@ import {
 test.describe('Font Editor Basic Workflow', () => {
     test.beforeEach(async ({ page }) => {
         console.log('[Test] Starting beforeEach');
-        
+
         // Track unexpected navigations
         page.on('framenavigated', (frame) => {
             if (frame === page.mainFrame()) {
                 console.error('[Test] ⚠️ PAGE NAVIGATION:', frame.url());
             }
         });
-        
+
         // Track console errors that might trigger reload
         page.on('pageerror', (error) => {
             console.error('[Test] ⚠️ PAGE ERROR:', error.message);
         });
-        
+
         // Navigate to your local dev server
         // Adjust URL if your dev server runs on a different port
         // Add ?test=true to enable test mode (hides FPS, etc.)

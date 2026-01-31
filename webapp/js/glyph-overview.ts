@@ -209,7 +209,11 @@ class GlyphOverview {
                 if (window.glyphOverviewFilterManager) {
                     window.glyphOverviewFilterManager.clearGroupSelection();
                 }
-            } else if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) {
+            } else if (
+                ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(
+                    e.key
+                )
+            ) {
                 // Handle arrow key navigation for glyph selection
                 if (this.isViewActive()) {
                     e.preventDefault();
@@ -941,12 +945,15 @@ class GlyphOverview {
      * Navigates to adjacent glyphs based on visual grid layout
      * When shift is held, performs range selection from the anchor point
      */
-    private handleArrowKeyNavigation(key: string, shiftKey: boolean = false): void {
+    private handleArrowKeyNavigation(
+        key: string,
+        shiftKey: boolean = false
+    ): void {
         const selectedGlyphs = this.getSelectedGlyphs();
-        
+
         // Get the current glyph to navigate from
         let currentGlyphId: string | null = null;
-        
+
         if (selectedGlyphs.length === 0) {
             // No selection yet, select the first visible glyph
             const firstVisibleTile = this.findFirstVisibleTile();
@@ -970,7 +977,10 @@ class GlyphOverview {
             } else {
                 // For up/down, prefer the last clicked glyph if it's in the selection
                 // This handles shift+click range selections properly
-                if (this.lastClickedGlyphId && selectedGlyphs.includes(this.lastClickedGlyphId)) {
+                if (
+                    this.lastClickedGlyphId &&
+                    selectedGlyphs.includes(this.lastClickedGlyphId)
+                ) {
                     currentGlyphId = this.lastClickedGlyphId;
                 } else {
                     // Fall back to the rightmost selected glyph
@@ -1015,11 +1025,15 @@ class GlyphOverview {
         if (targetIndex >= 0 && targetIndex < visibleGlyphIds.length) {
             const targetGlyphId = visibleGlyphIds[targetIndex];
             const targetTile = this.tiles.get(targetGlyphId);
-            
+
             if (targetTile) {
                 if (shiftKey) {
                     // Shift+arrow: range selection
-                    this.handleKeyboardRangeSelection(targetGlyphId, columns, visibleGlyphIds);
+                    this.handleKeyboardRangeSelection(
+                        targetGlyphId,
+                        columns,
+                        visibleGlyphIds
+                    );
                 } else {
                     // Regular arrow: clear selection and select single glyph
                     this.clearSelection();
@@ -1067,7 +1081,9 @@ class GlyphOverview {
 
         // Select all glyphs between anchor and target (inclusive)
         const [from, to] =
-            anchorIndex < targetIndex ? [anchorIndex, targetIndex] : [targetIndex, anchorIndex];
+            anchorIndex < targetIndex
+                ? [anchorIndex, targetIndex]
+                : [targetIndex, anchorIndex];
 
         for (let i = from; i <= to; i++) {
             this.selectTile(visibleGlyphIds[i]);
@@ -1082,17 +1098,18 @@ class GlyphOverview {
 
         const containerWidth = this.container.clientWidth;
         const tileWidth = parseFloat(
-            getComputedStyle(this.container).getPropertyValue('--tile-width') || '30'
+            getComputedStyle(this.container).getPropertyValue('--tile-width') ||
+                '30'
         );
         const gap = 2; // From CSS: gap: 2px
         const padding = 4; // From CSS: padding: 2px on each side
-        
+
         if (tileWidth === 0) return 0;
-        
+
         // Calculate how many tiles fit per row
         const availableWidth = containerWidth - padding;
         const columns = Math.floor((availableWidth + gap) / (tileWidth + gap));
-        
+
         return Math.max(1, columns);
     }
 
@@ -1101,14 +1118,14 @@ class GlyphOverview {
      */
     private getVisibleGlyphIds(): string[] {
         const visibleIds: string[] = [];
-        
+
         this.tiles.forEach((tile, glyphId) => {
             // Check if the tile is visible (not hidden by filter/search)
             if (tile.element.style.display !== 'none') {
                 visibleIds.push(glyphId);
             }
         });
-        
+
         return visibleIds;
     }
 

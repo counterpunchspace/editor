@@ -117,7 +117,7 @@ module.exports = {
             const chokidar = require('chokidar');
             const tokensPath = path.join(__dirname, 'css/tokens.json');
             const watcher = chokidar.watch(tokensPath);
-            
+
             watcher.on('change', () => {
                 console.log('[Tokens] tokens.json changed, regenerating...');
                 try {
