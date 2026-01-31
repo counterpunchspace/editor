@@ -1400,7 +1400,18 @@ class GlyphOverview {
         const hasExistingSession =
             currentLinkedPath === filePath && sessionManager.currentChatId;
 
-        if (!hasExistingSession) {
+        // Check if a chat already exists for this file path
+        const existingChatId = sessionManager.getChatIdForFilePath(filePath);
+
+        if (existingChatId && !hasExistingSession) {
+            // Load existing chat for this file
+            console.log(
+                '[GlyphOverview] Loading existing chat for file:',
+                filePath
+            );
+            await sessionManager.loadChatSession(existingChatId);
+            sessionManager.setLinkedFilePath(filePath); // Re-link the file path
+        } else if (!hasExistingSession) {
             // Start a new chat session for this file
             // Confirm if there's an active chat
             if (

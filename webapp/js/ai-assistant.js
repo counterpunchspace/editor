@@ -2168,6 +2168,16 @@ ${errorTraceback}
         if (data.chatId && this.sessionManager) {
             this.sessionManager.currentChatId = data.chatId;
             this.sessionManager.isContextLocked = true;
+
+            // Track file-to-chat association for glyph filter context
+            if (
+                this.context === 'glyphfilter' &&
+                this.sessionManager.linkedFilePath
+            ) {
+                this.sessionManager.setLinkedFilePath(
+                    this.sessionManager.linkedFilePath
+                );
+            }
         }
 
         // Update chat history menu if available

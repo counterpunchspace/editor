@@ -10,6 +10,7 @@ class ChatSessionManager {
         this.chatHistory = []; // Last 50 chats for the menu
         this.isContextLocked = false; // Lock context after first message
         this.linkedFilePath = null; // File path for glyph filter context (session only)
+        this.filePathToChatId = new Map(); // Map file paths to chat IDs (session only)
     }
 
     /**
@@ -18,6 +19,16 @@ class ChatSessionManager {
     setLinkedFilePath(filePath) {
         this.linkedFilePath = filePath;
         console.log('[ChatSession] Linked file path set to:', filePath);
+        // Track file-to-chat association when chat ID exists
+        if (this.currentChatId && filePath) {
+            this.filePathToChatId.set(filePath, this.currentChatId);
+            console.log(
+                '[ChatSession] Tracked file-to-chat mapping:',
+                filePath,
+                '->',
+                this.currentChatId
+            );
+        }
         // Update file path display if visible
         this.updateFilePathDisplay();
     }
@@ -27,6 +38,15 @@ class ChatSessionManager {
      */
     getLinkedFilePath() {
         return this.linkedFilePath;
+    }
+
+    /**
+     * Check if a chat exists for a given file path (glyph filter context)
+     * @param {string} filePath - File path to check
+     * @returns {string|null} Chat ID if exists, null otherwise
+     */
+    getChatIdForFilePath(filePath) {
+        return this.filePathToChatId.get(filePath) || null;
     }
 
     /**
@@ -60,6 +80,7 @@ class ChatSessionManager {
         this.currentChatId = null;
         this.isContextLocked = false;
         this.linkedFilePath = null;
+        // Note: Don't clear filePathToChatId - keep mappings across new chats in same session
         this.aiAssistant.messages = [];
         this.aiAssistant.messagesContainer.innerHTML = '';
 
