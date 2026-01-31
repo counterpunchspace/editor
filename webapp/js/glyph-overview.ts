@@ -878,6 +878,9 @@ class GlyphOverview {
 
         tile.selected = true;
         tile.element.classList.add('selected');
+
+        // Notify filter manager of selection change
+        this.updateSelectedGlyphGroups();
     }
 
     private deselectTile(glyphId: string): void {
@@ -886,20 +889,61 @@ class GlyphOverview {
 
         tile.selected = false;
         tile.element.classList.remove('selected');
+
+        // Notify filter manager of selection change
+        this.updateSelectedGlyphGroups();
     }
 
     private clearSelection(): void {
         this.tiles.forEach((tile) => {
             if (tile.selected) {
-                this.deselectTile(tile.glyphId);
+                tile.selected = false;
+                tile.element.classList.remove('selected');
             }
         });
+
+        // Notify filter manager of selection change
+        this.updateSelectedGlyphGroups();
     }
 
     private getSelectedGlyphs(): string[] {
         return Array.from(this.tiles.values())
             .filter((tile) => tile.selected)
             .map((tile) => tile.glyphId);
+    }
+
+    /**
+     * Update the filter manager with groups of currently selected glyphs
+     */
+    public updateSelectedGlyphGroups(): void {
+        if (!this.activeFilterResults) {
+            // No filter active, nothing to update
+            if (window.glyphOverviewFilterManager) {
+                window.glyphOverviewFilterManager.updateSelectedGlyphGroups(
+                    new Set()
+                );
+            }
+            return;
+        }
+
+        // Build set of all groups that selected glyphs belong to
+        const selectedGroups = new Set<string>();
+
+        this.tiles.forEach((tile) => {
+            if (tile.selected) {
+                const result = this.activeFilterResults!.get(tile.glyphName);
+                if (result && result.groups) {
+                    result.groups.forEach((group) => selectedGroups.add(group));
+                }
+            }
+        });
+
+        // Notify filter manager
+        if (window.glyphOverviewFilterManager) {
+            window.glyphOverviewFilterManager.updateSelectedGlyphGroups(
+                selectedGroups
+            );
+        }
     }
 
     // Drag selection handlers

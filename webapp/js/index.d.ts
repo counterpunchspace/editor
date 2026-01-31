@@ -105,6 +105,7 @@ declare global {
             isLoaded: () => boolean;
             getActiveFilter: () => any | null;
             clearActiveFilter: () => void;
+            updateSelectedGlyphGroups: (groups: Set<string>) => void;
         };
 
         // From file-browser.js

@@ -31,6 +31,7 @@
     box-sizing: border-box;
     overflow: hidden;
     background-color: var(--filter-color);
+    border: 1px solid transparent;
     /* No transition - instant color changes prevent flickering on view focus change */
     /* Performance: skip rendering of off-screen tiles */
     content-visibility: auto;
@@ -45,7 +46,7 @@
 /* Selected state (inactive view) */
 .glyph-tile.selected {
     background-color: color-mix(in srgb, var(--filter-color), var(--glyph-tile-selected-inactive));
-    border: 0px solid var(--border-primary);
+    border-color: var(--border-hover);
 }
 
 /* Selected state (active/focused view) */
@@ -210,7 +211,7 @@
     gap: 6px;
     padding: 3px 6px;
     border-radius: 4px;
-    transition: background-color 0.1s ease;
+    border: 1px solid transparent;
     user-select: none;
 }
 
@@ -220,6 +221,10 @@
 
 .glyph-filter-legend-item.active {
     background-color: var(--background-hover);
+}
+
+.glyph-filter-legend-item.selected-glyph-group {
+    border-color: var(--border-hover);
 }
 
 .glyph-filter-legend-circle {

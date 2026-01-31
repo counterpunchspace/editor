@@ -83,6 +83,8 @@ export class GlyphOverviewFilterManager {
     private glyphOverview: any = null;
     private activeFilter: GlyphFilterPlugin | null = null;
     private activeGroupFilters: Set<string> = new Set(); // Selected group keywords for filtering (not colors)
+    private selectedGlyphGroups: Set<string> = new Set(); // Groups that selected glyphs belong to
+    private groupElements: Map<string, HTMLElement> = new Map(); // Map group keyword to legend element
     private rootNode: TreeNode;
     private userFiltersNode: TreeNode;
     private readonly STORAGE_KEY = 'glyphFilterActive';
@@ -1360,6 +1362,8 @@ list(_result) if isinstance(_result, types.GeneratorType) else _result
                     );
                 } else {
                     this.glyphOverview.setActiveFilter(results);
+                    // Update selected glyph groups highlighting for current selection
+                    this.glyphOverview.updateSelectedGlyphGroups();
                 }
             }
         } catch (error) {
@@ -1624,6 +1628,7 @@ _filter_result
         // Clear existing content and reset group filters
         this.groupLegendContainer.innerHTML = '';
         this.activeGroupFilters.clear();
+        this.groupElements.clear();
 
         // If no groups used, hide the container
         if (usedGroupKeywords.size === 0 || !plugin.groups) {
@@ -1678,6 +1683,10 @@ _filter_result
             item.appendChild(label);
             item.appendChild(count);
 
+            // Store element reference and keyword for later highlighting
+            this.groupElements.set(keyword, item);
+            item.dataset.groupKeyword = keyword;
+
             // Click to toggle group filter by keyword
             item.addEventListener('click', (e) => {
                 this.toggleGroupFilter(keyword, item, e);
@@ -1685,6 +1694,9 @@ _filter_result
 
             this.groupLegendContainer.appendChild(item);
         }
+
+        // Update highlighting for currently selected glyphs
+        this.updateGroupHighlighting();
     }
 
     /**
@@ -1764,6 +1776,31 @@ _filter_result
         });
 
         this.glyphOverview.setActiveFilter(filteredResults);
+    }
+
+    /**
+     * Update which groups are highlighted based on selected glyphs
+     * Called from GlyphOverview when selection changes
+     */
+    public updateSelectedGlyphGroups(groups: Set<string>): void {
+        this.selectedGlyphGroups = groups;
+        this.updateGroupHighlighting();
+    }
+
+    /**
+     * Update visual highlighting of group legend items based on selected glyphs
+     */
+    private updateGroupHighlighting(): void {
+        if (!this.groupLegendContainer) return;
+
+        // Update all group elements
+        this.groupElements.forEach((element, keyword) => {
+            if (this.selectedGlyphGroups.has(keyword)) {
+                element.classList.add('selected-glyph-group');
+            } else {
+                element.classList.remove('selected-glyph-group');
+            }
+        });
     }
 
     /**
@@ -2369,6 +2406,10 @@ def filter_glyphs(font):
             if (this.glyphOverview) {
                 this.glyphOverview.setActiveFilter(null);
             }
+
+            // Clear selected glyph groups highlighting
+            this.selectedGlyphGroups.clear();
+            this.updateGroupHighlighting();
         }
     }
 }
