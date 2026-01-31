@@ -69,6 +69,8 @@ class GlyphOverview {
     private errorOverlay: HTMLDivElement | null = null;
     // Track the last glyph clicked by mouse (for keyboard navigation reference)
     private lastClickedGlyphId: string | null = null;
+    // Track anchor point for shift+keyboard selection
+    private keyboardAnchorGlyphId: string | null = null;
 
     constructor(parentElement: HTMLElement) {
         this.init(parentElement);
@@ -202,6 +204,8 @@ class GlyphOverview {
                 // Clear all glyph and group selections
                 e.preventDefault();
                 this.clearSelection();
+                // Also clear keyboard anchor
+                this.keyboardAnchorGlyphId = null;
                 if (window.glyphOverviewFilterManager) {
                     window.glyphOverviewFilterManager.clearGroupSelection();
                 }
@@ -209,7 +213,7 @@ class GlyphOverview {
                 // Handle arrow key navigation for glyph selection
                 if (this.isViewActive()) {
                     e.preventDefault();
-                    this.handleArrowKeyNavigation(e.key);
+                    this.handleArrowKeyNavigation(e.key, e.shiftKey);
                 }
             }
         });
@@ -841,6 +845,8 @@ class GlyphOverview {
 
         // Track this glyph as the last clicked (for keyboard navigation reference)
         this.lastClickedGlyphId = glyphId;
+        // Also set as keyboard anchor for shift+keyboard selection
+        this.keyboardAnchorGlyphId = glyphId;
 
         if (event.shiftKey) {
             // Shift+click: range selection
@@ -933,8 +939,9 @@ class GlyphOverview {
     /**
      * Handle arrow key navigation for glyph selection
      * Navigates to adjacent glyphs based on visual grid layout
+     * When shift is held, performs range selection from the anchor point
      */
-    private handleArrowKeyNavigation(key: string): void {
+    private handleArrowKeyNavigation(key: string, shiftKey: boolean = false): void {
         const selectedGlyphs = this.getSelectedGlyphs();
         
         // Get the current glyph to navigate from
@@ -944,6 +951,10 @@ class GlyphOverview {
             // No selection yet, select the first visible glyph
             const firstVisibleTile = this.findFirstVisibleTile();
             if (firstVisibleTile) {
+                if (shiftKey) {
+                    // With shift, set anchor and select
+                    this.keyboardAnchorGlyphId = firstVisibleTile.glyphId;
+                }
                 this.selectTile(firstVisibleTile.glyphId);
                 this.scrollToTile(firstVisibleTile.element);
             }
@@ -1006,13 +1017,60 @@ class GlyphOverview {
             const targetTile = this.tiles.get(targetGlyphId);
             
             if (targetTile) {
-                // Clear previous selection and select the new glyph
-                this.clearSelection();
-                this.selectTile(targetGlyphId);
+                if (shiftKey) {
+                    // Shift+arrow: range selection
+                    this.handleKeyboardRangeSelection(targetGlyphId, columns, visibleGlyphIds);
+                } else {
+                    // Regular arrow: clear selection and select single glyph
+                    this.clearSelection();
+                    this.selectTile(targetGlyphId);
+                    // Set keyboard anchor for future shift selections
+                    this.keyboardAnchorGlyphId = targetGlyphId;
+                }
                 // Update the last clicked glyph to the new selection
                 this.lastClickedGlyphId = targetGlyphId;
                 this.scrollToTile(targetTile.element);
             }
+        }
+    }
+
+    /**
+     * Handle range selection for keyboard navigation (shift+arrow keys)
+     * Selects all glyphs between the anchor and target, following the linear order
+     * (like text selection: goes along the line, then wraps to next line)
+     */
+    private handleKeyboardRangeSelection(
+        targetGlyphId: string,
+        columns: number,
+        visibleGlyphIds: string[]
+    ): void {
+        // If no anchor is set, use the last clicked glyph or first selected
+        if (!this.keyboardAnchorGlyphId) {
+            const selectedGlyphs = this.getSelectedGlyphs();
+            if (selectedGlyphs.length > 0) {
+                this.keyboardAnchorGlyphId = selectedGlyphs[0];
+            } else {
+                // No anchor and no selection, just select the target
+                this.selectTile(targetGlyphId);
+                this.keyboardAnchorGlyphId = targetGlyphId;
+                return;
+            }
+        }
+
+        const anchorIndex = visibleGlyphIds.indexOf(this.keyboardAnchorGlyphId);
+        const targetIndex = visibleGlyphIds.indexOf(targetGlyphId);
+
+        if (anchorIndex === -1 || targetIndex === -1) return;
+
+        // Clear current selection
+        this.clearSelection();
+
+        // Select all glyphs between anchor and target (inclusive)
+        const [from, to] =
+            anchorIndex < targetIndex ? [anchorIndex, targetIndex] : [targetIndex, anchorIndex];
+
+        for (let i = from; i <= to; i++) {
+            this.selectTile(visibleGlyphIds[i]);
         }
     }
 
