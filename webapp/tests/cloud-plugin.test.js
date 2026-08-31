@@ -180,7 +180,10 @@ const wrappedCloudFontJson = {
     ]
 };
 
-const { CloudPlugin } = require('../js/cloud-plugin');
+require('../js/filesystem-plugins');
+const {
+    CloudPlugin
+} = require('../js/filesystem-plugins/plugins/cloud-plugin');
 
 describe('CloudPlugin.openAsset', () => {
     let plugin;

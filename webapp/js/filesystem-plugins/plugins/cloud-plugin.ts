@@ -5,25 +5,26 @@
  * Exposed as window.cloudPlugin; window.cloudDebug kept for dev testing.
  */
 
-import { FilesystemPlugin, pluginRegistry } from './filesystem-plugins';
-import type {
-    FileContextAction,
-    FileContextTarget,
-    PluginMessageOptions,
-    TitleBarMenuItem
-} from './filesystem-plugins';
+import {
+    FilesystemPlugin,
+    type FileContextAction,
+    type FileContextTarget,
+    type PluginMessageOptions,
+    type TitleBarMenuItem
+} from '../filesystem-plugin';
+import { pluginRegistry } from '../registry';
 import {
     CloudAdapter,
     CloudAdapterOptions,
     CloudConnectionStatus,
     normalizeCloudRoomWebSocketUrl
-} from './cloud-adapter';
+} from '../../cloud-adapter';
 import {
     PatchSyncEngine,
     type CommittedChangeListener
-} from './patch-sync-engine';
-import { Logger } from './logger';
-import { resolveWebsiteURL } from './website-url';
+} from '../../patch-sync-engine';
+import { Logger } from '../../logger';
+import { resolveWebsiteURL } from '../../website-url';
 
 const console = new Logger('CloudPlugin');
 const CLOUD_PLUGIN_UI_ENABLED = false;

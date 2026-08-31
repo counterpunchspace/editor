@@ -7,7 +7,7 @@ import type {
     CloudOwnershipTransfer,
     CloudPlugin,
     CloudShareState
-} from './cloud-plugin';
+} from './filesystem-plugins/plugins/cloud-plugin';
 import { Logger } from './logger';
 import { bindModalEscape, type ModalEscapeBinding } from './ui/modal-escape';
 

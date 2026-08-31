@@ -12,7 +12,11 @@ import type { StateManager, EditorState } from './state-manager';
 import type { PatchSyncEngine } from './patch-sync-engine';
 import type { WindowSync } from './window-sync';
 import type { WindowRoleManager } from './window-role';
-import type { CloudPlugin, CloudEligibility, CloudAsset } from './cloud-plugin';
+import type {
+    CloudPlugin,
+    CloudEligibility,
+    CloudAsset
+} from './filesystem-plugins/plugins/cloud-plugin';
 import type { FindGlyphDialog } from './find-glyph-dialog';
 import type { GlyphDataIndex } from './glyph-data';
 import type { QaCorpusIndex } from './auto-qa/auto-qa-corpus';
@@ -697,10 +701,10 @@ declare global {
         // From view-title-buttons.ts
         updateViewTitleButtonVisibility: (viewId: string) => void;
 
-        // From cloud-plugin.ts — Phase 1 cloud storage
+        // From filesystem-plugins/plugins/cloud-plugin.ts — Phase 1 cloud storage
         cloudPlugin: CloudPlugin | undefined;
 
-        // From cloud-plugin.ts — dev helper for Phase 0/1 cloud testing
+        // From filesystem-plugins/plugins/cloud-plugin.ts — dev helper for Phase 0/1 cloud testing
         cloudDebug:
             | {
                   bootstrapLocalSession: (email?: string) => Promise<{

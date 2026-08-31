@@ -195,6 +195,7 @@ If glyph switching stops updating outlines and the glyph stack shows `(none)` wh
 
 - `APP.md` is the principal authority for application behavior
 - `developer-docs/COMPILATION_EDIT_POLICY.md` is the authority for compilation scheduling and fast-path behavior
+- `developer-docs/FILESYSTEM_PLUGINS.md` documents Memory/Disk/Cloud file backends and how to add one
 - `developer-docs/JS_EVENTS.md` documents emitted JavaScript events
 - `developer-docs/APP_UPDATE_RECOVERY.md` is the stuck-client update recovery procedure
 - `developer-docs/STUCK_EDITING_RECOVERY.md` is the stuck-editing-session recovery procedure

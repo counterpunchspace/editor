@@ -541,7 +541,7 @@ import './update-manager';
 import './window-buttons';
 import './keyboard-shortcut-display';
 import { initViewTitleButtons } from './view-title-buttons';
-import { CloudPlugin } from './cloud-plugin';
+import { CloudPlugin } from './filesystem-plugins/plugins/cloud-plugin';
 import { pluginRegistry } from './filesystem-plugins';
 
 // Initialize view title buttons after DOM is ready and keyboard navigation is initialized
