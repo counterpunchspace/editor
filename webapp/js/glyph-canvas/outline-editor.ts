@@ -1544,6 +1544,7 @@ export class OutlineEditor {
     renderVerticalMetrics: Record<string, number> | null = null;
     targetLayerData: Babelfont.Layer | null = null;
     selectedLayerId: string | null = null;
+    private _layerDataFetchGeneration = 0;
     isInterpolating: boolean = false;
     isLayerSwitchAnimating: boolean = false;
 
@@ -20342,6 +20343,9 @@ export class OutlineEditor {
         rootGlyphName?: string,
         retryCount: number = 0
     ): Promise<void> {
+        const fetchGeneration = ++this._layerDataFetchGeneration;
+        const isCurrentFetch = () =>
+            fetchGeneration === this._layerDataFetchGeneration;
         const stackPreview = new Error().stack
             ?.split('\n')
             .slice(2, 6)
@@ -20394,7 +20398,7 @@ export class OutlineEditor {
                 error
             );
         }
-        if (exactLayerData) {
+        if (exactLayerData && isCurrentFetch()) {
             this.applyExactSelectedLayerData(exactLayerData, null);
             this.finalizeFetchedLayerData(glyphName, skipRender);
         }
@@ -20435,6 +20439,9 @@ export class OutlineEditor {
                       glyphName,
                       userspaceLocation
                   );
+            if (!isCurrentFetch()) {
+                return;
+            }
 
             if (exactLayerData) {
                 this.applyExactSelectedLayerData(exactLayerData, rustResult);

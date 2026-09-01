@@ -50,7 +50,10 @@ import type { ChangeLogEntry } from './change-log';
 import { Logger } from './logger';
 import type { FileInfo, FileSystemAdapter } from './file-system-adapter';
 import type { EncodedShard } from './filesystem-plugins/cloud-document-set';
-import { FONT_CORE_DOCUMENT_ID } from './filesystem-plugins/cloud-document-set';
+import {
+    FONT_CORE_DOCUMENT_ID,
+    glyphIdFromDocumentId
+} from './filesystem-plugins/cloud-document-set';
 import {
     collaborationMessageKey,
     createChangeLogEntriesFromCollaborationMessageEnvelope,
@@ -250,6 +253,62 @@ function resolvedCatchUpRevision(options: {
     return undefined;
 }
 
+function editorGlyphNamesShowingCloudDocument(documentId: string): string[] {
+    const glyphId = glyphIdFromDocumentId(documentId);
+    if (!glyphId) {
+        return [];
+    }
+    const outlineEditor = window.glyphCanvas?.outlineEditor;
+    if (!outlineEditor?.active) {
+        return [];
+    }
+    const parsed = outlineEditor.parseGlyphStack?.() ?? [];
+    const names = [
+        ...parsed.map((item: { glyphName?: string }) => item.glyphName),
+        window.glyphCanvas?.getCurrentGlyphName?.()
+    ].filter((name): name is string => Boolean(name));
+    const bridge = window.changeBridge ?? window.patchSyncEngine;
+    const matching: string[] = [];
+    for (const name of names) {
+        if (bridge?.glyphDocumentIdForName?.(name) === documentId) {
+            matching.push(name);
+            continue;
+        }
+        const glyph = window.currentFontModel?.resolveGlyphView?.(name);
+        if (glyph && 'id' in glyph && glyph.id === glyphId) {
+            matching.push(name);
+        }
+    }
+    return matching;
+}
+
+/**
+ * Glyph catch-up patches the Y.Doc and overview tiles, but the outline
+ * editor keeps the layer snapshot loaded at restore. Reload that snapshot
+ * the same way a layer switch does.
+ */
+export function refreshEditorAfterGlyphDocumentCatchUp(
+    documentId: string
+): void {
+    const showing = editorGlyphNamesShowingCloudDocument(documentId);
+    if (!showing.length) {
+        return;
+    }
+    const refresh = window.syncRustCacheAndRefreshCanvas;
+    if (typeof refresh === 'function') {
+        void refresh(showing[0], showing[0], {
+            allowSelectedLayerFallback: true
+        });
+        return;
+    }
+    const outlineEditor = window.glyphCanvas?.outlineEditor;
+    if (outlineEditor?.selectedLayerId) {
+        void outlineEditor.fetchLayerData?.(true, showing[0]);
+        return;
+    }
+    void outlineEditor?.interpolateCurrentGlyph?.(true);
+}
+
 export async function catchUpCloudDocument(options: {
     bridge: PatchSyncEngine;
     token: string;
@@ -365,6 +424,7 @@ export async function catchUpCloudDocument(options: {
                     options.documentId
                 );
             }
+            refreshEditorAfterGlyphDocumentCatchUp(options.documentId);
             return true;
         } catch (error) {
             if (
@@ -2005,10 +2065,12 @@ export class CloudAdapter implements FileSystemAdapter {
                     update,
                     this._lastSyncCollaborationMessages
                 );
+                refreshEditorAfterGlyphDocumentCatchUp(this._documentId);
                 return;
             }
             if (typeof this._bridge.applyDocumentCheckpoint === 'function') {
                 this._bridge.applyDocumentCheckpoint(this._documentId, update);
+                refreshEditorAfterGlyphDocumentCatchUp(this._documentId);
                 return;
             }
         }

@@ -5,7 +5,10 @@
  */
 const { PatchSyncEngine } = require('../js/patch-sync-engine');
 const { Font } = require('../js/babelfont-model');
-const { catchUpCloudDocument } = require('../js/cloud-adapter');
+const {
+    catchUpCloudDocument,
+    refreshEditorAfterGlyphDocumentCatchUp
+} = require('../js/cloud-adapter');
 const {
     createCollaborationMessageEnvelopesFromChangeLogEntries
 } = require('../js/collaboration-message');
@@ -488,5 +491,54 @@ describe('glyph catch-up for edits outside the receiver subset', () => {
         expect(attempts).toBe(2);
         expect(glyphWidth(receiver, 'B')).toBe(400);
         global.fetch = originalFetch;
+    });
+
+    test('catching up the edited glyph refreshes the outline editor', async () => {
+        const writer = createEngine('writer');
+        const receiver = hydrateReceiverFromWriter(writer.bridge);
+        window.changeBridge = writer.bridge;
+        writer.font.findGlyph('B').layers[0].width = 777;
+        const refresh = jest.fn().mockResolvedValue();
+        const previousRefresh = window.syncRustCacheAndRefreshCanvas;
+        const previousCanvas = window.glyphCanvas;
+        window.syncRustCacheAndRefreshCanvas = refresh;
+        window.glyphCanvas = {
+            getCurrentGlyphName: () => 'B',
+            outlineEditor: {
+                active: true,
+                selectedLayerId: 'layer-1',
+                parseGlyphStack: () => [{ glyphName: 'B' }]
+            }
+        };
+
+        const originalFetch = global.fetch;
+        global.fetch = jest.fn(async () =>
+            jsonLiveResponse(
+                writer.bridge.encodeDocumentState(glyphDocumentId('id-b'))
+            )
+        );
+        try {
+            await catchUpCloudDocument({
+                bridge: receiver,
+                token: 'token',
+                roomUrl: 'wss://rooms.example/room/asset-1',
+                websiteBaseUrl: 'https://editor.example',
+                assetId: 'asset-1',
+                documentId: glyphDocumentId('id-b'),
+                expectedRevision: revisionFor(writer.bridge, 'id-b'),
+                maxAttempts: 2,
+                wait: async () => {}
+            });
+            expect(refresh).toHaveBeenCalledWith('B', 'B', {
+                allowSelectedLayerFallback: true
+            });
+            refresh.mockClear();
+            refreshEditorAfterGlyphDocumentCatchUp(glyphDocumentId('id-a'));
+            expect(refresh).not.toHaveBeenCalled();
+        } finally {
+            global.fetch = originalFetch;
+            window.syncRustCacheAndRefreshCanvas = previousRefresh;
+            window.glyphCanvas = previousCanvas;
+        }
     });
 });

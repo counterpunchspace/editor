@@ -7,6 +7,7 @@
  */
 
 import { MetadataFreeRemoteUpdateError } from './patch-sync-engine';
+import { refreshEditorAfterGlyphDocumentCatchUp } from './cloud-adapter';
 import type { PatchSyncEngine } from './patch-sync-engine';
 import type { ChangeLogEntry } from './change-log';
 import { Logger } from './logger';
@@ -422,6 +423,9 @@ export class WindowSync {
                         this._bridge.applyDocumentCatchUp?.(
                             packet.documentId,
                             update
+                        );
+                        refreshEditorAfterGlyphDocumentCatchUp(
+                            packet.documentId
                         );
                         continue;
                     }
