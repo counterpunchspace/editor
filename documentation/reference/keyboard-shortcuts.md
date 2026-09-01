@@ -80,6 +80,7 @@ Each view title bar shows the same shortcut.
 - Double-click an on-curve point to toggle smooth and corner
 - `Shift` constrains a smooth handle while dragging
 - `Alt/Option` slides a smooth on-curve point along its handles; on a corner on-curve point it moves the node freely while handles stay put
+- `Cmd/Ctrl+Alt/Option` drag on a smooth on-curve point slides it along the combined curve
 
 ### Panning and zooming
 

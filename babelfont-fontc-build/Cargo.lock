@@ -139,7 +139,6 @@ checksum = "c08606f8c3cbf4ce6ec8e28fb0014a2c086708fe954eaa885384a6165172e7e8"
 [[package]]
 name = "babelfont"
 version = "0.2.0-pre"
-source = "git+https://github.com/yanone/babelfont-rs?rev=df18a2f6ab348e71d7d91f96090ff0ee8638776c#df18a2f6ab348e71d7d91f96090ff0ee8638776c"
 dependencies = [
  "chrono",
  "csv",
@@ -1928,7 +1927,6 @@ dependencies = [
 [[package]]
 name = "sr-aef"
 version = "0.1.0"
-source = "git+https://github.com/yanone/babelfont-rs?rev=df18a2f6ab348e71d7d91f96090ff0ee8638776c#df18a2f6ab348e71d7d91f96090ff0ee8638776c"
 dependencies = [
  "fea-rs-ast",
  "fontdrasil 0.4.0 (git+https://github.com/googlefonts/fontc?rev=484e26c)",

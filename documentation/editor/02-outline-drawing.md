@@ -29,7 +29,7 @@ Hold Tab in outline mode, then drag, to measure a custom distance.
 
 ## Curves and smooth points
 
-Double-click an on-curve point in a curve to toggle smooth and corner. Hold Shift while dragging a smooth point’s off-curve handle to constrain it horizontally or vertically. Hold Alt/Option while dragging a smooth on-curve point to slide it along its handle axis while the handles stay put. Hold Alt/Option while dragging a corner on-curve point (including one with a curve on only one side) to move it freely while its handles stay put. Hold Alt/Option while dragging an off-curve that is not part of a smooth connection to keep it on its original direction from the on-curve point.
+Double-click an on-curve point in a curve to toggle smooth and corner. Hold Shift while dragging a smooth point’s off-curve handle to constrain it horizontally or vertically. Hold Alt/Option while dragging a smooth on-curve point to slide it along its handle axis while the handles stay put. Hold Alt/Option while dragging a corner on-curve point (including one with a curve on only one side) to move it freely while its handles stay put. Hold `Cmd/Ctrl+Alt/Option` and drag a smooth on-curve point to slide it along the two neighboring curves as one. Hold Alt/Option while dragging an off-curve that is not part of a smooth connection to keep it on its original direction from the on-curve point.
 
 Open contour ends are always corners.
 

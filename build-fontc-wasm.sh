@@ -32,6 +32,18 @@ rustup toolchain install nightly --profile minimal --component rust-std --compon
 mkdir -p "$WASM_DIR"
 cd "$WASM_DIR"
 
+# Prefer a sibling babelfont-rs checkout (uncommitted join/keep-shape work)
+# over the git pin in Cargo.toml. CI has no sibling, so it keeps the pin.
+LOCAL_BABELFONT="$(cd "$SCRIPT_DIR/.." && pwd)/babelfont-rs/babelfont"
+if [ -d "$LOCAL_BABELFONT" ]; then
+    echo "✓ Using local babelfont-rs: $LOCAL_BABELFONT"
+    mkdir -p "$WASM_DIR/.cargo"
+    cat > "$WASM_DIR/.cargo/config.toml" << EOF
+[patch."https://github.com/yanone/babelfont-rs"]
+babelfont = { path = "$LOCAL_BABELFONT" }
+EOF
+fi
+
 echo ""
 echo "🔨 Building WASM module (single-threaded for browser compatibility)..."
 echo "This may take several minutes (first build downloads dependencies)..."

@@ -16,6 +16,7 @@ import {
     Layer,
     FeatureVariationGlyph,
     Glyph,
+    Path,
     DecomposedAffineTransform,
     buildInterpolationRustBatchOperations,
     withSuppressedModelRecording,
@@ -505,6 +506,58 @@ function isOnCurveNode(node: Babelfont.Node | null | undefined): boolean {
 
 function isOffCurveNode(node: Babelfont.Node | null | undefined): boolean {
     return node?.nodetype === 'OffCurve';
+}
+
+function canSlideSmoothOnCurveFromContour(
+    contour: EditableContour | null,
+    nodeIndex: number
+): boolean {
+    const node = contour?.nodes[nodeIndex];
+    if (
+        !contour ||
+        !node ||
+        !node.smooth ||
+        isOffCurveNode(node) ||
+        node.nodetype === 'Move'
+    ) {
+        return false;
+    }
+
+    const leftHandle = getNeighborNodeIndex(
+        nodeIndex,
+        -1,
+        contour.nodes.length,
+        contour.closed
+    );
+    const leftFarHandle = getNeighborNodeIndex(
+        nodeIndex,
+        -2,
+        contour.nodes.length,
+        contour.closed
+    );
+    const rightHandle = getNeighborNodeIndex(
+        nodeIndex,
+        1,
+        contour.nodes.length,
+        contour.closed
+    );
+    const rightFarHandle = getNeighborNodeIndex(
+        nodeIndex,
+        2,
+        contour.nodes.length,
+        contour.closed
+    );
+
+    return (
+        leftHandle !== null &&
+        leftFarHandle !== null &&
+        rightHandle !== null &&
+        rightFarHandle !== null &&
+        isOffCurveNode(contour.nodes[leftHandle]) &&
+        isOffCurveNode(contour.nodes[leftFarHandle]) &&
+        isOffCurveNode(contour.nodes[rightHandle]) &&
+        isOffCurveNode(contour.nodes[rightFarHandle])
+    );
 }
 
 function getNeighborNodeIndex(
@@ -10436,9 +10489,8 @@ export class OutlineEditor {
 
             if (
                 (e.metaKey || e.ctrlKey) &&
-                !e.altKey &&
+                e.altKey &&
                 !e.shiftKey &&
-                !this.shouldTreatCommandClickAsSelectionToggle() &&
                 this.canSlideSmoothPointOnCurve(hoveredPoint)
             ) {
                 this.selectedPoints = [{ ...hoveredPoint }];
@@ -14842,6 +14894,17 @@ export class OutlineEditor {
             }
         }
 
+        if (
+            pressed &&
+            this.altKeyPressed &&
+            this.isDraggingPoint &&
+            !this.isSlidingSmoothPointAlongCurve &&
+            this.tryBeginAlongCurveSlideFromCurrentSelection()
+        ) {
+            this.notifyEditToolsChanged();
+            return;
+        }
+
         this.notifyEditToolsChanged();
     }
 
@@ -14857,6 +14920,14 @@ export class OutlineEditor {
             this.glyphCanvas.stopModifierFocusWatch();
         }
         if (this.isDraggingPoint && !this.isSlidingSmoothPointAlongCurve) {
+            if (
+                pressed &&
+                this.cmdKeyPressed &&
+                this.tryBeginAlongCurveSlideFromCurrentSelection()
+            ) {
+                this.notifyEditToolsChanged();
+                return;
+            }
             this._rebuildSnapCandidateCache();
             if (pressed) {
                 this._captureSmoothOnCurveAltDragConstraint();
@@ -17680,10 +17751,50 @@ export class OutlineEditor {
         restoreRetainedVerticalMetrics();
     }
 
-    private canSlideSmoothPointOnCurve(point: Point): boolean {
+    private getPathModelForContour(contourIndex: number): Path | null {
         const currentLayerModel = this.getCurrentLayerModel();
-        const path = currentLayerModel?.paths?.[point.contourIndex];
-        return Boolean(path?._canSlideSmoothOnCurve?.(point.nodeIndex));
+        const shape = currentLayerModel?.shapes?.[contourIndex];
+        if (shape && typeof shape.isPath === 'function' && shape.isPath()) {
+            return shape.asPath();
+        }
+        return null;
+    }
+
+    private canSlideSmoothPointOnCurve(point: Point): boolean {
+        const path = this.getPathModelForContour(point.contourIndex);
+        if (typeof path?._canSlideSmoothOnCurve === 'function') {
+            return Boolean(path._canSlideSmoothOnCurve(point.nodeIndex));
+        }
+
+        return canSlideSmoothOnCurveFromContour(
+            getEditableContour(
+                this.getCurrentLayerDataFromStack()?.shapes?.[
+                    point.contourIndex
+                ]
+            ),
+            point.nodeIndex
+        );
+    }
+
+    /**
+     * Switch an in-progress point drag to along-curve sliding when the
+     * current selection is a single smooth node between two curves.
+     */
+    private tryBeginAlongCurveSlideFromCurrentSelection(): boolean {
+        if (this.selectedPoints.length !== 1) {
+            return false;
+        }
+        const currentPoint = this.selectedPoints[0];
+        if (!this.canSlideSmoothPointOnCurve(currentPoint)) {
+            return false;
+        }
+        this.isSlidingSmoothPointAlongCurve = true;
+        this._dragType = 'slide-point';
+        this._smoothOnCurveAltDragConstraint = null;
+        this._pointDragPreserveHandlePositions = false;
+        this.lastGlyphX = null;
+        this.lastGlyphY = null;
+        return true;
     }
 
     private slideSelectedSmoothPointAlongCurve(
@@ -17696,10 +17807,11 @@ export class OutlineEditor {
 
         const currentLayerModel = this.getCurrentLayerModel();
         const currentPoint = this.selectedPoints[0];
-        const activePath =
-            currentLayerModel?.paths?.[currentPoint.contourIndex];
+        const activePath = this.getPathModelForContour(
+            currentPoint.contourIndex
+        );
 
-        if (!activePath) {
+        if (!currentLayerModel || !activePath) {
             return false;
         }
 
@@ -17721,8 +17833,14 @@ export class OutlineEditor {
             }
 
             for (const linkedLayer of linkedLayers) {
+                const linkedShape =
+                    linkedLayer.shapes?.[currentPoint.contourIndex];
                 const linkedPath =
-                    linkedLayer.paths?.[currentPoint.contourIndex];
+                    linkedShape &&
+                    typeof linkedShape.isPath === 'function' &&
+                    linkedShape.isPath()
+                        ? linkedShape.asPath()
+                        : null;
                 if (!linkedPath) {
                     continue;
                 }

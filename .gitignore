@@ -40,6 +40,7 @@ webapp/build/
 webapp/playwright-report/
 webapp/test-results/
 babelfont-fontc-build/target/
+babelfont-fontc-build/.cargo/
 
 # Playwright test artifacts
 test-results/

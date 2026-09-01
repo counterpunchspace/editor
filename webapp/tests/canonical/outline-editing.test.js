@@ -733,6 +733,41 @@ describe('Outline Editing canonical behavior', () => {
         }
     });
 
+    test('cmd+alt click on a smooth on-curve point starts a slide along the combined curve', () => {
+        activateEditableLayer(canvas, makeOpenTripletLayer({ smooth: true }));
+        canvas.outlineEditor.selectedPoints = [
+            {
+                contourIndex: 0,
+                nodeIndex: 3
+            }
+        ];
+        canvas.outlineEditor.hoveredPointIndex = {
+            contourIndex: 0,
+            nodeIndex: 3
+        };
+        window.changeBridge = {
+            beginTransaction: jest.fn(),
+            endTransaction: jest.fn(),
+            syncGlyphFromJson: jest.fn()
+        };
+
+        canvas.outlineEditor.onSingleClick({
+            clientX: 10,
+            clientY: 20,
+            detail: 1,
+            shiftKey: false,
+            altKey: true,
+            metaKey: true,
+            ctrlKey: false
+        });
+
+        expect(canvas.outlineEditor.isSlidingSmoothPointAlongCurve).toBe(true);
+        expect(canvas.outlineEditor.isDraggingPoint).toBe(true);
+        expect(window.changeBridge.beginTransaction).toHaveBeenCalledWith(
+            'Move point along curve'
+        );
+    });
+
     test('alt re-press during non-smooth off-curve dragging returns to the original drag-start direction', () => {
         const saveLayerDataSpy = jest
             .spyOn(canvas.outlineEditor, 'saveLayerData')

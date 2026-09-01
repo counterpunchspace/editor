@@ -1560,10 +1560,10 @@ function tryInvertCubicSplit(
         reconstructedLeft.length === leftPoints.length &&
         reconstructedRight.length === rightPoints.length &&
         reconstructedLeft.every((point, index) =>
-            pointsAreClose(point, leftPoints[index], 0.001)
+            pointsAreClose(point, leftPoints[index], 0.05)
         ) &&
         reconstructedRight.every((point, index) =>
-            pointsAreClose(point, rightPoints[index], 0.001)
+            pointsAreClose(point, rightPoints[index], 0.05)
         );
 
     if (!reconstructionMatches) {
@@ -1585,6 +1585,162 @@ function evaluateCubicBezier(points: SegmentPoint[], t: number): SegmentPoint {
         x: u3 * p0.x + 3 * u2 * t * p1.x + 3 * u * t2 * p2.x + t3 * p3.x,
         y: u3 * p0.y + 3 * u2 * t * p1.y + 3 * u * t2 * p2.y + t3 * p3.y
     };
+}
+
+/** Default join tolerance matching babelfont Path.delete_keeping_shape. */
+const DELETE_KEEPING_SHAPE_TOLERANCE = 1000;
+
+const JOIN_BEZ_GAUSS_4: Array<[number, number]> = [
+    [0.6521451548625461, -0.3399810435848563],
+    [0.6521451548625461, 0.3399810435848563],
+    [0.34785484513745385, -0.8611363115940526],
+    [0.34785484513745385, 0.8611363115940526]
+];
+
+function joinBezBernstein(t: number): [number, number, number, number] {
+    const mt = 1 - t;
+    return [mt * mt * mt, 3 * t * mt * mt, 3 * t * t * mt, t * t * t];
+}
+
+const JOIN_BEZ_M = (() => {
+    let m11 = 0;
+    let m22 = 0;
+    let m12 = 0;
+    for (const [weight, x] of JOIN_BEZ_GAUSS_4) {
+        const t = 0.5 * (x + 1);
+        const w = 0.5 * weight;
+        const b = joinBezBernstein(t);
+        m11 += w * b[1] * b[1];
+        m22 += w * b[2] * b[2];
+        m12 += w * b[1] * b[2];
+    }
+    return { m11, m22, m12 };
+})();
+
+function cubicArclen(points: SegmentPoint[]): number {
+    let length = 0;
+    let previous = evaluateCubicBezier(points, 0);
+    for (let index = 1; index <= 16; index++) {
+        const point = evaluateCubicBezier(points, index / 16);
+        length += Math.hypot(point.x - previous.x, point.y - previous.y);
+        previous = point;
+    }
+    return length;
+}
+
+function evalJoinedCubics(
+    leftPoints: SegmentPoint[],
+    rightPoints: SegmentPoint[],
+    r: number,
+    t: number
+): SegmentPoint {
+    if (t < r) {
+        return evaluateCubicBezier(leftPoints, t / r);
+    }
+    return evaluateCubicBezier(rightPoints, (t - r) / (1 - r));
+}
+
+function recommendedJoinTolerance(
+    leftPoints: SegmentPoint[],
+    rightPoints: SegmentPoint[]
+): number {
+    const lenA = Math.max(1e-6, cubicArclen(leftPoints));
+    const lenB = Math.max(1e-6, cubicArclen(rightPoints));
+    const total = lenA + lenB;
+    const uneven = Math.abs(lenA / total - 0.5);
+    let tolerance = Math.max(64, 0.2 * total);
+    if (uneven > 0.12) {
+        tolerance = Math.max(tolerance, 128);
+    }
+    if (uneven > 0.25) {
+        tolerance = Math.max(tolerance, 256);
+    }
+    return Math.min(tolerance, 4000);
+}
+
+function joinBezFit(
+    leftPoints: SegmentPoint[],
+    rightPoints: SegmentPoint[]
+): SegmentPoint[] {
+    const start = leftPoints[0];
+    const end = rightPoints[3];
+    const d1 = subtractPoints(leftPoints[1], start);
+    const d2 = subtractPoints(end, rightPoints[2]);
+    const lenA = cubicArclen(leftPoints);
+    const lenB = cubicArclen(rightPoints);
+    const r = Math.min(1 - 1e-3, Math.max(1e-3, lenA / (lenA + lenB)));
+    let r1x = 0;
+    let r1y = 0;
+    let r2x = 0;
+    let r2y = 0;
+
+    for (const [weight, x] of JOIN_BEZ_GAUSS_4) {
+        const t = 0.5 * (x + 1);
+        const w = 0.5 * weight;
+        const bt = joinBezBernstein(t);
+        const sample = evalJoinedCubics(leftPoints, rightPoints, r, t);
+        const fixedX = (bt[0] + bt[1]) * start.x + (bt[2] + bt[3]) * end.x;
+        const fixedY = (bt[0] + bt[1]) * start.y + (bt[2] + bt[3]) * end.y;
+        const residX = sample.x - fixedX;
+        const residY = sample.y - fixedY;
+        r1x += w * bt[1] * residX;
+        r1y += w * bt[1] * residY;
+        r2x += w * bt[2] * residX;
+        r2y += w * bt[2] * residY;
+    }
+
+    const mat11 = (d1.x * d1.x + d1.y * d1.y) * JOIN_BEZ_M.m11;
+    const mat22 = (d2.x * d2.x + d2.y * d2.y) * JOIN_BEZ_M.m22;
+    const mat12 = -(d1.x * d2.x + d1.y * d2.y) * JOIN_BEZ_M.m12;
+    const rhs1 = d1.x * r1x + d1.y * r1y;
+    const rhs2 = -(d2.x * r2x + d2.y * r2y);
+    const det = mat11 * mat22 - mat12 * mat12;
+    let t1 = 0;
+    let t2 = 0;
+    if (Math.abs(det) > 1e-12) {
+        t1 = (rhs1 * mat22 - mat12 * rhs2) / det;
+        t2 = (mat11 * rhs2 - mat12 * rhs1) / det;
+    }
+
+    return [
+        start,
+        { x: start.x + t1 * d1.x, y: start.y + t1 * d1.y },
+        { x: end.x - t2 * d2.x, y: end.y - t2 * d2.y },
+        end
+    ];
+}
+
+function joinBezMaxError(
+    leftPoints: SegmentPoint[],
+    rightPoints: SegmentPoint[],
+    fitted: SegmentPoint[]
+): number {
+    const lenA = cubicArclen(leftPoints);
+    const lenB = cubicArclen(rightPoints);
+    const r = Math.min(1 - 1e-3, Math.max(1e-3, lenA / (lenA + lenB)));
+    let maxErr = 0;
+    for (let i = 0; i <= 64; i++) {
+        const t = i / 64;
+        const sample = evalJoinedCubics(leftPoints, rightPoints, r, t);
+        const fittedPoint = evaluateCubicBezier(fitted, t);
+        maxErr = Math.max(
+            maxErr,
+            Math.hypot(sample.x - fittedPoint.x, sample.y - fittedPoint.y)
+        );
+    }
+    return maxErr;
+}
+
+function joinBez(
+    leftPoints: SegmentPoint[],
+    rightPoints: SegmentPoint[],
+    tolerance: number
+): SegmentPoint[] | null {
+    const fitted = joinBezFit(leftPoints, rightPoints);
+    if (joinBezMaxError(leftPoints, rightPoints, fitted) < tolerance) {
+        return fitted;
+    }
+    return null;
 }
 
 function fitCubicCurveToConnectedCubicsFallback(
@@ -1676,29 +1832,16 @@ function fitCubicCurveToConnectedCubics(
 ): SegmentPoint[] {
     const exactInverse = tryInvertCubicSplit(leftPoints, rightPoints);
     if (exactInverse) {
-        const startDirection = normalizePoint(
-            subtractPoints(exactInverse.points[1], exactInverse.points[0]),
-            subtractPoints(exactInverse.points[3], exactInverse.points[0])
-        );
-        const endDirection = normalizePoint(
-            subtractPoints(exactInverse.points[2], exactInverse.points[3]),
-            subtractPoints(exactInverse.points[0], exactInverse.points[3])
-        );
+        return exactInverse.points;
+    }
 
-        return sanitizeMergedCubicWithFixedDirections(
-            exactInverse.points[0],
-            exactInverse.points[3],
-            startDirection,
-            endDirection,
-            Math.hypot(
-                exactInverse.points[1].x - exactInverse.points[0].x,
-                exactInverse.points[1].y - exactInverse.points[0].y
-            ),
-            Math.hypot(
-                exactInverse.points[2].x - exactInverse.points[3].x,
-                exactInverse.points[2].y - exactInverse.points[3].y
-            )
-        );
+    const joinTolerance = Math.max(
+        DELETE_KEEPING_SHAPE_TOLERANCE,
+        recommendedJoinTolerance(leftPoints, rightPoints)
+    );
+    const joined = joinBez(leftPoints, rightPoints, joinTolerance);
+    if (joined) {
+        return joined;
     }
 
     return fitCubicCurveToConnectedCubicsFallback(leftPoints, rightPoints);
