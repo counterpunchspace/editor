@@ -1,5 +1,7 @@
 // Share Button
-// Handles the direct cloud access button plus invitation and membership management dialog
+// Title-bar control and share dialog. Markup is built in this file; chrome
+// uses the shared info-popup / dialog-button / dialog-input styles in
+// css/ui/dialogs.css.
 
 import type {
     CloudAssetInvitation,
@@ -113,8 +115,8 @@ function renderMemberRow(
     const controls =
         canManage && !isOwner
             ? `
-            <form class="share-dialog-role-form" data-user-id="${escapeHtml(member.userId)}">
-                <select class="share-dialog-select" name="role">
+            <form class="share-dialog-form" data-user-id="${escapeHtml(member.userId)}" data-share-role-form>
+                <select class="dialog-input" name="role">
                     <option value="editor" ${member.role === 'editor' ? 'selected' : ''}>Editor</option>
                     <option value="viewer" ${member.role === 'viewer' ? 'selected' : ''}>Viewer</option>
                 </select>
@@ -122,19 +124,19 @@ function renderMemberRow(
                 <button type="button" class="dialog-button dialog-button-danger" data-share-dialog-action="remove-member" data-user-id="${escapeHtml(member.userId)}">Remove</button>
             </form>
         `
-            : `<div class="share-dialog-pill">${formatRole(member.role)}</div>`;
+            : '';
 
     return `
-        <li class="share-dialog-list-item">
-            <div class="share-dialog-list-copy">
-                <div class="share-dialog-list-title">${escapeHtml(member.email)}</div>
-                <div class="share-dialog-list-meta">
+        <li class="share-dialog-row">
+            <div>
+                <strong>${escapeHtml(member.email)}</strong>
+                <p>
                     ${isOwner ? 'Owner' : formatRole(member.role)}
                     ${member.invitedByEmail ? ` · Invited by ${escapeHtml(member.invitedByEmail)}` : ''}
                     · Added ${escapeHtml(formatTimestamp(member.createdAt))}
-                </div>
+                </p>
             </div>
-            <div class="share-dialog-list-actions">${controls}</div>
+            ${controls}
         </li>
     `;
 }
@@ -144,19 +146,16 @@ function renderInvitationRow(
     canManage: boolean
 ): string {
     return `
-        <li class="share-dialog-list-item">
-            <div class="share-dialog-list-copy">
-                <div class="share-dialog-list-title">${escapeHtml(invitation.email)}</div>
-                <div class="share-dialog-list-meta">
-                    ${formatRole(invitation.role)}
+        <li class="share-dialog-row">
+            <div>
+                <strong>${escapeHtml(invitation.email)}</strong>
+                <p>
+                    Pending ${formatRole(invitation.role).toLowerCase()}
                     ${invitation.targetUserEmail ? ` · Matches ${escapeHtml(invitation.targetUserEmail)}` : ''}
                     · Sent ${escapeHtml(formatTimestamp(invitation.lastSentAt || invitation.createdAt))}
-                </div>
+                </p>
             </div>
-            <div class="share-dialog-list-actions">
-                <div class="share-dialog-pill">Pending</div>
-                ${canManage ? `<button type="button" class="dialog-button dialog-button-danger" data-share-dialog-action="revoke-invite" data-invitation-id="${escapeHtml(invitation.id)}">Revoke</button>` : ''}
-            </div>
+            ${canManage ? `<button type="button" class="dialog-button dialog-button-danger" data-share-dialog-action="revoke-invite" data-invitation-id="${escapeHtml(invitation.id)}">Revoke</button>` : ''}
         </li>
     `;
 }
@@ -165,15 +164,15 @@ function renderOwnershipTransferCard(
     ownershipTransfer: CloudOwnershipTransfer
 ): string {
     return `
-        <div class="share-dialog-banner share-dialog-banner-info">
-            <div class="share-dialog-banner-copy">
+        <div class="share-dialog-row">
+            <div>
                 <strong>Pending transfer to ${escapeHtml(ownershipTransfer.email)}</strong>
-                <div class="share-dialog-banner-detail">
+                <p>
                     ${escapeHtml(formatPreviousOwnerPolicy(ownershipTransfer.previousOwnerRole))}
                     ${ownershipTransfer.targetUserEmail ? ` · Matches ${escapeHtml(ownershipTransfer.targetUserEmail)}` : ''}
                     · Requested ${escapeHtml(formatTimestamp(ownershipTransfer.createdAt))}
                     ${ownershipTransfer.expiresAt ? ` · Expires ${escapeHtml(formatTimestamp(ownershipTransfer.expiresAt))}` : ''}
-                </div>
+                </p>
             </div>
             <button type="button" class="dialog-button dialog-button-danger" data-share-dialog-action="cancel-transfer">Cancel</button>
         </div>
@@ -196,34 +195,33 @@ function renderShareDialog(): void {
     const showDevelopmentLinks = window.isDevelopment?.() ?? false;
 
     shareDialogOverlay.innerHTML = `
-        <div class="share-dialog-backdrop" data-share-dialog-action="close"></div>
-        <div class="share-dialog" role="dialog" aria-modal="true" aria-labelledby="share-dialog-title">
-            <div class="share-dialog-header">
-                <div>
-                    <div class="share-dialog-eyebrow">Cloud access</div>
-                    <h2 id="share-dialog-title">${escapeHtml(title)}</h2>
-                    <div class="share-dialog-subtitle">
-                        ${shareState ? `${formatRole(shareState.asset.role)} access${ownerEmail ? ` · Owner ${escapeHtml(ownerEmail)}` : ''}` : 'Load sharing settings'}
-                    </div>
-                </div>
-                <button type="button" class="share-dialog-icon-button" data-share-dialog-action="close" aria-label="Close share dialog">
+        <div class="info-popup share-dialog" role="dialog" aria-modal="true" aria-labelledby="share-dialog-title">
+            <div class="info-popup-header">
+                <h3 id="share-dialog-title">Share</h3>
+                <button type="button" class="info-popup-close" data-share-dialog-action="close" aria-label="Close">
                     <span class="material-symbols-outlined">close</span>
                 </button>
             </div>
-
-            <div class="share-dialog-body">
-                ${shareDialogState.error ? `<div class="share-dialog-banner share-dialog-banner-error">${escapeHtml(shareDialogState.error)}</div>` : ''}
-                ${shareDialogState.notice ? `<div class="share-dialog-banner share-dialog-banner-success">${escapeHtml(shareDialogState.notice)}</div>` : ''}
+            <div class="info-popup-content">
+                <p>
+                    ${
+                        shareState
+                            ? `<strong>${escapeHtml(title)}</strong> · ${formatRole(shareState.asset.role)} access${ownerEmail ? ` · Owner ${escapeHtml(ownerEmail)}` : ''}`
+                            : 'Load sharing settings for this cloud font.'
+                    }
+                </p>
+                ${shareDialogState.error ? `<p role="alert">${escapeHtml(shareDialogState.error)}</p>` : ''}
+                ${shareDialogState.notice ? `<div class="info-highlight"><p>${escapeHtml(shareDialogState.notice)}</p></div>` : ''}
                 ${
                     showDevelopmentLinks && shareDialogState.latestInviteUrl
                         ? `
-                    <div class="share-dialog-banner share-dialog-banner-info">
-                        <div class="share-dialog-banner-copy">
-                            <strong>Latest invite link</strong>
-                            <div class="share-dialog-banner-detail">Use this to test acceptance locally if email delivery is stubbed.</div>
-                            <input class="share-dialog-input share-dialog-link-input" type="text" readonly value="${escapeHtml(shareDialogState.latestInviteUrl)}" />
+                    <div class="info-highlight">
+                        <strong>Latest invite link</strong>
+                        <p>Use this to test acceptance locally if email delivery is stubbed.</p>
+                        <div class="share-dialog-form">
+                            <input class="dialog-input" type="text" readonly value="${escapeHtml(shareDialogState.latestInviteUrl)}" />
+                            <button type="button" class="dialog-button" data-share-dialog-action="copy-latest-link">Copy</button>
                         </div>
-                        <button type="button" class="dialog-button" data-share-dialog-action="copy-latest-link">Copy link</button>
                     </div>
                 `
                         : ''
@@ -231,25 +229,20 @@ function renderShareDialog(): void {
                 ${
                     showDevelopmentLinks && shareDialogState.latestTransferUrl
                         ? `
-                    <div class="share-dialog-banner share-dialog-banner-info">
-                        <div class="share-dialog-banner-copy">
-                            <strong>Latest transfer link</strong>
-                            <div class="share-dialog-banner-detail">Use this to review the ownership transfer locally if email delivery is stubbed.</div>
-                            <input class="share-dialog-input share-dialog-link-input" type="text" readonly value="${escapeHtml(shareDialogState.latestTransferUrl)}" />
+                    <div class="info-highlight">
+                        <strong>Latest transfer link</strong>
+                        <p>Use this to review the ownership transfer locally if email delivery is stubbed.</p>
+                        <div class="share-dialog-form">
+                            <input class="dialog-input" type="text" readonly value="${escapeHtml(shareDialogState.latestTransferUrl)}" />
+                            <button type="button" class="dialog-button" data-share-dialog-action="copy-latest-transfer-link">Copy</button>
                         </div>
-                        <button type="button" class="dialog-button" data-share-dialog-action="copy-latest-transfer-link">Copy link</button>
                     </div>
                 `
                         : ''
                 }
                 ${
                     shareDialogState.isLoading
-                        ? `
-                    <div class="share-dialog-loading">
-                        <span class="material-symbols-outlined">sync</span>
-                        <span>Loading sharing settings…</span>
-                    </div>
-                `
+                        ? `<p>Loading sharing settings…</p>`
                         : ''
                 }
                 ${
@@ -259,13 +252,11 @@ function renderShareDialog(): void {
                         canManage
                             ? `
                         <section class="share-dialog-section">
-                            <div class="share-dialog-section-header">
-                                <h3>Invite people</h3>
-                                <p>Invite by email and choose whether they can edit or only view.</p>
-                            </div>
-                            <form class="share-dialog-invite-form">
-                                <input class="share-dialog-input" type="email" name="email" placeholder="name@example.com" value="${escapeHtml(shareDialogState.inviteEmail)}" ${shareDialogState.isSubmitting ? 'disabled' : ''} required />
-                                <select class="share-dialog-select" name="role" ${shareDialogState.isSubmitting ? 'disabled' : ''}>
+                            <h4>Invite people</h4>
+                            <p>Invite by email. Editors can change the font; viewers cannot.</p>
+                            <form class="share-dialog-form" data-share-invite-form>
+                                <input class="dialog-input" type="email" name="email" placeholder="name@example.com" value="${escapeHtml(shareDialogState.inviteEmail)}" ${shareDialogState.isSubmitting ? 'disabled' : ''} required />
+                                <select class="dialog-input" name="role" ${shareDialogState.isSubmitting ? 'disabled' : ''}>
                                     <option value="editor" ${shareDialogState.inviteRole === 'editor' ? 'selected' : ''}>Editor</option>
                                     <option value="viewer" ${shareDialogState.inviteRole === 'viewer' ? 'selected' : ''}>Viewer</option>
                                 </select>
@@ -274,14 +265,12 @@ function renderShareDialog(): void {
                         </section>
 
                         <section class="share-dialog-section">
-                            <div class="share-dialog-section-header">
-                                <h3>Transfer ownership</h3>
-                                <p>Send a transfer request to another email. If they accept, you keep the selected access or are removed entirely.</p>
-                            </div>
-                            ${ownershipTransfer ? renderOwnershipTransferCard(ownershipTransfer) : '<div class="share-dialog-banner share-dialog-banner-info"><div class="share-dialog-banner-copy"><strong>No pending transfer</strong><div class="share-dialog-banner-detail">Ownership stays unchanged until someone accepts a transfer request.</div></div></div>'}
-                            <form class="share-dialog-transfer-form">
-                                <input class="share-dialog-input" type="email" name="email" placeholder="new-owner@example.com" value="${escapeHtml(shareDialogState.transferEmail)}" ${shareDialogState.isSubmitting ? 'disabled' : ''} required />
-                                <select class="share-dialog-select" name="previousOwnerRole" ${shareDialogState.isSubmitting ? 'disabled' : ''}>
+                            <h4>Transfer ownership</h4>
+                            <p>If they accept, you keep the selected access or are removed.</p>
+                            ${ownershipTransfer ? renderOwnershipTransferCard(ownershipTransfer) : '<p>No pending transfer.</p>'}
+                            <form class="share-dialog-form" data-share-transfer-form>
+                                <input class="dialog-input" type="email" name="email" placeholder="new-owner@example.com" value="${escapeHtml(shareDialogState.transferEmail)}" ${shareDialogState.isSubmitting ? 'disabled' : ''} required />
+                                <select class="dialog-input" name="previousOwnerRole" ${shareDialogState.isSubmitting ? 'disabled' : ''}>
                                     <option value="editor" ${shareDialogState.previousOwnerRole === 'editor' ? 'selected' : ''}>Keep me as editor</option>
                                     <option value="viewer" ${shareDialogState.previousOwnerRole === 'viewer' ? 'selected' : ''}>Keep me as viewer</option>
                                     <option value="remove" ${shareDialogState.previousOwnerRole === 'remove' ? 'selected' : ''}>Remove me entirely</option>
@@ -292,14 +281,12 @@ function renderShareDialog(): void {
                     `
                             : `
                         <section class="share-dialog-section">
-                            <div class="share-dialog-section-header">
-                                <h3>Your access</h3>
-                                <p>${
-                                    canViewMembers
-                                        ? 'You can view the current membership list, but only the owner can change access.'
-                                        : 'The owner manages access for this font.'
-                                }</p>
-                            </div>
+                            <h4>Your access</h4>
+                            <p>${
+                                canViewMembers
+                                    ? 'You can view who has access. Only the owner can change it.'
+                                    : 'The owner manages access for this font.'
+                            }</p>
                         </section>
                     `
                     }
@@ -308,12 +295,10 @@ function renderShareDialog(): void {
                         canViewMembers
                             ? `
                     <section class="share-dialog-section">
-                        <div class="share-dialog-section-header">
-                            <h3>People with access</h3>
-                            <p>${shareState.members.length} member${shareState.members.length === 1 ? '' : 's'}</p>
-                        </div>
-                        <ul class="share-dialog-list">
-                            ${shareState.members.length ? shareState.members.map((member) => renderMemberRow(member, canManage, ownerUserId)).join('') : '<li class="share-dialog-empty">No members found.</li>'}
+                        <h4>People with access</h4>
+                        <p>${shareState.members.length} member${shareState.members.length === 1 ? '' : 's'}</p>
+                        <ul class="share-dialog-people">
+                            ${shareState.members.length ? shareState.members.map((member) => renderMemberRow(member, canManage, ownerUserId)).join('') : '<li>No members found.</li>'}
                         </ul>
                     </section>
                     `
@@ -324,12 +309,10 @@ function renderShareDialog(): void {
                         canManage
                             ? `
                     <section class="share-dialog-section">
-                        <div class="share-dialog-section-header">
-                            <h3>Pending invites</h3>
-                            <p>${shareState.invitations.length} pending</p>
-                        </div>
-                        <ul class="share-dialog-list">
-                            ${shareState.invitations.length ? shareState.invitations.map((invitation) => renderInvitationRow(invitation, canManage)).join('') : '<li class="share-dialog-empty">No pending invites.</li>'}
+                        <h4>Pending invites</h4>
+                        <p>${shareState.invitations.length} pending</p>
+                        <ul class="share-dialog-people">
+                            ${shareState.invitations.length ? shareState.invitations.map((invitation) => renderInvitationRow(invitation, canManage)).join('') : '<li>No pending invites.</li>'}
                         </ul>
                     </section>
                     `
@@ -339,8 +322,7 @@ function renderShareDialog(): void {
                         : ''
                 }
             </div>
-
-            <div class="share-dialog-footer">
+            <div class="confirm-dialog-actions share-dialog-actions">
                 <button type="button" class="dialog-button" data-share-dialog-action="refresh" ${shareDialogState.isLoading || shareDialogState.isSubmitting ? 'disabled' : ''}>Refresh</button>
                 <button type="button" class="dialog-button dialog-button-primary" data-share-dialog-action="close">Close</button>
             </div>
@@ -348,7 +330,7 @@ function renderShareDialog(): void {
     `;
 
     const inviteForm = shareDialogOverlay.querySelector(
-        '.share-dialog-invite-form'
+        '[data-share-invite-form]'
     ) as HTMLFormElement | null;
     if (inviteForm) {
         inviteForm.addEventListener('submit', (event) => {
@@ -358,7 +340,7 @@ function renderShareDialog(): void {
     }
 
     const transferForm = shareDialogOverlay.querySelector(
-        '.share-dialog-transfer-form'
+        '[data-share-transfer-form]'
     ) as HTMLFormElement | null;
     if (transferForm) {
         transferForm.addEventListener('submit', (event) => {
@@ -368,7 +350,7 @@ function renderShareDialog(): void {
     }
 
     shareDialogOverlay
-        .querySelectorAll('.share-dialog-role-form')
+        .querySelectorAll('[data-share-role-form]')
         .forEach((formElement) => {
             formElement.addEventListener('submit', (event) => {
                 event.preventDefault();
@@ -439,7 +421,12 @@ function ensureShareDialog(): HTMLDivElement {
     }
 
     shareDialogOverlay = document.createElement('div');
-    shareDialogOverlay.className = 'share-dialog-overlay';
+    shareDialogOverlay.className = 'info-popup-overlay share-dialog-overlay';
+    shareDialogOverlay.addEventListener('click', (event) => {
+        if (event.target === shareDialogOverlay) {
+            closeShareDialog();
+        }
+    });
     document.body.appendChild(shareDialogOverlay);
 
     return shareDialogOverlay;
@@ -739,7 +726,9 @@ async function handleRemoveMember(userId: string): Promise<void> {
 }
 
 /**
- * Initialize the direct access button
+ * Initialize the title-bar share button.
+ * Dialog markup is built here; chrome uses the shared info-popup /
+ * dialog-button styles in css/ui/dialogs.css.
  */
 export function initShareButton(): void {
     const shareButton = document.getElementById('share-btn');

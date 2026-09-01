@@ -91,6 +91,7 @@ export function buildApplyYjsUpdateMetadataJson(options: {
     layerTargets?: unknown;
     glyphRenames?: unknown;
     invalidateLayoutClosure?: unknown;
+    documentId?: unknown;
 }): string {
     const rawLayerTargets = Array.isArray(options.layerTargets)
         ? options.layerTargets
@@ -141,7 +142,10 @@ export function buildApplyYjsUpdateMetadataJson(options: {
         nonGlyphChangeHints,
         layerTargets: sanitizedLayerTargets,
         ...(glyphRenames.length ? { glyphRenames } : {}),
-        invalidateLayoutClosure: options.invalidateLayoutClosure === true
+        invalidateLayoutClosure: options.invalidateLayoutClosure === true,
+        ...(typeof options.documentId === 'string' && options.documentId
+            ? { documentId: options.documentId }
+            : {})
     });
 }
 

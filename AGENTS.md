@@ -1,5 +1,14 @@
 # Counterpunch Font Editor - Coding Instructions
 
+## Cloud entitlements
+
+Website D1 is the only source of truth for cloud quotas. The subscription that
+counts is the **asset owner’s**, never the accessing collaborator’s. CloudPlugin
+and the collab Worker/DO must both enforce; client-only checks are not enough.
+Basic: `maxFontsOwned = 1`, `maxGlyphsPerFont = 1000` (`null` = unlimited).
+Per-shard encoded Y.Doc ceiling: 10 MB (warn at 75%). See
+`strategy/CLOUD_COLLABORATION_ARCHITECTURE.md`.
+
 ## Project Overview
 
 Counterpunch is a browser-based font editor with live compilation and rendering capabilities. It uses a WebAssembly-based font compilation pipeline (Rust fontc/babelfont-rs compiled to WASM) and a JavaScript/TypeScript/HTML/CSS frontend. The editor provides a Python scripting environment via Pyodide, allowing users to manipulate font data programmatically.

@@ -2110,9 +2110,26 @@ async function saveCurrentFontAsToPath(): Promise<void> {
                 }
 
                 currentFont.syncJsonFromModel();
+                const sourcePlugin = currentFont.sourcePlugin;
+                const destinationPlugin = fileSystemCache.currentPlugin;
+                let babelfontJson = currentFont.babelfontJson;
+                if (
+                    sourcePlugin &&
+                    destinationPlugin &&
+                    sourcePlugin.getId() !== destinationPlugin.getId() &&
+                    typeof sourcePlugin.stripOwnedFontData === 'function'
+                ) {
+                    const parsed = JSON.parse(babelfontJson) as Record<
+                        string,
+                        unknown
+                    >;
+                    babelfontJson = JSON.stringify(
+                        sourcePlugin.stripOwnedFontData(parsed)
+                    );
+                }
                 const serializedFont = await serializeFontForSourceSave(
                     targetPath,
-                    currentFont.babelfontJson
+                    babelfontJson
                 );
                 const pluginId = fileSystemCache.currentPlugin.getId();
                 if (pluginId === 'disk') {

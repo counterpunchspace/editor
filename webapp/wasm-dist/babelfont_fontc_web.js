@@ -1105,6 +1105,13 @@ export function prime_preview_layout_closure_cache(
     return ret[0] >>> 0;
 }
 
+export function rebuild_caches_from_ydoc_set() {
+    const ret = wasm.rebuild_caches_from_ydoc_set();
+    if (ret[1]) {
+        throw takeFromExternrefTable0(ret[0]);
+    }
+}
+
 /**
  * @param {Uint8Array} base_update
  * @param {string} overrides_json
@@ -1185,6 +1192,10 @@ export function remove_masters_yjs(master_ids_json) {
         throw takeFromExternrefTable0(ret[1]);
     }
     return takeFromExternrefTable0(ret[0]);
+}
+
+export function reset_ydoc_set() {
+    wasm.reset_ydoc_set();
 }
 
 /**
@@ -1270,6 +1281,25 @@ export function seed_ydoc(state_update) {
     const ptr0 = passArray8ToWasm0(state_update, wasm.__wbindgen_malloc);
     const len0 = WASM_VECTOR_LEN;
     const ret = wasm.seed_ydoc(ptr0, len0);
+    if (ret[1]) {
+        throw takeFromExternrefTable0(ret[0]);
+    }
+}
+
+/**
+ * @param {string} document_id
+ * @param {Uint8Array} state_update
+ */
+export function seed_ydoc_document(document_id, state_update) {
+    const ptr0 = passStringToWasm0(
+        document_id,
+        wasm.__wbindgen_malloc,
+        wasm.__wbindgen_realloc
+    );
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passArray8ToWasm0(state_update, wasm.__wbindgen_malloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ret = wasm.seed_ydoc_document(ptr0, len0, ptr1, len1);
     if (ret[1]) {
         throw takeFromExternrefTable0(ret[0]);
     }
@@ -1491,6 +1521,10 @@ function __wbg_get_imports() {
             const ret = new Object();
             return ret;
         },
+        __wbg_new_ff7f9cc4c9a4a0cf: function () {
+            const ret = new Array();
+            return ret;
+        },
         __wbg_new_from_slice_a5be53238f31f9f7: function (arg0, arg1) {
             const ret = new Uint8Array(getArrayU8FromWasm0(arg0, arg1));
             return ret;
@@ -1512,6 +1546,10 @@ function __wbg_get_imports() {
                 getArrayU8FromWasm0(arg0, arg1),
                 arg2
             );
+        },
+        __wbg_push_3584053bd77475ee: function (arg0, arg1) {
+            const ret = arg0.push(arg1);
+            return ret;
         },
         __wbg_randomFillSync_6c25eac9869eb53c: function () {
             return handleError(function (arg0, arg1) {

@@ -449,6 +449,8 @@ export namespace Babelfont {
         component_axes?: Axis[];
         /** Format-specific data */
         format_specific?: Record<string, any>;
+        /** Immutable cloud/CRDT glyph id */
+        id?: string;
     }
     /** A representation of a font source file */
     export interface Font {

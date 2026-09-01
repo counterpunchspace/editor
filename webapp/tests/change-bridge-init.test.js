@@ -3198,6 +3198,10 @@ describe('bridge Yjs worker callback', () => {
             fontCompilation,
             'seedWorkerYDocFromState'
         ).mockResolvedValue();
+        jest.spyOn(
+            fontCompilation,
+            'seedWorkerDocumentSet'
+        ).mockResolvedValue();
         window.windowRole = {
             isLinkedWindow: () => false,
             getRoleLabel: () => 'main'
@@ -3320,8 +3324,12 @@ describe('bridge Yjs worker callback', () => {
 
     test('seeds the worker from the authoritative bridge Y.Doc', async () => {
         const workerSeedSpy = jest
-            .spyOn(fontCompilation, 'seedWorkerYDocFromState')
+            .spyOn(fontCompilation, 'seedWorkerDocumentSet')
             .mockResolvedValue();
+        jest.spyOn(
+            fontCompilation,
+            'seedWorkerYDocFromState'
+        ).mockResolvedValue();
         const trackWorkerDocumentSyncSpy = jest.spyOn(
             fontCompilation,
             'trackWorkerDocumentSync'
@@ -3336,10 +3344,12 @@ describe('bridge Yjs worker callback', () => {
         const bridge = initializeBridgeHarness();
         await Promise.resolve();
 
-        const [seedState] = workerSeedSpy.mock.calls[0];
-        expect(seedState).toEqual(expect.any(Uint8Array));
-        expect(Array.from(seedState)).toEqual(
-            Array.from(bridge.encodeBridgeState())
+        const [seedDocuments] = workerSeedSpy.mock.calls[0];
+        expect(seedDocuments).toEqual(
+            bridge.encodeDocumentSet().map((shard) => ({
+                documentId: shard.documentId,
+                bytes: shard.bytes
+            }))
         );
         expect(trackWorkerDocumentSyncSpy).toHaveBeenCalledWith(
             expect.any(Promise)

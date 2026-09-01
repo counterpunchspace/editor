@@ -304,6 +304,100 @@
     background-color: color-mix(in srgb, var(--accent-red) 12%, transparent);
 }
 
+.dialog-input {
+    min-width: 0;
+    padding: 6px 8px;
+    border: 1px solid var(--border-primary);
+    background-color: var(--input-bg);
+    color: var(--text-primary);
+    font-family: var(--font-families-sans);
+    font-size: 12px;
+    border-radius: 4px;
+    box-sizing: border-box;
+}
+
+.dialog-input:disabled {
+    opacity: 0.45;
+    cursor: default;
+}
+
+.share-dialog-open {
+    overflow: hidden;
+}
+
+.share-dialog-overlay {
+    display: none;
+}
+
+.share-dialog-overlay.visible {
+    display: flex;
+}
+
+.share-dialog {
+    max-width: 560px;
+}
+
+.share-dialog-actions {
+    padding: 0 20px 16px;
+    margin-top: 0;
+}
+
+.share-dialog-form,
+.share-dialog-row {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.share-dialog-form {
+    margin-top: 8px;
+}
+
+.share-dialog-form .dialog-input[type='email'],
+.share-dialog-form .dialog-input[type='text'] {
+    flex: 1 1 160px;
+}
+
+.share-dialog-form select.dialog-input {
+    flex: 0 0 auto;
+}
+
+.share-dialog-row {
+    align-items: flex-start;
+    justify-content: space-between;
+}
+
+.share-dialog-row p {
+    margin: 4px 0 0;
+}
+
+.share-dialog .share-dialog-people {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+}
+
+.share-dialog .share-dialog-people li {
+    margin: 0;
+    padding: 8px 0;
+    border-top: 1px solid var(--border-primary);
+}
+
+.share-dialog .share-dialog-people li:first-child {
+    border-top: none;
+    padding-top: 0;
+}
+
+.share-dialog-section h4 {
+    margin: 0;
+    font-family: var(--font-families-sans);
+}
+
+.share-dialog [role='alert'] {
+    color: var(--accent-red);
+}
+
 .folder-permissions-dialog {
     max-width: 560px;
 }
@@ -327,7 +421,8 @@
     z-index: 12000;
 }
 
-.folder-permissions-section {
+.folder-permissions-section,
+.share-dialog-section {
     margin-top: 16px;
     padding-top: 12px;
     border-top: 1px solid var(--border-primary);

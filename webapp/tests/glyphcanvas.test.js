@@ -14079,7 +14079,7 @@ describe('GlyphCanvas anchor movement', () => {
 
             step = 'assert ydoc committed adieresis placement';
             const yDocAdieresisLayer = getLayerFromFontJson(
-                yDocToJson(bridge.fontMap),
+                bridge.getFontJsonSnapshot(),
                 'adieresis'
             );
             expect(

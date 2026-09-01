@@ -7,6 +7,7 @@ import {
 } from './character-set-plugin-manager';
 import { Logger } from './logger';
 import { bindModalEscape, type ModalEscapeBinding } from './ui/modal-escape';
+import type { FilesystemPlugin } from './filesystem-plugins/filesystem-plugin';
 
 const console = new Logger('AddGlyphsDialog');
 
@@ -61,6 +62,7 @@ export class AddGlyphsDialog {
     private coverageControls: HTMLElement | null = null;
     private list: HTMLElement | null = null;
     private confirmButton: HTMLButtonElement | null = null;
+    private quotaError: HTMLParagraphElement | null = null;
     private results: GlyphDataSearchResult[] = [];
     private selectedCodepoints = new Set<number>();
     private activeIndex = -1;
@@ -115,9 +117,34 @@ export class AddGlyphsDialog {
     private close(): void {
         this.escapeBinding?.release();
         this.escapeBinding = null;
+        this.clearQuotaError();
         if (this.modal) {
             this.modal.style.display = 'none';
         }
+    }
+
+    private clearQuotaError(): void {
+        if (!this.quotaError) {
+            return;
+        }
+        this.quotaError.hidden = true;
+        this.quotaError.textContent = '';
+    }
+
+    private showQuotaError(message: string): void {
+        if (!this.quotaError) {
+            return;
+        }
+        this.quotaError.hidden = false;
+        this.quotaError.textContent = message;
+    }
+
+    private getSourcePlugin(): FilesystemPlugin | null {
+        const plugin = window.fontManager?.currentFont?.sourcePlugin;
+        if (plugin && typeof plugin.canAddGlyphs === 'function') {
+            return plugin as FilesystemPlugin;
+        }
+        return null;
     }
 
     private buildContent(): void {
@@ -181,17 +208,23 @@ export class AddGlyphsDialog {
 
         const actions = document.createElement('div');
         actions.className = 'find-glyph-actions';
+        this.quotaError = document.createElement('p');
+        this.quotaError.className = 'add-glyphs-quota-error';
+        this.quotaError.setAttribute('role', 'alert');
+        this.quotaError.hidden = true;
         const cancel = document.createElement('button');
         cancel.className = 'dialog-button';
         cancel.type = 'button';
         cancel.textContent = 'Cancel';
         cancel.addEventListener('click', () => this.close());
-        actions.appendChild(cancel);
+        actions.append(this.quotaError, cancel);
 
         this.confirmButton = document.createElement('button');
         this.confirmButton.className = 'dialog-button dialog-button-primary';
         this.confirmButton.type = 'button';
-        this.confirmButton.addEventListener('click', () => this.addSelected());
+        this.confirmButton.addEventListener('click', () => {
+            void this.addSelected();
+        });
         actions.appendChild(this.confirmButton);
         const body = document.createElement('div');
         body.className = 'add-glyph-body';
@@ -669,11 +702,12 @@ export class AddGlyphsDialog {
             count === 1 ? 'Add Glyph' : `Add ${count} Glyphs`;
     }
 
-    private addSelected(): void {
+    private async addSelected(): Promise<void> {
         const font = window.currentFontModel as Font | null;
         if (!font || this.selectedCodepoints.size === 0) {
             return;
         }
+        this.clearQuotaError();
         const selected = this.results.filter((record) =>
             this.selectedCodepoints.has(record.codepoint)
         );
@@ -683,16 +717,38 @@ export class AddGlyphsDialog {
                 !font.findGlyphByCodepoint(record.codepoint) &&
                 !existingNames.has(record.glyph_name)
         );
-        font.addGlyphs(
-            additions.map((record) => ({
-                name: record.glyph_name,
-                codepoints: [record.codepoint],
-                category: record.general_category.startsWith('M')
-                    ? 'Mark'
-                    : 'Base'
-            }))
-        );
-        this.close();
+        if (additions.length === 0) {
+            this.close();
+            return;
+        }
+        const plugin = this.getSourcePlugin();
+        if (plugin) {
+            const gate = await plugin.canAddGlyphs(additions.length);
+            if (!gate.allowed) {
+                this.showQuotaError(
+                    gate.reason || 'Glyph limit reached for this font.'
+                );
+                return;
+            }
+        }
+        try {
+            font.addGlyphs(
+                additions.map((record) => ({
+                    name: record.glyph_name,
+                    codepoints: [record.codepoint],
+                    category: record.general_category.startsWith('M')
+                        ? 'Mark'
+                        : 'Base'
+                }))
+            );
+            this.close();
+        } catch (error) {
+            this.showQuotaError(
+                error instanceof Error
+                    ? error.message
+                    : 'Glyph limit reached for this font.'
+            );
+        }
     }
 }
 

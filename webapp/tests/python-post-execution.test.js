@@ -44,6 +44,18 @@ describe('Python post-execution synthetic commit alignment', () => {
         }
     }
 
+    function withoutGlyphIds(snapshot) {
+        const clone = JSON.parse(JSON.stringify(snapshot));
+        if (Array.isArray(clone.glyphs)) {
+            for (const glyph of clone.glyphs) {
+                if (glyph && typeof glyph === 'object') {
+                    delete glyph.id;
+                }
+            }
+        }
+        return clone;
+    }
+
     afterEach(() => {
         delete window.autoCompileManager;
         delete window.afterPythonExecution;
@@ -176,6 +188,7 @@ describe('Python post-execution synthetic commit alignment', () => {
             { x: 0, y: 100, nodetype: 'Move' },
             { x: 100, y: 0, nodetype: 'Line' }
         ];
+        const beforeFontDataJson = JSON.stringify(beforeSnapshot);
         const bridge = new PatchSyncEngine('python-one-node-packet');
         bridge.initFromJson(beforeSnapshot);
         const emittedUpdates = [];
@@ -192,7 +205,7 @@ describe('Python post-execution synthetic commit alignment', () => {
             },
             {
                 transactionStarted: true,
-                beforeFontDataJson: JSON.stringify(beforeSnapshot),
+                beforeFontDataJson,
                 label: 'Python script',
                 releaseRecordingSuppression
             },
@@ -425,7 +438,7 @@ describe('Python post-execution synthetic commit alignment', () => {
         const receiverFontJson = JSON.parse(JSON.stringify(beforeSnapshot));
         sender.initFromJson(beforeSnapshot);
         receiver._fontJson = receiverFontJson;
-        Y.applyUpdate(receiver.yDoc, Y.encodeStateAsUpdate(sender.yDoc));
+        receiver.applyDocumentSetState(sender.encodeDocumentSet());
 
         const emittedUpdates = [];
         sender.onLocalUpdate((update, _message, entries) => {
@@ -461,13 +474,17 @@ describe('Python post-execution synthetic commit alignment', () => {
                 promptGroupId: 'prompt-python-suppression'
             })
         ]);
-        expect(yDocToJson(sender.fontMap)).toEqual(afterSnapshot);
+        expect(sender.getFontJsonSnapshot()).toEqual(
+            expect.objectContaining(afterSnapshot)
+        );
 
         receiver.applyRemoteUpdate(
             emittedUpdates[0].update,
             emittedUpdates[0].entries
         );
-        expect(receiverFontJson).toEqual(afterSnapshot);
+        expect(receiverFontJson).toEqual(
+            expect.objectContaining(afterSnapshot)
+        );
 
         sender.destroy();
         receiver.destroy();
@@ -644,9 +661,9 @@ describe('Python post-execution synthetic commit alignment', () => {
         const sender = new PatchSyncEngine('prompt-feature-reorder-sender');
         const receiver = new PatchSyncEngine('prompt-feature-reorder-receiver');
         const receiverFontJson = JSON.parse(JSON.stringify(beforeSnapshot));
-        sender.initFromJson(beforeSnapshot);
+        sender.initFromJson(JSON.parse(JSON.stringify(beforeSnapshot)));
         receiver._fontJson = receiverFontJson;
-        Y.applyUpdate(receiver.yDoc, Y.encodeStateAsUpdate(sender.yDoc));
+        receiver.applyDocumentSetState(sender.encodeDocumentSet());
 
         const emittedUpdates = [];
         sender.onLocalUpdate((update, _message, entries) => {
@@ -727,7 +744,7 @@ describe('Python post-execution synthetic commit alignment', () => {
                 ])
             })
         ]);
-        expect(yDocToJson(sender.fontMap)).toEqual(finalSnapshot);
+        expect(sender.getFontJsonSnapshot()).toEqual(finalSnapshot);
 
         expect(emittedUpdates).toHaveLength(2);
         expect(buildHistoryStackItems(sender.getChangeLog())).toEqual([
@@ -749,7 +766,7 @@ describe('Python post-execution synthetic commit alignment', () => {
 
         sender.undo();
         expect(emittedUpdates).toHaveLength(3);
-        expect(yDocToJson(sender.fontMap)).toEqual(beforeSnapshot);
+        expect(sender.getFontJsonSnapshot()).toEqual(beforeSnapshot);
         receiver.applyRemoteUpdate(
             emittedUpdates[2].update,
             emittedUpdates[2].entries
@@ -758,7 +775,7 @@ describe('Python post-execution synthetic commit alignment', () => {
 
         sender.redo();
         expect(emittedUpdates).toHaveLength(4);
-        expect(yDocToJson(sender.fontMap)).toEqual(finalSnapshot);
+        expect(sender.getFontJsonSnapshot()).toEqual(finalSnapshot);
         receiver.applyRemoteUpdate(
             emittedUpdates[3].update,
             emittedUpdates[3].entries
@@ -789,7 +806,7 @@ describe('Python post-execution synthetic commit alignment', () => {
         const sender = new PatchSyncEngine('mixed-prompt-sender');
         const receiver = new PatchSyncEngine('mixed-prompt-receiver');
         sender.initFromJson(beforeSnapshot);
-        const normalizedBeforeSnapshot = yDocToJson(sender.fontMap);
+        const normalizedBeforeSnapshot = sender.getFontJsonSnapshot();
         const finalSnapshot = JSON.parse(
             JSON.stringify(normalizedBeforeSnapshot)
         );
@@ -805,11 +822,18 @@ describe('Python post-execution synthetic commit alignment', () => {
             JSON.stringify(normalizedBeforeSnapshot)
         );
         receiver._fontJson = receiverFontJson;
-        Y.applyUpdate(receiver.yDoc, Y.encodeStateAsUpdate(sender.yDoc));
+        receiver.applyDocumentSetState(sender.encodeDocumentSet());
 
         const emittedUpdates = [];
-        sender.onLocalUpdate((update, _message, entries) => {
-            emittedUpdates.push({ update, entries });
+        sender.onLocalUpdate((update, _message, entries, documentId) => {
+            emittedUpdates.push({ update, entries, documentId });
+        });
+        sender.onGlyphRevisionSignal((update, entries) => {
+            emittedUpdates.push({
+                update,
+                entries,
+                documentId: 'font-core'
+            });
         });
         const promptHistoryMetadata = {
             historyItemId: 'prompt-mixed-scope',
@@ -855,23 +879,42 @@ describe('Python post-execution synthetic commit alignment', () => {
                 ])
             })
         ]);
-        expect(yDocToJson(sender.fontMap)).toEqual(finalSnapshot);
+        expect(sender.getFontJsonSnapshot()).toEqual(finalSnapshot);
 
         for (const packet of emittedUpdates) {
-            receiver.applyRemoteUpdate(packet.update, packet.entries);
+            receiver.applyRemoteUpdate(
+                packet.update,
+                packet.entries,
+                undefined,
+                packet.documentId
+            );
         }
         expect(receiverFontJson).toEqual(receiverFinalSnapshot);
 
+        const undoFrom = emittedUpdates.length;
         sender.undo();
-        const undoPacket = emittedUpdates.at(-1);
-        receiver.applyRemoteUpdate(undoPacket.update, undoPacket.entries);
-        expect(yDocToJson(sender.fontMap)).toEqual(normalizedBeforeSnapshot);
+        for (const packet of emittedUpdates.slice(undoFrom)) {
+            receiver.applyRemoteUpdate(
+                packet.update,
+                packet.entries,
+                undefined,
+                packet.documentId
+            );
+        }
+        expect(sender.getFontJsonSnapshot()).toEqual(normalizedBeforeSnapshot);
         expect(receiverFontJson).toEqual(normalizedBeforeSnapshot);
 
+        const redoFrom = emittedUpdates.length;
         sender.redo();
-        const redoPacket = emittedUpdates.at(-1);
-        receiver.applyRemoteUpdate(redoPacket.update, redoPacket.entries);
-        expect(yDocToJson(sender.fontMap)).toEqual(finalSnapshot);
+        for (const packet of emittedUpdates.slice(redoFrom)) {
+            receiver.applyRemoteUpdate(
+                packet.update,
+                packet.entries,
+                undefined,
+                packet.documentId
+            );
+        }
+        expect(sender.getFontJsonSnapshot()).toEqual(finalSnapshot);
         expect(receiverFontJson).toEqual(receiverFinalSnapshot);
 
         sender.destroy();
@@ -973,16 +1016,20 @@ describe('Python post-execution synthetic commit alignment', () => {
         const sender = new PatchSyncEngine('python-collection-sender');
         const receiver = new PatchSyncEngine('python-collection-receiver');
         const receiverFontJson = JSON.parse(JSON.stringify(beforeSnapshot));
-        sender.initFromJson(beforeSnapshot);
+        sender.initFromJson(JSON.parse(JSON.stringify(beforeSnapshot)));
         receiver._fontJson = receiverFontJson;
-        Y.applyUpdate(receiver.yDoc, Y.encodeStateAsUpdate(sender.yDoc));
+        receiver.applyDocumentSetState(sender.encodeDocumentSet());
 
-        let update;
-        let entries;
-        sender.onLocalUpdate((nextUpdate, _message, nextEntries) => {
-            update = nextUpdate;
-            entries = nextEntries;
-        });
+        const packets = [];
+        sender.onLocalUpdate(
+            (nextUpdate, _message, nextEntries, documentId) => {
+                packets.push({
+                    update: nextUpdate,
+                    entries: nextEntries,
+                    documentId
+                });
+            }
+        );
         const currentFont = {
             babelfontJson: '',
             syncJsonFromModel: jest.fn(function () {
@@ -1000,17 +1047,33 @@ describe('Python post-execution synthetic commit alignment', () => {
             sender
         );
 
-        expect(sender.fontMap.get('glyphs')).toBeInstanceOf(Y.Map);
-        expect(yDocToJson(sender.fontMap)).toEqual(afterSnapshot);
+        expect(sender.getYValue(['glyphs', 'C'])).toBeInstanceOf(Y.Map);
+        expect(sender.getYValue(['glyphs', 'A'])).toBeUndefined();
+        expect(withoutGlyphIds(sender.getFontJsonSnapshot())).toEqual(
+            expect.objectContaining(afterSnapshot)
+        );
 
-        receiver.applyRemoteUpdate(update, entries);
-        expect(receiverFontJson).toEqual(afterSnapshot);
+        for (const packet of packets) {
+            receiver.applyRemoteUpdate(
+                packet.update,
+                packet.entries,
+                undefined,
+                packet.documentId
+            );
+        }
+        expect(withoutGlyphIds(receiverFontJson)).toEqual(
+            expect.objectContaining(afterSnapshot)
+        );
 
         sender.undo();
-        expect(yDocToJson(sender.fontMap)).toEqual(beforeSnapshot);
+        expect(withoutGlyphIds(sender.getFontJsonSnapshot())).toEqual(
+            withoutGlyphIds(beforeSnapshot)
+        );
 
         sender.redo();
-        expect(yDocToJson(sender.fontMap)).toEqual(afterSnapshot);
+        expect(withoutGlyphIds(sender.getFontJsonSnapshot())).toEqual(
+            expect.objectContaining(afterSnapshot)
+        );
 
         sender.destroy();
         receiver.destroy();

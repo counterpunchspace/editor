@@ -5484,7 +5484,7 @@ describe('FontManager external source reload', () => {
         ).resolves.toBe(true);
 
         expect(loadSourceSpy).toHaveBeenCalledWith(openedFont);
-        expect(emittedUpdates).toHaveLength(1);
+        expect(emittedUpdates.length).toBeGreaterThanOrEqual(1);
         expect(workerCacheSpy).toHaveBeenCalledTimes(1);
         expect(sendMessageSpy).not.toHaveBeenCalledWith(
             expect.objectContaining({ type: 'storeFontJson' })
@@ -5625,15 +5625,15 @@ describe('FontManager external source reload', () => {
         expect(sourceAdapter.readFile).toHaveBeenCalledWith(
             '/fonts/ManufacturedKink.babelfont'
         );
-        expect(emittedUpdates).toHaveLength(1);
-        expect(emittedUpdates[0].entries).toEqual([
+        expect(emittedUpdates.length).toBeGreaterThanOrEqual(1);
+        expect(emittedUpdates.flatMap((packet) => packet.entries)).toEqual([
             expect.objectContaining({
                 op: 'set',
                 path: 'glyphs..notdef:layers.L1:shapes',
                 workerReplayTargets: [{ glyphName: '.notdef', layerId: 'L1' }]
             })
         ]);
-        expect(emittedUpdates[0].entries).not.toEqual(
+        expect(emittedUpdates.flatMap((packet) => packet.entries)).not.toEqual(
             expect.arrayContaining([
                 expect.objectContaining({
                     path: 'glyphs..notdef:layers.L2:shapes'
@@ -5643,10 +5643,11 @@ describe('FontManager external source reload', () => {
                 })
             ])
         );
-        expect(emittedUpdates[0].entries[0].newValue[0].nodes[0].y).toBe(
-            beforeY + 100
-        );
-        expect(yDocToJson(bridge.fontMap).masters[0].guides[0].id).toBe(
+        const shapeEntry = emittedUpdates
+            .flatMap((packet) => packet.entries)
+            .find((entry) => entry.path === 'glyphs..notdef:layers.L1:shapes');
+        expect(shapeEntry.newValue[0].nodes[0].y).toBe(beforeY + 100);
+        expect(bridge.getFontJsonSnapshot().masters[0].guides[0].id).toBe(
             originalData.masters[0].guides[0].id
         );
         expect(workerCacheSpy).toHaveBeenCalledTimes(1);

@@ -58,7 +58,20 @@ Full-document transport is reserved for bootstrap from external sources only, su
 
 ### Cloud sync vs. local window sync
 
-Only a font’s main window syncs with the DO room in the cloud. Local linked windows only talk to the main window which relays messages back and forth between the cloud and the local linked windows. Each window keeps its own chrome (layout, docs, overview, filters, canvas plugins, and focus) in `windowUi.*`; font data stays shared.
+Font data is a **document set**: `font-core`, `font-deps`, and one Y.Doc per
+`glyph:<id>`. Outlines live only on glyph docs. The compilation worker is
+seeded and updated per `documentId`; glyph-revision-only core packets are
+not forwarded to the worker.
+
+Only the main window holds cloud Durable Object sockets (`font-core` plus the
+live glyph subset). Linked windows talk to main over document-scoped
+BroadcastChannel. Chrome stays per window (`windowUi.*`).
+
+Edits that are not on a peer’s WebSocket subset still arrive: core publishes
+`glyphRevisions`, then every instance HTTP-catches-up the glyph live vector
+until `sync.revision` matches, and main relays that to linked windows.
+Catch-up is a checkpoint, not history replay. Linked bootstrap seeds the
+Rust worker with the full document set (`seedWorkerDocumentSet`).
 
 ## The Editing Pipeline
 

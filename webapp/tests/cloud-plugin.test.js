@@ -57,6 +57,8 @@ jest.mock('../js/cloud-adapter', () => ({
                 }
             }),
             rebindToCurrentBridge: mockRebindToCurrentBridge,
+            seedDocumentSet: jest.fn().mockResolvedValue(),
+            hydrateDocumentSet: jest.fn().mockResolvedValue(new Map()),
             disconnect: jest.fn(() => {
                 mockDisconnect();
             }),
@@ -65,7 +67,8 @@ jest.mock('../js/cloud-adapter', () => ({
 
         return adapter;
     }),
-    normalizeCloudRoomWebSocketUrl: jest.fn((roomUrl) => roomUrl)
+    normalizeCloudRoomWebSocketUrl: jest.fn((roomUrl) => roomUrl),
+    normalizeCloudShardWebSocketUrl: jest.fn((roomUrl) => roomUrl)
 }));
 
 const mockBridgeState = new Uint8Array([1, 2, 3]);
@@ -75,6 +78,9 @@ jest.mock('../js/patch-sync-engine', () => ({
     PatchSyncEngine: jest.fn().mockImplementation(() => {
         let updateHandler = null;
         mockLatestTempBridge = {
+            encodeDocumentSet: jest.fn(() => [
+                { documentId: 'font-core', bytes: new Uint8Array([1, 2, 3]) }
+            ]),
             getFontJsonSnapshot: jest.fn(() => mockYDocToJson()),
             yDoc: {
                 on: jest.fn((eventName, handler) => {
@@ -184,6 +190,7 @@ require('../js/filesystem-plugins');
 const {
     CloudPlugin
 } = require('../js/filesystem-plugins/plugins/cloud-plugin');
+const { CloudAdapter } = require('../js/cloud-adapter');
 
 describe('CloudPlugin.openAsset', () => {
     let plugin;
@@ -202,9 +209,11 @@ describe('CloudPlugin.openAsset', () => {
     let eventListeners;
 
     beforeEach(() => {
-        mockConnectDirect.mockClear();
+        mockConnectDirect.mockReset();
+        mockConnectDirect.mockResolvedValue();
         mockConnect.mockClear();
         mockDisconnect.mockClear();
+        CloudAdapter.mockClear();
         mockConnectDirectStatusQueue = [];
         mockRebindToCurrentBridge.mockClear();
         mockYDocToJson.mockReset();
@@ -254,6 +263,12 @@ describe('CloudPlugin.openAsset', () => {
                 if (!window.patchSyncEngine) {
                     window.patchSyncEngine = {
                         encodeBridgeState: jest.fn(() => new Uint8Array([1])),
+                        encodeDocumentSet: jest.fn(() => [
+                            {
+                                documentId: 'font-core',
+                                bytes: new Uint8Array([1, 2, 3])
+                            }
+                        ]),
                         onCommittedChange: jest.fn(),
                         offCommittedChange: jest.fn(),
                         onLocalUpdate: jest.fn(),
@@ -516,6 +531,9 @@ describe('CloudPlugin.openAsset', () => {
         };
         window.patchSyncEngine = {
             encodeBridgeState: jest.fn(() => new Uint8Array([1, 2, 3])),
+            encodeDocumentSet: jest.fn(() => [
+                { documentId: 'font-core', bytes: new Uint8Array([1, 2, 3]) }
+            ]),
             onCommittedChange: jest.fn(),
             offCommittedChange: jest.fn(),
             onLocalUpdate: jest.fn(),
@@ -609,6 +627,116 @@ describe('CloudPlugin.openAsset', () => {
         );
         expect(mockConnect).not.toHaveBeenCalled();
         expect(finalizeCalls).toHaveLength(1);
+    });
+
+    test('saveAs opens live WebSockets for font-core and the editing-subset glyph rooms', async () => {
+        window.glyphCanvas = {
+            initialFontLoaded: true
+        };
+        window.currentFontModel = {
+            glyphs: [
+                {
+                    name: 'A',
+                    layers: [
+                        {
+                            id: 'L0',
+                            shapes: [{}, {}],
+                            anchors: [],
+                            guides: []
+                        }
+                    ]
+                }
+            ]
+        };
+        window.fontManager = {
+            currentFont: {
+                name: 'Save Source',
+                path: '/user/Save Source.babelfont',
+                babelfontJson: JSON.stringify(defaultCloudFontJson),
+                babelfontData: defaultCloudFontJson,
+                fontModel: window.currentFontModel,
+                syncJsonFromModel: jest.fn()
+            },
+            editingFont: new Uint8Array([1]),
+            getEditingSubsetSnapshot: jest.fn(() => ['A'])
+        };
+        window.patchSyncEngine = {
+            encodeBridgeState: jest.fn(() => new Uint8Array([1, 2, 3])),
+            encodeDocumentSet: jest.fn(() => [
+                { documentId: 'font-core', bytes: new Uint8Array([1, 2, 3]) },
+                { documentId: 'glyph:uuid-a', bytes: new Uint8Array([4, 5]) }
+            ]),
+            glyphDocumentIdForName: jest.fn((name) =>
+                name === 'A' ? 'glyph:uuid-a' : null
+            ),
+            onCommittedChange: jest.fn(),
+            offCommittedChange: jest.fn(),
+            onLocalUpdate: jest.fn(),
+            offLocalUpdate: jest.fn(),
+            getFontJsonSnapshot: jest.fn(() => defaultCloudFontJson)
+        };
+
+        global.fetch = jest.fn().mockImplementation((url) => {
+            if (
+                typeof url === 'string' &&
+                url.endsWith('/api/cloud/eligibility')
+            ) {
+                return Promise.resolve({
+                    ok: true,
+                    json: jest.fn().mockResolvedValue({
+                        cloudHostingEnabled: true,
+                        maxFontsOwned: null,
+                        snapshotRetentionDays: null,
+                        fontsOwnedCount: 0,
+                        maxCloudAssetBytes: 1024 * 1024,
+                        warningCloudAssetBytes: 512
+                    })
+                });
+            }
+            if (
+                typeof url === 'string' &&
+                url.endsWith('/api/cloud/assets/asset-save/finalize')
+            ) {
+                return Promise.resolve({
+                    ok: true,
+                    json: jest.fn().mockResolvedValue({
+                        success: true,
+                        asset: { id: 'asset-save', lifecycleState: 'active' }
+                    }),
+                    text: jest.fn().mockResolvedValue('')
+                });
+            }
+            return Promise.resolve({
+                ok: true,
+                json: jest.fn().mockResolvedValue({
+                    asset: {
+                        id: 'asset-save',
+                        name: 'Save Source',
+                        role: 'owner'
+                    },
+                    token: 'room-token',
+                    roomUrl: 'ws://localhost:8787/room/asset-save'
+                })
+            });
+        });
+
+        window.dispatchEvent = jest.fn((event) => {
+            if (event.type === 'fontLoaded') {
+                window.fontManager.currentFont.path = event.detail?.path;
+                window.fontManager.currentFont.sourcePlugin = plugin;
+            }
+            return true;
+        });
+
+        await expect(plugin.saveAs('Save Source')).resolves.toBe('asset-save');
+        const liveDocumentIds = CloudAdapter.mock.calls
+            .map(([options]) => options?.documentId)
+            .filter(Boolean);
+        expect(liveDocumentIds).toEqual(
+            expect.arrayContaining(['font-core', 'glyph:uuid-a'])
+        );
+        expect(liveDocumentIds).not.toContain('font-deps');
+        expect(mockConnectDirect).toHaveBeenCalledTimes(2);
     });
 
     test('reuses the save seed snapshot until the font revision changes', async () => {
@@ -838,6 +966,9 @@ describe('CloudPlugin.openAsset', () => {
         window.patchSyncEngine = {
             onLocalUpdate: jest.fn(),
             offLocalUpdate: jest.fn(),
+            encodeDocumentSet: jest.fn(() => [
+                { documentId: 'font-core', bytes: new Uint8Array([1, 2, 3]) }
+            ]),
             getFontJsonSnapshot: jest.fn(() => defaultCloudFontJson)
         };
 
@@ -884,7 +1015,7 @@ describe('CloudPlugin.openAsset', () => {
             'cloud sync timed out'
         );
 
-        expect(mockDisconnect).toHaveBeenCalledTimes(1);
+        expect(mockDisconnect).toHaveBeenCalledTimes(2);
         expect(plugin.activeAssetId).toBeNull();
         expect(window.fontManager.currentFont.path).toBe(
             '/user/Save Source.babelfont'
@@ -925,6 +1056,9 @@ describe('CloudPlugin.openAsset', () => {
         window.patchSyncEngine = {
             onLocalUpdate: jest.fn(),
             offLocalUpdate: jest.fn(),
+            encodeDocumentSet: jest.fn(() => [
+                { documentId: 'font-core', bytes: new Uint8Array([1, 2, 3]) }
+            ]),
             getFontJsonSnapshot: jest.fn(() => defaultCloudFontJson)
         };
 
@@ -1010,6 +1144,9 @@ describe('CloudPlugin.openAsset', () => {
 
         const originalBridge = {
             encodeBridgeState: jest.fn(() => new Uint8Array([1, 2, 3])),
+            encodeDocumentSet: jest.fn(() => [
+                { documentId: 'font-core', bytes: new Uint8Array([1, 2, 3]) }
+            ]),
             onCommittedChange: jest.fn(),
             offCommittedChange: jest.fn(),
             onLocalUpdate: jest.fn(),
@@ -1018,6 +1155,9 @@ describe('CloudPlugin.openAsset', () => {
         };
         const replacementBridge = {
             encodeBridgeState: jest.fn(() => new Uint8Array([1, 2, 3])),
+            encodeDocumentSet: jest.fn(() => [
+                { documentId: 'font-core', bytes: new Uint8Array([1, 2, 3]) }
+            ]),
             onCommittedChange: jest.fn(),
             offCommittedChange: jest.fn(),
             onLocalUpdate: jest.fn(),
@@ -1425,10 +1565,10 @@ describe('CloudPlugin.openAsset', () => {
 });
 
 describe('CloudPlugin UI availability', () => {
-    test('is hidden from UI by plugin flag', () => {
+    test('is visible in UI when the plugin flag is enabled', () => {
         const plugin = new CloudPlugin();
 
-        expect(plugin.isVisibleInUI()).toBe(false);
+        expect(plugin.isVisibleInUI()).toBe(true);
     });
 });
 
@@ -1687,5 +1827,51 @@ describe('CloudPlugin eligibility gating', () => {
             document.getElementById('cloud-panel').classList.contains('visible')
         ).toBe(false);
         expect(window.refreshFileSystem).toHaveBeenCalled();
+    });
+});
+
+describe('CloudPlugin glyph add quota', () => {
+    let plugin;
+    let originalFontModel;
+
+    beforeEach(() => {
+        plugin = new CloudPlugin();
+        originalFontModel = window.currentFontModel;
+        plugin._eligibility = {
+            cloudHostingEnabled: true,
+            maxFontsOwned: 1,
+            maxGlyphsPerFont: 2,
+            snapshotRetentionDays: null,
+            fontsOwnedCount: 0
+        };
+    });
+
+    afterEach(() => {
+        window.currentFontModel = originalFontModel;
+    });
+
+    test('blocks adding past the live glyph count even if server remaining is stale', () => {
+        window.currentFontModel = { glyphs: [{}, {}] };
+        plugin._assetLimits = {
+            ownerUserId: 'owner',
+            maxFontsOwned: 1,
+            maxGlyphsPerFont: 2,
+            glyphCount: 1,
+            fontsOwnedCount: 1,
+            remainingGlyphs: 1,
+            maxShardBytes: 10,
+            warningShardBytes: 8
+        };
+
+        expect(plugin.getCachedCanAddGlyphs(1).allowed).toBe(false);
+        expect(plugin.getCachedCanAddGlyphs(1).reason).toMatch(
+            /Glyph limit reached \(2\/2\)/
+        );
+    });
+
+    test('allows adding up to the remaining live slots', () => {
+        window.currentFontModel = { glyphs: [{}] };
+        expect(plugin.getCachedCanAddGlyphs(1).allowed).toBe(true);
+        expect(plugin.getCachedCanAddGlyphs(2).allowed).toBe(false);
     });
 });

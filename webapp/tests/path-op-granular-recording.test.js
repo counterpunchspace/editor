@@ -364,7 +364,8 @@ describe('Integration: set-start-point and reverse-direction byte budgets', () =
         const font = new Font(fontJson);
         const path = font.glyphs[0].layers[0].paths[0];
 
-        const beforeSV = Y.encodeStateVector(bridge.yDoc);
+        const glyphDoc = [...bridge._glyphDocs.values()][0];
+        const beforeSV = Y.encodeStateVector(glyphDoc || bridge.yDoc);
 
         path._setStartNode(5);
 
@@ -379,17 +380,13 @@ describe('Integration: set-start-point and reverse-direction byte budgets', () =
         expect(nodesEntry.newValue).toEqual(expect.any(Array));
         expect(nodesEntry.newValue).not.toEqual(nodesEntry.oldValue);
 
-        const update = Y.encodeStateAsUpdate(bridge.yDoc, beforeSV);
+        const update = Y.encodeStateAsUpdate(glyphDoc || bridge.yDoc, beforeSV);
 
         // Budget: 20-node rotation → one node-array replacement, not a whole-glyph snapshot.
         expect(update.length).toBeLessThan(3000);
 
         // Verify the Y.Doc state is correct — the first node is the former index 5.
-        const layerMap = bridge.fontMap
-            .get('glyphs')
-            .get('A')
-            .get('layers')
-            .get('layer-1');
+        const layerMap = bridge.getYValue(['glyphs', 'A', 'layers', 'layer-1']);
         const shapeMap = layerMap.get('shapes').get(0);
         expect(shapeMap.get('nodes')).toBeInstanceOf(Y.Array);
         expect(shapeMap.get('nodes').get(0).get('x')).toBe(1100);
@@ -463,12 +460,10 @@ describe('Assistant prompt transaction metadata', () => {
         const receiverBridge = new PatchSyncEngine('collection-order-receiver');
         bridge.initFromJson(fontJson);
         receiverBridge._fontJson = receiverFontJson;
-        Y.applyUpdate(receiverBridge.yDoc, Y.encodeStateAsUpdate(bridge.yDoc));
-        let remoteUpdate;
-        let remoteEntries;
-        bridge.onLocalUpdate((update, _message, entries) => {
-            remoteUpdate = update;
-            remoteEntries = entries;
+        receiverBridge.applyDocumentSetState(bridge.encodeDocumentSet());
+        const packets = [];
+        bridge.onLocalUpdate((update, _message, entries, documentId) => {
+            packets.push({ update, entries, documentId });
         });
         bridge.applySyntheticChangeSet('Reorder collections', [
             {
@@ -485,26 +480,38 @@ describe('Assistant prompt transaction metadata', () => {
             }
         ]);
 
-        expect(bridge.fontMap.get('glyphs')).toBeInstanceOf(Y.Map);
-        expect(yDocToJson(bridge.fontMap).glyphs).toEqual(
+        expect(bridge.getYValue(['glyphs', 'A'])).toBeInstanceOf(Y.Map);
+        expect(bridge.getFontJsonSnapshot().glyphs).toEqual(
             expect.arrayContaining([
                 expect.objectContaining({ name: 'A' }),
                 expect.objectContaining({ name: 'B' })
             ])
         );
         expect(
-            yDocToJson(bridge.fontMap).glyphs.map((glyph) => glyph.name)
+            bridge.getFontJsonSnapshot().glyphs.map((glyph) => glyph.name)
         ).toEqual(['B', 'A']);
         expect(
-            yDocToJson(bridge.fontMap)
+            bridge
+                .getFontJsonSnapshot()
                 .glyphs.find((glyph) => glyph.name === 'A')
                 .layers.map((layer) => layer.id)
         ).toEqual(['layer-2', 'layer-1']);
 
-        expect(remoteEntries.map((entry) => entry.path)).toEqual(
+        expect(
+            packets
+                .flatMap((packet) => packet.entries)
+                .map((entry) => entry.path)
+        ).toEqual(
             expect.arrayContaining(['glyphOrder', 'glyphs.A:layerOrder'])
         );
-        receiverBridge.applyRemoteUpdate(remoteUpdate, remoteEntries);
+        for (const packet of packets) {
+            receiverBridge.applyRemoteUpdate(
+                packet.update,
+                packet.entries,
+                undefined,
+                packet.documentId
+            );
+        }
         expect(receiverFontJson.glyphs.map((glyph) => glyph.name)).toEqual([
             'B',
             'A'
@@ -515,15 +522,17 @@ describe('Assistant prompt transaction metadata', () => {
 
         bridge.undo();
         expect(
-            yDocToJson(bridge.fontMap).glyphs.map((glyph) => glyph.name)
+            bridge.getFontJsonSnapshot().glyphs.map((glyph) => glyph.name)
         ).toEqual(['A', 'B']);
         expect(
-            yDocToJson(bridge.fontMap).glyphs[0].layers.map((layer) => layer.id)
+            bridge
+                .getFontJsonSnapshot()
+                .glyphs[0].layers.map((layer) => layer.id)
         ).toEqual(['layer-1', 'layer-2']);
 
         bridge.redo();
         expect(
-            yDocToJson(bridge.fontMap).glyphs.map((glyph) => glyph.name)
+            bridge.getFontJsonSnapshot().glyphs.map((glyph) => glyph.name)
         ).toEqual(['B', 'A']);
 
         bridge.destroy();
@@ -613,7 +622,7 @@ describe('Assistant prompt transaction metadata', () => {
                 })
             ])
         );
-        expect(yDocToJson(bridge.fontMap)).toEqual(
+        expect(bridge.getFontJsonSnapshot()).toEqual(
             expect.objectContaining({
                 names: expect.objectContaining({ familyName: 'PromptFont' }),
                 format_specific: expect.objectContaining({ source: 'python' })

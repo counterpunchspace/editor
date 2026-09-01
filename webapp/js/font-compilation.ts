@@ -535,6 +535,8 @@ export class FontCompilation {
     workerCacheDocumentReady: boolean;
     pendingWorkerDocumentSync: Promise<void>;
     pendingWorkerDocumentSyncCount: number;
+    pendingWorkerDocumentReplaces: Map<string, Uint8Array>;
+    workerDocumentReplaceFlush: Promise<unknown> | null;
 
     constructor(options?: { connectInterpolation?: boolean }) {
         this.worker = null;
@@ -550,6 +552,8 @@ export class FontCompilation {
         this.workerCacheDocumentReady = false;
         this.pendingWorkerDocumentSync = Promise.resolve();
         this.pendingWorkerDocumentSyncCount = 0;
+        this.pendingWorkerDocumentReplaces = new Map();
+        this.workerDocumentReplaceFlush = null;
     }
 
     /** Mark whether editing compiles may rely on the worker's current document cache. */
@@ -622,6 +626,133 @@ export class FontCompilation {
                 `Failed to seed worker Yjs document: ${seedResult.error}`
             );
         }
+    }
+
+    async seedWorkerDocumentSet(
+        documents: Array<{ documentId: string; bytes: Uint8Array }>
+    ): Promise<void> {
+        if (!documents.length) {
+            this.workerCacheDocumentReady = false;
+            throw new Error('Cannot seed worker document set without shards');
+        }
+
+        if (!this.isInitialized) {
+            const initialized = await this.initialize();
+            if (!initialized) {
+                throw new Error(
+                    'babelfont-fontc WASM not available. Run ./build-fontc-wasm.sh and serve with CORS headers.'
+                );
+            }
+        }
+
+        this.workerCacheDocumentReady = false;
+
+        const seedWork = (async () => {
+            const seedResult = await this.sendMessage({
+                type: 'seedYdoc',
+                documents: documents.map((document) => ({
+                    documentId: document.documentId,
+                    state: document.bytes
+                }))
+            });
+
+            if (seedResult?.error) {
+                this.workerCacheDocumentReady = false;
+                throw new Error(
+                    `Failed to seed worker Yjs document: ${seedResult.error}`
+                );
+            }
+        })();
+        this.trackWorkerDocumentSync(seedWork);
+        await seedWork;
+    }
+
+    /**
+     * Replace one or more worker shards from encoded Yjs snapshots.
+     * Used for cloud catch-up, which is a checkpoint rather than a delta.
+     */
+    async replaceWorkerDocuments(
+        documents: Array<{ documentId: string; bytes: Uint8Array }>
+    ): Promise<void> {
+        const shards = documents.filter(
+            (document) => document.documentId && document.bytes?.length
+        );
+        if (!shards.length) {
+            return;
+        }
+
+        if (!this.isInitialized) {
+            const initialized = await this.initialize();
+            if (!initialized) {
+                throw new Error(
+                    'babelfont-fontc WASM not available. Run ./build-fontc-wasm.sh and serve with CORS headers.'
+                );
+            }
+        }
+
+        this.workerCacheDocumentReady = false;
+        const result = await this.sendMessage({
+            type: 'replaceYdocDocuments',
+            documents: shards.map((document) => ({
+                documentId: document.documentId,
+                state: document.bytes
+            }))
+        });
+        if (result?.error) {
+            this.workerCacheDocumentReady = false;
+            throw new Error(
+                `Failed to replace worker Yjs documents: ${result.error}`
+            );
+        }
+    }
+
+    scheduleReplaceWorkerDocument(
+        documentId: string,
+        state: Uint8Array | ArrayBufferLike | null | undefined
+    ): void {
+        if (!documentId || !state) {
+            return;
+        }
+        const bytes =
+            state instanceof Uint8Array ? state : new Uint8Array(state);
+        if (!bytes.length) {
+            return;
+        }
+        this.pendingWorkerDocumentReplaces.set(documentId, bytes);
+        this._ensureWorkerDocumentReplaceFlush();
+    }
+
+    private _ensureWorkerDocumentReplaceFlush(): void {
+        if (this.workerDocumentReplaceFlush) {
+            return;
+        }
+        const flush = (async () => {
+            await Promise.resolve();
+            await this.awaitWorkerDocumentSync();
+            try {
+                while (this.pendingWorkerDocumentReplaces.size > 0) {
+                    const documents = Array.from(
+                        this.pendingWorkerDocumentReplaces.entries()
+                    ).map(([documentId, bytes]) => ({ documentId, bytes }));
+                    this.pendingWorkerDocumentReplaces.clear();
+                    const work = this.replaceWorkerDocuments(documents);
+                    this.trackWorkerDocumentSync(work);
+                    await work;
+                }
+            } finally {
+                this.workerDocumentReplaceFlush = null;
+                if (this.pendingWorkerDocumentReplaces.size > 0) {
+                    this._ensureWorkerDocumentReplaceFlush();
+                }
+            }
+        })();
+        this.workerDocumentReplaceFlush = flush;
+        void flush.catch((error) => {
+            console.warn(
+                'Failed to replace worker Yjs documents after catch-up',
+                error
+            );
+        });
     }
 
     async bootstrapWorkerCacheFromFontState(
@@ -1107,6 +1238,7 @@ export class FontCompilation {
         if (
             messageType === 'storeFontJson' ||
             messageType === 'seedYdoc' ||
+            messageType === 'replaceYdocDocuments' ||
             messageType === 'applyYjsUpdate'
         ) {
             // These messages mutate the Rust worker's document/cache state and
@@ -1140,6 +1272,7 @@ export class FontCompilation {
                 if (
                     messageType === 'storeFontJson' ||
                     messageType === 'seedYdoc' ||
+                    messageType === 'replaceYdocDocuments' ||
                     messageType === 'applyYjsUpdate'
                 ) {
                     this.workerCacheDocumentReady = true;

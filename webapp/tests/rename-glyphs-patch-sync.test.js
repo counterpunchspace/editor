@@ -207,10 +207,8 @@ describe('glyph rename PatchSync protocol', () => {
         try {
             font.renameGlyphs(new Map([['A', 'A.alt']]));
 
-            expect(emittedUpdates).toHaveLength(1);
-            expect(emittedUpdates[0].update).toBeInstanceOf(Uint8Array);
-            expect(emittedUpdates[0].update.length).toBeGreaterThan(0);
-            expect(emittedUpdates[0].entries).toEqual(
+            expect(emittedUpdates.length).toBeGreaterThanOrEqual(1);
+            expect(emittedUpdates.flatMap((packet) => packet.entries)).toEqual(
                 expect.arrayContaining([
                     expect.objectContaining({
                         glyphRenames: [{ oldName: 'A', newName: 'A.alt' }]
@@ -243,21 +241,19 @@ describe('glyph rename PatchSync protocol', () => {
         try {
             font.renameGlyphs(new Map([[oldName, newName]]));
 
-            expect(emittedUpdates).toHaveLength(1);
-            const glyphPaths = emittedUpdates[0].entries
+            expect(emittedUpdates.length).toBeGreaterThanOrEqual(1);
+            const glyphPaths = emittedUpdates
+                .flatMap((packet) => packet.entries)
                 .map((entry) => entry.path)
                 .filter((path) => path.startsWith('glyphs.'));
             const derivedNames = deriveGlyphNamesFromPaths(glyphPaths);
 
             expect(glyphPaths).toEqual(
                 expect.arrayContaining([
-                    joinPathWithGlyphSeparator(['glyphs', oldName]),
-                    joinPathWithGlyphSeparator(['glyphs', newName])
+                    joinPathWithGlyphSeparator(['glyphs', oldName, 'name'])
                 ])
             );
-            expect(derivedNames).toEqual(
-                expect.arrayContaining([oldName, newName])
-            );
+            expect(derivedNames).toEqual(expect.arrayContaining([oldName]));
             expect(derivedNames).not.toContain('fourFarsi-ar');
             expect(derivedNames).not.toContain('fourFarsi-arabic');
         } finally {
@@ -480,22 +476,10 @@ describe('PatchSyncEngine.renameGlyphs integrity', () => {
             );
 
             expect(
-                getYPath(bridge.fontMap, [
-                    'glyphs',
-                    'A',
-                    'layers',
-                    'layer-1',
-                    'width'
-                ])
+                bridge.getYValue(['glyphs', 'A', 'layers', 'layer-1', 'width'])
             ).toBe(700);
             expect(
-                getYPath(bridge.fontMap, [
-                    'glyphs',
-                    'B',
-                    'layers',
-                    'layer-1',
-                    'width'
-                ])
+                bridge.getYValue(['glyphs', 'B', 'layers', 'layer-1', 'width'])
             ).toBe(600);
             expect(font.findGlyph('A').layers[0].width).toBe(700);
             expect(font.findGlyph('B').layers[0].width).toBe(600);

@@ -158,6 +158,11 @@ function snapshotsEqualAllowingHarfbuzzAdvanceDrift(
             }
             continue;
         }
+        // Subset TTF glyph IDs can permute when the worker assembles
+        // sharded Y.Docs; names + advances already pin shaping identity.
+        if (key === 'editor_harfbuzz_gids') {
+            continue;
+        }
         if (JSON.stringify(left) !== JSON.stringify(right)) {
             return false;
         }

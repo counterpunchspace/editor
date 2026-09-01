@@ -37,6 +37,12 @@ export interface PluginMessageOptions {
     spinning?: boolean;
 }
 
+export interface CanAddGlyphsResult {
+    allowed: boolean;
+    remaining?: number | null;
+    reason?: string;
+}
+
 export interface FilesystemPluginUICallbacks {
     showOpenFolderUI: () => void;
     hideOpenFolderUI: () => void;
@@ -249,6 +255,44 @@ export abstract class FilesystemPlugin {
      */
     async handleOpenPath(_path: string): Promise<boolean> {
         return false;
+    }
+
+    /**
+     * Refresh plugin-owned data (catalog, indexes) before Save or seed.
+     */
+    async prepareToSave(): Promise<void> {
+        // Default: nothing extra to prepare
+    }
+
+    async prepareToSeed(): Promise<void> {
+        await this.prepareToSave();
+    }
+
+    /**
+     * Whether `additionalGlyphCount` new glyphs may be added under this backend.
+     */
+    async canAddGlyphs(
+        additionalGlyphCount: number
+    ): Promise<CanAddGlyphsResult> {
+        void additionalGlyphCount;
+        return { allowed: true };
+    }
+
+    /**
+     * Sync view of {@link canAddGlyphs} for model mutations that cannot await.
+     * Cloud uses live glyph count vs the last known owner cap.
+     */
+    getCachedCanAddGlyphs(additionalGlyphCount: number): CanAddGlyphsResult {
+        void additionalGlyphCount;
+        return { allowed: true };
+    }
+
+    /**
+     * Return a copy of font JSON without this plugin's owned extra data.
+     * Used when Save As targets a different plugin.
+     */
+    stripOwnedFontData<T>(fontJson: T): T {
+        return fontJson;
     }
 
     /**

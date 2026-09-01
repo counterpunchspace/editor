@@ -113,6 +113,12 @@ static Y_DOC_EPOCH: AtomicU64 = AtomicU64::new(0);
 /// from the JavaScript PatchSyncEngine, eliminating full-JSON round-trips for
 /// incremental cache maintenance.
 static Y_DOC: Mutex<Option<yrs::Doc>> = Mutex::new(None);
+static GLYPH_DOCS: LazyLock<Mutex<HashMap<String, yrs::Doc>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+static GLYPH_ID_BY_NAME: LazyLock<Mutex<HashMap<String, String>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+const FONT_CORE_DOCUMENT_ID: &str = "font-core";
+const FONT_DEPS_DOCUMENT_ID: &str = "font-deps";
 
 static PREVIEW_OVERLAY: Mutex<Option<PreviewOverlay>> = Mutex::new(None);
 static LAST_PREVIEW_LAYOUT_CLOSURE_CACHE_KEY: Mutex<Option<String>> = Mutex::new(None);
@@ -2653,6 +2659,9 @@ fn ydoc_glyph_to_json<T: ReadTxn>(
 ) -> serde_json::Value {
     let mut glyph_obj = serde_json::Map::new();
     for (gk, gv) in glyph_map.iter(txn) {
+        if gk == "sync" {
+            continue;
+        }
         if gk == "layers" {
             if let yrs::types::Value::YMap(layers_map) = gv {
                 let mut layers_array: Vec<serde_json::Value> = Vec::new();
@@ -2716,6 +2725,9 @@ fn ydoc_get_glyph_json_with_txn<T: ReadTxn>(
     glyph_name: &str,
     txn: &T,
 ) -> Option<serde_json::Value> {
+    if let Some(json) = ydoc_glyph_json_from_shards(glyph_name) {
+        return Some(json);
+    }
     let font_map = txn.get_map("font")?;
     let glyphs_val = font_map.get(txn, "glyphs")?;
     if let yrs::types::Value::YMap(glyphs_map) = glyphs_val {
@@ -2732,6 +2744,9 @@ fn ydoc_get_layer_json_with_txn<T: ReadTxn>(
     layer_id: &str,
     txn: &T,
 ) -> Option<serde_json::Value> {
+    if let Some(json) = ydoc_layer_json_from_shards(glyph_name, layer_id) {
+        return Some(json);
+    }
     let font_map = txn.get_map("font")?;
     let glyphs_val = font_map.get(txn, "glyphs")?;
     let yrs::types::Value::YMap(glyphs_map) = glyphs_val else {
@@ -2899,6 +2914,165 @@ fn parse_apply_yjs_update_metadata(
         glyph_renames,
         invalidate_layout_closure,
     )
+}
+
+fn parse_document_id_from_metadata(update_metadata_json: &str) -> String {
+    let Ok(parsed) = serde_json::from_str::<serde_json::Value>(update_metadata_json) else {
+        return FONT_CORE_DOCUMENT_ID.to_string();
+    };
+    parsed
+        .get("documentId")
+        .and_then(|value| value.as_str())
+        .filter(|value| !value.is_empty())
+        .unwrap_or(FONT_CORE_DOCUMENT_ID)
+        .to_string()
+}
+
+fn glyph_id_from_document_id(document_id: &str) -> Option<&str> {
+    document_id.strip_prefix("glyph:")
+}
+
+fn remember_glyph_name(glyph_id: &str, doc: &yrs::Doc) {
+    let txn = doc.transact();
+    let Some(glyph_map) = txn.get_map("glyph") else {
+        return;
+    };
+    if let Some(yrs::types::Value::Any(yrs::Any::String(name))) = glyph_map.get(&txn, "name") {
+        if !name.is_empty() {
+            GLYPH_ID_BY_NAME
+                .lock()
+                .unwrap()
+                .insert(name.to_string(), glyph_id.to_string());
+        }
+    }
+}
+
+#[wasm_bindgen]
+pub fn reset_ydoc_set() {
+    GLYPH_DOCS.lock().unwrap().clear();
+    GLYPH_ID_BY_NAME.lock().unwrap().clear();
+    *Y_DOC.lock().unwrap() = None;
+}
+
+#[wasm_bindgen]
+pub fn seed_ydoc_document(document_id: &str, state_update: &[u8]) -> Result<(), JsValue> {
+    let update = yrs::Update::decode_v1(state_update).map_err(|e| {
+        JsValue::from_str(&format!("seed_ydoc_document: decode failed: {:?}", e))
+    })?;
+    let doc = yrs::Doc::new();
+    {
+        let mut txn = doc.transact_mut();
+        txn.apply_update(update);
+    }
+    if let Some(glyph_id) = glyph_id_from_document_id(document_id) {
+        remember_glyph_name(glyph_id, &doc);
+        GLYPH_DOCS.lock().unwrap().insert(glyph_id.to_string(), doc);
+        return Ok(());
+    }
+    if document_id == FONT_DEPS_DOCUMENT_ID {
+        return Ok(());
+    }
+    *Y_DOC.lock().unwrap() = Some(doc);
+    Ok(())
+}
+
+#[wasm_bindgen]
+pub fn rebuild_caches_from_ydoc_set() -> Result<(), JsValue> {
+    let json_value = assembled_babelfont_json()?;
+    store_font_from_value(json_value)
+}
+
+fn apply_update_to_glyph_doc(glyph_id: &str, update: yrs::Update) -> Result<(), JsValue> {
+    let mut docs = GLYPH_DOCS.lock().unwrap();
+    let doc = docs
+        .entry(glyph_id.to_string())
+        .or_insert_with(yrs::Doc::new);
+    {
+        let mut txn = doc.transact_mut();
+        txn.apply_update(update);
+    }
+    remember_glyph_name(glyph_id, doc);
+    Ok(())
+}
+
+fn ydoc_glyph_json_from_shards(glyph_name: &str) -> Option<serde_json::Value> {
+    let docs = GLYPH_DOCS.lock().unwrap();
+    if docs.is_empty() {
+        return None;
+    }
+    let ids = GLYPH_ID_BY_NAME.lock().unwrap();
+    let glyph_id = ids.get(glyph_name)?;
+    let doc = docs.get(glyph_id)?;
+    let txn = doc.transact();
+    let glyph_map = txn.get_map("glyph")?;
+    Some(ydoc_glyph_to_json(glyph_name, &glyph_map, &txn))
+}
+
+fn ydoc_layer_json_from_shards(glyph_name: &str, layer_id: &str) -> Option<serde_json::Value> {
+    let docs = GLYPH_DOCS.lock().unwrap();
+    if docs.is_empty() {
+        return None;
+    }
+    let ids = GLYPH_ID_BY_NAME.lock().unwrap();
+    let glyph_id = ids.get(glyph_name)?;
+    let doc = docs.get(glyph_id)?;
+    let txn = doc.transact();
+    let glyph_map = txn.get_map("glyph")?;
+    let layers_val = glyph_map.get(&txn, "layers")?;
+    let yrs::types::Value::YMap(layers_map) = layers_val else {
+        return None;
+    };
+    let layer_val = layers_map.get(&txn, layer_id)?;
+    Some(ydoc_layer_to_json(layer_id, layer_val, &txn))
+}
+
+fn assembled_babelfont_json() -> Result<serde_json::Value, JsValue> {
+    let mut json = {
+        let core_guard = Y_DOC.lock().unwrap();
+        let Some(core) = core_guard.as_ref() else {
+            return Ok(serde_json::Value::Object(serde_json::Map::new()));
+        };
+        let txn = core.transact();
+        ydoc_to_babelfont_json_with_txn(&txn)
+    };
+    let glyph_docs = GLYPH_DOCS.lock().unwrap();
+    if glyph_docs.is_empty() {
+        return Ok(json);
+    }
+    let order: Vec<String> = json
+        .get("glyphOrder")
+        .and_then(|value| value.as_array())
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| item.as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_else(|| {
+            GLYPH_ID_BY_NAME
+                .lock()
+                .unwrap()
+                .keys()
+                .cloned()
+                .collect()
+        });
+    let id_by_name = GLYPH_ID_BY_NAME.lock().unwrap();
+    let mut glyphs = Vec::new();
+    for name in order {
+        let Some(glyph_id) = id_by_name.get(&name) else {
+            continue;
+        };
+        let Some(glyph_doc) = glyph_docs.get(glyph_id) else {
+            continue;
+        };
+        let glyph_txn = glyph_doc.transact();
+        let Some(glyph_map) = glyph_txn.get_map("glyph") else {
+            continue;
+        };
+        glyphs.push(ydoc_glyph_to_json(&name, &glyph_map, &glyph_txn));
+    }
+    json["glyphs"] = serde_json::Value::Array(glyphs);
+    Ok(json)
 }
 
 fn clear_active_subset_caches_for_closure_invalidation() {
@@ -3362,6 +3536,8 @@ pub fn init_ydoc_from_state(state_update: &[u8]) -> Result<(), JsValue> {
     // Could be made incremental with targeted top-level key patching — lower
     // priority since no boundary crossing.
     let _span = PerfSpan::start("init_ydoc_from_state.total");
+    GLYPH_DOCS.lock().unwrap().clear();
+    GLYPH_ID_BY_NAME.lock().unwrap().clear();
 
     let doc = yrs::Doc::new();
     let json_value = {
@@ -3537,9 +3713,18 @@ pub fn apply_yjs_update(update: &[u8], update_metadata_json: &str) -> Result<Str
     let _span = PerfSpan::start("apply_yjs_update.total");
     clear_preview_overlay_internal();
 
-    // -- 1. Apply binary update to Y_DOC ----------------------------------
+    // -- 1. Apply binary update to the addressed document -----------------
+    let document_id = parse_document_id_from_metadata(update_metadata_json);
     let yrs_update = yrs::Update::decode_v1(update)
         .map_err(|e| JsValue::from_str(&format!("apply_yjs_update: decode failed: {:?}", e)))?;
+    let mut pending_core_update = Some(yrs_update);
+    if let Some(glyph_id) = glyph_id_from_document_id(&document_id) {
+        if let Some(update) = pending_core_update.take() {
+            apply_update_to_glyph_doc(glyph_id, update)?;
+        }
+    } else if document_id == FONT_DEPS_DOCUMENT_ID {
+        pending_core_update.take();
+    }
 
     // Keep the worker doc installed in Y_DOC while mutating it. In wasm, a trap
     // inside apply_update can bypass our normal Result flow; if the doc has been
@@ -3568,7 +3753,9 @@ pub fn apply_yjs_update(update: &[u8], update_metadata_json: &str) -> Result<Str
         let result = (|| -> Result<String, JsValue> {
             let _apply_span = PerfSpan::start("apply_yjs_update.decode_apply");
             let mut txn = doc.transact_mut();
-            txn.apply_update(yrs_update);
+            if let Some(core_update) = pending_core_update.take() {
+                txn.apply_update(core_update);
+            }
             let document_epoch = Y_DOC_EPOCH.fetch_add(1, Ordering::Relaxed) + 1;
 
             // -- 2. Parse JS-supplied update metadata -----------------------------

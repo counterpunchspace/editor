@@ -1,7 +1,10 @@
 const {
     CloudAdapter,
     normalizeCloudRoomWebSocketUrl,
-    normalizeCloudRoomHttpUrl
+    normalizeCloudRoomHttpUrl,
+    normalizeCloudShardHttpUrl,
+    normalizeCloudShardLiveHttpUrl,
+    normalizeCloudShardWebSocketUrl
 } = require('../js/cloud-adapter.ts');
 const { MetadataFreeRemoteUpdateError } = require('../js/patch-sync-engine.ts');
 const { createLogEntry } = require('../js/change-log');
@@ -271,7 +274,7 @@ describe('CloudAdapter outbound updates', () => {
 
             expect(openWebSocket).toHaveBeenCalledWith(
                 'room-token',
-                'wss://fonts-room.fonteditor.workers.dev/room/asset-123'
+                'wss://fonts-room.fonteditor.workers.dev/room/asset-123/shards/font-core'
             );
             expect(global.fetch).toHaveBeenCalledWith(
                 'https://counterpunch.space/api/cloud/assets/asset-123/room-token',
@@ -320,7 +323,7 @@ describe('CloudAdapter outbound updates', () => {
             expect(bootstrapFromR2).not.toHaveBeenCalled();
             expect(openWebSocket).toHaveBeenCalledWith(
                 'room-token',
-                'wss://fonts-room.fonteditor.workers.dev/room/asset-123'
+                'wss://fonts-room.fonteditor.workers.dev/room/asset-123/shards/font-core'
             );
         } finally {
             global.fetch = originalFetch;
@@ -430,6 +433,62 @@ describe('CloudAdapter outbound updates', () => {
         expect(adapter._sendSyncComplete).toHaveBeenCalledWith(
             new Uint8Array([4, 5, 6])
         );
+    });
+
+    it('applies glyph-room sync-response to that shard without rewriting font-core', () => {
+        const adapter = new CloudAdapter({
+            assetId: 'asset-123',
+            documentId: 'glyph:abc'
+        });
+        const originalFontCompilation = window.fontCompilation;
+        window.fontCompilation = {
+            isInitialized: true,
+            seedWorkerYDocFromState: jest.fn(() => Promise.resolve()),
+            seedWorkerDocumentSet: jest.fn(() => Promise.resolve()),
+            setWorkerCacheDocumentReady: jest.fn()
+        };
+        const bridge = {
+            mergeImportedChangeLog: jest.fn(),
+            mergeImportedCollaborationMessages: jest.fn(),
+            applyFullState: jest.fn(),
+            applyDocumentCheckpoint: jest.fn(),
+            encodeBridgeState: jest.fn(() => new Uint8Array([9])),
+            encodeDocumentSet: jest.fn(() => [
+                { documentId: 'font-core', bytes: new Uint8Array([1]) }
+            ]),
+            onLocalUpdate: jest.fn(),
+            offLocalUpdate: jest.fn()
+        };
+
+        try {
+            adapter._bridge = bridge;
+            adapter._registerOutboundHook = jest.fn();
+            adapter._sendSyncComplete = jest.fn();
+            adapter._handleMessage(
+                JSON.stringify({
+                    type: 'sync-response',
+                    update: Buffer.from([1, 2, 3]).toString('base64'),
+                    serverStateVector: Buffer.from([4, 5, 6]).toString(
+                        'base64'
+                    ),
+                    collaborationMessageHistory: []
+                })
+            );
+
+            expect(bridge.applyDocumentCheckpoint).toHaveBeenCalledWith(
+                'glyph:abc',
+                new Uint8Array([1, 2, 3])
+            );
+            expect(bridge.applyFullState).not.toHaveBeenCalled();
+            expect(
+                window.fontCompilation.seedWorkerDocumentSet
+            ).not.toHaveBeenCalled();
+            expect(
+                window.fontCompilation.seedWorkerYDocFromState
+            ).not.toHaveBeenCalled();
+        } finally {
+            window.fontCompilation = originalFontCompilation;
+        }
     });
 
     it('rebuilds the Rust worker bridge state before reporting sync-response connected', async () => {
@@ -1447,7 +1506,8 @@ describe('CloudAdapter outbound updates', () => {
             expect(applyRemoteUpdate).toHaveBeenCalledWith(
                 durableUpdate,
                 undefined,
-                [collaborationMessage]
+                [collaborationMessage],
+                'font-core'
             );
             expect(adapter.pendingSyncCount).toBe(1);
             expect(pendingCounts[pendingCounts.length - 1]).toBe(1);
@@ -2965,6 +3025,49 @@ describe('normalizeCloudRoomHttpUrl', () => {
     });
 });
 
+describe('normalizeCloudShardHttpUrl / WebSocketUrl', () => {
+    it('builds per-document shard HTTP and WS URLs', () => {
+        expect(
+            normalizeCloudShardHttpUrl(
+                'wss://rooms.example.com/room/asset-123',
+                'https://editor.counterpunch.space',
+                'asset-123',
+                'font-core'
+            )
+        ).toBe(
+            'https://rooms.example.com/room/asset-123/shards/font-core/state'
+        );
+        expect(
+            normalizeCloudShardHttpUrl(
+                'wss://rooms.example.com/room/asset-123',
+                'https://editor.counterpunch.space',
+                'asset-123',
+                'glyph:abc-def'
+            )
+        ).toBe(
+            'https://rooms.example.com/room/asset-123/shards/glyph/abc-def/state'
+        );
+        expect(
+            normalizeCloudShardLiveHttpUrl(
+                'wss://rooms.example.com/room/asset-123',
+                'https://editor.counterpunch.space',
+                'asset-123',
+                'glyph:abc-def'
+            )
+        ).toBe(
+            'https://rooms.example.com/room/asset-123/shards/glyph/abc-def/live'
+        );
+        expect(
+            normalizeCloudShardWebSocketUrl(
+                'wss://rooms.example.com/room/asset-123',
+                'https://editor.counterpunch.space',
+                'asset-123',
+                'glyph:abc-def'
+            )
+        ).toBe('wss://rooms.example.com/room/asset-123/shards/glyph/abc-def');
+    });
+});
+
 describe('R2 bootstrap (GET /state before WebSocket)', () => {
     const originalFetch = global.fetch;
     const originalWebSocket = global.WebSocket;
@@ -3120,7 +3223,7 @@ describe('R2 bootstrap (GET /state before WebSocket)', () => {
             ).toHaveBeenCalledTimes(1);
             expect(stateRequests).toEqual([
                 {
-                    url: 'https://rooms.example.com/room/asset-123/state',
+                    url: 'https://rooms.example.com/room/asset-123/shards/font-core/state',
                     opts: {
                         headers: { Authorization: 'Bearer room-token' }
                     }
@@ -3644,7 +3747,7 @@ describe('HTTP seed (POST /state for new rooms)', () => {
 
         expect(seedCallCount).toBe(1);
         expect(postUrls[0]).toBe(
-            'https://rooms.example.com/room/asset-123/state'
+            'https://rooms.example.com/room/asset-123/shards/font-core/state'
         );
         expect(postOptions[0]).toEqual(
             expect.objectContaining({

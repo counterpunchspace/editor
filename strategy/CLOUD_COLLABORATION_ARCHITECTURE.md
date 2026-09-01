@@ -2,14 +2,44 @@
 
 ## Status
 
-Proposed target architecture. Supersedes prior cloud collaboration strategy
-and developer docs (one-room whole-font Y.Doc, R2-via-WebSocket bootstrap with
-DO hydration, and earlier sharded drafts that kept full dependency edges inside
-always-resident `font-core`).
+**v1 is in the editor.** Cloud UI is on (`CLOUD_PLUGIN_UI_ENABLED`). The editor
+uses a document set (`font-core`, `font-deps`, `glyph:<id>`), not one whole-font
+Y.Doc. Outlines are not dual-written into core.
 
-Cloud collaboration is currently disabled in production because the previous
-design hit Cloudflare Durable Object isolate memory limits (~128 MB) when a
-room held an entire font.
+Supersedes one-room whole-font Y.Doc, R2-via-WebSocket bootstrap, and drafts
+that kept full dependency edges in always-resident `font-core`. One DO per
+whole font still hits isolate memory (~128 MB); rooms stay per-shard.
+
+**Landed in the client (this cut)**
+
+- `PatchSyncEngine` routes glyph paths to glyph docs; core holds catalog +
+  `glyphRevisions` (dirty `{glyphId, revision}`), not outlines.
+- Persistent WebSockets: `font-core` + the current glyph subset only.
+- Passive glyphs catch up over HTTP `GET /shards/:path/live` → DO
+  `/internal/live-state` (live vector, not stale R2). Access-epoch 403;
+  `Cache-Control: no-store`. Four concurrent reads; retry until the glyph
+  `sync.revision` stamp matches (or 401/403).
+- Commit/undo/redo: stamp glyph `sync.revision` in the same outline
+  transaction, then emit one core revision envelope (`onGlyphRevisionSignal`,
+  shared `historyItemId`). Catch-up is a document checkpoint
+  (`applyDocumentCatchUp`), not history replay. After core hydrate, scan the
+  revision map and catch up every glyph whose live revision is newer.
+- Linked windows: document-scoped BroadcastChannel; main is the cloud hub;
+  inbound MetadataFree glyph packets use catch-up; linked worker seed uses
+  `seedWorkerDocumentSet` (`state`, not raw `bytes`).
+
+**Still later:** CJK working-set hydrate, Fly full-font builder, fat
+compactor, denser cmap, Worker-class `cf-compactor` on sharded R2 keys.
+
+**v1 vs later**
+
+| In v1 | Later |
+| --- | --- |
+| Per-shard DOs, HTTP seed/hydrate, external Worker compaction | Fat-process compactor for oversized shards |
+| Hydrate policy `all` (Basic: 1 font, ≤1000 glyphs) | CJK working-set hydrate + layout-closure UX |
+| Owner quotas, 10 MB per Y.Doc, plugin catalog/deps | Fly/session full-font builder |
+| Document-scoped BC `documentId`; linked worker `seedWorkerDocumentSet` | CJK-style selective linked bootstrap |
+| cf-compactor as-is (room id + R2 shard keys) | Legacy whole-font room migration |
 
 ## Goals
 
@@ -43,7 +73,14 @@ Use these as stress cases when sizing catalog/deps budgets and hydrate UX:
 | Closure | Layout closure (`close_layout`) ∪ deps-index expansion; then hydrate bodies |
 | Linked windows | Main window is sole cloud hub; BC is multi-doc; per-window residency |
 | Small vs large | Same machinery; default hydrate policy is `all` vs working-set |
-| Full-font compile | Session-scoped Fly Machine (8–16 GB); core dirty + HTTP glyph catch-up |
+| Full-font compile | Session-scoped Fly Machine (8–16 GB); core dirty + HTTP glyph catch-up (not v1) |
+| Quotas | Website is source of truth; **asset owner** subscription; plugin **and** collab enforce |
+| Basic plan | 1 owned font, 1000 glyphs (`null` = unlimited for future tiers) |
+| Client shard ceiling | 10 MB encoded per Y.Doc (core, deps, each glyph); warn at 75%; block at cap |
+| Compaction host | `cf-compactor` Worker-class; ~16 MiB recoverable; 10 MB client cap leaves tail headroom |
+| Catalog / deps | Built in CloudPlugin (`prepareToSeed` / `prepareToSave`); live incremental updates |
+| Plugin-owned data | Namespaced; stripped on Save As to another plugin (`stripOwnedFontData`) |
+| Collab → website | Service-token internal limits API on seed and catalog growth |
 
 ## Why one architecture
 
@@ -54,6 +91,74 @@ active glyph and expands a dependency closure first.
 
 Growing past a browser budget does not flip product modes. It only changes
 hydrate selectivity and when full builds must run server-side.
+
+## Entitlements (normative)
+
+Website D1 is the **only** source of truth for cloud quotas. The subscription
+that counts is the **asset owner’s**, never the accessing collaborator’s.
+Client-only checks are not sufficient: the CloudPlugin **and** the collab
+Worker/DO must both enforce.
+
+| API | Whose subscription | When |
+| --- | --- | --- |
+| `GET /api/cloud/eligibility` | Logged-in caller | “Can I host / first Save As?” |
+| `GET /api/cloud/assets/:id/limits` | Asset owner | Open cloud font, Save, `canAddGlyphs` |
+| `POST /api/cloud/assets/:id/can-add-glyphs` | Asset owner | Before add/duplicate/paste glyphs |
+| `GET /api/internal/cloud/assets/:id/limits` | Asset owner (service token) | Collab seed / catalog insert |
+| `POST /api/internal/cloud/assets/:id/glyph-count` | Service token | Persist `font_assets.glyph_count` |
+
+**Basic** (and current no-membership cloud grant): `maxFontsOwned = 1`,
+`maxGlyphsPerFont = 1000`. Convention: `null` means unlimited.
+
+Glyph count is stored on `font_assets.glyph_count` and in core-shard manifest
+metadata. Rooms must **not** hydrate glyph bodies to count glyphs.
+
+## Client shard size gate
+
+Encoded Yjs state per document, independently:
+
+- Ceiling: **10 MB** (`MAX_SHARD_BYTES`)
+- Warning: **75%** (7.5 MB)
+- Applies to `font-core`, `font-deps`, and each `glyph:<id>`
+
+Distinct from Worker compaction recoverable (~16 MiB encoded checkpoint + dirty
+tail). The 10 MB client cap is deliberate headroom for an uncompacted tail.
+Approaching the cap shows a warning; at/over the cap seed, save, and commit are
+blocked. Collab `POST .../state` also rejects shard bodies ≥ 10 MB.
+
+Measure dirty shards only (`Y.encodeStateAsUpdate` off the UI thread). Compare
+to last committed encoded size plus pending update size when a full encode
+would stall the UI.
+
+## Cloud plugin: catalog, hooks, owned data
+
+The lean catalog and deps index are **built in the CloudPlugin**, not in the
+room DO.
+
+Hooks on `FilesystemPlugin` (Cloud overrides):
+
+| Hook | Role |
+| --- | --- |
+| `prepareToSeed()` / `prepareToSave()` | Refresh catalog + deps from the live model **before** `canSave` / seed |
+| `canSave()` | Quota + per-shard size |
+| `canAddGlyphs(n)` | Website limits (eligibility if no asset; **owner** limits if open cloud font) |
+| `stripOwnedFontData(fontJson)` | Restore baseline JSON without this plugin’s catalog/deps |
+
+Keep catalog/deps live on committed changes that affect identity or references
+(glyph add/remove/reorder, rename, codepoints, component `reference`,
+metrics/sidebearing keys). Incremental patches — not a full rebuild on every
+outline edit.
+
+Plugin data lives under a namespaced font field
+(`format_specific['com.counterpunch.cloud']`). Save As to Memory/Disk/Glyphs
+calls the **source** plugin’s `stripOwnedFontData` so foreign formats never
+keep a cloud catalog. Another plugin may then install its own structure.
+
+Editor cloud sessions use a **document set** of Y.Docs (`font-core`,
+`font-deps`, `glyph:<id>`), not one merged font CRDT. `PatchSyncEngine` routes
+glyph paths to glyph docs and font-wide fields to core. Live WebSockets: core
+always + the subsetted glyphs. Other glyphs one-shot HTTP live catch-up
+(retry until stamp matches).
 
 ## Shard model
 
@@ -104,9 +209,8 @@ body is loaded — too late for text-run seeding.
 `font-core` must therefore carry a cmap-like index derived from those
 encodings, updated whenever a glyph’s codepoints change:
 
-- At minimum: every catalog entry’s `codepoints` (and a reverse lookup
-  `codepoint → glyphId[]` or equivalent, built from the catalog or stored
-  beside it).
+- At minimum: every catalog entry’s `codepoints` **and** a reverse lookup
+  `codepoint → glyphId[]` stored beside the catalog (v1).
 - Optional later: a denser dedicated cmap structure if per-entry lists plus
   scan are too slow for CJK text.
 
@@ -239,7 +343,12 @@ path.
 #### Why “external” even when the host is still a Worker
 
 Today’s `cf-compactor` is a **separate Workers isolate**, not unlimited RAM.
-Externalization is still the right room design because:
+It is the v1 **Worker-class per-shard host**: one request = one room’s R2
+baseline + DO durable tail. After sharding, `roomId` is
+`${assetId}:${shardId}` and R2 keys live under
+`font-assets/{assetId}/shards/{shardId}/…`. The compact loop itself does not
+need a rewrite — only identity/layout alignment. Externalization is still
+the right room design because:
 
 1. Compaction peak must not share the live room heap (fan-out, auth, tail
    append).
@@ -360,86 +469,44 @@ Persistent WebSocket subscriptions stay tiny:
 | Channel | When |
 | --- | --- |
 | `font-core` | Always |
-| Active glyph DO | While that glyph is being edited |
-| Other glyph DOs | Not for whole text runs or full closures |
-
-Visible / loaded-but-passive glyphs are **hydrated**, not live-subscribed.
+| Subset glyph DOs | Glyphs in this instance’s live subset |
+| Other glyph DOs | No persistent socket |
 
 When a remote edit commits:
 
-1. Writer updates the affected glyph DO tails (and deps/catalog as needed).
-2. Core broadcasts a compact dirty signal: `{ glyphId, revision }[]`.
-3. Each peer intersects dirty ids with local interest (loaded ∪ visible ∪
-   compile-needed).
-4. Interested peers **one-shot catch-up** those shards via HTTP
-   (`baseline + tail`), optionally packed — they do not open 21 WebSockets.
+1. Writer persists the glyph shard (outline + `sync.revision` stamp) first.
+2. Core then publishes `glyphRevisions` (`{ glyphId, revision }[]`) in **one**
+   collab envelope.
+3. Every cloud-connected instance must catch up — not best-effort. Peers GET
+   `/shards/glyph:<id>/live` (DO live state). Apply as a checkpoint; retry
+   until the stamp is present. Cap 4 in flight. Broadcast the result to linked
+   windows.
 
-Switching the active glyph: unsubscribe previous (or tiny LRU), subscribe next,
-catch up first if needed.
+Do not catch up from a stale R2 baseline. Switching the active glyph:
+subscribe the new shard (catch up first if needed); drop the previous socket.
 
 ## Linked windows (same browser)
 
-Today, linked windows share **one** whole-font Y.Doc over `BroadcastChannel`
-(`WindowSync`): bootstrap via `full-state-request/response`, steady-state via
-`yjs-update`. Only the **main** window connects to the cloud DO; it relays
-peer updates up and cloud updates down (`APP.md`).
+Main window is the only cloud WebSocket client; it relays to linked windows
+over `BroadcastChannel` (`WindowSync`). Packets are document-scoped
+(`documentId`: `font-core` | `font-deps` | `glyph:<id>`). Core revision
+signals use `onGlyphRevisionSignal`, not `onLocalUpdate` (avoids Yjs client
+clock holes on the same core doc).
 
-That hub model stays. What changes is document scope and bootstrap volume —
-not “every window opens one WebSocket per glyph.”
+Each window keeps core + deps always, plus the glyph docs it has applied.
+Bootstrap is `full-state-request/response` with a **document set**; the
+linked worker is seeded with `seedWorkerDocumentSet`. CJK-scale bootstrap
+(core only + selective glyph fetch) is later.
 
-### What stays
-
-- Main window = only cloud WebSocket client for the asset.
-- Linked windows talk to main (and peers) over BroadcastChannel.
-- Authoritative transport = binary Yjs updates + collaboration metadata.
-- Same committed-change funnel after apply.
-
-### What changes
-
-**Many local Y.Docs.** Each window keeps `font-core` (+ `font-deps`) always,
-and only the glyph docs in **its** residency set. Two linked windows may
-hydrate different glyphs (different text runs / active glyphs). That is
-normal.
-
-**Packets are document-scoped.** Every BC message carries a `documentId`
-(`font-core` | `font-deps` | `glyph:<id>`). Receivers apply a glyph update
-only if that shard is loaded (core/deps always apply).
-
-**Bootstrap must not dump the whole font.** A single full-font
-`full-state-response` is already painful and is impossible for CJK. Linked
-open should:
-
-1. Obtain **core** (+ deps) state from main over BC (or from R2 baseline for
-   cloud assets).
-2. Compute **this window’s** seeds → layout closure ∪ deps → missing glyph
-   set.
-3. Fetch those shard states from main **when main already has them**, else
-   via the same HTTP hydrate path (R2 + tails) — never by shipping every
-   glyph the main window has ever touched.
-
-**Cloud live set is multiplexed on main.** Because only main holds DO
-connections, main subscribes to:
-
-- `font-core` (always), and
-- the **union of active glyphs** across local windows (plus an optional small
-  LRU),
-
-while passive freshness for other hydrated glyphs uses core dirty signals +
-HTTP catch-up — the same pattern as remote collaborators. Linked windows
-announce interest (active glyph / residency) so main can adjust the live set.
-They never open glyph DO sockets themselves.
-
-**Cascade across windows.** If window A edits `a` and writes recomposed glyph
-docs that window B has loaded, those document-scoped updates go out on BC
-(and to the cloud via main). B applies them if resident; if not, B only sees
-catalog/deps/dirty until it hydrates.
+Cloud HTTP catch-up on main is fanned out on BC. A MetadataFree glyph packet
+on a linked window is applied as `applyDocumentCatchUp`.
 
 | Path | Linked windows |
 | --- | --- |
-| Local sync | BC, multi-doc packets; interest = local residency |
-| Cloud live | Main multiplexes DO subs for the local window group |
-| Bulk / catch-up | HTTP packs / baseline+tail, not BC full-font snapshots |
-| Residency | Per-window; not required to match peers |
+| Local sync | BC, multi-doc packets |
+| Cloud live | Main multiplexes DO sockets for the window group |
+| Passive glyphs | Core dirty + HTTP live catch-up, then BC relay |
+| Worker seed | `seedYdoc` document set (`state` bytes per shard) |
 
 ## Seeding
 
@@ -600,21 +667,17 @@ republish. Prefer immutable glyph ids and tombstones.
 
 ## Migration sketch
 
-1. Introduce immutable glyph ids + lean catalog (with codepoints/cmap) + deps
-   index writers on commit.
-2. Generalize the committed-update funnel to document-scoped updates.
-3. Implement residency + hydrate packs + full closure
-   (`close_layout` ∪ deps index), reusing the existing babelfont/WASM layout
-   closure path with catalog names instead of a full glyph list. Extend
-   `WindowSync` to document-scoped BC packets and shard-scoped linked
-   bootstrap (core/deps + requested glyphs), keeping main as the sole cloud
-   hub.
-4. Shard DO identity and R2 layouts; zero-hydration join (HTTP baseline + tail).
-5. External compaction per shard on the Worker-class host; refuse or hand off
-   shards above the recoverable-byte cap.
-6. One-shot migrate legacy whole-font rooms into core + deps + per-glyph
-   shards (fat-process compact during migration if needed); validate
-   equivalence before switching an asset.
+Done in the editor: immutable glyph ids, document-scoped updates, WindowSync
+document packets + linked `seedWorkerDocumentSet`, HTTP live catch-up from
+the glyph DO, revision stamp-before-core-signal.
+
+Still to do:
+
+1. Residency + hydrate packs + full closure (`close_layout` ∪ deps index)
+   without shipping every glyph on linked open.
+2. Shard DO identity and R2 layouts; zero-hydration join.
+3. External compaction per shard; refuse or hand off oversized shards.
+4. Migrate legacy whole-font rooms into core + deps + per-glyph shards.
 
 ## Explicit non-goals (for the first cut)
 
@@ -627,15 +690,24 @@ republish. Prefer immutable glyph ids and tombstones.
 
 ## Open follow-ups
 
+Settled in v1 (do not re-open without a product change):
+
+- Owner-subscription quotas (website source of truth; plugin + collab enforce)
+- Basic: 1 font / 1000 glyphs
+- Cmap: per-entry `codepoints` **plus** reverse `codepoint → glyphId[]`
+- Browser per-shard encoded ceiling: 10 MB (warn 75%)
+- Worker-class compactor is `cf-compactor` once room IDs/R2 keys are sharded
+
+Still open:
+
 - Exact deps index encoding and whether reverse edges are stored or derived
-- Cmap encoding in core: per-entry `codepoints` only vs dedicated
-  `codepoint → glyphId[]` structure for CJK text performance
+- Denser cmap for CJK text performance beyond the reverse map
 - Linked-window interest protocol: how precisely main aggregates active-glyph
   DO subscriptions across local windows
 - Thinner `close_layout` API: `{ features, glyphNames, seeds }` without a full
   `Font` (optional cleanup in babelfont-rs)
-- Browser budgets: glyph count, bytes, layout-closure result size
-- Whether kerning / feature sources leave core in v1 or later
+- Layout-closure result size budget for CJK working-set hydrate
+- Whether kerning / feature sources leave core after v1
 - Structured feature-class membership vs AFDKO string leaves
 - UX for range hydrate and “server preview required”
 - Load measurements against Plangothic and Source Han Sans

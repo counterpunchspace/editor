@@ -118,6 +118,8 @@ export const prime_preview_layout_closure_cache: (
     c: number,
     d: number
 ) => [number, number, number];
+export const rebuild_caches_from_ydoc_set: () => [number, number];
+export const reset_ydoc_set: () => void;
 export const save_font_as_glyphs: (
     a: number,
     b: number
@@ -127,6 +129,12 @@ export const save_font_as_ufo_entries: (
     b: number
 ) => [number, number, number, number];
 export const seed_ydoc: (a: number, b: number) => [number, number];
+export const seed_ydoc_document: (
+    a: number,
+    b: number,
+    c: number,
+    d: number
+) => [number, number];
 export const set_debug_font_cache_max_bytes: (a: number) => void;
 export const store_font: (a: number, b: number) => [number, number];
 export const validate_feature_source_with_full_filter_pipeline: (

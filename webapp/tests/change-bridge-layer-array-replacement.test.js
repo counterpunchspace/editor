@@ -64,10 +64,7 @@ describe('ChangeBridge layer snapshot array replacement', () => {
         const bridge = new ChangeBridge();
         bridge.initFromJson(fontJson);
 
-        const glyphsMap = bridge.fontMap.get('glyphs');
-        const glyphMap = glyphsMap.get('oacute');
-        const layersMap = glyphMap.get('layers');
-        const layerMap = layersMap.get('L0');
+        const layerMap = bridge.getYValue(['glyphs', 'oacute', 'layers', 'L0']);
 
         const initialLayerMap = layerMap;
         // Indexed-map structure: shapesById+shapeOrder, not flat shapes
@@ -104,7 +101,7 @@ describe('ChangeBridge layer snapshot array replacement', () => {
 
         expect(layerMap).toBe(initialLayerMap);
 
-        const decoded = yDocToJson(bridge.fontMap);
+        const decoded = bridge.getFontJsonSnapshot();
         const glyph = decoded.glyphs.find((entry) => entry.name === 'oacute');
         const layer = glyph.layers.find((entry) => entry.id === 'L0');
 

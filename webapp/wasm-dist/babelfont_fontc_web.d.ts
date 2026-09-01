@@ -417,6 +417,8 @@ export function prime_preview_layout_closure_cache(
     glyph_names_json: string
 ): number;
 
+export function rebuild_caches_from_ydoc_set(): void;
+
 export function refine_layer_snapshots_yjs(
     base_update: Uint8Array,
     overrides_json: string
@@ -430,6 +432,8 @@ export function reinterpolate_layer_yjs(
 export function reinterpolate_master_layers_yjs(master_id: string): any;
 
 export function remove_masters_yjs(master_ids_json: string): any;
+
+export function reset_ydoc_set(): void;
 
 /**
  * Serialize a babelfont JSON string as a Glyphs 3 source file.
@@ -458,6 +462,11 @@ export function save_font_as_ufo_entries(babelfont_json: string): string;
  * happened in the `openFont` worker handler.
  */
 export function seed_ydoc(state_update: Uint8Array): void;
+
+export function seed_ydoc_document(
+    document_id: string,
+    state_update: Uint8Array
+): void;
 
 /**
  * Configure the maximum total size of the dedicated debug compiled-font bytes
@@ -610,6 +619,8 @@ export interface InitOutput {
         c: number,
         d: number
     ) => [number, number, number];
+    readonly rebuild_caches_from_ydoc_set: () => [number, number];
+    readonly reset_ydoc_set: () => void;
     readonly save_font_as_glyphs: (
         a: number,
         b: number
@@ -619,6 +630,12 @@ export interface InitOutput {
         b: number
     ) => [number, number, number, number];
     readonly seed_ydoc: (a: number, b: number) => [number, number];
+    readonly seed_ydoc_document: (
+        a: number,
+        b: number,
+        c: number,
+        d: number
+    ) => [number, number];
     readonly set_debug_font_cache_max_bytes: (a: number) => void;
     readonly store_font: (a: number, b: number) => [number, number];
     readonly validate_feature_source_with_full_filter_pipeline: (

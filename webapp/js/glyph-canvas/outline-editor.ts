@@ -8670,11 +8670,13 @@ export class OutlineEditor {
                     sourceGlyphName,
                     layerId
                 );
-            if (batchResult.update.length) {
+            if (batchResult.update.length || batchResult.updates?.length) {
                 bridge.applyLocalGeneratedYjsUpdate(
                     batchResult.update,
                     buildInterpolationRustBatchOperations(batchResult.metadata),
-                    'Reinterpolate layer sync'
+                    'Reinterpolate layer sync',
+                    null,
+                    batchResult.updates
                 );
             }
 
@@ -8899,14 +8901,16 @@ export class OutlineEditor {
                 await fontManager.buildWorkerReinterpolateMasterLayersBatch(
                     masterId
                 );
-            if (!batchResult.update.length) {
+            if (!batchResult.update.length && !batchResult.updates?.length) {
                 return;
             }
 
             bridge.applyLocalGeneratedYjsUpdate(
                 batchResult.update,
                 buildInterpolationRustBatchOperations(batchResult.metadata),
-                'Reinterpolate layer batch sync'
+                'Reinterpolate layer batch sync',
+                null,
+                batchResult.updates
             );
 
             await this.refreshAfterStructuralLayerEdit(

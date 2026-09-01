@@ -12,6 +12,9 @@ import init, {
     store_font,
     init_ydoc_from_state,
     apply_yjs_update,
+    reset_ydoc_set,
+    seed_ydoc_document,
+    rebuild_caches_from_ydoc_set,
     apply_preview_layer_overlay,
     clear_preview_layer_overlay,
     dump_layer_state_json,
@@ -45,6 +48,12 @@ import {
     timelineSpanStart
 } from './perf-timeline';
 import { buildApplyYjsUpdateMetadataJson } from './apply-yjs-update-metadata';
+
+type RustYjsBatchResult = {
+    update?: Uint8Array;
+    updates?: Array<{ documentId: string; update: Uint8Array }>;
+    metadataJson?: string;
+};
 
 // Note: This is a Web Worker, cannot import Logger from main thread
 // Using standard console.log with facility prefix
@@ -1639,14 +1648,28 @@ self.onmessage = async (event) => {
         // populated at seed time, making the worker compile-ready without a
         // separate storeFontJson call.
         if (data.type === 'seedYdoc') {
-            const { id, state } = data;
+            const { id, state, documents } = data;
             try {
                 if (!initialized) {
                     await initializeWasm();
                 }
-                init_ydoc_from_state(
-                    state instanceof Uint8Array ? state : new Uint8Array(state)
-                );
+                if (Array.isArray(documents) && documents.length) {
+                    reset_ydoc_set();
+                    for (const document of documents) {
+                        const bytes =
+                            document.state instanceof Uint8Array
+                                ? document.state
+                                : new Uint8Array(document.state);
+                        seed_ydoc_document(document.documentId, bytes);
+                    }
+                    rebuild_caches_from_ydoc_set();
+                } else {
+                    init_ydoc_from_state(
+                        state instanceof Uint8Array
+                            ? state
+                            : new Uint8Array(state)
+                    );
+                }
                 // init_ydoc_from_state seeds the Y.Doc AND populates all
                 // caches from it, so the worker is immediately compile-ready
                 // without a separate storeFontJson call.
@@ -1672,6 +1695,48 @@ self.onmessage = async (event) => {
             return;
         }
 
+        if (data.type === 'replaceYdocDocuments') {
+            const { id, documents } = data;
+            try {
+                if (!initialized) {
+                    await initializeWasm();
+                }
+                if (!Array.isArray(documents) || !documents.length) {
+                    throw new Error(
+                        'replaceYdocDocuments requires at least one shard'
+                    );
+                }
+                for (const document of documents) {
+                    const bytes =
+                        document.state instanceof Uint8Array
+                            ? document.state
+                            : new Uint8Array(document.state);
+                    seed_ydoc_document(document.documentId, bytes);
+                }
+                rebuild_caches_from_ydoc_set();
+                cachedBabelfontJson = null;
+                cachedBaseSubsetKey = null;
+                cachedClosureGlyphCount = null;
+                cachedPreviewBaseSubsetKey = null;
+                cachedPreviewClosureGlyphCount = null;
+                fontCacheEpoch += 1;
+                self.postMessage({
+                    id,
+                    type: 'replaceYdocDocuments',
+                    success: true
+                });
+            } catch (e: any) {
+                console.error('[Fontc Worker] replaceYdocDocuments error:', e);
+                self.postMessage({
+                    id,
+                    type: 'replaceYdocDocuments',
+                    success: false,
+                    error: e.toString()
+                });
+            }
+            return;
+        }
+
         // applyYjsUpdate: apply an incremental binary Yjs update to the Rust Y.Doc
         // and update CANONICAL_JSON_CACHE (partial or full rebuild depending on
         // whether changedGlyphs were supplied).
@@ -1686,7 +1751,8 @@ self.onmessage = async (event) => {
                 layerTargets,
                 nonGlyphChangeHints,
                 glyphRenames,
-                invalidateLayoutClosure
+                invalidateLayoutClosure,
+                documentId
             } = data;
             try {
                 if (!initialized) {
@@ -1698,7 +1764,8 @@ self.onmessage = async (event) => {
                     nonGlyphChangeHints,
                     layerTargets,
                     glyphRenames,
-                    invalidateLayoutClosure
+                    invalidateLayoutClosure,
+                    documentId
                 });
                 const resultJson = apply_yjs_update(
                     update instanceof Uint8Array
@@ -1929,15 +1996,16 @@ self.onmessage = async (event) => {
 
             try {
                 timelineMark('font.worker.reinterpolateLayerYjs.started');
-                const result = reinterpolate_layer_yjs(glyphName, layerId) as {
-                    update?: Uint8Array;
-                    metadataJson?: string;
-                };
+                const result = reinterpolate_layer_yjs(
+                    glyphName,
+                    layerId
+                ) as RustYjsBatchResult;
                 self.postMessage({
                     id,
                     type: 'reinterpolateLayerYjs',
                     success: true,
                     update: result.update ?? new Uint8Array(),
+                    updates: result.updates,
                     metadataJson: result.metadataJson ?? '{}'
                 });
                 timelineMark('font.worker.reinterpolateLayerYjs.success');
@@ -1966,15 +2034,15 @@ self.onmessage = async (event) => {
                 timelineMark(
                     'font.worker.reinterpolateMasterLayersYjs.started'
                 );
-                const result = reinterpolate_master_layers_yjs(masterId) as {
-                    update?: Uint8Array;
-                    metadataJson?: string;
-                };
+                const result = reinterpolate_master_layers_yjs(
+                    masterId
+                ) as RustYjsBatchResult;
                 self.postMessage({
                     id,
                     type: 'reinterpolateMasterLayersYjs',
                     success: true,
                     update: result.update ?? new Uint8Array(),
+                    updates: result.updates,
                     metadataJson: result.metadataJson ?? '{}'
                 });
                 timelineMark(
@@ -2030,15 +2098,13 @@ self.onmessage = async (event) => {
                 });
                 const result = add_master_with_interpolated_layers_yjs(
                     payload
-                ) as {
-                    update?: Uint8Array;
-                    metadataJson?: string;
-                };
+                ) as RustYjsBatchResult;
                 self.postMessage({
                     id,
                     type: 'addMasterWithInterpolatedLayersYjs',
                     success: true,
                     update: result.update ?? new Uint8Array(),
+                    updates: result.updates,
                     metadataJson: result.metadataJson ?? '{}'
                 });
                 timelineMark(
@@ -2077,15 +2143,13 @@ self.onmessage = async (event) => {
                         ? baseUpdate
                         : new Uint8Array(baseUpdate || []),
                     JSON.stringify(overrides ?? [])
-                ) as {
-                    update?: Uint8Array;
-                    metadataJson?: string;
-                };
+                ) as RustYjsBatchResult;
                 self.postMessage({
                     id,
                     type: 'refineLayerSnapshotsYjs',
                     success: true,
                     update: result.update ?? new Uint8Array(),
+                    updates: result.updates,
                     metadataJson: result.metadataJson ?? '{}'
                 });
                 timelineMark('font.worker.refineLayerSnapshotsYjs.success');
@@ -2117,15 +2181,13 @@ self.onmessage = async (event) => {
                 timelineMark('font.worker.removeMastersYjs.started');
                 const result = remove_masters_yjs(
                     JSON.stringify(masterIds ?? [])
-                ) as {
-                    update?: Uint8Array;
-                    metadataJson?: string;
-                };
+                ) as RustYjsBatchResult;
                 self.postMessage({
                     id,
                     type: 'removeMastersYjs',
                     success: true,
                     update: result.update ?? new Uint8Array(),
+                    updates: result.updates,
                     metadataJson: result.metadataJson ?? '{}'
                 });
                 timelineMark('font.worker.removeMastersYjs.success');

@@ -46,8 +46,11 @@ import {
     MetadataFreeRemoteUpdateError,
     type PatchSyncEngine
 } from './patch-sync-engine';
-import type { FileSystemAdapter, FileInfo } from './file-system-adapter';
+import type { ChangeLogEntry } from './change-log';
 import { Logger } from './logger';
+import type { FileInfo, FileSystemAdapter } from './file-system-adapter';
+import type { EncodedShard } from './filesystem-plugins/cloud-document-set';
+import { FONT_CORE_DOCUMENT_ID } from './filesystem-plugins/cloud-document-set';
 import {
     collaborationMessageKey,
     createChangeLogEntriesFromCollaborationMessageEnvelope,
@@ -65,6 +68,9 @@ const DEFAULT_PRODUCTION_ROOM_WORKER_URL =
 const DEFAULT_LOCAL_ROOM_WORKER_URL = 'ws://localhost:8787';
 const CLOUD_ASSET_DELETED_MESSAGE = 'Cloud asset was deleted';
 const YDOC_SCHEMA_VERSION = 3;
+export const CLOUD_GLYPH_CATCH_UP_MAX_ATTEMPTS = 8;
+export const CLOUD_GLYPH_CATCH_UP_RETRY_MS = 50;
+export const CLOUD_GLYPH_CATCH_UP_CONCURRENCY = 4;
 const CLOUD_COLLAB_RELOAD_MESSAGE =
     'Please reload the editor to continue collaborating.';
 const CLOUD_COLLAB_FORMAT_CHANGED_MESSAGE =
@@ -159,6 +165,45 @@ export function normalizeCloudRoomHttpUrl(
     return url.toString();
 }
 
+export function normalizeCloudShardHttpUrl(
+    roomUrl: string,
+    websiteBaseUrl: string,
+    assetId: string,
+    documentId: string
+): string {
+    const httpUrl = normalizeCloudRoomHttpUrl(roomUrl, websiteBaseUrl);
+    const url = new URL(httpUrl);
+    const shardPath = documentId.replace(/:/g, '/');
+    url.pathname = `/room/${encodeURIComponent(assetId)}/shards/${shardPath}/state`;
+    return url.toString();
+}
+
+export function normalizeCloudShardLiveHttpUrl(
+    roomUrl: string,
+    websiteBaseUrl: string,
+    assetId: string,
+    documentId: string
+): string {
+    const url = new URL(
+        normalizeCloudShardHttpUrl(roomUrl, websiteBaseUrl, assetId, documentId)
+    );
+    url.pathname = url.pathname.replace(/\/state$/, '/live');
+    return url.toString();
+}
+
+export function normalizeCloudShardWebSocketUrl(
+    roomUrl: string,
+    websiteBaseUrl: string,
+    assetId: string,
+    documentId: string
+): string {
+    const wsUrl = normalizeCloudRoomWebSocketUrl(roomUrl, websiteBaseUrl);
+    const url = new URL(wsUrl);
+    const shardPath = documentId.replace(/:/g, '/');
+    url.pathname = `/room/${encodeURIComponent(assetId)}/shards/${shardPath}`;
+    return url.toString();
+}
+
 async function parseRequiredJsonResponse<T>(
     response: Response,
     errorPrefix: string
@@ -173,6 +218,174 @@ async function parseRequiredJsonResponse<T>(
     }
 
     return (await response.json()) as T;
+}
+
+export type CloudLiveDocumentState = {
+    update: string;
+    serverStateVector?: string;
+    collaborationMessageHistory?: CollaborationMessageEnvelope[];
+};
+
+function defaultGlyphCatchUpWait(attempt: number): Promise<void> {
+    const delayMs = CLOUD_GLYPH_CATCH_UP_RETRY_MS * 2 ** attempt;
+    return new Promise((resolve) => {
+        window.setTimeout(resolve, delayMs);
+    });
+}
+
+function resolvedCatchUpRevision(options: {
+    expectedRevision?: string;
+    resolveExpectedRevision?: () => string | undefined;
+}): string | undefined {
+    const live = options.resolveExpectedRevision?.();
+    if (typeof live === 'string' && live) {
+        return live;
+    }
+    if (
+        typeof options.expectedRevision === 'string' &&
+        options.expectedRevision
+    ) {
+        return options.expectedRevision;
+    }
+    return undefined;
+}
+
+export async function catchUpCloudDocument(options: {
+    bridge: PatchSyncEngine;
+    token: string;
+    roomUrl: string;
+    websiteBaseUrl: string;
+    assetId: string;
+    documentId: string;
+    expectedRevision?: string;
+    resolveExpectedRevision?: () => string | undefined;
+    maxAttempts?: number;
+    wait?: (attempt: number) => Promise<void>;
+}): Promise<boolean> {
+    const liveUrl = normalizeCloudShardLiveHttpUrl(
+        options.roomUrl,
+        options.websiteBaseUrl,
+        options.assetId,
+        options.documentId
+    );
+    const maxAttempts = Math.max(
+        1,
+        options.maxAttempts ?? CLOUD_GLYPH_CATCH_UP_MAX_ATTEMPTS
+    );
+    const wait = options.wait ?? defaultGlyphCatchUpWait;
+    let lastError: Error | null = null;
+
+    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+        if (attempt > 0) {
+            await wait(attempt - 1);
+        }
+        const expectedRevision = resolvedCatchUpRevision(options);
+        try {
+            const response = await fetch(liveUrl, {
+                method: 'GET',
+                headers: {
+                    Authorization: `Bearer ${options.token}`,
+                    Accept: 'application/json'
+                }
+            });
+            if (response.status === 401 || response.status === 403) {
+                throw new Error(
+                    `Live glyph catch-up failed (${response.status}) for ${options.documentId}`
+                );
+            }
+            if (response.status === 404) {
+                lastError = new Error(
+                    `Live glyph catch-up not found for ${options.documentId}`
+                );
+                if (!expectedRevision) {
+                    return false;
+                }
+                continue;
+            }
+            if (!response.ok) {
+                lastError = new Error(
+                    `Live glyph catch-up failed (${response.status}) for ${options.documentId}`
+                );
+                continue;
+            }
+            const payload =
+                await parseRequiredJsonResponse<CloudLiveDocumentState>(
+                    response,
+                    'Live glyph catch-up'
+                );
+            const update =
+                typeof payload.update === 'string' && payload.update.length > 0
+                    ? base64ToU8(payload.update)
+                    : new Uint8Array();
+            if (!update.length) {
+                lastError = new Error(
+                    `Live glyph catch-up returned empty state for ${options.documentId}`
+                );
+                if (!expectedRevision) {
+                    return false;
+                }
+                continue;
+            }
+            let applied = true;
+            if (typeof options.bridge.applyDocumentCatchUp === 'function') {
+                applied = options.bridge.applyDocumentCatchUp(
+                    options.documentId,
+                    update,
+                    payload.collaborationMessageHistory,
+                    undefined,
+                    expectedRevision
+                );
+            } else {
+                options.bridge.applyDocumentCheckpoint?.(
+                    options.documentId,
+                    update
+                );
+                if (
+                    expectedRevision &&
+                    typeof options.bridge.glyphHasCatchUpRevision ===
+                        'function' &&
+                    !options.bridge.glyphHasCatchUpRevision(
+                        options.documentId,
+                        expectedRevision
+                    )
+                ) {
+                    applied = false;
+                }
+            }
+            if (!applied) {
+                lastError = new Error(
+                    `Live glyph catch-up revision mismatch for ${options.documentId}`
+                );
+                continue;
+            }
+            if (window.windowRole?.isMainWindow()) {
+                window.windowSync?.broadcastCloudRelayUpdate?.(
+                    update,
+                    null,
+                    options.documentId
+                );
+            }
+            return true;
+        } catch (error) {
+            if (
+                error instanceof Error &&
+                /Live glyph catch-up failed \(40[13]\)/.test(error.message)
+            ) {
+                throw error;
+            }
+            lastError =
+                error instanceof Error
+                    ? error
+                    : new Error(
+                          `Live glyph catch-up failed for ${options.documentId}`
+                      );
+        }
+    }
+
+    if (lastError) {
+        throw lastError;
+    }
+    return false;
 }
 
 /**
@@ -200,6 +413,7 @@ export type CloudAdapterOptions = {
     assetId: string;
     websiteBaseUrl?: string;
     roomWorkerBaseUrl?: string;
+    documentId?: string;
     suppressSyncComplete?: boolean;
     onConnectionStatus?: (
         status: CloudConnectionStatus,
@@ -589,6 +803,10 @@ export class CloudAdapter implements FileSystemAdapter {
     >();
     private _directConnection: { token: string; roomUrl: string } | null = null;
     private _terminalCloseDetail: string | null = null;
+    private _documentId: string;
+    private _skipWorkerReseed = false;
+    private _lastSyncCollaborationMessages:
+        CollaborationMessageEnvelope[] | undefined;
 
     constructor(options: CloudAdapterOptions) {
         this._assetId = options.assetId;
@@ -596,6 +814,7 @@ export class CloudAdapter implements FileSystemAdapter {
             options.websiteBaseUrl ?? DEFAULT_WEBSITE_BASE_URL;
         this._roomWorkerBaseUrl =
             options.roomWorkerBaseUrl ?? getDefaultRoomWorkerUrl();
+        this._documentId = options.documentId || FONT_CORE_DOCUMENT_ID;
         this._suppressSyncComplete = options.suppressSyncComplete ?? false;
         this._onConnectionStatus = options.onConnectionStatus ?? null;
         this._onPendingSyncCountChange =
@@ -616,6 +835,10 @@ export class CloudAdapter implements FileSystemAdapter {
 
     get pendingSyncCount(): number {
         return this._durableOutboxEntries.size;
+    }
+
+    get documentId(): string {
+        return this._documentId;
     }
 
     getConnectionHealth(): CloudConnectionHealth {
@@ -651,6 +874,7 @@ export class CloudAdapter implements FileSystemAdapter {
         this._clearInitialSyncTimeout();
         this._bridge = bridge;
         this._directConnection = null;
+        this._skipWorkerReseed = false;
         await this._restorePersistentOutboxIntoBridge();
         this._registerOutboundHook();
         this._subscribeFontModelReady();
@@ -706,6 +930,7 @@ export class CloudAdapter implements FileSystemAdapter {
         this._checkpointLogId = Number.isInteger(options?.checkpointLogId)
             ? (options?.checkpointLogId as number)
             : null;
+        this._skipWorkerReseed = options?.bootstrapMode === 'skip';
         if (options?.bootstrapMode !== 'skip') {
             await this._bootstrapFromR2(token, roomUrl);
         }
@@ -799,9 +1024,11 @@ export class CloudAdapter implements FileSystemAdapter {
         // Bridge was replaced by initializeBridge() — re-seed the new bridge's
         // Y.Doc with the accumulated CRDT state from the old bridge so future
         // incremental updates from remote peers can resolve correctly.
-        const oldState = this._bridge?.encodeBridgeState();
+        const oldState =
+            this._bridge?.encodeDocumentState?.(this._documentId) ??
+            this._bridge?.encodeBridgeState();
         if (!skipMerge && oldState && oldState.length > 0) {
-            newBridge.applyYDocUpdateSilent(oldState);
+            newBridge.applyYDocUpdateSilent(oldState, this._documentId);
         }
 
         this._localUpdateUnsubscribe?.();
@@ -1026,7 +1253,8 @@ export class CloudAdapter implements FileSystemAdapter {
                 bridge?.applyRemoteUpdate(
                     base64ToU8(record.updateBase64),
                     undefined,
-                    [record.collaborationMessage]
+                    [record.collaborationMessage],
+                    this._documentId
                 );
                 existingCollaborationIds.add(record.clientTransactionId);
             } catch (error) {
@@ -1092,9 +1320,11 @@ export class CloudAdapter implements FileSystemAdapter {
         if (this._destroyed) return;
         try {
             const { token, roomUrl } = await this._fetchRoomToken();
-            const normalizedWsUrl = normalizeCloudRoomWebSocketUrl(
+            const normalizedWsUrl = normalizeCloudShardWebSocketUrl(
                 roomUrl,
-                this._websiteBaseUrl
+                this._websiteBaseUrl,
+                this._assetId,
+                this._documentId
             );
 
             if (!this._canSkipBootstrapOnReconnect) {
@@ -1147,7 +1377,7 @@ export class CloudAdapter implements FileSystemAdapter {
             return;
         }
 
-        const sv = this._bridge?.encodeBridgeStateVector() ?? new Uint8Array(0);
+        const sv = this._encodeLocalStateVector();
         const syncRequest: Record<string, unknown> = {
             type: 'sync-request',
             stateVector: u8ToBase64(sv)
@@ -1167,10 +1397,7 @@ export class CloudAdapter implements FileSystemAdapter {
         token: string,
         roomUrl: string
     ): Promise<void> {
-        const httpUrl = normalizeCloudRoomHttpUrl(
-            roomUrl,
-            this._websiteBaseUrl
-        );
+        const httpUrl = this._shardHttpUrl(roomUrl);
         const response = await fetch(httpUrl, {
             headers: { Authorization: `Bearer ${token}` }
         });
@@ -1196,10 +1423,12 @@ export class CloudAdapter implements FileSystemAdapter {
         // local edits cannot land against a pre-checkpoint Rust Y.Doc before
         // the later sync-response rebaseline (COMPILATION_EDIT_POLICY §28).
         if (this._bridge) {
-            this._bridge.applyFullState(stateBytes);
-            await this._reseedEditingWorkerFromBridgeAfterCheckpoint(
-                'R2 checkpoint bootstrap'
-            );
+            this._applyServerStateToBridge(stateBytes);
+            if (this._shouldReseedWorkerAfterServerState(stateBytes)) {
+                await this._reseedEditingWorkerFromBridgeAfterCheckpoint(
+                    'R2 checkpoint bootstrap'
+                );
+            }
         }
 
         this._checkpointLogId =
@@ -1220,12 +1449,9 @@ export class CloudAdapter implements FileSystemAdapter {
         token: string,
         roomUrl: string
     ): Promise<number | null> {
-        const httpUrl = normalizeCloudRoomHttpUrl(
-            roomUrl,
-            this._websiteBaseUrl
-        );
+        const httpUrl = this._shardHttpUrl(roomUrl);
 
-        const bridgeState = this._bridge?.encodeBridgeState();
+        const bridgeState = this._encodeLocalState();
         if (!bridgeState || bridgeState.length === 0) {
             throw new Error('no bridge state to seed');
         }
@@ -1265,6 +1491,72 @@ export class CloudAdapter implements FileSystemAdapter {
         );
 
         return checkpointLogId;
+    }
+
+    async seedDocumentSet(
+        token: string,
+        roomUrl: string,
+        shards: EncodedShard[],
+        glyphCount: number
+    ): Promise<void> {
+        for (const shard of shards) {
+            const httpUrl = normalizeCloudShardHttpUrl(
+                roomUrl,
+                this._websiteBaseUrl,
+                this._assetId,
+                shard.documentId
+            );
+            const response = await fetch(httpUrl, {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${token}`,
+                    'Content-Type': 'application/octet-stream',
+                    'X-Glyph-Count': String(glyphCount)
+                },
+                body: shard.bytes as unknown as BodyInit
+            });
+            if (response.status === 409) {
+                continue;
+            }
+            if (!response.ok) {
+                const body = await response.text().catch(() => '');
+                throw new Error(
+                    `shard seed failed (${shard.documentId}): ${response.status} ${body.slice(0, 160)}`
+                );
+            }
+        }
+    }
+
+    async hydrateDocumentSet(
+        token: string,
+        roomUrl: string,
+        documentIds: string[]
+    ): Promise<Map<string, Uint8Array>> {
+        const result = new Map<string, Uint8Array>();
+        for (const documentId of documentIds) {
+            const httpUrl = normalizeCloudShardHttpUrl(
+                roomUrl,
+                this._websiteBaseUrl,
+                this._assetId,
+                documentId
+            );
+            const response = await fetch(httpUrl, {
+                headers: { Authorization: `Bearer ${token}` }
+            });
+            if (response.status === 404) {
+                continue;
+            }
+            if (!response.ok) {
+                throw new Error(
+                    `shard hydrate failed (${documentId}): ${response.status}`
+                );
+            }
+            result.set(
+                documentId,
+                new Uint8Array(await response.arrayBuffer())
+            );
+        }
+        return result;
     }
 
     private async _openWebSocket(token: string, wsUrl: string): Promise<void> {
@@ -1485,6 +1777,8 @@ export class CloudAdapter implements FileSystemAdapter {
                 )
                     ? (msg.collaborationMessageHistory as CollaborationMessageEnvelope[])
                     : undefined;
+                this._lastSyncCollaborationMessages =
+                    collaborationMessageHistory;
                 this._reconcileDurableCollaborationMessageHistory(
                     collaborationMessageHistory ?? []
                 );
@@ -1676,19 +1970,78 @@ export class CloudAdapter implements FileSystemAdapter {
 
     // ── Yjs integration ───────────────────────────────────────────
 
+    private _shardHttpUrl(roomUrl: string): string {
+        return normalizeCloudShardHttpUrl(
+            roomUrl,
+            this._websiteBaseUrl,
+            this._assetId,
+            this._documentId
+        );
+    }
+
+    private _encodeLocalStateVector(): Uint8Array {
+        return (
+            this._bridge?.encodeDocumentStateVector?.(this._documentId) ??
+            this._bridge?.encodeBridgeStateVector?.() ??
+            new Uint8Array(0)
+        );
+    }
+
+    private _encodeLocalState(): Uint8Array | undefined {
+        return (
+            this._bridge?.encodeDocumentState?.(this._documentId) ??
+            this._bridge?.encodeBridgeState?.()
+        );
+    }
+
+    private _applyServerStateToBridge(update: Uint8Array): void {
+        if (!this._bridge) {
+            return;
+        }
+        if (this._documentId !== FONT_CORE_DOCUMENT_ID) {
+            if (typeof this._bridge.applyDocumentCatchUp === 'function') {
+                this._bridge.applyDocumentCatchUp(
+                    this._documentId,
+                    update,
+                    this._lastSyncCollaborationMessages
+                );
+                return;
+            }
+            if (typeof this._bridge.applyDocumentCheckpoint === 'function') {
+                this._bridge.applyDocumentCheckpoint(this._documentId, update);
+                return;
+            }
+        }
+        this._bridge.applyFullState(update);
+    }
+
+    private _shouldReseedWorkerAfterServerState(update: Uint8Array): boolean {
+        if (this._documentId !== FONT_CORE_DOCUMENT_ID) {
+            return false;
+        }
+        if (this._skipWorkerReseed && update.length === 0) {
+            return false;
+        }
+        return true;
+    }
+
     /** Apply a full-state snapshot received from the server. */
     private _applyServerState(update: Uint8Array): void {
         if (update.length === 0) {
             this._resyncRequestedAfterNoopUpdate = false;
-            if (!this._scheduleWorkerBridgeSyncAfterServerState()) return;
+            if (this._shouldReseedWorkerAfterServerState(update)) {
+                if (!this._scheduleWorkerBridgeSyncAfterServerState()) return;
+            }
             this._initialServerStateApplied = true;
             return;
         }
         if (!this._bridge) return;
         try {
-            this._bridge.applyFullState(update);
+            this._applyServerStateToBridge(update);
             this._resyncRequestedAfterNoopUpdate = false;
-            if (!this._scheduleWorkerBridgeSyncAfterServerState()) return;
+            if (this._shouldReseedWorkerAfterServerState(update)) {
+                if (!this._scheduleWorkerBridgeSyncAfterServerState()) return;
+            }
             this._initialServerStateApplied = true;
             console.log(
                 `CloudAdapter: applied server state (${update.length} bytes)`
@@ -1714,10 +2067,12 @@ export class CloudAdapter implements FileSystemAdapter {
                   acknowledgeWorkerBridgeReseed?: () => void;
               })
             | undefined;
-        const seedState =
-            bridge?.encodeBridgeState?.() ??
-            fontManager?.buildWorkerSeedYjsState?.();
-        if (!seedState?.length) {
+        const documentSet = bridge?.encodeDocumentSet?.() ?? [];
+        const seedState = documentSet.length
+            ? null
+            : (bridge?.encodeBridgeState?.() ??
+              fontManager?.buildWorkerSeedYjsState?.());
+        if (!documentSet.length && !seedState?.length) {
             if (this._syncGeneration === syncGeneration) {
                 fontCompilation.setWorkerCacheDocumentReady?.(false);
             }
@@ -1732,8 +2087,17 @@ export class CloudAdapter implements FileSystemAdapter {
         fontManager?.recordFullFontCrossing?.();
 
         const syncPromise = (async () => {
-            if (typeof fontCompilation.seedWorkerYDocFromState === 'function') {
-                await fontCompilation.seedWorkerYDocFromState(seedState);
+            if (
+                documentSet.length &&
+                typeof fontCompilation.seedWorkerDocumentSet === 'function'
+            ) {
+                await fontCompilation.seedWorkerDocumentSet(documentSet);
+            } else if (
+                typeof fontCompilation.seedWorkerYDocFromState === 'function'
+            ) {
+                await fontCompilation.seedWorkerYDocFromState(
+                    seedState as Uint8Array
+                );
             } else {
                 await fontCompilation.sendMessage({
                     type: 'seedYdoc',
@@ -1797,10 +2161,12 @@ export class CloudAdapter implements FileSystemAdapter {
                   acknowledgeWorkerBridgeReseed?: () => void;
               })
             | undefined;
-        const seedState =
-            this._bridge.encodeBridgeState?.() ??
-            fontManager?.buildWorkerSeedYjsState?.();
-        if (!seedState?.length) {
+        const documentSet = this._bridge.encodeDocumentSet?.() ?? [];
+        const seedState = documentSet.length
+            ? null
+            : (this._bridge.encodeBridgeState?.() ??
+              fontManager?.buildWorkerSeedYjsState?.());
+        if (!documentSet.length && !seedState?.length) {
             console.warn(
                 `CloudAdapter: skipping worker reseed after ${reason}: missing bridge Yjs state`
             );
@@ -1811,8 +2177,17 @@ export class CloudAdapter implements FileSystemAdapter {
         fontManager?.recordFullFontCrossing?.();
 
         const syncPromise = (async () => {
-            if (typeof fontCompilation.seedWorkerYDocFromState === 'function') {
-                await fontCompilation.seedWorkerYDocFromState(seedState);
+            if (
+                documentSet.length &&
+                typeof fontCompilation.seedWorkerDocumentSet === 'function'
+            ) {
+                await fontCompilation.seedWorkerDocumentSet(documentSet);
+            } else if (
+                typeof fontCompilation.seedWorkerYDocFromState === 'function'
+            ) {
+                await fontCompilation.seedWorkerYDocFromState(
+                    seedState as Uint8Array
+                );
             } else {
                 await fontCompilation.sendMessage({
                     type: 'seedYdoc',
@@ -2026,7 +2401,8 @@ export class CloudAdapter implements FileSystemAdapter {
             const didApply = this._bridge.applyRemoteUpdate(
                 update,
                 undefined,
-                remoteCollaborationMessages
+                remoteCollaborationMessages,
+                this._documentId
             );
             if (!didApply) {
                 return;
@@ -2034,7 +2410,8 @@ export class CloudAdapter implements FileSystemAdapter {
             if (window.windowRole?.isMainWindow()) {
                 window.windowSync?.broadcastCloudRelayUpdate?.(
                     update,
-                    remoteCollaborationMessages?.[0] ?? null
+                    remoteCollaborationMessages?.[0] ?? null,
+                    this._documentId
                 );
             }
         } catch (err) {
@@ -2072,7 +2449,10 @@ export class CloudAdapter implements FileSystemAdapter {
             return false;
         }
         try {
-            const diff = this._bridge.encodeStateDiff(serverStateVector);
+            const diff = this._bridge.encodeStateDiff(
+                serverStateVector,
+                this._documentId
+            );
             if (diff.length === 0) return false;
             const collaborationMessages =
                 createCollaborationMessageEnvelopesFromChangeLogEntries(
@@ -2247,14 +2627,42 @@ export class CloudAdapter implements FileSystemAdapter {
 
         const sendUpdate = (
             update: Uint8Array,
-            collaborationMessage?: CollaborationMessageEnvelope | null
+            collaborationMessage?: CollaborationMessageEnvelope | null,
+            _changeLogEntries?: unknown,
+            documentId?: string
         ): void => {
+            if (documentId && documentId !== this._documentId) {
+                return;
+            }
             this._enqueueOutboundPacket(update, collaborationMessage);
         };
 
         this._bridge.onLocalUpdate(sendUpdate);
+        const sendRevisionSignal = (
+            update: Uint8Array,
+            entries: ChangeLogEntry[]
+        ): void => {
+            if (this._documentId !== FONT_CORE_DOCUMENT_ID) {
+                return;
+            }
+            const collaborationMessages =
+                createCollaborationMessageEnvelopesFromChangeLogEntries(
+                    entries,
+                    {
+                        startingLocalSequence: this._seq + 1,
+                        source: 'cloud-adapter.glyph-revision',
+                        windowId: this._bridge?.windowId
+                    }
+                );
+            this._enqueueOutboundPacket(
+                update,
+                collaborationMessages[0] ?? null
+            );
+        };
+        this._bridge.onGlyphRevisionSignal?.(sendRevisionSignal);
         this._localUpdateUnsubscribe = () => {
             this._bridge?.offLocalUpdate(sendUpdate);
+            this._bridge?.offGlyphRevisionSignal?.(sendRevisionSignal);
         };
     }
 

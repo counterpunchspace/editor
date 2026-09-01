@@ -9,7 +9,8 @@ export {
     type FileContextAction,
     type FileContextTarget,
     type PluginMessageOptions,
-    type FilesystemPluginUICallbacks
+    type FilesystemPluginUICallbacks,
+    type CanAddGlyphsResult
 } from './filesystem-plugin';
 export { pluginRegistry } from './registry';
 export { MemoryPlugin } from './plugins/memory-plugin';

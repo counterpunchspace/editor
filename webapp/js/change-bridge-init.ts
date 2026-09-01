@@ -480,9 +480,7 @@ function buildCascadeLayerOperations(
     const glyphs = Array.isArray((fontJson as Unsafe)?.glyphs)
         ? ((fontJson as Unsafe).glyphs as Unsafe[])
         : [];
-    const glyphsMap = bridge.fontMap.get('glyphs') as
-        { get?: (key: string) => unknown } | undefined;
-    if (!glyphsMap || !layerTargets.length) {
+    if (!layerTargets.length) {
         return [];
     }
 
@@ -511,11 +509,9 @@ function buildCascadeLayerOperations(
             continue;
         }
 
-        const glyphMap = glyphsMap.get?.(glyphName) as
+        const glyphMap = bridge.getYValue(['glyphs', glyphName]) as
             { get?: (key: string) => unknown } | undefined;
-        const yGlyphMap = glyphMap as
-            { get?: (key: string) => unknown } | undefined;
-        const yLayersMap = yGlyphMap?.get?.('layers') as
+        const yLayersMap = glyphMap?.get?.('layers') as
             { get?: (key: string) => unknown } | undefined;
         const yLayerMap = yLayersMap?.get?.(layerId);
         if (!yLayerMap) {
@@ -898,6 +894,9 @@ function collectNonGlyphChangeHints(
 
     for (const entry of entries) {
         const path = entry.path ?? '';
+        if (path === 'glyphRevisions' || path.startsWith('glyphRevisions.')) {
+            continue;
+        }
         const kerningEditType = inferKerningEditTypeFromMetadata(
             entry.transactionLabel ?? '',
             path
@@ -2935,6 +2934,16 @@ function initializeBridge(detail: {
     );
     window.patchSyncEngine = bridge;
     window.changeBridge = bridge;
+    const bootstrapDocuments = (
+        window as Window & {
+            __pendingCloudBridgeBootstrapDocuments?: Array<{
+                documentId: string;
+                bytes: Uint8Array;
+            }>;
+            __pendingCloudBridgeBootstrapState?: Uint8Array;
+            __pendingCloudBridgeBootstrapChangeLog?: ChangeLogEntry[];
+        }
+    ).__pendingCloudBridgeBootstrapDocuments;
     const bootstrapState = (
         window as Window & {
             __pendingCloudBridgeBootstrapState?: Uint8Array;
@@ -2947,6 +2956,14 @@ function initializeBridge(detail: {
             __pendingCloudBridgeBootstrapChangeLog?: ChangeLogEntry[];
         }
     ).__pendingCloudBridgeBootstrapChangeLog;
+    delete (
+        window as Window & {
+            __pendingCloudBridgeBootstrapDocuments?: Array<{
+                documentId: string;
+                bytes: Uint8Array;
+            }>;
+        }
+    ).__pendingCloudBridgeBootstrapDocuments;
     delete (
         window as Window & {
             __pendingCloudBridgeBootstrapState?: Uint8Array;
@@ -3040,6 +3057,17 @@ function initializeBridge(detail: {
                 ReturnType<typeof JSON.parse>
             >
         );
+    } else if (bootstrapDocuments?.length) {
+        bridge.setFontJson(
+            detail.babelfontData as Record<
+                string,
+                ReturnType<typeof JSON.parse>
+            >
+        );
+        bridge.applyDocumentSetState(bootstrapDocuments);
+        if (bootstrapChangeLog?.length) {
+            bridge.importChangeLog(bootstrapChangeLog);
+        }
     } else if (bootstrapState && bootstrapState.length > 0) {
         bridge.setFontJson(
             detail.babelfontData as Record<
@@ -3069,7 +3097,17 @@ function initializeBridge(detail: {
     // stay current without the expensive full-JSON round-trip.
     // YJS_ONLY: Binary Yjs update forwarded to worker — no full JSON
     // crossing. changedGlyphs hint enables targeted Rust-side cache patching.
-    bridge.setYjsWorkerCallback((update, changeLogEntries) => {
+    bridge.setWorkerDocumentReplaceCallback((documentId, state) => {
+        fontCompilation.scheduleReplaceWorkerDocument(documentId, state);
+        if (fullFontCompilation.hasWorkerCacheDocument()) {
+            fullFontCompilation.scheduleReplaceWorkerDocument(
+                documentId,
+                state
+            );
+        }
+    });
+
+    bridge.setYjsWorkerCallback((update, changeLogEntries, documentId) => {
         // Extract affected glyph names from the change-log entries so Rust can
         // perform a targeted partial update instead of a full JSON rebuild.
         // ChangeLogEntry.path uses dot-delimited format: "glyphs.A.layers.uuid.shapes.0.nodes"
@@ -3093,7 +3131,8 @@ function initializeBridge(detail: {
                 invalidateLayoutClosure,
                 nonGlyphChangeHints,
                 ...(glyphRenames.length ? { glyphRenames } : undefined),
-                ...(layerTargets.length ? { layerTargets } : undefined)
+                ...(layerTargets.length ? { layerTargets } : undefined),
+                documentId
             }
         );
 
@@ -3106,7 +3145,8 @@ function initializeBridge(detail: {
                     nonGlyphChangeHints,
                     ...(glyphRenames.length ? { glyphRenames } : undefined),
                     ...(layerTargets.length ? { layerTargets } : undefined),
-                    invalidateLayoutClosure
+                    invalidateLayoutClosure,
+                    documentId
                 })
                 .catch((error) => {
                     console.warn(
@@ -3124,8 +3164,9 @@ function initializeBridge(detail: {
         // The worker must inherit this exact CRDT graph. A fresh Y.Doc rebuilt
         // from the same JSON has different item identities, so later bridge
         // deltas can remain pending or fail to update nested arrays.
+        const documentSet = bridge.encodeDocumentSet?.();
         const state = bridge.encodeBridgeState();
-        if (!state?.length) {
+        if (!documentSet?.length && !state?.length) {
             console.warn(
                 'Failed to build worker seed Yjs state for initial worker seed'
             );
@@ -3133,7 +3174,9 @@ function initializeBridge(detail: {
         } else {
             void fontCompilation
                 .trackWorkerDocumentSync(
-                    fontCompilation.seedWorkerYDocFromState(state)
+                    documentSet?.length
+                        ? fontCompilation.seedWorkerDocumentSet(documentSet)
+                        : fontCompilation.seedWorkerYDocFromState(state)
                 )
                 .catch((error) => {
                     console.warn(

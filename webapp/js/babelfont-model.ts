@@ -35,6 +35,7 @@ export {
     pathHasSubtractionFlag
 };
 import { assertModelMutationAllowed } from './model-mutation-policy';
+import type { FilesystemPlugin } from './filesystem-plugins/filesystem-plugin';
 import { applyGlyphRenameUiContext } from './rename-glyphs-ui-context';
 import { assertGlyphRenamePreflight } from './rename-glyphs-preflight';
 import { applyGlyphDeleteUiContext } from './delete-glyphs-ui-context';
@@ -3317,6 +3318,29 @@ function withBridgeTransaction<T>(label: string, fn: () => T): T {
         return fn();
     } finally {
         bridge.endTransaction();
+    }
+}
+
+function getCurrentSourcePlugin(): FilesystemPlugin | null {
+    const plugin = window.fontManager?.currentFont?.sourcePlugin;
+    if (
+        plugin &&
+        typeof plugin.getCachedCanAddGlyphs === 'function' &&
+        typeof plugin.canAddGlyphs === 'function'
+    ) {
+        return plugin as FilesystemPlugin;
+    }
+    return null;
+}
+
+function assertCanAddGlyphs(additionalGlyphCount: number): void {
+    const plugin = getCurrentSourcePlugin();
+    if (!plugin) {
+        return;
+    }
+    const gate = plugin.getCachedCanAddGlyphs(additionalGlyphCount);
+    if (!gate.allowed) {
+        throw new Error(gate.reason || 'Glyph limit reached');
     }
 }
 
@@ -11038,6 +11062,13 @@ export class Glyph extends ArrayElementBase {
         return this.data.name;
     }
 
+    get id(): string {
+        if (typeof this.data.id !== 'string' || !this.data.id) {
+            this.data.id = generateStableId();
+        }
+        return this.data.id;
+    }
+
     set name(value: string) {
         assertModelMutationAllowed();
         const old = this.data.name;
@@ -12398,14 +12429,16 @@ export class Master extends ArrayElementBase {
                 await window.fontManager.buildWorkerReinterpolateMasterLayersBatch(
                     this.id
                 );
-            if (!batchResult.update.length) {
+            if (!batchResult.update.length && !batchResult.updates?.length) {
                 return;
             }
 
             bridge.applyLocalGeneratedYjsUpdate(
                 batchResult.update,
                 buildInterpolationRustBatchOperations(batchResult.metadata),
-                'Reinterpolate layer batch sync'
+                'Reinterpolate layer batch sync',
+                null,
+                batchResult.updates
             );
         } finally {
             endStartupInteractionLock();
@@ -14340,6 +14373,7 @@ export class Font extends ModelBase {
      */
     duplicateGlyph(glyph: Glyph, newName: string): Glyph {
         assertModelMutationAllowed();
+        assertCanAddGlyphs(1);
         // Check if glyph with newName already exists
         if (this.findGlyph(newName)) {
             throw new Error(`Glyph "${newName}" already exists in the font`);
@@ -14361,6 +14395,7 @@ export class Font extends ModelBase {
         // Set the new name; duplicates are unencoded.
         clonedData.name = newName;
         delete clonedData.codepoints;
+        clonedData.id = generateStableId();
 
         // Generate new unique IDs for all layers
         if (clonedData.layers) {
@@ -14447,9 +14482,11 @@ export class Font extends ModelBase {
             );
             return indexA - indexB;
         });
+        const toDuplicate = uniqueNames.filter((name) => this.findGlyph(name));
+        assertCanAddGlyphs(toDuplicate.length);
         return withBridgeTransaction('Duplicate glyphs', () => {
             const created: Glyph[] = [];
-            for (const name of uniqueNames) {
+            for (const name of toDuplicate) {
                 const glyph = this.findGlyph(name);
                 if (!glyph) {
                     continue;
@@ -14852,7 +14889,10 @@ export class Font extends ModelBase {
                         // stale avar map and produces frankenstein layers.
                         this._data.axes ?? []
                     );
-                if (!batchResult.update.length) {
+                if (
+                    !batchResult.update.length &&
+                    !batchResult.updates?.length
+                ) {
                     if (axisExtension.changed) {
                         this._data.axes = previousAxes;
                     }
@@ -14860,6 +14900,7 @@ export class Font extends ModelBase {
                 }
 
                 let finalUpdate = batchResult.update;
+                let documentUpdates = batchResult.updates;
                 const metadata = batchResult.metadata;
                 if (axisExtension.changed && !metadata.axesOperation) {
                     metadata.axesOperation = {
@@ -14877,6 +14918,9 @@ export class Font extends ModelBase {
                         );
                     if (refined.update.length) {
                         finalUpdate = refined.update;
+                    }
+                    if (refined.updates?.length) {
+                        documentUpdates = refined.updates;
                     }
                     const overrideByKey = new Map(
                         overrides.map((override) => [
@@ -14896,7 +14940,8 @@ export class Font extends ModelBase {
                 bridge.applyLocalGeneratedYjsUpdate(
                     finalUpdate,
                     buildInterpolationRustBatchOperations(metadata),
-                    'Add master'
+                    'Add master',
+                    ...(documentUpdates?.length ? [null, documentUpdates] : [])
                 );
             } finally {
                 endStartupInteractionLock();
@@ -15010,13 +15055,18 @@ export class Font extends ModelBase {
                     await window.fontManager.buildWorkerRemoveMastersBatch(
                         normalizedMasterIds
                     );
-                if (!batchResult.update.length) {
+                if (
+                    !batchResult.update.length &&
+                    !batchResult.updates?.length
+                ) {
                     return false;
                 }
                 bridge.applyLocalGeneratedYjsUpdate(
                     batchResult.update,
                     buildInterpolationRustBatchOperations(batchResult.metadata),
-                    'Remove master'
+                    'Remove master',
+                    null,
+                    batchResult.updates
                 );
             } finally {
                 endStartupInteractionLock();
@@ -15079,11 +15129,13 @@ export class Font extends ModelBase {
         options?: { insertIndex?: number }
     ): Glyph {
         assertModelMutationAllowed();
+        assertCanAddGlyphs(1);
         const glyphData: Babelfont.Glyph = {
             name,
             category: Glyph.normalizeCategory(category),
             layers: [],
-            exported: true
+            exported: true,
+            id: generateStableId()
         };
         assertModelMutationAllowed();
         const insertIndex =
@@ -15125,6 +15177,7 @@ export class Font extends ModelBase {
             category?: Babelfont.GlyphCategory | string;
         }>
     ): Glyph[] {
+        assertCanAddGlyphs(glyphs.length);
         return withBridgeTransaction('Add glyphs', () =>
             glyphs.map((glyph) => {
                 const added = this.addGlyph(

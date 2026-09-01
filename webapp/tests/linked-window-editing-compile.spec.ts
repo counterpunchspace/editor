@@ -480,13 +480,14 @@ async function waitForFullStateSync(page: Page): Promise<void> {
             if (!sync || !bridge) {
                 return false;
             }
-            const glyphsMap = bridge.fontMap?.get('glyphs');
-            if (!glyphsMap) {
-                return false;
+            const liveGlyphs = bridge.listLiveGlyphDocumentIds?.();
+            if (Array.isArray(liveGlyphs) && liveGlyphs.length > 0) {
+                return true;
             }
-            let glyphCount = 0;
-            glyphsMap.forEach(() => glyphCount++);
-            return glyphCount > 0;
+            const snapshot = bridge.getFontJsonSnapshot?.();
+            return (
+                Array.isArray(snapshot?.glyphs) && snapshot.glyphs.length > 0
+            );
         },
         { timeout: 20000 }
     );

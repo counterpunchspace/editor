@@ -219,10 +219,23 @@ export type RustBatchMetadata = {
     } | null;
 };
 
+export type RustBatchDocumentUpdate = {
+    documentId: string;
+    update: Uint8Array;
+};
+
 export type RustBatchResult = {
     update: Uint8Array;
+    updates?: RustBatchDocumentUpdate[];
     metadata: RustBatchMetadata;
 };
+
+export function rustBatchHasContent(result: RustBatchResult): boolean {
+    if (result.update.length > 0) {
+        return true;
+    }
+    return Boolean(result.updates?.some((packet) => packet.update.length > 0));
+}
 
 export type AddMasterInterpolationLocation = {
     glyphName: string;
@@ -1094,6 +1107,29 @@ class FontManager {
         return new Uint8Array();
     }
 
+    private normalizeWorkerBatchUpdates(
+        value: unknown
+    ): RustBatchDocumentUpdate[] | undefined {
+        if (!Array.isArray(value) || value.length === 0) {
+            return undefined;
+        }
+        const packets = value.flatMap((entry) => {
+            if (!entry || typeof entry !== 'object') {
+                return [];
+            }
+            const record = entry as Record<string, unknown>;
+            if (typeof record.documentId !== 'string' || !record.documentId) {
+                return [];
+            }
+            const update = this.normalizeWorkerBatchUpdate(record.update);
+            if (!update.length) {
+                return [];
+            }
+            return [{ documentId: record.documentId, update }];
+        });
+        return packets.length ? packets : undefined;
+    }
+
     private parseWorkerBatchMetadata(value: unknown): RustBatchMetadata {
         const rawMetadata =
             typeof value === 'string' && value.length > 0
@@ -1180,11 +1216,13 @@ class FontManager {
         await fontCompilation.awaitWorkerDocumentSync();
         const response = (await fontCompilation.sendMessage(message)) as {
             update?: unknown;
+            updates?: unknown;
             metadataJson?: unknown;
         };
 
         return {
             update: this.normalizeWorkerBatchUpdate(response.update),
+            updates: this.normalizeWorkerBatchUpdates(response.updates),
             metadata: this.parseWorkerBatchMetadata(response.metadataJson)
         };
     }
@@ -2277,6 +2315,13 @@ class FontManager {
 
         this.editingSubsetSnapshotGlyphs = normalized;
         this.editingSubsetSnapshotKey = subsetKey;
+        if (typeof window !== 'undefined' && window.dispatchEvent) {
+            window.dispatchEvent(
+                new CustomEvent('editingSubsetChanged', {
+                    detail: { glyphs: normalized }
+                })
+            );
+        }
         return true;
     }
 
@@ -4374,6 +4419,22 @@ class FontManager {
         return this.buildWorkerYjsStateFromCurrentFont();
     }
 
+    buildWorkerSeedDocumentSet(): Array<{
+        documentId: string;
+        bytes: Uint8Array;
+    }> | null {
+        const bridge = window.patchSyncEngine as
+            | (typeof window.patchSyncEngine & {
+                  encodeDocumentSet?: () => Array<{
+                      documentId: string;
+                      bytes: Uint8Array;
+                  }>;
+              })
+            | undefined;
+        const shards = bridge?.encodeDocumentSet?.();
+        return shards?.length ? shards : null;
+    }
+
     /**
      * Build a Yjs binary state from a raw babelfont JSON string, without
      * touching the current font or any bridge. Used to seed the worker's
@@ -4444,7 +4505,8 @@ class FontManager {
         invalidateLayoutClosure: boolean,
         nonGlyphChangeHints: string[] = [],
         layerTargets: WorkerReplayTarget[] = [],
-        glyphRenames: Array<{ oldName: string; newName: string }> = []
+        glyphRenames: Array<{ oldName: string; newName: string }> = [],
+        documentId?: string
     ): Promise<boolean> {
         const runSend = async (): Promise<boolean> => {
             if (!fontCompilation) {
@@ -4512,7 +4574,8 @@ class FontManager {
                         ? { layerTargets: normalizedLayerTargets }
                         : undefined),
                     ...(glyphRenames.length ? { glyphRenames } : undefined),
-                    invalidateLayoutClosure
+                    invalidateLayoutClosure,
+                    documentId
                 });
 
                 // Keep incremental worker updates strictly serialized.
@@ -4655,8 +4718,12 @@ class FontManager {
     private async recoverWorkerCacheFromAuthoritativeState(
         reason: string
     ): Promise<boolean> {
+        const documentSet = window.patchSyncEngine?.encodeDocumentSet?.();
         const bridgeState = window.patchSyncEngine?.encodeBridgeState?.();
-        if (!bridgeState?.length || !fontCompilation) {
+        if (
+            (!documentSet?.length && !bridgeState?.length) ||
+            !fontCompilation
+        ) {
             this.workerMirrorQuarantined = true;
             fontCompilation?.setWorkerCacheDocumentReady(false);
             console.error(
@@ -4667,8 +4734,11 @@ class FontManager {
         }
 
         try {
-            const recovery =
-                fontCompilation.seedWorkerYDocFromState(bridgeState);
+            const recovery = documentSet?.length
+                ? fontCompilation.seedWorkerDocumentSet(documentSet)
+                : fontCompilation.seedWorkerYDocFromState(
+                      bridgeState as Uint8Array
+                  );
             await fontCompilation.trackWorkerDocumentSync(recovery);
             this.acknowledgeWorkerBridgeReseed();
             console.warn(
@@ -4876,6 +4946,7 @@ class FontManager {
             layerTargets?: WorkerReplayTarget[];
             nonGlyphChangeHints?: string[];
             glyphRenames?: Array<{ oldName: string; newName: string }>;
+            documentId?: string;
         }
     ): Promise<boolean> {
         const previousWorkerCacheUpdatePromise = this.workerCacheUpdatePromise;
@@ -4908,6 +4979,7 @@ class FontManager {
             layerTargets?: WorkerReplayTarget[];
             nonGlyphChangeHints?: string[];
             glyphRenames?: Array<{ oldName: string; newName: string }>;
+            documentId?: string;
         }
     ): Promise<boolean> {
         const normalizedChangedGlyphs = Array.from(
@@ -4927,7 +4999,8 @@ class FontManager {
                 options?.invalidateLayoutClosure !== false,
                 normalizedNonGlyphChangeHints,
                 normalizedLayerTargets,
-                options?.glyphRenames || []
+                options?.glyphRenames || [],
+                options?.documentId
             );
         }
         // Authoritative mutation is the Yjs binary already being sent.
@@ -4971,7 +5044,8 @@ class FontManager {
             options?.invalidateLayoutClosure !== false,
             normalizedNonGlyphChangeHints,
             normalizedLayerTargets,
-            options?.glyphRenames || []
+            options?.glyphRenames || [],
+            options?.documentId
         );
 
         if (!sent) {

@@ -7,6 +7,7 @@
 
 import {
     FilesystemPlugin,
+    type CanAddGlyphsResult,
     type FileContextAction,
     type FileContextTarget,
     type PluginMessageOptions,
@@ -20,14 +21,39 @@ import {
     normalizeCloudRoomWebSocketUrl
 } from '../../cloud-adapter';
 import {
+    CloudLiveSession,
+    liveGlyphDocumentIdsFromSubset
+} from '../../cloud-live-session';
+import {
     PatchSyncEngine,
     type CommittedChangeListener
 } from '../../patch-sync-engine';
 import { Logger } from '../../logger';
 import { resolveWebsiteURL } from '../../website-url';
+import {
+    applyCloudOwnedData,
+    catalogNeedsUpdate,
+    CLOUD_PLUGIN_OWNED_KEY,
+    depsNeedUpdate,
+    listGlyphRecords,
+    stripOwnedFontData
+} from '../cloud-glyph-catalog';
+import {
+    CloudDocumentSet,
+    FONT_CORE_DOCUMENT_ID,
+    FONT_DEPS_DOCUMENT_ID,
+    glyphDocumentId,
+    glyphIdsFromRevisionEntries,
+    type EncodedShard
+} from '../cloud-document-set';
+import {
+    evaluateShardSizes,
+    MAX_SHARD_BYTES,
+    type ShardSizeGate
+} from '../cloud-shard-limits';
 
 const console = new Logger('CloudPlugin');
-const CLOUD_PLUGIN_UI_ENABLED = false;
+const CLOUD_PLUGIN_UI_ENABLED = true;
 const CLOUD_ASSET_DELETED_MESSAGE = 'Cloud asset was deleted';
 const CLOUD_ASSET_LOCALIZED_EVENT = 'cloudAssetLocalizedToMemory';
 
@@ -276,6 +302,23 @@ function validateCloudExportForFontOpen(
             }
         }
     }
+}
+
+function glyphDocumentIdsFromCoreJson(
+    coreJson: Record<string, unknown>
+): string[] {
+    const formatSpecific = coreJson.format_specific as
+        Record<string, unknown> | undefined;
+    const owned = formatSpecific?.[CLOUD_PLUGIN_OWNED_KEY] as
+        { glyphCatalog?: Array<{ glyphId?: unknown }> } | undefined;
+    if (!Array.isArray(owned?.glyphCatalog)) {
+        return [];
+    }
+    return owned.glyphCatalog.flatMap((entry) => {
+        return typeof entry?.glyphId === 'string' && entry.glyphId
+            ? [glyphDocumentId(entry.glyphId)]
+            : [];
+    });
 }
 
 function getCloudFontJsonFromBridge(
@@ -673,10 +716,24 @@ export interface CloudAsset {
 export interface CloudEligibility {
     cloudHostingEnabled: boolean;
     maxFontsOwned: number | null;
+    maxGlyphsPerFont?: number | null;
     snapshotRetentionDays: number | null;
     fontsOwnedCount: number;
     maxCloudAssetBytes?: number;
     warningCloudAssetBytes?: number;
+    maxShardBytes?: number;
+    warningShardBytes?: number;
+}
+
+export interface CloudAssetLimits {
+    ownerUserId: string;
+    maxFontsOwned: number | null;
+    maxGlyphsPerFont: number | null;
+    glyphCount: number;
+    fontsOwnedCount: number;
+    remainingGlyphs: number | null;
+    maxShardBytes: number;
+    warningShardBytes: number;
 }
 
 export interface CloudAssetMember {
@@ -728,12 +785,21 @@ export interface CloudShareState {
 
 export class CloudPlugin extends FilesystemPlugin {
     private _cloudAdapter: CloudAdapter | null = null;
+    private _liveSession: CloudLiveSession | null = null;
+    private _editingSubsetListener: (() => void) | null = null;
+    private _isSyncingCatalog = false;
     private _activeAssetId: string | null = null;
     private _relayedAssetId: string | null = null;
     private _relayedConnectionStatus: CloudConnectionStatus = 'disconnected';
     private _relayedConnectionDetail: string | undefined;
     private _relayedPendingSyncCount = 0;
     private _eligibility: CloudEligibility | null = null;
+    private _assetLimits: CloudAssetLimits | null = null;
+    private _documentSet: CloudDocumentSet | null = null;
+    private _catalogListener: CommittedChangeListener | null = null;
+    private _glyphCatchUpListener: CommittedChangeListener | null = null;
+    private _coreHydratedListener: (() => void) | null = null;
+    private _glyphCatchUpInFlight = new Set<string>();
     private _pendingOpenAsset: {
         assetId: string;
         promise: Promise<void>;
@@ -968,6 +1034,9 @@ export class CloudPlugin extends FilesystemPlugin {
             return this._relayedPendingSyncCount;
         }
 
+        if (this._activeAssetId === assetId && this._liveSession) {
+            return this._liveSession.pendingSyncCount;
+        }
         if (this._activeAssetId === assetId && this._cloudAdapter) {
             return this._cloudAdapter.pendingSyncCount;
         }
@@ -1191,9 +1260,23 @@ export class CloudPlugin extends FilesystemPlugin {
                 offCommittedChange?: (cb: CommittedChangeListener) => void;
             };
             bridge.offCommittedChange?.(this._activeAssetSizeListener);
+            if (this._catalogListener) {
+                bridge.offCommittedChange?.(this._catalogListener);
+            }
+            if (this._glyphCatchUpListener) {
+                bridge.offCommittedChange?.(this._glyphCatchUpListener);
+            }
+            if (this._coreHydratedListener) {
+                this._activeAssetSizeBridge.offCoreHydrated?.(
+                    this._coreHydratedListener
+                );
+            }
         }
         this._activeAssetSizeBridge = null;
         this._activeAssetSizeListener = null;
+        this._catalogListener = null;
+        this._glyphCatchUpListener = null;
+        this._coreHydratedListener = null;
     }
 
     private _recomputeActiveAssetSize(): void {
@@ -1238,6 +1321,22 @@ export class CloudPlugin extends FilesystemPlugin {
                 onCommittedChange?: (cb: CommittedChangeListener) => void;
             }
         ).onCommittedChange?.(this._activeAssetSizeListener);
+        this._catalogListener = this._syncCatalogFromCommittedChange;
+        (
+            bridge as PatchSyncEngine & {
+                onCommittedChange?: (cb: CommittedChangeListener) => void;
+            }
+        ).onCommittedChange?.(this._catalogListener);
+        this._glyphCatchUpListener = this._syncGlyphCatchUpFromCommittedChange;
+        (
+            bridge as PatchSyncEngine & {
+                onCommittedChange?: (cb: CommittedChangeListener) => void;
+            }
+        ).onCommittedChange?.(this._glyphCatchUpListener);
+        this._coreHydratedListener = () => {
+            this._catchUpFromCoreRevisionMap();
+        };
+        bridge.onCoreHydrated?.(this._coreHydratedListener);
         this._recomputeActiveAssetSize();
     }
 
@@ -1355,9 +1454,18 @@ export class CloudPlugin extends FilesystemPlugin {
             collaborationMessage?: infer T
         ) => void
             ? T
-            : never
+            : never,
+        documentId?: string
     ): void {
         if (!window.windowRole?.isMainWindow()) {
+            return;
+        }
+        if (this._liveSession) {
+            this._liveSession.sendForwardedUpdate(
+                update,
+                collaborationMessage,
+                documentId
+            );
             return;
         }
         this._cloudAdapter?.sendForwardedUpdate(update, collaborationMessage);
@@ -1380,7 +1488,124 @@ export class CloudPlugin extends FilesystemPlugin {
     }
 
     canSave(): boolean {
-        return true; // Cloud syncs continuously
+        const gate = this._documentSet?.evaluateSizes();
+        if (gate && !gate.canSave) {
+            return false;
+        }
+        return true;
+    }
+
+    async prepareToSave(): Promise<void> {
+        await this._refreshOwnedCatalogAndSizes();
+    }
+
+    async prepareToSeed(): Promise<void> {
+        await this.prepareToSave();
+        const fontJson = this._currentFontJson();
+        if (!fontJson) {
+            return;
+        }
+        const glyphCount = listGlyphRecords(fontJson).length;
+        const gate = await this.canAddGlyphs(0);
+        if (
+            this._eligibility?.maxGlyphsPerFont != null &&
+            glyphCount > this._eligibility.maxGlyphsPerFont
+        ) {
+            throw new Error(
+                `Cloud seed blocked: font has ${glyphCount} glyphs but this account allows ${this._eligibility.maxGlyphsPerFont}.`
+            );
+        }
+        void gate;
+    }
+
+    async canAddGlyphs(
+        additionalGlyphCount: number
+    ): Promise<CanAddGlyphsResult> {
+        const additional = Math.max(0, Math.floor(additionalGlyphCount) || 0);
+        const assetId = this.getCurrentAssetIdForSharing();
+        if (assetId) {
+            const limits = await this._fetchAssetLimits(assetId);
+            if (!limits) {
+                return { allowed: false, reason: 'Cloud limits unavailable' };
+            }
+            return this._glyphAddGate(additional, limits);
+        }
+        await this.checkEligibility();
+        return this._glyphAddGate(additional, this._assetLimits);
+    }
+
+    getCachedCanAddGlyphs(additionalGlyphCount: number): CanAddGlyphsResult {
+        return this._glyphAddGate(
+            Math.max(0, Math.floor(additionalGlyphCount) || 0),
+            this._assetLimits
+        );
+    }
+
+    private _liveGlyphCount(): number {
+        const model = window.currentFontModel;
+        if (model && Array.isArray(model.glyphs)) {
+            return model.glyphs.length;
+        }
+        return listGlyphRecords(this._currentFontJson() || {}).length;
+    }
+
+    private _resolveMaxGlyphsPerFont(
+        limits?: CloudAssetLimits | null
+    ): number | null {
+        if (
+            limits &&
+            Object.prototype.hasOwnProperty.call(limits, 'maxGlyphsPerFont')
+        ) {
+            return limits.maxGlyphsPerFont;
+        }
+        if (
+            this._assetLimits &&
+            Object.prototype.hasOwnProperty.call(
+                this._assetLimits,
+                'maxGlyphsPerFont'
+            )
+        ) {
+            return this._assetLimits.maxGlyphsPerFont;
+        }
+        if (
+            this._eligibility &&
+            Object.prototype.hasOwnProperty.call(
+                this._eligibility,
+                'maxGlyphsPerFont'
+            )
+        ) {
+            return this._eligibility.maxGlyphsPerFont ?? null;
+        }
+        return 1000;
+    }
+
+    private _glyphAddGate(
+        additionalGlyphCount: number,
+        limits?: CloudAssetLimits | null
+    ): CanAddGlyphsResult {
+        const max = this._resolveMaxGlyphsPerFont(limits);
+        if (max === null) {
+            return { allowed: true, remaining: null };
+        }
+        const liveCount = this._liveGlyphCount();
+        const liveRemaining = Math.max(0, max - liveCount);
+        const serverRemaining = limits?.remainingGlyphs;
+        const remaining =
+            typeof serverRemaining === 'number'
+                ? Math.min(liveRemaining, serverRemaining)
+                : liveRemaining;
+        const allowed = additionalGlyphCount <= remaining;
+        return {
+            allowed,
+            remaining,
+            reason: allowed
+                ? undefined
+                : `Glyph limit reached (${liveCount}/${max})`
+        };
+    }
+
+    stripOwnedFontData<T>(fontJson: T): T {
+        return stripOwnedFontData(fontJson);
     }
 
     showsManualRefreshButton(): boolean {
@@ -1597,6 +1822,206 @@ export class CloudPlugin extends FilesystemPlugin {
             return data;
         } catch {
             return null;
+        }
+    }
+
+    private _currentFontJson(): Record<string, unknown> | null {
+        const currentFont = (window as any).fontManager?.currentFont;
+        const model = currentFont?.fontModel;
+        if (model && typeof model.toJSON === 'function') {
+            try {
+                return model.toJSON({ compileFacing: false }) as Record<
+                    string,
+                    unknown
+                >;
+            } catch {
+                // Fall through to stored JSON
+            }
+        }
+        if (
+            currentFont?.babelfontData &&
+            typeof currentFont.babelfontData === 'object'
+        ) {
+            return currentFont.babelfontData as Record<string, unknown>;
+        }
+        return null;
+    }
+
+    private async _fetchAssetLimits(
+        assetId: string
+    ): Promise<CloudAssetLimits | null> {
+        try {
+            const resp = await fetch(
+                `${this._websiteBaseUrl}/api/cloud/assets/${encodeURIComponent(assetId)}/limits`,
+                {
+                    credentials: 'include',
+                    headers: getCloudRequestHeaders()
+                }
+            );
+            if (!resp.ok) {
+                return null;
+            }
+            const data = (await resp.json()) as CloudAssetLimits;
+            this._assetLimits = data;
+            return data;
+        } catch {
+            return null;
+        }
+    }
+
+    private async _refreshOwnedCatalogAndSizes(): Promise<ShardSizeGate | null> {
+        const fontJson = this._currentFontJson();
+        if (!fontJson) {
+            return null;
+        }
+        const owned = applyCloudOwnedData(fontJson);
+        window.patchSyncEngine?.syncCloudOwnedProjection?.(owned);
+        const liveShards = window.patchSyncEngine?.encodeDocumentSet?.();
+        const encoded = liveShards?.length
+            ? liveShards
+            : (() => {
+                  if (!this._documentSet) {
+                      this._documentSet = new CloudDocumentSet();
+                  }
+                  this._documentSet.initFromFontJson(fontJson);
+                  return this._documentSet.encodeAll();
+              })();
+        const gate = evaluateShardSizes(
+            encoded.map((shard) => ({
+                documentId: shard.documentId,
+                byteLength: shard.bytes.byteLength
+            }))
+        );
+        if (!gate.canSave) {
+            const blocked = gate.blocking
+                .map(
+                    (report) =>
+                        `${report.documentId} (${report.byteLength} bytes)`
+                )
+                .join(', ');
+            throw new Error(
+                `Cloud save blocked: shard exceeds ${MAX_SHARD_BYTES} bytes (${blocked}).`
+            );
+        }
+        return gate;
+    }
+
+    private _syncCatalogFromCommittedChange: CommittedChangeListener = (
+        entries
+    ) => {
+        const fontJson = this._currentFontJson();
+        if (!fontJson) {
+            return;
+        }
+        const shouldUpdate = entries.some((entry) => {
+            const rawPath = (
+                entry as { path?: string | Array<string | number> }
+            ).path;
+            const path = Array.isArray(rawPath)
+                ? rawPath
+                : typeof rawPath === 'string'
+                  ? rawPath.split('.')
+                  : [];
+            if (!path.length) {
+                return true;
+            }
+            return catalogNeedsUpdate(path) || depsNeedUpdate(path);
+        });
+        if (!shouldUpdate) {
+            return;
+        }
+        if (this._isSyncingCatalog) {
+            return;
+        }
+        this._isSyncingCatalog = true;
+        try {
+            const owned = applyCloudOwnedData(fontJson);
+            window.patchSyncEngine?.syncCloudOwnedProjection?.(owned);
+            if (this._documentSet) {
+                this._documentSet.initFromFontJson(fontJson);
+            }
+            void this._refreshAssetLimitsAfterCatalogChange();
+        } finally {
+            this._isSyncingCatalog = false;
+        }
+    };
+
+    private _syncGlyphCatchUpFromCommittedChange: CommittedChangeListener = (
+        entries,
+        context
+    ) => {
+        if (context.origin !== 'remote') {
+            return;
+        }
+        if (
+            context.documentId &&
+            context.documentId !== FONT_CORE_DOCUMENT_ID
+        ) {
+            return;
+        }
+        const glyphIds = glyphIdsFromRevisionEntries(entries);
+        if (!glyphIds.length) {
+            return;
+        }
+        this._enqueueGlyphCatchUp(glyphIds);
+    };
+
+    private _catchUpFromCoreRevisionMap(): void {
+        this._enqueueGlyphCatchUp();
+    }
+
+    private _enqueueGlyphCatchUp(glyphIds?: string[]): void {
+        const bridge = this._activeAssetSizeBridge;
+        if (!this._liveSession || !bridge) {
+            return;
+        }
+        const tokens = bridge.listGlyphRevisionTokens?.() ?? [];
+        const selected = glyphIds?.length
+            ? glyphIds.map((glyphId) => {
+                  const token = tokens.find(
+                      (entry) => entry.glyphId === glyphId
+                  );
+                  return {
+                      glyphId,
+                      revision: token?.revision
+                  };
+              })
+            : tokens;
+        const targets = selected
+            .map((entry) => ({
+                documentId: glyphDocumentId(entry.glyphId),
+                expectedRevision: entry.revision
+            }))
+            .filter(
+                (target) =>
+                    !this._liveSession?.hasLiveDocument(target.documentId) &&
+                    !this._glyphCatchUpInFlight.has(target.documentId)
+            );
+        if (!targets.length) {
+            return;
+        }
+        for (const target of targets) {
+            this._glyphCatchUpInFlight.add(target.documentId);
+        }
+        void this._liveSession
+            .catchUpDocuments(targets)
+            .catch((error) => {
+                console.warn(
+                    '[CloudPlugin] Failed to catch up glyphs outside the live subset:',
+                    error
+                );
+            })
+            .finally(() => {
+                for (const target of targets) {
+                    this._glyphCatchUpInFlight.delete(target.documentId);
+                }
+            });
+    }
+
+    private async _refreshAssetLimitsAfterCatalogChange(): Promise<void> {
+        const assetId = this.getCurrentAssetIdForSharing();
+        if (assetId) {
+            await this._fetchAssetLimits(assetId);
         }
     }
 
@@ -1983,6 +2408,7 @@ export class CloudPlugin extends FilesystemPlugin {
             const adapter = new CloudAdapter({
                 assetId,
                 websiteBaseUrl: this._websiteBaseUrl,
+                documentId: FONT_CORE_DOCUMENT_ID,
                 suppressSyncComplete: options?.suppressSyncComplete,
                 onConnectionStatus: (
                     status: CloudConnectionStatus,
@@ -2035,6 +2461,162 @@ export class CloudPlugin extends FilesystemPlugin {
                 throw error;
             }
         };
+
+        const hydrator = new CloudAdapter({
+            assetId,
+            websiteBaseUrl: this._websiteBaseUrl
+        });
+        let hydratedShards: EncodedShard[] | null = null;
+        let hydratedFontJson: Record<string, unknown> | null = null;
+        try {
+            const coreAndDeps = await hydrator.hydrateDocumentSet(
+                token,
+                roomUrl,
+                [FONT_CORE_DOCUMENT_ID, FONT_DEPS_DOCUMENT_ID]
+            );
+            const coreBytes = coreAndDeps.get(FONT_CORE_DOCUMENT_ID);
+            if (coreBytes?.byteLength) {
+                const documentSet = new CloudDocumentSet();
+                documentSet.applyRemoteUpdate(FONT_CORE_DOCUMENT_ID, coreBytes);
+                const depsBytes = coreAndDeps.get(FONT_DEPS_DOCUMENT_ID);
+                if (depsBytes?.byteLength) {
+                    documentSet.applyRemoteUpdate(
+                        FONT_DEPS_DOCUMENT_ID,
+                        depsBytes
+                    );
+                }
+                const coreJson = documentSet.assembleFontJson();
+                const glyphDocumentIds = glyphDocumentIdsFromCoreJson(coreJson);
+                const glyphBytes = glyphDocumentIds.length
+                    ? await hydrator.hydrateDocumentSet(
+                          token,
+                          roomUrl,
+                          glyphDocumentIds
+                      )
+                    : new Map<string, Uint8Array>();
+                for (const [documentId, bytes] of glyphBytes) {
+                    documentSet.applyRemoteUpdate(documentId, bytes);
+                }
+                hydratedFontJson = documentSet.assembleFontJson();
+                hydratedShards = [
+                    {
+                        documentId: FONT_CORE_DOCUMENT_ID,
+                        bytes: coreBytes
+                    },
+                    ...(depsBytes?.byteLength
+                        ? [
+                              {
+                                  documentId: FONT_DEPS_DOCUMENT_ID,
+                                  bytes: depsBytes
+                              }
+                          ]
+                        : []),
+                    ...[...glyphBytes.entries()].map(([documentId, bytes]) => ({
+                        documentId,
+                        bytes
+                    }))
+                ];
+                documentSet.destroy();
+            }
+        } catch (error) {
+            console.warn(
+                '[CloudPlugin] Shard hydrate failed; falling back to room bootstrap:',
+                error
+            );
+        } finally {
+            hydrator.disconnect();
+        }
+
+        if (hydratedShards?.length && hydratedFontJson) {
+            try {
+                validateCloudExportForFontOpen(hydratedFontJson);
+            } catch (error) {
+                throw error;
+            }
+
+            const babelfontJson = JSON.stringify(hydratedFontJson);
+            (
+                window as Window & {
+                    __pendingCloudBridgeBootstrapDocuments?: EncodedShard[];
+                    __skipCloudBridgeRebindMerge?: boolean;
+                }
+            ).__pendingCloudBridgeBootstrapDocuments = hydratedShards;
+            (
+                window as Window & {
+                    __skipCloudBridgeRebindMerge?: boolean;
+                }
+            ).__skipCloudBridgeRebindMerge = true;
+
+            this._activeAssetId = assetId;
+            const bridgeReadyPromise = new Promise<void>((resolve, reject) => {
+                const timeoutId = window.setTimeout(() => {
+                    window.removeEventListener(
+                        'fontModelReady',
+                        onFontModelReady
+                    );
+                    reject(new Error('cloud bridge bootstrap timed out'));
+                }, 30_000);
+
+                const onFontModelReady = async () => {
+                    window.clearTimeout(timeoutId);
+                    window.removeEventListener(
+                        'fontModelReady',
+                        onFontModelReady
+                    );
+                    try {
+                        const liveBridge = window.patchSyncEngine;
+                        if (!liveBridge) {
+                            throw new Error(
+                                'cloud bridge bootstrap missing live bridge'
+                            );
+                        }
+                        const liveTokenResponse =
+                            await this._fetchRoomToken(assetId);
+                        await this._attachLiveSession({
+                            assetId,
+                            token: liveTokenResponse.token,
+                            roomUrl: liveTokenResponse.roomUrl,
+                            bridge: liveBridge,
+                            bootstrapMode: 'skip'
+                        });
+                        resolve();
+                    } catch (error) {
+                        reject(
+                            error instanceof Error
+                                ? error
+                                : new Error(String(error))
+                        );
+                    }
+                };
+
+                window.addEventListener('fontModelReady', onFontModelReady);
+            });
+
+            window.dispatchEvent(
+                new CustomEvent('fontLoaded', {
+                    detail: {
+                        path: `cloud://${assetId}`,
+                        babelfontJson,
+                        sourcePlugin: this,
+                        fileHandle: undefined,
+                        directoryHandle: undefined
+                    }
+                })
+            );
+
+            if (options?.awaitLiveBridge === false) {
+                void bridgeReadyPromise.catch((error) => {
+                    this._handleBackgroundBridgeBootstrapFailure(
+                        assetId,
+                        error
+                    );
+                });
+                return;
+            }
+
+            await bridgeReadyPromise;
+            return;
+        }
 
         // Temporary bridge receives the initial CRDT state from the room.
         const tempBridge = new PatchSyncEngine(`cloud-bootstrap-${assetId}`);
@@ -2119,20 +2701,14 @@ export class CloudPlugin extends FilesystemPlugin {
                     }
                     const liveTokenResponse =
                         await this._fetchRoomToken(assetId);
-                    const liveWsUrl = normalizeCloudRoomWebSocketUrl(
-                        liveTokenResponse.roomUrl,
-                        this._websiteBaseUrl
-                    );
-                    this._cloudAdapter = await connectAndWaitForSync(
-                        liveBridge,
-                        liveTokenResponse.token,
-                        liveWsUrl,
-                        {
-                            bootstrapMode: 'skip',
-                            checkpointLogId: bootstrapCheckpointLogId
-                        }
-                    );
-                    this._startTrackingActiveAssetSize(assetId, liveBridge);
+                    await this._attachLiveSession({
+                        assetId,
+                        token: liveTokenResponse.token,
+                        roomUrl: liveTokenResponse.roomUrl,
+                        bridge: liveBridge,
+                        bootstrapMode: 'skip',
+                        checkpointLogId: bootstrapCheckpointLogId
+                    });
                     resolve();
                 } catch (error) {
                     reject(
@@ -2215,10 +2791,12 @@ export class CloudPlugin extends FilesystemPlugin {
             throw new Error('Authentication required');
         }
 
+        await this.prepareToSeed();
         const seedFontJson = canonicalizeCloudExportFontJson(
             await waitForCloudSaveSeedFontJson()
         );
         validateCloudExportForFontOpen(seedFontJson, 'save');
+        const estimatedGlyphCount = listGlyphRecords(seedFontJson).length;
         const estimatedSaveBytes = new TextEncoder().encode(
             JSON.stringify(seedFontJson)
         ).length;
@@ -2238,7 +2816,8 @@ export class CloudPlugin extends FilesystemPlugin {
             }),
             body: JSON.stringify({
                 name,
-                estimatedSeedBytes: estimatedSaveBytes
+                estimatedSeedBytes: estimatedSaveBytes,
+                estimatedGlyphCount
             })
         });
 
@@ -2253,81 +2832,40 @@ export class CloudPlugin extends FilesystemPlugin {
         const assetId = asset.id;
 
         const { token, roomUrl } = await this._fetchRoomToken(assetId);
-        const wsUrl = normalizeCloudRoomWebSocketUrl(
-            roomUrl,
-            this._websiteBaseUrl
-        );
-
-        this._disconnectCurrent();
-
-        const connectAndWaitForSync = async (
-            bridgeToConnect: PatchSyncEngine,
-            options?: {
-                bootstrapMode?: 'required' | 'skip';
-                reportConnectionStatus?: boolean;
-            }
-        ): Promise<CloudAdapter> => {
-            let resolveConnected!: () => void;
-            let rejectConnected!: (err: Error) => void;
-            const connectedPromise = new Promise<void>((res, rej) => {
-                resolveConnected = res;
-                rejectConnected = rej;
-            });
-
-            const adapter = new CloudAdapter({
-                assetId,
-                websiteBaseUrl: this._websiteBaseUrl,
-                onConnectionStatus: (
-                    status: CloudConnectionStatus,
-                    detail?: string
-                ) => {
-                    console.log(
-                        `[${assetId}] ${status}${detail ? ` (${detail})` : ''}`
-                    );
-                    if (options?.reportConnectionStatus !== false) {
-                        this._updateConnectionStatus(assetId, status, detail);
-                    }
-                    if (status === 'connected') resolveConnected();
-                    if (status === 'error') {
-                        rejectConnected(
-                            new Error(detail ?? 'cloud connection error')
-                        );
-                    }
-                },
-                onPendingSyncCountChange: (count: number) => {
-                    this._updatePendingSyncCount(assetId, count);
-                }
-            });
-
-            try {
-                await adapter.connectDirect(bridgeToConnect, token, wsUrl, {
-                    bootstrapMode: options?.bootstrapMode ?? 'required'
-                });
-
-                const timeout = new Promise<never>((_, rej) =>
-                    setTimeout(
-                        () => rej(new Error('cloud save timed out')),
-                        estimateCloudTransferTimeoutMs(estimatedSaveBytes)
-                    )
-                );
-                await Promise.race([connectedPromise, timeout]);
-
-                return adapter;
-            } catch (error) {
-                adapter.disconnect();
-                throw error;
-            }
-        };
-
         this._disconnectCurrent();
         const liveBridge = await waitForCloudSaveBridge();
         assertCloudBridgeStateCanBeSaved(liveBridge);
+        const shards = liveBridge.encodeDocumentSet?.() ?? [];
+        if (!shards.length) {
+            throw new Error('No live document set to seed to cloud');
+        }
+        const seeder = new CloudAdapter({
+            assetId,
+            websiteBaseUrl: this._websiteBaseUrl
+        });
+        try {
+            await seeder.seedDocumentSet(
+                token,
+                roomUrl,
+                shards,
+                estimatedGlyphCount
+            );
+        } finally {
+            seeder.disconnect();
+        }
+
+        this._disconnectCurrent();
 
         try {
-            this._cloudAdapter = await connectAndWaitForSync(liveBridge, {
-                bootstrapMode: 'skip'
+            await this._attachLiveSession({
+                assetId,
+                token,
+                roomUrl,
+                bridge: liveBridge,
+                bootstrapMode: 'skip',
+                connectedTimeoutMs:
+                    estimateCloudTransferTimeoutMs(estimatedSaveBytes)
             });
-            this._startTrackingActiveAssetSize(assetId, liveBridge);
             await this._finalizePendingAsset(assetId);
         } catch (error) {
             this._disconnectCurrent();
@@ -2367,26 +2905,15 @@ export class CloudPlugin extends FilesystemPlugin {
             return;
         }
 
-        this._cloudAdapter = new CloudAdapter({
-            assetId,
-            websiteBaseUrl: this._websiteBaseUrl,
-            onConnectionStatus: (
-                status: CloudConnectionStatus,
-                detail?: string
-            ) => {
-                console.log(
-                    `[${assetId}] ${status}${detail ? ` (${detail})` : ''}`
-                );
-                this._updateConnectionStatus(assetId, status, detail);
-            },
-            onPendingSyncCountChange: (count: number) => {
-                this._updatePendingSyncCount(assetId, count);
-            }
-        });
-
+        const { token, roomUrl } = await this._fetchRoomToken(assetId);
         console.log(`Connecting to room: ${assetId}`);
-        await this._cloudAdapter.connect(bridge);
-        this._startTrackingActiveAssetSize(assetId, bridge);
+        await this._attachLiveSession({
+            assetId,
+            token,
+            roomUrl,
+            bridge,
+            bootstrapMode: 'required'
+        });
     }
 
     /**
@@ -2412,30 +2939,14 @@ export class CloudPlugin extends FilesystemPlugin {
             return;
         }
 
-        this._cloudAdapter = new CloudAdapter({
+        console.log(`Connecting directly to room: ${assetId}`);
+        await this._attachLiveSession({
             assetId,
-            websiteBaseUrl: this._websiteBaseUrl,
-            onConnectionStatus: (
-                status: CloudConnectionStatus,
-                detail?: string
-            ) => {
-                console.log(
-                    `[${assetId}] ${status}${detail ? ` (${detail})` : ''}`
-                );
-                this._updateConnectionStatus(assetId, status, detail);
-            },
-            onPendingSyncCountChange: (count: number) => {
-                this._updatePendingSyncCount(assetId, count);
-            }
-        });
-
-        const wsUrl = normalizeCloudRoomWebSocketUrl(
+            token,
             roomUrl,
-            this._websiteBaseUrl
-        );
-        console.log(`Connecting directly to room: ${assetId} at ${wsUrl}`);
-        await this._cloudAdapter.connectDirect(bridge, token, wsUrl);
-        this._startTrackingActiveAssetSize(assetId, bridge);
+            bridge,
+            bootstrapMode: 'required'
+        });
     }
 
     /** Disconnect from the current room. */
@@ -2461,18 +2972,110 @@ export class CloudPlugin extends FilesystemPlugin {
 
     private _disconnectCurrent(): void {
         this._stopTrackingActiveAssetSize();
+        this._stopEditingSubsetSync();
+        this._liveSession?.disconnect();
+        this._liveSession = null;
         this._cloudAdapter?.disconnect();
+        this._cloudAdapter = null;
         if (this._activeAssetId) {
             this._updatePendingSyncCount(this._activeAssetId, 0);
             this._updateConnectionStatus(this._activeAssetId, 'disconnected');
         }
-        this._cloudAdapter = null;
         this._activeAssetId = null;
         if (window.windowRole?.isLinkedWindow()) {
             this._relayedAssetId = null;
             this._relayedConnectionStatus = 'disconnected';
             this._relayedConnectionDetail = undefined;
             this._relayedPendingSyncCount = 0;
+        }
+    }
+
+    private async _attachLiveSession(options: {
+        assetId: string;
+        token: string;
+        roomUrl: string;
+        bridge: PatchSyncEngine;
+        bootstrapMode?: 'required' | 'skip';
+        checkpointLogId?: number | null;
+        connectedTimeoutMs?: number;
+        reportConnectionStatus?: boolean;
+    }): Promise<void> {
+        const session = new CloudLiveSession({
+            assetId: options.assetId,
+            websiteBaseUrl: this._websiteBaseUrl,
+            token: options.token,
+            roomUrl: options.roomUrl,
+            bridge: options.bridge,
+            bootstrapMode: options.bootstrapMode ?? 'skip',
+            ...(options.checkpointLogId !== undefined
+                ? { checkpointLogId: options.checkpointLogId }
+                : {}),
+            connectedTimeoutMs: options.connectedTimeoutMs,
+            onConnectionStatus: (status, detail) => {
+                console.log(
+                    `[${options.assetId}] ${status}${detail ? ` (${detail})` : ''}`
+                );
+                if (options.reportConnectionStatus !== false) {
+                    this._updateConnectionStatus(
+                        options.assetId,
+                        status,
+                        detail
+                    );
+                }
+            },
+            onPendingSyncCountChange: (count) => {
+                this._updatePendingSyncCount(options.assetId, count);
+            }
+        });
+        const glyphDocumentIds = liveGlyphDocumentIdsFromSubset(
+            options.bridge,
+            window.fontManager?.getEditingSubsetSnapshot?.() ?? []
+        );
+        try {
+            await session.syncLiveDocumentIds(glyphDocumentIds);
+        } catch (error) {
+            session.disconnect();
+            throw error;
+        }
+        this._liveSession = session;
+        this._cloudAdapter = session.coreAdapter;
+        this._startTrackingActiveAssetSize(options.assetId, options.bridge);
+        this._startEditingSubsetSync(options.bridge);
+        this._catchUpFromCoreRevisionMap();
+    }
+
+    private _startEditingSubsetSync(bridge: PatchSyncEngine): void {
+        this._stopEditingSubsetSync();
+        this._editingSubsetListener = () => {
+            if (!this._liveSession) {
+                return;
+            }
+            const glyphDocumentIds = liveGlyphDocumentIdsFromSubset(
+                bridge,
+                window.fontManager?.getEditingSubsetSnapshot?.() ?? []
+            );
+            void this._liveSession
+                .syncLiveDocumentIds(glyphDocumentIds)
+                .catch((error) => {
+                    console.warn(
+                        '[CloudPlugin] Failed to sync live glyph rooms:',
+                        error
+                    );
+                });
+        };
+        window.addEventListener(
+            'editingSubsetChanged',
+            this._editingSubsetListener
+        );
+    }
+
+    private _stopEditingSubsetSync(): void {
+        if (this._editingSubsetListener) {
+            window.removeEventListener(
+                'editingSubsetChanged',
+                this._editingSubsetListener
+            );
+            this._editingSubsetListener = null;
         }
     }
 
@@ -2642,6 +3245,10 @@ export class CloudPlugin extends FilesystemPlugin {
             credentials: 'include',
             headers: getCloudRequestHeaders({
                 'Content-Type': 'application/json'
+            }),
+            body: JSON.stringify({
+                glyphCount: listGlyphRecords(this._currentFontJson() || {})
+                    .length
             })
         });
         if (!resp.ok) {

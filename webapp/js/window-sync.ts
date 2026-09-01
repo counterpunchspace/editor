@@ -6,11 +6,15 @@
  * the full Y.Doc state; existing windows respond.
  */
 
+import { MetadataFreeRemoteUpdateError } from './patch-sync-engine';
 import type { PatchSyncEngine } from './patch-sync-engine';
 import type { ChangeLogEntry } from './change-log';
 import { Logger } from './logger';
 import type { CollaborationLogItem } from './patch-sync-engine';
-import type { CollaborationMessageEnvelope } from './collaboration-message';
+import {
+    createCollaborationMessageEnvelopeFromChangeLogEntries,
+    type CollaborationMessageEnvelope
+} from './collaboration-message';
 
 const console = new Logger('WindowSync');
 
@@ -19,6 +23,7 @@ type BinaryPayload = number[] | Uint8Array | ArrayBuffer;
 type YjsUpdatePacket = {
     update: BinaryPayload;
     collaborationMessage?: CollaborationMessageEnvelope;
+    documentId?: string;
 };
 
 type CloudConnectionRelayState = {
@@ -46,6 +51,7 @@ interface FullStateRequestMsg {
 interface FullStateResponseMsg {
     type: 'full-state-response';
     state: BinaryPayload;
+    documents?: Array<{ documentId: string; state: BinaryPayload }>;
     changeLog: ChangeLogEntry[];
     collaborationLog: CollaborationLogItem[];
     cloudRelayState?: CloudConnectionRelayState;
@@ -123,8 +129,28 @@ export class WindowSync {
             // Wire bridge's local updates to broadcast. The broadcast itself is
             // microtask-batched so a single user transaction that emits several
             // Yjs updates produces one channel message and one receiver refresh.
-            bridge.onLocalUpdate((_update, collaborationMessage) => {
-                this._queueOutboundBroadcast(_update, collaborationMessage);
+            bridge.onLocalUpdate(
+                (_update, collaborationMessage, _entries, documentId) => {
+                    this._queueOutboundBroadcast(
+                        _update,
+                        collaborationMessage,
+                        documentId
+                    );
+                }
+            );
+            bridge.onGlyphRevisionSignal?.((update, entries) => {
+                this._queueOutboundBroadcast(
+                    update,
+                    createCollaborationMessageEnvelopeFromChangeLogEntries(
+                        entries,
+                        {
+                            localSequence: 0,
+                            source: 'window-sync.glyph-revision',
+                            windowId: bridge.windowId
+                        }
+                    ),
+                    'font-core'
+                );
             });
         }
     }
@@ -168,10 +194,10 @@ export class WindowSync {
             this._fullStateBootstrapTimeout = setTimeout(() => {
                 this._resolveFullStateBootstrap(
                     new Error(
-                        'Linked-window full-state-response timed out — no peer window responded within 15s'
+                        'Linked-window full-state-response timed out — no peer window responded within 60s'
                     )
                 );
-            }, 15000);
+            }, 60000);
         }
 
         this._send({
@@ -230,11 +256,13 @@ export class WindowSync {
 
     broadcastCloudRelayUpdate(
         update: Uint8Array,
-        collaborationMessage?: CollaborationMessageEnvelope | null
+        collaborationMessage?: CollaborationMessageEnvelope | null,
+        documentId?: string
     ): void {
         this._sendYjsUpdate([
             {
                 update,
+                documentId: documentId || 'font-core',
                 ...(collaborationMessage ? { collaborationMessage } : undefined)
             }
         ]);
@@ -281,10 +309,12 @@ export class WindowSync {
 
     private _queueOutboundBroadcast(
         update: Uint8Array,
-        collaborationMessage?: CollaborationMessageEnvelope | null
+        collaborationMessage?: CollaborationMessageEnvelope | null,
+        documentId?: string
     ): void {
         this._pendingOutboundPackets.push({
             update,
+            documentId: documentId || 'font-core',
             ...(collaborationMessage ? { collaborationMessage } : undefined)
         });
         if (this._outboundFlushScheduled) {
@@ -373,15 +403,28 @@ export class WindowSync {
                         undefined,
                         packet.collaborationMessage
                             ? [packet.collaborationMessage]
-                            : undefined
+                            : undefined,
+                        packet.documentId
                     );
                     if (window.windowRole?.isMainWindow()) {
                         window.cloudPlugin?.relayPeerWindowUpdateToCloud?.(
                             update,
-                            packet.collaborationMessage ?? null
+                            packet.collaborationMessage ?? null,
+                            packet.documentId
                         );
                     }
                 } catch (error) {
+                    if (
+                        error instanceof MetadataFreeRemoteUpdateError &&
+                        packet.documentId &&
+                        packet.documentId !== 'font-core'
+                    ) {
+                        this._bridge.applyDocumentCatchUp?.(
+                            packet.documentId,
+                            update
+                        );
+                        continue;
+                    }
                     console.warn(
                         'WindowSync: failed to apply inbound Yjs update:',
                         error
@@ -426,9 +469,16 @@ export class WindowSync {
                 this._peers.add(msg.windowId);
                 // Respond with our full state
                 const state = this._bridge.getFullState();
+                const documents = (
+                    this._bridge.getDocumentSetState?.() || []
+                ).map((shard) => ({
+                    documentId: shard.documentId,
+                    state: shard.bytes
+                }));
                 this._send({
                     type: 'full-state-response',
                     state,
+                    documents,
                     changeLog: this._bridge.getChangeLog(),
                     collaborationLog: this._bridge.getCollaborationLog(),
                     cloudRelayState:
@@ -447,23 +497,39 @@ export class WindowSync {
                 if (!this._awaitingFullState || this._hasAppliedFullState) {
                     return;
                 }
+                // The peer-wait timer only covers "no window answered". Apply
+                // + seedYdoc for a large document set can take longer; clear
+                // it on arrival so compiles stay blocked on the real seed.
+                if (this._fullStateBootstrapTimeout) {
+                    clearTimeout(this._fullStateBootstrapTimeout);
+                    this._fullStateBootstrapTimeout = null;
+                }
                 this._hasAppliedFullState = true;
                 this._awaitingFullState = false;
-                const fullState = toUint8Array(msg.state);
-                // Import change log before applying state so the
-                // onRemoteChange callback (fired by applyFullState)
-                // sees the complete log.
                 this._bridge.importChangeLog(msg.changeLog);
                 this._bridge.importCollaborationMessages(
                     msg.collaborationLog ?? []
                 );
-                this._bridge.applyFullState(fullState);
+                if (msg.documents?.length) {
+                    this._bridge.applyDocumentSetState(
+                        msg.documents.map((document) => ({
+                            documentId: document.documentId,
+                            bytes: toUint8Array(document.state)
+                        }))
+                    );
+                } else {
+                    this._bridge.applyFullState(toUint8Array(msg.state));
+                }
                 const fontCompilation = window.fontCompilation;
                 if (fontCompilation) {
                     const fontManager = window.fontManager as
                         | (typeof window.fontManager & {
                               syncBabelfontJsonFromCurrentModel?: () => boolean;
                               buildWorkerSeedYjsState?: () => Uint8Array | null;
+                              buildWorkerSeedDocumentSet?: () => Array<{
+                                  documentId: string;
+                                  bytes: Uint8Array;
+                              }> | null;
                           })
                         | undefined;
 
@@ -488,24 +554,45 @@ export class WindowSync {
                         // YJS_ONLY (N2): Binary Yjs full-state-response —
                         // no JSON crossing. The bridge.getFullState() call at line ~343
                         // produces binary Yjs state.
+                        const documentSet =
+                            fontManager.buildWorkerSeedDocumentSet?.();
                         const seedState =
                             fontManager.buildWorkerSeedYjsState?.();
-                        if (!seedState?.length) {
+                        if (!documentSet?.length && !seedState?.length) {
                             throw new Error(
                                 'Failed to build worker seed Yjs state for linked-window bootstrap'
                             );
                         }
 
                         fontManager.recordFullFontCrossing?.();
-                        // YJS_ONLY (N3): Binary Yjs seed for the worker
-                        // Y.Doc — the CRDT baseline, not a JSON crossing.
-                        // seedYdoc (init_ydoc_from_state) populates all Rust
-                        // caches from the binary Yjs state, so no storeFontJson
-                        // is needed. No second JS worker-mirror Y.Doc.
-                        await fontCompilation.sendMessage({
-                            type: 'seedYdoc',
-                            state: seedState
-                        });
+                        if (documentSet?.length) {
+                            if (
+                                typeof fontCompilation.seedWorkerDocumentSet ===
+                                'function'
+                            ) {
+                                await fontCompilation.seedWorkerDocumentSet(
+                                    documentSet
+                                );
+                            } else {
+                                await fontCompilation.sendMessage({
+                                    type: 'seedYdoc',
+                                    documents: documentSet.map(
+                                        (document: {
+                                            documentId: string;
+                                            bytes: Uint8Array;
+                                        }) => ({
+                                            documentId: document.documentId,
+                                            state: document.bytes
+                                        })
+                                    )
+                                });
+                            }
+                        } else {
+                            await fontCompilation.sendMessage({
+                                type: 'seedYdoc',
+                                state: seedState
+                            });
+                        }
                     })()
                         .then(() => {
                             this._resolveFullStateBootstrap(null);

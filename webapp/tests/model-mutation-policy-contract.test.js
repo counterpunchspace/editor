@@ -19,6 +19,10 @@ const INTERNAL_WRITE_EXCEPTIONS = new Map([
     [
         'ModelBase.constructor',
         'Initializes a wrapper reference; it does not edit existing font data.'
+    ],
+    [
+        'Glyph.id',
+        'Stamps an immutable glyph identity on first read of unstamped JSON.'
     ]
 ]);
 

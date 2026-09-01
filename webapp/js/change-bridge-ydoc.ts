@@ -218,8 +218,12 @@ export function applyLayerDelta(
     layerData: Record<string, unknown>
 ): void {
     const glyphsMap = fontMap.get('glyphs');
-    if (!isYMap(glyphsMap)) return;
-    const glyphMap = glyphsMap.get(glyphName);
+    const glyphMap = isYMap(glyphsMap)
+        ? glyphsMap.get(glyphName)
+        : fontMap.get('layers') !== undefined ||
+            fontMap.get('name') === glyphName
+          ? fontMap
+          : null;
     if (!isYMap(glyphMap)) return;
     const layersMapTyped = ensureGlyphLayersMap(glyphMap);
     let layerMap = layersMapTyped.get(layerId);
@@ -423,6 +427,102 @@ export function toYType(value: unknown): unknown {
 }
 
 /**
+ * Fill a glyph Y.Map using the live editor conventions: `layers` is a Y.Map
+ * keyed by layer id, `layerOrder` is the display order.
+ */
+export function fillGlyphYMap(
+    glyphJson: Record<string, unknown>,
+    glyphMap: Y.Map<unknown>
+): void {
+    for (const [gk, gv] of Object.entries(glyphJson)) {
+        if (gk === 'layers' && Array.isArray(gv)) {
+            const layersMap = new Y.Map();
+            const layerOrder = new Y.Array<unknown>();
+            for (const layerJson of gv as Record<string, unknown>[]) {
+                const layerId = (layerJson.id as string) || crypto.randomUUID();
+                layersMap.set(layerId, toYType(layerJson) as Y.Map<unknown>);
+                layerOrder.push([layerId]);
+            }
+            glyphMap.set('layers', layersMap);
+            glyphMap.set('layerOrder', layerOrder);
+        } else if (
+            gk === 'layers' &&
+            gv &&
+            typeof gv === 'object' &&
+            !Array.isArray(gv)
+        ) {
+            const layersMap = new Y.Map();
+            const layerOrder = new Y.Array<unknown>();
+            for (const [layerKey, layerValue] of Object.entries(
+                gv as Record<string, unknown>
+            )) {
+                if (
+                    !layerValue ||
+                    typeof layerValue !== 'object' ||
+                    Array.isArray(layerValue)
+                ) {
+                    continue;
+                }
+                const layerJson = layerValue as Record<string, unknown>;
+                const layerId =
+                    typeof layerJson.id === 'string' && layerJson.id
+                        ? layerJson.id
+                        : layerKey;
+                if (typeof layerJson.id !== 'string' || !layerJson.id) {
+                    layerJson.id = layerId;
+                }
+                layersMap.set(layerId, toYType(layerJson) as Y.Map<unknown>);
+                layerOrder.push([layerId]);
+            }
+            glyphMap.set('layers', layersMap);
+            glyphMap.set('layerOrder', layerOrder);
+        } else {
+            glyphMap.set(gk, toYType(gv));
+        }
+    }
+}
+
+/**
+ * Populate font-core: every non-glyph field, plus `glyphOrder`.
+ * Outline bodies belong in per-glyph Y.Docs, not here.
+ */
+export function jsonToCoreFontMap(
+    json: Record<string, unknown>,
+    fontMap: Y.Map<unknown>
+): void {
+    const glyphNames = Array.isArray(json.glyphs)
+        ? (json.glyphs as Record<string, unknown>[])
+              .map((glyph) =>
+                  typeof glyph?.name === 'string' ? glyph.name : ''
+              )
+              .filter((name) => name.length > 0)
+        : json.glyphs &&
+            typeof json.glyphs === 'object' &&
+            !Array.isArray(json.glyphs)
+          ? Object.values(json.glyphs as Record<string, unknown>)
+                .map((glyph) =>
+                    glyph &&
+                    typeof glyph === 'object' &&
+                    typeof (glyph as Record<string, unknown>).name === 'string'
+                        ? String((glyph as Record<string, unknown>).name)
+                        : ''
+                )
+                .filter((name) => name.length > 0)
+          : Array.isArray(json.glyphOrder)
+            ? (json.glyphOrder as unknown[]).map(String)
+            : [];
+    for (const [key, value] of Object.entries(json)) {
+        if (key === 'glyphs') {
+            continue;
+        }
+        fontMap.set(key, toYType(value));
+    }
+    const glyphOrder = new Y.Array<unknown>();
+    glyphOrder.push(glyphNames);
+    fontMap.set('glyphOrder', glyphOrder);
+}
+
+/**
  * Populate a Y.Map from a babelfont Font JSON object.
  *
  * Glyphs are stored as a Y.Map keyed by glyph name (not an array).
@@ -441,29 +541,7 @@ export function jsonToYDoc(
             for (const glyphJson of value as Record<string, unknown>[]) {
                 const name = glyphJson.name as string;
                 const glyphMap = new Y.Map();
-                for (const [gk, gv] of Object.entries(glyphJson)) {
-                    if (gk === 'layers' && Array.isArray(gv)) {
-                        // Layers → Y.Map keyed by layer id
-                        const layersMap = new Y.Map();
-                        const layerOrder = new Y.Array<unknown>();
-                        for (const layerJson of gv as Record<
-                            string,
-                            unknown
-                        >[]) {
-                            const layerId =
-                                (layerJson.id as string) || crypto.randomUUID();
-                            layersMap.set(
-                                layerId,
-                                toYType(layerJson) as Y.Map<unknown>
-                            );
-                            layerOrder.push([layerId]);
-                        }
-                        glyphMap.set('layers', layersMap);
-                        glyphMap.set('layerOrder', layerOrder);
-                    } else {
-                        glyphMap.set(gk, toYType(gv));
-                    }
-                }
+                fillGlyphYMap(glyphJson, glyphMap);
                 glyphsMap.set(name, glyphMap);
                 glyphOrder.push([name]);
             }

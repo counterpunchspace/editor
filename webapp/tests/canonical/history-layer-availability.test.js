@@ -136,42 +136,18 @@ describe('history layer availability', () => {
 
         expect(bridge.undo('A', 'layer-1b')).not.toBeNull();
         expect(
-            getYPath(bridge.fontMap, [
-                'glyphs',
-                'A',
-                'layers',
-                'layer-1',
-                'width'
-            ])
+            bridge.getYValue(['glyphs', 'A', 'layers', 'layer-1', 'width'])
         ).toBe(600);
         expect(
-            getYPath(bridge.fontMap, [
-                'glyphs',
-                'A',
-                'layers',
-                'layer-1b',
-                'width'
-            ])
+            bridge.getYValue(['glyphs', 'A', 'layers', 'layer-1b', 'width'])
         ).toBe(620);
         expect(
-            getYPath(bridge.fontMap, [
-                'glyphs',
-                'A',
-                'layers',
-                'layer-1c',
-                'width'
-            ])
+            bridge.getYValue(['glyphs', 'A', 'layers', 'layer-1c', 'width'])
         ).toBe(640);
 
         expect(bridge.redo('A', 'layer-1b')).not.toBeNull();
         expect(
-            getYPath(bridge.fontMap, [
-                'glyphs',
-                'A',
-                'layers',
-                'layer-1b',
-                'width'
-            ])
+            bridge.getYValue(['glyphs', 'A', 'layers', 'layer-1b', 'width'])
         ).toBe(730);
 
         bridge.destroy();
@@ -396,33 +372,15 @@ describe('history layer availability', () => {
         expect(bridge.canUndo('B', 'layer-2', null, 'canvas')).toBe(false);
         expect(bridge.undo('B', 'layer-2', null, 'canvas')).toBeNull();
         expect(
-            getYPath(bridge.fontMap, [
-                'glyphs',
-                'B',
-                'layers',
-                'layer-2',
-                'width'
-            ])
+            bridge.getYValue(['glyphs', 'B', 'layers', 'layer-2', 'width'])
         ).toBe(680);
 
         expect(bridge.undo('A', 'layer-1', null, 'canvas')).not.toBeNull();
         expect(
-            getYPath(bridge.fontMap, [
-                'glyphs',
-                'A',
-                'layers',
-                'layer-1',
-                'width'
-            ])
+            bridge.getYValue(['glyphs', 'A', 'layers', 'layer-1', 'width'])
         ).toBe(600);
         expect(
-            getYPath(bridge.fontMap, [
-                'glyphs',
-                'B',
-                'layers',
-                'layer-2',
-                'width'
-            ])
+            bridge.getYValue(['glyphs', 'B', 'layers', 'layer-2', 'width'])
         ).toBe(650);
 
         bridge.destroy();
@@ -497,33 +455,15 @@ describe('history layer availability', () => {
         bridge.endTransaction();
 
         expect(
-            getYPath(bridge.fontMap, [
-                'glyphs',
-                'B',
-                'layers',
-                'layer-2',
-                'width'
-            ])
+            bridge.getYValue(['glyphs', 'B', 'layers', 'layer-2', 'width'])
         ).toBe(999);
 
         expect(bridge.undo('A', 'layer-1')).not.toBeNull();
         expect(
-            getYPath(bridge.fontMap, [
-                'glyphs',
-                'A',
-                'layers',
-                'layer-1',
-                'anchors'
-            ])
+            bridge.getYValue(['glyphs', 'A', 'layers', 'layer-1', 'anchors'])
         ).toEqual([]);
         expect(
-            getYPath(bridge.fontMap, [
-                'glyphs',
-                'B',
-                'layers',
-                'layer-2',
-                'width'
-            ])
+            bridge.getYValue(['glyphs', 'B', 'layers', 'layer-2', 'width'])
         ).toBe(999);
 
         bridge.destroy();
@@ -581,13 +521,7 @@ describe('history layer availability', () => {
 
         expect(bridge.undo('A', 'layer-1')).not.toBeNull();
         expect(
-            getYPath(bridge.fontMap, [
-                'glyphs',
-                'B',
-                'layers',
-                'layer-2',
-                'width'
-            ])
+            bridge.getYValue(['glyphs', 'B', 'layers', 'layer-2', 'width'])
         ).toBe(400);
 
         bridge.destroy();

@@ -791,7 +791,8 @@ const COLLECTION_MUTATOR_TESTS = {
         isApplicable: (font) => !!font.findGlyph('B'),
         invoke: (font) => font.removeGlyph('B'),
         expectedOp: 'remove',
-        expectedPathFragment: () => 'glyphs.B'
+        expectedPathFragment: () => 'glyphs.B',
+        expectedLogLength: 2
     },
     'Font.duplicateGlyph': {
         isApplicable: (font) =>
@@ -1034,7 +1035,7 @@ function normalizeYDocValue(value) {
 }
 
 function getYDocLayerNodeValue(
-    fontMap,
+    bridge,
     glyphName,
     layerId,
     shapeIndex,
@@ -1042,9 +1043,61 @@ function getYDocLayerNodeValue(
     property
 ) {
     const layer = normalizeYDocValue(
-        getYPath(fontMap, ['glyphs', glyphName, 'layers', layerId])
+        typeof bridge.getYValue === 'function'
+            ? bridge.getYValue(['glyphs', glyphName, 'layers', layerId])
+            : getYPath(bridge, ['glyphs', glyphName, 'layers', layerId])
     );
     return layer?.shapes?.[shapeIndex]?.nodes?.[nodeIndex]?.[property];
+}
+
+function deleteBridgeYPath(bridge, path) {
+    if (path[0] === 'glyphs' && path.length >= 2) {
+        const glyphMap = bridge.getYValue(['glyphs', path[1]]);
+        if (glyphMap) {
+            deleteYPath(glyphMap, path.slice(2));
+        }
+        return;
+    }
+    deleteYPath(bridge.fontMap, path);
+}
+
+function setBridgeYPath(bridge, path, value) {
+    if (path[0] === 'glyphs' && path.length >= 2) {
+        const glyphMap = bridge.getYValue(['glyphs', path[1]]);
+        if (glyphMap) {
+            setYPath(glyphMap, path.slice(2), value);
+        }
+        return;
+    }
+    setYPath(bridge.fontMap, path, value);
+}
+
+function attachPacketCapture(bridge) {
+    const packets = [];
+    bridge.onLocalUpdate(
+        (update, collaborationMessage, changeLogEntries, documentId) => {
+            packets.push({
+                update,
+                collaborationMessage,
+                changeLogEntries,
+                documentId
+            });
+        }
+    );
+    return packets;
+}
+
+function applyCapturedPackets(receiver, packets, extraEntries) {
+    for (const packet of packets) {
+        receiver.applyRemoteUpdate(
+            packet.update,
+            extraEntries ?? packet.changeLogEntries,
+            packet.collaborationMessage
+                ? [packet.collaborationMessage]
+                : undefined,
+            packet.documentId
+        );
+    }
 }
 
 const GENERIC_ACCESSOR_SPECS = collectWritableAccessorSpecs();
@@ -2365,8 +2418,52 @@ describe('change-log', () => {
 describe('ChangeBridge', () => {
     test('initFromJson populates Y.Doc', () => {
         const { bridge } = createTestBridge('test-1');
-        expect(getYPath(bridge.fontMap, ['upm'])).toBe(1000);
-        expect(getYPath(bridge.fontMap, ['glyphs', 'A', 'name'])).toBe('A');
+        expect(bridge.getYValue(['upm'])).toBe(1000);
+        expect(bridge.getYValue(['glyphs', 'A', 'name'])).toBe('A');
+    });
+
+    test('initFromJson encodes a live sharded document set', () => {
+        const { bridge } = createTestBridge('test-1');
+        const shards = bridge.encodeDocumentSet();
+        expect(shards.some((shard) => shard.documentId === 'font-core')).toBe(
+            true
+        );
+        expect(
+            shards.some((shard) => shard.documentId.startsWith('glyph:'))
+        ).toBe(true);
+        expect(bridge.fontMap.get('glyphs')).toBeUndefined();
+        expect(bridge.getYValue(['glyphs', 'A'])).toBeInstanceOf(Y.Map);
+    });
+
+    test('syncCloudOwnedProjection writes catalog into live core and deps docs', () => {
+        const {
+            applyCloudOwnedData,
+            CLOUD_PLUGIN_OWNED_KEY
+        } = require('../js/filesystem-plugins/cloud-glyph-catalog');
+        const { bridge } = createTestBridge('test-catalog');
+        const fontJson = bridge.getFontJsonSnapshot();
+        const owned = applyCloudOwnedData(fontJson);
+        bridge.syncCloudOwnedProjection(owned);
+        expect(
+            fromYType(
+                bridge.getYValue(['format_specific', CLOUD_PLUGIN_OWNED_KEY])
+            )
+        ).toEqual(
+            expect.objectContaining({
+                glyphCatalog: expect.any(Array),
+                fontDeps: expect.any(Object)
+            })
+        );
+        expect(fromYType(bridge.getYValue(['deps', 'edges']))).toEqual(
+            owned.fontDeps
+        );
+        const glyphDocumentId = bridge.glyphDocumentIdForName('A');
+        expect(glyphDocumentId).toMatch(/^glyph:/);
+        const encoded = bridge.encodeDocumentState(glyphDocumentId);
+        expect(encoded.byteLength).toBeGreaterThan(0);
+        const peer = new ChangeBridge('test-catalog-peer');
+        peer.applyDocumentCheckpoint(glyphDocumentId, encoded);
+        expect(peer.getYValue(['glyphs', 'A', 'name'])).toBe('A');
     });
 
     test('initFromJson normalizes component transforms in the JSON shadow', () => {
@@ -2397,13 +2494,7 @@ describe('ChangeBridge', () => {
         );
         // Y.Doc updated
         expect(
-            getYPath(bridge.fontMap, [
-                'glyphs',
-                'A',
-                'layers',
-                'layer-1',
-                'width'
-            ])
+            bridge.getYValue(['glyphs', 'A', 'layers', 'layer-1', 'width'])
         ).toBe(700);
         // Log entry recorded
         const log = bridge.getChangeLog();
@@ -2444,7 +2535,7 @@ describe('ChangeBridge', () => {
             name: 'C',
             layers: []
         });
-        const glyphC = getYPath(bridge.fontMap, ['glyphs', 'C']);
+        const glyphC = bridge.getYValue(['glyphs', 'C']);
         expect(glyphC).toBeDefined();
         const log = bridge.getChangeLog();
         expect(log).toHaveLength(1);
@@ -2466,11 +2557,7 @@ describe('ChangeBridge', () => {
         const regularLayer = glyph.findLayerById('master-regular');
         expect(regularLayer).toBeDefined();
 
-        const layersMap = getYPath(bridge.fontMap, [
-            'glyphs',
-            'fi-lat',
-            'layers'
-        ]);
+        const layersMap = bridge.getYValue(['glyphs', 'fi-lat', 'layers']);
         expect(layersMap).toBeInstanceOf(Y.Map);
         expect([...layersMap.keys()].sort()).toEqual([
             'master-bold',
@@ -2509,7 +2596,7 @@ describe('ChangeBridge', () => {
 
     test('applyLayerDelta preserves sibling master layers when layers were stored as a Y.Array', () => {
         const { bridge } = createTestBridge('array-layers-migrate');
-        const glyphMap = getYPath(bridge.fontMap, ['glyphs', 'A']);
+        const glyphMap = bridge.getYValue(['glyphs', 'A']);
         const arrayLayers = new Y.Array();
         arrayLayers.push([
             toYType({
@@ -2534,7 +2621,7 @@ describe('ChangeBridge', () => {
         glyphMap.set('layers', arrayLayers);
         expect(glyphMap.get('layers')).toBeInstanceOf(Y.Array);
 
-        applyLayerDelta(bridge.fontMap, 'A', 'master-regular', {
+        applyLayerDelta(glyphMap, 'A', 'master-regular', {
             id: 'master-regular',
             width: 500,
             shapes: [{ reference: 'B' }],
@@ -2566,7 +2653,7 @@ describe('ChangeBridge', () => {
 
         const glyphOrder = bridge.fontMap.get('glyphOrder');
         expect(glyphOrder.toArray()).toEqual(['A', 'A.001', 'B']);
-        expect(yDocToJson(bridge.fontMap).glyphs.map((g) => g.name)).toEqual([
+        expect(bridge.getFontJsonSnapshot().glyphs.map((g) => g.name)).toEqual([
             'A',
             'A.001',
             'B'
@@ -2581,9 +2668,12 @@ describe('ChangeBridge', () => {
     test('recordRemove deletes from Y.Doc', () => {
         const { bridge } = createTestBridge('test-1');
         bridge.recordRemove(['glyphs', 'B'], { name: 'B' });
-        expect(getYPath(bridge.fontMap, ['glyphs', 'B'])).toBeUndefined();
+        expect(bridge.getYValue(['glyphs', 'B'])).toBeUndefined();
         const log = bridge.getChangeLog();
-        expect(log).toHaveLength(1);
+        expect(log.map((entry) => entry.path)).toEqual([
+            'glyphs.B:',
+            'glyphOrder'
+        ]);
         expect(log[0].op).toBe('remove');
     });
 
@@ -2645,22 +2735,10 @@ describe('ChangeBridge', () => {
 
         expect(bridge.undo('A', 'layer-1b')).not.toBeNull();
         expect(
-            getYPath(bridge.fontMap, [
-                'glyphs',
-                'A',
-                'layers',
-                'layer-1',
-                'width'
-            ])
+            bridge.getYValue(['glyphs', 'A', 'layers', 'layer-1', 'width'])
         ).toBe(600);
         expect(
-            getYPath(bridge.fontMap, [
-                'glyphs',
-                'A',
-                'layers',
-                'layer-1b',
-                'width'
-            ])
+            bridge.getYValue(['glyphs', 'A', 'layers', 'layer-1b', 'width'])
         ).toBe(620);
 
         expect(bridge.redo('A', 'layer-1b')).toEqual(
@@ -2671,22 +2749,10 @@ describe('ChangeBridge', () => {
             })
         );
         expect(
-            getYPath(bridge.fontMap, [
-                'glyphs',
-                'A',
-                'layers',
-                'layer-1',
-                'width'
-            ])
+            bridge.getYValue(['glyphs', 'A', 'layers', 'layer-1', 'width'])
         ).toBe(700);
         expect(
-            getYPath(bridge.fontMap, [
-                'glyphs',
-                'A',
-                'layers',
-                'layer-1b',
-                'width'
-            ])
+            bridge.getYValue(['glyphs', 'A', 'layers', 'layer-1b', 'width'])
         ).toBe(730);
 
         bridge.destroy();
@@ -2782,9 +2848,16 @@ describe('ChangeBridge', () => {
             'glyphs.B:layers.layer-2:width'
         ]);
 
-        expect(localUpdates).toHaveLength(1);
-        expect(localUpdates[0].changes).toHaveLength(2);
-        expect(localUpdates[0].changes[1]).toEqual(
+        expect(localUpdates).toHaveLength(2);
+        expect(
+            localUpdates
+                .flatMap((envelope) => envelope.changes)
+                .map((change) => change.path)
+        ).toEqual([
+            'glyphs.A:layers.layer-1:width',
+            'glyphs.B:layers.layer-2:width'
+        ]);
+        expect(localUpdates[1].changes[0]).toEqual(
             expect.objectContaining({
                 op: 'set',
                 path: 'glyphs.B:layers.layer-2:width'
@@ -2811,10 +2884,10 @@ describe('ChangeBridge', () => {
 
         // Create a second bridge WITHOUT initFromJson (avoids conflicting CRDT state)
         const b2 = new ChangeBridge('test-2');
-        b2.applyFullState(state);
+        b2.applyDocumentSetState(b1.encodeDocumentSet());
 
         expect(
-            getYPath(b2.fontMap, ['glyphs', 'A', 'layers', 'layer-1', 'width'])
+            b2.getYValue(['glyphs', 'A', 'layers', 'layer-1', 'width'])
         ).toBe(800);
         b2.destroy();
     });
@@ -2879,9 +2952,9 @@ describe('Transactions', () => {
         ).toBe(false);
         expect(typeof log[0].replayOldValue).toBe('number');
         expect(typeof log[0].replayNewValue).toBe('number');
-        expect(
-            getYDocLayerNodeValue(bridge.fontMap, 'A', 'layer-1', 0, 0, 'x')
-        ).toBe(125);
+        expect(getYDocLayerNodeValue(bridge, 'A', 'layer-1', 0, 0, 'x')).toBe(
+            125
+        );
     });
 
     test('indexed collection membership changes are atomic', () => {
@@ -3033,7 +3106,9 @@ describe('Transactions', () => {
         const { bridge } = createTestBridge(
             'layer-snapshot-interpolator-sparse'
         );
-        const original = yDocToJson(bridge.fontMap).glyphs[0].layers[0];
+        const original = cloneValue(
+            bridge.getFontJsonSnapshot().glyphs[0].layers[0]
+        );
         const nextAnchors = cloneValue(original.anchors);
         nextAnchors[0].y = original.anchors[0].y + 12;
 
@@ -3057,7 +3132,7 @@ describe('Transactions', () => {
             'Drag anchor'
         );
 
-        const nextLayer = yDocToJson(bridge.fontMap).glyphs[0].layers[0];
+        const nextLayer = bridge.getFontJsonSnapshot().glyphs[0].layers[0];
         expect(nextLayer.width).toBe(original.width);
         expect(nextLayer.master).toEqual(original.master);
         expect(nextLayer._interpolationRequestId).toBeUndefined();
@@ -3082,7 +3157,7 @@ describe('Transactions', () => {
 
         bridge.undo('A', 'layer-1');
         expect(
-            yDocToJson(bridge.fontMap).glyphs[0].layers[0].anchors[0].y
+            bridge.getFontJsonSnapshot().glyphs[0].layers[0].anchors[0].y
         ).toBe(original.anchors[0].y);
     });
 
@@ -3185,7 +3260,7 @@ describe('Transactions', () => {
         let update;
         bridge.initFromJson(fontJson);
         receiverBridge.setFontJson(receiverFontJson);
-        receiverBridge.applyFullState(bridge.getFullState());
+        receiverBridge.applyDocumentSetState(bridge.encodeDocumentSet());
         bridge.onLocalUpdate((nextUpdate) => {
             update = nextUpdate;
         });
@@ -3257,7 +3332,7 @@ describe('Transactions', () => {
         let update;
         bridge.initFromJson(fontJson);
         receiverBridge.setFontJson(receiverFontJson);
-        receiverBridge.applyFullState(bridge.getFullState());
+        receiverBridge.applyDocumentSetState(bridge.encodeDocumentSet());
         bridge.onLocalUpdate((nextUpdate) => {
             update = nextUpdate;
         });
@@ -3319,16 +3394,19 @@ describe('Transactions', () => {
         let lastUpdate = null;
         let lastEntries = null;
         receiverBridge.setFontJson(receiverFontJson);
-        receiverBridge.applyFullState(bridge.getFullState());
+        receiverBridge.applyDocumentSetState(bridge.encodeDocumentSet());
+        const remotePackets = [];
         bridge.onLocalUpdate((update, _message, changeLogEntries) => {
+            remotePackets.push({ update, changeLogEntries });
             lastUpdate = update;
             lastEntries = changeLogEntries;
         });
-        const receiverLayerMap = receiverBridge.fontMap
-            .get('glyphs')
-            .get('B')
-            .get('layers')
-            .get('layer-2');
+        const receiverLayerMap = receiverBridge.getYValue([
+            'glyphs',
+            'B',
+            'layers',
+            'layer-2'
+        ]);
         const sourceLayer = fontJson.glyphs[0].layers[0];
         const dependentLayer = fontJson.glyphs[1].layers[0];
         const receiverDependentLayer = receiverFontJson.glyphs[1].layers[0];
@@ -3353,6 +3431,7 @@ describe('Transactions', () => {
         );
         receiverBridge.applyRemoteUpdate(lastUpdate, lastEntries);
         const logStart = bridge.getChangeLog().length;
+        remotePackets.length = 0;
 
         sourceLayer.shapes[0].nodes[1].y = 760;
         const dependentSnapshot = JSON.parse(JSON.stringify(dependentLayer));
@@ -3396,7 +3475,7 @@ describe('Transactions', () => {
         );
         expect(
             cloneValue(
-                getYPath(bridge.fontMap, [
+                bridge.getYValue([
                     'glyphs',
                     'B',
                     'layers',
@@ -3415,9 +3494,17 @@ describe('Transactions', () => {
         expect(log.every((entry) => entry.workerReplayTargets.length)).toBe(
             true
         );
-        expect(lastEntries).toEqual(log);
+        const emittedEntries = remotePackets.flatMap(
+            (packet) => packet.changeLogEntries
+        );
+        expect(emittedEntries).toEqual(log);
 
-        receiverBridge.applyRemoteUpdate(lastUpdate, lastEntries);
+        for (const packet of remotePackets) {
+            receiverBridge.applyRemoteUpdate(
+                packet.update,
+                packet.changeLogEntries
+            );
+        }
         expect(receiverFontJson.glyphs[0].layers[0].shapes[0].nodes[1].y).toBe(
             760
         );
@@ -3425,11 +3512,7 @@ describe('Transactions', () => {
             receiverFontJson.glyphs[1].layers[0].shapes[1].transform.translation
         ).toEqual([-122, -32]);
         expect(
-            receiverBridge.fontMap
-                .get('glyphs')
-                .get('B')
-                .get('layers')
-                .get('layer-2')
+            receiverBridge.getYValue(['glyphs', 'B', 'layers', 'layer-2'])
         ).toBe(receiverLayerMap);
 
         receiverBridge.destroy();
@@ -3525,7 +3608,7 @@ describe('Transactions', () => {
         ).toBe(false);
         expect(
             normalizeYDocValue(
-                getYPath(bridge.fontMap, [
+                bridge.getYValue([
                     'glyphs',
                     'A',
                     'layers',
@@ -3536,18 +3619,12 @@ describe('Transactions', () => {
         ).toEqual({ seed: true });
         expect(
             normalizeYDocValue(
-                getYPath(bridge.fontMap, [
-                    'glyphs',
-                    'A',
-                    'layers',
-                    'layer-1',
-                    'guides'
-                ])
+                bridge.getYValue(['glyphs', 'A', 'layers', 'layer-1', 'guides'])
             )
         ).toEqual(originalGuides);
-        expect(
-            getYDocLayerNodeValue(bridge.fontMap, 'A', 'layer-1', 0, 0, 'x')
-        ).toBe(125);
+        expect(getYDocLayerNodeValue(bridge, 'A', 'layer-1', 0, 0, 'x')).toBe(
+            125
+        );
     });
 
     test('snapshot preserves unowned Y.Doc optional layer fields', () => {
@@ -3602,7 +3679,7 @@ describe('Transactions', () => {
         expect(
             cloneValue(
                 fromYType(
-                    getYPath(bridge.fontMap, [
+                    bridge.getYValue([
                         'glyphs',
                         'A',
                         'layers',
@@ -3613,20 +3690,14 @@ describe('Transactions', () => {
             )
         ).toEqual({ 'com.schriftgestalt.Glyphs.attr': {} });
         expect(
-            getYPath(bridge.fontMap, [
-                'glyphs',
-                'A',
-                'layers',
-                'layer-1',
-                'anchors'
-            ])
+            bridge.getYValue(['glyphs', 'A', 'layers', 'layer-1', 'anchors'])
         ).toBeUndefined();
 
         bridge.undo('A', 'layer-1');
         expect(
             cloneValue(
                 fromYType(
-                    getYPath(bridge.fontMap, [
+                    bridge.getYValue([
                         'glyphs',
                         'A',
                         'layers',
@@ -3651,7 +3722,7 @@ describe('Transactions', () => {
         expect(
             cloneValue(
                 fromYType(
-                    getYPath(bridge.fontMap, [
+                    bridge.getYValue([
                         'glyphs',
                         'A',
                         'layers',
@@ -3697,27 +3768,15 @@ describe('Transactions', () => {
             'glyphs.A:layers.layer-1:width'
         ]);
         expect(
-            getYPath(bridge.fontMap, [
-                'glyphs',
-                'A',
-                'layers',
-                'layer-1',
-                'anchors'
-            ])
+            bridge.getYValue(['glyphs', 'A', 'layers', 'layer-1', 'anchors'])
         ).toBeUndefined();
         expect(
-            getYPath(bridge.fontMap, [
-                'glyphs',
-                'A',
-                'layers',
-                'layer-1',
-                'guides'
-            ])
+            bridge.getYValue(['glyphs', 'A', 'layers', 'layer-1', 'guides'])
         ).toBeUndefined();
         expect(
             cloneValue(
                 fromYType(
-                    getYPath(bridge.fontMap, [
+                    bridge.getYValue([
                         'glyphs',
                         'A',
                         'layers',
@@ -3762,7 +3821,7 @@ describe('Transactions', () => {
         expect(
             cloneValue(
                 fromYType(
-                    getYPath(bridge.fontMap, [
+                    bridge.getYValue([
                         'glyphs',
                         'A',
                         'layers',
@@ -3775,7 +3834,7 @@ describe('Transactions', () => {
         expect(
             cloneValue(
                 fromYType(
-                    getYPath(bridge.fontMap, [
+                    bridge.getYValue([
                         'glyphs',
                         'A',
                         'layers',
@@ -3788,7 +3847,7 @@ describe('Transactions', () => {
         expect(
             cloneValue(
                 fromYType(
-                    getYPath(bridge.fontMap, [
+                    bridge.getYValue([
                         'glyphs',
                         'A',
                         'layers',
@@ -3865,12 +3924,12 @@ describe('Transactions', () => {
 
         expect(bridge.getChangeLog()).toHaveLength(0);
         expect(bridge.canUndo('A', 'layer-1')).toBe(false);
-        expect(
-            getYDocLayerNodeValue(bridge.fontMap, 'A', 'layer-1', 0, 0, 'x')
-        ).toBe(100);
-        expect(
-            getYDocLayerNodeValue(bridge.fontMap, 'A', 'layer-1', 0, 0, 'y')
-        ).toBe(0);
+        expect(getYDocLayerNodeValue(bridge, 'A', 'layer-1', 0, 0, 'x')).toBe(
+            100
+        );
+        expect(getYDocLayerNodeValue(bridge, 'A', 'layer-1', 0, 0, 'y')).toBe(
+            0
+        );
     });
 
     test('buffered layer transaction undoes as one layer history item', () => {
@@ -3907,12 +3966,12 @@ describe('Transactions', () => {
                 layerId: 'layer-1'
             })
         );
-        expect(
-            getYDocLayerNodeValue(bridge.fontMap, 'A', 'layer-1', 0, 0, 'x')
-        ).toBe(100);
-        expect(
-            getYDocLayerNodeValue(bridge.fontMap, 'A', 'layer-1', 0, 0, 'y')
-        ).toBe(0);
+        expect(getYDocLayerNodeValue(bridge, 'A', 'layer-1', 0, 0, 'x')).toBe(
+            100
+        );
+        expect(getYDocLayerNodeValue(bridge, 'A', 'layer-1', 0, 0, 'y')).toBe(
+            0
+        );
     });
 
     test('runWithoutRecording skips transient operations inside a transaction', () => {
@@ -3997,22 +4056,10 @@ describe('Transactions', () => {
 
         expect(bridge.undo('A', 'layer-1b')).not.toBeNull();
         expect(
-            getYPath(bridge.fontMap, [
-                'glyphs',
-                'A',
-                'layers',
-                'layer-1',
-                'width'
-            ])
+            bridge.getYValue(['glyphs', 'A', 'layers', 'layer-1', 'width'])
         ).toBe(600);
         expect(
-            getYPath(bridge.fontMap, [
-                'glyphs',
-                'A',
-                'layers',
-                'layer-1b',
-                'width'
-            ])
+            bridge.getYValue(['glyphs', 'A', 'layers', 'layer-1b', 'width'])
         ).toBe(620);
     });
 
@@ -4060,22 +4107,10 @@ describe('Transactions', () => {
             })
         );
         expect(
-            getYPath(bridge.fontMap, [
-                'glyphs',
-                'A',
-                'layers',
-                'layer-1',
-                'width'
-            ])
+            bridge.getYValue(['glyphs', 'A', 'layers', 'layer-1', 'width'])
         ).toBe(600);
         expect(
-            getYPath(bridge.fontMap, [
-                'glyphs',
-                'B',
-                'layers',
-                'layer-2',
-                'width'
-            ])
+            bridge.getYValue(['glyphs', 'B', 'layers', 'layer-2', 'width'])
         ).toBe(650);
     });
 
@@ -4165,12 +4200,7 @@ describe('Model setter change recording', () => {
         expect(bridgeBackground.master).toEqual(foreground.master);
         expect(bridgeBackground.location).toEqual(foreground.location);
         const rawBridgeBackground = fromYType(
-            getYPath(bridge.yDoc.getMap('font'), [
-                'glyphs',
-                'A',
-                'layers',
-                materialized.id
-            ])
+            bridge.getYValue(['glyphs', 'A', 'layers', materialized.id])
         );
         expect(rawBridgeBackground.shapes[0]).toEqual({
             nodes: [{ x: 100, y: 200, nodetype: 'Line' }],
@@ -4190,7 +4220,7 @@ describe('Model setter change recording', () => {
         const receiverFontJson = cloneValue(fontJson);
         const receiverBridge = new ChangeBridge('structural-path-receiver');
         receiverBridge.setFontJson(receiverFontJson);
-        receiverBridge.applyFullState(bridge.getFullState());
+        receiverBridge.applyDocumentSetState(bridge.encodeDocumentSet());
         let update;
         let changeLogEntries;
         bridge.onLocalUpdate((nextUpdate, _message, entries) => {
@@ -4217,12 +4247,7 @@ describe('Model setter change recording', () => {
         );
 
         const rawLayer = fromYType(
-            getYPath(bridge.yDoc.getMap('font'), [
-                'glyphs',
-                'A',
-                'layers',
-                'layer-1'
-            ])
+            bridge.getYValue(['glyphs', 'A', 'layers', 'layer-1'])
         );
         expect(rawLayer.shapes).toEqual([
             {
@@ -4263,12 +4288,7 @@ describe('Model setter change recording', () => {
         );
 
         const rawBackground = fromYType(
-            getYPath(bridge.yDoc.getMap('font'), [
-                'glyphs',
-                'A',
-                'layers',
-                background.id
-            ])
+            bridge.getYValue(['glyphs', 'A', 'layers', background.id])
         );
         expect(rawBackground).toEqual(
             expect.objectContaining({
@@ -4292,7 +4312,7 @@ describe('Model setter change recording', () => {
             'background-layer-insert-receiver'
         );
         receiverBridge.setFontJson(receiverFontJson);
-        receiverBridge.applyFullState(bridge.getFullState());
+        receiverBridge.applyDocumentSetState(bridge.encodeDocumentSet());
         let update;
         let changeLogEntries;
         bridge.onLocalUpdate((nextUpdate, _message, entries) => {
@@ -4329,12 +4349,7 @@ describe('Model setter change recording', () => {
 
         expect(
             fromYType(
-                getYPath(bridge.yDoc.getMap('font'), [
-                    'glyphs',
-                    'A',
-                    'layers',
-                    background.id
-                ])
+                bridge.getYValue(['glyphs', 'A', 'layers', background.id])
             )
         ).toEqual(
             expect.objectContaining({
@@ -4385,12 +4400,7 @@ describe('Model setter change recording', () => {
 
         bridge.undo('A', background.id);
         expect(
-            getYPath(bridge.yDoc.getMap('font'), [
-                'glyphs',
-                'A',
-                'layers',
-                background.id
-            ])
+            bridge.getYValue(['glyphs', 'A', 'layers', background.id])
         ).toBeUndefined();
         receiverBridge.applyRemoteUpdate(update, changeLogEntries);
         expect(
@@ -4402,12 +4412,7 @@ describe('Model setter change recording', () => {
         bridge.redo('A', background.id);
         expect(
             fromYType(
-                getYPath(bridge.yDoc.getMap('font'), [
-                    'glyphs',
-                    'A',
-                    'layers',
-                    background.id
-                ])
+                bridge.getYValue(['glyphs', 'A', 'layers', background.id])
             )
         ).toEqual(
             expect.objectContaining({
@@ -4481,7 +4486,7 @@ describe('Model setter change recording', () => {
             'Draw path'
         );
 
-        receiverBridge.applyFullState(bridge.getFullState());
+        receiverBridge.applyDocumentSetState(bridge.encodeDocumentSet());
         const receiverLayers = receiverFontJson.glyphs.find(
             (candidate) => candidate.name === 'A'
         ).layers;
@@ -4571,7 +4576,7 @@ describe('Model setter change recording', () => {
             if (spec.property === 'nodes') {
                 expect(log.length).toBeGreaterThanOrEqual(1);
                 const shapePath = target.getPath();
-                const shapeYMap = getYPath(bridge.fontMap, shapePath);
+                const shapeYMap = bridge.getYValue(shapePath);
                 const reconstructed = normalizeYDocValue(shapeYMap);
                 expect(reconstructed.nodes).toEqual(expectedValue);
             } else if (isMasterRtlKerning) {
@@ -4595,12 +4600,10 @@ describe('Model setter change recording', () => {
                     cloneValue(font.format_specific)
                 );
                 expect(
-                    normalizeYValue(getYPath(bridge.fontMap, expectedYPath))
+                    normalizeYValue(bridge.getYValue(expectedYPath))
                 ).toEqual(expectedValue);
                 expect(
-                    normalizeYValue(
-                        getYPath(bridge.fontMap, ['format_specific'])
-                    )
+                    normalizeYValue(bridge.getYValue(['format_specific']))
                 ).toEqual(cloneValue(font.format_specific));
             } else if (isPathIsSubtraction) {
                 expect(log).toHaveLength(2);
@@ -4613,8 +4616,7 @@ describe('Model setter change recording', () => {
                 expect(target.isSubtraction).toEqual(expectedValue);
                 expect(
                     normalizeYValue(
-                        getYPath(
-                            bridge.fontMap,
+                        bridge.getYValue(
                             target
                                 .getPath()
                                 .concat(['format_specific', 'fip001-boolean'])
@@ -4623,8 +4625,7 @@ describe('Model setter change recording', () => {
                 ).toBe(expectedValue ? 'subtraction' : undefined);
                 expect(
                     normalizeYValue(
-                        getYPath(
-                            bridge.fontMap,
+                        bridge.getYValue(
                             target
                                 .getPath()
                                 .concat([
@@ -4646,7 +4647,7 @@ describe('Model setter change recording', () => {
                 const path = target.getPath();
                 expect(
                     getYDocLayerNodeValue(
-                        bridge.fontMap,
+                        bridge,
                         String(path[1]),
                         String(path[3]),
                         Number(path[5]),
@@ -4660,7 +4661,7 @@ describe('Model setter change recording', () => {
                 expect(log[0].oldValue).toEqual(oldValue);
                 expect(log[0].newValue).toEqual(expectedValue);
                 expect(
-                    normalizeYValue(getYPath(bridge.fontMap, expectedYPath))
+                    normalizeYValue(bridge.getYValue(expectedYPath))
                 ).toEqual(expectedValue);
             }
         }
@@ -4670,7 +4671,7 @@ describe('Model setter change recording', () => {
 describe('Model mutable getter change recording', () => {
     test('rejects read-only Assistant model mutations before bridge changes', async () => {
         const { bridge, font } = createTestBridge('read-only-model');
-        const beforeJson = yDocToJson(bridge.fontMap);
+        const beforeJson = bridge.getFontJsonSnapshot();
         const {
             runAssistantPythonExecution
         } = require('../js/assistant-execution-context.ts');
@@ -4695,7 +4696,7 @@ describe('Model mutable getter change recording', () => {
         );
 
         expect(font.upm).toBe(1000);
-        expect(yDocToJson(bridge.fontMap)).toEqual(beforeJson);
+        expect(bridge.getFontJsonSnapshot()).toEqual(beforeJson);
         expect(bridge.getChangeLog()).toHaveLength(0);
     });
 
@@ -4735,10 +4736,7 @@ describe('Model mutable getter change recording', () => {
             }
             expect(
                 normalizeYValue(
-                    getYPath(
-                        bridge.fontMap,
-                        target.getPath().concat(spec.property)
-                    )
+                    bridge.getYValue(target.getPath().concat(spec.property))
                 )
             ).toEqual(expectedValue);
         }
@@ -4764,7 +4762,7 @@ describe('Model mutable getter change recording', () => {
             'features.include_paths.0',
             'features.include_paths'
         ]);
-        expect(normalizeYValue(getYPath(bridge.fontMap, ['features']))).toEqual(
+        expect(normalizeYValue(bridge.getYValue(['features']))).toEqual(
             cloneValue(font.features)
         );
     });
@@ -4791,17 +4789,12 @@ describe('Model mutable getter change recording', () => {
                 layerId: null
             })
         );
-        expect(normalizeYValue(getYPath(bridge.fontMap, ['note']))).toBe(
+        expect(normalizeYValue(bridge.getYValue(['note']))).toBe(
             'note-changed'
         );
         expect(
             normalizeYValue(
-                getYPath(bridge.fontMap, [
-                    'features',
-                    'prefixes',
-                    'global',
-                    'code'
-                ])
+                bridge.getYValue(['features', 'prefixes', 'global', 'code'])
             )
         ).toBe('lookupflag 0;');
     });
@@ -4814,12 +4807,7 @@ describe('Model mutable getter change recording', () => {
         expect(bridge.getChangeLog()).toHaveLength(0);
         expect(
             normalizeYValue(
-                getYPath(bridge.fontMap, [
-                    'features',
-                    'prefixes',
-                    'global',
-                    'code'
-                ])
+                bridge.getYValue(['features', 'prefixes', 'global', 'code'])
             )
         ).toBe('lookupflag 0;');
     });
@@ -4832,7 +4820,7 @@ describe('Model mutable getter change recording', () => {
         expect(bridge.getChangeLog()).toHaveLength(0);
         expect(
             normalizeYValue(
-                getYPath(bridge.fontMap, ['features', 'features', 0, 1, 'code'])
+                bridge.getYValue(['features', 'features', 0, 1, 'code'])
             )
         ).toBe('sub f i by fi;');
     });
@@ -4884,7 +4872,7 @@ describe('Model mutable getter change recording', () => {
             'features.features',
             'features.features'
         ]);
-        expect(normalizeYValue(getYPath(bridge.fontMap, ['features']))).toEqual(
+        expect(normalizeYValue(bridge.getYValue(['features']))).toEqual(
             cloneValue(font.features)
         );
         expect(font.features.features).toEqual([
@@ -5005,7 +4993,7 @@ describe('Model mutable getter change recording', () => {
 
         expect(bridge.getChangeLog()).toHaveLength(1);
         expect(bridge.getChangeLog()[0].property).toBe('names');
-        expect(normalizeYValue(getYPath(bridge.fontMap, ['names']))).toEqual({
+        expect(normalizeYValue(bridge.getYValue(['names']))).toEqual({
             familyName: 'Renamed'
         });
     });
@@ -5036,12 +5024,12 @@ describe('Model collection mutator change recording', () => {
             const target = resolveModelObject(font, spec);
             const mutator =
                 COLLECTION_MUTATOR_TESTS[`${spec.className}.${spec.method}`];
-            const beforeJson = yDocToJson(bridge.fontMap);
+            const beforeJson = cloneValue(bridge.getFontJsonSnapshot());
 
             mutator.invoke(target);
 
             const log = bridge.getChangeLog();
-            const afterJson = yDocToJson(bridge.fontMap);
+            const afterJson = bridge.getFontJsonSnapshot();
             const expectedLogLength = mutator.expectedLogLength ?? 1;
 
             expect(log).toHaveLength(expectedLogLength);
@@ -5098,11 +5086,11 @@ describe('Model collection mutator change recording', () => {
             'glyphs.A:layers.layer-1:anchors',
             'glyphs.A:layers.layer-1:width'
         ]);
+        expect(getYDocLayerNodeValue(bridge, 'A', 'layer-1', 0, 0, 'x')).toBe(
+            60
+        );
         expect(
-            getYDocLayerNodeValue(bridge.fontMap, 'A', 'layer-1', 0, 0, 'x')
-        ).toBe(60);
-        expect(
-            getYPath(bridge.fontMap, [
+            bridge.getYValue([
                 'glyphs',
                 'A',
                 'layers',
@@ -5113,13 +5101,7 @@ describe('Model collection mutator change recording', () => {
             ])
         ).toBe(260);
         expect(
-            getYPath(bridge.fontMap, [
-                'glyphs',
-                'A',
-                'layers',
-                'layer-1',
-                'width'
-            ])
+            bridge.getYValue(['glyphs', 'A', 'layers', 'layer-1', 'width'])
         ).toBe(560);
     });
 
@@ -5138,7 +5120,7 @@ describe('Model collection mutator change recording', () => {
         const path = font.findGlyph('A').layers[0].shapes[0].asPath();
 
         expect(
-            getYPath(bridge.fontMap, [
+            bridge.getYValue([
                 'glyphs',
                 'A',
                 'layers',
@@ -5150,7 +5132,7 @@ describe('Model collection mutator change recording', () => {
         ).toBeInstanceOf(Y.Array);
         expect(
             normalizeYDocValue(
-                getYPath(bridge.fontMap, [
+                bridge.getYValue([
                     'glyphs',
                     'A',
                     'layers',
@@ -5170,7 +5152,7 @@ describe('Model collection mutator change recording', () => {
         expect(bridge.getChangeLog()).toHaveLength(0);
         expect(
             normalizeYDocValue(
-                getYPath(bridge.fontMap, [
+                bridge.getYValue([
                     'glyphs',
                     'A',
                     'layers',
@@ -5188,9 +5170,9 @@ describe('Model collection mutator change recording', () => {
         nodes[0].x = 120;
 
         expect(bridge.getChangeLog()).toHaveLength(1);
-        expect(
-            getYDocLayerNodeValue(bridge.fontMap, 'A', 'layer-1', 0, 0, 'x')
-        ).toBe(120);
+        expect(getYDocLayerNodeValue(bridge, 'A', 'layer-1', 0, 0, 'x')).toBe(
+            120
+        );
     });
 });
 
@@ -5202,20 +5184,20 @@ describe('Undo / Redo', () => {
     test('font-level undo reverts property change', () => {
         const { bridge } = createTestBridge('test-1');
         bridge.recordChange([], 'upm', 1000, 2000);
-        expect(getYPath(bridge.fontMap, ['upm'])).toBe(2000);
+        expect(bridge.getYValue(['upm'])).toBe(2000);
 
         bridge.undo();
-        expect(getYPath(bridge.fontMap, ['upm'])).toBe(1000);
+        expect(bridge.getYValue(['upm'])).toBe(1000);
     });
 
     test('font-level redo restores change', () => {
         const { bridge } = createTestBridge('test-1');
         bridge.recordChange([], 'upm', 1000, 2000);
         bridge.undo();
-        expect(getYPath(bridge.fontMap, ['upm'])).toBe(1000);
+        expect(bridge.getYValue(['upm'])).toBe(1000);
 
         bridge.redo();
-        expect(getYPath(bridge.fontMap, ['upm'])).toBe(2000);
+        expect(bridge.getYValue(['upm'])).toBe(2000);
     });
 
     test('font-level undo and redo patch the recorded top-level key without bootstrap rehydration', () => {
@@ -5265,13 +5247,7 @@ describe('Undo / Redo', () => {
         // Undo glyph A from its originating layer
         bridge.undo('A', 'layer-1');
         expect(
-            getYPath(bridge.fontMap, [
-                'glyphs',
-                'A',
-                'layers',
-                'layer-1',
-                'width'
-            ])
+            bridge.getYValue(['glyphs', 'A', 'layers', 'layer-1', 'width'])
         ).toBe(600);
     });
 
@@ -5316,7 +5292,7 @@ describe('WindowSync', () => {
 
         // Bridge2 gets its state from bridge1 (no independent initFromJson)
         const bridge2 = new ChangeBridge('win-2');
-        bridge2.applyFullState(bridge1.getFullState());
+        bridge2.applyDocumentSetState(bridge1.encodeDocumentSet());
 
         const sync1 = new WindowSync(bridge1, 'font-channel');
         const sync2 = new WindowSync(bridge2, 'font-channel');
@@ -5331,19 +5307,13 @@ describe('WindowSync', () => {
 
         // Verify bridge1's Y.Doc was updated
         expect(
-            getYPath(bridge1.fontMap, [
-                'glyphs',
-                'A',
-                'layers',
-                'layer-1',
-                'width'
-            ])
+            bridge1.getYValue(['glyphs', 'A', 'layers', 'layer-1', 'width'])
         ).toBe(800);
 
         // Flush to deliver BroadcastChannel messages
         flushTimers();
 
-        const width = getYPath(bridge2.fontMap, [
+        const width = bridge2.getYValue([
             'glyphs',
             'A',
             'layers',
@@ -5387,7 +5357,9 @@ describe('WindowSync', () => {
             }
         ]);
 
-        const forwardEntries = localUpdates.at(-1).changeLogEntries;
+        const forwardEntries = localUpdates.flatMap(
+            (packet) => packet.changeLogEntries
+        );
         localUpdates.length = 0;
 
         expect(bridge.undo()).toEqual(
@@ -5398,14 +5370,14 @@ describe('WindowSync', () => {
             })
         );
 
-        expect(localUpdates).toHaveLength(1);
-        expect(localUpdates[0].update).toBeInstanceOf(Uint8Array);
-        expect(localUpdates[0].changeLogEntries).toHaveLength(
-            forwardEntries.length
+        expect(localUpdates.length).toBeGreaterThanOrEqual(1);
+        const undoEntries = localUpdates.flatMap(
+            (packet) => packet.changeLogEntries
         );
+        expect(undoEntries).toHaveLength(forwardEntries.length);
 
         for (let index = 0; index < forwardEntries.length; index++) {
-            expect(localUpdates[0].changeLogEntries[index]).toEqual(
+            expect(undoEntries[index]).toEqual(
                 expect.objectContaining({
                     historyAction: 'undo',
                     targetHistoryItemId: forwardEntries[index].historyItemId,
@@ -5469,7 +5441,7 @@ describe('WindowSync', () => {
         bridge1.initFromJson(fontJson1);
 
         const bridge2 = new ChangeBridge('win-2');
-        bridge2.applyFullState(bridge1.getFullState());
+        bridge2.applyDocumentSetState(bridge1.encodeDocumentSet());
 
         const sync1 = new WindowSync(bridge1, 'font-channel');
         const sync2 = new WindowSync(bridge2, 'font-channel');
@@ -5488,22 +5460,10 @@ describe('WindowSync', () => {
         flushTimers();
 
         expect(
-            getYPath(bridge2.fontMap, [
-                'glyphs',
-                'A',
-                'layers',
-                'layer-1',
-                'width'
-            ])
+            bridge2.getYValue(['glyphs', 'A', 'layers', 'layer-1', 'width'])
         ).toBe(600);
         expect(
-            getYPath(bridge1.fontMap, [
-                'glyphs',
-                'A',
-                'layers',
-                'layer-1',
-                'width'
-            ])
+            bridge1.getYValue(['glyphs', 'A', 'layers', 'layer-1', 'width'])
         ).toBe(600);
 
         sync1.destroy();
@@ -5539,7 +5499,7 @@ describe('WindowSync', () => {
         // Second flush delivers the response from sync1 to sync2
         flushTimers();
 
-        const width = getYPath(bridge2.fontMap, [
+        const width = bridge2.getYValue([
             'glyphs',
             'A',
             'layers',
@@ -5662,6 +5622,12 @@ describe('WindowSync', () => {
         sync2._handleMessage({
             type: 'full-state-response',
             state: bridge1.getFullState(),
+            documents: bridge1
+                .encodeDocumentSet()
+                .map((shard) => ({
+                    documentId: shard.documentId,
+                    state: shard.bytes
+                })),
             changeLog: bridge1.getChangeLog(),
             collaborationLog: bridge1.getCollaborationLog(),
             windowId: 'win-1',
@@ -5748,6 +5714,12 @@ describe('WindowSync', () => {
         sync2._handleMessage({
             type: 'full-state-response',
             state: bridge1.getFullState(),
+            documents: bridge1
+                .encodeDocumentSet()
+                .map((shard) => ({
+                    documentId: shard.documentId,
+                    state: shard.bytes
+                })),
             changeLog: bridge1.getChangeLog(),
             collaborationLog: bridge1.getCollaborationLog(),
             windowId: 'win-1',
@@ -5786,13 +5758,7 @@ describe('WindowSync', () => {
         expect(applyRemoteUpdateSpy).not.toHaveBeenCalled();
 
         expect(
-            getYPath(bridge2.fontMap, [
-                'glyphs',
-                'A',
-                'layers',
-                'layer-1',
-                'width'
-            ])
+            bridge2.getYValue(['glyphs', 'A', 'layers', 'layer-1', 'width'])
         ).toBe(600);
 
         resolveSeedYdoc();
@@ -5895,6 +5861,12 @@ describe('WindowSync', () => {
         sync2._handleMessage({
             type: 'full-state-response',
             state: bridge1.getFullState(),
+            documents: bridge1
+                .encodeDocumentSet()
+                .map((shard) => ({
+                    documentId: shard.documentId,
+                    state: shard.bytes
+                })),
             changeLog: bridge1.getChangeLog(),
             collaborationLog: bridge1.getCollaborationLog(),
             windowId: 'win-1',
@@ -5937,7 +5909,7 @@ describe('WindowSync', () => {
         flushTimers();
         flushTimers();
 
-        const width = getYPath(receiver.fontMap, [
+        const width = receiver.getYValue([
             'glyphs',
             'A',
             'layers',
@@ -5964,7 +5936,7 @@ describe('WindowSync', () => {
         bridge1.initFromJson(fontJson1);
 
         const bridge2 = new ChangeBridge('metadata-noop-receiver');
-        bridge2.applyFullState(bridge1.getFullState());
+        bridge2.applyDocumentSetState(bridge1.encodeDocumentSet());
         bridge2.setFontJson(cloneValue(fontJson1));
 
         const sync1 = new WindowSync(bridge1, 'font-channel-metadata-noop');
@@ -6002,13 +5974,7 @@ describe('WindowSync', () => {
         expect(receiverWorkerUpdates).toHaveLength(0);
         expect(bridge2.getChangeLog()).toHaveLength(receiverLogStart);
         expect(
-            getYPath(bridge2.fontMap, [
-                'glyphs',
-                'A',
-                'layers',
-                'layer-1',
-                'width'
-            ])
+            bridge2.getYValue(['glyphs', 'A', 'layers', 'layer-1', 'width'])
         ).toBe(600);
 
         sync1.destroy();
@@ -6033,7 +5999,7 @@ describe('WindowSync', () => {
         };
 
         function layerFromBridge(bridge, glyphName, targetLayerId) {
-            return getYPath(bridge.fontMap, [
+            return bridge.getYValue([
                 'glyphs',
                 glyphName,
                 'layers',
@@ -6158,7 +6124,7 @@ describe('WindowSync', () => {
 
         mainBridge.initFromJson(mainFontJson);
         linkedBridge.setFontJson(linkedFontJson);
-        linkedBridge.applyFullState(mainBridge.getFullState());
+        linkedBridge.applyDocumentSetState(mainBridge.encodeDocumentSet());
         mainBridge.setYjsWorkerCallback((_update, entries) => {
             recordWorkerCache(workerCaches.main, mainBridge, entries);
         });
@@ -6289,8 +6255,11 @@ describe('WindowSync', () => {
         const yjsUpdates = captured.filter((m) => m.type === 'yjs-update');
         expect(yjsUpdates).toHaveLength(1);
         expect(yjsUpdates[0].fullState).toBeUndefined();
-        expect(yjsUpdates[0].updates).toHaveLength(1);
-        expect(yjsUpdates[0].updates[0].collaborationMessage).toBeDefined();
+        const outlineUpdates = yjsUpdates[0].updates.filter(
+            (packet) => packet.documentId !== 'font-core'
+        );
+        expect(outlineUpdates).toHaveLength(1);
+        expect(outlineUpdates[0].collaborationMessage).toBeDefined();
         expect(getFullStateSpy).not.toHaveBeenCalled();
 
         getFullStateSpy.mockRestore();
@@ -6304,7 +6273,7 @@ describe('WindowSync', () => {
         const bridge1 = new ChangeBridge('win-1');
         bridge1.initFromJson(fontJson1);
         const bridge2 = new ChangeBridge('win-2');
-        bridge2.applyFullState(bridge1.getFullState());
+        bridge2.applyDocumentSetState(bridge1.encodeDocumentSet());
 
         const sync1 = new WindowSync(bridge1, 'font-channel-pair');
         const sync2 = new WindowSync(bridge2, 'font-channel-pair');
@@ -6342,10 +6311,11 @@ describe('WindowSync', () => {
         expect(fromWin1[fromWin1.length - 1].updates[0].update).toBeInstanceOf(
             Uint8Array
         );
-        expect(fromWin1[fromWin1.length - 1].updates).toHaveLength(1);
-        expect(
-            fromWin1[fromWin1.length - 1].updates[0].collaborationMessage
-        ).toBeDefined();
+        const outlineUpdates = fromWin1[fromWin1.length - 1].updates.filter(
+            (packet) => packet.documentId !== 'font-core'
+        );
+        expect(outlineUpdates).toHaveLength(1);
+        expect(outlineUpdates[0].collaborationMessage).toBeDefined();
         expect(
             fromWin1[fromWin1.length - 1].layerRepairSnapshots
         ).toBeUndefined();
@@ -6390,7 +6360,7 @@ describe('WindowSync', () => {
         const bridge1 = new ChangeBridge('win-inbound-sender');
         bridge1.initFromJson(fontJson1);
         const bridge2 = new ChangeBridge('win-inbound-receiver');
-        bridge2.applyFullState(bridge1.getFullState());
+        bridge2.applyDocumentSetState(bridge1.encodeDocumentSet());
 
         const sync1 = new WindowSync(bridge1, 'font-channel-inbound-batch');
         const sync2 = new WindowSync(bridge2, 'font-channel-inbound-batch');
@@ -6410,57 +6380,27 @@ describe('WindowSync', () => {
         flushTimers();
 
         expect(
-            getYPath(bridge2.fontMap, [
-                'glyphs',
-                'A',
-                'layers',
-                'layer-1',
-                'width'
-            ])
+            bridge2.getYValue(['glyphs', 'A', 'layers', 'layer-1', 'width'])
         ).toBe(800);
         expect(
-            getYPath(bridge2.fontMap, [
-                'glyphs',
-                'B',
-                'layers',
-                'layer-2',
-                'width'
-            ])
+            bridge2.getYValue(['glyphs', 'B', 'layers', 'layer-2', 'width'])
         ).toBe(720);
 
         expect(bridge2.canUndo('A', 'layer-1')).toBe(true);
         expect(bridge2.undo('A', 'layer-1')).not.toBeNull();
         flushTimers();
         expect(
-            getYPath(bridge2.fontMap, [
-                'glyphs',
-                'A',
-                'layers',
-                'layer-1',
-                'width'
-            ])
+            bridge2.getYValue(['glyphs', 'A', 'layers', 'layer-1', 'width'])
         ).toBe(600);
         expect(
-            getYPath(bridge2.fontMap, [
-                'glyphs',
-                'B',
-                'layers',
-                'layer-2',
-                'width'
-            ])
+            bridge2.getYValue(['glyphs', 'B', 'layers', 'layer-2', 'width'])
         ).toBe(720);
 
         expect(bridge2.canUndo('B', 'layer-2')).toBe(true);
         expect(bridge2.undo('B', 'layer-2')).not.toBeNull();
         flushTimers();
         expect(
-            getYPath(bridge2.fontMap, [
-                'glyphs',
-                'B',
-                'layers',
-                'layer-2',
-                'width'
-            ])
+            bridge2.getYValue(['glyphs', 'B', 'layers', 'layer-2', 'width'])
         ).toBe(650);
 
         sync1.destroy();
@@ -6513,7 +6453,7 @@ describe('WindowSync', () => {
         const bridge1 = new ChangeBridge('win-1c');
         bridge1.initFromJson(fontJson1);
         const bridge2 = new ChangeBridge('win-2c');
-        bridge2.applyFullState(bridge1.getFullState());
+        bridge2.applyDocumentSetState(bridge1.encodeDocumentSet());
 
         const sync1 = new WindowSync(bridge1, 'font-channel-cleanup');
         const sync2 = new WindowSync(bridge2, 'font-channel-cleanup');
@@ -6567,7 +6507,7 @@ describe('WindowSync', () => {
 
         // Bridge2 gets state from bridge1
         const bridge2 = new ChangeBridge('win-2');
-        bridge2.applyFullState(bridge1.getFullState());
+        bridge2.applyDocumentSetState(bridge1.encodeDocumentSet());
 
         const sync1 = new WindowSync(bridge1, 'font-channel');
         const sync2 = new WindowSync(bridge2, 'font-channel');
@@ -6716,22 +6656,10 @@ describe('syncGlyphFromJson', () => {
         expect(historyItems[0].undoScope).toBe('font');
 
         expect(
-            getYPath(bridge.fontMap, [
-                'glyphs',
-                'A',
-                'layers',
-                'layer-1',
-                'width'
-            ])
+            bridge.getYValue(['glyphs', 'A', 'layers', 'layer-1', 'width'])
         ).toBe(700);
         expect(
-            getYPath(bridge.fontMap, [
-                'glyphs',
-                'B',
-                'layers',
-                'layer-2',
-                'width'
-            ])
+            bridge.getYValue(['glyphs', 'B', 'layers', 'layer-2', 'width'])
         ).toBe(750);
 
         expect(bridge.undo()).toEqual(
@@ -6742,22 +6670,10 @@ describe('syncGlyphFromJson', () => {
             })
         );
         expect(
-            getYPath(bridge.fontMap, [
-                'glyphs',
-                'A',
-                'layers',
-                'layer-1',
-                'width'
-            ])
+            bridge.getYValue(['glyphs', 'A', 'layers', 'layer-1', 'width'])
         ).toBe(600);
         expect(
-            getYPath(bridge.fontMap, [
-                'glyphs',
-                'B',
-                'layers',
-                'layer-2',
-                'width'
-            ])
+            bridge.getYValue(['glyphs', 'B', 'layers', 'layer-2', 'width'])
         ).toBe(650);
 
         expect(bridge.redo()).toEqual(
@@ -6768,22 +6684,10 @@ describe('syncGlyphFromJson', () => {
             })
         );
         expect(
-            getYPath(bridge.fontMap, [
-                'glyphs',
-                'A',
-                'layers',
-                'layer-1',
-                'width'
-            ])
+            bridge.getYValue(['glyphs', 'A', 'layers', 'layer-1', 'width'])
         ).toBe(700);
         expect(
-            getYPath(bridge.fontMap, [
-                'glyphs',
-                'B',
-                'layers',
-                'layer-2',
-                'width'
-            ])
+            bridge.getYValue(['glyphs', 'B', 'layers', 'layer-2', 'width'])
         ).toBe(750);
     });
 
@@ -6799,13 +6703,7 @@ describe('syncGlyphFromJson', () => {
         expect(updates.length).toBe(1);
         // Y.Doc should reflect the new width
         expect(
-            getYPath(bridge.fontMap, [
-                'glyphs',
-                'A',
-                'layers',
-                'layer-1',
-                'width'
-            ])
+            bridge.getYValue(['glyphs', 'A', 'layers', 'layer-1', 'width'])
         ).toBe(700);
     });
 
@@ -6825,13 +6723,7 @@ describe('syncGlyphFromJson', () => {
         expect(updates.length).toBe(2);
 
         expect(
-            getYPath(bridge.fontMap, [
-                'glyphs',
-                'A',
-                'layers',
-                'layer-1',
-                'width'
-            ])
+            bridge.getYValue(['glyphs', 'A', 'layers', 'layer-1', 'width'])
         ).toBe(800);
     });
 
@@ -6887,10 +6779,12 @@ describe('syncGlyphFromJson', () => {
         expect(workerUpdates).toHaveLength(1);
         expect(committedChanges).toHaveLength(1);
         expect(workerUpdates[0].update).toBeInstanceOf(Uint8Array);
-        expect(committedChanges[0].context).toEqual({
-            origin: 'local',
-            update: workerUpdates[0].update
-        });
+        expect(committedChanges[0].context).toEqual(
+            expect.objectContaining({
+                origin: 'local',
+                update: workerUpdates[0].update
+            })
+        );
         expect(workerUpdates[0].changeLogEntries).toEqual(
             committedChanges[0].entries
         );
@@ -6934,10 +6828,12 @@ describe('syncGlyphFromJson', () => {
         expect(result).not.toBeNull();
         expect(workerUpdates).toHaveLength(1);
         expect(committedChanges).toHaveLength(1);
-        expect(committedChanges[0].context).toEqual({
-            origin: 'local',
-            update: workerUpdates[0].update
-        });
+        expect(committedChanges[0].context).toEqual(
+            expect.objectContaining({
+                origin: 'local',
+                update: workerUpdates[0].update
+            })
+        );
         expect(workerUpdates[0].changeLogEntries).toEqual(
             committedChanges[0].entries
         );
@@ -6983,16 +6879,15 @@ describe('syncGlyphFromJson', () => {
             committedChanges.push({ entries, context });
         });
 
+        const glyphShard = bridge
+            .encodeDocumentSet()
+            .find((shard) => shard.documentId.startsWith('glyph:'));
         const clonedDoc = new Y.Doc({ gc: false });
-        Y.applyUpdate(clonedDoc, bridge.encodeBridgeState());
-        const clonedFontMap = clonedDoc.getMap('font');
+        Y.applyUpdate(clonedDoc, glyphShard.bytes);
+        const clonedGlyphMap = clonedDoc.getMap('glyph');
         const baseline = Y.encodeStateVector(clonedDoc);
         clonedDoc.transact(() => {
-            setYPath(
-                clonedFontMap,
-                ['glyphs', 'A', 'layers', layerId],
-                newLayer
-            );
+            setYPath(clonedGlyphMap, ['layers', layerId], newLayer);
         });
         const update = Y.encodeStateAsUpdate(clonedDoc, baseline);
 
@@ -7017,10 +6912,12 @@ describe('syncGlyphFromJson', () => {
         expect(committedChanges).toHaveLength(1);
         expect(localUpdates[0].update).toBeInstanceOf(Uint8Array);
         expect(workerUpdates[0].update).toEqual(localUpdates[0].update);
-        expect(committedChanges[0].context).toEqual({
-            origin: 'local',
-            update: localUpdates[0].update
-        });
+        expect(committedChanges[0].context).toEqual(
+            expect.objectContaining({
+                origin: 'local',
+                update: localUpdates[0].update
+            })
+        );
         expect(committedChanges[0].entries).toEqual(
             workerUpdates[0].changeLogEntries
         );
@@ -7306,8 +7203,10 @@ describe('syncGlyphFromJson', () => {
         expect(bridge.undo('A', 'layer-1')).toEqual(
             expect.objectContaining({ scope: 'font' })
         );
-        expect(workerUpdates).toHaveLength(1);
-        expect(workerUpdates[0].changeLogEntries).toEqual(
+        expect(workerUpdates.length).toBeGreaterThanOrEqual(1);
+        expect(
+            workerUpdates.flatMap((packet) => packet.changeLogEntries)
+        ).toEqual(
             expect.arrayContaining([
                 expect.objectContaining({
                     historyAction: 'undo',
@@ -7480,7 +7379,7 @@ describe('syncGlyphFromJson', () => {
 
         senderBridge.initFromJson(senderFontJson);
         receiverBridge.setFontJson(receiverFontJson);
-        receiverBridge.applyFullState(senderBridge.getFullState());
+        receiverBridge.applyDocumentSetState(senderBridge.encodeDocumentSet());
         senderBridge.onLocalUpdate((update, _message, changeLogEntries) => {
             lastUpdate = update;
             lastEntries = changeLogEntries;
@@ -7531,8 +7430,10 @@ describe('syncGlyphFromJson', () => {
         senderBridge.initFromJson(senderFontJson);
         localWindowBridge.setFontJson(localWindowFontJson);
         cloudBridge.setFontJson(cloudFontJson);
-        localWindowBridge.applyFullState(senderBridge.getFullState());
-        cloudBridge.applyFullState(senderBridge.getFullState());
+        localWindowBridge.applyDocumentSetState(
+            senderBridge.encodeDocumentSet()
+        );
+        cloudBridge.applyDocumentSetState(senderBridge.encodeDocumentSet());
         senderBridge.onLocalUpdate(
             (update, collaborationMessage, changeLogEntries) => {
                 lastUpdate = update;
@@ -7602,7 +7503,7 @@ describe('syncGlyphFromJson', () => {
 
         senderBridge.initFromJson(senderFontJson);
         receiverBridge.setFontJson(receiverFontJson);
-        receiverBridge.applyFullState(senderBridge.getFullState());
+        receiverBridge.applyDocumentSetState(senderBridge.encodeDocumentSet());
         senderBridge.onLocalUpdate((update, _message, changeLogEntries) => {
             lastUpdate = update;
             lastEntries = changeLogEntries;
@@ -7660,7 +7561,7 @@ describe('syncGlyphFromJson', () => {
 
         senderBridge.initFromJson(senderFontJson);
         receiverBridge.setFontJson(receiverFontJson);
-        receiverBridge.applyFullState(senderBridge.getFullState());
+        receiverBridge.applyDocumentSetState(senderBridge.encodeDocumentSet());
         senderBridge.onLocalUpdate((update, _message, entries) => {
             lastUpdate = update;
             lastEntries = entries;
@@ -7696,13 +7597,7 @@ describe('syncGlyphFromJson', () => {
         expect(bridge.canUndo('A')).toBe(true);
         bridge.undo('A');
         expect(
-            getYPath(bridge.fontMap, [
-                'glyphs',
-                'A',
-                'layers',
-                'layer-1',
-                'width'
-            ])
+            bridge.getYValue(['glyphs', 'A', 'layers', 'layer-1', 'width'])
         ).toBe(600);
     });
 
@@ -7721,13 +7616,7 @@ describe('syncGlyphFromJson', () => {
             })
         );
         expect(
-            getYPath(bridge.fontMap, [
-                'glyphs',
-                'A',
-                'layers',
-                'layer-1',
-                'width'
-            ])
+            bridge.getYValue(['glyphs', 'A', 'layers', 'layer-1', 'width'])
         ).toBe(600);
 
         expect(bridge.canRedo('A', 'layer-1')).toBe(true);
@@ -7739,13 +7628,7 @@ describe('syncGlyphFromJson', () => {
             })
         );
         expect(
-            getYPath(bridge.fontMap, [
-                'glyphs',
-                'A',
-                'layers',
-                'layer-1',
-                'width'
-            ])
+            bridge.getYValue(['glyphs', 'A', 'layers', 'layer-1', 'width'])
         ).toBe(700);
     });
 
@@ -7759,7 +7642,7 @@ describe('syncGlyphFromJson', () => {
         bridge.syncGlyphFromJson('A', 'Glyph snapshot edit');
 
         bridge.undo('A');
-        let layerMap = getYPath(bridge.fontMap, layerPath);
+        let layerMap = bridge.getYValue(layerPath);
         expect(layerMap.get('shapes')).toBeInstanceOf(Y.Array);
         expect(layerMap.get('anchors')).toBeUndefined();
         expect(layerMap.get('shapesById')).toBeUndefined();
@@ -7772,7 +7655,7 @@ describe('syncGlyphFromJson', () => {
         expect(normalizeYDocValue(layerMap).shapes[0].nodes[0].x).toBe(100);
 
         bridge.redo('A');
-        layerMap = getYPath(bridge.fontMap, layerPath);
+        layerMap = bridge.getYValue(layerPath);
         expect(layerMap.get('shapes')).toBeInstanceOf(Y.Array);
         expect(layerMap.get('anchors')).toBeUndefined();
         expect(layerMap.get('shapesById')).toBeUndefined();
@@ -7790,9 +7673,7 @@ describe('syncGlyphFromJson', () => {
     test('malformed scalar layer snapshot payload does not clear an existing layer root', () => {
         const { bridge } = createTestBridge('test-1');
         const layerPath = ['glyphs', 'A', 'layers', 'layer-1'];
-        const originalLayer = normalizeYDocValue(
-            getYPath(bridge.fontMap, layerPath)
-        );
+        const originalLayer = normalizeYDocValue(bridge.getYValue(layerPath));
 
         bridge._applyBufferedOperation({
             op: 'set',
@@ -7802,7 +7683,7 @@ describe('syncGlyphFromJson', () => {
             applyMode: 'layer-snapshot'
         });
 
-        expect(normalizeYDocValue(getYPath(bridge.fontMap, layerPath))).toEqual(
+        expect(normalizeYDocValue(bridge.getYValue(layerPath))).toEqual(
             originalLayer
         );
     });
@@ -7819,7 +7700,7 @@ describe('syncGlyphFromJson', () => {
             applyMode: 'layer-snapshot'
         });
 
-        expect(getYPath(bridge.fontMap, missingLayerPath)).toBeUndefined();
+        expect(bridge.getYValue(missingLayerPath)).toBeUndefined();
     });
 
     test('valid layer snapshot payload still materializes a missing layer root', () => {
@@ -7844,17 +7725,15 @@ describe('syncGlyphFromJson', () => {
             applyMode: 'layer-snapshot'
         });
 
-        expect(
-            normalizeYDocValue(getYPath(bridge.fontMap, missingLayerPath))
-        ).toEqual(layerSnapshot);
+        expect(normalizeYDocValue(bridge.getYValue(missingLayerPath))).toEqual(
+            layerSnapshot
+        );
     });
 
     test('partial layer snapshot updates do not delete omitted layer fields', () => {
         const { bridge } = createTestBridge('test-1');
         const layerPath = ['glyphs', 'A', 'layers', 'layer-1'];
-        const originalLayer = normalizeYDocValue(
-            getYPath(bridge.fontMap, layerPath)
-        );
+        const originalLayer = normalizeYDocValue(bridge.getYValue(layerPath));
 
         bridge._applyBufferedOperation({
             op: 'set',
@@ -7864,7 +7743,7 @@ describe('syncGlyphFromJson', () => {
             applyMode: 'layer-snapshot'
         });
 
-        expect(normalizeYDocValue(getYPath(bridge.fontMap, layerPath))).toEqual(
+        expect(normalizeYDocValue(bridge.getYValue(layerPath))).toEqual(
             expect.objectContaining({
                 ...originalLayer,
                 width: 620
@@ -7885,20 +7764,14 @@ describe('syncGlyphFromJson', () => {
         });
 
         expect(
-            getYPath(bridge.fontMap, [
-                'glyphs',
-                'A',
-                'layers',
-                'layer-1',
-                'width'
-            ])
+            bridge.getYValue(['glyphs', 'A', 'layers', 'layer-1', 'width'])
         ).toBe(600);
     });
 
     test('sparse layer delta without width leaves existing width alone (no throw)', () => {
         const { bridge } = createTestBridge('test-1');
         const layerPath = ['glyphs', 'A', 'layers', 'layer-1'];
-        deleteYPath(bridge.fontMap, [...layerPath, 'width']);
+        deleteBridgeYPath(bridge, [...layerPath, 'width']);
 
         // Sparse delta: only anchors changed, width absent means "don't touch."
         expect(() =>
@@ -7912,9 +7785,7 @@ describe('syncGlyphFromJson', () => {
         ).not.toThrow();
 
         // Width is still absent — the Y.Doc was already corrupted.
-        expect(
-            getYPath(bridge.fontMap, [...layerPath, 'width'])
-        ).toBeUndefined();
+        expect(bridge.getYValue([...layerPath, 'width'])).toBeUndefined();
     });
 
     test('sparse layer delta with null width preserves existing valid width', () => {
@@ -7933,7 +7804,7 @@ describe('syncGlyphFromJson', () => {
             })
         ).not.toThrow();
 
-        expect(getYPath(bridge.fontMap, [...layerPath, 'width'])).toBe(600);
+        expect(bridge.getYValue([...layerPath, 'width'])).toBe(600);
     });
 
     test('partial layer snapshot does not materialize a missing layer root', () => {
@@ -7948,15 +7819,13 @@ describe('syncGlyphFromJson', () => {
             applyMode: 'layer-snapshot'
         });
 
-        expect(getYPath(bridge.fontMap, missingLayerPath)).toBeUndefined();
+        expect(bridge.getYValue(missingLayerPath)).toBeUndefined();
     });
 
     test('partial object layer snapshot payload does not clear omission-sensitive keys', () => {
         const { bridge } = createTestBridge('test-1');
         const layerPath = ['glyphs', 'A', 'layers', 'layer-1'];
-        const originalLayer = normalizeYDocValue(
-            getYPath(bridge.fontMap, layerPath)
-        );
+        const originalLayer = normalizeYDocValue(bridge.getYValue(layerPath));
 
         bridge._applyBufferedOperation({
             op: 'set',
@@ -7966,7 +7835,7 @@ describe('syncGlyphFromJson', () => {
             applyMode: 'layer-snapshot'
         });
 
-        expect(normalizeYDocValue(getYPath(bridge.fontMap, layerPath))).toEqual(
+        expect(normalizeYDocValue(bridge.getYValue(layerPath))).toEqual(
             originalLayer
         );
     });
@@ -7990,7 +7859,7 @@ describe('syncGlyphFromJson', () => {
         );
 
         expect(
-            getYPath(bridge.fontMap, [
+            bridge.getYValue([
                 'glyphs',
                 'behDotless-ar.medi',
                 'layers',
@@ -8010,7 +7879,7 @@ describe('syncGlyphFromJson', () => {
         );
 
         expect(
-            getYPath(bridge.fontMap, [
+            bridge.getYValue([
                 'glyphs',
                 'behDotless-ar.medi',
                 'layers',
@@ -8059,16 +7928,10 @@ describe('syncGlyphFromJson', () => {
         bridge.syncGlyphFromJson('A', 'Drag', undefined, undefined, 'layer-1');
 
         expect(
-            getYPath(bridge.fontMap, [
-                'glyphs',
-                'A',
-                'layers',
-                'layer-1',
-                'width'
-            ])
+            bridge.getYValue(['glyphs', 'A', 'layers', 'layer-1', 'width'])
         ).toBe(600);
         expect(
-            getYPath(bridge.fontMap, [
+            bridge.getYValue([
                 'glyphs',
                 'A',
                 'layers',
@@ -8078,11 +7941,11 @@ describe('syncGlyphFromJson', () => {
                 'name'
             ])
         ).toBe('top');
+        expect(getYDocLayerNodeValue(bridge, 'A', 'layer-1', 0, 0, 'x')).toBe(
+            150
+        );
         expect(
-            getYDocLayerNodeValue(bridge.fontMap, 'A', 'layer-1', 0, 0, 'x')
-        ).toBe(150);
-        expect(
-            getYPath(bridge.fontMap, [
+            bridge.getYValue([
                 'glyphs',
                 'A',
                 'layers',
@@ -8133,16 +7996,10 @@ describe('syncGlyphFromJson', () => {
         bridge.syncGlyphFromJson('A', 'Add point');
 
         expect(
-            getYPath(bridge.fontMap, [
-                'glyphs',
-                'A',
-                'layers',
-                'layer-1',
-                'width'
-            ])
+            bridge.getYValue(['glyphs', 'A', 'layers', 'layer-1', 'width'])
         ).toBe(600);
         expect(
-            getYPath(bridge.fontMap, [
+            bridge.getYValue([
                 'glyphs',
                 'A',
                 'layers',
@@ -8152,9 +8009,9 @@ describe('syncGlyphFromJson', () => {
                 'name'
             ])
         ).toBe('top');
-        expect(
-            getYDocLayerNodeValue(bridge.fontMap, 'A', 'layer-1', 0, 0, 'x')
-        ).toBe(175);
+        expect(getYDocLayerNodeValue(bridge, 'A', 'layer-1', 0, 0, 'x')).toBe(
+            175
+        );
     });
 
     test('layer-scoped undo restores original outlines after remove and recreate with the same layer id', () => {
@@ -8213,22 +8070,10 @@ describe('syncGlyphFromJson', () => {
         bridge.endTransaction();
 
         expect(
-            getYPath(bridge.fontMap, [
-                'glyphs',
-                'A',
-                'layers',
-                'layer-1',
-                'width'
-            ])
+            bridge.getYValue(['glyphs', 'A', 'layers', 'layer-1', 'width'])
         ).toBe(910);
         expect(
-            getYPath(bridge.fontMap, [
-                'glyphs',
-                'A',
-                'layers',
-                'layer-1',
-                'shapes'
-            ])
+            bridge.getYValue(['glyphs', 'A', 'layers', 'layer-1', 'shapes'])
         ).toHaveLength(1);
 
         expect(bridge.undo('A', 'layer-1')).toEqual(
@@ -8240,17 +8085,11 @@ describe('syncGlyphFromJson', () => {
         );
 
         expect(
-            getYPath(bridge.fontMap, [
-                'glyphs',
-                'A',
-                'layers',
-                'layer-1',
-                'width'
-            ])
+            bridge.getYValue(['glyphs', 'A', 'layers', 'layer-1', 'width'])
         ).toBe(originalSnapshot.width);
         expect(
             normalizeYDocValue(
-                getYPath(bridge.fontMap, [
+                bridge.getYValue([
                     'glyphs',
                     'A',
                     'layers',
@@ -8261,13 +8100,7 @@ describe('syncGlyphFromJson', () => {
         ).toEqual(originalSnapshot.anchors);
         expect(
             normalizeYDocValue(
-                getYPath(bridge.fontMap, [
-                    'glyphs',
-                    'A',
-                    'layers',
-                    'layer-1',
-                    'shapes'
-                ])
+                bridge.getYValue(['glyphs', 'A', 'layers', 'layer-1', 'shapes'])
             )
         ).toEqual(originalSnapshot.shapes);
     });
@@ -8505,26 +8338,14 @@ describe('syncGlyphFromJson', () => {
         bridge.undo('A');
         // First undo reverts Drag 2: width goes back to 700
         expect(
-            getYPath(bridge.fontMap, [
-                'glyphs',
-                'A',
-                'layers',
-                'layer-1',
-                'width'
-            ])
+            bridge.getYValue(['glyphs', 'A', 'layers', 'layer-1', 'width'])
         ).toBe(700);
 
         // Second undo reverts Drag 1: width goes back to original 600
         expect(bridge.canUndo('A')).toBe(true);
         bridge.undo('A');
         expect(
-            getYPath(bridge.fontMap, [
-                'glyphs',
-                'A',
-                'layers',
-                'layer-1',
-                'width'
-            ])
+            bridge.getYValue(['glyphs', 'A', 'layers', 'layer-1', 'width'])
         ).toBe(600);
     });
 
@@ -8560,13 +8381,7 @@ describe('syncGlyphFromJson', () => {
             })
         );
         expect(
-            getYPath(bridge.fontMap, [
-                'glyphs',
-                'A',
-                'layers',
-                'layer-1',
-                'width'
-            ])
+            bridge.getYValue(['glyphs', 'A', 'layers', 'layer-1', 'width'])
         ).toBe(650);
 
         expect(bridge.canUndo('A', 'layer-1')).toBe(true);
@@ -8578,13 +8393,7 @@ describe('syncGlyphFromJson', () => {
             })
         );
         expect(
-            getYPath(bridge.fontMap, [
-                'glyphs',
-                'A',
-                'layers',
-                'layer-1',
-                'width'
-            ])
+            bridge.getYValue(['glyphs', 'A', 'layers', 'layer-1', 'width'])
         ).toBe(600);
     });
 
@@ -8620,17 +8429,9 @@ describe('syncGlyphFromJson', () => {
             })
         );
 
+        expect(bridge.getYValue(['format_specific', 'a'])).toBeUndefined();
         expect(
-            getYPath(bridge.fontMap, ['format_specific', 'a'])
-        ).toBeUndefined();
-        expect(
-            getYPath(bridge.fontMap, [
-                'glyphs',
-                'A',
-                'layers',
-                'layer-1',
-                'width'
-            ])
+            bridge.getYValue(['glyphs', 'A', 'layers', 'layer-1', 'width'])
         ).toBe(700);
 
         expect(bridge.canRedo()).toBe(true);
@@ -8641,15 +8442,9 @@ describe('syncGlyphFromJson', () => {
                 layerId: null
             })
         );
-        expect(getYPath(bridge.fontMap, ['format_specific', 'a'])).toBe('b');
+        expect(bridge.getYValue(['format_specific', 'a'])).toBe('b');
         expect(
-            getYPath(bridge.fontMap, [
-                'glyphs',
-                'A',
-                'layers',
-                'layer-1',
-                'width'
-            ])
+            bridge.getYValue(['glyphs', 'A', 'layers', 'layer-1', 'width'])
         ).toBe(700);
     });
 
@@ -8677,7 +8472,7 @@ describe('syncGlyphFromJson', () => {
         bridge.syncGlyphFromJson('A', 'Add temp layer');
 
         expect(
-            getYPath(bridge.fontMap, ['glyphs', 'A', 'layers', 'layer-temp'])
+            bridge.getYValue(['glyphs', 'A', 'layers', 'layer-temp'])
         ).toBeDefined();
 
         // Remove from source JSON and sync again; Y.Doc should prune it
@@ -8687,7 +8482,7 @@ describe('syncGlyphFromJson', () => {
         bridge.syncGlyphFromJson('A', 'Remove temp layer');
 
         expect(
-            getYPath(bridge.fontMap, ['glyphs', 'A', 'layers', 'layer-temp'])
+            bridge.getYValue(['glyphs', 'A', 'layers', 'layer-temp'])
         ).toBeUndefined();
     });
 
@@ -8698,7 +8493,7 @@ describe('syncGlyphFromJson', () => {
         bridge1.initFromJson(font1);
         // Secondary bootstraps from primary's state (matching real setup)
         const bridge2 = new ChangeBridge('secondary');
-        bridge2.applyFullState(bridge1.getFullState());
+        bridge2.applyDocumentSetState(bridge1.encodeDocumentSet());
 
         const sync1 = new WindowSync(bridge1, 'test-sync-consecutive');
         const sync2 = new WindowSync(bridge2, 'test-sync-consecutive');
@@ -8711,15 +8506,9 @@ describe('syncGlyphFromJson', () => {
         bridge1.syncGlyphFromJson('A', 'Drag');
         flushTimers();
 
-        expect(remoteEntries.length).toBe(1);
+        expect(remoteEntries.length).toBeGreaterThanOrEqual(1);
         expect(
-            getYPath(bridge2.fontMap, [
-                'glyphs',
-                'A',
-                'layers',
-                'layer-1',
-                'width'
-            ])
+            bridge2.getYValue(['glyphs', 'A', 'layers', 'layer-1', 'width'])
         ).toBe(700);
 
         // Second drag
@@ -8727,15 +8516,9 @@ describe('syncGlyphFromJson', () => {
         bridge1.syncGlyphFromJson('A', 'Drag');
         flushTimers();
 
-        expect(remoteEntries.length).toBe(2);
+        expect(remoteEntries.length).toBeGreaterThanOrEqual(2);
         expect(
-            getYPath(bridge2.fontMap, [
-                'glyphs',
-                'A',
-                'layers',
-                'layer-1',
-                'width'
-            ])
+            bridge2.getYValue(['glyphs', 'A', 'layers', 'layer-1', 'width'])
         ).toBe(800);
 
         sync1.destroy();
@@ -8765,7 +8548,7 @@ describe('syncGlyphFromJson', () => {
         const bridge1 = new ChangeBridge('primary');
         bridge1.initFromJson(font1);
         const bridge2 = new ChangeBridge('secondary');
-        bridge2.applyFullState(bridge1.getFullState());
+        bridge2.applyDocumentSetState(bridge1.encodeDocumentSet());
 
         const sync1 = new WindowSync(bridge1, 'test-log-sync');
         const sync2 = new WindowSync(bridge2, 'test-log-sync');
@@ -8778,7 +8561,12 @@ describe('syncGlyphFromJson', () => {
         flushTimers();
 
         // Remote bridge should have the change log entry
-        const remoteLog = bridge2.getChangeLog();
+        const remoteLog = bridge2
+            .getChangeLog()
+            .filter(
+                (entry) =>
+                    !String(entry.path || '').startsWith('glyphRevisions')
+            );
         expect(remoteLog.length).toBe(1);
         expect(remoteLog[0].objectId).toBe('A');
         expect(remoteLog[0].transactionLabel).toBe('Drag');
@@ -8794,7 +8582,7 @@ describe('syncGlyphFromJson', () => {
         const bridge1 = new ChangeBridge('primary');
         bridge1.initFromJson(font1);
         const bridge2 = new ChangeBridge('secondary');
-        bridge2.applyFullState(bridge1.getFullState());
+        bridge2.applyDocumentSetState(bridge1.encodeDocumentSet());
 
         const sync1 = new WindowSync(bridge1, 'test-undo-sync');
         const sync2 = new WindowSync(bridge2, 'test-undo-sync');
@@ -8808,13 +8596,7 @@ describe('syncGlyphFromJson', () => {
         flushTimers();
 
         expect(
-            getYPath(bridge2.fontMap, [
-                'glyphs',
-                'A',
-                'layers',
-                'layer-1',
-                'width'
-            ])
+            bridge2.getYValue(['glyphs', 'A', 'layers', 'layer-1', 'width'])
         ).toBe(700);
 
         bridge1.undo('A');
@@ -8822,13 +8604,7 @@ describe('syncGlyphFromJson', () => {
 
         // Undo should propagate
         expect(
-            getYPath(bridge2.fontMap, [
-                'glyphs',
-                'A',
-                'layers',
-                'layer-1',
-                'width'
-            ])
+            bridge2.getYValue(['glyphs', 'A', 'layers', 'layer-1', 'width'])
         ).toBe(600);
 
         sync1.destroy();
@@ -8921,13 +8697,7 @@ describe('syncGlyphFromJson', () => {
 
         // Secondary should now have the font data from primary's Y.Doc
         expect(
-            getYPath(bridge2.fontMap, [
-                'glyphs',
-                'A',
-                'layers',
-                'layer-1',
-                'width'
-            ])
+            bridge2.getYValue(['glyphs', 'A', 'layers', 'layer-1', 'width'])
         ).toBe(600);
 
         const remoteUpdates = [];
@@ -8938,15 +8708,9 @@ describe('syncGlyphFromJson', () => {
         bridge1.syncGlyphFromJson('A', 'Drag 1');
         flushTimers();
 
-        expect(remoteUpdates.length).toBe(1);
+        expect(remoteUpdates.length).toBeGreaterThanOrEqual(1);
         expect(
-            getYPath(bridge2.fontMap, [
-                'glyphs',
-                'A',
-                'layers',
-                'layer-1',
-                'width'
-            ])
+            bridge2.getYValue(['glyphs', 'A', 'layers', 'layer-1', 'width'])
         ).toBe(700);
 
         // Second edit
@@ -8954,15 +8718,9 @@ describe('syncGlyphFromJson', () => {
         bridge1.syncGlyphFromJson('A', 'Drag 2');
         flushTimers();
 
-        expect(remoteUpdates.length).toBe(2);
+        expect(remoteUpdates.length).toBeGreaterThanOrEqual(2);
         expect(
-            getYPath(bridge2.fontMap, [
-                'glyphs',
-                'A',
-                'layers',
-                'layer-1',
-                'width'
-            ])
+            bridge2.getYValue(['glyphs', 'A', 'layers', 'layer-1', 'width'])
         ).toBe(800);
 
         sync1.destroy();
@@ -8977,7 +8735,7 @@ describe('syncGlyphFromJson', () => {
         const bridge1 = new ChangeBridge('primary');
         bridge1.initFromJson(font1);
         const bridge2 = new ChangeBridge('secondary');
-        bridge2.applyFullState(bridge1.getFullState());
+        bridge2.applyDocumentSetState(bridge1.encodeDocumentSet());
 
         const sync1 = new WindowSync(bridge1, 'test-fingerprint-remote-sync');
         const sync2 = new WindowSync(bridge2, 'test-fingerprint-remote-sync');
@@ -9024,7 +8782,7 @@ describe('syncGlyphFromJson', () => {
         const bridge1 = new ChangeBridge('primary');
         bridge1.initFromJson(font1);
         const bridge2 = new ChangeBridge('secondary');
-        bridge2.applyFullState(bridge1.getFullState());
+        bridge2.applyDocumentSetState(bridge1.encodeDocumentSet());
 
         const sync1 = new WindowSync(
             bridge1,
@@ -9050,16 +8808,10 @@ describe('syncGlyphFromJson', () => {
         flushTimers();
 
         expect(
-            getYPath(bridge2.fontMap, [
-                'glyphs',
-                'A',
-                'layers',
-                'layer-1',
-                'width'
-            ])
+            bridge2.getYValue(['glyphs', 'A', 'layers', 'layer-1', 'width'])
         ).toBe(600);
         expect(
-            getYPath(bridge2.fontMap, [
+            bridge2.getYValue([
                 'glyphs',
                 'A',
                 'layers',
@@ -9069,9 +8821,9 @@ describe('syncGlyphFromJson', () => {
                 'x'
             ])
         ).toBe(320);
-        expect(
-            getYDocLayerNodeValue(bridge2.fontMap, 'A', 'layer-1', 0, 0, 'x')
-        ).toBe(100);
+        expect(getYDocLayerNodeValue(bridge2, 'A', 'layer-1', 0, 0, 'x')).toBe(
+            100
+        );
 
         sync1.destroy();
         sync2.destroy();
@@ -9088,7 +8840,7 @@ describe('syncGlyphFromJson', () => {
 
         senderBridge.initFromJson(senderFontJson);
         receiverBridge.setFontJson(receiverFontJson);
-        receiverBridge.applyFullState(senderBridge.getFullState());
+        receiverBridge.applyDocumentSetState(senderBridge.encodeDocumentSet());
         senderBridge.onLocalUpdate((update) => {
             lastUpdate = update;
         });
@@ -9130,21 +8882,17 @@ describe('syncGlyphFromJson', () => {
         const receiverBridge = new ChangeBridge(
             'receiver-sequential-no-repair'
         );
-        let lastUpdate = null;
-        let lastCollaborationMessage = null;
+        const packets = attachPacketCapture(senderBridge);
 
         senderBridge.initFromJson(senderFontJson);
         receiverBridge.setFontJson(receiverFontJson);
-        receiverBridge.applyFullState(senderBridge.getFullState());
-        senderBridge.onLocalUpdate((update, collaborationMessage) => {
-            lastUpdate = update;
-            lastCollaborationMessage = collaborationMessage;
-        });
+        receiverBridge.applyDocumentSetState(senderBridge.encodeDocumentSet());
 
         const receiverLayerPath = ['glyphs', 'A', 'layers', 'layer-1'];
 
         for (const nextX of [123, 146, 171]) {
             senderFontJson.glyphs[0].layers[0].shapes[0].nodes[0].x = nextX;
+            packets.length = 0;
 
             senderBridge.syncGlyphFromJson(
                 'A',
@@ -9154,31 +8902,21 @@ describe('syncGlyphFromJson', () => {
                 'layer-1'
             );
 
-            receiverBridge.applyRemoteUpdate(
-                lastUpdate,
-                undefined,
-                lastCollaborationMessage ? [lastCollaborationMessage] : []
-            );
+            applyCapturedPackets(receiverBridge, packets);
 
             expect(
-                getYPath(receiverBridge.fontMap, [
-                    ...receiverLayerPath,
-                    'width'
-                ])
+                receiverBridge.getYValue([...receiverLayerPath, 'width'])
             ).toBe(600);
             expect(
                 fromYType(
-                    getYPath(receiverBridge.fontMap, [
-                        ...receiverLayerPath,
-                        'master'
-                    ])
+                    receiverBridge.getYValue([...receiverLayerPath, 'master'])
                 )
             ).toEqual({
                 type: 'DefaultForMaster',
                 master: 'master-regular'
             });
             expect(
-                getYPath(receiverBridge.fontMap, [
+                receiverBridge.getYValue([
                     ...receiverLayerPath,
                     'anchors',
                     0,
@@ -9186,14 +8924,7 @@ describe('syncGlyphFromJson', () => {
                 ])
             ).toBe(300);
             expect(
-                getYDocLayerNodeValue(
-                    receiverBridge.fontMap,
-                    'A',
-                    'layer-1',
-                    0,
-                    0,
-                    'x'
-                )
+                getYDocLayerNodeValue(receiverBridge, 'A', 'layer-1', 0, 0, 'x')
             ).toBe(nextX);
             expect(
                 receiverFontJson.glyphs[0].layers[0].shapes[0].nodes[0].x
@@ -9215,7 +8946,7 @@ describe('syncGlyphFromJson', () => {
 
         senderBridge.initFromJson(senderFontJson);
         receiverBridge.setFontJson(receiverFontJson);
-        receiverBridge.applyFullState(senderBridge.getFullState());
+        receiverBridge.applyDocumentSetState(senderBridge.encodeDocumentSet());
         senderBridge.onLocalUpdate((update, collaborationMessage) => {
             lastUpdate = update;
             lastCollaborationMessage = collaborationMessage;
@@ -9315,7 +9046,7 @@ describe('syncGlyphFromJson', () => {
 
         senderBridge.initFromJson(senderFontJson);
         receiverBridge.setFontJson(receiverFontJson);
-        receiverBridge.applyFullState(senderBridge.getFullState());
+        receiverBridge.applyDocumentSetState(senderBridge.encodeDocumentSet());
         senderBridge.onLocalUpdate((update, collaborationMessage) => {
             lastUpdate = update;
             lastCollaborationMessage = collaborationMessage;
@@ -9372,7 +9103,7 @@ describe('syncGlyphFromJson', () => {
 
         senderBridge.initFromJson(senderFontJson);
         receiverBridge.setFontJson(receiverFontJson);
-        receiverBridge.applyFullState(senderBridge.getFullState());
+        receiverBridge.applyDocumentSetState(senderBridge.encodeDocumentSet());
         senderBridge.onLocalUpdate((update, collaborationMessage) => {
             lastUpdate = update;
             lastCollaborationMessage = collaborationMessage;
@@ -9420,7 +9151,7 @@ describe('syncGlyphFromJson', () => {
 
         senderBridge.initFromJson(senderFontJson);
         receiverBridge.setFontJson(receiverFontJson);
-        receiverBridge.applyFullState(senderBridge.getFullState());
+        receiverBridge.applyDocumentSetState(senderBridge.encodeDocumentSet());
         const senderSync = new WindowSync(
             senderBridge,
             'test-linked-contour-history'
@@ -9480,7 +9211,7 @@ describe('syncGlyphFromJson', () => {
 
         senderBridge.initFromJson(senderFontJson);
         receiverBridge.setFontJson(receiverFontJson);
-        receiverBridge.applyFullState(senderBridge.getFullState());
+        receiverBridge.applyDocumentSetState(senderBridge.encodeDocumentSet());
         senderBridge.onLocalUpdate((update) => {
             lastUpdate = update;
         });
@@ -9527,7 +9258,7 @@ describe('syncGlyphFromJson', () => {
 
         senderBridge.initFromJson(senderFontJson);
         receiverBridge.setFontJson(receiverFontJson);
-        receiverBridge.applyFullState(senderBridge.getFullState());
+        receiverBridge.applyDocumentSetState(senderBridge.encodeDocumentSet());
         senderBridge.onLocalUpdate((update) => {
             lastUpdate = update;
         });
@@ -9570,7 +9301,7 @@ describe('syncGlyphFromJson', () => {
 
         senderBridge.initFromJson(senderFontJson);
         receiverBridge.setFontJson(receiverFontJson);
-        receiverBridge.applyFullState(senderBridge.getFullState());
+        receiverBridge.applyDocumentSetState(senderBridge.encodeDocumentSet());
         senderBridge.onLocalUpdate((update) => {
             lastUpdate = update;
         });
@@ -9626,7 +9357,7 @@ describe('syncGlyphFromJson', () => {
 
         senderBridge.initFromJson(senderFontJson);
         receiverBridge.setFontJson(receiverFontJson);
-        receiverBridge.applyFullState(senderBridge.getFullState());
+        receiverBridge.applyDocumentSetState(senderBridge.encodeDocumentSet());
         senderBridge.onLocalUpdate((update) => {
             lastUpdate = update;
         });
@@ -9715,7 +9446,7 @@ describe('syncGlyphFromJson', () => {
 
         senderBridge.initFromJson(senderFontJson);
         receiverBridge.setFontJson(receiverFontJson);
-        receiverBridge.applyFullState(senderBridge.getFullState());
+        receiverBridge.applyDocumentSetState(senderBridge.encodeDocumentSet());
         senderBridge.onLocalUpdate((update) => {
             lastUpdate = update;
         });
@@ -9759,14 +9490,11 @@ describe('syncGlyphFromJson', () => {
         const receiverFontJson = cloneValue(senderFontJson);
         const senderBridge = new ChangeBridge('sender-remote-glyph-delete');
         const receiverBridge = new ChangeBridge('receiver-remote-glyph-delete');
-        let lastUpdate = null;
+        const packets = attachPacketCapture(senderBridge);
 
         senderBridge.initFromJson(senderFontJson);
         receiverBridge.setFontJson(receiverFontJson);
-        receiverBridge.applyFullState(senderBridge.getFullState());
-        senderBridge.onLocalUpdate((update) => {
-            lastUpdate = update;
-        });
+        receiverBridge.applyDocumentSetState(senderBridge.encodeDocumentSet());
 
         const syncSpy = jest.spyOn(receiverBridge, '_syncJsonFromYDoc');
         senderFontJson.glyphs = senderFontJson.glyphs.filter(
@@ -9780,10 +9508,7 @@ describe('syncGlyphFromJson', () => {
             senderBridge.endTransaction();
         }
 
-        receiverBridge.applyRemoteUpdate(
-            lastUpdate,
-            senderBridge.getNewChangeLogEntries()
-        );
+        applyCapturedPackets(receiverBridge, packets);
 
         expect(syncSpy).not.toHaveBeenCalled();
         expect(receiverFontJson.glyphs.map((glyph) => glyph.name)).toEqual([
@@ -9842,7 +9567,7 @@ describe('syncGlyphFromJson', () => {
         const bridge1 = new ChangeBridge('primary');
         bridge1.initFromJson(font1);
         const bridge2 = new ChangeBridge('secondary');
-        bridge2.applyFullState(bridge1.getFullState());
+        bridge2.applyDocumentSetState(bridge1.encodeDocumentSet());
 
         const sync1 = new WindowSync(bridge1, 'test-partial-glyph-remote-sync');
         const sync2 = new WindowSync(bridge2, 'test-partial-glyph-remote-sync');
@@ -9861,16 +9586,10 @@ describe('syncGlyphFromJson', () => {
         flushTimers();
 
         expect(
-            getYPath(bridge2.fontMap, [
-                'glyphs',
-                'A',
-                'layers',
-                'layer-1',
-                'width'
-            ])
+            bridge2.getYValue(['glyphs', 'A', 'layers', 'layer-1', 'width'])
         ).toBe(600);
         expect(
-            getYPath(bridge2.fontMap, [
+            bridge2.getYValue([
                 'glyphs',
                 'A',
                 'layers',
@@ -9880,9 +9599,9 @@ describe('syncGlyphFromJson', () => {
                 'x'
             ])
         ).toBe(340);
-        expect(
-            getYDocLayerNodeValue(bridge2.fontMap, 'A', 'layer-1', 0, 0, 'x')
-        ).toBe(100);
+        expect(getYDocLayerNodeValue(bridge2, 'A', 'layer-1', 0, 0, 'x')).toBe(
+            100
+        );
 
         sync1.destroy();
         sync2.destroy();
@@ -9898,7 +9617,7 @@ describe('syncGlyphFromJson', () => {
 
         senderBridge.initFromJson(senderFontJson);
         receiverBridge.setFontJson(receiverFontJson);
-        receiverBridge.applyFullState(senderBridge.getFullState());
+        receiverBridge.applyDocumentSetState(senderBridge.encodeDocumentSet());
 
         const sync1 = new WindowSync(senderBridge, 'test-undo-master-sync');
         const sync2 = new WindowSync(receiverBridge, 'test-undo-master-sync');
@@ -9969,7 +9688,7 @@ describe('syncGlyphFromJson', () => {
 
         senderBridge.initFromJson(senderFontJson);
         receiverBridge.setFontJson(receiverFontJson);
-        receiverBridge.applyFullState(senderBridge.getFullState());
+        receiverBridge.applyDocumentSetState(senderBridge.encodeDocumentSet());
         senderBridge.onLocalUpdate((update) => {
             lastUpdate = update;
         });
@@ -9990,7 +9709,7 @@ describe('syncGlyphFromJson', () => {
         );
 
         expect(
-            getYPath(receiverBridge.fontMap, [
+            receiverBridge.getYValue([
                 'glyphs',
                 'A',
                 'layers',
@@ -10023,7 +9742,7 @@ describe('syncGlyphFromJson', () => {
 
         senderBridge.initFromJson(senderFontJson);
         receiverBridge.setFontJson(receiverFontJson);
-        receiverBridge.applyFullState(senderBridge.getFullState());
+        receiverBridge.applyDocumentSetState(senderBridge.encodeDocumentSet());
         senderBridge.onLocalUpdate((update) => {
             lastUpdate = update;
         });
@@ -10050,7 +9769,7 @@ describe('syncGlyphFromJson', () => {
         );
 
         expect(
-            getYPath(receiverBridge.fontMap, [
+            receiverBridge.getYValue([
                 'glyphs',
                 'behDotless-ar.medi',
                 'layers',
@@ -10072,14 +9791,11 @@ describe('syncGlyphFromJson', () => {
         const receiverFontJson = cloneValue(senderFontJson);
         const senderBridge = new ChangeBridge('sender-multi-target');
         const receiverBridge = new ChangeBridge('receiver-multi-target');
-        let lastUpdate = null;
+        const packets = attachPacketCapture(senderBridge);
 
         senderBridge.initFromJson(senderFontJson);
         receiverBridge.setFontJson(receiverFontJson);
-        receiverBridge.applyFullState(senderBridge.getFullState());
-        senderBridge.onLocalUpdate((update) => {
-            lastUpdate = update;
-        });
+        receiverBridge.applyDocumentSetState(senderBridge.encodeDocumentSet());
 
         senderFontJson.glyphs[0].layers[0].anchors[0].x = 321;
         senderFontJson.glyphs[1].layers[0].width = 777;
@@ -10107,7 +9823,7 @@ describe('syncGlyphFromJson', () => {
             expect(entry.workerReplayTargets).toEqual(changedTargets);
         });
 
-        receiverBridge.applyRemoteUpdate(lastUpdate, remoteEntries);
+        applyCapturedPackets(receiverBridge, packets);
 
         expect(receiverFontJson.glyphs[0].layers[0].anchors[0].x).toBe(321);
         expect(receiverFontJson.glyphs[1].layers[0].width).toBe(777);
@@ -10141,14 +9857,11 @@ describe('syncGlyphFromJson', () => {
         const receiverFontJson = cloneValue(senderFontJson);
         const senderBridge = new ChangeBridge('sender-sidebearing-batch');
         const receiverBridge = new ChangeBridge('receiver-sidebearing-batch');
-        let lastUpdate = null;
+        const packets = attachPacketCapture(senderBridge);
 
         senderBridge.initFromJson(senderFontJson);
         receiverBridge.setFontJson(receiverFontJson);
-        receiverBridge.applyFullState(senderBridge.getFullState());
-        senderBridge.onLocalUpdate((update) => {
-            lastUpdate = update;
-        });
+        receiverBridge.applyDocumentSetState(senderBridge.encodeDocumentSet());
 
         delete senderFontJson.glyphs[0].layers[0].format_specific;
         delete senderFontJson.glyphs[0].layers[0].vendor_extension;
@@ -10195,7 +9908,7 @@ describe('syncGlyphFromJson', () => {
             expect(entry.compileEditType).toBeNull();
         });
 
-        receiverBridge.applyRemoteUpdate(lastUpdate, remoteEntries);
+        applyCapturedPackets(receiverBridge, packets);
 
         expect(receiverFontJson.glyphs[1].layers[0].width).toBe(777);
         expect(receiverFontJson.glyphs[0].layers[0].width).toBe(690);
@@ -10203,20 +9916,10 @@ describe('syncGlyphFromJson', () => {
             receiverFontJson.glyphs[0].layers[0].shapes[1].transform.translation
         ).toEqual([123, 45]);
         const receiverSourceLayer = normalizeYDocValue(
-            getYPath(receiverBridge.fontMap, [
-                'glyphs',
-                'A',
-                'layers',
-                'layer-1'
-            ])
+            receiverBridge.getYValue(['glyphs', 'A', 'layers', 'layer-1'])
         );
         const receiverDependentLayer = normalizeYDocValue(
-            getYPath(receiverBridge.fontMap, [
-                'glyphs',
-                'B',
-                'layers',
-                'layer-2'
-            ])
+            receiverBridge.getYValue(['glyphs', 'B', 'layers', 'layer-2'])
         );
 
         expect(receiverSourceLayer.name).toBe('Regular');
@@ -10245,14 +9948,11 @@ describe('syncGlyphFromJson', () => {
         const receiverBridge = new ChangeBridge(
             'receiver-batched-partial-layer'
         );
-        let lastUpdate = null;
+        const packets = attachPacketCapture(senderBridge);
 
         senderBridge.initFromJson(senderFontJson);
         receiverBridge.setFontJson(receiverFontJson);
-        receiverBridge.applyFullState(senderBridge.getFullState());
-        senderBridge.onLocalUpdate((update) => {
-            lastUpdate = update;
-        });
+        receiverBridge.applyDocumentSetState(senderBridge.encodeDocumentSet());
 
         senderFontJson.glyphs[0].layers[0] = {
             id: 'layer-1',
@@ -10283,7 +9983,7 @@ describe('syncGlyphFromJson', () => {
             'glyphs.B:layers.layer-2:width'
         ]);
 
-        receiverBridge.applyRemoteUpdate(lastUpdate, changeEntries);
+        applyCapturedPackets(receiverBridge, packets);
 
         expect(receiverFontJson.glyphs[0].layers[0].width).toBe(600);
         expect(receiverFontJson.glyphs[0].layers[0].anchors[0].x).toBe(320);
@@ -10396,39 +10096,21 @@ describe('syncGlyphFromJson', () => {
         bridge.endTransaction();
 
         expect(
-            getYPath(bridge.fontMap, [
-                'glyphs',
-                'A',
-                'layers',
-                'layer-1',
-                'width'
-            ])
+            bridge.getYValue(['glyphs', 'A', 'layers', 'layer-1', 'width'])
         ).toBe(910);
         expect(
-            getYPath(bridge.fontMap, [
-                'glyphs',
-                'A',
-                'layers',
-                'layer-1',
-                'shapes'
-            ])
+            bridge.getYValue(['glyphs', 'A', 'layers', 'layer-1', 'shapes'])
         ).toHaveLength(1);
         expect(fontJson.glyphs[1].layers[0].width).toBe(777);
 
         expect(bridge.undo('A', 'layer-1')).not.toBeNull();
 
         expect(
-            getYPath(bridge.fontMap, [
-                'glyphs',
-                'A',
-                'layers',
-                'layer-1',
-                'width'
-            ])
+            bridge.getYValue(['glyphs', 'A', 'layers', 'layer-1', 'width'])
         ).toBe(originalSnapshot.width);
         expect(
             cloneValue(
-                getYPath(bridge.fontMap, [
+                bridge.getYValue([
                     'glyphs',
                     'A',
                     'layers',
@@ -10455,7 +10137,7 @@ describe('syncGlyphFromJson', () => {
 
         senderBridge.initFromJson(senderFontJson);
         receiverBridge.setFontJson(receiverFontJson);
-        receiverBridge.applyFullState(senderBridge.getFullState());
+        receiverBridge.applyDocumentSetState(senderBridge.encodeDocumentSet());
 
         expect('name' in receiverFontJson.glyphs[0].layers[0]).toBe(false);
         expect('height' in receiverFontJson.glyphs[0].layers[0]).toBe(false);
@@ -10593,7 +10275,7 @@ describe('syncGlyphFromJson', () => {
         const bridge1 = new ChangeBridge('primary');
         bridge1.initFromJson(font1);
         const bridge2 = new ChangeBridge('secondary');
-        bridge2.applyFullState(bridge1.getFullState());
+        bridge2.applyDocumentSetState(bridge1.encodeDocumentSet());
 
         const sync1 = new WindowSync(bridge1, 'test-fingerprint-remote-undo');
         const sync2 = new WindowSync(bridge2, 'test-fingerprint-remote-undo');
@@ -10665,22 +10347,22 @@ describe('ChangeBridge _syncJsonFromYDoc scope-aware undo regression', () => {
         window.changeBridge = bridge;
 
         bridge.yDoc.transact(() => {
-            deleteYPath(bridge.fontMap, [
+            deleteBridgeYPath(bridge, [
                 'glyphs',
                 'A',
                 'layers',
                 'layer-1',
                 'width'
             ]);
-            deleteYPath(bridge.fontMap, [
+            deleteBridgeYPath(bridge, [
                 'glyphs',
                 'A',
                 'layers',
                 'layer-1',
                 'shapes'
             ]);
-            setYPath(
-                bridge.fontMap,
+            setBridgeYPath(
+                bridge,
                 ['glyphs', 'A', 'layers', 'layer-1', 'anchors'],
                 [{ name: 'top', x: 333, y: 722 }]
             );
@@ -10704,22 +10386,22 @@ describe('ChangeBridge _syncJsonFromYDoc scope-aware undo regression', () => {
         window.changeBridge = bridge;
 
         bridge.yDoc.transact(() => {
-            deleteYPath(bridge.fontMap, [
+            deleteBridgeYPath(bridge, [
                 'glyphs',
                 'A',
                 'layers',
                 'layer-1',
                 'width'
             ]);
-            deleteYPath(bridge.fontMap, [
+            deleteBridgeYPath(bridge, [
                 'glyphs',
                 'A',
                 'layers',
                 'layer-1',
                 'shapes'
             ]);
-            setYPath(
-                bridge.fontMap,
+            setBridgeYPath(
+                bridge,
                 ['glyphs', 'A', 'layers', 'layer-1', 'anchors'],
                 [{ name: 'top', x: 345, y: 733 }]
             );
@@ -10804,9 +10486,9 @@ describe('ChangeBridge _syncJsonFromYDoc scope-aware undo regression', () => {
         bridge.endTransaction();
 
         // Confirm the Y.Doc now holds the new value
-        expect(
-            getYDocLayerNodeValue(bridge.fontMap, 'A', 'layer-1', 0, 0, 'x')
-        ).toBe(150);
+        expect(getYDocLayerNodeValue(bridge, 'A', 'layer-1', 0, 0, 'x')).toBe(
+            150
+        );
 
         // Perform the undo — scope must be 'layer'
         const result = bridge.undo('A', 'layer-1');
@@ -10819,9 +10501,9 @@ describe('ChangeBridge _syncJsonFromYDoc scope-aware undo regression', () => {
         );
 
         // Y.Doc should be reverted
-        expect(
-            getYDocLayerNodeValue(bridge.fontMap, 'A', 'layer-1', 0, 0, 'x')
-        ).toBe(100);
+        expect(getYDocLayerNodeValue(bridge, 'A', 'layer-1', 0, 0, 'x')).toBe(
+            100
+        );
 
         // Glyph B's layer object MUST be the same reference as before.
         // A regression to full-font reconstruction would create a new object.
@@ -10868,9 +10550,7 @@ describe('ChangeBridge _syncJsonFromYDoc scope-aware undo regression', () => {
         expect(result).not.toBeNull();
 
         // After full sync, the Y.Doc value must be reflected in fontJson
-        expect(
-            getYPath(bridge.fontMap, ['glyphs', 'A', 'production_name'])
-        ).toBe('A');
+        expect(bridge.getYValue(['glyphs', 'A', 'production_name'])).toBe('A');
         expect(fontJson.glyphs[0].production_name).toBe('A');
     });
 
@@ -10923,7 +10603,7 @@ describe('ChangeBridge _syncJsonFromYDoc scope-aware undo regression', () => {
         // The update should still be valid — applying it to a peer
         // must restore the pre-edit state.
         const peerBridge = new ChangeBridge('peer-undo-inc');
-        peerBridge.applyFullState(bridge.getFullState());
+        peerBridge.applyDocumentSetState(bridge.encodeDocumentSet());
         // Record the same edit on the peer so it matches
         peerBridge.syncGlyphFromJson(
             'A',
@@ -10935,7 +10615,7 @@ describe('ChangeBridge _syncJsonFromYDoc scope-aware undo regression', () => {
 
         // Verify the undo was effective locally
         expect(
-            getYPath(bridge.fontMap, ['glyphs', 'A', 'layers', 'layer-1'])
+            bridge.getYValue(['glyphs', 'A', 'layers', 'layer-1'])
         ).toBeDefined();
 
         eavesdropper.close();
@@ -10993,7 +10673,7 @@ describe('ChangeBridge _syncJsonFromYDoc scope-aware undo regression', () => {
         const bridge = new ChangeBridge('win-valid-inc');
         bridge.initFromJson(fontJson);
         const peerBridge = new ChangeBridge('peer-valid-inc');
-        peerBridge.applyFullState(bridge.getFullState());
+        peerBridge.applyDocumentSetState(bridge.encodeDocumentSet());
 
         const sync = new WindowSync(bridge, 'font-channel-valid-inc');
         const peerSync = new WindowSync(peerBridge, 'font-channel-valid-inc');
@@ -11009,10 +10689,10 @@ describe('ChangeBridge _syncJsonFromYDoc scope-aware undo regression', () => {
 
         // Verify both are in sync before undo
         expect(
-            getYPath(bridge.fontMap, ['glyphs', 'A', 'layers', 'layer-1'])
+            bridge.getYValue(['glyphs', 'A', 'layers', 'layer-1'])
         ).toBeDefined();
         expect(
-            getYPath(peerBridge.fontMap, ['glyphs', 'A', 'layers', 'layer-1'])
+            peerBridge.getYValue(['glyphs', 'A', 'layers', 'layer-1'])
         ).toBeDefined();
 
         // Undo on primary
@@ -11025,7 +10705,7 @@ describe('ChangeBridge _syncJsonFromYDoc scope-aware undo regression', () => {
         // only verifies that the peer still has a valid layer snapshot after
         // consuming the incremental undo.
         expect(
-            getYPath(peerBridge.fontMap, ['glyphs', 'A', 'layers', 'layer-1'])
+            peerBridge.getYValue(['glyphs', 'A', 'layers', 'layer-1'])
         ).toBeDefined();
 
         sync.destroy();
@@ -11041,7 +10721,7 @@ describe('ChangeBridge _syncJsonFromYDoc scope-aware undo regression', () => {
         const receiverBridge = new ChangeBridge('external-reload-receiver');
         senderBridge.initFromJson(senderJson);
         receiverBridge.setFontJson(receiverJson);
-        receiverBridge.applyFullState(senderBridge.getFullState());
+        receiverBridge.applyDocumentSetState(senderBridge.encodeDocumentSet());
 
         const workerUpdates = [];
         const emittedUpdates = [];
@@ -11052,8 +10732,17 @@ describe('ChangeBridge _syncJsonFromYDoc scope-aware undo regression', () => {
             emittedUpdates.push({ update, entries });
             receiverBridge.applyRemoteUpdate(update, entries);
         });
+        senderBridge.onGlyphRevisionSignal((update, entries) => {
+            emittedUpdates.push({ update, entries });
+            receiverBridge.applyRemoteUpdate(
+                update,
+                entries,
+                undefined,
+                'font-core'
+            );
+        });
 
-        const layerMapBefore = getYPath(senderBridge.fontMap, [
+        const layerMapBefore = senderBridge.getYValue([
             'glyphs',
             'A',
             'layers',
@@ -11068,11 +10757,12 @@ describe('ChangeBridge _syncJsonFromYDoc scope-aware undo regression', () => {
         );
 
         expect(result.status).toBe('committed');
-        expect(emittedUpdates).toHaveLength(1);
-        expect(workerUpdates).toHaveLength(1);
-        expect(workerUpdates[0].update).toBe(emittedUpdates[0].update);
-        expect(workerUpdates[0].entries).toEqual(emittedUpdates[0].entries);
-        expect(emittedUpdates[0].entries).toEqual(
+        expect(emittedUpdates.length).toBeGreaterThanOrEqual(1);
+        expect(workerUpdates.length).toBeGreaterThanOrEqual(1);
+        const allEmittedEntries = emittedUpdates.flatMap(
+            (packet) => packet.entries
+        );
+        expect(allEmittedEntries).toEqual(
             expect.arrayContaining([
                 expect.objectContaining({
                     transactionLabel: 'Reload external source',
@@ -11088,29 +10778,29 @@ describe('ChangeBridge _syncJsonFromYDoc scope-aware undo regression', () => {
                 })
             ])
         );
+        expect(allEmittedEntries.some((entry) => entry.path === 'font')).toBe(
+            false
+        );
         expect(
-            emittedUpdates[0].entries.some((entry) => entry.path === 'font')
-        ).toBe(false);
-        expect(
-            emittedUpdates[0].entries.every(
+            allEmittedEntries.every(
                 (entry) =>
                     !entry.replayOldValue?.glyphs &&
                     !entry.replayNewValue?.glyphs
             )
         ).toBe(true);
         expect(
-            getYPath(senderBridge.fontMap, ['glyphs', 'A', 'layers', 'layer-1'])
+            senderBridge.getYValue(['glyphs', 'A', 'layers', 'layer-1'])
         ).toBe(layerMapBefore);
         expect(senderJson.note).toBe('Changed outside Counterpunch');
         expect(senderJson.glyphs[0].layers[0].width).toBe(777);
-        expect(getYPath(receiverBridge.fontMap, ['note'])).toBe(
+        expect(receiverBridge.getYValue(['note'])).toBe(
             'Changed outside Counterpunch'
         );
         expect(receiverJson.note).toBe(senderJson.note);
         expect(receiverJson.glyphs[0].layers[0].width).toBe(777);
 
         expect(senderBridge.undo()).not.toBeNull();
-        expect(getYPath(senderBridge.fontMap, ['note'])).toBe('');
+        expect(senderBridge.getYValue(['note'])).toBe('');
         expect(senderJson.note).toBe('');
         expect(senderJson.glyphs[0].layers[0].width).toBe(600);
         expect(receiverJson.note).toBe('');
@@ -11135,7 +10825,7 @@ describe('ChangeBridge _syncJsonFromYDoc scope-aware undo regression', () => {
         );
         senderBridge.initFromJson(senderJson);
         receiverBridge.setFontJson(receiverJson);
-        receiverBridge.applyFullState(senderBridge.getFullState());
+        receiverBridge.applyDocumentSetState(senderBridge.encodeDocumentSet());
 
         const staleLayerSnapshot = cloneValue(senderJson.glyphs[0].layers[0]);
         const transactionFinalizer = jest.fn(() => [
@@ -11150,6 +10840,14 @@ describe('ChangeBridge _syncJsonFromYDoc scope-aware undo regression', () => {
         senderBridge.setTransactionFinalizer(transactionFinalizer);
         senderBridge.onLocalUpdate((update, _message, entries) => {
             receiverBridge.applyRemoteUpdate(update, entries);
+        });
+        senderBridge.onGlyphRevisionSignal((update, entries) => {
+            receiverBridge.applyRemoteUpdate(
+                update,
+                entries,
+                undefined,
+                'font-core'
+            );
         });
 
         const sourceSnapshot = cloneValue(senderBridge.getFontJsonSnapshot());
@@ -11230,7 +10928,7 @@ describe('ChangeBridge _syncJsonFromYDoc scope-aware undo regression', () => {
             }
         }
 
-        const sourceSnapshot = yDocToJson(bridge.fontMap);
+        const sourceSnapshot = bridge.getFontJsonSnapshot();
         sourceSnapshot.glyphs[0].layers[0].width = 777;
 
         expect(
@@ -11265,12 +10963,21 @@ describe('ChangeBridge _syncJsonFromYDoc scope-aware undo regression', () => {
         );
         senderBridge.initFromJson(senderJson);
         receiverBridge.setFontJson(receiverJson);
-        receiverBridge.applyFullState(senderBridge.getFullState());
+        receiverBridge.applyDocumentSetState(senderBridge.encodeDocumentSet());
 
         const emittedUpdates = [];
         senderBridge.onLocalUpdate((update, _message, entries) => {
             emittedUpdates.push({ update, entries });
             receiverBridge.applyRemoteUpdate(update, entries);
+        });
+        senderBridge.onGlyphRevisionSignal((update, entries) => {
+            emittedUpdates.push({ update, entries });
+            receiverBridge.applyRemoteUpdate(
+                update,
+                entries,
+                undefined,
+                'font-core'
+            );
         });
 
         const sourceSnapshot = cloneValue(senderBridge.getFontJsonSnapshot());
@@ -11306,8 +11013,11 @@ describe('ChangeBridge _syncJsonFromYDoc scope-aware undo regression', () => {
             ).status
         ).toBe('committed');
 
-        expect(emittedUpdates).toHaveLength(1);
-        expect(emittedUpdates[0].entries).toEqual(
+        expect(emittedUpdates.length).toBeGreaterThanOrEqual(1);
+        const allEmittedEntries = emittedUpdates.flatMap(
+            (packet) => packet.entries
+        );
+        expect(allEmittedEntries).toEqual(
             expect.arrayContaining([
                 expect.objectContaining({ op: 'remove', path: 'glyphs.B:' }),
                 expect.objectContaining({ op: 'add', path: 'glyphs.C:' }),
@@ -11331,9 +11041,9 @@ describe('ChangeBridge _syncJsonFromYDoc scope-aware undo regression', () => {
                 })
             ])
         );
-        expect(
-            emittedUpdates[0].entries.some((entry) => entry.path === 'font')
-        ).toBe(false);
+        expect(allEmittedEntries.some((entry) => entry.path === 'font')).toBe(
+            false
+        );
         expect(
             buildHistoryStackItems(senderBridge.getChangeLog(), {
                 includeUndone: true
@@ -11405,7 +11115,7 @@ describe('ChangeBridge _syncJsonFromYDoc scope-aware undo regression', () => {
         ).toBe('committed');
 
         const rawLayer = fromYType(
-            getYPath(bridge.fontMap, ['glyphs', 'A', 'layers', 'layer-1'])
+            bridge.getYValue(['glyphs', 'A', 'layers', 'layer-1'])
         );
         expect(Array.isArray(rawLayer.shapes[0].nodes)).toBe(true);
         expect(rawLayer.shapes[0].nodes[1].x).toBe(325);

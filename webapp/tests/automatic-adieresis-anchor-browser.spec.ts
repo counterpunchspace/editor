@@ -1750,31 +1750,45 @@ test.describe('automatic adieresis anchor browser commit', () => {
         ).toBeTruthy();
         const workerPipelineAfterDrag =
             await getEditingWorkerPipelineTracker(page);
-        const committedWorkerUpdate = workerPipelineAfterDrag.events.find(
+        const applyEvents = workerPipelineAfterDrag.events.filter(
             (event) =>
                 event.type === 'applyYjsUpdate' &&
-                event.changedGlyphs.includes('a') &&
-                event.layerTargets.some(
-                    (target) => target.glyphName === 'adieresis'
-                ) &&
                 event.workerCacheStatus !== null
         );
+        const sourceWorkerUpdate = applyEvents.find(
+            (event) =>
+                event.changedGlyphs.includes('a') &&
+                event.layerTargets.some((target) => target.glyphName === 'a')
+        );
+        const dependentWorkerUpdate = applyEvents.find(
+            (event) =>
+                event.changedGlyphs.includes('adieresis') ||
+                event.layerTargets.some(
+                    (target) => target.glyphName === 'adieresis'
+                )
+        );
         expect(
-            committedWorkerUpdate,
+            sourceWorkerUpdate,
             JSON.stringify(workerPipelineAfterDrag)
         ).toBeTruthy();
-        expect(committedWorkerUpdate?.invalidateLayoutClosure).toBe(false);
         expect(
-            committedWorkerUpdate?.layerTargets.some(
-                (target) => target.glyphName === 'a'
-            )
-        ).toBe(true);
-        expect(
-            committedWorkerUpdate?.workerCacheStatus?.filterEpoch
-        ).toBeGreaterThan(workerPipelineBeforeDrag.filterEpoch ?? -1);
-        expect(
-            committedWorkerUpdate?.workerCacheStatus?.subsetCacheEpoch
-        ).toBeGreaterThan(0);
+            dependentWorkerUpdate,
+            JSON.stringify(workerPipelineAfterDrag)
+        ).toBeTruthy();
+        expect(sourceWorkerUpdate?.invalidateLayoutClosure).toBe(false);
+        expect(dependentWorkerUpdate?.invalidateLayoutClosure).toBe(false);
+        const maxFilterEpoch = Math.max(
+            sourceWorkerUpdate?.workerCacheStatus?.filterEpoch ?? -1,
+            dependentWorkerUpdate?.workerCacheStatus?.filterEpoch ?? -1
+        );
+        const maxSubsetCacheEpoch = Math.max(
+            sourceWorkerUpdate?.workerCacheStatus?.subsetCacheEpoch ?? 0,
+            dependentWorkerUpdate?.workerCacheStatus?.subsetCacheEpoch ?? 0
+        );
+        expect(maxFilterEpoch).toBeGreaterThan(
+            workerPipelineBeforeDrag.filterEpoch ?? -1
+        );
+        expect(maxSubsetCacheEpoch).toBeGreaterThan(0);
 
         const committedWorkerCompile = workerPipelineAfterDrag.events.find(
             (event) =>

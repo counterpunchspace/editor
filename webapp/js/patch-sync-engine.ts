@@ -10,6 +10,8 @@
 import * as Y from 'yjs';
 import {
     jsonToYDoc,
+    jsonToCoreFontMap,
+    fillGlyphYMap,
     yDocToJson,
     fromYType,
     toYType,
@@ -79,6 +81,24 @@ import {
 import { diffFontDataToPatchPairs } from './font-data-diff';
 import { getUndoRedoContext } from './undo-redo-context';
 import {
+    stampImmutableGlyphIds,
+    ensureImmutableGlyphId,
+    listGlyphRecords,
+    CLOUD_PLUGIN_OWNED_KEY,
+    type CloudOwnedFontData
+} from './filesystem-plugins/cloud-glyph-catalog';
+import {
+    FONT_CORE_DOCUMENT_ID,
+    FONT_DEPS_DOCUMENT_ID,
+    GLYPH_REVISIONS_KEY,
+    GLYPH_SYNC_MAP_KEY,
+    GLYPH_SYNC_REVISION_KEY,
+    areGlyphRevisionOnlyEntries,
+    glyphDocumentId,
+    glyphIdFromDocumentId,
+    type EncodedShard
+} from './filesystem-plugins/cloud-document-set';
+import {
     computeLayerRecompositionClosure,
     deriveEditKindsFromChangeLogEntries,
     shouldResettleDerivedLayersOnHistoryReplay,
@@ -101,7 +121,8 @@ export type { ChangeLogEntry } from './change-log';
 export type LocalUpdateListener = (
     update: YjsUpdate,
     collaborationMessage?: CollaborationMessageEnvelope | null,
-    changeLogEntries?: ChangeLogEntry[]
+    changeLogEntries?: ChangeLogEntry[],
+    documentId?: string
 ) => void;
 
 export type CommittedChangeOrigin = 'local' | 'remote';
@@ -111,7 +132,13 @@ export type CommittedChangeListener = (
     context: {
         origin: CommittedChangeOrigin;
         update: YjsUpdate;
+        documentId?: string;
     }
+) => void;
+
+export type GlyphRevisionSignalListener = (
+    update: YjsUpdate,
+    entries: ChangeLogEntry[]
 ) => void;
 
 export class MetadataFreeRemoteUpdateError extends Error {
@@ -210,12 +237,20 @@ const SYSTEM_REMOTE_ORIGIN = 'system-remote';
 const HISTORY_REPLAY_ORIGIN = 'history-replay';
 const FONT_EDIT_ORIGIN = 'font-edit';
 const GLYPH_EDIT_ORIGIN = 'glyph-edit';
+const GLYPH_REVISION_ORIGIN = 'glyph-revision-signal';
 const LAYER_EDIT_ORIGIN_PREFIX = 'layer-edit:';
 
 function stateVectorsEqual(left: Uint8Array, right: Uint8Array): boolean {
     return (
         left.length === right.length &&
         left.every((value, index) => value === right[index])
+    );
+}
+
+function isNoOpYjsUpdate(update: Uint8Array): boolean {
+    return (
+        update.length === 0 ||
+        (update.length === 2 && update[0] === 0 && update[1] === 0)
     );
 }
 
@@ -467,10 +502,16 @@ function getLayerFingerprintFromJson(layerJson: Unsafe): string | null {
  * babelfont JSON object model.
  */
 export class PatchSyncEngine {
-    /** The Yjs document */
+    /** Font-core Yjs document (non-glyph fields + glyphOrder). */
     readonly yDoc: Y.Doc;
-    /** Root font map inside Y.Doc */
+    readonly depsDoc: Y.Doc;
+    /** Root font map inside the core Y.Doc */
     readonly fontMap: Y.Map<unknown>;
+    private _glyphDocs = new Map<string, Y.Doc>();
+    private _glyphIdByName = new Map<string, string>();
+    private _glyphNameById = new Map<string, string>();
+    private _lastBroadcastStateVectorByDoc = new Map<string, Uint8Array>();
+    private _docUpdateUnsubscribers: Array<() => void> = [];
     /** Per-glyph undo managers (keyed by glyph name) */
     private _undoManagers = new Map<string, Y.UndoManager>();
     /** Per-layer undo managers (keyed by glyph@@layer) */
@@ -522,8 +563,19 @@ export class PatchSyncEngine {
      * edit. Set via `setYjsWorkerCallback`.
      */
     private _yjsWorkerCallback:
-        | ((update: YjsUpdate, changeLogEntries: ChangeLogEntry[]) => void)
+        | ((
+              update: YjsUpdate,
+              changeLogEntries: ChangeLogEntry[],
+              documentId?: string
+          ) => void)
         | null = null;
+    /**
+     * Catch-up snapshots replace a worker shard instead of applying as a
+     * delta. Incremental `applyYjsUpdate` needs cache metadata that a full
+     * document state does not carry.
+     */
+    private _workerDocumentReplaceCallback:
+        ((documentId: string, state: YjsUpdate) => void) | null = null;
     /** Flag: suppress Y.Doc sync (during initFromJson) */
     private _isSyncing = false;
     /** Callback when a remote change arrives (for UI refresh) */
@@ -535,6 +587,9 @@ export class PatchSyncEngine {
     private _localUpdateListeners: Set<LocalUpdateListener> = new Set();
     /** Callbacks for committed local/remote changes after Yjs apply */
     private _committedChangeListeners: Set<CommittedChangeListener> = new Set();
+    private _glyphRevisionListeners: Set<GlyphRevisionSignalListener> =
+        new Set();
+    private _coreHydratedListeners: Set<() => void> = new Set();
     /** Callback to trigger dirty marking on the font manager side */
     private _onDirty: (() => void) | null = null;
     /** Callback after _syncJsonFromYDoc (undo/redo/remote) for external resync */
@@ -547,6 +602,7 @@ export class PatchSyncEngine {
     private _lastBroadcastLogIndex = 0;
     /** Index into _changeLog marking the last entry emitted to local-update listeners */
     private _lastLocalUpdateLogIndex = 0;
+    private _glyphRevisionClock = 0;
     /** Monotonic local sequence for emitted collaboration messages */
     private _nextCollaborationMessageSequence = 1;
     /** Subscribers for same-tab history UI updates */
@@ -758,52 +814,646 @@ export class PatchSyncEngine {
     constructor(windowId?: string) {
         this.windowId = windowId ?? windowRole.instanceId;
         this.yDoc = new Y.Doc({ gc: false });
+        this.depsDoc = new Y.Doc({ gc: false });
         this.fontMap = this.yDoc.getMap('font');
 
-        // Listen for Y.Doc updates.
-        // Only broadcast updates whose origin is a known local edit origin.
-        // Yjs CRDT reconciliation updates have origin=undefined and must NOT
-        // be broadcast, or they create a ping-pong echo loop between windows.
         const LOCAL_EDIT_ORIGINS: Set<string> = new Set([
             USER_EDIT_ORIGIN,
             FONT_EDIT_ORIGIN,
             GLYPH_EDIT_ORIGIN,
             HISTORY_REPLAY_ORIGIN
         ]);
-        const isLocalEditOrigin = (origin: unknown): boolean => {
+        this._isLocalEditOrigin = (origin: unknown): boolean => {
             if (typeof origin !== 'string') return false;
             if (LOCAL_EDIT_ORIGINS.has(origin)) return true;
             if (origin.startsWith(LAYER_EDIT_ORIGIN_PREFIX)) return true;
             return false;
         };
-        this.yDoc.on('update', (update: YjsUpdate, origin: unknown) => {
+        this._bindDocUpdates(this.yDoc, FONT_CORE_DOCUMENT_ID);
+        this._bindDocUpdates(this.depsDoc, FONT_DEPS_DOCUMENT_ID);
+    }
+
+    private _isLocalEditOrigin: (origin: unknown) => boolean = () => false;
+
+    private _bindDocUpdates(doc: Y.Doc, documentId: string): void {
+        const handler = (update: YjsUpdate, origin: unknown) => {
             if (
-                isLocalEditOrigin(origin) &&
+                this._isLocalEditOrigin(origin) &&
                 !this._isApplyingRemote &&
                 !this._suppressAutomaticLocalUpdateEmission
             ) {
-                this._emitRawLocalUpdate(update);
+                this._emitRawLocalUpdate(update, documentId);
             }
+        };
+        doc.on('update', handler);
+        this._docUpdateUnsubscribers.push(() => {
+            doc.off('update', handler);
         });
     }
 
-    private _emitRawLocalUpdate(update: YjsUpdate): void {
+    private _noteBroadcastStateVector(documentId: string): void {
+        const doc = this._docForId(documentId);
+        if (!doc) {
+            return;
+        }
+        const vector = Y.encodeStateVector(doc);
+        this._lastBroadcastStateVectorByDoc.set(documentId, vector);
+        if (documentId === FONT_CORE_DOCUMENT_ID) {
+            this._lastBroadcastStateVector = vector;
+        }
+    }
+
+    documentIdForPath(path: Array<string | number>): string {
+        if (path[0] === 'glyphs' && path.length >= 2) {
+            const key = String(path[1]);
+            const glyphId = this._glyphIdByName.get(key) || key;
+            return glyphDocumentId(glyphId);
+        }
+        if (path[0] === 'fontDeps' || path[0] === 'deps') {
+            return FONT_DEPS_DOCUMENT_ID;
+        }
+        return FONT_CORE_DOCUMENT_ID;
+    }
+
+    private _collectGlyphRenamesFromEntries(
+        entries: ChangeLogEntry[]
+    ): GlyphRename[] {
+        return entries.flatMap((entry) =>
+            normalizeGlyphRenames(entry.glyphRenames)
+        );
+    }
+
+    private _liveGlyphName(
+        pathName: string,
+        renames: GlyphRename[] = []
+    ): string {
+        if (this._glyphIdByName.has(pathName)) {
+            return pathName;
+        }
+        for (const rename of renames) {
+            if (
+                rename.oldName === pathName &&
+                this._glyphIdByName.has(rename.newName)
+            ) {
+                return rename.newName;
+            }
+            if (
+                rename.newName === pathName &&
+                this._glyphIdByName.has(rename.oldName)
+            ) {
+                return rename.oldName;
+            }
+        }
+        return pathName;
+    }
+
+    private _documentIdForHistoryEntry(
+        entry: ChangeLogEntry,
+        extraRenames: GlyphRename[] = []
+    ): string {
+        if (!entry.path || entry.path === 'font') {
+            return FONT_CORE_DOCUMENT_ID;
+        }
+        const segments = this._toYDocPath(this._parseEntryPath(entry.path));
+        if (segments[0] === 'glyphs' && segments.length >= 2) {
+            const liveName = this._liveGlyphName(String(segments[1]), [
+                ...normalizeGlyphRenames(entry.glyphRenames),
+                ...extraRenames
+            ]);
+            return this.documentIdForPath([
+                'glyphs',
+                liveName,
+                ...segments.slice(2)
+            ]);
+        }
+        return this.documentIdForPath(segments);
+    }
+
+    private _docForId(documentId: string): Y.Doc | null {
+        if (documentId === FONT_CORE_DOCUMENT_ID) {
+            return this.yDoc;
+        }
+        if (documentId === FONT_DEPS_DOCUMENT_ID) {
+            return this.depsDoc;
+        }
+        if (documentId.startsWith('glyph:')) {
+            return (
+                this._glyphDocs.get(documentId.slice('glyph:'.length)) || null
+            );
+        }
+        return this._glyphDocs.get(documentId) || null;
+    }
+
+    private _glyphMapForName(glyphName: string): Y.Map<unknown> | null {
+        const glyphId = this._glyphIdByName.get(glyphName);
+        if (glyphId) {
+            const doc = this._glyphDocs.get(glyphId);
+            const glyphMap = doc?.getMap('glyph');
+            if (glyphMap instanceof Y.Map) {
+                return glyphMap;
+            }
+        }
+        const glyphsMap = this.fontMap.get('glyphs');
+        if (!(glyphsMap instanceof Y.Map)) {
+            return null;
+        }
+        const glyphMap = glyphsMap.get(glyphName);
+        return glyphMap instanceof Y.Map ? glyphMap : null;
+    }
+
+    private _ensureGlyphDoc(
+        glyphId: string,
+        glyphName: string,
+        glyphJson?: Record<string, unknown>
+    ): Y.Doc {
+        let doc = this._glyphDocs.get(glyphId);
+        if (!doc) {
+            doc = new Y.Doc({ gc: false });
+            this._glyphDocs.set(glyphId, doc);
+            this._bindDocUpdates(doc, glyphDocumentId(glyphId));
+        }
+        this._glyphIdByName.set(glyphName, glyphId);
+        this._glyphNameById.set(glyphId, glyphName);
+        if (glyphJson) {
+            doc.transact(() => {
+                const glyphMap = doc.getMap('glyph');
+                glyphMap.forEach((_value, key) => glyphMap.delete(key));
+                fillGlyphYMap(glyphJson, glyphMap);
+            }, USER_EDIT_ORIGIN);
+        }
+        return doc;
+    }
+
+    private _destroyGlyphDocs(): void {
+        for (const doc of this._glyphDocs.values()) {
+            doc.destroy();
+        }
+        this._glyphDocs.clear();
+        this._glyphIdByName.clear();
+        this._glyphNameById.clear();
+    }
+
+    glyphDocumentIdForName(glyphName: string): string | null {
+        const glyphId = this._glyphIdByName.get(glyphName);
+        return glyphId ? glyphDocumentId(glyphId) : null;
+    }
+
+    listLiveGlyphDocumentIds(): string[] {
+        return [...this._glyphDocs.keys()]
+            .filter((glyphId) => this._glyphNameById.has(glyphId))
+            .map((glyphId) => glyphDocumentId(glyphId));
+    }
+
+    encodeDocumentState(documentId: string = FONT_CORE_DOCUMENT_ID): YjsUpdate {
+        const doc = this._docForId(documentId);
+        return doc ? Y.encodeStateAsUpdate(doc) : new Uint8Array();
+    }
+
+    encodeDocumentStateVector(
+        documentId: string = FONT_CORE_DOCUMENT_ID
+    ): YjsUpdate {
+        const doc = this._docForId(documentId);
+        return doc ? Y.encodeStateVector(doc) : new Uint8Array();
+    }
+
+    applyDocumentCheckpoint(documentId: string, state: YjsUpdate): void {
+        if (!state?.length) {
+            return;
+        }
+        this._isApplyingRemote = true;
+        try {
+            if (!this._fontJson) this._fontJson = {};
+            let doc = this._docForId(documentId);
+            if (!doc && documentId.startsWith('glyph:')) {
+                doc = this._ensureGlyphDocFromShard({
+                    documentId,
+                    bytes: state
+                });
+            }
+            if (!doc) {
+                doc = this.yDoc;
+            }
+            Y.applyUpdate(doc, state, SYSTEM_REMOTE_ORIGIN);
+            this._noteBroadcastStateVector(documentId);
+            if (documentId === FONT_CORE_DOCUMENT_ID) {
+                this._rehydrateEntireFontJsonFromYDoc();
+            } else if (documentId.startsWith('glyph:')) {
+                this._rebuildGlyphNameIndexFromDocs();
+                const glyphName = this._glyphNameById.get(
+                    documentId.slice('glyph:'.length)
+                );
+                if (glyphName) {
+                    this._patchGlyphFromYDoc(glyphName);
+                }
+            }
+            this._onAfterSync?.();
+        } finally {
+            this._isApplyingRemote = false;
+        }
+    }
+
+    applyDocumentCatchUp(
+        documentId: string,
+        update: YjsUpdate,
+        _collaborationMessages?: CollaborationMessageEnvelope[],
+        _remoteEntries?: ChangeLogEntry[],
+        expectedRevision?: string
+    ): boolean {
+        if (!update?.length) {
+            return false;
+        }
+        this.applyDocumentCheckpoint(documentId, update);
+        if (documentId !== FONT_DEPS_DOCUMENT_ID) {
+            // Live WS catch-up is often a delta vs the HTTP-hydrated SV.
+            // Worker replace seeds an empty Yrs doc, so it must receive a
+            // full encodeStateAsUpdate of the merged JS shard.
+            const workerState = this.encodeDocumentState(documentId);
+            if (workerState.length) {
+                this._workerDocumentReplaceCallback?.(documentId, workerState);
+            }
+        }
+        if (
+            expectedRevision &&
+            !this.glyphHasCatchUpRevision(documentId, expectedRevision)
+        ) {
+            return false;
+        }
+        return true;
+    }
+
+    glyphHasCatchUpRevision(documentId: string, revision: string): boolean {
+        const glyphId = glyphIdFromDocumentId(documentId);
+        if (!glyphId) {
+            return false;
+        }
+        const doc = this._glyphDocs.get(glyphId);
+        const token = doc
+            ?.getMap(GLYPH_SYNC_MAP_KEY)
+            .get(GLYPH_SYNC_REVISION_KEY);
+        return token === revision;
+    }
+
+    listGlyphRevisionTokens(): Array<{ glyphId: string; revision: string }> {
+        const revisions = this.yDoc.getMap(GLYPH_REVISIONS_KEY);
+        const tokens: Array<{ glyphId: string; revision: string }> = [];
+        revisions.forEach((value, glyphId) => {
+            if (typeof value === 'string' && value) {
+                tokens.push({ glyphId, revision: value });
+            }
+        });
+        return tokens;
+    }
+
+    onCoreHydrated(cb: () => void): void {
+        this._coreHydratedListeners.add(cb);
+    }
+
+    offCoreHydrated(cb: () => void): void {
+        this._coreHydratedListeners.delete(cb);
+    }
+
+    syncCloudOwnedProjection(owned: CloudOwnedFontData): void {
+        if (!this._fontJson) {
+            this._fontJson = {};
+        }
+        const fontRecord = this._fontJson as Record<string, unknown>;
+        const existingFormat =
+            fontRecord.format_specific &&
+            typeof fontRecord.format_specific === 'object' &&
+            !Array.isArray(fontRecord.format_specific)
+                ? (fontRecord.format_specific as Record<string, unknown>)
+                : {};
+        const previousOwned = existingFormat[CLOUD_PLUGIN_OWNED_KEY];
+        const previousDeps =
+            previousOwned &&
+            typeof previousOwned === 'object' &&
+            !Array.isArray(previousOwned)
+                ? (previousOwned as CloudOwnedFontData).fontDeps
+                : undefined;
+        this._queueOrCommitOperations(
+            [
+                {
+                    op: 'set',
+                    path: ['format_specific', CLOUD_PLUGIN_OWNED_KEY],
+                    oldValue: previousOwned,
+                    newValue: owned
+                },
+                {
+                    op: 'set',
+                    path: ['deps', 'edges'],
+                    oldValue: previousDeps,
+                    newValue: owned.fontDeps
+                }
+            ],
+            'Update cloud catalog'
+        );
+        fontRecord.format_specific = {
+            ...existingFormat,
+            [CLOUD_PLUGIN_OWNED_KEY]: owned
+        };
+    }
+
+    encodeDocumentSet(): EncodedShard[] {
+        const shards: EncodedShard[] = [
+            {
+                documentId: FONT_CORE_DOCUMENT_ID,
+                bytes: Y.encodeStateAsUpdate(this.yDoc)
+            },
+            {
+                documentId: FONT_DEPS_DOCUMENT_ID,
+                bytes: Y.encodeStateAsUpdate(this.depsDoc)
+            }
+        ];
+        for (const [glyphId, doc] of this._glyphDocs) {
+            if (!this._glyphNameById.has(glyphId)) {
+                continue;
+            }
+            shards.push({
+                documentId: glyphDocumentId(glyphId),
+                bytes: Y.encodeStateAsUpdate(doc)
+            });
+        }
+        return shards;
+    }
+
+    applyDocumentSetState(shards: EncodedShard[]): void {
+        this._isApplyingRemote = true;
+        try {
+            if (!this._fontJson) this._fontJson = {};
+            this._destroyGlyphDocs();
+            for (const shard of shards) {
+                const doc =
+                    shard.documentId === FONT_CORE_DOCUMENT_ID
+                        ? this.yDoc
+                        : shard.documentId === FONT_DEPS_DOCUMENT_ID
+                          ? this.depsDoc
+                          : this._ensureGlyphDocFromShard(shard);
+                if (shard.documentId === FONT_CORE_DOCUMENT_ID) {
+                    this.fontMap.forEach((_value, key) =>
+                        this.fontMap.delete(key)
+                    );
+                }
+                Y.applyUpdate(doc, shard.bytes, SYSTEM_REMOTE_ORIGIN);
+                this._noteBroadcastStateVector(shard.documentId);
+            }
+            this._rebuildGlyphNameIndexFromDocs();
+            this._rehydrateEntireFontJsonFromYDoc();
+            this._canonicalizeFullStateRawFontJson();
+            this._setupFontUndoManager();
+            this._onAfterSync?.();
+            this._onRemoteChange?.([]);
+        } finally {
+            this._isApplyingRemote = false;
+        }
+    }
+
+    private _ensureGlyphDocFromShard(shard: EncodedShard): Y.Doc {
+        const glyphId = shard.documentId.startsWith('glyph:')
+            ? shard.documentId.slice('glyph:'.length)
+            : shard.documentId;
+        let doc = this._glyphDocs.get(glyphId);
+        if (!doc) {
+            doc = new Y.Doc({ gc: false });
+            this._glyphDocs.set(glyphId, doc);
+            this._bindDocUpdates(doc, glyphDocumentId(glyphId));
+        }
+        return doc;
+    }
+
+    private _rebuildGlyphNameIndexFromDocs(): void {
+        this._glyphIdByName.clear();
+        this._glyphNameById.clear();
+        for (const [glyphId, doc] of this._glyphDocs) {
+            const glyphMap = doc.getMap('glyph');
+            const nameValue = glyphMap.get('name');
+            const name =
+                typeof nameValue === 'string' && nameValue
+                    ? nameValue
+                    : glyphId;
+            this._glyphIdByName.set(name, glyphId);
+            this._glyphNameById.set(glyphId, name);
+        }
+    }
+
+    private _routedYPath(
+        path: Array<string | number>,
+        options?: { createIfMissing?: boolean }
+    ): {
+        map: Y.Map<unknown>;
+        path: Array<string | number>;
+        doc: Y.Doc;
+        documentId: string;
+    } {
+        const documentId = this.documentIdForPath(path);
+        if (path[0] === 'glyphs' && path.length >= 2) {
+            const glyphName = String(path[1]);
+            let glyphMap = this._glyphMapForName(glyphName);
+            if (!glyphMap && options?.createIfMissing) {
+                const glyphId = this._glyphIdByName.get(glyphName) || glyphName;
+                this._ensureGlyphDoc(glyphId, glyphName);
+                glyphMap = this._glyphMapForName(glyphName);
+            }
+            if (!glyphMap) {
+                return {
+                    map: this.fontMap,
+                    path,
+                    doc: this.yDoc,
+                    documentId
+                };
+            }
+            return {
+                map: glyphMap,
+                path: path.slice(2),
+                doc:
+                    this._docForId(documentId) ||
+                    this._ensureGlyphDoc(
+                        this._glyphIdByName.get(glyphName) || glyphName,
+                        glyphName
+                    ),
+                documentId
+            };
+        }
+        if (documentId === FONT_DEPS_DOCUMENT_ID) {
+            const depsMap = this.depsDoc.getMap('deps');
+            return {
+                map: depsMap,
+                path: path[0] === 'deps' ? path.slice(1) : path.slice(1),
+                doc: this.depsDoc,
+                documentId
+            };
+        }
+        if (path[0] === GLYPH_REVISIONS_KEY) {
+            return {
+                map: this.yDoc.getMap(GLYPH_REVISIONS_KEY),
+                path: path.slice(1),
+                doc: this.yDoc,
+                documentId: FONT_CORE_DOCUMENT_ID
+            };
+        }
+        return {
+            map: this.fontMap,
+            path,
+            doc: this.yDoc,
+            documentId
+        };
+    }
+
+    private _setRoutedYPath(
+        path: Array<string | number>,
+        value: unknown
+    ): void {
+        if (
+            path[0] === 'glyphs' &&
+            path.length === 2 &&
+            value &&
+            typeof value === 'object'
+        ) {
+            this._applyGlyphSnapshot(String(path[1]), value);
+            return;
+        }
+        if (path[0] === 'glyphs' && path.length === 2 && value == null) {
+            this._removeGlyphDoc(String(path[1]));
+            return;
+        }
+        const routed = this._routedYPath(path, { createIfMissing: true });
+        setYPath(routed.map, routed.path, value);
+    }
+
+    private _deleteRoutedYPath(path: Array<string | number>): void {
+        if (path[0] === 'glyphs' && path.length === 2) {
+            this._removeGlyphDoc(String(path[1]));
+            return;
+        }
+        const routed = this._routedYPath(path);
+        deleteYPath(routed.map, routed.path);
+    }
+
+    private _getRoutedYPath(path: Array<string | number>): unknown {
+        if (path[0] === 'glyphs' && path.length === 2) {
+            return this._glyphMapForName(String(path[1])) || undefined;
+        }
+        const routed = this._routedYPath(path);
+        if (path[0] === 'glyphs' && path.length >= 2 && routed.path === path) {
+            return undefined;
+        }
+        return getYPath(routed.map, routed.path);
+    }
+
+    getYValue(path: Array<string | number>): unknown {
+        return this._getRoutedYPath(path);
+    }
+
+    private _pendingDestroyedGlyphIds = new Set<string>();
+
+    private _removeGlyphDoc(glyphName: string): void {
+        const glyphId = this._glyphIdByName.get(glyphName);
+        if (!glyphId) {
+            const glyphsMap = this.fontMap.get('glyphs');
+            if (glyphsMap instanceof Y.Map) {
+                glyphsMap.delete(glyphName);
+            }
+            return;
+        }
+        this._pendingDestroyedGlyphIds.add(glyphId);
+    }
+
+    private _flushDestroyedGlyphDocs(): void {
+        for (const glyphId of this._pendingDestroyedGlyphIds) {
+            const glyphName = this._glyphNameById.get(glyphId);
+            if (glyphName) {
+                this._glyphIdByName.delete(glyphName);
+            }
+            this._glyphNameById.delete(glyphId);
+        }
+        this._pendingDestroyedGlyphIds.clear();
+    }
+
+    private _syncGlyphNameIndexToOrder(): void {
+        const remaining = new Set(this._readYGlyphOrderNames());
+        for (const [glyphName, glyphId] of [...this._glyphIdByName]) {
+            if (!remaining.has(glyphName)) {
+                this._glyphIdByName.delete(glyphName);
+                this._glyphNameById.delete(glyphId);
+            }
+        }
+        for (const glyphName of remaining) {
+            if (this._glyphIdByName.has(glyphName)) {
+                continue;
+            }
+            for (const [glyphId, doc] of this._glyphDocs) {
+                const nameValue = doc.getMap('glyph').get('name');
+                if (nameValue === glyphName) {
+                    this._glyphIdByName.set(glyphName, glyphId);
+                    this._glyphNameById.set(glyphId, glyphName);
+                    break;
+                }
+            }
+        }
+    }
+
+    private _applyGlyphNameRemapsFromEntries(
+        entries: ChangeLogEntry[],
+        direction: 'undo' | 'redo'
+    ): void {
+        const remaps: Array<{ oldName: string; newName: string }> = [];
+        for (const entry of entries) {
+            for (const rename of normalizeGlyphRenames(entry.glyphRenames)) {
+                remaps.push(
+                    direction === 'undo'
+                        ? {
+                              oldName: rename.newName,
+                              newName: rename.oldName
+                          }
+                        : {
+                              oldName: rename.oldName,
+                              newName: rename.newName
+                          }
+                );
+            }
+        }
+        if (!remaps.length) {
+            return;
+        }
+        const resolved = remaps.flatMap((remap) => {
+            const glyphId =
+                this._glyphIdByName.get(remap.oldName) ||
+                this._glyphIdByName.get(remap.newName);
+            if (!glyphId) {
+                return [];
+            }
+            return [{ ...remap, glyphId }];
+        });
+        for (const remap of resolved) {
+            this._glyphIdByName.delete(remap.oldName);
+        }
+        for (const remap of resolved) {
+            this._glyphIdByName.set(remap.newName, remap.glyphId);
+            this._glyphNameById.set(remap.glyphId, remap.newName);
+        }
+    }
+
+    private _emitRawLocalUpdate(
+        update: YjsUpdate,
+        documentId: string = FONT_CORE_DOCUMENT_ID
+    ): void {
         if (!update.length) {
             this._lastLocalUpdateLogIndex = this._changeLog.length;
-            this._lastBroadcastStateVector = Y.encodeStateVector(this.yDoc);
+            this._noteBroadcastStateVector(documentId);
             return;
         }
 
         this._emitLocalUpdate(
             update,
-            this._getNewChangeLogEntriesForLocalUpdate()
+            this._getNewChangeLogEntriesForLocalUpdate(),
+            documentId
         );
-        this._lastBroadcastStateVector = Y.encodeStateVector(this.yDoc);
+        this._noteBroadcastStateVector(documentId);
     }
 
     private _emitLocalUpdate(
         update: YjsUpdate,
-        changeLogEntries: ChangeLogEntry[]
+        changeLogEntries: ChangeLogEntry[],
+        documentId: string = FONT_CORE_DOCUMENT_ID
     ): void {
         // Undo/redo may append a coarse control entry for history-stack state,
         // but every emitted Yjs packet must still be observed through the same
@@ -833,25 +1483,106 @@ export class PatchSyncEngine {
             ]);
         }
         for (const cb of this._localUpdateListeners) {
-            cb(update, collaborationMessage, emissionEntries);
+            cb(update, collaborationMessage, emissionEntries, documentId);
         }
-        this._yjsWorkerCallback?.(update, emissionEntries);
+        this._yjsWorkerCallback?.(update, emissionEntries, documentId);
         for (const cb of this._committedChangeListeners) {
-            cb(emissionEntries, { origin: 'local', update });
+            cb(emissionEntries, { origin: 'local', update, documentId });
         }
     }
 
-    private _emitCanonicalLocalUpdateSince(
-        previousStateVector: Uint8Array
+    private _documentIdsForHistoryItem(
+        item: HistoryStackItem | null | undefined,
+        fallbackDocumentId: string
+    ): string[] {
+        const documentIds = new Set<string>([fallbackDocumentId]);
+        const itemRenames = this._collectGlyphRenamesFromEntries(
+            item?.entries ?? []
+        );
+        for (const entry of item?.entries ?? []) {
+            if (!entry.path || entry.path === 'font') {
+                documentIds.add(FONT_CORE_DOCUMENT_ID);
+                continue;
+            }
+            documentIds.add(
+                this._documentIdForHistoryEntry(entry, itemRenames)
+            );
+        }
+        return [...documentIds];
+    }
+
+    private _captureDocumentBaselines(
+        documentIds: string[]
+    ): Map<string, Uint8Array> {
+        const baselines = new Map<string, Uint8Array>();
+        for (const documentId of documentIds) {
+            const doc = this._docForId(documentId);
+            if (doc) {
+                baselines.set(documentId, Y.encodeStateVector(doc));
+            }
+        }
+        return baselines;
+    }
+
+    private _emitCanonicalLocalUpdatesSince(
+        baselines: Map<string, Uint8Array>
     ): void {
-        // Compute only the operations added since previousStateVector — no need
-        // to allocate two temporary Y.Doc instances; the live yDoc IS the current
-        // state, so we just diff against the stored state vector.
+        const allEntries = getEffectiveEmissionEntries(
+            this._getNewChangeLogEntriesForLocalUpdate()
+        );
+        let emitted = false;
+        for (const [documentId, baseline] of baselines) {
+            const doc = this._docForId(documentId) || this.yDoc;
+            const incrementalUpdate = Y.encodeStateAsUpdate(doc, baseline);
+            this._noteBroadcastStateVector(documentId);
+            const historyRenames =
+                this._collectGlyphRenamesFromEntries(allEntries);
+            const docEntries = allEntries.filter((entry) => {
+                if (!entry.path || entry.path === 'font') {
+                    return documentId === FONT_CORE_DOCUMENT_ID;
+                }
+                return (
+                    this._documentIdForHistoryEntry(entry, historyRenames) ===
+                    documentId
+                );
+            });
+            if (
+                incrementalUpdate.length === 0 ||
+                (isNoOpYjsUpdate(incrementalUpdate) && !docEntries.length)
+            ) {
+                continue;
+            }
+            if (!docEntries.length) {
+                continue;
+            }
+            this._emitLocalUpdate(incrementalUpdate, docEntries, documentId);
+            emitted = true;
+        }
+        if (!emitted) {
+            this._lastLocalUpdateLogIndex = this._changeLog.length;
+        }
+    }
+
+    private _documentIdForUndoTarget(target: {
+        glyphName: string | null;
+        layerId?: string | null;
+    }): string {
+        if (target.glyphName) {
+            return this.documentIdForPath(['glyphs', target.glyphName]);
+        }
+        return FONT_CORE_DOCUMENT_ID;
+    }
+
+    private _emitCanonicalLocalUpdateSince(
+        previousStateVector: Uint8Array,
+        documentId: string = FONT_CORE_DOCUMENT_ID
+    ): void {
+        const doc = this._docForId(documentId) || this.yDoc;
         const incrementalUpdate = Y.encodeStateAsUpdate(
-            this.yDoc,
+            doc,
             previousStateVector
         );
-        this._lastBroadcastStateVector = Y.encodeStateVector(this.yDoc);
+        this._noteBroadcastStateVector(documentId);
 
         if (incrementalUpdate.length === 0) {
             this._lastLocalUpdateLogIndex = this._changeLog.length;
@@ -860,7 +1591,8 @@ export class PatchSyncEngine {
 
         this._emitLocalUpdate(
             incrementalUpdate,
-            this._getNewChangeLogEntriesForLocalUpdate()
+            this._getNewChangeLogEntriesForLocalUpdate(),
+            documentId
         );
     }
 
@@ -923,17 +1655,32 @@ export class PatchSyncEngine {
     initFromJson(fontJson: Record<string, Unsafe>): void {
         this._fontJson = fontJson;
         this._isSyncing = true;
-        this.yDoc.transact(() => {
-            // Clear existing content
-            this.fontMap.forEach((_v: unknown, k: string) => {
-                this.fontMap.delete(k);
-            });
-            jsonToYDoc(fontJson, this.fontMap);
-        }, USER_EDIT_ORIGIN);
-        this._isSyncing = false;
+        stampImmutableGlyphIds(fontJson);
+        this._destroyGlyphDocs();
+        this._suppressAutomaticLocalUpdateEmission = true;
+        try {
+            this.yDoc.transact(() => {
+                this.fontMap.forEach((_v: unknown, k: string) => {
+                    this.fontMap.delete(k);
+                });
+                jsonToCoreFontMap(fontJson, this.fontMap);
+            }, USER_EDIT_ORIGIN);
+            for (const glyph of listGlyphRecords(fontJson)) {
+                const glyphId = ensureImmutableGlyphId(glyph);
+                const name = String(glyph.name || glyphId);
+                this._ensureGlyphDoc(glyphId, name, glyph);
+            }
+        } finally {
+            this._suppressAutomaticLocalUpdateEmission = false;
+            this._isSyncing = false;
+        }
         this._rehydrateEntireFontJsonFromYDoc();
         this._setupFontUndoManager();
-        this._lastBroadcastStateVector = Y.encodeStateVector(this.yDoc);
+        this._noteBroadcastStateVector(FONT_CORE_DOCUMENT_ID);
+        this._noteBroadcastStateVector(FONT_DEPS_DOCUMENT_ID);
+        for (const glyphId of this._glyphDocs.keys()) {
+            this._noteBroadcastStateVector(glyphDocumentId(glyphId));
+        }
     }
 
     /**
@@ -980,6 +1727,14 @@ export class PatchSyncEngine {
         this._committedChangeListeners.delete(cb);
     }
 
+    onGlyphRevisionSignal(cb: GlyphRevisionSignalListener): void {
+        this._glyphRevisionListeners.add(cb);
+    }
+
+    offGlyphRevisionSignal(cb: GlyphRevisionSignalListener): void {
+        this._glyphRevisionListeners.delete(cb);
+    }
+
     /** Register a callback to mark the font as dirty. */
     onDirty(cb: () => void): void {
         this._onDirty = cb;
@@ -1007,6 +1762,12 @@ export class PatchSyncEngine {
         this._fontUndoManager?.destroy();
         this._fontUndoManager = null;
         this._undoHistoryStacks.clear();
+        for (const unsub of this._docUpdateUnsubscribers) {
+            unsub();
+        }
+        this._docUpdateUnsubscribers = [];
+        this._destroyGlyphDocs();
+        this.depsDoc.destroy();
         this.yDoc.destroy();
         this._fontJson = null;
         this._changeLog = [];
@@ -1014,6 +1775,8 @@ export class PatchSyncEngine {
         this._onRemoteChange = null;
         this._localUpdateListeners.clear();
         this._committedChangeListeners.clear();
+        this._glyphRevisionListeners.clear();
+        this._coreHydratedListeners.clear();
         this._onDirty = null;
         this._onAfterSync = null;
         this._changeLogListeners.clear();
@@ -1107,14 +1870,27 @@ export class PatchSyncEngine {
     recordRemove(path: (string | number)[], oldValue: unknown): void {
         if (this._suppressRecording || this._isSyncing) return;
 
-        this._queueOrCommitOperations([
+        const operations: TransactionBufferedOperation[] = [
             {
                 op: 'remove',
                 path,
                 oldValue: cloneHistoryValue(oldValue),
                 newValue: undefined
             }
-        ]);
+        ];
+
+        if (this._isGlyphRootPath(path)) {
+            const glyphOrderOp =
+                this._createModelGlyphOrderSyncOperation(
+                    String(path[1]),
+                    'remove'
+                ) || this._createGlyphOrderRemoveOperation(String(path[1]));
+            if (glyphOrderOp) {
+                operations.push(glyphOrderOp);
+            }
+        }
+
+        this._queueOrCommitOperations(operations);
     }
 
     /**
@@ -1163,27 +1939,13 @@ export class PatchSyncEngine {
         const nextOrder = oldOrder.map((name) => renameMap.get(name) || name);
         const operations: TransactionBufferedOperation[] = [];
 
-        // Phase 1: drop every old key (enables A↔B swaps).
-        for (const { oldName, newName, oldGlyph } of prepared) {
+        for (const { oldName, newName } of prepared) {
             operations.push({
-                op: 'remove',
-                path: ['glyphs', oldName],
-                oldValue: oldGlyph,
-                newValue: undefined,
+                op: 'set',
+                path: ['glyphs', oldName, 'name'],
+                oldValue: oldName,
+                newValue: newName,
                 glyphRenames: [{ oldName, newName }]
-            });
-        }
-        // Phase 2: insert every new key from the prepared snapshots.
-        for (const { newName, glyph } of prepared) {
-            operations.push({
-                op: 'add',
-                path: ['glyphs', newName],
-                oldValue: undefined,
-                // New glyph snapshots need shape ids for Rust's Shape enum.
-                // The normal patch encoder strips those ids because existing
-                // shape patches address them structurally.
-                newValue: this._prepareStorageValue(glyph),
-                applyMode: 'glyph-snapshot'
             });
         }
 
@@ -1274,7 +2036,7 @@ export class PatchSyncEngine {
         }
 
         const previousSnapshot = this._normalizeExternalSourceReloadSnapshot(
-            this._fontJson
+            this._captureYDocFontJson()
         );
         const normalizedPreviousSnapshot = this._normalizeFontSnapshot(
             previousSnapshot,
@@ -1289,6 +2051,12 @@ export class PatchSyncEngine {
         this._adoptIndexedFontLayerIds(
             normalizedPreviousSnapshot,
             nextSnapshot
+        );
+        this._adoptGlyphIds(normalizedPreviousSnapshot, nextSnapshot);
+        this._omitLiveOnlyModelKeys(
+            nextSnapshot,
+            normalizedPreviousSnapshot,
+            this._fontJson
         );
         if (this._isDeepEqual(normalizedPreviousSnapshot, nextSnapshot)) {
             return { status: 'noop', commit: null };
@@ -1592,12 +2360,6 @@ export class PatchSyncEngine {
             return;
         }
 
-        const glyphsMap = this.fontMap.get('glyphs') as
-            Y.Map<unknown> | undefined;
-        if (!glyphsMap) {
-            return;
-        }
-
         const operations: TransactionBufferedOperation[] = [];
 
         for (const { glyphName, layerId } of uniqueTargets) {
@@ -1608,8 +2370,7 @@ export class PatchSyncEngine {
                 continue;
             }
 
-            const glyphMap = glyphsMap.get(glyphName) as
-                Y.Map<unknown> | undefined;
+            const glyphMap = this._glyphMapForName(glyphName);
             if (!glyphMap) {
                 continue;
             }
@@ -1708,12 +2469,6 @@ export class PatchSyncEngine {
             return;
         }
 
-        const glyphsMap = this.fontMap.get('glyphs') as
-            Y.Map<unknown> | undefined;
-        if (!glyphsMap) {
-            return;
-        }
-
         const operations: TransactionBufferedOperation[] = [];
         for (const {
             glyphName,
@@ -1721,8 +2476,7 @@ export class PatchSyncEngine {
             layerJson,
             authoritativeOptionalLayerFields
         } of uniqueTargets) {
-            const glyphMap = glyphsMap.get(glyphName) as
-                Y.Map<unknown> | undefined;
+            const glyphMap = this._glyphMapForName(glyphName);
             if (!glyphMap) {
                 continue;
             }
@@ -2405,6 +3159,144 @@ export class PatchSyncEngine {
         }
     }
 
+    private _adoptGlyphIds(
+        previousSnapshot: unknown,
+        nextSnapshot: unknown
+    ): void {
+        const previousGlyphs = this._coerceFontGlyphSnapshots(
+            (previousSnapshot as Record<string, unknown>)?.glyphs
+        );
+        const nextGlyphs = this._coerceFontGlyphSnapshots(
+            (nextSnapshot as Record<string, unknown>)?.glyphs
+        );
+        const previousByName = new Map(
+            previousGlyphs.map((glyph) => [String(glyph.name || ''), glyph])
+        );
+        const usedIds = new Set(
+            previousGlyphs
+                .map((glyph) => (typeof glyph.id === 'string' ? glyph.id : ''))
+                .filter((id) => id.length > 0)
+        );
+
+        for (const nextGlyph of nextGlyphs) {
+            const previousGlyph = previousByName.get(
+                String(nextGlyph.name || '')
+            );
+            if (previousGlyph && typeof previousGlyph.id === 'string') {
+                nextGlyph.id = previousGlyph.id;
+                usedIds.add(previousGlyph.id);
+                continue;
+            }
+            const incomingId =
+                typeof nextGlyph.id === 'string' ? nextGlyph.id : '';
+            if (!incomingId || usedIds.has(incomingId)) {
+                delete nextGlyph.id;
+                usedIds.add(ensureImmutableGlyphId(nextGlyph));
+                continue;
+            }
+            usedIds.add(incomingId);
+        }
+    }
+
+    private _omitLiveOnlyModelKeys(
+        nextSnapshot: unknown,
+        previousSnapshot: unknown,
+        liveSnapshot: unknown
+    ): void {
+        const omitFromRecord = (
+            nextRecord: Record<string, unknown>,
+            previousRecord: Record<string, unknown> | null,
+            liveRecord: Record<string, unknown> | null
+        ): void => {
+            if (!liveRecord) {
+                return;
+            }
+            for (const key of Object.keys(nextRecord)) {
+                const previousHasKey =
+                    !!previousRecord &&
+                    Object.prototype.hasOwnProperty.call(previousRecord, key);
+                const liveHasKey = Object.prototype.hasOwnProperty.call(
+                    liveRecord,
+                    key
+                );
+                if (!previousHasKey && liveHasKey) {
+                    delete nextRecord[key];
+                    continue;
+                }
+                const nextValue = nextRecord[key];
+                if (
+                    nextValue &&
+                    typeof nextValue === 'object' &&
+                    !Array.isArray(nextValue)
+                ) {
+                    omitFromRecord(
+                        nextValue as Record<string, unknown>,
+                        previousRecord?.[key] &&
+                            typeof previousRecord[key] === 'object' &&
+                            !Array.isArray(previousRecord[key])
+                            ? (previousRecord[key] as Record<string, unknown>)
+                            : null,
+                        liveRecord[key] &&
+                            typeof liveRecord[key] === 'object' &&
+                            !Array.isArray(liveRecord[key])
+                            ? (liveRecord[key] as Record<string, unknown>)
+                            : null
+                    );
+                }
+            }
+        };
+
+        const nextFont = nextSnapshot as Record<string, unknown> | null;
+        const previousFont = previousSnapshot as Record<string, unknown> | null;
+        const liveFont = liveSnapshot as Record<string, unknown> | null;
+        if (!nextFont || !previousFont || !liveFont) {
+            return;
+        }
+
+        const nextGlyphs = this._coerceFontGlyphSnapshots(nextFont.glyphs);
+        const previousGlyphs = this._coerceFontGlyphSnapshots(
+            previousFont.glyphs
+        );
+        const liveGlyphs = this._coerceFontGlyphSnapshots(liveFont.glyphs);
+        const previousByName = new Map(
+            previousGlyphs.map((glyph) => [String(glyph.name || ''), glyph])
+        );
+        const liveByName = new Map(
+            liveGlyphs.map((glyph) => [String(glyph.name || ''), glyph])
+        );
+
+        for (const nextGlyph of nextGlyphs) {
+            const name = String(nextGlyph.name || '');
+            omitFromRecord(
+                nextGlyph,
+                previousByName.get(name) ?? null,
+                liveByName.get(name) ?? null
+            );
+            const nextLayers = this._coerceGlyphLayerSnapshots(
+                nextGlyph.layers
+            );
+            const previousLayers = this._coerceGlyphLayerSnapshots(
+                previousByName.get(name)?.layers
+            );
+            const liveLayers = this._coerceGlyphLayerSnapshots(
+                liveByName.get(name)?.layers
+            );
+            const previousLayersById = new Map(
+                previousLayers.map((layer) => [String(layer.id || ''), layer])
+            );
+            const liveLayersById = new Map(
+                liveLayers.map((layer) => [String(layer.id || ''), layer])
+            );
+            for (const nextLayer of nextLayers) {
+                omitFromRecord(
+                    nextLayer,
+                    previousLayersById.get(String(nextLayer.id || '')) ?? null,
+                    liveLayersById.get(String(nextLayer.id || '')) ?? null
+                );
+            }
+        }
+    }
+
     private _adoptIndexedArrayIds(
         previousValue: unknown,
         nextValue: unknown,
@@ -2566,10 +3458,6 @@ export class PatchSyncEngine {
         const glyphs = (this._fontJson as Unsafe).glyphs;
         if (!Array.isArray(glyphs)) return;
 
-        const glyphsMap = this.fontMap.get('glyphs') as
-            Y.Map<unknown> | undefined;
-        if (!glyphsMap) return;
-
         const targets: Array<{
             glyphName: string;
             previousGlyphJson: Record<string, unknown>;
@@ -2584,8 +3472,7 @@ export class PatchSyncEngine {
                 continue;
             }
 
-            const glyphMap = glyphsMap.get(glyphName) as
-                Y.Map<unknown> | undefined;
+            const glyphMap = this._glyphMapForName(glyphName);
             if (!glyphMap) {
                 continue;
             }
@@ -2742,11 +3629,7 @@ export class PatchSyncEngine {
         ) as Record<string, unknown> | undefined;
         if (!glyphJson) return false;
 
-        const glyphsMap = this.fontMap.get('glyphs') as
-            Y.Map<unknown> | undefined;
-        if (!glyphsMap) return false;
-
-        const glyphMap = glyphsMap.get(glyphName) as Y.Map<unknown> | undefined;
+        const glyphMap = this._glyphMapForName(glyphName);
         if (!glyphMap) return false;
 
         const layersMap = glyphMap.get('layers') as Y.Map<unknown> | undefined;
@@ -2854,9 +3737,14 @@ export class PatchSyncEngine {
         if (scope === 'font' && !authoritativeHistory.historyItem) {
             return null;
         }
-        const localUpdateLogIndexBeforeUndo = this._lastLocalUpdateLogIndex;
-        const localUpdateBaseline = Y.encodeStateVector(this.yDoc);
+        const undoDocumentIds = this._documentIdsForHistoryItem(
+            authoritativeHistory.historyItem,
+            this._documentIdForUndoTarget(target)
+        );
+        const localUpdateBaselines =
+            this._captureDocumentBaselines(undoDocumentIds);
         this._suppressRecording = true;
+        this._suppressAutomaticLocalUpdateEmission = true;
         try {
             const targetHistoryItemId = authoritativeHistory.historyItemId;
             const semanticHistoryItem = authoritativeHistory.historyItem;
@@ -2951,13 +3839,14 @@ export class PatchSyncEngine {
 
             this._onAfterSync?.();
             this._onDirty?.();
-            if (
-                this._lastLocalUpdateLogIndex ===
-                    localUpdateLogIndexBeforeUndo &&
-                !this._isApplyingRemote &&
-                !this._suppressAutomaticLocalUpdateEmission
-            ) {
-                this._emitCanonicalLocalUpdateSince(localUpdateBaseline);
+            if (!this._isApplyingRemote) {
+                this._withGlyphRevisionCatchUp(
+                    this._glyphIdsFromDocumentIds(localUpdateBaselines.keys()),
+                    () =>
+                        this._emitCanonicalLocalUpdatesSince(
+                            localUpdateBaselines
+                        )
+                );
             }
             this._advanceUndoHistoryItem(
                 scope,
@@ -2974,6 +3863,7 @@ export class PatchSyncEngine {
             };
         } finally {
             this._suppressRecording = false;
+            this._suppressAutomaticLocalUpdateEmission = false;
         }
     }
 
@@ -3031,9 +3921,14 @@ export class PatchSyncEngine {
         if (scope === 'font' && !authoritativeHistory.historyItem) {
             return null;
         }
-        const localUpdateLogIndexBeforeRedo = this._lastLocalUpdateLogIndex;
-        const localUpdateBaseline = Y.encodeStateVector(this.yDoc);
+        const redoDocumentIds = this._documentIdsForHistoryItem(
+            authoritativeHistory.historyItem,
+            this._documentIdForUndoTarget(target)
+        );
+        const localUpdateBaselines =
+            this._captureDocumentBaselines(redoDocumentIds);
         this._suppressRecording = true;
+        this._suppressAutomaticLocalUpdateEmission = true;
         try {
             const targetHistoryItemId = authoritativeHistory.historyItemId;
             const semanticHistoryItem = authoritativeHistory.historyItem;
@@ -3127,13 +4022,14 @@ export class PatchSyncEngine {
 
             this._onAfterSync?.();
             this._onDirty?.();
-            if (
-                this._lastLocalUpdateLogIndex ===
-                    localUpdateLogIndexBeforeRedo &&
-                !this._isApplyingRemote &&
-                !this._suppressAutomaticLocalUpdateEmission
-            ) {
-                this._emitCanonicalLocalUpdateSince(localUpdateBaseline);
+            if (!this._isApplyingRemote) {
+                this._withGlyphRevisionCatchUp(
+                    this._glyphIdsFromDocumentIds(localUpdateBaselines.keys()),
+                    () =>
+                        this._emitCanonicalLocalUpdatesSince(
+                            localUpdateBaselines
+                        )
+                );
             }
             this._advanceUndoHistoryItem(
                 scope,
@@ -3150,6 +4046,7 @@ export class PatchSyncEngine {
             };
         } finally {
             this._suppressRecording = false;
+            this._suppressAutomaticLocalUpdateEmission = false;
         }
     }
 
@@ -3259,7 +4156,8 @@ export class PatchSyncEngine {
     applyRemoteUpdate(
         update: Uint8Array,
         remoteEntries?: ChangeLogEntry[],
-        remoteCollaborationMessages?: CollaborationMessageEnvelope[]
+        remoteCollaborationMessages?: CollaborationMessageEnvelope[],
+        documentId?: string
     ): boolean {
         this._isApplyingRemote = true;
         try {
@@ -3275,13 +4173,31 @@ export class PatchSyncEngine {
                       )
                   ) ?? []);
             if (!effectiveRemoteEntries.length) {
-                if (this._isRemoteUpdateNoop(update)) {
+                if (this._isRemoteUpdateNoopOnAnyDoc(update)) {
                     return false;
                 }
                 throw new MetadataFreeRemoteUpdateError();
             }
-            // Apply linked-window updates using the shared same-user origin so
-            // every window can undo the combined edit history.
+            const resolvedDocumentId =
+                documentId ||
+                (effectiveRemoteEntries[0]
+                    ? this.documentIdForPath(
+                          getPathSegments(effectiveRemoteEntries[0].path)
+                      )
+                    : FONT_CORE_DOCUMENT_ID);
+            let targetDoc = this._docForId(resolvedDocumentId);
+            if (!targetDoc && resolvedDocumentId.startsWith('glyph:')) {
+                const glyphId = resolvedDocumentId.slice('glyph:'.length);
+                const glyphName =
+                    this._glyphNameById.get(glyphId) ||
+                    this._deriveGlyphNameFromPath(
+                        effectiveRemoteEntries[0]?.path || ''
+                    ) ||
+                    glyphId;
+                this._ensureGlyphDoc(glyphId, glyphName);
+                targetDoc = this._docForId(resolvedDocumentId);
+            }
+            targetDoc = targetDoc || this.yDoc;
             let didChange = false;
             const observeRemoteTransaction = (transaction: Y.Transaction) => {
                 didChange ||=
@@ -3292,15 +4208,15 @@ export class PatchSyncEngine {
                             clock > (transaction.beforeState.get(client) ?? 0)
                     );
             };
-            this.yDoc.on('afterTransaction', observeRemoteTransaction);
+            targetDoc.on('afterTransaction', observeRemoteTransaction);
             try {
                 Y.applyUpdate(
-                    this.yDoc,
+                    targetDoc,
                     update,
                     this._getRemoteUpdateOrigin(effectiveRemoteEntries)
                 );
             } finally {
-                this.yDoc.off('afterTransaction', observeRemoteTransaction);
+                targetDoc.off('afterTransaction', observeRemoteTransaction);
             }
             if (!didChange) {
                 return false;
@@ -3324,8 +4240,15 @@ export class PatchSyncEngine {
                     }
                 }
             }
+            this._reconcileGlyphDocsAfterRemoteEntries(effectiveRemoteEntries);
             this._syncRemoteJsonFromYDoc(effectiveRemoteEntries);
-            this._yjsWorkerCallback?.(update, effectiveRemoteEntries);
+            if (!areGlyphRevisionOnlyEntries(effectiveRemoteEntries)) {
+                this._yjsWorkerCallback?.(
+                    update,
+                    effectiveRemoteEntries,
+                    resolvedDocumentId
+                );
+            }
             this._onAfterSync?.();
             this._onDirty?.();
             if (effectiveRemoteEntries && effectiveRemoteEntries.length > 0) {
@@ -3351,35 +4274,64 @@ export class PatchSyncEngine {
             for (const cb of this._committedChangeListeners) {
                 cb(effectiveRemoteEntries ?? [], {
                     origin: 'remote',
-                    update
+                    update,
+                    documentId: resolvedDocumentId
                 });
             }
-            this._lastBroadcastStateVector = Y.encodeStateVector(this.yDoc);
+            this._noteBroadcastStateVector(resolvedDocumentId);
             return didChange;
         } finally {
             this._isApplyingRemote = false;
         }
     }
 
-    private _isRemoteUpdateNoop(update: Uint8Array): boolean {
+    private _reconcileGlyphDocsAfterRemoteEntries(
+        remoteEntries: ChangeLogEntry[]
+    ): void {
+        const glyphOrderTouched = remoteEntries.some((entry) => {
+            const segments = getPathSegments(String(entry.path || ''));
+            return segments[0] === 'glyphOrder';
+        });
+        const glyphRootRemoved = remoteEntries.some((entry) => {
+            const segments = getPathSegments(String(entry.path || ''));
+            return this._isGlyphRootPath(segments) && entry.op === 'remove';
+        });
+        if (glyphOrderTouched || glyphRootRemoved) {
+            this._syncGlyphNameIndexToOrder();
+        }
+    }
+
+    private _isRemoteUpdateNoopOnAnyDoc(update: Uint8Array): boolean {
+        const docs: Y.Doc[] = [
+            this.yDoc,
+            this.depsDoc,
+            ...this._glyphDocs.values()
+        ];
+        return docs.some((doc) => this._isRemoteUpdateNoop(update, doc));
+    }
+
+    private _isRemoteUpdateNoop(
+        update: Uint8Array,
+        doc: Y.Doc = this.yDoc
+    ): boolean {
         const decodedUpdate = Y.decodeUpdate(update);
 
         for (const struct of decodedUpdate.structs) {
-            const knownClock = Y.getState(this.yDoc.store, struct.id.client);
+            const knownClock = Y.getState(doc.store, struct.id.client);
             if (struct.id.clock + struct.length > knownClock) {
                 return false;
             }
         }
 
         for (const [client, deleteItems] of decodedUpdate.ds.clients) {
-            const structs = this.yDoc.store.clients.get(client);
+            const structs = doc.store.clients.get(client);
             if (!structs) {
                 return false;
             }
 
             for (const deleteItem of deleteItems) {
                 const deleteEnd = deleteItem.clock + deleteItem.len;
-                if (Y.getState(this.yDoc.store, client) < deleteEnd) {
+                if (Y.getState(doc.store, client) < deleteEnd) {
                     return false;
                 }
 
@@ -3430,6 +4382,9 @@ export class PatchSyncEngine {
             const topLevelKey = pathSegments[0];
             if (topLevelKey === 'font') {
                 syncEntireFont = true;
+                continue;
+            }
+            if (topLevelKey === GLYPH_REVISIONS_KEY) {
                 continue;
             }
             if (topLevelKey !== 'glyphs') {
@@ -3626,11 +4581,7 @@ export class PatchSyncEngine {
             pushTarget(typeof layer?.id === 'string' ? layer.id : null);
         }
 
-        const yGlyphsMap = this.fontMap.get('glyphs');
-        if (!(yGlyphsMap instanceof Y.Map)) {
-            return;
-        }
-        const glyphMap = yGlyphsMap.get(glyphName);
+        const glyphMap = this._glyphMapForName(glyphName);
         if (!(glyphMap instanceof Y.Map)) {
             return;
         }
@@ -3643,18 +4594,97 @@ export class PatchSyncEngine {
         });
     }
 
+    private _captureYDocFontJson(): Record<string, unknown> {
+        const snapshot: Record<string, unknown> = {};
+        this.fontMap.forEach((value: unknown, key: string) => {
+            if (key === 'glyphs' || key === 'glyphOrder') {
+                return;
+            }
+            snapshot[key] = this._cloneRuntimeValue(
+                cloneHistoryValue(fromYType(value))
+            );
+        });
+        const glyphOrder = this.fontMap.get('glyphOrder');
+        const fromOrder =
+            glyphOrder instanceof Y.Array
+                ? glyphOrder.toArray().map(String)
+                : [];
+        const orderedGlyphNames = fromOrder.length
+            ? fromOrder
+            : [...this._glyphIdByName.keys()];
+        const glyphs: Unsafe[] = [];
+        for (const glyphName of orderedGlyphNames) {
+            const glyphSnapshot =
+                this._readNormalizedGlyphSnapshotFromYDoc(glyphName);
+            if (glyphSnapshot) {
+                glyphs.push(glyphSnapshot);
+            }
+        }
+        snapshot.glyphs = glyphs;
+        return snapshot;
+    }
+
+    private _assignJsonObjectInPlace(
+        target: Record<string, unknown>,
+        source: Record<string, unknown>
+    ): void {
+        for (const key of Object.keys(target)) {
+            if (!Object.prototype.hasOwnProperty.call(source, key)) {
+                delete target[key];
+            }
+        }
+        for (const [key, value] of Object.entries(source)) {
+            target[key] = value;
+        }
+    }
+
+    private _assignGlyphSnapshotInPlace(
+        existing: Unsafe,
+        snapshot: Unsafe
+    ): void {
+        const existingLayers = Array.isArray(existing.layers)
+            ? (existing.layers as Unsafe[])
+            : [];
+        const snapshotLayers = Array.isArray(snapshot.layers)
+            ? (snapshot.layers as Unsafe[])
+            : [];
+        const layersById = new Map<string, Unsafe>();
+        for (const layer of existingLayers) {
+            if (typeof layer?.id === 'string' && layer.id) {
+                layersById.set(layer.id, layer);
+            }
+        }
+        const nextLayers: Unsafe[] = [];
+        for (const layerSnapshot of snapshotLayers) {
+            const layerId =
+                typeof layerSnapshot?.id === 'string' ? layerSnapshot.id : '';
+            const existingLayer = layerId ? layersById.get(layerId) : undefined;
+            if (
+                existingLayer &&
+                typeof existingLayer === 'object' &&
+                !Array.isArray(existingLayer)
+            ) {
+                this._assignJsonObjectInPlace(
+                    existingLayer as Record<string, unknown>,
+                    layerSnapshot as Record<string, unknown>
+                );
+                nextLayers.push(existingLayer);
+            } else {
+                nextLayers.push(layerSnapshot);
+            }
+        }
+        this._assignJsonObjectInPlace(existing as Record<string, unknown>, {
+            ...(snapshot as Record<string, unknown>),
+            layers: nextLayers
+        });
+    }
+
     private _syncAllGlyphsFromYDoc(): void {
         if (!this._fontJson) {
             return;
         }
 
         const fontRecord = this._fontJson as Record<string, unknown>;
-        const yGlyphsMap = this.fontMap.get('glyphs');
-        if (!(yGlyphsMap instanceof Y.Map)) {
-            delete fontRecord.glyphs;
-            return;
-        }
-
         const existingGlyphs = Array.isArray(fontRecord.glyphs)
             ? (fontRecord.glyphs as Unsafe[])
             : [];
@@ -3667,29 +4697,51 @@ export class PatchSyncEngine {
                 .map((glyph) => [String(glyph.name), glyph])
         );
 
+        const existingGlyphsById = new Map<string, Unsafe>();
+        for (const glyph of existingGlyphs) {
+            if (typeof glyph?.id === 'string' && glyph.id) {
+                existingGlyphsById.set(String(glyph.id), glyph);
+            }
+        }
         const nextGlyphs: Unsafe[] = [];
         const glyphOrder = this.fontMap.get('glyphOrder');
-        const orderedGlyphNames =
+        const fromOrder =
             glyphOrder instanceof Y.Array
                 ? glyphOrder.toArray().map(String)
-                : Array.from(yGlyphsMap.keys());
-        const includedGlyphNames = new Set(orderedGlyphNames);
-        yGlyphsMap.forEach((_value: unknown, glyphName: string) => {
-            if (!includedGlyphNames.has(glyphName)) {
-                orderedGlyphNames.push(glyphName);
-            }
-        });
+                : [];
+        const orderedGlyphNames = fromOrder.length
+            ? fromOrder
+            : [...this._glyphIdByName.keys()];
         for (const glyphName of orderedGlyphNames) {
+            const glyphId = this._glyphIdByName.get(glyphName);
             const glyphSnapshot = this._readNormalizedGlyphSnapshotFromYDoc(
                 glyphName,
-                existingGlyphsByName.get(glyphName)
+                existingGlyphsByName.get(glyphName) ||
+                    (glyphId ? existingGlyphsById.get(glyphId) : undefined)
             );
             if (glyphSnapshot) {
-                nextGlyphs.push(glyphSnapshot);
+                const existingGlyph =
+                    existingGlyphsByName.get(glyphName) ||
+                    (glyphId ? existingGlyphsById.get(glyphId) : undefined);
+                if (
+                    existingGlyph &&
+                    typeof existingGlyph === 'object' &&
+                    !Array.isArray(existingGlyph)
+                ) {
+                    this._assignGlyphSnapshotInPlace(
+                        existingGlyph,
+                        glyphSnapshot
+                    );
+                    nextGlyphs.push(existingGlyph);
+                } else {
+                    nextGlyphs.push(glyphSnapshot);
+                }
             }
         }
 
-        fontRecord.glyphs = nextGlyphs;
+        if (nextGlyphs.length > 0 || Array.isArray(fontRecord.glyphs)) {
+            fontRecord.glyphs = nextGlyphs;
+        }
     }
 
     private _syncTopLevelFontKeyFromYDoc(key: string): void {
@@ -3718,12 +4770,7 @@ export class PatchSyncEngine {
         glyphName: string,
         existingGlyphSnapshot?: unknown
     ): Unsafe | null {
-        const glyphsMap = this.fontMap.get('glyphs');
-        if (!(glyphsMap instanceof Y.Map)) {
-            return null;
-        }
-
-        const glyphMap = glyphsMap.get(glyphName);
+        const glyphMap = this._glyphMapForName(glyphName);
         if (!(glyphMap instanceof Y.Map)) {
             return null;
         }
@@ -3766,12 +4813,21 @@ export class PatchSyncEngine {
         }
 
         if (glyphIndex >= 0) {
-            glyphs[glyphIndex] = glyphSnapshot;
+            const existingGlyph = glyphs[glyphIndex];
+            if (
+                existingGlyph &&
+                typeof existingGlyph === 'object' &&
+                !Array.isArray(existingGlyph)
+            ) {
+                this._assignGlyphSnapshotInPlace(existingGlyph, glyphSnapshot);
+            } else {
+                glyphs[glyphIndex] = glyphSnapshot;
+            }
             return true;
         }
 
         const yGlyphsMap = this.fontMap.get('glyphs');
-        if (!(yGlyphsMap instanceof Y.Map)) {
+        if (!(yGlyphsMap instanceof Y.Map) && !this._glyphDocs.size) {
             glyphs.push(glyphSnapshot);
             return true;
         }
@@ -3784,9 +4840,7 @@ export class PatchSyncEngine {
                 ? glyphOrder.toArray().map(String)
                 : [];
         if (orderedGlyphNames.length === 0) {
-            yGlyphsMap.forEach((_value: unknown, nextGlyphName: string) => {
-                orderedGlyphNames.push(nextGlyphName);
-            });
+            orderedGlyphNames.push(...this._glyphIdByName.keys());
         }
         const glyphOrderIndex = orderedGlyphNames.indexOf(glyphName);
         if (glyphOrderIndex < 0) {
@@ -3896,9 +4950,11 @@ export class PatchSyncEngine {
      * Export the full Y.Doc state for bootstrapping a new window.
      */
     getFullState(): YjsUpdate {
-        // YJS_ONLY (N2/B3): Binary Yjs state, not JSON.
-        // Used for linked-window bootstrap and cloud-font baseline.
         return Y.encodeStateAsUpdate(this.yDoc);
+    }
+
+    getDocumentSetState(): EncodedShard[] {
+        return this.encodeDocumentSet();
     }
 
     /**
@@ -3911,6 +4967,7 @@ export class PatchSyncEngine {
      * never for an ordinary committed update.
      */
     applyFullState(state: YjsUpdate): void {
+        let applied = false;
         this._isApplyingRemote = true;
         try {
             if (!this._fontJson) this._fontJson = {};
@@ -3922,27 +4979,35 @@ export class PatchSyncEngine {
             this._onAfterSync?.();
             this._onRemoteChange?.([]);
             this._lastBroadcastStateVector = Y.encodeStateVector(this.yDoc);
+            applied = true;
         } finally {
             this._isApplyingRemote = false;
+        }
+        if (applied) {
+            this._notifyCoreHydrated();
         }
     }
 
     /** Encode the full Y.Doc state as a Yjs update binary. */
     encodeBridgeState(): YjsUpdate {
-        return Y.encodeStateAsUpdate(this.yDoc);
+        return this.encodeDocumentState(FONT_CORE_DOCUMENT_ID);
     }
 
     /** Encode the Y.Doc state vector (compact — one entry per known client). */
     encodeBridgeStateVector(): YjsUpdate {
-        return Y.encodeStateVector(this.yDoc);
+        return this.encodeDocumentStateVector(FONT_CORE_DOCUMENT_ID);
     }
 
     /**
      * Encode the minimal update diff that a peer (described by peerStateVector)
      * is missing. Returns an empty update if we have nothing new to share.
      */
-    encodeStateDiff(peerStateVector: YjsUpdate): YjsUpdate {
-        return Y.encodeStateAsUpdate(this.yDoc, peerStateVector);
+    encodeStateDiff(
+        peerStateVector: YjsUpdate,
+        documentId: string = FONT_CORE_DOCUMENT_ID
+    ): YjsUpdate {
+        const doc = this._docForId(documentId) || this.yDoc;
+        return Y.encodeStateAsUpdate(doc, peerStateVector);
     }
 
     /**
@@ -3956,10 +5021,20 @@ export class PatchSyncEngine {
      */
     setYjsWorkerCallback(
         cb:
-            | ((update: YjsUpdate, changeLogEntries: ChangeLogEntry[]) => void)
+            | ((
+                  update: YjsUpdate,
+                  changeLogEntries: ChangeLogEntry[],
+                  documentId?: string
+              ) => void)
             | null
     ): void {
         this._yjsWorkerCallback = cb;
+    }
+
+    setWorkerDocumentReplaceCallback(
+        cb: ((documentId: string, state: YjsUpdate) => void) | null
+    ): void {
+        this._workerDocumentReplaceCallback = cb;
     }
 
     /**
@@ -3969,22 +5044,33 @@ export class PatchSyncEngine {
      * incremental updates from remote peers can be applied (their left-sibling
      * references will be resolvable).
      */
-    applyYDocUpdateSilent(update: YjsUpdate): void {
+    applyYDocUpdateSilent(
+        update: YjsUpdate,
+        documentId: string = FONT_CORE_DOCUMENT_ID
+    ): void {
         if (!update || update.length === 0) return;
-        Y.applyUpdate(this.yDoc, update);
-        this._lastBroadcastStateVector = Y.encodeStateVector(this.yDoc);
+        const doc = this._docForId(documentId) || this.yDoc;
+        Y.applyUpdate(doc, update);
+        this._noteBroadcastStateVector(documentId);
     }
 
     applyLocalGeneratedYjsUpdate(
         update: YjsUpdate,
         operations: TransactionBufferedOperation[],
         label: string | null,
-        historyTarget?: TransactionHistoryTarget | null
+        historyTarget?: TransactionHistoryTarget | null,
+        documentUpdates?: Array<{ documentId: string; update: YjsUpdate }>
     ): TransactionCommitResult | null {
+        const packets = (documentUpdates || []).filter(
+            (packet) => packet.update?.length
+        );
         const normalizedOperations = operations
             .filter((operation) => operation.path.length > 0)
             .map((operation) => this._normalizeBufferedOperation(operation));
-        if (!update?.length || !normalizedOperations.length) {
+        if (
+            (!update?.length && !packets.length) ||
+            !normalizedOperations.length
+        ) {
             return null;
         }
         if (this._txDepth > 0) {
@@ -4060,11 +5146,38 @@ export class PatchSyncEngine {
 
         this._suppressAutomaticLocalUpdateEmission = true;
         try {
-            Y.applyUpdate(this.yDoc, update, scopeInfo.origin);
+            const uniqueDocumentIds = [
+                ...new Set(
+                    normalizedOperations.map((operation) =>
+                        this.documentIdForPath(operation.path)
+                    )
+                )
+            ];
+            const packetsToApply =
+                packets.length > 0
+                    ? packets
+                    : [
+                          {
+                              documentId:
+                                  uniqueDocumentIds.length === 1
+                                      ? uniqueDocumentIds[0]
+                                      : FONT_CORE_DOCUMENT_ID,
+                              update
+                          }
+                      ];
+            for (const packet of packetsToApply) {
+                const targetDoc =
+                    this._docForId(packet.documentId) || this.yDoc;
+                Y.applyUpdate(
+                    targetDoc,
+                    packet.update,
+                    this._originForDocument(packet.documentId, scopeInfo.origin)
+                );
+                this._noteBroadcastStateVector(packet.documentId);
+            }
             this._syncRemoteJsonFromYDoc(changeLogEntries);
             this._onAfterSync?.();
             this._onDirty?.();
-            this._lastBroadcastStateVector = Y.encodeStateVector(this.yDoc);
 
             if (
                 this._lastLocalUpdateLogIndex ===
@@ -4072,7 +5185,13 @@ export class PatchSyncEngine {
                 !this._isApplyingRemote
             ) {
                 this._lastLocalUpdateLogIndex = this._changeLog.length;
-                this._emitLocalUpdate(update, changeLogEntries);
+                for (const packet of packetsToApply) {
+                    this._emitLocalUpdate(
+                        packet.update,
+                        changeLogEntries,
+                        packet.documentId
+                    );
+                }
             }
         } finally {
             this._suppressAutomaticLocalUpdateEmission = false;
@@ -4218,6 +5337,7 @@ export class PatchSyncEngine {
         this._collaborationLog = [];
         this._lastBroadcastLogIndex = 0;
         this._lastLocalUpdateLogIndex = 0;
+        this._glyphRevisionClock = 0;
         this._txDepth = 0;
         this._txLabel = null;
         this._txId = null;
@@ -4340,11 +5460,7 @@ export class PatchSyncEngine {
         glyphName: string;
         layerId: string;
     }): boolean {
-        const glyphsMap = this.fontMap.get('glyphs');
-        const glyphMap =
-            glyphsMap instanceof Y.Map
-                ? glyphsMap.get(scopeHint.glyphName)
-                : null;
+        const glyphMap = this._glyphMapForName(scopeHint.glyphName);
         const layersMap =
             glyphMap instanceof Y.Map ? glyphMap.get('layers') : null;
         const glyph = (this._fontJson as Unsafe)?.glyphs?.find(
@@ -4363,12 +5479,7 @@ export class PatchSyncEngine {
         glyphName: string;
         layerId: string;
     }): boolean {
-        const glyphsMap = this.fontMap.get('glyphs');
-        if (!(glyphsMap instanceof Y.Map)) {
-            return false;
-        }
-
-        const glyphMap = glyphsMap.get(scopeHint.glyphName);
+        const glyphMap = this._glyphMapForName(scopeHint.glyphName);
         if (!(glyphMap instanceof Y.Map)) {
             return false;
         }
@@ -4427,7 +5538,21 @@ export class PatchSyncEngine {
             }
         }
 
-        layers[layerIdx] = patchedLayer;
+        if (
+            layers[layerIdx] &&
+            typeof layers[layerIdx] === 'object' &&
+            !Array.isArray(layers[layerIdx]) &&
+            patchedLayer &&
+            typeof patchedLayer === 'object' &&
+            !Array.isArray(patchedLayer)
+        ) {
+            this._assignJsonObjectInPlace(
+                layers[layerIdx] as Record<string, unknown>,
+                patchedLayer as Record<string, unknown>
+            );
+        } else {
+            layers[layerIdx] = patchedLayer;
+        }
         return true;
     }
 
@@ -4536,9 +5661,7 @@ export class PatchSyncEngine {
         if (this._undoManagers.has(glyphName)) {
             return this._undoManagers.get(glyphName)!;
         }
-        const glyphsMap = this.fontMap.get('glyphs');
-        if (!(glyphsMap instanceof Y.Map)) return null;
-        const glyphMap = glyphsMap.get(glyphName);
+        const glyphMap = this._glyphMapForName(glyphName);
         if (!(glyphMap instanceof Y.Map)) return null;
 
         const um = new Y.UndoManager(glyphMap, {
@@ -4554,9 +5677,7 @@ export class PatchSyncEngine {
         layerId: string
     ): Y.UndoManager | null {
         const managerKey = getLayerManagerKey(glyphName, layerId);
-        const glyphsMap = this.fontMap.get('glyphs');
-        if (!(glyphsMap instanceof Y.Map)) return null;
-        const glyphMap = glyphsMap.get(glyphName);
+        const glyphMap = this._glyphMapForName(glyphName);
         if (!(glyphMap instanceof Y.Map)) return null;
         const layersMap = glyphMap.get('layers');
         if (!(layersMap instanceof Y.Map)) return null;
@@ -4868,44 +5989,139 @@ export class PatchSyncEngine {
 
         this._appendChangeLogEntries(changeLogEntries);
 
-        const localUpdateBaseline =
-            this._txStartStateVector ?? this._lastBroadcastStateVector;
+        this._ensureDocumentsForOperations(effectiveOperations);
+
+        const glyphNameRemaps = effectiveOperations.flatMap((operation) => {
+            const applyPath = this._toYDocPath(
+                operation.applyPath ?? operation.path
+            );
+            if (
+                applyPath.length !== 3 ||
+                applyPath[0] !== 'glyphs' ||
+                applyPath[2] !== 'name'
+            ) {
+                return [];
+            }
+            const oldName = String(applyPath[1]);
+            const glyphId = this._glyphIdByName.get(oldName);
+            if (!glyphId) {
+                return [];
+            }
+            return [
+                {
+                    glyphId,
+                    oldName,
+                    newName: String(operation.newValue ?? '')
+                }
+            ];
+        });
+
+        const localUpdateBaselineByDoc = new Map<string, Uint8Array>();
+        const docsTouched = new Set<string>();
+        for (const operation of effectiveOperations) {
+            const applyPath = this._toYDocPath(
+                operation.applyPath ?? operation.path
+            );
+            docsTouched.add(this.documentIdForPath(applyPath));
+            if (operation.op === 'remove' && this._isGlyphRootPath(applyPath)) {
+                docsTouched.add(FONT_CORE_DOCUMENT_ID);
+            }
+        }
+        for (const documentId of docsTouched) {
+            const doc = this._docForId(documentId);
+            if (!doc) {
+                continue;
+            }
+            localUpdateBaselineByDoc.set(
+                documentId,
+                this._lastBroadcastStateVectorByDoc.get(documentId) ||
+                    (documentId === FONT_CORE_DOCUMENT_ID
+                        ? (this._txStartStateVector ??
+                          this._lastBroadcastStateVector)
+                        : Y.encodeStateVector(doc))
+            );
+        }
 
         this._suppressAutomaticLocalUpdateEmission = true;
         try {
-            this.yDoc.transact(() => {
-                for (const operation of effectiveOperations) {
-                    this._applyBufferedOperation(operation);
+            for (const documentId of docsTouched) {
+                const doc = this._docForId(documentId);
+                if (!doc) {
+                    continue;
                 }
-            }, scopeInfo.origin);
+                const opsForDoc = effectiveOperations.filter((operation) => {
+                    const applyPath = this._toYDocPath(
+                        operation.applyPath ?? operation.path
+                    );
+                    return this.documentIdForPath(applyPath) === documentId;
+                });
+                doc.transact(
+                    () => {
+                        for (const operation of opsForDoc) {
+                            this._applyBufferedOperation(operation);
+                        }
+                    },
+                    this._originForDocument(documentId, scopeInfo.origin)
+                );
+            }
         } finally {
             this._suppressAutomaticLocalUpdateEmission = false;
         }
 
-        const exactCommitUpdate = Y.encodeStateAsUpdate(
-            this.yDoc,
-            localUpdateBaseline
-        );
-        this._lastBroadcastStateVector = Y.encodeStateVector(this.yDoc);
-
         if (!this._isApplyingRemote) {
             this._lastLocalUpdateLogIndex = this._changeLog.length;
-            if (exactCommitUpdate.length > 0) {
-                this._emitLocalUpdate(exactCommitUpdate, changeLogEntries);
-            } else if (
-                changeLogEntries.some(
-                    (entry) => entry.workerReplayTargets.length > 0
-                )
-            ) {
-                this._emitLocalUpdate(
-                    Y.encodeStateAsUpdate(
-                        this.yDoc,
-                        Y.encodeStateVector(this.yDoc)
-                    ),
-                    changeLogEntries
-                );
-            }
+            this._withGlyphRevisionCatchUp(
+                this._glyphIdsTouchedByOperations(effectiveOperations),
+                () => {
+                    for (const documentId of docsTouched) {
+                        const doc = this._docForId(documentId);
+                        if (!doc) {
+                            continue;
+                        }
+                        const baseline =
+                            localUpdateBaselineByDoc.get(documentId) ||
+                            Y.encodeStateVector(doc);
+                        const exactCommitUpdate = Y.encodeStateAsUpdate(
+                            doc,
+                            baseline
+                        );
+                        this._noteBroadcastStateVector(documentId);
+                        const docEntries = changeLogEntries.filter((entry) => {
+                            const segments = getPathSegments(entry.path);
+                            return (
+                                this.documentIdForPath(segments) === documentId
+                            );
+                        });
+                        if (exactCommitUpdate.length > 0) {
+                            this._emitLocalUpdate(
+                                exactCommitUpdate,
+                                docEntries.length
+                                    ? docEntries
+                                    : changeLogEntries,
+                                documentId
+                            );
+                        }
+                    }
+                }
+            );
         }
+
+        for (const remap of glyphNameRemaps) {
+            this._glyphIdByName.delete(remap.oldName);
+        }
+        for (const remap of glyphNameRemaps) {
+            if (!remap.newName) {
+                continue;
+            }
+            this._glyphIdByName.set(remap.newName, remap.glyphId);
+            this._glyphNameById.set(remap.glyphId, remap.newName);
+        }
+
+        if (!this._isApplyingRemote) {
+            this._syncRemoteJsonFromYDoc(changeLogEntries);
+        }
+
+        this._flushDestroyedGlyphDocs();
 
         this._recordUndoHistoryItem(
             scopeInfo.scope,
@@ -5032,7 +6248,7 @@ export class PatchSyncEngine {
                 byApplyPath.set(pathKey, {
                     finalValue,
                     originalValue: cloneHistoryValue(
-                        getYPath(this.fontMap, applyPath)
+                        this._getRoutedYPath(applyPath)
                     )
                 });
                 return;
@@ -5083,7 +6299,7 @@ export class PatchSyncEngine {
                 : operation.applyNewValue;
 
         if (operation.op === 'remove') {
-            deleteYPath(this.fontMap, applyPath);
+            this._deleteRoutedYPath(applyPath);
             return;
         }
 
@@ -5109,7 +6325,7 @@ export class PatchSyncEngine {
             return;
         }
 
-        setYPath(this.fontMap, applyPath, applyValue);
+        this._setRoutedYPath(applyPath, applyValue);
     }
 
     private _deriveBufferedScope(operations: TransactionBufferedOperation[]): {
@@ -5188,6 +6404,183 @@ export class PatchSyncEngine {
             return;
         }
         this._fontUndoManager?.stopCapturing();
+        if (scopeInfo.scope === 'font') {
+            for (const glyphName of this._glyphIdByName.keys()) {
+                this.getGlyphUndoManager(glyphName)?.stopCapturing();
+            }
+        }
+    }
+
+    private _ensureDocumentsForOperations(
+        operations: TransactionBufferedOperation[]
+    ): void {
+        for (const operation of operations) {
+            const applyPath = this._toYDocPath(
+                operation.applyPath ?? operation.path
+            );
+            if (applyPath[0] !== 'glyphs' || applyPath.length < 2) {
+                continue;
+            }
+            const glyphName = String(applyPath[1]);
+            if (this._glyphMapForName(glyphName)) {
+                continue;
+            }
+            const snapshot =
+                applyPath.length === 2 &&
+                operation.newValue &&
+                typeof operation.newValue === 'object'
+                    ? (operation.newValue as Record<string, unknown>)
+                    : { name: glyphName };
+            const glyphId = ensureImmutableGlyphId(snapshot);
+            this._ensureGlyphDoc(glyphId, glyphName);
+        }
+    }
+
+    private _originForDocument(
+        documentId: string,
+        fallbackOrigin: string
+    ): string {
+        if (!documentId.startsWith('glyph:')) {
+            return FONT_EDIT_ORIGIN;
+        }
+        if (fallbackOrigin === FONT_EDIT_ORIGIN) {
+            return GLYPH_EDIT_ORIGIN;
+        }
+        return fallbackOrigin;
+    }
+
+    private _glyphIdsTouchedByOperations(
+        operations: Array<{
+            path: Array<string | number>;
+            applyPath?: Array<string | number>;
+        }>
+    ): string[] {
+        const ids = new Set<string>();
+        for (const operation of operations) {
+            const applyPath = this._toYDocPath(
+                operation.applyPath ?? operation.path
+            );
+            const glyphId = glyphIdFromDocumentId(
+                this.documentIdForPath(applyPath)
+            );
+            if (glyphId) {
+                ids.add(glyphId);
+            }
+        }
+        return [...ids];
+    }
+
+    private _glyphIdsFromDocumentIds(documentIds: Iterable<string>): string[] {
+        const ids = new Set<string>();
+        for (const documentId of documentIds) {
+            const glyphId = glyphIdFromDocumentId(documentId);
+            if (glyphId) {
+                ids.add(glyphId);
+            }
+        }
+        return [...ids];
+    }
+
+    private _allocateGlyphRevisionTokens(glyphIds: string[]): Array<{
+        glyphId: string;
+        revision: string;
+        previous: unknown;
+    }> {
+        const uniqueIds = [...new Set(glyphIds.filter(Boolean))];
+        if (!uniqueIds.length || this._isApplyingRemote) {
+            return [];
+        }
+        const revisions = this.yDoc.getMap(GLYPH_REVISIONS_KEY);
+        return uniqueIds.map((glyphId) => {
+            const previous = revisions.get(glyphId) ?? null;
+            const revision = `${this.windowId}:${++this._glyphRevisionClock}`;
+            return { glyphId, revision, previous };
+        });
+    }
+
+    private _stampGlyphCatchUpRevisions(
+        tokens: Array<{ glyphId: string; revision: string }>
+    ): void {
+        for (const { glyphId, revision } of tokens) {
+            const doc = this._glyphDocs.get(glyphId);
+            if (!doc) {
+                continue;
+            }
+            doc.transact(() => {
+                doc.getMap(GLYPH_SYNC_MAP_KEY).set(
+                    GLYPH_SYNC_REVISION_KEY,
+                    revision
+                );
+            }, GLYPH_REVISION_ORIGIN);
+        }
+    }
+
+    private _publishGlyphRevisionCoreSignal(
+        tokens: Array<{
+            glyphId: string;
+            revision: string;
+            previous: unknown;
+        }>
+    ): void {
+        if (!tokens.length || this._isApplyingRemote) {
+            return;
+        }
+        const historyItemId = `glyph-revision-${this.windowId}-${tokens[0].revision}`;
+        const baseline = Y.encodeStateVector(this.yDoc);
+        const entries: ChangeLogEntry[] = [];
+        this.yDoc.transact(() => {
+            const revisions = this.yDoc.getMap(GLYPH_REVISIONS_KEY);
+            for (const { glyphId, revision, previous } of tokens) {
+                revisions.set(glyphId, revision);
+                entries.push(
+                    createLogEntry({
+                        timestamp: Date.now(),
+                        windowId: this.windowId,
+                        windowRoleLabel: this._getWindowRoleLabel(),
+                        historyAction: 'change',
+                        transactionLabel: 'Glyph revision',
+                        transactionId: null,
+                        historyItemId,
+                        op: 'set',
+                        undoScope: 'font',
+                        path: joinPathWithGlyphSeparator([
+                            GLYPH_REVISIONS_KEY,
+                            glyphId
+                        ]),
+                        oldValue: previous,
+                        newValue: revision
+                    })
+                );
+            }
+        }, GLYPH_REVISION_ORIGIN);
+        const update = Y.encodeStateAsUpdate(this.yDoc, baseline);
+        if (!update.length || !entries.length) {
+            return;
+        }
+        this._noteBroadcastStateVector(FONT_CORE_DOCUMENT_ID);
+        for (const cb of this._glyphRevisionListeners) {
+            cb(update, entries);
+        }
+    }
+
+    private _withGlyphRevisionCatchUp(
+        glyphIds: string[],
+        emitLocalGlyphUpdates: () => void
+    ): void {
+        const tokens = this._allocateGlyphRevisionTokens(glyphIds);
+        this._stampGlyphCatchUpRevisions(tokens);
+        emitLocalGlyphUpdates();
+        this._publishGlyphRevisionCoreSignal(tokens);
+    }
+
+    private _notifyCoreHydrated(): void {
+        for (const cb of this._coreHydratedListeners) {
+            try {
+                cb();
+            } catch (error) {
+                console.warn('PatchSyncEngine: onCoreHydrated failed', error);
+            }
+        }
     }
 
     private _finishBatchUndoManagers(scopeInfo: {
@@ -5460,12 +6853,11 @@ export class PatchSyncEngine {
         glyphName: string,
         layerId: string
     ): boolean {
-        const layerValue = getYPath(this.fontMap, [
-            'glyphs',
-            glyphName,
-            'layers',
-            layerId
-        ]);
+        const glyphMap = this._glyphMapForName(glyphName);
+        const layersMap =
+            glyphMap instanceof Y.Map ? glyphMap.get('layers') : null;
+        const layerValue =
+            layersMap instanceof Y.Map ? layersMap.get(layerId) : undefined;
         if (!(layerValue instanceof Y.Map)) {
             return false;
         }
@@ -5665,22 +7057,46 @@ export class PatchSyncEngine {
             : orderedEntries;
 
         let writtenTargets: WorkerReplayTarget[] = [];
-        this.yDoc.transact(() => {
-            for (const entry of replayEntries) {
-                this._applyHistoryReplayEntry(entry, direction);
-            }
-            if (resettleDerivedLayers) {
-                writtenTargets =
-                    this._resettleDerivedLayersAfterOriginReplay(item);
-            }
-        }, HISTORY_REPLAY_ORIGIN);
+        const itemRenames = this._collectGlyphRenamesFromEntries(replayEntries);
+        if (direction === 'undo') {
+            this._applyGlyphNameRemapsFromEntries(replayEntries, direction);
+        }
+        const entriesByDocument = new Map<string, ChangeLogEntry[]>();
+        for (const entry of replayEntries) {
+            const documentId = this._documentIdForHistoryEntry(
+                entry,
+                itemRenames
+            );
+            const bucket = entriesByDocument.get(documentId) || [];
+            bucket.push(entry);
+            entriesByDocument.set(documentId, bucket);
+        }
+        for (const [documentId, entries] of entriesByDocument) {
+            const doc = this._docForId(documentId) || this.yDoc;
+            doc.transact(() => {
+                for (const entry of entries) {
+                    this._applyHistoryReplayEntry(
+                        entry,
+                        direction,
+                        itemRenames
+                    );
+                }
+            }, HISTORY_REPLAY_ORIGIN);
+        }
+        if (direction === 'redo') {
+            this._applyGlyphNameRemapsFromEntries(replayEntries, direction);
+        }
+        if (resettleDerivedLayers) {
+            writtenTargets = this._resettleDerivedLayersAfterOriginReplay(item);
+        }
 
         return writtenTargets;
     }
 
     private _applyHistoryReplayEntry(
         entry: ChangeLogEntry,
-        direction: 'undo' | 'redo'
+        direction: 'undo' | 'redo',
+        itemRenames: GlyphRename[] = []
     ): void {
         const replayValue = this._getHistoryReplayValue(entry, direction);
         if (entry.path === 'font') {
@@ -5688,6 +7104,24 @@ export class PatchSyncEngine {
             return;
         }
         const path = this._toYDocPath(this._parseEntryPath(entry.path));
+        if (path[0] === 'glyphs' && path.length >= 2) {
+            path[1] = this._liveGlyphName(String(path[1]), [
+                ...normalizeGlyphRenames(entry.glyphRenames),
+                ...itemRenames
+            ]);
+        }
+        if (
+            path.length === 3 &&
+            path[0] === 'glyphs' &&
+            path[2] === 'name' &&
+            typeof replayValue === 'string'
+        ) {
+            const glyphMap = this._glyphMapForName(String(path[1]));
+            if (glyphMap instanceof Y.Map) {
+                glyphMap.set('name', replayValue);
+            }
+            return;
+        }
         if (this._isGlyphRootPath(path) && replayValue) {
             this._applyGlyphSnapshot(String(path[1]), replayValue);
             return;
@@ -5705,24 +7139,24 @@ export class PatchSyncEngine {
         }
         if (direction === 'undo') {
             if (entry.op === 'add') {
-                deleteYPath(this.fontMap, path);
+                this._deleteRoutedYPath(path);
                 return;
             }
             if (entry.op === 'remove' || entry.op === 'set') {
                 if (entry.op === 'set' && replayValue === undefined) {
-                    deleteYPath(this.fontMap, path);
+                    this._deleteRoutedYPath(path);
                 } else {
-                    setYPath(this.fontMap, path, replayValue);
+                    this._setRoutedYPath(path, replayValue);
                 }
             }
             return;
         }
 
         if (entry.op === 'remove') {
-            deleteYPath(this.fontMap, path);
+            this._deleteRoutedYPath(path);
             return;
         }
-        setYPath(this.fontMap, path, replayValue);
+        this._setRoutedYPath(path, replayValue);
     }
 
     private _getResettleFontModel(): FontModelLike | null {
@@ -5855,9 +7289,7 @@ export class PatchSyncEngine {
         if (!layerJson) {
             return;
         }
-        const glyphsMap = this.fontMap.get('glyphs');
-        const glyphMap =
-            glyphsMap instanceof Y.Map ? glyphsMap.get(glyphName) : null;
+        const glyphMap = this._glyphMapForName(glyphName);
         const layersMap =
             glyphMap instanceof Y.Map ? glyphMap.get('layers') : null;
         const yLayerMap =
@@ -6106,6 +7538,22 @@ export class PatchSyncEngine {
         };
     }
 
+    private _createGlyphOrderRemoveOperation(
+        glyphName: string
+    ): TransactionBufferedOperation | null {
+        const oldOrder = this._readYGlyphOrderNames();
+        const nextOrder = oldOrder.filter((name) => name !== glyphName);
+        if (nextOrder.length === oldOrder.length) {
+            return null;
+        }
+        return {
+            op: 'set',
+            path: ['glyphOrder'],
+            oldValue: oldOrder,
+            newValue: nextOrder
+        };
+    }
+
     /**
      * Replace a Y.Array's contents without replacing the array object itself.
      * This keeps the shared container identity stable across windows.
@@ -6292,19 +7740,16 @@ export class PatchSyncEngine {
         glyphSnapshot: unknown
     ): void {
         if (!glyphSnapshot || typeof glyphSnapshot !== 'object') {
-            setYPath(this.fontMap, ['glyphs', glyphName], glyphSnapshot);
+            this._removeGlyphDoc(glyphName);
             return;
         }
 
-        const glyphsMap = this.fontMap.get('glyphs');
-        if (!(glyphsMap instanceof Y.Map)) {
-            return;
-        }
-
-        let glyphMap = glyphsMap.get(glyphName) as Y.Map<unknown> | undefined;
+        const glyphRecord = glyphSnapshot as Record<string, unknown>;
+        const glyphId = ensureImmutableGlyphId(glyphRecord);
+        this._ensureGlyphDoc(glyphId, glyphName);
+        let glyphMap = this._glyphMapForName(glyphName);
         if (!(glyphMap instanceof Y.Map)) {
-            glyphMap = new Y.Map<unknown>();
-            glyphsMap.set(glyphName, glyphMap);
+            return;
         }
 
         const existingGlyphSnapshot =
@@ -6409,13 +7854,11 @@ export class PatchSyncEngine {
             this._applyGlyphSnapshot(glyphName, glyph);
         }
 
-        const glyphsMap = this.fontMap.get('glyphs');
-        if (glyphsMap instanceof Y.Map) {
-            glyphsMap.forEach((_value: unknown, glyphName: string) => {
-                if (!nextGlyphNames.has(glyphName)) {
-                    glyphsMap.delete(glyphName);
-                }
-            });
+        const knownNames = new Set(this._glyphIdByName.keys());
+        for (const glyphName of knownNames) {
+            if (!nextGlyphNames.has(glyphName)) {
+                this._removeGlyphDoc(glyphName);
+            }
         }
         setYPath(this.fontMap, ['glyphOrder'], [...nextGlyphNames]);
 
@@ -7026,12 +8469,7 @@ export class PatchSyncEngine {
         layerId: string,
         delta: unknown
     ): void {
-        const glyphsMap = this.fontMap.get('glyphs');
-        if (!(glyphsMap instanceof Y.Map)) {
-            return;
-        }
-
-        const glyphMap = glyphsMap.get(glyphName);
+        const glyphMap = this._glyphMapForName(glyphName);
         if (!(glyphMap instanceof Y.Map)) {
             return;
         }

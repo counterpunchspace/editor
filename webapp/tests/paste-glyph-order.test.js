@@ -169,7 +169,7 @@ describe('paste glyph order through bridge', () => {
             'b',
             'c'
         ]);
-        expect(yDocToJson(bridge.fontMap).glyphs.map((g) => g.name)).toEqual([
+        expect(bridge.getFontJsonSnapshot().glyphs.map((g) => g.name)).toEqual([
             'a',
             'a.001',
             'b',

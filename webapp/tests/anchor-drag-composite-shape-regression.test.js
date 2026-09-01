@@ -214,7 +214,7 @@ describe('Fustat anchor drag component serialization', () => {
 
             bridge.syncLayersFromJson(layerTargets, 'Drag anchor');
 
-            const bridgeJson = yDocToJson(bridge.fontMap);
+            const bridgeJson = bridge.getFontJsonSnapshot();
             const bridgeGlyph = Array.isArray(bridgeJson.glyphs)
                 ? bridgeJson.glyphs.find((glyph) => glyph?.name === 'o')
                 : null;

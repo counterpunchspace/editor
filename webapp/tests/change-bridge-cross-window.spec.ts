@@ -318,12 +318,14 @@ async function waitForFullStateSync(page: Page): Promise<void> {
             const sync = (window as any).windowSync;
             const bridge = (window as any).changeBridge;
             if (!sync || !bridge) return false;
-            // The linked window must have applied full state and have glyph data
-            const glyphsMap = bridge.fontMap?.get('glyphs');
-            if (!glyphsMap) return false;
-            let glyphCount = 0;
-            glyphsMap.forEach(() => glyphCount++);
-            return glyphCount > 0;
+            const liveGlyphs = bridge.listLiveGlyphDocumentIds?.();
+            if (Array.isArray(liveGlyphs) && liveGlyphs.length > 0) {
+                return true;
+            }
+            const snapshot = bridge.getFontJsonSnapshot?.();
+            return (
+                Array.isArray(snapshot?.glyphs) && snapshot.glyphs.length > 0
+            );
         },
         20000
     );
@@ -625,11 +627,13 @@ async function extractYDocLayerKeys(
         ({ glyphName, layerId }) => {
             const bridge = (window as any).changeBridge;
             if (!bridge) return [];
-            const glyphsMap = bridge.fontMap?.get('glyphs');
-            const glyphMap = glyphsMap?.get(glyphName);
-            const layersMap = glyphMap?.get('layers');
-            const layerMap = layersMap?.get(layerId);
-            if (!layerMap) return [];
+            const layerMap = bridge.getYValue?.([
+                'glyphs',
+                glyphName,
+                'layers',
+                layerId
+            ]);
+            if (!layerMap || typeof layerMap.forEach !== 'function') return [];
 
             const keys: string[] = [];
             layerMap.forEach((_v: any, k: string) => keys.push(k));
@@ -648,10 +652,12 @@ async function extractYDocLayerAnchors(
         ({ glyphName, layerId }) => {
             const bridge = (window as any).changeBridge;
             if (!bridge) return null;
-            const glyphsMap = bridge.fontMap?.get('glyphs');
-            const glyphMap = glyphsMap?.get(glyphName);
-            const layersMap = glyphMap?.get('layers');
-            const layerMap = layersMap?.get(layerId);
+            const layerMap = bridge.getYValue?.([
+                'glyphs',
+                glyphName,
+                'layers',
+                layerId
+            ]);
             const anchors = layerMap?.get?.('anchors');
             if (!anchors || typeof anchors.toJSON !== 'function') {
                 return null;
@@ -779,9 +785,7 @@ async function findThinLayerId(page: Page): Promise<string> {
             }
 
             const bridge = (window as any).changeBridge;
-            const glyphsMap = bridge?.fontMap?.get('glyphs');
-            const glyphMap = glyphsMap?.get('a');
-            const layersMap = glyphMap?.get('layers');
+            const layersMap = bridge?.getYValue?.(['glyphs', 'a', 'layers']);
             if (!layersMap) return '';
 
             let result = '';
@@ -1451,8 +1455,7 @@ test.describe('Cross-window ChangeBridge sync', () => {
             const Y = (window as any).Y;
             let yDocKeysAfter: string[] = [];
             try {
-                const glyphsMap = bridge.fontMap.get('glyphs');
-                const glyphMap = glyphsMap.get('a');
+                const glyphMap = bridge.getYValue(['glyphs', 'a']);
                 const layersMap = glyphMap.get('layers');
                 const layerMap = layersMap.get(layerId);
                 if (layerMap) {
@@ -1482,8 +1485,7 @@ test.describe('Cross-window ChangeBridge sync', () => {
         await linkedPage.evaluate((layerId) => {
             const bridge = (window as any).changeBridge;
             const Y = (window as any).Y;
-            const glyphsMap = bridge.fontMap.get('glyphs');
-            const glyphMap = glyphsMap.get('a');
+            const glyphMap = bridge.getYValue(['glyphs', 'a']);
             const layersMap = glyphMap.get('layers');
             const layerMap = layersMap.get(layerId);
 
@@ -1522,8 +1524,7 @@ test.describe('Cross-window ChangeBridge sync', () => {
             const bridge = (window as any).changeBridge;
             let keys: string[] = [];
             try {
-                const glyphsMap = bridge.fontMap.get('glyphs');
-                const glyphMap = glyphsMap.get('a');
+                const glyphMap = bridge.getYValue(['glyphs', 'a']);
                 const layersMap = glyphMap.get('layers');
                 const layerMap = layersMap.get(layerId);
                 if (layerMap && typeof layerMap.forEach === 'function') {
@@ -1547,9 +1548,11 @@ test.describe('Cross-window ChangeBridge sync', () => {
             let yDocLayerCount = 0;
             let yDocLayerKeysAtTarget: string[] = [];
             try {
-                const glyphsMap = bridge?.fontMap?.get('glyphs');
-                const glyphMap = glyphsMap?.get('a');
-                const layersMap = glyphMap?.get('layers');
+                const layersMap = bridge?.getYValue?.([
+                    'glyphs',
+                    'a',
+                    'layers'
+                ]);
                 layersMap?.forEach((layerMap: any, layerId2: string) => {
                     yDocLayerCount++;
                     if (
