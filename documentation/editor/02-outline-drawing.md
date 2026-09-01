@@ -9,7 +9,7 @@ Start with the drawing tools in the Editor title bar. Click a tool, then click o
 - **Text** (`T`) leaves outline editing and returns to the text run.
 - **Select** (`V`) clicks and drags points, handles, components, and other objects. Entering a glyph always starts on Select.
 - **Pen** (`P`) draws a new contour point by point, or continues from a selected open end. Each click places a point. Click the first point to close, or connect to another open end to join two contours. While Pen is active, drawing can continue beyond the current glyph width; nearby glyphs are ignored so they do not steal the gesture.
-- **Insert** (`I`) clicks a segment to add a node. It is enabled when the layer has path segments.
+- **Insert** (`I`) clicks a segment to add a node. It is enabled when the layer has path segments. The hover preview is a smooth node on a curve and a corner square on a straight segment.
 - **Convert** (`C`) clicks a straight segment to turn it into a curve. It is enabled when the layer has straight segments.
 - **Cut** (toolbar only) clicks an on-curve node to open the contour there. Click a segment to insert a node at that point and cut in the same step. It is enabled when the layer has contours.
 
@@ -43,7 +43,7 @@ A short practice: open `O`, `H`, or `n`; choose Pen; draw a short open contour; 
 
 When the tools feel familiar, you can keep Select active and hold modifiers instead of switching tools. These are the same actions as Pen, Insert, and Convert, without clicking the toolbar. Cut stays a toolbar tool.
 
-Hold `Cmd/Ctrl` in empty glyph space with nothing selected to draw, or on a selected open end to continue that contour. With objects already selected, `Cmd/Ctrl+Click` adds or removes from the selection like Shift instead of inserting. With an empty selection, `Cmd/Ctrl+Click` on a segment inserts a point; on an on-curve point it cuts the contour open (the cut badge appears while that node is hovered). Guideline and sidebearing handles stay a plain-click drag; holding `Cmd/Ctrl` still places a point next to them when nothing is selected. `Alt/Option+Click` on a straight segment converts it to a curve. Drag one open end onto another to join or close.
+Hold `Cmd/Ctrl` in empty glyph space with nothing selected to draw, or on a selected open end to continue that contour. With objects already selected, `Cmd/Ctrl+Click` adds or removes from the selection like Shift instead of inserting. With an empty selection, `Cmd/Ctrl+Click` on a segment inserts a point (the hover preview is a smooth node on a curve and a corner square on a line); on an on-curve point it cuts the contour open (the cut badge appears while that node is hovered). Guideline and sidebearing handles stay a plain-click drag; holding `Cmd/Ctrl` still places a point next to them when nothing is selected. `Alt/Option+Click` on a straight segment converts it to a curve. Drag one open end onto another to join or close.
 
 While `Cmd/Ctrl` is held and nothing is selected, the toolbar highlights Pen, or Insert when an add-point preview is showing. While `Alt/Option` is held, it highlights Convert. Releasing the modifier returns the highlight to the sticky tool. Sticky Pen, Insert, Convert, and Cut stay single-purpose; the `Cmd/Ctrl` hold is what combines draw and insert by hover when the selection is empty.
 

@@ -4026,18 +4026,33 @@ export class GlyphCanvasRenderer {
                 this.ctx.translate(point.x, point.y);
                 this.applyInverseComponentTransform();
                 const isOffCurve = type === 'offcurve';
+                const isInsertedOnCurve =
+                    !isOffCurve &&
+                    addPointPreview !== null &&
+                    Math.abs(point.x - addPointPreview.point.x) < 0.001 &&
+                    Math.abs(point.y - addPointPreview.point.y) < 0.001;
+                const isSmoothInsertPreview =
+                    isInsertedOnCurve &&
+                    addPointPreview.segments.some(
+                        (segment) =>
+                            segment.type === 'cubic' ||
+                            segment.type === 'quadratic'
+                    );
                 const previewKind = isOffCurve
                     ? 'circle'
                     : this.isOnCurveDiamondNode(point.x, point.y)
                       ? 'diamond'
-                      : 'square';
+                      : isSmoothInsertPreview
+                        ? 'circle'
+                        : 'square';
                 const previewRadius =
                     pointSize *
                     (isOffCurve
                         ? controlRatio
-                        : previewKind === 'diamond'
-                          ? diamondRatio
-                          : 1);
+                        : isSmoothInsertPreview
+                          ? smoothRatio
+                          : 1) *
+                    (previewKind === 'diamond' ? diamondRatio : 1);
                 if (!isOffCurve && this.shouldPaintZoneHalo(point.x, point.y)) {
                     this.paintZoneHalo(
                         previewKind,
@@ -4059,6 +4074,20 @@ export class GlyphCanvasRenderer {
                     null,
                     strokeWidth
                 );
+                if (isSmoothInsertPreview) {
+                    this.ctx.beginPath();
+                    this.ctx.arc(
+                        0,
+                        0,
+                        pointSize * smoothRatio * smoothDotRatio,
+                        0,
+                        Math.PI * 2
+                    );
+                    this.ctx.fillStyle = desaturateColor(
+                        colors.NODE_SMOOTH_DOT
+                    );
+                    this.ctx.fill();
+                }
                 this.ctx.restore();
             });
         }
