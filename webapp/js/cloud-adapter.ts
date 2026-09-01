@@ -474,6 +474,7 @@ const OUTBOUND_ACK_TIMEOUT_MS = 10000;
 const OUTBOUND_ACK_MAX_WAIT_MS = 30000;
 const INITIAL_SYNC_TIMEOUT_MS = 10000;
 const INITIAL_SYNC_MAX_WAIT_MS = 30000;
+const TRANSFER_ACTIVITY_HOLD_MS = 450;
 
 export type CloudConnectionStatus =
     | 'disconnected'
@@ -482,6 +483,8 @@ export type CloudConnectionStatus =
     | 'syncing'
     | 'connected'
     | 'error';
+
+export type CloudTransferActivity = 'idle' | 'sending' | 'receiving';
 
 export type CloudAdapterOptions = {
     assetId: string;
@@ -494,6 +497,7 @@ export type CloudAdapterOptions = {
         detail?: string
     ) => void;
     onPendingSyncCountChange?: (count: number) => void;
+    onTransferActivityChange?: (activity: CloudTransferActivity) => void;
     /** Session owns the one reconnect rebaseline after every live shard is fresh. */
     deferVisibleRebaseline?: boolean;
 };
@@ -885,6 +889,13 @@ export class CloudAdapter implements FileSystemAdapter {
     private _onConnectionStatus:
         ((status: CloudConnectionStatus, detail?: string) => void) | null;
     private _onPendingSyncCountChange: ((count: number) => void) | null;
+    private _onTransferActivityChange:
+        ((activity: CloudTransferActivity) => void) | null;
+    private _sendingUntil = 0;
+    private _receivingUntil = 0;
+    private _lastNotedTransfer: 'sending' | 'receiving' | null = null;
+    private _lastEmittedTransferActivity: CloudTransferActivity = 'idle';
+    private _transferIdleTimer: ReturnType<typeof setTimeout> | null = null;
     private _suppressSyncComplete: boolean;
     private _deferVisibleRebaseline: boolean;
 
@@ -960,6 +971,8 @@ export class CloudAdapter implements FileSystemAdapter {
         this._onConnectionStatus = options.onConnectionStatus ?? null;
         this._onPendingSyncCountChange =
             options.onPendingSyncCountChange ?? null;
+        this._onTransferActivityChange =
+            options.onTransferActivityChange ?? null;
     }
 
     get status(): CloudConnectionStatus {
@@ -976,6 +989,10 @@ export class CloudAdapter implements FileSystemAdapter {
 
     get pendingSyncCount(): number {
         return this._durableOutboxEntries.size;
+    }
+
+    get transferActivity(): CloudTransferActivity {
+        return this._computeTransferActivity(Date.now());
     }
 
     get documentId(): string {
@@ -1127,6 +1144,11 @@ export class CloudAdapter implements FileSystemAdapter {
         this._visibleRebaselinePromise = null;
         this._resetWorkerBridgeSyncState();
         this._incomingLiveUpdateChunks.clear();
+        this._clearTransferIdleTimer();
+        this._sendingUntil = 0;
+        this._receivingUntil = 0;
+        this._lastNotedTransfer = null;
+        this._lastEmittedTransferActivity = 'idle';
         this._setStatus('disconnected');
     }
 
@@ -1330,6 +1352,7 @@ export class CloudAdapter implements FileSystemAdapter {
             this._enqueuePendingDurabilityMessages([collaborationMessage]);
             void this._persistDurableOutboxPacket(packet);
         }
+        this._noteTransferActivity('sending');
         if (this._outboundFlushScheduled) {
             return;
         }
@@ -1432,6 +1455,77 @@ export class CloudAdapter implements FileSystemAdapter {
 
     private _emitPendingSyncCountChange(): void {
         this._onPendingSyncCountChange?.(this.pendingSyncCount);
+    }
+
+    private _computeTransferActivity(now: number): CloudTransferActivity {
+        const sending =
+            this._pendingOutboundPackets.length > 0 ||
+            this._outboundFlushScheduled ||
+            this._outboundPendingTransactionIds.size > 0 ||
+            this._sendingUntil > now;
+        const receiving =
+            this._pendingInboundUpdates.length > 0 ||
+            this._inboundFlushScheduled ||
+            this._incomingLiveUpdateChunks.size > 0 ||
+            this._incomingResponseChunks !== null ||
+            this._receivingUntil > now;
+        if (sending && receiving) {
+            return this._lastNotedTransfer ?? 'receiving';
+        }
+        if (receiving) {
+            return 'receiving';
+        }
+        if (sending) {
+            return 'sending';
+        }
+        return 'idle';
+    }
+
+    private _noteTransferActivity(activity: 'sending' | 'receiving'): void {
+        const now = Date.now();
+        this._lastNotedTransfer = activity;
+        if (activity === 'sending') {
+            this._sendingUntil = now + TRANSFER_ACTIVITY_HOLD_MS;
+        } else {
+            this._receivingUntil = now + TRANSFER_ACTIVITY_HOLD_MS;
+        }
+        this._emitTransferActivity();
+    }
+
+    private _emitTransferActivity(): void {
+        const next = this._computeTransferActivity(Date.now());
+        if (next !== this._lastEmittedTransferActivity) {
+            this._lastEmittedTransferActivity = next;
+            this._onTransferActivityChange?.(next);
+        }
+        this._armTransferIdleTimer();
+    }
+
+    private _clearTransferIdleTimer(): void {
+        if (this._transferIdleTimer !== null) {
+            clearTimeout(this._transferIdleTimer);
+            this._transferIdleTimer = null;
+        }
+    }
+
+    private _armTransferIdleTimer(): void {
+        this._clearTransferIdleTimer();
+        if (this._destroyed) {
+            return;
+        }
+        const now = Date.now();
+        const until = Math.max(this._sendingUntil, this._receivingUntil);
+        const next = this._computeTransferActivity(now);
+        if (next === 'idle' && until <= now) {
+            return;
+        }
+        this._transferIdleTimer = setTimeout(
+            () => {
+                this._transferIdleTimer = null;
+                this._emitTransferActivity();
+            },
+            Math.max(0, until - now)
+        );
     }
 
     private _dropDurableTransactions(clientTransactionIds: string[]): void {
@@ -1547,6 +1641,7 @@ export class CloudAdapter implements FileSystemAdapter {
             syncRequest.checkpointLogId = this._checkpointLogId;
         }
         ws.send(JSON.stringify(syncRequest));
+        this._noteTransferActivity('sending');
     }
 
     /**
@@ -1559,6 +1654,7 @@ export class CloudAdapter implements FileSystemAdapter {
         roomUrl: string
     ): Promise<void> {
         const httpUrl = this._shardHttpUrl(roomUrl);
+        this._noteTransferActivity('receiving');
         const response = await fetch(httpUrl, {
             headers: { Authorization: `Bearer ${token}` }
         });
@@ -1617,6 +1713,7 @@ export class CloudAdapter implements FileSystemAdapter {
             throw new Error('no bridge state to seed');
         }
 
+        this._noteTransferActivity('sending');
         const response = await fetch(httpUrl, {
             method: 'POST',
             headers: {
@@ -1667,6 +1764,7 @@ export class CloudAdapter implements FileSystemAdapter {
                 this._assetId,
                 shard.documentId
             );
+            this._noteTransferActivity('sending');
             const response = await fetch(httpUrl, {
                 method: 'POST',
                 headers: {
@@ -1701,6 +1799,7 @@ export class CloudAdapter implements FileSystemAdapter {
                 this._assetId,
                 documentId
             );
+            this._noteTransferActivity('receiving');
             const response = await fetch(httpUrl, {
                 headers: { Authorization: `Bearer ${token}` }
             });
@@ -1934,6 +2033,7 @@ export class CloudAdapter implements FileSystemAdapter {
 
             case 'sync-response': {
                 this._resyncRequestedAfterNoopUpdate = false;
+                this._noteTransferActivity('receiving');
                 const serverSV =
                     typeof msg.serverStateVector === 'string'
                         ? base64ToU8(msg.serverStateVector as string)
@@ -2001,6 +2101,7 @@ export class CloudAdapter implements FileSystemAdapter {
                     this._incomingResponseChunks &&
                     typeof msg.update === 'string'
                 ) {
+                    this._noteTransferActivity('receiving');
                     this._armInitialSyncTimeout();
                     const state = this._incomingResponseChunks;
                     state.chunks[msg.chunkIndex as number] = base64ToU8(
@@ -2022,6 +2123,7 @@ export class CloudAdapter implements FileSystemAdapter {
             }
 
             case 'update-chunk': {
+                this._noteTransferActivity('receiving');
                 this._accumulateIncomingLiveUpdateChunk(msg);
                 break;
             }
@@ -2616,6 +2718,7 @@ export class CloudAdapter implements FileSystemAdapter {
                 }
                 this._ws.send(JSON.stringify(frame));
             }
+            this._noteTransferActivity('sending');
             return true;
         } catch (err) {
             console.warn('CloudAdapter: failed to send sync-complete:', err);
@@ -2861,6 +2964,7 @@ export class CloudAdapter implements FileSystemAdapter {
                 this._ws.send(JSON.stringify(frame));
             }
         }
+        this._noteTransferActivity('sending');
     }
 
     private _recordDurableAck(seq: number): void {
@@ -2873,6 +2977,7 @@ export class CloudAdapter implements FileSystemAdapter {
         this._outboundAckSentAtBySeq.delete(seq);
         this._dropDurableTransactions(pendingTransactionIds);
         this._armOutboundAckTimeout();
+        this._emitTransferActivity();
 
         this._bridge?.advanceBroadcastLogCursor(broadcastEntryCount);
     }
@@ -2910,6 +3015,7 @@ export class CloudAdapter implements FileSystemAdapter {
 
     private _queueInboundUpdate(msg: CloudLiveUpdateMessage): void {
         this._pendingInboundUpdates.push(msg);
+        this._noteTransferActivity('receiving');
         if (this._inboundFlushScheduled) {
             return;
         }

@@ -1519,6 +1519,52 @@ describe('CloudAdapter outbound updates', () => {
         }
     });
 
+    it('reports sending and receiving transfer activity for live updates', async () => {
+        jest.useFakeTimers();
+        const activities = [];
+        const adapter = new CloudAdapter({
+            assetId: 'asset-123',
+            onTransferActivityChange: (activity) => activities.push(activity)
+        });
+        adapter._bridge = {
+            applyRemoteUpdate: jest.fn(() => true),
+            onLocalUpdate: jest.fn(),
+            offLocalUpdate: jest.fn()
+        };
+        adapter._ws = {
+            readyState: 1,
+            send: jest.fn(),
+            close: jest.fn()
+        };
+        adapter._clientId = 'client-1';
+        adapter._status = 'connected';
+        adapter._hasSynced = true;
+
+        try {
+            adapter._enqueueOutboundPacket(new Uint8Array([1, 2, 3]));
+            await Promise.resolve();
+
+            expect(adapter.transferActivity).toBe('sending');
+            expect(activities[activities.length - 1]).toBe('sending');
+
+            jest.advanceTimersByTime(500);
+            expect(adapter.transferActivity).toBe('idle');
+
+            adapter._queueInboundUpdate({
+                update: new Uint8Array([9, 8, 7])
+            });
+            expect(adapter.transferActivity).toBe('receiving');
+            expect(activities[activities.length - 1]).toBe('receiving');
+
+            jest.advanceTimersByTime(500);
+            expect(adapter.transferActivity).toBe('idle');
+            expect(activities[activities.length - 1]).toBe('idle');
+        } finally {
+            adapter.disconnect();
+            jest.useRealTimers();
+        }
+    });
+
     it('retires only the matching pending envelope identity during bootstrap reconciliation', () => {
         const adapter = new CloudAdapter({ assetId: 'asset-123' });
         const durableEnvelope = createCollaborationMessageEnvelope({

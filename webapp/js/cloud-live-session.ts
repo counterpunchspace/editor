@@ -13,6 +13,7 @@ import {
     CLOUD_GLYPH_CATCH_UP_CONCURRENCY,
     runCloudVisibleReconnectRebaseline,
     type CloudConnectionStatus,
+    type CloudTransferActivity,
     normalizeCloudShardWebSocketUrl
 } from './cloud-adapter';
 import {
@@ -39,6 +40,7 @@ export type CloudLiveSessionOptions = {
         detail?: string
     ) => void;
     onPendingSyncCountChange?: (count: number) => void;
+    onTransferActivityChange?: (activity: CloudTransferActivity) => void;
 };
 
 export type GlyphCatchUpTarget = {
@@ -89,6 +91,8 @@ export class CloudLiveSession {
     private _desiredDocumentIds = new Set<string>([FONT_CORE_DOCUMENT_ID]);
     private _reportedConnected = false;
     private _barrierPromise: Promise<void> | null = null;
+    private _httpReceivingCount = 0;
+    private _lastEmittedTransferActivity: CloudTransferActivity = 'idle';
 
     constructor(options: CloudLiveSessionOptions) {
         this._options = options;
@@ -108,6 +112,30 @@ export class CloudLiveSession {
             count += adapter.pendingSyncCount;
         }
         return count;
+    }
+
+    get transferActivity(): CloudTransferActivity {
+        let sending = false;
+        let receiving = this._httpReceivingCount > 0;
+        for (const adapter of this._adapters.values()) {
+            const activity = adapter.transferActivity;
+            if (activity === 'sending') {
+                sending = true;
+            }
+            if (activity === 'receiving') {
+                receiving = true;
+            }
+        }
+        if (sending && receiving) {
+            return 'receiving';
+        }
+        if (receiving) {
+            return 'receiving';
+        }
+        if (sending) {
+            return 'sending';
+        }
+        return 'idle';
     }
 
     getConnectionHealth(): ReturnType<
@@ -146,58 +174,68 @@ export class CloudLiveSession {
         if (!pending.length) {
             return [];
         }
-        const { assetId, websiteBaseUrl, token, roomUrl, bridge } =
-            this._options;
-        const succeeded: string[] = [];
-        const failures: Error[] = [];
-        await runWithConcurrency(
-            pending,
-            CLOUD_GLYPH_CATCH_UP_CONCURRENCY,
-            async (target) => {
-                try {
-                    const ok = await catchUpCloudDocument({
-                        bridge,
-                        token,
-                        roomUrl,
-                        websiteBaseUrl,
-                        assetId,
-                        documentId: target.documentId,
-                        expectedRevision: target.expectedRevision,
-                        resolveExpectedRevision: () => {
-                            const glyphId = target.documentId.startsWith(
-                                'glyph:'
-                            )
-                                ? target.documentId.slice('glyph:'.length)
-                                : '';
-                            if (
-                                !glyphId ||
-                                typeof bridge.listGlyphRevisionTokens !==
-                                    'function'
-                            ) {
-                                return target.expectedRevision;
+        this._httpReceivingCount += 1;
+        this._emitTransferActivity();
+        try {
+            const { assetId, websiteBaseUrl, token, roomUrl, bridge } =
+                this._options;
+            const succeeded: string[] = [];
+            const failures: Error[] = [];
+            await runWithConcurrency(
+                pending,
+                CLOUD_GLYPH_CATCH_UP_CONCURRENCY,
+                async (target) => {
+                    try {
+                        const ok = await catchUpCloudDocument({
+                            bridge,
+                            token,
+                            roomUrl,
+                            websiteBaseUrl,
+                            assetId,
+                            documentId: target.documentId,
+                            expectedRevision: target.expectedRevision,
+                            resolveExpectedRevision: () => {
+                                const glyphId = target.documentId.startsWith(
+                                    'glyph:'
+                                )
+                                    ? target.documentId.slice('glyph:'.length)
+                                    : '';
+                                if (
+                                    !glyphId ||
+                                    typeof bridge.listGlyphRevisionTokens !==
+                                        'function'
+                                ) {
+                                    return target.expectedRevision;
+                                }
+                                return bridge
+                                    .listGlyphRevisionTokens()
+                                    .find((entry) => entry.glyphId === glyphId)
+                                    ?.revision;
                             }
-                            return bridge
-                                .listGlyphRevisionTokens()
-                                .find((entry) => entry.glyphId === glyphId)
-                                ?.revision;
+                        });
+                        if (ok) {
+                            succeeded.push(target.documentId);
                         }
-                    });
-                    if (ok) {
-                        succeeded.push(target.documentId);
+                    } catch (error) {
+                        failures.push(
+                            error instanceof Error
+                                ? error
+                                : new Error(String(error))
+                        );
                     }
-                } catch (error) {
-                    failures.push(
-                        error instanceof Error
-                            ? error
-                            : new Error(String(error))
-                    );
                 }
+            );
+            if (failures.length) {
+                throw failures[0];
             }
-        );
-        if (failures.length) {
-            throw failures[0];
+            return succeeded;
+        } finally {
+            this._httpReceivingCount = Math.max(
+                0,
+                this._httpReceivingCount - 1
+            );
+            this._emitTransferActivity();
         }
-        return succeeded;
     }
 
     sendForwardedUpdate(
@@ -219,6 +257,8 @@ export class CloudLiveSession {
         this._desiredDocumentIds = new Set([FONT_CORE_DOCUMENT_ID]);
         this._reportedConnected = false;
         this._barrierPromise = null;
+        this._httpReceivingCount = 0;
+        this._lastEmittedTransferActivity = 'idle';
     }
 
     async syncLiveDocumentIds(documentIds: string[]): Promise<void> {
@@ -252,6 +292,15 @@ export class CloudLiveSession {
 
     private _emitPendingSyncCount(): void {
         this._options.onPendingSyncCountChange?.(this.pendingSyncCount);
+    }
+
+    private _emitTransferActivity(): void {
+        const next = this.transferActivity;
+        if (next === this._lastEmittedTransferActivity) {
+            return;
+        }
+        this._lastEmittedTransferActivity = next;
+        this._options.onTransferActivityChange?.(next);
     }
 
     private async _connectDocument(documentId: string): Promise<void> {
@@ -296,6 +345,9 @@ export class CloudLiveSession {
             },
             onPendingSyncCountChange: () => {
                 this._emitPendingSyncCount();
+            },
+            onTransferActivityChange: () => {
+                this._emitTransferActivity();
             }
         });
         const wsUrl = normalizeCloudShardWebSocketUrl(
@@ -328,6 +380,7 @@ export class CloudLiveSession {
             if (this._desiredDocumentIds.has(documentId)) {
                 this._adapters.set(documentId, adapter);
                 this._emitPendingSyncCount();
+                this._emitTransferActivity();
             } else {
                 adapter.disconnect();
             }

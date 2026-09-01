@@ -18,6 +18,7 @@ import {
     CloudAdapter,
     CloudAdapterOptions,
     CloudConnectionStatus,
+    type CloudTransferActivity,
     normalizeCloudRoomWebSocketUrl
 } from '../../cloud-adapter';
 import {
@@ -793,6 +794,7 @@ export class CloudPlugin extends FilesystemPlugin {
     private _relayedConnectionStatus: CloudConnectionStatus = 'disconnected';
     private _relayedConnectionDetail: string | undefined;
     private _relayedPendingSyncCount = 0;
+    private _relayedTransferActivity: CloudTransferActivity = 'idle';
     private _eligibility: CloudEligibility | null = null;
     private _assetLimits: CloudAssetLimits | null = null;
     private _documentSet: CloudDocumentSet | null = null;
@@ -811,6 +813,10 @@ export class CloudPlugin extends FilesystemPlugin {
     >();
     private _connectionDetailByAssetId = new Map<string, string>();
     private _pendingSyncCountByAssetId = new Map<string, number>();
+    private _transferActivityByAssetId = new Map<
+        string,
+        CloudTransferActivity
+    >();
     private _connectionTraceByAssetId = new Map<
         string,
         Array<{
@@ -1008,7 +1014,7 @@ export class CloudPlugin extends FilesystemPlugin {
                 visible: true,
                 title: `Cloud status: Font exceeds the current cloud size limit (${formatCloudByteCount(byteLength)} of ${formatCloudByteCount(policy.maxCloudAssetBytes)}). Cloud editing will stop working until a larger compaction tier exists.`,
                 label: 'Too large',
-                icon: 'sync_problem',
+                icon: 'cloud_alert',
                 tone: 'error'
             };
         }
@@ -1042,6 +1048,24 @@ export class CloudPlugin extends FilesystemPlugin {
         }
 
         return this._pendingSyncCountByAssetId.get(assetId) ?? 0;
+    }
+
+    getAssetTransferActivity(assetId: string): CloudTransferActivity {
+        if (
+            window.windowRole?.isLinkedWindow() &&
+            assetId === this._relayedAssetId
+        ) {
+            return this._relayedTransferActivity;
+        }
+
+        if (this._activeAssetId === assetId && this._liveSession) {
+            return this._liveSession.transferActivity;
+        }
+        if (this._activeAssetId === assetId && this._cloudAdapter) {
+            return this._cloudAdapter.transferActivity;
+        }
+
+        return this._transferActivityByAssetId.get(assetId) ?? 'idle';
     }
 
     getConnectionTrace(assetId: string): Array<{
@@ -1168,6 +1192,7 @@ export class CloudPlugin extends FilesystemPlugin {
                 assetId,
                 status,
                 pendingSyncCount: this.getAssetPendingSyncCount(assetId),
+                transferActivity: this.getAssetTransferActivity(assetId),
                 ...(detail ? { detail } : {})
             });
         }
@@ -1178,7 +1203,8 @@ export class CloudPlugin extends FilesystemPlugin {
                     assetId,
                     status,
                     detail,
-                    pendingSyncCount: this.getAssetPendingSyncCount(assetId)
+                    pendingSyncCount: this.getAssetPendingSyncCount(assetId),
+                    transferActivity: this.getAssetTransferActivity(assetId)
                 }
             })
         );
@@ -1195,6 +1221,7 @@ export class CloudPlugin extends FilesystemPlugin {
                 assetId,
                 status,
                 pendingSyncCount: this.getAssetPendingSyncCount(assetId),
+                transferActivity: this.getAssetTransferActivity(assetId),
                 ...(detail ? { detail } : {})
             });
         }
@@ -1205,9 +1232,21 @@ export class CloudPlugin extends FilesystemPlugin {
                     assetId,
                     status,
                     detail,
-                    pendingSyncCount: this.getAssetPendingSyncCount(assetId)
+                    pendingSyncCount: this.getAssetPendingSyncCount(assetId),
+                    transferActivity: this.getAssetTransferActivity(assetId)
                 }
             })
+        );
+    }
+
+    private _updateTransferActivity(
+        assetId: string,
+        activity: CloudTransferActivity
+    ): void {
+        this._transferActivityByAssetId.set(assetId, activity);
+        this._updatePendingSyncCount(
+            assetId,
+            this.getAssetPendingSyncCount(assetId)
         );
     }
 
@@ -1372,6 +1411,7 @@ export class CloudPlugin extends FilesystemPlugin {
         status: CloudConnectionStatus;
         detail?: string;
         pendingSyncCount?: number;
+        transferActivity?: CloudTransferActivity;
     } {
         const detail = this._activeAssetId
             ? this.getAssetConnectionDetail(this._activeAssetId)
@@ -1382,6 +1422,9 @@ export class CloudPlugin extends FilesystemPlugin {
             ...(this._activeAssetId
                 ? {
                       pendingSyncCount: this.getAssetPendingSyncCount(
+                          this._activeAssetId
+                      ),
+                      transferActivity: this.getAssetTransferActivity(
                           this._activeAssetId
                       )
                   }
@@ -1395,6 +1438,7 @@ export class CloudPlugin extends FilesystemPlugin {
         status: string;
         detail?: string;
         pendingSyncCount?: number;
+        transferActivity?: CloudTransferActivity;
     }): void {
         if (window.windowRole?.isMainWindow()) {
             return;
@@ -1407,6 +1451,11 @@ export class CloudPlugin extends FilesystemPlugin {
             0,
             Number(state.pendingSyncCount ?? 0)
         );
+        this._relayedTransferActivity =
+            state.transferActivity === 'sending' ||
+            state.transferActivity === 'receiving'
+                ? state.transferActivity
+                : 'idle';
 
         if (state.assetId) {
             this._connectionStatusByAssetId.set(
@@ -1425,6 +1474,10 @@ export class CloudPlugin extends FilesystemPlugin {
                 state.assetId,
                 this._relayedPendingSyncCount
             );
+            this._transferActivityByAssetId.set(
+                state.assetId,
+                this._relayedTransferActivity
+            );
         }
 
         if (
@@ -1441,7 +1494,8 @@ export class CloudPlugin extends FilesystemPlugin {
                     assetId: state.assetId,
                     status: this._relayedConnectionStatus,
                     detail: state.detail,
-                    pendingSyncCount: this._relayedPendingSyncCount
+                    pendingSyncCount: this._relayedPendingSyncCount,
+                    transferActivity: this._relayedTransferActivity
                 }
             })
         );
@@ -2431,6 +2485,9 @@ export class CloudPlugin extends FilesystemPlugin {
                 },
                 onPendingSyncCountChange: (count: number) => {
                     this._updatePendingSyncCount(assetId, count);
+                },
+                onTransferActivityChange: (activity) => {
+                    this._updateTransferActivity(assetId, activity);
                 }
             });
 
@@ -3025,6 +3082,9 @@ export class CloudPlugin extends FilesystemPlugin {
             },
             onPendingSyncCountChange: (count) => {
                 this._updatePendingSyncCount(options.assetId, count);
+            },
+            onTransferActivityChange: (activity) => {
+                this._updateTransferActivity(options.assetId, activity);
             }
         });
         const glyphDocumentIds = liveGlyphDocumentIdsFromSubset(
@@ -3139,6 +3199,11 @@ export class CloudPlugin extends FilesystemPlugin {
             `connectionStatus: ${status}`,
             ...(detail ? [`connectionDetail: ${detail}`] : []),
             `pendingSyncCount: ${pendingSyncCount}`,
+            `transferActivity: ${
+                activeAssetId
+                    ? this.getAssetTransferActivity(activeAssetId)
+                    : 'idle'
+            }`,
             `connectedAssetIds: ${connectedAssetIds.length ? connectedAssetIds.join(', ') : 'none'}`,
             `lastOutboundSeq: ${outboundSeq ?? 'none'}`,
             `lastInboundCount: ${inboundCount ?? 'none'}`,

@@ -1321,46 +1321,36 @@ html[data-command-modifier='ctrl'] .shortcut-option-modifier::before {
     font-size: 18px;
 }
 
-.cloud-connection-warning-badge {
-    display: none;
+.cloud-status-chip {
     align-items: center;
-    gap: 6px;
-    min-height: 28px;
-    padding: 0 10px;
-    border: 1px solid var(--status-warning);
-    border-radius: 999px;
-    background: color-mix(in srgb, var(--status-warning) 14%, transparent);
+    background: transparent;
+    border: none;
     color: var(--text-primary);
-    font-size: 11px;
-    font-weight: 600;
-    letter-spacing: 0.02em;
-    white-space: nowrap;
+    cursor: default;
+    display: none;
+    flex-shrink: 0;
+    height: 32px;
+    justify-content: center;
+    min-width: 32px;
+    padding: 0;
+    width: 32px;
 }
 
-.cloud-connection-warning-badge.visible {
+.cloud-status-chip.visible {
     display: inline-flex;
 }
 
-.cloud-connection-warning-badge.tone-warning {
-    border-color: var(--status-warning);
+.cloud-status-chip .material-symbols-outlined {
+    color: var(--text-primary);
+    font-size: 18px;
 }
 
-.cloud-connection-warning-badge.tone-error {
-    border-color: var(--status-error);
-    background: color-mix(in srgb, var(--status-error) 14%, transparent);
+.cloud-status-chip.tone-warning .material-symbols-outlined {
+    color: var(--accent-orange);
 }
 
-.cloud-connection-warning-badge .material-symbols-outlined {
-    font-size: 16px;
-    color: var(--status-warning);
-}
-
-.cloud-connection-warning-badge.tone-error .material-symbols-outlined {
-    color: var(--status-error);
-}
-
-.cloud-connection-warning-text {
-    line-height: 1;
+.cloud-status-chip.tone-error .material-symbols-outlined {
+    color: var(--accent-red);
 }
 
 .cloud-access-role-badge {

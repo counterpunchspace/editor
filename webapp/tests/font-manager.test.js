@@ -2547,6 +2547,15 @@ describe('FontManager share button visibility', () => {
                 <span class="font-icon"></span>
                 <span class="font-name"></span>
             </div>
+            <span
+                id="cloud-status-chip"
+                class="cloud-status-chip"
+                role="status"
+                aria-live="polite"
+                hidden
+            >
+                <span class="material-symbols-outlined">cloud_done</span>
+            </span>
             <button id="share-btn" class="share-button" title="Invite people">
                 <span class="material-symbols-outlined">group_add</span>
             </button>
@@ -2589,7 +2598,8 @@ describe('FontManager share button visibility', () => {
             getAssetConnectionStatus: jest.fn(() => 'connected'),
             getAssetConnectionDetail: jest.fn(() => undefined),
             hasConnectionProblem: jest.fn(() => false),
-            getAssetPendingSyncCount: jest.fn(() => 0)
+            getAssetPendingSyncCount: jest.fn(() => 0),
+            getAssetTransferActivity: jest.fn(() => 'idle')
         };
     }
 
@@ -2680,9 +2690,7 @@ describe('FontManager share button visibility', () => {
         const cloudAccessRoleBadge = document.getElementById(
             'cloud-access-role-badge'
         );
-        const warningBadge = document.querySelector(
-            '.cloud-connection-warning-badge'
-        );
+        const warningBadge = document.querySelector('.cloud-status-chip');
 
         expect(shareButton.classList.contains('visible')).toBe(false);
         expect(cloudAccessRoleBadge.classList.contains('visible')).toBe(false);
@@ -2702,18 +2710,19 @@ describe('FontManager share button visibility', () => {
 
         fontManager.updateFontDisplay();
 
-        const warningBadge = document.querySelector(
-            '.cloud-connection-warning-badge'
-        );
+        const warningBadge = document.querySelector('.cloud-status-chip');
         const shareButton = document.getElementById('share-btn');
 
         expect(shareButton.classList.contains('visible')).toBe(true);
         expect(warningBadge.classList.contains('visible')).toBe(true);
         expect(warningBadge.hidden).toBe(false);
+        expect(warningBadge.classList.contains('tone-warning')).toBe(true);
         expect(warningBadge.getAttribute('title')).toBe(
             'Cloud status: Access epoch is stale'
         );
-        expect(warningBadge.textContent).toContain('Reconnecting');
+        expect(
+            warningBadge.querySelector('.material-symbols-outlined').textContent
+        ).toBe('cloud_sync');
     });
 
     test('shows a persistent cloud size warning badge even when the connection is stable', () => {
@@ -2728,16 +2737,17 @@ describe('FontManager share button visibility', () => {
 
         fontManager.updateFontDisplay();
 
-        const warningBadge = document.querySelector(
-            '.cloud-connection-warning-badge'
-        );
+        const warningBadge = document.querySelector('.cloud-status-chip');
 
         expect(warningBadge.classList.contains('visible')).toBe(true);
         expect(warningBadge.hidden).toBe(false);
+        expect(warningBadge.classList.contains('tone-warning')).toBe(true);
         expect(warningBadge.getAttribute('title')).toBe(
             'Cloud status: Font is near the current cloud size limit (11.9 MiB of 16.0 MiB).'
         );
-        expect(warningBadge.textContent).toContain('Near limit');
+        expect(
+            warningBadge.querySelector('.material-symbols-outlined').textContent
+        ).toBe('warning');
     });
 
     test('shows a connection warning badge for a cloud-backed font with no live adapter attached', () => {
@@ -2749,32 +2759,69 @@ describe('FontManager share button visibility', () => {
 
         fontManager.updateFontDisplay();
 
-        const warningBadge = document.querySelector(
-            '.cloud-connection-warning-badge'
-        );
+        const warningBadge = document.querySelector('.cloud-status-chip');
 
         expect(warningBadge.classList.contains('visible')).toBe(true);
         expect(warningBadge.hidden).toBe(false);
+        expect(warningBadge.classList.contains('tone-warning')).toBe(true);
         expect(warningBadge.getAttribute('title')).toBe(
             'Cloud status: Cloud room is disconnected'
         );
-        expect(warningBadge.textContent).toContain('Offline');
+        expect(
+            warningBadge.querySelector('.material-symbols-outlined').textContent
+        ).toBe('cloud_off');
     });
 
-    test('hides the connection warning badge while the cloud room is stable', () => {
+    test('shows a monochrome cloud_done chip while the cloud room is stable', () => {
         setCurrentFont({ role: 'editor', path: 'cloud://asset-1' });
 
         fontManager.updateFontDisplay();
 
-        const warningBadge = document.querySelector(
-            '.cloud-connection-warning-badge'
-        );
+        const warningBadge = document.querySelector('.cloud-status-chip');
 
-        expect(warningBadge.classList.contains('visible')).toBe(false);
-        expect(warningBadge.hidden).toBe(true);
+        expect(warningBadge.classList.contains('visible')).toBe(true);
+        expect(warningBadge.hidden).toBe(false);
+        expect(warningBadge.classList.contains('tone-warning')).toBe(false);
+        expect(warningBadge.classList.contains('tone-error')).toBe(false);
+        expect(warningBadge.getAttribute('title')).toBe(
+            'Cloud status: Connected. Changes sync continuously.'
+        );
+        expect(
+            warningBadge.querySelector('.material-symbols-outlined').textContent
+        ).toBe('cloud_done');
     });
 
-    test('does not show the connection warning badge during initial cloud authentication before any real connection problem exists', () => {
+    test('shows cloud_upload while sending and cloud_download while receiving', () => {
+        setCurrentFont({ role: 'owner', path: 'cloud://asset-1' });
+        window.cloudPlugin.getAssetTransferActivity.mockReturnValue('sending');
+
+        fontManager.updateFontDisplay();
+
+        const warningBadge = document.querySelector('.cloud-status-chip');
+
+        expect(warningBadge.classList.contains('tone-warning')).toBe(false);
+        expect(warningBadge.getAttribute('title')).toBe(
+            'Cloud status: Sending changes to the cloud'
+        );
+        expect(
+            warningBadge.querySelector('.material-symbols-outlined').textContent
+        ).toBe('cloud_upload');
+
+        window.cloudPlugin.getAssetTransferActivity.mockReturnValue(
+            'receiving'
+        );
+        fontManager.updateFontDisplay();
+
+        expect(warningBadge.classList.contains('tone-warning')).toBe(false);
+        expect(warningBadge.getAttribute('title')).toBe(
+            'Cloud status: Receiving cloud updates'
+        );
+        expect(
+            warningBadge.querySelector('.material-symbols-outlined').textContent
+        ).toBe('cloud_download');
+    });
+
+    test('shows a monochrome cloud_sync chip during initial cloud authentication before any real connection problem exists', () => {
         setCurrentFont({ role: 'owner', path: 'cloud://asset-1' });
         window.cloudPlugin.getAssetConnectionStatus.mockReturnValue(
             'authenticating'
@@ -2783,13 +2830,18 @@ describe('FontManager share button visibility', () => {
 
         fontManager.updateFontDisplay();
 
-        const warningBadge = document.querySelector(
-            '.cloud-connection-warning-badge'
-        );
+        const warningBadge = document.querySelector('.cloud-status-chip');
 
-        expect(warningBadge.classList.contains('visible')).toBe(false);
-        expect(warningBadge.hidden).toBe(true);
-        expect(warningBadge.getAttribute('title')).toBeNull();
+        expect(warningBadge.classList.contains('visible')).toBe(true);
+        expect(warningBadge.hidden).toBe(false);
+        expect(warningBadge.classList.contains('tone-warning')).toBe(false);
+        expect(warningBadge.classList.contains('tone-error')).toBe(false);
+        expect(warningBadge.getAttribute('title')).toBe(
+            'Cloud status: Authenticating cloud room access'
+        );
+        expect(
+            warningBadge.querySelector('.material-symbols-outlined').textContent
+        ).toBe('cloud_sync');
     });
 
     test('shows a pending durable sync count while the cloud socket remains connected', () => {
@@ -2799,21 +2851,26 @@ describe('FontManager share button visibility', () => {
 
         fontManager.updateFontDisplay();
 
-        const warningBadge = document.querySelector(
-            '.cloud-connection-warning-badge'
-        );
+        const warningBadge = document.querySelector('.cloud-status-chip');
 
-        expect(warningBadge.classList.contains('visible')).toBe(false);
-        expect(warningBadge.hidden).toBe(true);
+        expect(warningBadge.classList.contains('visible')).toBe(true);
+        expect(warningBadge.hidden).toBe(false);
+        expect(warningBadge.classList.contains('tone-warning')).toBe(false);
+        expect(
+            warningBadge.querySelector('.material-symbols-outlined').textContent
+        ).toBe('cloud_done');
 
         jest.advanceTimersByTime(1000);
 
         expect(warningBadge.classList.contains('visible')).toBe(true);
         expect(warningBadge.hidden).toBe(false);
+        expect(warningBadge.classList.contains('tone-warning')).toBe(true);
         expect(warningBadge.getAttribute('title')).toBe(
             'Cloud status: 3 cloud edits waiting for durable sync'
         );
-        expect(warningBadge.textContent).toContain('3 pending');
+        expect(
+            warningBadge.querySelector('.material-symbols-outlined').textContent
+        ).toBe('cloud_upload');
     });
 
     test('does not show the pending durable sync count if it clears before the 1s delay', () => {
@@ -2823,17 +2880,19 @@ describe('FontManager share button visibility', () => {
 
         fontManager.updateFontDisplay();
 
-        const warningBadge = document.querySelector(
-            '.cloud-connection-warning-badge'
-        );
+        const warningBadge = document.querySelector('.cloud-status-chip');
 
         jest.advanceTimersByTime(500);
         window.cloudPlugin.getAssetPendingSyncCount.mockReturnValue(0);
         fontManager.updateFontDisplay();
         jest.advanceTimersByTime(1000);
 
-        expect(warningBadge.classList.contains('visible')).toBe(false);
-        expect(warningBadge.hidden).toBe(true);
+        expect(warningBadge.classList.contains('visible')).toBe(true);
+        expect(warningBadge.hidden).toBe(false);
+        expect(warningBadge.classList.contains('tone-warning')).toBe(false);
+        expect(
+            warningBadge.querySelector('.material-symbols-outlined').textContent
+        ).toBe('cloud_done');
     });
 
     test('cloud-backed fonts no longer use the dirty indicator for connection problems', async () => {

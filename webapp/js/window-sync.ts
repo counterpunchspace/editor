@@ -32,6 +32,7 @@ type CloudConnectionRelayState = {
     status: string;
     detail?: string;
     pendingSyncCount?: number;
+    transferActivity?: 'idle' | 'sending' | 'receiving';
 };
 
 // ── Protocol message types ──────────────────────────────────────────
