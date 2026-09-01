@@ -41,6 +41,11 @@ jest.mock('../js/cloud-adapter', () => ({
                         );
                     }
                 }
+                if (
+                    queuedStatuses.some((entry) => entry.status === 'connected')
+                ) {
+                    adapter.status = 'connected';
+                }
             }),
             connect: jest.fn(async (...args) => {
                 mockConnect(...args);
@@ -55,18 +60,30 @@ jest.mock('../js/cloud-adapter', () => ({
                         );
                     }
                 }
+                if (
+                    queuedStatuses.some((entry) => entry.status === 'connected')
+                ) {
+                    adapter.status = 'connected';
+                }
             }),
             rebindToCurrentBridge: mockRebindToCurrentBridge,
             seedDocumentSet: jest.fn().mockResolvedValue(),
             hydrateDocumentSet: jest.fn().mockResolvedValue(new Map()),
             disconnect: jest.fn(() => {
                 mockDisconnect();
+                adapter.status = 'disconnected';
             }),
-            status: 'disconnected'
+            status: 'disconnected',
+            isTransportSynced: () => adapter.status === 'connected',
+            needsVisibleRebaseline: false,
+            clearVisibleRebaselineNeeded: jest.fn()
         };
 
         return adapter;
     }),
+    catchUpCloudDocument: jest.fn().mockResolvedValue(false),
+    runCloudVisibleReconnectRebaseline: jest.fn().mockResolvedValue({}),
+    CLOUD_GLYPH_CATCH_UP_CONCURRENCY: 4,
     normalizeCloudRoomWebSocketUrl: jest.fn((roomUrl) => roomUrl),
     normalizeCloudShardWebSocketUrl: jest.fn((roomUrl) => roomUrl)
 }));

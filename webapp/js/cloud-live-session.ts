@@ -3,16 +3,22 @@
  *
  * Always connects `font-core`. Glyph rooms are opened only for the current
  * editing subset (visible/active glyphs). HTTP hydrate/seed still covers the
- * full font in v1. `font-deps` stays HTTP-only.
+ * full font in v1. `font-deps` is HTTP-only at open and is live-caught on the
+ * reconnect barrier. The session reports connected only after core, live glyphs,
+ * and deps are fresh, then rebases the UI once.
  */
 import {
     CloudAdapter,
     catchUpCloudDocument,
     CLOUD_GLYPH_CATCH_UP_CONCURRENCY,
+    runCloudVisibleReconnectRebaseline,
     type CloudConnectionStatus,
     normalizeCloudShardWebSocketUrl
 } from './cloud-adapter';
-import { FONT_CORE_DOCUMENT_ID } from './filesystem-plugins/cloud-document-set';
+import {
+    FONT_CORE_DOCUMENT_ID,
+    FONT_DEPS_DOCUMENT_ID
+} from './filesystem-plugins/cloud-document-set';
 import type { PatchSyncEngine } from './patch-sync-engine';
 import type { CollaborationMessageEnvelope } from './collaboration-message';
 import { Logger } from './logger';
@@ -81,6 +87,8 @@ export class CloudLiveSession {
     private readonly _adapters = new Map<string, CloudAdapter>();
     private readonly _options: CloudLiveSessionOptions;
     private _desiredDocumentIds = new Set<string>([FONT_CORE_DOCUMENT_ID]);
+    private _reportedConnected = false;
+    private _barrierPromise: Promise<void> | null = null;
 
     constructor(options: CloudLiveSessionOptions) {
         this._options = options;
@@ -117,7 +125,8 @@ export class CloudLiveSession {
     }
 
     async catchUpDocuments(
-        targets: Array<string | GlyphCatchUpTarget>
+        targets: Array<string | GlyphCatchUpTarget>,
+        options?: { includeLiveDocuments?: boolean }
     ): Promise<string[]> {
         const unique = new Map<string, GlyphCatchUpTarget>();
         for (const target of targets) {
@@ -126,7 +135,8 @@ export class CloudLiveSession {
             if (
                 !normalized.documentId ||
                 normalized.documentId === FONT_CORE_DOCUMENT_ID ||
-                this._adapters.has(normalized.documentId)
+                (!options?.includeLiveDocuments &&
+                    this._adapters.has(normalized.documentId))
             ) {
                 continue;
             }
@@ -207,6 +217,8 @@ export class CloudLiveSession {
         }
         this._adapters.clear();
         this._desiredDocumentIds = new Set([FONT_CORE_DOCUMENT_ID]);
+        this._reportedConnected = false;
+        this._barrierPromise = null;
     }
 
     async syncLiveDocumentIds(documentIds: string[]): Promise<void> {
@@ -235,6 +247,7 @@ export class CloudLiveSession {
             pending.push(this._connectDocument(documentId));
         }
         await Promise.all(pending);
+        await this._runSessionReadyBarrier();
     }
 
     private _emitPendingSyncCount(): void {
@@ -250,8 +263,7 @@ export class CloudLiveSession {
             bridge,
             bootstrapMode,
             checkpointLogId,
-            connectedTimeoutMs,
-            onConnectionStatus
+            connectedTimeoutMs
         } = this._options;
         let resolveConnected: (() => void) | null = null;
         let rejectConnected: ((err: Error) => void) | null = null;
@@ -266,9 +278,12 @@ export class CloudLiveSession {
             assetId,
             websiteBaseUrl,
             documentId,
+            deferVisibleRebaseline: true,
             onConnectionStatus: (status, detail) => {
                 if (isCore) {
-                    onConnectionStatus?.(status, detail);
+                    this._onCoreAdapterStatus(status, detail);
+                } else {
+                    this._onGlyphAdapterStatus(status);
                 }
                 if (status === 'connected') {
                     resolveConnected?.();
@@ -325,6 +340,144 @@ export class CloudLiveSession {
                 `CloudLiveSession: failed to connect glyph room ${documentId}:`,
                 error
             );
+        }
+    }
+
+    private _onCoreAdapterStatus(
+        status: CloudConnectionStatus,
+        detail?: string
+    ): void {
+        if (status === 'connected') {
+            if (this._reportedConnected) {
+                void this._runSessionReadyBarrier();
+            }
+            return;
+        }
+        if (status === 'connecting' || status === 'syncing') {
+            this._reportedConnected = false;
+        }
+        this._options.onConnectionStatus?.(status, detail);
+    }
+
+    private _onGlyphAdapterStatus(status: CloudConnectionStatus): void {
+        if (status === 'connected' && this._adapters.size > 0) {
+            const needsBarrier = [...this._adapters.values()].some(
+                (adapter) => adapter.needsVisibleRebaseline
+            );
+            if (needsBarrier) {
+                this._reportedConnected = false;
+                this._options.onConnectionStatus?.(
+                    'syncing',
+                    'Catching up after reconnect'
+                );
+                void this._runSessionReadyBarrier();
+            }
+        }
+    }
+
+    private async _runSessionReadyBarrier(): Promise<void> {
+        if (this._barrierPromise) {
+            return this._barrierPromise;
+        }
+        this._barrierPromise = this._completeSessionReadyBarrier().finally(
+            () => {
+                this._barrierPromise = null;
+            }
+        );
+        return this._barrierPromise;
+    }
+
+    private async _completeSessionReadyBarrier(): Promise<void> {
+        this._options.onConnectionStatus?.('syncing', 'Catching up');
+        await this._waitForLiveTransportSynced();
+        await this._catchUpLiveSubsetAndDeps();
+        const adapters = [...this._adapters.values()];
+        const needsRebaseline = adapters.some(
+            (adapter) => adapter.needsVisibleRebaseline
+        );
+        if (needsRebaseline) {
+            this._options.onConnectionStatus?.(
+                'syncing',
+                'Rebuilding visible state after reconnect'
+            );
+            try {
+                await runCloudVisibleReconnectRebaseline();
+                for (const adapter of adapters) {
+                    adapter.clearVisibleRebaselineNeeded();
+                }
+            } catch (error) {
+                const detail =
+                    error instanceof Error ? error.message : String(error);
+                this._options.onConnectionStatus?.(
+                    'error',
+                    `Reconnect refresh failed: ${detail}`
+                );
+                throw error;
+            }
+        }
+        this._reportedConnected = true;
+        this._options.onConnectionStatus?.('connected');
+    }
+
+    private async _waitForLiveTransportSynced(
+        timeoutMs = 30_000
+    ): Promise<void> {
+        const deadline = Date.now() + timeoutMs;
+        while (Date.now() < deadline) {
+            const pending = [...this._desiredDocumentIds].filter(
+                (documentId) => {
+                    const adapter = this._adapters.get(documentId);
+                    if (!adapter) {
+                        return true;
+                    }
+                    if (typeof adapter.isTransportSynced === 'function') {
+                        return !adapter.isTransportSynced();
+                    }
+                    return adapter.status !== 'connected';
+                }
+            );
+            if (!pending.length) {
+                return;
+            }
+            await new Promise((resolve) => {
+                window.setTimeout(resolve, 50);
+            });
+        }
+        console.warn(
+            'CloudLiveSession: live shard sync timed out; continuing with HTTP catch-up'
+        );
+    }
+
+    private async _catchUpLiveSubsetAndDeps(): Promise<void> {
+        const liveGlyphs = [...this._desiredDocumentIds].filter(
+            (documentId) => documentId !== FONT_CORE_DOCUMENT_ID
+        );
+        const tokens = this._options.bridge.listGlyphRevisionTokens?.() ?? [];
+        const glyphTargets = liveGlyphs.map((documentId) => {
+            const glyphId = documentId.startsWith('glyph:')
+                ? documentId.slice('glyph:'.length)
+                : '';
+            const revision = tokens.find(
+                (entry) => entry.glyphId === glyphId
+            )?.revision;
+            return { documentId, expectedRevision: revision };
+        });
+        try {
+            if (glyphTargets.length) {
+                await this.catchUpDocuments(glyphTargets, {
+                    includeLiveDocuments: true
+                });
+            }
+            await catchUpCloudDocument({
+                bridge: this._options.bridge,
+                token: this._options.token,
+                roomUrl: this._options.roomUrl,
+                websiteBaseUrl: this._options.websiteBaseUrl,
+                assetId: this._options.assetId,
+                documentId: FONT_DEPS_DOCUMENT_ID
+            });
+        } catch (error) {
+            console.warn('CloudLiveSession: reconnect catch-up failed:', error);
         }
     }
 }

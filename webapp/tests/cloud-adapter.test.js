@@ -2647,6 +2647,95 @@ describe('CloudAdapter durability failures', () => {
         }
     });
 
+    it('defers visible rebaseline when the live session owns it', async () => {
+        const statuses = [];
+        const adapter = new CloudAdapter({
+            assetId: 'asset-123',
+            deferVisibleRebaseline: true,
+            onConnectionStatus: (status, detail) => {
+                statuses.push({ status, detail });
+            }
+        });
+        const originalRefresh = window.syncRustCacheAndRefreshCanvas;
+        const refresh = jest.fn();
+        window.syncRustCacheAndRefreshCanvas = refresh;
+        adapter._hasSynced = true;
+        adapter._initialServerStateApplied = true;
+        adapter._initialSyncDurable = true;
+        adapter._needsVisibleRebaseline = true;
+
+        try {
+            await adapter._maybeMarkInitialSyncConnected();
+
+            expect(refresh).not.toHaveBeenCalled();
+            expect(adapter.needsVisibleRebaseline).toBe(true);
+            expect(statuses).toEqual([
+                { status: 'connected', detail: undefined }
+            ]);
+            expect(adapter.isTransportSynced()).toBe(true);
+        } finally {
+            window.syncRustCacheAndRefreshCanvas = originalRefresh;
+        }
+    });
+
+    it('pings the room and reconnects when inbound traffic goes stale', async () => {
+        jest.useFakeTimers();
+        const originalWebSocket = global.WebSocket;
+        let socket;
+        class FakeWebSocket {
+            constructor() {
+                this.readyState = 1;
+                this.send = jest.fn();
+                this.close = jest.fn(() => {
+                    this.readyState = 2;
+                });
+                socket = this;
+            }
+        }
+        global.WebSocket = FakeWebSocket;
+        const adapter = new CloudAdapter({
+            assetId: 'asset-123',
+            websiteBaseUrl: 'https://counterpunch.space'
+        });
+        const scheduleReconnect = jest
+            .spyOn(adapter, '_scheduleReconnect')
+            .mockImplementation(() => {});
+
+        try {
+            await adapter.connectDirect(
+                {
+                    onLocalUpdate: jest.fn(),
+                    offLocalUpdate: jest.fn()
+                },
+                'room-token',
+                'wss://rooms.example.com/room/asset-123',
+                { bootstrapMode: 'skip' }
+            );
+            socket.onopen();
+            adapter._handleMessage(
+                JSON.stringify({
+                    type: 'auth-ok',
+                    clientId: 'c1',
+                    roomSchemaVersion: 3
+                })
+            );
+            jest.advanceTimersByTime(10000);
+            expect(socket.send).toHaveBeenCalledWith(
+                expect.stringContaining('"type":"ping"')
+            );
+
+            adapter._lastInboundMessageAt = Date.now() - 26000;
+            jest.advanceTimersByTime(10000);
+            expect(scheduleReconnect).toHaveBeenCalled();
+            expect(adapter.getConnectionHealth().livenessTimeoutCount).toBe(1);
+        } finally {
+            scheduleReconnect.mockRestore();
+            adapter.disconnect();
+            global.WebSocket = originalWebSocket;
+            jest.useRealTimers();
+        }
+    });
+
     it('forces a reconnect when the room revokes write access', () => {
         const statuses = [];
         const adapter = new CloudAdapter({

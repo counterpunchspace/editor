@@ -74,6 +74,20 @@ const YDOC_SCHEMA_VERSION = 3;
 export const CLOUD_GLYPH_CATCH_UP_MAX_ATTEMPTS = 8;
 export const CLOUD_GLYPH_CATCH_UP_RETRY_MS = 50;
 export const CLOUD_GLYPH_CATCH_UP_CONCURRENCY = 4;
+export const CLOUD_PING_INTERVAL_MS = 10_000;
+export const CLOUD_LIVENESS_STALE_MS = 25_000;
+export const CLOUD_RECONNECT_BASE_MS = 1_000;
+export const CLOUD_RECONNECT_MAX_MS = 30_000;
+
+export function cloudReconnectDelayMs(attempt: number): number {
+    const bounded = Math.max(0, attempt);
+    const exponential = Math.min(
+        CLOUD_RECONNECT_BASE_MS * 2 ** bounded,
+        CLOUD_RECONNECT_MAX_MS
+    );
+    const jitter = 0.8 + Math.random() * 0.4;
+    return Math.round(exponential * jitter);
+}
 const CLOUD_COLLAB_RELOAD_MESSAGE =
     'Please reload the editor to continue collaborating.';
 const CLOUD_COLLAB_FORMAT_CHANGED_MESSAGE =
@@ -480,6 +494,8 @@ export type CloudAdapterOptions = {
         detail?: string
     ) => void;
     onPendingSyncCountChange?: (count: number) => void;
+    /** Session owns the one reconnect rebaseline after every live shard is fresh. */
+    deferVisibleRebaseline?: boolean;
 };
 
 export type CloudConnectionHealth = {
@@ -522,6 +538,66 @@ type CloudVisibleRebaselineTargets = {
     overviewRefreshed: boolean;
     fontInfoRefreshed: boolean;
 };
+
+export async function runCloudVisibleReconnectRebaseline(): Promise<CloudVisibleRebaselineTargets> {
+    const refreshed: CloudVisibleRebaselineTargets = {
+        editingFontRecompiled: false,
+        textPreviewReshaped: false,
+        canvasRefreshed: false,
+        overviewRefreshed: false,
+        fontInfoRefreshed: false
+    };
+
+    if (typeof window.syncRustCacheAndRefreshCanvas === 'function') {
+        await window.syncRustCacheAndRefreshCanvas(undefined, undefined, {
+            allowSelectedLayerFallback: true
+        });
+        refreshed.canvasRefreshed = true;
+    }
+
+    if (typeof window.fontManager?.recompileEditingFont === 'function') {
+        await window.fontManager.recompileEditingFont();
+        refreshed.editingFontRecompiled = true;
+    }
+
+    const textRunEditor = window.glyphCanvas?.textRunEditor as
+        | {
+              shapeText?: (skipRender?: boolean) => void;
+          }
+        | undefined;
+    if (typeof textRunEditor?.shapeText === 'function') {
+        textRunEditor.shapeText();
+        refreshed.textPreviewReshaped = true;
+    }
+
+    const glyphOverview = window.glyphOverviewInstance as
+        | {
+              renderGlyphOutlines?: (
+                  location?: Record<string, number>
+              ) => Promise<void>;
+              syncActiveGlyphFocus?: () => void;
+              currentLocation?: Record<string, number>;
+          }
+        | null
+        | undefined;
+    if (typeof glyphOverview?.renderGlyphOutlines === 'function') {
+        await glyphOverview.renderGlyphOutlines(
+            glyphOverview.currentLocation ?? {}
+        );
+        glyphOverview.syncActiveGlyphFocus?.();
+        refreshed.overviewRefreshed = true;
+    }
+
+    if (
+        typeof window.fontInfoManager?.refreshVisibleContentForExternalSync ===
+        'function'
+    ) {
+        window.fontInfoManager.refreshVisibleContentForExternalSync();
+        refreshed.fontInfoRefreshed = true;
+    }
+
+    return refreshed;
+}
 
 const CLOUD_OUTBOX_DB_NAME = 'counterpunch-cloud-outbox';
 const CLOUD_OUTBOX_DB_VERSION = 1;
@@ -810,6 +886,7 @@ export class CloudAdapter implements FileSystemAdapter {
         ((status: CloudConnectionStatus, detail?: string) => void) | null;
     private _onPendingSyncCountChange: ((count: number) => void) | null;
     private _suppressSyncComplete: boolean;
+    private _deferVisibleRebaseline: boolean;
 
     private _bridge: PatchSyncEngine | null = null;
     private _ws: WebSocket | null = null;
@@ -823,6 +900,9 @@ export class CloudAdapter implements FileSystemAdapter {
     private _browserOnlineHandler: (() => void) | null = null;
     private _destroyed = false;
     private _reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+    private _pingTimer: ReturnType<typeof setInterval> | null = null;
+    private _livenessTimer: ReturnType<typeof setInterval> | null = null;
+    private _reconnectAttempt = 0;
     private _authenticationTimer: ReturnType<typeof setTimeout> | null = null;
     private _authenticationStartedAt = 0;
     private _outboundAckTimer: ReturnType<typeof setTimeout> | null = null;
@@ -876,6 +956,7 @@ export class CloudAdapter implements FileSystemAdapter {
             options.roomWorkerBaseUrl ?? getDefaultRoomWorkerUrl();
         this._documentId = options.documentId || FONT_CORE_DOCUMENT_ID;
         this._suppressSyncComplete = options.suppressSyncComplete ?? false;
+        this._deferVisibleRebaseline = options.deferVisibleRebaseline ?? false;
         this._onConnectionStatus = options.onConnectionStatus ?? null;
         this._onPendingSyncCountChange =
             options.onPendingSyncCountChange ?? null;
@@ -899,6 +980,24 @@ export class CloudAdapter implements FileSystemAdapter {
 
     get documentId(): string {
         return this._documentId;
+    }
+
+    get needsVisibleRebaseline(): boolean {
+        return this._needsVisibleRebaseline;
+    }
+
+    isTransportSynced(): boolean {
+        return (
+            !this._destroyed &&
+            this._hasSynced &&
+            this._initialServerStateApplied &&
+            this._initialSyncDurable &&
+            this._status === 'connected'
+        );
+    }
+
+    clearVisibleRebaselineNeeded(): void {
+        this._needsVisibleRebaseline = false;
     }
 
     getConnectionHealth(): CloudConnectionHealth {
@@ -1000,6 +1099,7 @@ export class CloudAdapter implements FileSystemAdapter {
 
     disconnect(): void {
         this._destroyed = true;
+        this._stopLiveness();
         this._clearReconnectTimer();
         this._clearAuthenticationTimeout();
         this._clearInitialSyncTimeout();
@@ -1159,6 +1259,7 @@ export class CloudAdapter implements FileSystemAdapter {
 
         const detail = 'Browser is offline';
         this._clearReconnectTimer();
+        this._stopLiveness();
         this._clearAuthenticationTimeout();
         this._clearInitialSyncTimeout();
         this._clearOutboundAckTimeout();
@@ -1667,6 +1768,7 @@ export class CloudAdapter implements FileSystemAdapter {
                     `CloudAdapter: closed (${event.code}: ${event.reason})`
                 );
                 this._clearAuthenticationTimeout();
+                this._stopLiveness();
                 this._clientId = null;
                 this._markVisibleRebaselineNeeded();
                 this._hasSynced = false;
@@ -1716,6 +1818,9 @@ export class CloudAdapter implements FileSystemAdapter {
         }
 
         switch (msg.type) {
+            case 'pong':
+                break;
+
             case 'auth-ok':
                 this._clearAuthenticationTimeout();
                 this._clearInitialSyncTimeout();
@@ -1735,6 +1840,7 @@ export class CloudAdapter implements FileSystemAdapter {
                 this._clientId = String(msg.clientId ?? '');
                 console.log(`CloudAdapter: authenticated as ${this._clientId}`);
                 this._setStatus('syncing');
+                this._startLiveness();
                 const authenticatedSocket = this._ws;
                 this._initialServerStateApplied = false;
                 this._initialSyncDurable = false;
@@ -2342,7 +2448,7 @@ export class CloudAdapter implements FileSystemAdapter {
                 await workerBridgeSyncPromise;
             }
             if (!this._canMarkInitialSyncConnected(syncGeneration)) return;
-            if (this._needsVisibleRebaseline) {
+            if (this._needsVisibleRebaseline && !this._deferVisibleRebaseline) {
                 if (!this._visibleRebaselinePromise) {
                     this._setStatus(
                         'syncing',
@@ -2357,6 +2463,7 @@ export class CloudAdapter implements FileSystemAdapter {
             }
             if (!this._canMarkInitialSyncConnected(syncGeneration)) return;
             this._canSkipBootstrapOnReconnect = true;
+            this._reconnectAttempt = 0;
             this._setStatus('connected');
         }
     }
@@ -2375,82 +2482,19 @@ export class CloudAdapter implements FileSystemAdapter {
         if (!this._needsVisibleRebaseline) {
             return;
         }
-
-        const refreshed: CloudVisibleRebaselineTargets = {
-            editingFontRecompiled: false,
-            textPreviewReshaped: false,
-            canvasRefreshed: false,
-            overviewRefreshed: false,
-            fontInfoRefreshed: false
-        };
-
         try {
-            if (typeof window.syncRustCacheAndRefreshCanvas === 'function') {
-                await window.syncRustCacheAndRefreshCanvas(
-                    undefined,
-                    undefined,
-                    {
-                        allowSelectedLayerFallback: true
-                    }
-                );
-                refreshed.canvasRefreshed = true;
-            }
-
-            if (
-                typeof window.fontManager?.recompileEditingFont === 'function'
-            ) {
-                await window.fontManager.recompileEditingFont();
-                refreshed.editingFontRecompiled = true;
-            }
-
-            const textRunEditor = window.glyphCanvas?.textRunEditor as
-                | {
-                      shapeText?: (skipRender?: boolean) => void;
-                  }
-                | undefined;
-            if (typeof textRunEditor?.shapeText === 'function') {
-                textRunEditor.shapeText();
-                refreshed.textPreviewReshaped = true;
-            }
-
-            const glyphOverview = window.glyphOverviewInstance as
-                | {
-                      renderGlyphOutlines?: (
-                          location?: Record<string, number>
-                      ) => Promise<void>;
-                      syncActiveGlyphFocus?: () => void;
-                      currentLocation?: Record<string, number>;
-                  }
-                | null
-                | undefined;
-            if (typeof glyphOverview?.renderGlyphOutlines === 'function') {
-                await glyphOverview.renderGlyphOutlines(
-                    glyphOverview.currentLocation ?? {}
-                );
-                glyphOverview.syncActiveGlyphFocus?.();
-                refreshed.overviewRefreshed = true;
-            }
-
-            if (
-                typeof window.fontInfoManager
-                    ?.refreshVisibleContentForExternalSync === 'function'
-            ) {
-                window.fontInfoManager.refreshVisibleContentForExternalSync();
-                refreshed.fontInfoRefreshed = true;
-            }
+            await runCloudVisibleReconnectRebaseline();
+            this._needsVisibleRebaseline = false;
         } catch (error) {
             const detail =
                 error instanceof Error ? error.message : String(error);
             console.warn(
                 'CloudAdapter: reconnect visible rebaseline failed:',
-                error,
-                refreshed
+                error
             );
             this._setStatus('error', `Reconnect refresh failed: ${detail}`);
             throw error;
         }
-
-        this._needsVisibleRebaseline = false;
     }
 
     /** Apply an incremental update broadcast from a peer. */
@@ -3227,12 +3271,78 @@ export class CloudAdapter implements FileSystemAdapter {
 
     private _scheduleReconnect(): void {
         this._clearReconnectTimer();
+        const delayMs = cloudReconnectDelayMs(this._reconnectAttempt);
+        this._reconnectAttempt += 1;
         this._reconnectTimer = setTimeout(() => {
             if (!this._destroyed) {
                 console.log('CloudAdapter: reconnecting...');
                 this._connectWebSocket().catch(() => {});
             }
-        }, 3000);
+        }, delayMs);
+    }
+
+    private _startLiveness(): void {
+        this._stopLiveness();
+        if (this._destroyed || !this._ws) {
+            return;
+        }
+        this._pingTimer = setInterval(() => {
+            this._sendPing();
+        }, CLOUD_PING_INTERVAL_MS);
+        this._livenessTimer = setInterval(() => {
+            this._checkLiveness();
+        }, CLOUD_PING_INTERVAL_MS);
+    }
+
+    private _stopLiveness(): void {
+        if (this._pingTimer !== null) {
+            clearInterval(this._pingTimer);
+            this._pingTimer = null;
+        }
+        if (this._livenessTimer !== null) {
+            clearInterval(this._livenessTimer);
+            this._livenessTimer = null;
+        }
+    }
+
+    private _sendPing(): void {
+        const ws = this._ws;
+        const openReadyState =
+            typeof WebSocket !== 'undefined' &&
+            typeof WebSocket.OPEN === 'number'
+                ? WebSocket.OPEN
+                : 1;
+        if (!ws || ws.readyState !== openReadyState) {
+            return;
+        }
+        try {
+            ws.send(JSON.stringify({ type: 'ping', sentAt: Date.now() }));
+        } catch (error) {
+            console.warn('CloudAdapter: ping failed', error);
+        }
+    }
+
+    private _checkLiveness(): void {
+        if (this._destroyed || !this._ws || !this._lastInboundMessageAt) {
+            return;
+        }
+        const inboundAgeMs = Date.now() - this._lastInboundMessageAt;
+        if (inboundAgeMs < CLOUD_LIVENESS_STALE_MS) {
+            return;
+        }
+        this._livenessTimeoutCount += 1;
+        this._lastReconnectReason = 'liveness-timeout';
+        console.warn(
+            `CloudAdapter: liveness timeout after ${inboundAgeMs}ms without inbound traffic`
+        );
+        const ws = this._ws;
+        this._ws = null;
+        this._clientId = null;
+        this._markVisibleRebaselineNeeded();
+        this._resetBootstrapStateForReconnect();
+        this._setStatus('connecting', 'Cloud connection timed out');
+        ws.close(CLIENT_RECONNECT_CLOSE_CODE, 'liveness-timeout');
+        this._scheduleReconnect();
     }
 
     private _clearReconnectTimer(): void {

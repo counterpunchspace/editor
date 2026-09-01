@@ -18,6 +18,13 @@ jest.mock('../js/cloud-adapter', () => {
                 documentId: options.documentId || 'font-core',
                 pendingSyncCount: 0,
                 status: 'disconnected',
+                needsVisibleRebaseline: false,
+                isTransportSynced: jest.fn(
+                    () => adapter.status === 'connected'
+                ),
+                clearVisibleRebaselineNeeded: jest.fn(() => {
+                    adapter.needsVisibleRebaseline = false;
+                }),
                 connectDirect: jest.fn(async (...args) => {
                     mockConnectDirect(...args, options);
                     adapter.status = 'connected';
@@ -42,10 +49,24 @@ const {
 const { CloudAdapter } = require('../js/cloud-adapter.ts');
 
 describe('CloudLiveSession', () => {
+    const originalFetch = global.fetch;
+
     beforeEach(() => {
         mockConnectDirect.mockClear();
         mockDisconnect.mockClear();
         CloudAdapter.mockClear();
+        global.fetch = jest.fn(async () => ({
+            ok: false,
+            status: 404,
+            headers: new Headers({
+                'content-type': 'application/json'
+            }),
+            json: async () => ({})
+        }));
+    });
+
+    afterEach(() => {
+        global.fetch = originalFetch;
     });
 
     test('liveGlyphDocumentIdsFromSubset maps names through the live bridge', () => {
@@ -77,7 +98,12 @@ describe('CloudLiveSession', () => {
         expect(documentIds.sort()).toEqual(
             ['font-core', 'glyph:aaa', 'glyph:bbb'].sort()
         );
-        expect(mockConnectDirect).toHaveBeenCalledTimes(3);
+        expect(mockConnectDirect.mock.calls.length).toBe(3);
+        expect(
+            CloudAdapter.mock.calls.every(
+                ([options]) => options.deferVisibleRebaseline === true
+            )
+        ).toBe(true);
         expect(
             mockConnectDirect.mock.calls
                 .map((call) => call[3]?.bootstrapMode)
@@ -112,7 +138,18 @@ describe('CloudLiveSession', () => {
     });
 
     test('catch-up fetches live glyph bytes without opening a sticky glyph room', async () => {
-        const originalFetch = global.fetch;
+        const applyDocumentCatchUp = jest.fn().mockReturnValue(true);
+        const session = new CloudLiveSession({
+            assetId: 'asset-1',
+            websiteBaseUrl: 'https://editor.example',
+            token: 'token',
+            roomUrl: 'wss://rooms.example/room/asset-1',
+            bridge: { applyDocumentCatchUp },
+            bootstrapMode: 'skip'
+        });
+        await session.syncLiveDocumentIds(['glyph:aaa']);
+        const connectCount = mockConnectDirect.mock.calls.length;
+        applyDocumentCatchUp.mockClear();
         global.fetch = jest.fn(async (url) => {
             expect(String(url)).toContain('/shards/glyph/bbb/live');
             return {
@@ -127,6 +164,16 @@ describe('CloudLiveSession', () => {
                 })
             };
         });
+        await session.catchUpDocuments(['glyph:aaa', 'glyph:bbb']);
+        expect(global.fetch).toHaveBeenCalledTimes(1);
+        expect(applyDocumentCatchUp).toHaveBeenCalledTimes(1);
+        expect(applyDocumentCatchUp.mock.calls[0][0]).toBe('glyph:bbb');
+        expect(mockConnectDirect).toHaveBeenCalledTimes(connectCount);
+        expect(session.hasLiveDocument('glyph:aaa')).toBe(true);
+        expect(session.hasLiveDocument('glyph:bbb')).toBe(false);
+    });
+
+    test('catch-up caps parallel live reads', async () => {
         const applyDocumentCatchUp = jest.fn().mockReturnValue(true);
         const session = new CloudLiveSession({
             assetId: 'asset-1',
@@ -136,20 +183,8 @@ describe('CloudLiveSession', () => {
             bridge: { applyDocumentCatchUp },
             bootstrapMode: 'skip'
         });
-        await session.syncLiveDocumentIds(['glyph:aaa']);
-        const connectCount = mockConnectDirect.mock.calls.length;
-        await session.catchUpDocuments(['glyph:aaa', 'glyph:bbb']);
-        expect(global.fetch).toHaveBeenCalledTimes(1);
-        expect(applyDocumentCatchUp).toHaveBeenCalledTimes(1);
-        expect(applyDocumentCatchUp.mock.calls[0][0]).toBe('glyph:bbb');
-        expect(mockConnectDirect).toHaveBeenCalledTimes(connectCount);
-        expect(session.hasLiveDocument('glyph:aaa')).toBe(true);
-        expect(session.hasLiveDocument('glyph:bbb')).toBe(false);
-        global.fetch = originalFetch;
-    });
-
-    test('catch-up caps parallel live reads', async () => {
-        const originalFetch = global.fetch;
+        await session.syncLiveDocumentIds([]);
+        applyDocumentCatchUp.mockClear();
         let inflight = 0;
         let maxInflight = 0;
         global.fetch = jest.fn(async () => {
@@ -170,16 +205,6 @@ describe('CloudLiveSession', () => {
                 })
             };
         });
-        const applyDocumentCatchUp = jest.fn().mockReturnValue(true);
-        const session = new CloudLiveSession({
-            assetId: 'asset-1',
-            websiteBaseUrl: 'https://editor.example',
-            token: 'token',
-            roomUrl: 'wss://rooms.example/room/asset-1',
-            bridge: { applyDocumentCatchUp },
-            bootstrapMode: 'skip'
-        });
-        await session.syncLiveDocumentIds([]);
         await session.catchUpDocuments([
             'glyph:1',
             'glyph:2',
@@ -190,6 +215,57 @@ describe('CloudLiveSession', () => {
         expect(applyDocumentCatchUp).toHaveBeenCalledTimes(5);
         expect(maxInflight).toBeLessThanOrEqual(4);
         expect(maxInflight).toBe(4);
-        global.fetch = originalFetch;
     }, 15000);
+
+    test('reconnect barrier HTTP-catches live glyphs and deps before connected', async () => {
+        const statuses = [];
+        const applyDocumentCatchUp = jest.fn().mockReturnValue(true);
+        const session = new CloudLiveSession({
+            assetId: 'asset-1',
+            websiteBaseUrl: 'https://editor.example',
+            token: 'token',
+            roomUrl: 'wss://rooms.example/room/asset-1',
+            bridge: { applyDocumentCatchUp },
+            onConnectionStatus: (status) => statuses.push(status),
+            bootstrapMode: 'skip'
+        });
+        await session.syncLiveDocumentIds(['glyph:aaa']);
+        const fetched = global.fetch.mock.calls.map(([url]) => String(url));
+        expect(
+            fetched.some((url) => url.includes('/shards/glyph/aaa/live'))
+        ).toBe(true);
+        expect(
+            fetched.some((url) => url.includes('/shards/font-deps/live'))
+        ).toBe(true);
+        expect(statuses.at(-1)).toBe('connected');
+    });
+
+    test('includeLiveDocuments catch-up fetches glyphs that already have a socket', async () => {
+        const applyDocumentCatchUp = jest.fn().mockReturnValue(true);
+        const session = new CloudLiveSession({
+            assetId: 'asset-1',
+            websiteBaseUrl: 'https://editor.example',
+            token: 'token',
+            roomUrl: 'wss://rooms.example/room/asset-1',
+            bridge: { applyDocumentCatchUp },
+            bootstrapMode: 'skip'
+        });
+        await session.syncLiveDocumentIds(['glyph:aaa']);
+        applyDocumentCatchUp.mockClear();
+        global.fetch = jest.fn(async () => ({
+            ok: true,
+            status: 200,
+            headers: new Headers({
+                'content-type': 'application/json'
+            }),
+            json: async () => ({
+                update: Buffer.from([9, 9]).toString('base64')
+            })
+        }));
+        await session.catchUpDocuments(['glyph:aaa'], {
+            includeLiveDocuments: true
+        });
+        expect(applyDocumentCatchUp).toHaveBeenCalledTimes(1);
+        expect(applyDocumentCatchUp.mock.calls[0][0]).toBe('glyph:aaa');
+    });
 });

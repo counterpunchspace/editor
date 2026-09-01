@@ -30,6 +30,7 @@ export const FACILITY_REGISTRY: Record<string, boolean> = {
     PatchSyncEngine: false,
     ConvertToCounterpunch: false,
     CloudAdapter: true,
+    CloudLiveSession: false,
     CloudPlugin: true,
     ChangeBridgeInit: false,
     CriticalErrorHandler: false,
