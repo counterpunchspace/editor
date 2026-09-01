@@ -12144,7 +12144,8 @@ export class OutlineEditor {
         const contour = getEditableContour(
             currentLayerData.shapes[contourIndex]
         );
-        if (!contour) {
+        const node = contour?.nodes[nodeIndex];
+        if (!contour || !node || !isOnCurveNode(node) || !node.smooth) {
             return;
         }
 
@@ -12818,7 +12819,8 @@ export class OutlineEditor {
             this._updateDraggedPoints(
                 effectiveDeltaX,
                 effectiveDeltaY,
-                this._pointDragPreserveHandlePositions,
+                this._pointDragPreserveHandlePositions ||
+                    (e.altKey && !this._smoothOnCurveAltDragConstraint),
                 e.shiftKey,
                 glyphX,
                 glyphY,

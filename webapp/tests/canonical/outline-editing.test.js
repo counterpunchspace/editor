@@ -563,6 +563,176 @@ describe('Outline Editing canonical behavior', () => {
         }
     });
 
+    test('alt toggling during non-smooth on-curve dragging freezes the handles and moves the on-curve point freely', () => {
+        const saveLayerDataSpy = jest
+            .spyOn(canvas.outlineEditor, 'saveLayerData')
+            .mockResolvedValue(undefined);
+
+        try {
+            activateEditableLayer(
+                canvas,
+                makeOpenTripletLayer({ smooth: false })
+            );
+            canvas.outlineEditor.hoveredPointIndex = {
+                contourIndex: 0,
+                nodeIndex: 3
+            };
+            window.changeBridge = {
+                beginTransaction: jest.fn(),
+                endTransaction: jest.fn(),
+                syncGlyphFromJson: jest.fn()
+            };
+
+            let pointer = { glyphX: 60, glyphY: 60 };
+            const pointerSpy = jest
+                .spyOn(canvas.outlineEditor, 'transformMouseToComponentSpace')
+                .mockImplementation(() => pointer);
+
+            canvas.outlineEditor.onSingleClick({
+                clientX: 10,
+                clientY: 20,
+                detail: 1,
+                shiftKey: false,
+                altKey: false,
+                metaKey: false,
+                ctrlKey: false
+            });
+
+            canvas.outlineEditor.onMouseMove({
+                clientX: 11,
+                clientY: 21,
+                shiftKey: false,
+                altKey: false,
+                metaKey: false,
+                ctrlKey: false
+            });
+            pointer = { glyphX: 90, glyphY: 90 };
+            canvas.outlineEditor.onMouseMove({
+                clientX: 12,
+                clientY: 22,
+                shiftKey: false,
+                altKey: false,
+                metaKey: false,
+                ctrlKey: false
+            });
+
+            let nodes = canvas.outlineEditor.layerData.shapes[0].nodes;
+            expect(nodes[3].x).toBe(90);
+            expect(nodes[3].y).toBe(90);
+            expect(nodes[2].x).toBe(70);
+            expect(nodes[2].y).toBe(90);
+            expect(nodes[4].x).toBe(110);
+            expect(nodes[4].y).toBe(90);
+
+            canvas.outlineEditor.setAltKeyPressed(true);
+            pointer = { glyphX: 95, glyphY: 120 };
+            canvas.outlineEditor.onMouseMove({
+                clientX: 13,
+                clientY: 23,
+                shiftKey: false,
+                altKey: true,
+                metaKey: false,
+                ctrlKey: false
+            });
+
+            nodes = canvas.outlineEditor.layerData.shapes[0].nodes;
+            expect(nodes[3].x).toBe(95);
+            expect(nodes[3].y).toBe(120);
+            expect(nodes[2].x).toBe(70);
+            expect(nodes[2].y).toBe(90);
+            expect(nodes[4].x).toBe(110);
+            expect(nodes[4].y).toBe(90);
+
+            pointerSpy.mockRestore();
+        } finally {
+            saveLayerDataSpy.mockRestore();
+        }
+    });
+
+    test('alt toggling during one-sided non-smooth on-curve dragging freezes the handle and moves the on-curve point freely', () => {
+        const saveLayerDataSpy = jest
+            .spyOn(canvas.outlineEditor, 'saveLayerData')
+            .mockResolvedValue(undefined);
+
+        try {
+            activateEditableLayer(canvas, makeOneSidedCurveLayer());
+            canvas.outlineEditor.hoveredPointIndex = {
+                contourIndex: 0,
+                nodeIndex: 3
+            };
+            window.changeBridge = {
+                beginTransaction: jest.fn(),
+                endTransaction: jest.fn(),
+                syncGlyphFromJson: jest.fn()
+            };
+
+            let pointer = { glyphX: 60, glyphY: 60 };
+            const pointerSpy = jest
+                .spyOn(canvas.outlineEditor, 'transformMouseToComponentSpace')
+                .mockImplementation(() => pointer);
+
+            canvas.outlineEditor.onSingleClick({
+                clientX: 10,
+                clientY: 20,
+                detail: 1,
+                shiftKey: false,
+                altKey: false,
+                metaKey: false,
+                ctrlKey: false
+            });
+
+            canvas.outlineEditor.onMouseMove({
+                clientX: 11,
+                clientY: 21,
+                shiftKey: false,
+                altKey: false,
+                metaKey: false,
+                ctrlKey: false
+            });
+
+            pointer = { glyphX: 80, glyphY: 90 };
+            canvas.outlineEditor.onMouseMove({
+                clientX: 12,
+                clientY: 22,
+                shiftKey: false,
+                altKey: false,
+                metaKey: false,
+                ctrlKey: false
+            });
+
+            let nodes = canvas.outlineEditor.layerData.shapes[0].nodes;
+            expect(nodes[3].x).toBe(80);
+            expect(nodes[3].y).toBe(90);
+            const preAltHandle = { x: nodes[2].x, y: nodes[2].y };
+            const preAltFarHandle = { x: nodes[1].x, y: nodes[1].y };
+
+            canvas.outlineEditor.setAltKeyPressed(true);
+            pointer = { glyphX: 90, glyphY: 140 };
+            canvas.outlineEditor.onMouseMove({
+                clientX: 13,
+                clientY: 23,
+                shiftKey: false,
+                altKey: true,
+                metaKey: false,
+                ctrlKey: false
+            });
+
+            nodes = canvas.outlineEditor.layerData.shapes[0].nodes;
+            expect(nodes[3].x).toBe(90);
+            expect(nodes[3].y).toBe(140);
+            expect(nodes[2].x).toBe(preAltHandle.x);
+            expect(nodes[2].y).toBe(preAltHandle.y);
+            expect(nodes[1].x).toBe(preAltFarHandle.x);
+            expect(nodes[1].y).toBe(preAltFarHandle.y);
+            expect(nodes[4].x).toBe(120);
+            expect(nodes[4].y).toBe(60);
+
+            pointerSpy.mockRestore();
+        } finally {
+            saveLayerDataSpy.mockRestore();
+        }
+    });
+
     test('alt re-press during non-smooth off-curve dragging returns to the original drag-start direction', () => {
         const saveLayerDataSpy = jest
             .spyOn(canvas.outlineEditor, 'saveLayerData')

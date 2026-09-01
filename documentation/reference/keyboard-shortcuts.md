@@ -79,7 +79,7 @@ Each view title bar shows the same shortcut.
 - `Alt/Option+Click` on a straight segment converts it to a curve
 - Double-click an on-curve point to toggle smooth and corner
 - `Shift` constrains a smooth handle while dragging
-- `Alt/Option` slides a smooth on-curve point along its handles
+- `Alt/Option` slides a smooth on-curve point along its handles; on a corner on-curve point it moves the node freely while handles stay put
 
 ### Panning and zooming
 
