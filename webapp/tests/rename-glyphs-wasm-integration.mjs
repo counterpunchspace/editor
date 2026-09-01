@@ -168,9 +168,11 @@ try {
             ),
         /neither a known glyph|feature parsing failed|glyph rename transaction/
     );
-    assert.ok(
-        wasm.compile_cached_font({}).length > 0,
-        'an invalid rename must not publish any cache'
+    // Yrs cannot roll back the applied packet, so a rejected rename drops the
+    // worker Y.Doc. The unpublished candidate cache must not compile.
+    assert.throws(
+        () => wasm.compile_cached_font({}),
+        /No font loaded/
     );
 
     const { doc, glyphs, featureList } = createFontDocument();

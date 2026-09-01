@@ -1233,7 +1233,12 @@ fn validate_feature_font(font: &babelfont::Font) -> Result<(), JsValue> {
         .iter()
         .map(|glyph| glyph.name.to_string())
         .collect();
-    let glyph_map: GlyphMap = glyph_names.iter().map(String::as_str).collect();
+    let glyph_map = GlyphMap::new(glyph_names.iter().map(String::as_str)).map_err(|error| {
+        JsValue::from_str(&format!(
+            "glyph rename transaction: feature glyph map failed: {:?}",
+            error
+        ))
+    })?;
     let include_dir = font
         .source
         .as_ref()
@@ -1900,11 +1905,13 @@ fn validate_feature_source_with_full_filter_pipeline_internal(
     let filtered_font = apply_filter_pipeline(&full_font, options)
         .map_err(|error| error.as_string().unwrap_or_else(|| format!("{:?}", error)))?;
     let fea = filtered_font.features.to_fea();
-    let glyph_map: GlyphMap = filtered_font
-        .glyphs
-        .iter()
-        .map(|glyph| glyph.name.as_str())
-        .collect();
+    let glyph_map = GlyphMap::new(
+        filtered_font
+            .glyphs
+            .iter()
+            .map(|glyph| glyph.name.as_str()),
+    )
+    .map_err(|error| format!("Feature validation failed: {:?}", error))?;
     let include_dir = filtered_font
         .source
         .as_ref()

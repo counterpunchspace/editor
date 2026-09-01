@@ -9,14 +9,15 @@ crate-type = ["cdylib"]
 [dependencies]
 # Git pin (not a sibling path) so CI can resolve without a local checkout.
 babelfont = { git = "https://github.com/yanone/babelfont-rs", rev = "df18a2f6ab348e71d7d91f96090ff0ee8638776c", features = ["fontir", "glyphs", "ufo", "fontlab", "fontforge"] }
-fontc = { git = "https://github.com/googlefonts/fontc", rev = "484e26c", default-features = false }
-fontbe = { git = "https://github.com/googlefonts/fontc", rev = "484e26c", default-features = false }
-fontir = { git = "https://github.com/googlefonts/fontc", rev = "484e26c" }
-fea-rs = "0.22.0"
+# googlefonts/fontc main (not mirrored)
+fontc = { git = "https://github.com/googlefonts/fontc", rev = "e62f5818357f796f329f9bc1335c0e14a104ce09", default-features = false }
+fontbe = { git = "https://github.com/googlefonts/fontc", rev = "e62f5818357f796f329f9bc1335c0e14a104ce09", default-features = false }
+fontir = { git = "https://github.com/googlefonts/fontc", rev = "e62f5818357f796f329f9bc1335c0e14a104ce09" }
+fea-rs = { git = "https://github.com/googlefonts/fontc", rev = "e62f5818357f796f329f9bc1335c0e14a104ce09" }
 fea-rs-ast = "0.1.2"
 typeshare = "1.0"
 kurbo = "0.13"
-fontdrasil = { git = "https://github.com/googlefonts/fontc", rev = "484e26c" }
+fontdrasil = { git = "https://github.com/googlefonts/fontc", rev = "e62f5818357f796f329f9bc1335c0e14a104ce09" }
 wasm-bindgen = "0.2"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
@@ -26,9 +27,9 @@ yrs = "0.18"
 console_error_panic_hook = "0.1"
 tempfile = "3"
 js-sys = "0.3.83"
-write-fonts = { version = "0.48", features = ["read"] }
-read-fonts = "0.39"
-skrifa = "0.42"
+write-fonts = { version = "0.52", features = ["read"] }
+read-fonts = "0.43"
+skrifa = "0.46"
 smol_str = "0.3"
 
 [dependencies.web-sys]

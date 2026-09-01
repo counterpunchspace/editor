@@ -1,5 +1,6 @@
 # Unreleased
 
+- **fontc**: Compile pipeline now uses googlefonts/fontc `e62f581` (1.0.0) instead of the previous `484e26c` pin.
 - **Keep-shape curve join**: Deleting an on-curve node between two cubics fits one curve across the gap (`Path.delete_keeping_shape` / `join_bez`). Tolerance 1000 covers typical joins; uneven handles use at least 128, even/inflected pairs at least 64. `Cmd/Ctrl+Alt/Option`-drag on a smooth point joins then re-inserts on that combined curve so the node slides along the outline.
 - **Alt-drag corner points**: Holding Alt/Option while dragging a corner on-curve point moves it freely and leaves its handles in place, including when there is a curve on only one side. Smooth points still slide on the line between frozen handles.
 - **Point size**: The Editing View title bar shows the on-screen text size in printer points (type-size icon), tied to canvas zoom. A ruler button opens a modal to calibrate the screen with a physical measurement (cm or inches); until then, 96 CSS pixels are treated as one inch. Thanks to @nicksherman (https://github.com/w3c/csswg-drafts/issues/614) and @graphicore (https://graphicore.github.io/varla-varfo/explorations/techniques/absolute_units_evaluation) for their work on the topic.
