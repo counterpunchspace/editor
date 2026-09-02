@@ -1008,6 +1008,114 @@ describe('GlyphOverview syncGlyphs incremental updates', () => {
         expect(center).not.toHaveBeenCalled();
     });
 
+    test('resize focus centers a visible active glyph when nothing is selected', () => {
+        const ids = Array.from({ length: 40 }, (_, index) => `g${index}`);
+        overview.visibleGlyphIds = ids;
+        overview.tiles = new Map(
+            ids.map((id) => {
+                const element = document.createElement('div');
+                return [
+                    id,
+                    { glyphId: id, glyphName: id, selected: false, element }
+                ];
+            })
+        );
+        overview.highlightedGlyphName = 'g2';
+        Object.defineProperty(overview.container, 'clientHeight', {
+            configurable: true,
+            value: 400
+        });
+        overview.container.scrollTop = 0;
+        window.glyphCanvas = { outlineEditor: { active: false } };
+        jest.spyOn(overview, 'getSelectedGlyphs').mockReturnValue([]);
+        const center = jest
+            .spyOn(overview, 'centerGlyphIdsInView')
+            .mockImplementation(() => {});
+        const ensure = jest
+            .spyOn(overview, 'ensureGlyphIdsInView')
+            .mockImplementation(() => {});
+
+        const anchor = overview.getResizeFocusAnchor(1);
+        overview.applyResizeFocusAnchor(anchor);
+
+        expect(anchor).toEqual({ type: 'center', glyphId: 'g2' });
+        expect(center).toHaveBeenCalledWith(['g2']);
+        expect(ensure).not.toHaveBeenCalled();
+    });
+
+    test('resize focus keeps the viewport-center glyph when the active glyph is off-screen', () => {
+        const ids = Array.from({ length: 40 }, (_, index) => `g${index}`);
+        overview.visibleGlyphIds = ids;
+        overview.tiles = new Map(
+            ids.map((id) => {
+                const element = document.createElement('div');
+                return [
+                    id,
+                    { glyphId: id, glyphName: id, selected: false, element }
+                ];
+            })
+        );
+        overview.highlightedGlyphName = 'g0';
+        Object.defineProperty(overview.container, 'clientHeight', {
+            configurable: true,
+            value: 400
+        });
+        overview.container.scrollTop = 1500;
+        window.glyphCanvas = { outlineEditor: { active: false } };
+        jest.spyOn(overview, 'getSelectedGlyphs').mockReturnValue([]);
+        const center = jest
+            .spyOn(overview, 'centerGlyphIdsInView')
+            .mockImplementation(() => {});
+
+        const anchor = overview.getResizeFocusAnchor(1);
+        overview.applyResizeFocusAnchor(anchor);
+
+        expect(anchor).toEqual({ type: 'center', glyphId: 'g16' });
+        expect(center).toHaveBeenCalledWith(['g16']);
+    });
+
+    test('line-break resize keeps the first focus glyph locked across wraps', () => {
+        const ids = Array.from({ length: 40 }, (_, index) => `g${index}`);
+        overview.visibleGlyphIds = ids;
+        overview.tiles = new Map(
+            ids.map((id) => {
+                const element = document.createElement('div');
+                return [
+                    id,
+                    { glyphId: id, glyphName: id, selected: false, element }
+                ];
+            })
+        );
+        overview.highlightedGlyphName = 'g2';
+        overview.lastLinesColumnCount = 1;
+        Object.defineProperty(overview.container, 'clientHeight', {
+            configurable: true,
+            value: 400
+        });
+        overview.container.scrollTop = 0;
+        window.glyphCanvas = { outlineEditor: { active: false } };
+        jest.spyOn(overview, 'getSelectedGlyphs').mockReturnValue([]);
+        const center = jest
+            .spyOn(overview, 'centerGlyphIdsInView')
+            .mockImplementation(() => {});
+
+        const first = overview.lockLineBreakFocusAnchor(80);
+        expect(first).toEqual({ type: 'center', glyphId: 'g2' });
+
+        overview.highlightedGlyphName = 'g0';
+        overview.container.scrollTop = 1500;
+        const second = overview.lockLineBreakFocusAnchor(160);
+        expect(second).toEqual({ type: 'center', glyphId: 'g2' });
+
+        overview.applyLineBreakFocusLock(second);
+        expect(center).toHaveBeenCalledWith(['g2']);
+
+        jest.advanceTimersByTime(250);
+        overview.highlightedGlyphName = 'g0';
+        const afterSettle = overview.lockLineBreakFocusAnchor(160);
+        expect(afterSettle).toEqual({ type: 'center', glyphId: 'g16' });
+    });
+
     test('resolves a feature-variation stack glyph to its base overview tile', () => {
         const getAuthoringGlyphName = jest.fn(() => 'dollar');
         const tile = overview.createGlyphTile('glyph-dollar', 'dollar');

@@ -168,8 +168,8 @@ type ResizeFocusAnchor =
           glyphIds: string[];
       }
     | {
-          type: 'active';
-          glyphName: string;
+          type: 'center';
+          glyphId: string;
       };
 
 type OverviewPropertyInputState = {
@@ -276,9 +276,11 @@ class GlyphOverview {
     private selectionUiFlushPending = false;
     private dragTileRects: DragTileRect[] | null = null;
     private resizeObserver: ResizeObserver | null = null;
-    private resizeSyncRafId: number | null = null;
     private lastContainerWidth = 0;
     private lastLinesColumnCount = 0;
+    private lineBreakFocusLock: ResizeFocusAnchor | null = null;
+    private lineBreakFocusLockTimer: number | null = null;
+    private readonly lineBreakFocusLockSettleMs = 250;
     private tiles: Map<string, GlyphTile> = new Map();
     private isDragging = false;
     private hasDragged = false;
@@ -467,28 +469,68 @@ class GlyphOverview {
                 return;
             }
 
+            const previousWidth = this.lastContainerWidth;
             this.lastContainerWidth = nextWidth;
-            if (this.syncLinesModeColumnsFromContainer()) {
-                this.scheduleResizeFocusSync();
+            if (!this.container || this.viewMode !== 'lines') {
+                return;
             }
+
+            const anchor = this.lockLineBreakFocusAnchor(previousWidth);
+            const nextColumns = computeLinesModeTileLayout(
+                this.container.clientWidth,
+                this.getTileDimensions().width
+            ).columns;
+            if (nextColumns === this.lastLinesColumnCount) {
+                return;
+            }
+
+            this.lastLinesColumnCount = nextColumns;
+            this.container.style.setProperty(
+                '--tile-columns',
+                String(nextColumns)
+            );
+            this.applyLineBreakFocusLock(anchor);
         });
         this.resizeObserver.observe(this.container);
     }
 
-    private scheduleResizeFocusSync(): void {
-        if (this.resizeSyncRafId !== null) {
-            cancelAnimationFrame(this.resizeSyncRafId);
+    private lockLineBreakFocusAnchor(
+        previousWidth: number = 0
+    ): ResizeFocusAnchor | null {
+        if (!this.lineBreakFocusLock) {
+            let columnsForVisibility = this.lastLinesColumnCount;
+            if (columnsForVisibility <= 0 && previousWidth > 0) {
+                columnsForVisibility = computeLinesModeTileLayout(
+                    previousWidth,
+                    this.getTileDimensions().width
+                ).columns;
+            }
+            if (columnsForVisibility <= 0) {
+                columnsForVisibility = Math.max(1, this.getGridColumns());
+            }
+            this.lineBreakFocusLock =
+                this.getResizeFocusAnchor(columnsForVisibility);
         }
 
-        this.resizeSyncRafId = requestAnimationFrame(() => {
-            this.resizeSyncRafId = null;
+        if (this.lineBreakFocusLockTimer !== null) {
+            window.clearTimeout(this.lineBreakFocusLockTimer);
+        }
+        this.lineBreakFocusLockTimer = window.setTimeout(() => {
+            this.lineBreakFocusLockTimer = null;
+            this.lineBreakFocusLock = null;
+        }, this.lineBreakFocusLockSettleMs);
 
-            if (this.linesVirtualizationActive) {
-                this.renderVirtualizedLinesWindow(true);
-            }
+        return this.lineBreakFocusLock;
+    }
 
-            this.applyResizeFocusAnchor(this.getResizeFocusAnchor());
-        });
+    private applyLineBreakFocusLock(anchor: ResizeFocusAnchor | null): void {
+        if (!anchor) {
+            return;
+        }
+
+        const glyphIds =
+            anchor.type === 'selection' ? anchor.glyphIds : [anchor.glyphId];
+        this.centerGlyphIdsInView(glyphIds);
     }
 
     private initSizeControl(): void {
@@ -1407,7 +1449,12 @@ class GlyphOverview {
     }
 
     private updateTileSize(): void {
-        const resizeFocusAnchor = this.getResizeFocusAnchor();
+        const columnsForVisibility =
+            this.lastLinesColumnCount > 0
+                ? this.lastLinesColumnCount
+                : Math.max(1, this.getGridColumns());
+        const resizeFocusAnchor =
+            this.getResizeFocusAnchor(columnsForVisibility);
         this.lastLinesColumnCount = 0;
         this.applyOverviewTileLayout();
 
@@ -1433,7 +1480,9 @@ class GlyphOverview {
         });
     }
 
-    private getResizeFocusAnchor(): ResizeFocusAnchor | null {
+    private getResizeFocusAnchor(
+        columnsForVisibility?: number
+    ): ResizeFocusAnchor | null {
         const selectedGlyphIds = this.getSelectedGlyphs().filter((glyphId) =>
             this.visibleGlyphIds.includes(glyphId)
         );
@@ -1444,15 +1493,87 @@ class GlyphOverview {
             };
         }
 
+        const columns = Math.max(
+            1,
+            columnsForVisibility && columnsForVisibility > 0
+                ? columnsForVisibility
+                : this.getGridColumns()
+        );
+
         const activeGlyphName = this.getCurrentActiveGlyphName();
-        if (activeGlyphName) {
+        const activeGlyphId = activeGlyphName
+            ? this.findVisibleTileIdByGlyphName(activeGlyphName)
+            : null;
+        if (
+            activeGlyphId &&
+            this.isGlyphIdInOverviewViewport(activeGlyphId, columns)
+        ) {
             return {
-                type: 'active',
-                glyphName: activeGlyphName
+                type: 'center',
+                glyphId: activeGlyphId
             };
         }
 
+        const viewportGlyphId =
+            this.getGlyphIdNearestOverviewViewportCenter(columns);
+        if (!viewportGlyphId) {
+            return null;
+        }
+
+        return {
+            type: 'center',
+            glyphId: viewportGlyphId
+        };
+    }
+
+    private findVisibleTileIdByGlyphName(glyphName: string): string | null {
+        for (const glyphId of this.visibleGlyphIds) {
+            const tile = this.tiles.get(glyphId);
+            if (tile?.glyphName === glyphName) {
+                return glyphId;
+            }
+        }
         return null;
+    }
+
+    private isGlyphIdInOverviewViewport(
+        glyphId: string,
+        columns: number
+    ): boolean {
+        if (!this.container || this.container.clientHeight <= 0) {
+            return false;
+        }
+
+        const bounds = this.getVisibleGlyphIdsContentBounds([glyphId], columns);
+        if (!bounds) {
+            return false;
+        }
+
+        const viewportTop = this.container.scrollTop;
+        const viewportBottom = viewportTop + this.container.clientHeight;
+        return bounds.bottom > viewportTop && bounds.top < viewportBottom;
+    }
+
+    private getGlyphIdNearestOverviewViewportCenter(
+        columns: number
+    ): string | null {
+        if (!this.container || this.visibleGlyphIds.length === 0) {
+            return null;
+        }
+
+        const dims = this.getTileDimensions();
+        const rowHeight = dims.height + 2;
+        const total = this.visibleGlyphIds.length;
+        const totalRows = Math.max(1, Math.ceil(total / columns));
+        const centerY =
+            this.container.scrollTop + this.container.clientHeight / 2;
+        const centerRow = Math.min(
+            totalRows - 1,
+            Math.max(0, Math.floor(centerY / rowHeight))
+        );
+        const centerCol = Math.min(columns - 1, Math.floor(columns / 2));
+        const index = Math.min(total - 1, centerRow * columns + centerCol);
+        return this.visibleGlyphIds[index] ?? null;
     }
 
     private getCurrentActiveGlyphName(): string | null {
@@ -1482,14 +1603,7 @@ class GlyphOverview {
             return;
         }
 
-        const activeTile = Array.from(this.tiles.values()).find(
-            (tile) => tile.glyphName === anchor.glyphName
-        );
-        if (!activeTile) {
-            return;
-        }
-
-        this.ensureGlyphIdsInView([activeTile.glyphId]);
+        this.centerGlyphIdsInView([anchor.glyphId]);
     }
 
     private centerGlyphIdsInView(glyphIds: string[]): void {
@@ -1572,7 +1686,8 @@ class GlyphOverview {
     }
 
     private getVisibleGlyphIdsContentBounds(
-        glyphIds: string[]
+        glyphIds: string[],
+        columnsOverride?: number
     ): { top: number; bottom: number; centerY: number } | null {
         // Lines mode: index math is authoritative (DOM rects are often stale
         // right after syncGlyphs reorders tiles and restores scrollTop).
@@ -1597,7 +1712,12 @@ class GlyphOverview {
         }
 
         const dims = this.getTileDimensions();
-        const columns = Math.max(1, this.getGridColumns());
+        const columns = Math.max(
+            1,
+            columnsOverride && columnsOverride > 0
+                ? columnsOverride
+                : this.getGridColumns()
+        );
         const rowHeight = dims.height + 2;
         const firstRow = Math.floor(visibleIndexes[0] / columns);
         const lastRow = Math.floor(
@@ -5344,6 +5464,11 @@ class GlyphOverview {
     }
 
     public destroy(): void {
+        if (this.lineBreakFocusLockTimer !== null) {
+            window.clearTimeout(this.lineBreakFocusLockTimer);
+            this.lineBreakFocusLockTimer = null;
+        }
+        this.lineBreakFocusLock = null;
         if (this.intersectionObserver) {
             this.intersectionObserver.disconnect();
             this.intersectionObserver = null;
