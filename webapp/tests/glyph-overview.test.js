@@ -1163,6 +1163,29 @@ describe('overviewTileCanvasBackingBytes', () => {
     });
 });
 
+describe('computeLinesModeTileLayout', () => {
+    test('keeps the base-width column count and stretches tiles to fill leftover', () => {
+        const { computeLinesModeTileLayout } = require('../js/glyph-overview');
+        const tight = computeLinesModeTileLayout(98, 30);
+        expect(tight.columns).toBe(3);
+        expect(tight.filledWidth).toBe(30);
+
+        const leftover = computeLinesModeTileLayout(113, 30);
+        expect(leftover.columns).toBe(3);
+        expect(leftover.filledWidth).toBe(35);
+    });
+
+    test('does not add a column until another base-width tile fits', () => {
+        const { computeLinesModeTileLayout } = require('../js/glyph-overview');
+        const almost = computeLinesModeTileLayout(129, 30);
+        expect(almost.columns).toBe(3);
+
+        const next = computeLinesModeTileLayout(130, 30);
+        expect(next.columns).toBe(4);
+        expect(next.filledWidth).toBe(30);
+    });
+});
+
 describe('GlyphOverview tile cache LRU', () => {
     let overview;
     let parent;

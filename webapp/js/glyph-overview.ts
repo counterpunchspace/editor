@@ -60,6 +60,43 @@ const console = new Logger('GlyphOverview');
 declare const window: Window & { fontCompilation?: any };
 
 /**
+ * Must match `#glyph-overview-container` gap and padding in glyph-overview.css.
+ */
+export const OVERVIEW_TILE_GAP_PX = 2;
+export const OVERVIEW_TILE_PADDING_PX = 2;
+
+/**
+ * Line-break from the slider's base tile width, then stretch each tile so a
+ * full row fills the content box (padding already subtracted via clientWidth).
+ */
+export function computeLinesModeTileLayout(
+    containerClientWidth: number,
+    baseTileWidth: number,
+    gap: number = OVERVIEW_TILE_GAP_PX,
+    paddingPerSide: number = OVERVIEW_TILE_PADDING_PX
+): { columns: number; filledWidth: number } {
+    const availableWidth = Math.max(
+        0,
+        containerClientWidth - paddingPerSide * 2
+    );
+    if (baseTileWidth <= 0) {
+        return { columns: 1, filledWidth: Math.max(0, availableWidth) };
+    }
+    const columns = Math.max(
+        1,
+        Math.floor((availableWidth + gap) / (baseTileWidth + gap))
+    );
+    const filledWidth =
+        columns === 1
+            ? availableWidth
+            : (availableWidth - (columns - 1) * gap) / columns;
+    return {
+        columns,
+        filledWidth: Math.max(0, filledWidth)
+    };
+}
+
+/**
  * Backing-store bytes for an overview tile canvas.
  * Unused tiles keep the HTML default 300×150 without a style size and
  * have never been painted; those do not get a real bitmap until render.
@@ -241,6 +278,7 @@ class GlyphOverview {
     private resizeObserver: ResizeObserver | null = null;
     private resizeSyncRafId: number | null = null;
     private lastContainerWidth = 0;
+    private lastLinesColumnCount = 0;
     private tiles: Map<string, GlyphTile> = new Map();
     private isDragging = false;
     private hasDragged = false;
@@ -430,7 +468,9 @@ class GlyphOverview {
             }
 
             this.lastContainerWidth = nextWidth;
-            this.scheduleResizeFocusSync();
+            if (this.syncLinesModeColumnsFromContainer()) {
+                this.scheduleResizeFocusSync();
+            }
         });
         this.resizeObserver.observe(this.container);
     }
@@ -475,15 +515,7 @@ class GlyphOverview {
             });
         }
 
-        // Set initial tile dimensions
-        const dims = this.getTileDimensions();
-        if (this.container) {
-            this.container.style.setProperty('--tile-width', `${dims.width}px`);
-            this.container.style.setProperty(
-                '--tile-height',
-                `${dims.height}px`
-            );
-        }
+        this.applyOverviewTileLayout();
     }
 
     private updateSliderProgress(): void {
@@ -755,6 +787,7 @@ class GlyphOverview {
         }
         this.updateViewModeButtonState();
         this.renderByViewMode();
+        this.applyOverviewTileLayout();
     }
 
     private updateViewModeButtonState(): void {
@@ -844,6 +877,7 @@ class GlyphOverview {
         const visibleSet = new Set(this.visibleGlyphIds);
         this.container.classList.remove('glyph-overview-grid-mode');
         this.container.classList.add('glyph-overview-lines-mode');
+        this.applyOverviewTileLayout();
         this.gridRowsForNavigation = [];
         this.gridColumnCount = 0;
 
@@ -878,6 +912,7 @@ class GlyphOverview {
         const layout = this.buildGridLayoutData(this.visibleGlyphIds);
         this.container.classList.remove('glyph-overview-lines-mode');
         this.container.classList.add('glyph-overview-grid-mode');
+        this.applyOverviewTileLayout();
         this.gridRowsForNavigation = layout.rows;
         this.gridColumnCount = layout.columns.length;
 
@@ -953,6 +988,7 @@ class GlyphOverview {
 
         this.container.classList.remove('glyph-overview-grid-mode');
         this.container.classList.add('glyph-overview-lines-mode');
+        this.applyOverviewTileLayout();
     }
 
     private detachLinesVirtualization(): void {
@@ -1116,7 +1152,6 @@ class GlyphOverview {
             const topSpacer = document.createElement('div');
             topSpacer.style.width = '100%';
             topSpacer.style.height = `${topSpacerHeight}px`;
-            topSpacer.style.flex = '0 0 100%';
             topSpacer.dataset.role = 'virtual-spacer-top';
             fragment.appendChild(topSpacer);
         }
@@ -1148,7 +1183,6 @@ class GlyphOverview {
             const bottomSpacer = document.createElement('div');
             bottomSpacer.style.width = '100%';
             bottomSpacer.style.height = `${bottomSpacerHeight}px`;
-            bottomSpacer.style.flex = '0 0 100%';
             bottomSpacer.dataset.role = 'virtual-spacer-bottom';
             fragment.appendChild(bottomSpacer);
         }
@@ -1244,6 +1278,43 @@ class GlyphOverview {
         return { width, height };
     }
 
+    /**
+     * Slider size stays on --tile-width/--tile-height (bitmap + matrix cells).
+     * Lines mode only updates --tile-columns; CSS 1fr stretches the chrome.
+     */
+    private applyOverviewTileLayout(): void {
+        if (!this.container) {
+            return;
+        }
+
+        const dims = this.getTileDimensions();
+        this.container.style.setProperty('--tile-width', `${dims.width}px`);
+        this.container.style.setProperty('--tile-height', `${dims.height}px`);
+        this.lastLinesColumnCount = 0;
+        this.syncLinesModeColumnsFromContainer();
+    }
+
+    /**
+     * @returns true when the integer column count changed (line-breaking).
+     */
+    private syncLinesModeColumnsFromContainer(): boolean {
+        if (!this.container || this.viewMode !== 'lines') {
+            return false;
+        }
+
+        const { columns } = computeLinesModeTileLayout(
+            this.container.clientWidth,
+            this.getTileDimensions().width
+        );
+        if (columns === this.lastLinesColumnCount) {
+            return false;
+        }
+
+        this.lastLinesColumnCount = columns;
+        this.container.style.setProperty('--tile-columns', String(columns));
+        return true;
+    }
+
     private getTileCacheBudgetBytes(): number {
         return APP_SETTINGS.GLYPH_OVERVIEW.TILE_CACHE_MAX_BYTES;
     }
@@ -1337,22 +1408,14 @@ class GlyphOverview {
 
     private updateTileSize(): void {
         const resizeFocusAnchor = this.getResizeFocusAnchor();
-        const dims = this.getTileDimensions();
+        this.lastLinesColumnCount = 0;
+        this.applyOverviewTileLayout();
 
         if (this.highlightScrollSyncRafId !== null) {
             cancelAnimationFrame(this.highlightScrollSyncRafId);
             this.highlightScrollSyncRafId = null;
         }
         this.highlightScrollSyncAttempts = 0;
-
-        // Update CSS custom properties for tile sizing
-        if (this.container) {
-            this.container.style.setProperty('--tile-width', `${dims.width}px`);
-            this.container.style.setProperty(
-                '--tile-height',
-                `${dims.height}px`
-            );
-        }
 
         requestAnimationFrame(() => {
             this.evictAllTileCaches();
@@ -3874,21 +3937,11 @@ class GlyphOverview {
 
         if (!this.container) return 0;
 
-        const containerWidth = this.container.clientWidth;
-        const tileWidth = parseFloat(
-            getComputedStyle(this.container).getPropertyValue('--tile-width') ||
-                '30'
+        const layout = computeLinesModeTileLayout(
+            this.container.clientWidth,
+            this.getTileDimensions().width
         );
-        const gap = 2; // From CSS: gap: 2px
-        const padding = 4; // From CSS: padding: 2px on each side
-
-        if (tileWidth === 0) return 0;
-
-        // Calculate how many tiles fit per row
-        const availableWidth = containerWidth - padding;
-        const columns = Math.floor((availableWidth + gap) / (tileWidth + gap));
-
-        return Math.max(1, columns);
+        return layout.columns;
     }
 
     /**

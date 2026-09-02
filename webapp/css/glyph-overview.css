@@ -4,6 +4,7 @@
 #glyph-overview-container {
     --tile-width: 30px;
     --tile-height: 50px;
+    --tile-columns: 1;
     display: flex;
     flex-wrap: wrap;
     gap: 2px;
@@ -21,7 +22,18 @@
 }
 
 #glyph-overview-container.glyph-overview-lines-mode {
-    display: flex;
+    display: grid;
+    grid-template-columns: repeat(var(--tile-columns), minmax(0, 1fr));
+    align-content: start;
+}
+
+#glyph-overview-container.glyph-overview-lines-mode .glyph-tile {
+    width: 100%;
+}
+
+#glyph-overview-container.glyph-overview-lines-mode
+    [data-role^='virtual-spacer'] {
+    grid-column: 1 / -1;
 }
 
 .glyph-grid-row {
@@ -153,7 +165,8 @@
 .glyph-tile canvas {
     position: absolute;
     top: 0;
-    left: 0;
+    left: 50%;
+    transform: translateX(-50%);
     pointer-events: none;
     color: var(--text-primary);
 }
