@@ -4,6 +4,10 @@
 
 import { pathHasSubtractionFlag } from './path-boolean-flag';
 import {
+    fillPunchFillContoursOnContext,
+    type PunchFillContour
+} from './punch-fill-contours';
+import {
     buildGlyphPathFromNodes,
     calculateGlyphShapeBounds,
     multiplyAffineTransforms,
@@ -34,12 +38,6 @@ interface GlyphOutlineData {
         yMax: number;
     };
 }
-
-type PunchFillContour = {
-    nodes: any[];
-    subtract: boolean;
-    fillStyle: string;
-};
 
 function isIdentityAffine(affine: number[]): boolean {
     return (
@@ -337,56 +335,10 @@ class FastGlyphTileRenderer {
                     ? this.autoComponentColor
                     : this.manualComponentColor
         );
-        this.fillPunchFillContours(ctx, contours);
-    }
-
-    private fillPunchFillContours(
-        ctx: CanvasRenderingContext2D,
-        contours: PunchFillContour[]
-    ): void {
-        const punchCoverage = (nodes: any[]): void => {
-            ctx.beginPath();
-            buildGlyphPathFromNodes(nodes, ctx);
-            ctx.closePath();
-            ctx.save();
-            ctx.globalCompositeOperation = 'destination-out';
-            ctx.fillStyle = 'rgba(0, 0, 0, 1)';
-            ctx.fill('nonzero');
-            ctx.restore();
-        };
-        const flushPending = (
-            pending: Array<{ nodes: any[]; fillStyle: string }>
-        ): void => {
-            if (!pending.length) {
-                return;
-            }
-            ctx.beginPath();
-            for (const contour of pending) {
-                buildGlyphPathFromNodes(contour.nodes, ctx);
-                ctx.closePath();
-            }
-            ctx.fillStyle = pending[0].fillStyle;
-            ctx.fill('nonzero');
-        };
-
-        const pending: Array<{ nodes: any[]; fillStyle: string }> = [];
-        for (const contour of contours) {
-            if (contour.subtract) {
-                flushPending(pending);
-                pending.length = 0;
-                punchCoverage(contour.nodes);
-                continue;
-            }
-            if (pending.length && pending[0].fillStyle !== contour.fillStyle) {
-                flushPending(pending);
-                pending.length = 0;
-            }
-            pending.push({
-                nodes: contour.nodes,
-                fillStyle: contour.fillStyle
-            });
-        }
-        flushPending(pending);
+        fillPunchFillContoursOnContext(ctx, contours, (target, nodes) => {
+            buildGlyphPathFromNodes(nodes as any[], target);
+            target.closePath();
+        });
     }
 
     private isAutomaticallyAlignedComponent(component: any): boolean {

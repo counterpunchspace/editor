@@ -5,6 +5,7 @@ import APP_SETTINGS, {
 } from '../settings';
 import { Layer, DecomposedAffineTransform } from '../babelfont-model';
 import { pathHasSubtractionFlag } from '../path-boolean-flag';
+import { fillPunchFillContoursOnContext } from '../punch-fill-contours';
 import { Logger } from '../logger';
 import { getPathFillOpacity } from '../path-fill-opacity-pref';
 import { get_glyph_name } from '../../wasm-dist/babelfont_fontc_web';
@@ -2409,74 +2410,15 @@ export class GlyphCanvasRenderer {
             fillStyle: string;
         }>
     ): void {
-        const punchCoverage = (nodes: Babelfont.Node[]): void => {
-            this.ctx.beginPath();
-            this.buildPathFromNodes(nodes, true);
-            this.ctx.closePath();
-            this.ctx.save();
-            this.ctx.globalCompositeOperation = 'destination-out';
-            this.ctx.fillStyle = 'rgba(0, 0, 0, 1)';
-            this.ctx.fill('nonzero');
-            this.ctx.restore();
-        };
-        const flushPending = (
-            pending: Array<{ nodes: Babelfont.Node[]; fillStyle: string }>
-        ): void => {
-            if (!pending.length) {
-                return;
-            }
-            this.ctx.beginPath();
-            for (const contour of pending) {
-                this.buildPathFromNodes(contour.nodes, true);
-                this.ctx.closePath();
-            }
-            this.ctx.fillStyle = pending[0].fillStyle;
-            this.ctx.fill('nonzero');
-        };
-        const pending: Array<{ nodes: Babelfont.Node[]; fillStyle: string }> =
-            [];
-        for (let index = 0; index < contours.length; index++) {
-            const contour = contours[index];
-            if (contour.subtract) {
-                flushPending(pending);
-                pending.length = 0;
-                punchCoverage(contour.nodes);
-                this.ctx.beginPath();
-                this.buildPathFromNodes(contour.nodes, true);
-                this.ctx.closePath();
-                this.ctx.fillStyle = this.getSubtractionFillColor();
-                this.ctx.fill('nonzero');
-                const coveringAdditives = contours
-                    .slice(index + 1)
-                    .filter((item) => !item.subtract);
-                if (coveringAdditives.length) {
-                    this.ctx.save();
-                    this.ctx.beginPath();
-                    this.buildPathFromNodes(contour.nodes, true);
-                    this.ctx.closePath();
-                    this.ctx.clip();
-                    this.ctx.beginPath();
-                    for (const additive of coveringAdditives) {
-                        this.buildPathFromNodes(additive.nodes, true);
-                        this.ctx.closePath();
-                    }
-                    this.ctx.globalCompositeOperation = 'destination-out';
-                    this.ctx.fillStyle = 'rgba(0, 0, 0, 1)';
-                    this.ctx.fill('nonzero');
-                    this.ctx.restore();
-                }
-                continue;
-            }
-            if (pending.length && pending[0].fillStyle !== contour.fillStyle) {
-                flushPending(pending);
-                pending.length = 0;
-            }
-            pending.push({
-                nodes: contour.nodes,
-                fillStyle: contour.fillStyle
-            });
-        }
-        flushPending(pending);
+        fillPunchFillContoursOnContext(
+            this.ctx,
+            contours,
+            (ctx, nodes) => {
+                this.buildPathFromNodes(nodes as Babelfont.Node[], true);
+                ctx.closePath();
+            },
+            this.getSubtractionFillColor()
+        );
     }
 
     private fillOutlineEditorPunchOut(
@@ -2640,9 +2582,10 @@ export class GlyphCanvasRenderer {
             );
         }
 
-        // Filled glyph background: grouped nonzero compounds, destination-out
-        // cutters for shapes below, later additives on top. Cutter fill covers
-        // the hole; only later solids punch the cutter fill (compiled coverage).
+        // Filled glyph background: all additive contours share one nonzero
+        // fill so reverse counters punch regardless of path/component order.
+        // Subtraction cutters then dest-out in shape order; later additives
+        // cover the cutter. Cutter fill stays except where later solids sit.
         this.fillOutlineEditorPunchOut(
             currentLayerData,
             this.getPathFillColor(isDarkTheme)

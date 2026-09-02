@@ -74,5 +74,45 @@ describe('overview tile punch-out', () => {
                     event.props?.value === 'destination-out'
             )
         ).toBe(true);
+        expect(
+            events.some(
+                (event) =>
+                    event.type === 'globalCompositeOperation' &&
+                    event.props?.value === 'destination-in'
+            )
+        ).toBe(true);
+    });
+
+    test('unifies path and component fills before punching a cutter', () => {
+        const canvas = fastGlyphTileRenderer.renderToCanvas(
+            {
+                name: 'A',
+                width: 400,
+                shapes: [
+                    rect(0, 0, 400, 700),
+                    {
+                        reference: 'dot',
+                        transform: [1, 0, 0, 1, 80, 80],
+                        layerData: {
+                            shapes: [rect(0, 0, 40, 40)]
+                        }
+                    },
+                    {
+                        ...rect(200, 100, 280, 400),
+                        format_specific: { 'fip001-boolean': 'subtraction' }
+                    }
+                ]
+            },
+            { upm: 1000, ascender: 800, descender: -200 },
+            64,
+            80
+        );
+        const ops = canvas
+            .getContext('2d')
+            .__getEvents()
+            .filter((event) => event.type === 'globalCompositeOperation')
+            .map((event) => event.props?.value);
+        expect(ops[0]).toBe('destination-in');
+        expect(ops).toContain('destination-out');
     });
 });
