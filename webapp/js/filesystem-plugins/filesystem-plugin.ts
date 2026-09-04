@@ -288,6 +288,30 @@ export abstract class FilesystemPlugin {
     }
 
     /**
+     * Sync admission for a live Yjs commit. Cloud rejects oversize packets
+     * or shards before the change-bridge emits. Local backends allow.
+     */
+    canSubmitCollabUpdate(
+        requests: Array<{
+            documentId: string;
+            packetBytes: number;
+            shardBytes: number;
+        }>
+    ): { allowed: boolean; reason?: string; kind?: 'packet' | 'shard' } {
+        void requests;
+        return { allowed: true };
+    }
+
+    notifyCollabSubmitRejected(_decision: {
+        allowed: boolean;
+        reason?: string;
+        kind?: 'packet' | 'shard';
+        documentId?: string;
+        packetBytes?: number;
+        shardBytes?: number;
+    }): void {}
+
+    /**
      * Return a copy of font JSON without this plugin's owned extra data.
      * Used when Save As targets a different plugin.
      */

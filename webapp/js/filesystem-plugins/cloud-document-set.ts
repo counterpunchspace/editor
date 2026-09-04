@@ -1,10 +1,21 @@
 import * as Y from 'yjs';
 import {
     applyCloudOwnedData,
+    catalogFromCoreJson,
     ensureImmutableGlyphId,
+    isCatalogTombstone,
+    liveCatalogGlyphIds,
     listGlyphRecords,
     type CloudOwnedFontData
 } from './cloud-glyph-catalog';
+import {
+    buildFontDepsForGlyph,
+    buildFontDepsIndex,
+    glyphIdsForSparseHydration,
+    patchSourceEdges,
+    readFontDepsIndex,
+    writeFontDepsYMap
+} from './cloud-font-deps';
 import { evaluateShardSizes, type ShardSizeGate } from './cloud-shard-limits';
 import {
     fillGlyphYMap,
@@ -18,6 +29,7 @@ export const FONT_DEPS_DOCUMENT_ID = 'font-deps';
 export const GLYPH_REVISIONS_KEY = 'glyphRevisions';
 export const GLYPH_SYNC_MAP_KEY = 'sync';
 export const GLYPH_SYNC_REVISION_KEY = 'revision';
+export const GLYPH_SYNC_GENERATION_KEY = 'generation';
 
 export function glyphDocumentId(glyphId: string): string {
     return `glyph:${glyphId}`;
@@ -72,6 +84,177 @@ export function shardRoomId(assetId: string, documentId: string): string {
     return `${assetId}:${documentId}`;
 }
 
+export type SparseGlyphHydrationFetch = (
+    documentIds: string[]
+) => Promise<Map<string, Uint8Array>>;
+
+/**
+ * Hydrate a sparse glyph subset to a fixed point. Stale deps projections
+ * are repaired from loaded glyph bodies; newly discovered prerequisites
+ * are fetched on later passes. Catalog size bounds the loop.
+ */
+export async function hydrateSparseGlyphsToFixedPoint(options: {
+    documentSet: CloudDocumentSet;
+    catalogIds: string[];
+    seedIds: string[];
+    layoutIds?: string[];
+    catalog: Array<{ glyphId: string; name: string }>;
+    fetchGlyphs: SparseGlyphHydrationFetch;
+}): Promise<{
+    loadedIds: string[];
+    fetchPasses: string[][];
+    glyphBytes: Map<string, Uint8Array>;
+}> {
+    const {
+        documentSet,
+        catalogIds,
+        seedIds,
+        layoutIds,
+        catalog,
+        fetchGlyphs
+    } = options;
+    const liveCatalogIds = liveCatalogGlyphIds(
+        catalogFromCoreJson(documentSet.assembleFontJson())?.glyphCatalog ||
+            Object.fromEntries(
+                catalogIds.map((glyphId) => [
+                    glyphId,
+                    {
+                        glyphId,
+                        name: '',
+                        codepoints: [],
+                        latestGlyphRevision: '0',
+                        generation: 0
+                    }
+                ])
+            )
+    );
+    const glyphBytes = new Map<string, Uint8Array>();
+    const loadedIds = new Set<string>();
+    const fetchPasses: string[][] = [];
+    let hydrateIds = glyphIdsForSparseHydration({
+        catalogIds: liveCatalogIds,
+        seedIds,
+        layoutIds,
+        edges: readFontDepsIndex(documentSet.depsDoc.getMap('deps')).edges
+    });
+
+    for (
+        let pass = 0;
+        pass <= Math.max(liveCatalogIds.length, catalogIds.length, 1);
+        pass++
+    ) {
+        const missing = hydrateIds.filter((id) => !loadedIds.has(id));
+        if (!missing.length) {
+            break;
+        }
+        fetchPasses.push(missing.slice());
+        const fetched = await fetchGlyphs(missing.map(glyphDocumentId));
+        for (const [documentId, bytes] of fetched) {
+            documentSet.applyRemoteUpdate(documentId, bytes);
+            glyphBytes.set(documentId, bytes);
+            const glyphId = documentId.slice('glyph:'.length);
+            loadedIds.add(glyphId);
+        }
+        const loadedGlyphs = new Map(
+            listGlyphRecords(documentSet.assembleFontJson()).map((glyph) => [
+                String(glyph.id || ''),
+                glyph
+            ])
+        );
+        const depsMap = documentSet.depsDoc.getMap('deps');
+        const sourceRevisions = depsMap.get('sourceRevision');
+        for (const glyphId of loadedIds) {
+            const glyph = loadedGlyphs.get(glyphId);
+            const revision = documentSet.glyphDocs
+                .get(glyphId)
+                ?.getMap(GLYPH_SYNC_MAP_KEY)
+                .get(GLYPH_SYNC_REVISION_KEY);
+            const projected =
+                sourceRevisions instanceof Y.Map
+                    ? sourceRevisions.get(glyphId)
+                    : undefined;
+            if (
+                glyph &&
+                typeof revision === 'string' &&
+                revision !== projected &&
+                !isCatalogTombstone(
+                    catalogFromCoreJson(documentSet.assembleFontJson())
+                        ?.glyphCatalog,
+                    glyphId
+                )
+            ) {
+                patchSourceEdges(
+                    depsMap,
+                    glyphId,
+                    buildFontDepsForGlyph(glyph, catalog),
+                    revision
+                );
+            }
+        }
+        hydrateIds = glyphIdsForSparseHydration({
+            catalogIds: liveCatalogIds,
+            seedIds,
+            layoutIds,
+            edges: readFontDepsIndex(depsMap).edges
+        });
+    }
+
+    return {
+        loadedIds: [...loadedIds],
+        fetchPasses,
+        glyphBytes
+    };
+}
+
+export type PublishedManifestRevisions = {
+    coreRevision: string;
+    depsRevision: string;
+};
+
+export async function hydrateCoreDepsToPublishedPair(options: {
+    fetchCoreDeps: () => Promise<{
+        core: Uint8Array | null;
+        deps: Uint8Array | null;
+    }>;
+    hash: (bytes: Uint8Array) => Promise<string>;
+    expected: PublishedManifestRevisions;
+    maxAttempts?: number;
+}): Promise<{
+    core: Uint8Array;
+    deps: Uint8Array | null;
+    attempts: number;
+}> {
+    const maxAttempts = options.maxAttempts ?? 3;
+    let lastCore: Uint8Array | null = null;
+    let lastDeps: Uint8Array | null = null;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        const fetched = await options.fetchCoreDeps();
+        lastCore = fetched.core;
+        lastDeps = fetched.deps;
+        if (!fetched.core?.byteLength) {
+            continue;
+        }
+        const coreRevision = await options.hash(fetched.core);
+        const depsRevision = fetched.deps?.byteLength
+            ? await options.hash(fetched.deps)
+            : options.expected.depsRevision;
+        if (
+            coreRevision === options.expected.coreRevision &&
+            depsRevision === options.expected.depsRevision
+        ) {
+            return {
+                core: fetched.core,
+                deps: fetched.deps,
+                attempts: attempt
+            };
+        }
+    }
+    if (!lastCore?.byteLength) {
+        throw new Error('core/deps hydrate failed: empty core shard');
+    }
+    return { core: lastCore, deps: lastDeps, attempts: maxAttempts };
+}
+
 export type EncodedShard = {
     documentId: string;
     bytes: Uint8Array;
@@ -104,7 +287,10 @@ export class CloudDocumentSet {
         });
 
         this.depsDoc.transact(() => {
-            this.depsDoc.getMap('deps').set('edges', owned.fontDeps);
+            writeFontDepsYMap(
+                this.depsDoc.getMap('deps'),
+                buildFontDepsIndex(working)
+            );
         });
 
         for (const doc of this.glyphDocs.values()) {

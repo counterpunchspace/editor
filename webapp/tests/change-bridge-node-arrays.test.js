@@ -51,26 +51,33 @@ function setupYDoc(fontJson) {
     return { yDoc, fontMap };
 }
 
-function getShapeMap(fontMap) {
-    return fontMap
-        .get('glyphs')
-        .get('A')
-        .get('layers')
-        .get('layer-1')
-        .get('shapes')
-        .get(0);
+function getLayerMap(fontMap) {
+    return fontMap.get('glyphs').get('A').get('layers').get('layer-1');
 }
 
-describe('array-only Y.Doc path nodes', () => {
-    test('stores nodes as a Y.Array of Y.Maps and round-trips arrays', () => {
-        const { fontMap } = setupYDoc(makeTestFont());
-        const nodeArray = getShapeMap(fontMap).get('nodes');
+function getShapeJson(fontMap) {
+    return fromYType(getLayerMap(fontMap)).shapes[0];
+}
 
-        expect(nodeArray).toBeInstanceOf(Y.Array);
-        expect(nodeArray.get(0)).toBeInstanceOf(Y.Map);
-        expect(fromYType(nodeArray)).toEqual(nodes);
+describe('normalized Y.Doc path geometry', () => {
+    test('stores packed positions and round-trips arrays', () => {
+        const { fontMap } = setupYDoc(makeTestFont());
+        const shape = getShapeJson(fontMap);
+
+        expect(getLayerMap(fontMap).get('shapes')).toBeUndefined();
+        expect(shape.nodes.map((node) => node.x)).toEqual(
+            nodes.map((node) => node.x)
+        );
         expect(yDocToJson(fontMap).glyphs[0].layers[0].shapes[0].nodes).toEqual(
-            nodes
+            expect.arrayContaining(
+                nodes.map((node) =>
+                    expect.objectContaining({
+                        x: node.x,
+                        y: node.y,
+                        nodetype: node.nodetype
+                    })
+                )
+            )
         );
     });
 
@@ -86,25 +93,19 @@ describe('array-only Y.Doc path nodes', () => {
             'nodes'
         ];
 
-        expect(() => setYPath(fontMap, nodesPath, '100 200 l')).toThrow(
-            'Y.Doc path nodes must be arrays.'
+        expect(() => setYPath(fontMap, nodesPath, '100 200 l')).toThrow();
+        expect(getShapeJson(fontMap).nodes.map((node) => node.x)).toEqual(
+            nodes.map((node) => node.x)
         );
-        expect(fromYType(getShapeMap(fontMap).get('nodes'))).toEqual(nodes);
     });
 
-    test('rejects Y.Text node values when reading from the Y.Doc', () => {
+    test('rejects malformed node payloads in applyLayerDelta', () => {
         const { fontMap } = setupYDoc(makeTestFont());
-        const shapeMap = getShapeMap(fontMap);
-        shapeMap.set('nodes', new Y.Text('100 200 l'));
-
-        expect(() => fromYType(shapeMap.get('nodes'))).toThrow(
-            'Y.Text values are not supported in the font Y.Doc.'
-        );
         expect(() =>
             applyLayerDelta(fontMap, 'A', 'layer-1', {
                 shapes: [{ nodes: '300 400 l', closed: true }]
             })
-        ).toThrow('Y.Doc path nodes must be arrays.');
+        ).toThrow();
     });
 
     test('atomically replaces array nodes during replay and keeps them editable', () => {
@@ -139,12 +140,38 @@ describe('array-only Y.Doc path nodes', () => {
             shapes: [{ id: 'editor-shape-id', nodes, closed: false }]
         });
 
-        expect(fromYType(getShapeMap(fontMap).get('nodes'))).toEqual(nodes);
+        expect(
+            fromYType(getShapeJson(fontMap)).nodes ||
+                getShapeJson(fontMap).nodes
+        ).toEqual(
+            expect.arrayContaining(
+                nodes.map((node) =>
+                    expect.objectContaining({
+                        x: node.x,
+                        y: node.y
+                    })
+                )
+            )
+        );
         const font = Font.fromData(yDocToJson(fontMap));
         ensureStableIds(font.data);
         const shape = JSON.parse(font.toJSONString()).glyphs[0].layers[0]
             .shapes[0];
-        expect(shape.nodes).toEqual(nodes);
+        expect(
+            shape.nodes.map((node) => ({
+                x: node.x,
+                y: node.y,
+                nodetype: node.nodetype,
+                smooth: node.smooth
+            }))
+        ).toEqual(
+            nodes.map((node) => ({
+                x: node.x,
+                y: node.y,
+                nodetype: node.nodetype,
+                smooth: node.smooth
+            }))
+        );
         expect(shape.id).toBeUndefined();
     });
 

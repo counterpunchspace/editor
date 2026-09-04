@@ -3,6 +3,7 @@
 import { Logger } from './logger';
 import {
     collectLocalMemoryBreakdown,
+    liveShardMemoryFromEngine,
     readBrowserHeapSnapshot,
     refreshWorkerMemoryDomains,
     renderMemoryBreakdown,
@@ -42,6 +43,7 @@ class MemoryMonitor {
         this.settingsIndicator = document.getElementById(
             'settings-memory-indicator'
         );
+        this.bindUndoTruncation();
         this.setupInfoPopup();
         this.startMonitoring();
         window.addEventListener('beforeunload', () => {
@@ -50,6 +52,34 @@ class MemoryMonitor {
             }
         });
         console.log('Memory monitor initialized');
+    }
+
+    bindUndoTruncation() {
+        const button = document.getElementById('truncate-undo-history-btn');
+        button?.addEventListener('click', () => {
+            window.patchSyncEngine?.truncateUndoHistory?.();
+            this.updateSettingsDisplay(readBrowserHeapSnapshot());
+        });
+    }
+
+    updateShardMemoryWarning() {
+        const warning = document.getElementById('shard-memory-warning');
+        const button = document.getElementById('truncate-undo-history-btn');
+        const report = liveShardMemoryFromEngine();
+        const show = report?.status === 'warning';
+        if (warning) {
+            warning.hidden = !show;
+            warning.textContent =
+                show && report
+                    ? `Live CRDT is large (${report.decodedStructs} structs). Rebaseline keeps unsent updates. Clear undo history only if you mean to drop local undo.`
+                    : '';
+        }
+        if (button) {
+            button.hidden = !show;
+        }
+        if (show && this.settingsIndicator) {
+            this.settingsIndicator.classList.add('warning');
+        }
     }
 
     setupInfoPopup() {
@@ -191,6 +221,7 @@ class MemoryMonitor {
                 this.settingsIndicator.classList.add('warning');
             }
         }
+        this.updateShardMemoryWarning();
     }
 
     startMonitoring() {

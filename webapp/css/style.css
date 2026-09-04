@@ -5414,6 +5414,16 @@ html[data-command-modifier='ctrl'] .shortcut-option-modifier::before {
     animation: pulse-indicator 1s ease-in-out infinite;
 }
 
+.shard-memory-warning {
+    margin: 8px 0 0;
+    color: var(--accent-yellow);
+    font-size: 12px;
+}
+
+#truncate-undo-history-btn {
+    margin-top: 8px;
+}
+
 @keyframes pulse-indicator {
     0%,
     100% {

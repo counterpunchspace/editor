@@ -29,7 +29,8 @@ whole font still hits isolate memory (~128 MB); rooms stay per-shard.
   `seedWorkerDocumentSet` (`state`, not raw `bytes`).
 
 **Still later:** CJK working-set hydrate, Fly full-font builder, fat
-compactor, denser cmap, Worker-class `cf-compactor` on sharded R2 keys.
+compactor, denser cmap. Worker-class `compactor` on sharded R2 keys is in
+v1.
 
 **v1 vs later**
 
@@ -37,9 +38,9 @@ compactor, denser cmap, Worker-class `cf-compactor` on sharded R2 keys.
 | --- | --- |
 | Per-shard DOs, HTTP seed/hydrate, external Worker compaction | Fat-process compactor for oversized shards |
 | Hydrate policy `all` (Basic: 1 font, ≤1000 glyphs) | CJK working-set hydrate + layout-closure UX |
-| Owner quotas, 10 MB per Y.Doc, plugin catalog/deps | Fly/session full-font builder |
+| Owner quotas, 5 MiB per Y.Doc, plugin catalog/deps | Fly/session full-font builder |
 | Document-scoped BC `documentId`; linked worker `seedWorkerDocumentSet` | CJK-style selective linked bootstrap |
-| cf-compactor as-is (room id + R2 shard keys) | Legacy whole-font room migration |
+| compactor as-is (room id + R2 shard keys) | Legacy whole-font room migration |
 
 ## Goals
 
@@ -76,8 +77,8 @@ Use these as stress cases when sizing catalog/deps budgets and hydrate UX:
 | Full-font compile | Session-scoped Fly Machine (8–16 GB); core dirty + HTTP glyph catch-up (not v1) |
 | Quotas | Website is source of truth; **asset owner** subscription; plugin **and** collab enforce |
 | Basic plan | 1 owned font, 1000 glyphs (`null` = unlimited for future tiers) |
-| Client shard ceiling | 10 MB encoded per Y.Doc (core, deps, each glyph); warn at 75%; block at cap |
-| Compaction host | `cf-compactor` Worker-class; ~16 MiB recoverable; 10 MB client cap leaves tail headroom |
+| Client shard ceiling | 5 MiB encoded per Y.Doc (`MAX_SHARD_BYTES` = 5 242 880); warn at 75%; seed/save/commit block at cap |
+| Compaction host | `compactor` Worker-class; recoverable matches the shard ceiling |
 | Catalog / deps | Built in CloudPlugin (`prepareToSeed` / `prepareToSave`); live incremental updates |
 | Plugin-owned data | Namespaced; stripped on Save As to another plugin (`stripOwnedFontData`) |
 | Collab → website | Service-token internal limits API on seed and catalog growth |
@@ -117,18 +118,27 @@ metadata. Rooms must **not** hydrate glyph bodies to count glyphs.
 
 Encoded Yjs state per document, independently:
 
-- Ceiling: **10 MB** (`MAX_SHARD_BYTES`)
-- Warning: **75%** (7.5 MB)
+- Ceiling: **5 242 880 bytes** (5 MiB, `MAX_SHARD_BYTES` / `MAX_YJS_PACKET_BYTES`)
+- Warning: **75%** (3 932 160 bytes)
 - Applies to `font-core`, `font-deps`, and each `glyph:<id>`
 
-Distinct from Worker compaction recoverable (~16 MiB encoded checkpoint + dirty
-tail). The 10 MB client cap is deliberate headroom for an uncompacted tail.
-Approaching the cap shows a warning; at/over the cap seed, save, and commit are
-blocked. Collab `POST .../state` also rejects shard bodies ≥ 10 MB.
+Isolate last-OK on Cloudflare preview was ~7.87 MB compact / ~8.65 MB validate.
+Last-OK × 0.7 is **5 505 773 bytes**; the product gate is a round **5 MiB** so
+the validator and compactor keep headroom. Approaching 75% shows a Preferences
+CRDT warning. At/over the cap:
 
-Measure dirty shards only (`Y.encodeStateAsUpdate` off the UI thread). Compare
-to last committed encoded size plus pending update size when a full encode
-would stall the UI.
+- **Seed / Save:** `prepareToSave` encodes shards, alerts, and throws.
+- **Live commit:** change-bridge measures packet bytes and an efficient shard
+  estimate (cached encode + packet; full encode of that shard only if the
+  estimate would reject), then `canSubmitCollabUpdate` on the cloud plugin.
+  Reject rolls the Yjs transact back immediately, restores font JSON, and
+  alerts. Local backends do not enforce this.
+
+Collab `POST .../state` also rejects shard bodies ≥ `MAX_SHARD_BYTES`.
+
+Do not encode every glyph on every edit. Cache last admitted encoded size per
+shard and only `Y.encodeStateAsUpdate(doc)` the touched shard when the cheap
+sum would cross the cap.
 
 ## Cloud plugin: catalog, hooks, owned data
 
@@ -139,9 +149,11 @@ Hooks on `FilesystemPlugin` (Cloud overrides):
 
 | Hook | Role |
 | --- | --- |
-| `prepareToSeed()` / `prepareToSave()` | Refresh catalog + deps from the live model **before** `canSave` / seed |
+| `prepareToSeed()` / `prepareToSave()` | Refresh catalog + deps from the live model **before** `canSave` / seed; Cloud also gates shard bytes |
 | `canSave()` | Quota + per-shard size |
 | `canAddGlyphs(n)` | Website limits (eligibility if no asset; **owner** limits if open cloud font) |
+| `canSubmitCollabUpdate(requests)` | Sync live-commit admit: packet + shard bytes. Cloud rejects at 5 MiB; Memory/Disk allow |
+| `notifyCollabSubmitRejected(decision)` | Visible alert; change-bridge already reverted the commit |
 | `stripOwnedFontData(fontJson)` | Restore baseline JSON without this plugin’s catalog/deps |
 
 Keep catalog/deps live on committed changes that affect identity or references
@@ -342,7 +354,7 @@ path.
 
 #### Why “external” even when the host is still a Worker
 
-Today’s `cf-compactor` is a **separate Workers isolate**, not unlimited RAM.
+Today’s `compactor` is a **separate Workers isolate**, not unlimited RAM.
 It is the v1 **Worker-class per-shard host**: one request = one room’s R2
 baseline + DO durable tail. After sharding, `roomId` is
 `${assetId}:${shardId}` and R2 keys live under
@@ -358,16 +370,26 @@ the right room design because:
    not whole-font. Glyph and lean-core shards fit a Worker; whole-font rooms
    do not.
 
-Probe order of magnitude (synthetic Yjs, `cf-compactor` probe): GC compact
-peak heap is roughly **2–4×** encoded checkpoint size. A Worker recoverable
-cap (today ~16 MiB encoded) is therefore a deliberate shard invariant, not a
-font-size budget.
+Checked-in benches (plan §5) replace that probe: run
+`node scripts/capacity-bench.mjs`, `node scripts/room-capacity-bench.mjs`, and
+`node scripts/wrangler-oom-bench.mjs` in the collab repo. Node `heapUsed` is a
+lower bound. Gates use last successful **128 MB workerd** compact+validate
+minus ≥30% headroom, and **do not shrink** just because a smaller fixture
+succeeded. Cloudflare preview isolates reported `Worker exceeded resource
+limits`. Last successful compact was 7.87 MB; last successful validate 8.65 MB.
+Last-OK × 0.7 = **5 505 773 bytes**. The product admission ceiling is a hard
+**5 MiB (5 242 880)** (`HARD_ADMISSION_BYTES`) so Workers keep the rest as
+headroom. The old 10 MB target is not raised (7.87 MB is below 10 MB / 0.7).
+
+Worker recoverable compact is `MAX_COMPACTION_RECOVERABLE_BYTES` (5 242 880
+bytes, same as the shard ceiling). Do not
+raise it toward 100 MB.
 
 #### Two external host classes
 
 | Host | Role | Memory contract |
 | --- | --- | --- |
-| **Worker-class compactor** (current `cf-compactor`) | Steady-state per-shard compact | `checkpointBytes + dirtyTailBytes ≤ MAX_COMPACTION_RECOVERABLE_BYTES`; reject/queue elsewhere if over |
+| **Worker-class compactor** (current `compactor`) | Steady-state per-shard compact | `checkpointBytes + dirtyTailBytes ≤ MAX_COMPACTION_RECOVERABLE_BYTES`; reject/queue elsewhere if over |
 | **Fat-process compactor** (same class as full-font builder VM / Containers) | Oversized shards, legacy whole-font migration, pathological cores | May hold multi‑100 MB Yjs GC peaks; not a DO or Worker isolate |
 
 Flow (both hosts):
@@ -677,7 +699,8 @@ Still to do:
    without shipping every glyph on linked open.
 2. Shard DO identity and R2 layouts; zero-hydration join.
 3. External compaction per shard; refuse or hand off oversized shards.
-4. Migrate legacy whole-font rooms into core + deps + per-glyph shards.
+4. ~~Migrate legacy whole-font rooms into core + deps + per-glyph shards.~~
+   Owner-authorized protocol 4 epoch + immutable asset manifests.
 
 ## Explicit non-goals (for the first cut)
 
@@ -695,8 +718,8 @@ Settled in v1 (do not re-open without a product change):
 - Owner-subscription quotas (website source of truth; plugin + collab enforce)
 - Basic: 1 font / 1000 glyphs
 - Cmap: per-entry `codepoints` **plus** reverse `codepoint → glyphId[]`
-- Browser per-shard encoded ceiling: 10 MB (warn 75%)
-- Worker-class compactor is `cf-compactor` once room IDs/R2 keys are sharded
+- Browser per-shard encoded ceiling: 5 MiB (warn 75%; live commit reverts on reject)
+- Worker-class compactor is `compactor` once room IDs/R2 keys are sharded
 
 Still open:
 
@@ -715,3 +738,145 @@ Still open:
   builds; proofing stream protocol; Fly vs CF Containers bake-off at 8–12 GB
 - Fat-process compactor: when to enqueue from Worker 413 vs migrate-only;
   shared image/host pool with the session builder or separate
+
+## Zero-hydration rooms (protocol 4)
+
+Live Durable Objects are an authenticated opaque-byte journal. They do not
+import Yjs, hydrate a long-lived `Y.Doc`, encode snapshots, or merge tails.
+Ingress is spooled in SQLite (`ingress_spool`), validated by `validator` (`gc:true` throwaway
+apply) before ACK/fan-out, and compacted by `compactor` with a pinned
+`(L0, H]` byte-budgeted page loop: apply checkpoint and drop the buffer, apply
+one framed transaction at a time, optional encode-fold, destroy the doc
+before R2 put. Mutation-history fetch failure aborts without writing
+`envelopes: []`. A 413 is terminal (`needs-fat-compactor`);
+the hard dirty cap is `tail_full` (WS `error.code = tail_full`, read-only).
+Operator inbox: `GET /api/internal/cloud/shard-ops` on Website D1, also listed
+on the admin dashboard Cloud Rooms table.
+
+Existing cloud assets use an owner-authorized schema/protocol 4 migration
+epoch: `POST /api/cloud/assets/:id/migrate` quiesces writers (access epoch +
+`migration_status=seeding`, seed-only room tokens), the owner reseeds shards,
+then `POST /api/cloud/assets/:id/manifests` atomically publishes a new
+immutable `font_asset_manifests` row and CAS-switches `manifest_revision`.
+Failure leaves the previous pointer readable. Rollback is
+`POST .../manifests/rollback` to an earlier revision — checkpoints are not
+rewritten. Mixed v3/v4 writers are rejected at auth. Catalog deletes keep
+generation tombstones; delayed orphan shard rows use `font_shard_ops` status
+`orphan-pending`. Sparse hydrate retries until the published core/deps
+revision pair matches.
+
+Reconnect carries `baselineCheckpointLogId` and `appliedLogId`. If
+`appliedLogId < currentCheckpointLogId`, the client must rebaseline.
+
+`font-core` holds catalog + cmap only. `font-deps` stores UUID edge maps
+(`component | metrics-key | both`) and is repaired from converged glyph shards.
+
+Workers live in `counterpunchspace/collab` (`packages/protocol`,
+`workers/validator`, `workers/compactor`, `workers/room`). Push to
+`main` deploys callee-first: validator, then compactor, then room.
+
+### Capacity (checked-in Node + Worker benches)
+
+Run in the collab repo (`counterpunchspace/collab`):
+
+- `npm run bench:section5` — Node matrix, room, Chromium `{gc:false}`,
+  Worker apply/encode until isolate death, then `apply-capacity-limits`
+- `npm run bench:capacity` — full core×kerning×features cartesian (674…20k),
+  JSON/encoded/structs/heap/rss/encode-peak, compact tails, Node `{gc:false}`
+- `npm run bench:browser` — Chromium page with bundled Yjs `{gc:false}`
+- `npm run bench:room` — frames, export/spool pages, FontRoomDO one-copy
+  fan-out, slow-peer close, `/live` one-page pull backpressure
+- `npm run bench:wrangler-oom` — real **validator** and **compactor**
+  bundles (`CompactSession` apply/drop/fold) on **every** §5 fixture.
+  `CAPACITY_BENCH_REMOTE=1` runs on Cloudflare preview isolates (128 MB). Local
+  `[limits] memory = 128` does not emit `Exceeded Memory`. Local substitute:
+  V8 `--max-old-space-size=128` applying **Node-encoded** checkpoints.
+  `scripts/apply-capacity-limits.mjs` writes gates when `oomFound` is true.
+  This repo’s checked-in gates are from Cloudflare preview
+  (`productionOom=true`, `Worker exceeded resource limits`).
+
+Editor production graph samples:
+`webapp/tests/section5-capacity.test.js` (`jsonToCoreFontMap`,
+`writeFontDepsYMap` component/metrics-key/both, `writeLayerGeometry`,
+`{gc:false}` undo/merge/unsent rebaseline). Seed `POST /state` calls
+`validator` before R2 put. Preferences shows a live CRDT warning and an
+explicit **Clear undo history** control (`truncateUndoHistory()`).
+
+Node `heapUsed` is a lower bound. Cloudflare preview sweep 2026-09-04
+(`wrangler-oom.json`, `productionOom: true`): 220 Worker rows; seed 1.43 MB
+OK; last successful **validate 8.65 MB**, last successful **compact 7.87 MB**;
+first compact death was `Worker exceeded resource limits` on
+`compactor-capacity-bench` at 5.54 MB (later larger applies still
+succeeded after isolate restart). Lean-core 80k and high-struct 800k also
+died. Last-OK × 0.7: **5 505 773 bytes**, **280 000 structs**. Product
+admission is **5 242 880 bytes** (5 MiB). 10 MB is not raised (need last OK ≥
+~14.3 MB).
+
+| Fixture | Encoded | Structs |
+| --- | ---: | ---: |
+| V8 baseline empty doc (Worker) | 2 B | 0 |
+| font-core current 1000g | 91 KB | 5 004 |
+| font-core target 1000g | 57 KB | 3 004 |
+| font-core target 20 000g | 1.3 MB | 60 004 |
+| kerning 1k / 50k / 200k | 21 KB / 1.2 MB / 5.2 MB | 1 001 / 50 001 / 200 001 |
+| features 100 KB / 1 MB | 100 KB / 1.0 MB | 7 / 7 |
+| font-deps UUID mixed kinds dense 5000g | 1.2 MB | 45 001 |
+| glyph topology+packed 1×5000 | 176 KB | 5 003 |
+| glyph flat-nested 2×5000 | 563 KB | 40 013 |
+| Node compact + 32 leaf tails | 57 KB | 3 006 |
+| font-core target 1000g × 200k kerning × 1 MB features | 6.4 MB | 203 012 |
+| font-core current 20 000g × 200k kerning × 1 MB features | 8.35 MB | 300 012 |
+| Chromium `{gc:false}` 10k leaf edits | 198 KB | 10 001 |
+| glyph packed `{gc:false}` 10k drags undo/redo | 109 KB | 57 |
+| validator seed / production-core 1000g+50k+100 KB | 1.43 MB | 53 012 |
+| compactor production-core + 32 leaf tails | 1.43 MB | 53 014 |
+| validator+compactor production-deps 5000 dense | 1.18 MB | 45 001 |
+| validator+compactor production-glyph 2×5000 packed | 356 KB | 10 006 |
+| validator+compactor lean-core 80k | 5.31 MB | 240 006 |
+| validator+compactor 20k×200k×1 MB (last OK validate) | 8.65 MB | 300 012 |
+| compactor last OK | 7.87 MB | — |
+| compactor 674g×200k×100 KB (5.54 MB) | isolate death | `Worker exceeded resource limits` |
+
+FontRoomDO at 32 peers: slow peer `1013 slow-peer`, heap delta ≈153 KB, no
+per-peer queue. `/live` pull: checkpoint then one concatenated export page
+(264 KB for 64×4 KB rows) then remainder then terminal. Packed LWW deps are a
+benchmark only.
+
+| Limit | Value | Source |
+| --- | --- | --- |
+| Client shard encoded ceiling | 5 242 880 B (5 MiB) | Product admit; isolate last-OK × 0.7 was 5.50 MB |
+| Validator / compact transaction | 5 242 880 B | same envelope |
+| Validator / compact decoded structs | 280 000 | last OK 400k structs × 0.7 |
+| Worker recoverable compact | 5 242 880 B | 413 → fat-compactor |
+| Fold output | 5 242 880 B | one transaction-sized fold |
+| Export / stream page | 512 KB / 64 rows | one in-flight `/live` page |
+| SQLite spool | 12 MB | ingress before ACK |
+| Dirty soft / hard | 5 MiB or 2000 rows / 32 MB | alarm vs `tail_full` |
+| Authenticated peers | 32 | FontRoomDO; slow peer closed |
+| Unauthenticated sockets | 8 | pre-auth |
+| Metadata / attachment | 64 KB / 8 192 B | live extras / hibernation |
+| Client `{gc:false}` warning | 80k structs or 3 932 160 B | Preferences; unsent kept; `truncateUndoHistory()` explicit |
+| Worker bundle (dry-run) | ~980 KB / ~1.0 MB | validator / compactor |
+
+### Docs and tests (plan §6)
+
+Normative behavior is this file plus collab `packages/protocol` constants.
+Checked-in coverage (not a second spec):
+
+| Theme | Where |
+| --- | --- |
+| Ingress / reconnect / `appliedLogId` / `tail_full` / slow peer / hibernation mid-chunk / duplicate tx ids / validator never ACK | `collab/collab/workers/room/test/font-room-do.test.js`, `workers/room/test/index.test.js` |
+| No Yjs in the room DO | `FontRoomDO source does not import yjs` |
+| Hostile / oversize Yjs pre-ACK | `validator/test`, `validator failure never journals or ACKs` |
+| Pinned compact, malformed/incomplete tail, digest mismatch, CAS 409, mutation-history abort, 413 fat-compactor | `workers/compactor/test/index.test.js`; promote dirty recount + crash-before-`current.json` in FontRoomDO tests |
+| Nested writes, outline topology, last-good compile cache | `webapp/tests/nested-json-leaf-writes.test.js`, `layer-geometry-ydoc.test.js`, `babelfont-fontc-build` last-good shapes test |
+| Deps repair, over-hydrate never under-hydrate, core has no deps | `webapp/tests/cloud-glyph-catalog.test.js` |
+| `appliedLogId` only after apply | `webapp/tests/cloud-adapter.test.js` |
+| 5 MiB packet/shard reject + rollback | `webapp/tests/collab-submit-limits.test.js` |
+| Schema migration epoch, immutable manifests, rollback-by-revision | `website/test/cloud-schema-migration.test.js` |
+| Catalog generation tombstones, published core/deps hydrate pair | `webapp/tests/cloud-glyph-catalog.test.js` |
+| Seed-only live writes during migration | `collab/collab/workers/room/test/font-room-do.test.js` |
+
+Local `npm run dev` in the collab repo starts room + compactor + validator together (Wrangler multi-config). Fat compact stays out of scope. After the first production deploy of `compactor`, disable the Deploy workflow on `yanone/cf-compactor` so two CIs cannot overwrite it. Set website `ROOM_WORKER_URL` to the new `room` origin; existing `fonts-room` Durable Object state does not move automatically.
+
+

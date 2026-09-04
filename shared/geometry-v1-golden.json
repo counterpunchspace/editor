@@ -1,0 +1,24 @@
+{
+  "topology": {
+    "v": 1,
+    "g": 1,
+    "shapes": [
+      {
+        "id": "shape-golden",
+        "k": "P",
+        "c": true,
+        "n": ["node-golden"],
+        "t": ["Line"],
+        "s": [false]
+      }
+    ]
+  },
+  "packedXY": "-12.5 24",
+  "node": {
+    "id": "node-golden",
+    "x": -12.5,
+    "y": 24.0,
+    "nodetype": "Line",
+    "smooth": false
+  }
+}

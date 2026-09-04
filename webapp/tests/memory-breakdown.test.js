@@ -168,4 +168,15 @@ describe('memory breakdown helpers', () => {
         expect(html).toContain('canvas backing stores, not V8');
         expect(html).not.toContain('including Rust');
     });
+
+    test('liveShardMemoryFromEngine warns on struct cap', () => {
+        const { liveShardMemoryFromEngine } = require('../js/memory-breakdown');
+        const report = liveShardMemoryFromEngine({
+            getMemoryInspectionSnapshot() {
+                return { decodedStructs: 90_000, undoStackItems: 12 };
+            }
+        });
+        expect(report.status).toBe('warning');
+        expect(report.decodedStructs).toBe(90_000);
+    });
 });

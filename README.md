@@ -20,6 +20,12 @@ serializer; unsupported source formats fail instead of receiving Babelfont JSON
 under their original extension.
 Saving to UFO/DS and .glyphspackage is in development.
 
+**Cloud** is a filesystem plugin, not a file format. Open/Save talk to per-shard
+rooms (`font-core`, `font-deps`, `glyph:<id>`). Hydrate is HTTP + live tail;
+rebaseline is required when compaction moves the checkpoint past the client’s
+`appliedLogId`. See [Filesystem plugins](developer-docs/FILESYSTEM_PLUGINS.md)
+and [Cloud collaboration architecture](strategy/CLOUD_COLLABORATION_ARCHITECTURE.md).
+
 | Format | Open | Save | Notes |
 | --- | --- | --- | --- |
 | `.babelfont` | Yes | Yes | Native JSON source format. |
@@ -64,4 +70,4 @@ Coverage: 🟢 Should work · 🟡 Partial · 🔴 Missing
 | Source file I/O | 🟡 | UFO/DS and `.glyphspackage` writing is missing |
 | Plugin system | 🟡 | Most plugin types not yet implemented, no auto-update yet |
 | OpenType feature code generator | 🔴 | |
-| Live online collaboration | 🔴 | |
+| Live online collaboration | 🟡 | Protocol 4 rooms: opaque-byte journal, sparse glyph hydrate (`OT(seeds) ∪ reverse*(seeds)` then forward-close), reconnect with `checkpointLogId` + `appliedLogId` (advances only after the client applied the bytes). Mixed v3/v4 writers are rejected. Rebaseline after compaction that truncates behind `appliedLogId`. Seed and live commit hard-cap at 5 MiB per shard/packet. |

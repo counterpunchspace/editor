@@ -1,0 +1,1833 @@
+{
+  "id": "layer-edit-compile",
+  "title": "Layer-edit compile graph",
+  "lede": "Stories on the left: gesture, stamps, extra classifiers, JS events, then the change bridge, then overview filter events. Local canvas commits fan out into ChangeBridge; linked or remote windows fan in from it. Funnels merge into one compileEditingFont, then editingFontCompiled, canvas modes, then glyphCanvasRendered. Hover a path to see where it starts and stops.",
+  "layout": {
+    "chipW": 192,
+    "chipH": 58,
+    "colGap": 52,
+    "rowGap": 42,
+    "originX": 16,
+    "originY": 78,
+    "storyCols": 5,
+    "storyRows": 7,
+    "compilingRows": 6,
+    "chokeGap": 76,
+    "filterCol": 5,
+    "accentCol": 3,
+    "sink": {
+      "id": "compile",
+      "w": 220,
+      "hSlots": 3
+    },
+    "compiledId": "ev-compiled",
+    "renderedId": "ev-rendered"
+  },
+  "stats": [
+    {
+      "value": 7,
+      "label": "Stories"
+    },
+    {
+      "value": "3 \u2192 1",
+      "label": "Funnels into one transformer"
+    },
+    {
+      "value": 5,
+      "label": "Overview filter chips"
+    },
+    {
+      "value": "unifyCount",
+      "label": "Unification marks",
+      "tone": "warning"
+    }
+  ],
+  "callout": {
+    "title": "Badges, start, and stop",
+    "body": "DEL = delete this leftover. CMB = combine with its sibling (two live funnels, live/commit stamps, extra Rust parsers). RM = remove the alias or leak, keep the story. A green triangle on the left is a path start (local canvas, or the remote window chip). A red octagon on the right is a path stop. Both stay hidden until a hover isolates a path that actually begins or ends there."
+  },
+  "headers": [
+    {
+      "text": "Stories (one row each)",
+      "at": "originX",
+      "y": 18
+    },
+    {
+      "text": "Change bridge, then overview filters",
+      "at": "bridgeX",
+      "y": 18,
+      "weight": 600
+    },
+    {
+      "text": "Chokepoints, then editingFontCompiled",
+      "at": "funnelX",
+      "y": 18,
+      "weight": 600
+    },
+    {
+      "text": "Canvas consumers, then glyphCanvasRendered",
+      "at": "canvasX",
+      "y": 18
+    }
+  ],
+  "columnTitles": [
+    {
+      "text": "1. Gesture",
+      "at": 0
+    },
+    {
+      "text": "2. Live stamp",
+      "at": 1
+    },
+    {
+      "text": "3. Commit stamp",
+      "at": 2
+    },
+    {
+      "text": "4. Extra classifier",
+      "at": 3
+    },
+    {
+      "text": "5. JS events",
+      "at": 4
+    },
+    {
+      "text": "Local out / remote in",
+      "at": "bridgeX"
+    },
+    {
+      "text": "6. Overview filters",
+      "at": "filter"
+    },
+    {
+      "text": "Funnels",
+      "at": "funnelX"
+    },
+    {
+      "text": "compileEditingFont",
+      "at": "compileX"
+    },
+    {
+      "text": "JS event",
+      "at": "evCompiledX"
+    }
+  ],
+  "footerTitle": "Rust consumers (inside compileEditingFont, before editingFontCompiled)",
+  "views": [
+    {
+      "id": "all",
+      "label": "Whole graph"
+    },
+    {
+      "id": "live",
+      "label": "Live lane",
+      "hideIds": [
+        "funnel-commit"
+      ],
+      "stages": [
+        "gesture",
+        "live",
+        "event",
+        "funnel",
+        "sink",
+        "canvas",
+        "rust"
+      ]
+    },
+    {
+      "id": "commit",
+      "label": "Commit lane",
+      "hideIds": [
+        "funnel-live",
+        "funnel-key"
+      ],
+      "stages": [
+        "gesture",
+        "commit",
+        "scatter",
+        "event",
+        "filter",
+        "bridge",
+        "funnel",
+        "sink",
+        "canvas",
+        "rust"
+      ]
+    },
+    {
+      "id": "scatter",
+      "label": "Extra classifiers",
+      "any": [
+        {
+          "stage": "scatter"
+        },
+        {
+          "id": "funnel-commit"
+        },
+        {
+          "stage": "sink"
+        },
+        {
+          "unify": "delete"
+        }
+      ]
+    },
+    {
+      "id": "unify",
+      "label": "Unification marks",
+      "unifyOnly": true,
+      "alsoIds": [
+        "compile"
+      ]
+    }
+  ],
+  "legend": [
+    {
+      "id": "story",
+      "label": "Story row",
+      "explain": "One user-facing edit. Blank cells mean that stage does not run.",
+      "color": "gray",
+      "node": {
+        "region": "story",
+        "col": 0
+      }
+    },
+    {
+      "id": "live",
+      "label": "Live identity",
+      "explain": "Pointer/key overlay stamp before mouse-up.",
+      "color": "cyan",
+      "node": {
+        "stage": "live"
+      }
+    },
+    {
+      "id": "commit",
+      "label": "Commit identity",
+      "explain": "Yjs packet stamp after the gesture ends.",
+      "color": "blue",
+      "node": {
+        "stage": "commit"
+      }
+    },
+    {
+      "id": "scatter",
+      "label": "Extra classifier",
+      "explain": "A later function disagrees with the stamp. Planned delete.",
+      "color": "orange",
+      "node": {
+        "stage": "scatter"
+      }
+    },
+    {
+      "id": "alias",
+      "label": "Alias / lie",
+      "explain": "Dashed accent: sidebearing compiled as outline, or a leak.",
+      "color": "orange",
+      "node": {
+        "kind": "alias"
+      },
+      "edge": {
+        "kind": "alias"
+      }
+    },
+    {
+      "id": "skip",
+      "label": "Skip / early return",
+      "explain": "Guide enters a funnel and does not compile.",
+      "color": "yellow",
+      "node": {
+        "kind": "skip"
+      },
+      "edge": {
+        "kind": "skip"
+      }
+    },
+    {
+      "id": "unused",
+      "label": "Unused kind",
+      "explain": "Declared LiveDragEditKind that is never queued.",
+      "color": "gray",
+      "node": {
+        "kind": "unused"
+      }
+    },
+    {
+      "id": "event",
+      "label": "JS event",
+      "explain": "window CustomEvent at this point in execution.",
+      "color": "yellow",
+      "node": {
+        "stage": "event"
+      }
+    },
+    {
+      "id": "filter",
+      "label": "Overview filter",
+      "explain": "Glyph-filter EVENT_TYPES from the committed packet. Not window CustomEvents.",
+      "color": "yellow",
+      "node": {
+        "stage": "filter"
+      }
+    },
+    {
+      "id": "bridge",
+      "label": "Change bridge",
+      "explain": "Local canvas commits fan out into Yjs. Linked or remote windows fan in through onCommittedChange.",
+      "color": "purple",
+      "node": {
+        "stage": "bridge"
+      }
+    },
+    {
+      "id": "funnel",
+      "label": "Shared funnel",
+      "explain": "One chip for a real shared class, not a per-row copy.",
+      "color": "purple",
+      "node": {
+        "stage": "funnel"
+      }
+    },
+    {
+      "id": "start",
+      "label": "Start",
+      "explain": "Green triangle on the left. Visible only when every highlighted lane begins on this chip. Local canvas origins only, except the remote window chip.",
+      "color": "green",
+      "node": {
+        "mark": "start"
+      }
+    },
+    {
+      "id": "stop",
+      "label": "Stop",
+      "explain": "Red octagon on the right. Visible only when every highlighted lane that touches this chip ends here. Hidden when paths overlap.",
+      "color": "red",
+      "node": {
+        "mark": "stop"
+      }
+    },
+    {
+      "id": "sink",
+      "label": "One transformer",
+      "explain": "compileEditingFont is the only compile function at this chokepoint.",
+      "color": "green",
+      "node": {
+        "id": "compile"
+      }
+    },
+    {
+      "id": "canvas",
+      "label": "Canvas consumer",
+      "explain": "setupFontLoadingListener reaction to compilationMode.",
+      "color": "blue",
+      "node": {
+        "stage": "canvas"
+      }
+    },
+    {
+      "id": "rust",
+      "label": "Rust consumer",
+      "explain": "WASM entry that re-parses skip_kerning.",
+      "color": "green",
+      "node": {
+        "stage": "rust"
+      }
+    },
+    {
+      "id": "leak",
+      "label": "Leak around funnel",
+      "explain": "Dashed hop from suffix-map bypass into compile, skipping CompiledEditFunnel.",
+      "color": "pink",
+      "edge": {
+        "route": "leak"
+      }
+    },
+    {
+      "id": "unify-delete",
+      "label": "Delete",
+      "explain": "This chip should disappear after unification.",
+      "color": "red",
+      "node": {
+        "unify": "delete"
+      }
+    },
+    {
+      "id": "unify-combine",
+      "label": "Combine",
+      "explain": "Merge with its sibling into one EditIntent / funnel / parser.",
+      "color": "blue",
+      "node": {
+        "unify": "combine"
+      }
+    },
+    {
+      "id": "unify-remove",
+      "label": "Remove hop",
+      "explain": "Remove this alias or leak. Keep the story, drop the lie.",
+      "color": "orange",
+      "node": {
+        "unify": "remove"
+      }
+    }
+  ],
+  "notes": {
+    "event": "window CustomEvent at this point in execution.",
+    "filter": "Overview filter EVENT_TYPES from deriveGlyphFilterChangesFromCommittedEntry after the change-bridge batch. Not a window CustomEvent.",
+    "bridge": "Local canvas commits fan out through _syncCurrentGlyphToYDoc into Yjs. Linked or remote windows fan in through applyRemoteUpdate then onCommittedChange.",
+    "cb-remote": "Start of a linked or remote commit. No local canvas gesture and no live overlay."
+  },
+  "later": {
+    "title": "Later comparison target",
+    "body": "Keep this chokepoint shape. Drop column 4, combine columns 2-3 into EditIntent, combine the two live funnels, route bypass through CompiledEditFunnel, parse skip_kerning once. Events stay: glyphChanged, overview filter types, editingFontCompiled, glyphCanvasRendered. ChangeBridge stays the local-out / remote-in join.",
+    "hint": "Layout follows instructions/GRAPHICAL_CODE_GRAPHS.md. This page is the current view. Hover, start/stop, and legend lighting work here with no Cursor runtime."
+  },
+  "nodes": [
+    {
+      "id": "g-outline",
+      "label": "Outline / component",
+      "icons": [
+        "polyline"
+      ],
+      "stage": "gesture",
+      "kind": "flow",
+      "region": "story",
+      "sub": "mouse + key",
+      "row": 0,
+      "col": 0
+    },
+    {
+      "id": "ls-outline",
+      "label": "editType outline",
+      "icons": [
+        "speed"
+      ],
+      "stage": "live",
+      "kind": "flow",
+      "region": "story",
+      "sub": "mouse-drag-outline",
+      "row": 0,
+      "col": 1,
+      "unify": {
+        "action": "combine",
+        "why": "Merge live and commit stamps into one EditIntent field. Stop restamping null then inferring the old type."
+      }
+    },
+    {
+      "id": "cs-outline",
+      "label": "stamps editType null",
+      "icons": [
+        "commit"
+      ],
+      "stage": "commit",
+      "kind": "flow",
+      "region": "story",
+      "sub": "getCommittedCompileMetadata",
+      "row": 0,
+      "col": 2,
+      "unify": {
+        "action": "combine",
+        "why": "Merge live and commit stamps into one EditIntent field. Stop restamping null then inferring the old type."
+      }
+    },
+    {
+      "id": "cl-outline",
+      "label": "infer still outline",
+      "icons": [
+        "account_tree"
+      ],
+      "stage": "scatter",
+      "kind": "alias",
+      "region": "story",
+      "sub": "inferCommittedEditTypeFromEntries",
+      "row": 0,
+      "col": 3,
+      "unify": {
+        "action": "delete",
+        "why": "Drop this leftover classifier. One EditIntent record already knows the mode."
+      }
+    },
+    {
+      "id": "ev-outline",
+      "label": "glyphChanged",
+      "icons": [
+        "bolt"
+      ],
+      "stage": "event",
+      "kind": "flow",
+      "region": "story",
+      "sub": "layerFingerprintChanged",
+      "row": 0,
+      "col": 4
+    },
+    {
+      "id": "gf-outline",
+      "label": "glyph.paths.changed",
+      "icons": [
+        "filter_list"
+      ],
+      "stage": "filter",
+      "kind": "flow",
+      "region": "story",
+      "sub": "compatibility if fingerprint",
+      "row": 0,
+      "col": 5
+    },
+    {
+      "id": "g-anchor",
+      "label": "Anchor",
+      "icons": [
+        "anchor"
+      ],
+      "stage": "gesture",
+      "kind": "flow",
+      "region": "story",
+      "sub": "mouse + key",
+      "row": 1,
+      "col": 0
+    },
+    {
+      "id": "ls-anchor",
+      "label": "editType anchor",
+      "icons": [
+        "speed"
+      ],
+      "stage": "live",
+      "kind": "flow",
+      "region": "story",
+      "sub": "mouse-drag-anchor",
+      "row": 1,
+      "col": 1,
+      "unify": {
+        "action": "combine",
+        "why": "Merge live and commit stamps into one EditIntent field. Stop restamping null then inferring the old type."
+      }
+    },
+    {
+      "id": "cs-anchor",
+      "label": "stamps editType null",
+      "icons": [
+        "commit"
+      ],
+      "stage": "commit",
+      "kind": "flow",
+      "region": "story",
+      "sub": "getCommittedCompileMetadata",
+      "row": 1,
+      "col": 2,
+      "unify": {
+        "action": "combine",
+        "why": "Merge live and commit stamps into one EditIntent field. Stop restamping null then inferring the old type."
+      }
+    },
+    {
+      "id": "cl-anchor",
+      "label": "infer still anchor",
+      "icons": [
+        "account_tree"
+      ],
+      "stage": "scatter",
+      "kind": "alias",
+      "region": "story",
+      "sub": "inferCommittedEditTypeFromEntries",
+      "row": 1,
+      "col": 3,
+      "unify": {
+        "action": "delete",
+        "why": "Drop this leftover classifier. One EditIntent record already knows the mode."
+      }
+    },
+    {
+      "id": "ev-anchor",
+      "label": "glyphChanged",
+      "icons": [
+        "bolt"
+      ],
+      "stage": "event",
+      "kind": "flow",
+      "region": "story",
+      "sub": "layerFingerprintChanged",
+      "row": 1,
+      "col": 4
+    },
+    {
+      "id": "gf-anchor",
+      "label": "glyph.anchors.changed",
+      "icons": [
+        "filter_list"
+      ],
+      "stage": "filter",
+      "kind": "flow",
+      "region": "story",
+      "sub": "compatibility if fingerprint",
+      "row": 1,
+      "col": 5
+    },
+    {
+      "id": "g-sb",
+      "label": "Sidebearing",
+      "icons": [
+        "align_horizontal_left"
+      ],
+      "stage": "gesture",
+      "kind": "flow",
+      "region": "story",
+      "sub": "mouse + key",
+      "row": 2,
+      "col": 0
+    },
+    {
+      "id": "ls-sb",
+      "label": "compiled as outline",
+      "icons": [
+        "swap_horiz"
+      ],
+      "stage": "live",
+      "kind": "alias",
+      "region": "story",
+      "sub": "changeSource mouse-drag-outline",
+      "row": 2,
+      "col": 1,
+      "unify": {
+        "action": "remove",
+        "why": "Stop aliasing sidebearing as outline. Stamp EditIntent.sidebearing and compile that."
+      }
+    },
+    {
+      "id": "cs-sb",
+      "label": "rewrites to SB + null",
+      "icons": [
+        "commit"
+      ],
+      "stage": "commit",
+      "kind": "flow",
+      "region": "story",
+      "sub": "keyboard-sidebearing",
+      "row": 2,
+      "col": 2,
+      "unify": {
+        "action": "combine",
+        "why": "Merge live and commit stamps into one EditIntent field. Stop restamping null then inferring the old type."
+      }
+    },
+    {
+      "id": "cl-sb",
+      "label": "prefix sniff outline",
+      "icons": [
+        "account_tree"
+      ],
+      "stage": "scatter",
+      "kind": "alias",
+      "region": "story",
+      "sub": "compileEditingFont startsWith",
+      "row": 2,
+      "col": 3,
+      "unify": {
+        "action": "delete",
+        "why": "Drop this leftover classifier. One EditIntent record already knows the mode."
+      }
+    },
+    {
+      "id": "ev-sb",
+      "label": "glyphChanged",
+      "icons": [
+        "bolt"
+      ],
+      "stage": "event",
+      "kind": "flow",
+      "region": "story",
+      "sub": "layerFingerprintChanged",
+      "row": 2,
+      "col": 4
+    },
+    {
+      "id": "gf-sb",
+      "label": "glyph.metrics.changed",
+      "icons": [
+        "filter_list"
+      ],
+      "stage": "filter",
+      "kind": "flow",
+      "region": "story",
+      "sub": "metrics-key if formula",
+      "row": 2,
+      "col": 5
+    },
+    {
+      "id": "g-guide",
+      "label": "Guide",
+      "icons": [
+        "square_foot"
+      ],
+      "stage": "gesture",
+      "kind": "flow",
+      "region": "story",
+      "sub": "mouse drag",
+      "row": 3,
+      "col": 0
+    },
+    {
+      "id": "ls-guide",
+      "label": "kind guide",
+      "icons": [
+        "speed"
+      ],
+      "stage": "live",
+      "kind": "skip",
+      "region": "story",
+      "sub": "no live overlay",
+      "row": 3,
+      "col": 1
+    },
+    {
+      "id": "cs-guide",
+      "label": "editType guide",
+      "icons": [
+        "commit"
+      ],
+      "stage": "commit",
+      "kind": "skip",
+      "region": "story",
+      "sub": "funnel returns early",
+      "row": 3,
+      "col": 2
+    },
+    {
+      "id": "gf-guide",
+      "label": "glyph.guides.changed",
+      "icons": [
+        "filter_list"
+      ],
+      "stage": "filter",
+      "kind": "flow",
+      "region": "story",
+      "sub": "overview filters only",
+      "row": 3,
+      "col": 5
+    },
+    {
+      "id": "g-kern",
+      "label": "Kerning value / groups",
+      "icons": [
+        "space_bar"
+      ],
+      "stage": "gesture",
+      "kind": "flow",
+      "region": "story",
+      "sub": "text-mode, no overlay",
+      "row": 4,
+      "col": 0
+    },
+    {
+      "id": "cs-kern",
+      "label": "kerning-value / groups",
+      "icons": [
+        "commit"
+      ],
+      "stage": "commit",
+      "kind": "flow",
+      "region": "story",
+      "sub": "fast-path stamp kept",
+      "row": 4,
+      "col": 2,
+      "unify": {
+        "action": "combine",
+        "why": "Merge live and commit stamps into one EditIntent field. Stop restamping null then inferring the old type."
+      }
+    },
+    {
+      "id": "cl-kern",
+      "label": "arm deferred full",
+      "icons": [
+        "account_tree"
+      ],
+      "stage": "scatter",
+      "kind": "flow",
+      "region": "story",
+      "sub": "shouldArmDeferredFullCompile",
+      "row": 4,
+      "col": 3,
+      "unify": {
+        "action": "delete",
+        "why": "Drop this leftover classifier. One EditIntent record already knows the mode."
+      }
+    },
+    {
+      "id": "ev-kern",
+      "label": "glyphChanged",
+      "icons": [
+        "bolt"
+      ],
+      "stage": "event",
+      "kind": "flow",
+      "region": "story",
+      "sub": "overview after commit",
+      "row": 4,
+      "col": 4
+    },
+    {
+      "id": "g-bypass",
+      "label": "Feature / overview / structural",
+      "icons": [
+        "alt_route"
+      ],
+      "stage": "gesture",
+      "kind": "flow",
+      "region": "story",
+      "sub": "skips live funnels",
+      "row": 5,
+      "col": 0,
+      "unify": {
+        "action": "remove",
+        "why": "Do not setEditingCompileContext beside the funnel. Every commit packet enters CompiledEditFunnel."
+      }
+    },
+    {
+      "id": "cs-bypass",
+      "label": "setEditingCompileContext",
+      "icons": [
+        "commit"
+      ],
+      "stage": "commit",
+      "kind": "flow",
+      "region": "story",
+      "sub": "direct, not via funnel",
+      "row": 5,
+      "col": 2,
+      "unify": {
+        "action": "remove",
+        "why": "This is the leak around the commit chokepoint."
+      }
+    },
+    {
+      "id": "cl-bypass",
+      "label": "suffix map -anchor/-outline",
+      "icons": [
+        "account_tree"
+      ],
+      "stage": "scatter",
+      "kind": "flow",
+      "region": "story",
+      "sub": "saveLayerData",
+      "row": 5,
+      "col": 3,
+      "unify": {
+        "action": "delete",
+        "why": "Drop this leftover classifier. One EditIntent record already knows the mode."
+      }
+    },
+    {
+      "id": "ev-bypass",
+      "label": "glyphChanged",
+      "icons": [
+        "bolt"
+      ],
+      "stage": "event",
+      "kind": "flow",
+      "region": "story",
+      "sub": "featureHistoryContextChanged",
+      "row": 5,
+      "col": 4
+    },
+    {
+      "id": "gf-bypass",
+      "label": "glyph.layers.changed",
+      "icons": [
+        "filter_list"
+      ],
+      "stage": "filter",
+      "kind": "flow",
+      "region": "story",
+      "sub": "paths / components",
+      "row": 5,
+      "col": 5
+    },
+    {
+      "id": "g-unused",
+      "label": "component / transform kinds",
+      "icons": [
+        "block"
+      ],
+      "stage": "gesture",
+      "kind": "unused",
+      "region": "story",
+      "sub": "declared, never queued",
+      "row": 6,
+      "col": 0,
+      "unify": {
+        "action": "delete",
+        "why": "Dead LiveDragEditKind values. Outline already covers component drags."
+      }
+    },
+    {
+      "id": "lf-unused",
+      "label": "no LiveDrag.queue",
+      "icons": [
+        "block"
+      ],
+      "stage": "live",
+      "kind": "unused",
+      "region": "story",
+      "sub": "rides outline row instead",
+      "row": 6,
+      "col": 1,
+      "unify": {
+        "action": "delete",
+        "why": "No queue site exists. Delete the unused kinds with the enum."
+      }
+    },
+    {
+      "id": "cb-remote",
+      "label": "Linked / remote window",
+      "icons": [
+        "laptop"
+      ],
+      "stage": "bridge",
+      "kind": "flow",
+      "region": "bridge",
+      "sub": "applyRemoteUpdate",
+      "bridgeIndex": 0,
+      "originRole": "remote"
+    },
+    {
+      "id": "bridge",
+      "label": "ChangeBridge",
+      "icons": [
+        "sync_alt"
+      ],
+      "stage": "bridge",
+      "kind": "flow",
+      "region": "bridge",
+      "sub": "Yjs + onCommittedChange",
+      "bridgeIndex": 1
+    },
+    {
+      "id": "funnel-live",
+      "label": "LiveDragEditFunnel",
+      "icons": [
+        "swipe"
+      ],
+      "stage": "funnel",
+      "kind": "flow",
+      "region": "choke",
+      "sub": "live-drag-worker-preview",
+      "funnelIndex": 0,
+      "unify": {
+        "action": "combine",
+        "why": "LiveDrag and Keyboard copy the same compile wakeup. Keep one live funnel."
+      }
+    },
+    {
+      "id": "funnel-key",
+      "label": "KeyboardPreviewEditFunnel",
+      "icons": [
+        "keyboard"
+      ],
+      "stage": "funnel",
+      "kind": "flow",
+      "region": "choke",
+      "sub": "same compile wakeup",
+      "funnelIndex": 1,
+      "unify": {
+        "action": "combine",
+        "why": "LiveDrag and Keyboard copy the same compile wakeup. Keep one live funnel."
+      }
+    },
+    {
+      "id": "funnel-commit",
+      "label": "CompiledEditFunnel",
+      "icons": [
+        "commit"
+      ],
+      "stage": "funnel",
+      "kind": "flow",
+      "region": "choke",
+      "sub": "processCommittedEdit",
+      "funnelIndex": 2
+    },
+    {
+      "id": "compile",
+      "label": "compileEditingFont",
+      "icons": [
+        "memory"
+      ],
+      "stage": "sink",
+      "kind": "flow",
+      "region": "choke",
+      "sub": "one transformer"
+    },
+    {
+      "id": "ev-compiled",
+      "label": "editingFontCompiled",
+      "icons": [
+        "bolt"
+      ],
+      "stage": "event",
+      "kind": "flow",
+      "region": "choke",
+      "sub": "canvas listens here"
+    },
+    {
+      "id": "cv-outline",
+      "label": "outline-only",
+      "icons": [
+        "brush"
+      ],
+      "stage": "canvas",
+      "kind": "flow",
+      "region": "consume",
+      "sub": "swap, skip reshape",
+      "canvasIndex": 0
+    },
+    {
+      "id": "cv-anchor",
+      "label": "anchor-only",
+      "icons": [
+        "brush"
+      ],
+      "stage": "canvas",
+      "kind": "flow",
+      "region": "consume",
+      "sub": "swap + reshape GPOS",
+      "canvasIndex": 1
+    },
+    {
+      "id": "cv-kern",
+      "label": "kerning-only",
+      "icons": [
+        "brush"
+      ],
+      "stage": "canvas",
+      "kind": "flow",
+      "region": "consume",
+      "sub": "shaping font only",
+      "canvasIndex": 2
+    },
+    {
+      "id": "cv-full",
+      "label": "full",
+      "icons": [
+        "brush"
+      ],
+      "stage": "canvas",
+      "kind": "flow",
+      "region": "consume",
+      "sub": "reshape + features UI",
+      "canvasIndex": 3
+    },
+    {
+      "id": "ev-rendered",
+      "label": "glyphCanvasRendered",
+      "icons": [
+        "bolt"
+      ],
+      "stage": "event",
+      "kind": "flow",
+      "region": "consume",
+      "sub": "after setFont / swap"
+    },
+    {
+      "id": "rs-preview",
+      "label": "compile_preview_cached",
+      "icons": [
+        "manufacturing"
+      ],
+      "stage": "rust",
+      "kind": "flow",
+      "region": "footer",
+      "sub": "parses skip_kerning",
+      "rustIndex": 0
+    },
+    {
+      "id": "rs-cached",
+      "label": "compile_cached_from_closure",
+      "icons": [
+        "manufacturing"
+      ],
+      "stage": "rust",
+      "kind": "flow",
+      "region": "footer",
+      "sub": "same options parse",
+      "rustIndex": 1,
+      "unify": {
+        "action": "combine",
+        "why": "Four WASM entry points parse skip_kerning the same way. Keep one options parser."
+      }
+    },
+    {
+      "id": "rs-debug",
+      "label": "compile_debug_cached",
+      "icons": [
+        "manufacturing"
+      ],
+      "stage": "rust",
+      "kind": "flow",
+      "region": "footer",
+      "sub": "same options parse",
+      "rustIndex": 2,
+      "unify": {
+        "action": "combine",
+        "why": "Four WASM entry points parse skip_kerning the same way. Keep one options parser."
+      }
+    },
+    {
+      "id": "rs-font",
+      "label": "compile_cached_font",
+      "icons": [
+        "manufacturing"
+      ],
+      "stage": "rust",
+      "kind": "flow",
+      "region": "footer",
+      "sub": "same options parse",
+      "rustIndex": 3,
+      "unify": {
+        "action": "combine",
+        "why": "Four WASM entry points parse skip_kerning the same way. Keep one options parser."
+      }
+    }
+  ],
+  "edges": [
+    {
+      "from": "g-outline",
+      "to": "ls-outline",
+      "kind": "flow",
+      "route": "row"
+    },
+    {
+      "from": "g-outline",
+      "to": "cs-outline",
+      "kind": "flow",
+      "route": "south"
+    },
+    {
+      "from": "cs-outline",
+      "to": "cl-outline",
+      "kind": "alias",
+      "route": "row"
+    },
+    {
+      "from": "ls-outline",
+      "to": "ev-outline",
+      "kind": "flow",
+      "route": "north"
+    },
+    {
+      "from": "cl-outline",
+      "to": "ev-outline",
+      "kind": "alias",
+      "route": "row"
+    },
+    {
+      "from": "g-anchor",
+      "to": "ls-anchor",
+      "kind": "flow",
+      "route": "row"
+    },
+    {
+      "from": "g-anchor",
+      "to": "cs-anchor",
+      "kind": "flow",
+      "route": "south"
+    },
+    {
+      "from": "cs-anchor",
+      "to": "cl-anchor",
+      "kind": "alias",
+      "route": "row"
+    },
+    {
+      "from": "ls-anchor",
+      "to": "ev-anchor",
+      "kind": "flow",
+      "route": "north"
+    },
+    {
+      "from": "cl-anchor",
+      "to": "ev-anchor",
+      "kind": "alias",
+      "route": "row"
+    },
+    {
+      "from": "g-sb",
+      "to": "ls-sb",
+      "kind": "alias",
+      "route": "row"
+    },
+    {
+      "from": "g-sb",
+      "to": "cs-sb",
+      "kind": "flow",
+      "route": "south"
+    },
+    {
+      "from": "cs-sb",
+      "to": "cl-sb",
+      "kind": "alias",
+      "route": "row"
+    },
+    {
+      "from": "ls-sb",
+      "to": "ev-sb",
+      "kind": "alias",
+      "route": "north"
+    },
+    {
+      "from": "cl-sb",
+      "to": "ev-sb",
+      "kind": "alias",
+      "route": "row"
+    },
+    {
+      "from": "g-guide",
+      "to": "ls-guide",
+      "kind": "skip",
+      "route": "row"
+    },
+    {
+      "from": "g-guide",
+      "to": "cs-guide",
+      "kind": "skip",
+      "route": "south"
+    },
+    {
+      "from": "g-kern",
+      "to": "cs-kern",
+      "kind": "flow",
+      "route": "row"
+    },
+    {
+      "from": "cs-kern",
+      "to": "cl-kern",
+      "kind": "flow",
+      "route": "row"
+    },
+    {
+      "from": "cl-kern",
+      "to": "ev-kern",
+      "kind": "flow",
+      "route": "row"
+    },
+    {
+      "from": "g-bypass",
+      "to": "cs-bypass",
+      "kind": "flow",
+      "route": "row"
+    },
+    {
+      "from": "cs-bypass",
+      "to": "cl-bypass",
+      "kind": "flow",
+      "route": "row"
+    },
+    {
+      "from": "cl-bypass",
+      "to": "ev-bypass",
+      "kind": "flow",
+      "route": "row"
+    },
+    {
+      "from": "g-unused",
+      "to": "lf-unused",
+      "kind": "unused",
+      "route": "row"
+    },
+    {
+      "from": "ev-outline",
+      "to": "funnel-live",
+      "kind": "flow",
+      "route": "live"
+    },
+    {
+      "from": "ev-outline",
+      "to": "funnel-key",
+      "kind": "flow",
+      "route": "key"
+    },
+    {
+      "from": "ev-anchor",
+      "to": "funnel-live",
+      "kind": "flow",
+      "route": "live"
+    },
+    {
+      "from": "ev-anchor",
+      "to": "funnel-key",
+      "kind": "flow",
+      "route": "key"
+    },
+    {
+      "from": "ev-sb",
+      "to": "funnel-live",
+      "kind": "alias",
+      "route": "live"
+    },
+    {
+      "from": "ev-sb",
+      "to": "funnel-key",
+      "kind": "alias",
+      "route": "key"
+    },
+    {
+      "from": "ls-guide",
+      "to": "funnel-live",
+      "kind": "skip",
+      "route": "live"
+    },
+    {
+      "from": "ev-outline",
+      "to": "bridge",
+      "kind": "alias",
+      "route": "commit"
+    },
+    {
+      "from": "ev-anchor",
+      "to": "bridge",
+      "kind": "alias",
+      "route": "commit"
+    },
+    {
+      "from": "ev-sb",
+      "to": "bridge",
+      "kind": "alias",
+      "route": "commit"
+    },
+    {
+      "from": "cs-guide",
+      "to": "bridge",
+      "kind": "skip",
+      "route": "commit"
+    },
+    {
+      "from": "ev-kern",
+      "to": "bridge",
+      "kind": "flow",
+      "route": "commit"
+    },
+    {
+      "from": "ev-bypass",
+      "to": "bridge",
+      "kind": "flow",
+      "route": "commit"
+    },
+    {
+      "from": "cb-remote",
+      "to": "bridge",
+      "kind": "flow",
+      "route": "down"
+    },
+    {
+      "from": "bridge",
+      "to": "gf-outline",
+      "kind": "flow",
+      "route": "fan"
+    },
+    {
+      "from": "bridge",
+      "to": "gf-anchor",
+      "kind": "flow",
+      "route": "fan"
+    },
+    {
+      "from": "bridge",
+      "to": "gf-sb",
+      "kind": "flow",
+      "route": "fan"
+    },
+    {
+      "from": "bridge",
+      "to": "gf-guide",
+      "kind": "flow",
+      "route": "fan"
+    },
+    {
+      "from": "bridge",
+      "to": "gf-bypass",
+      "kind": "flow",
+      "route": "fan"
+    },
+    {
+      "from": "gf-outline",
+      "to": "funnel-commit",
+      "kind": "alias",
+      "route": "commit"
+    },
+    {
+      "from": "gf-anchor",
+      "to": "funnel-commit",
+      "kind": "alias",
+      "route": "commit"
+    },
+    {
+      "from": "gf-sb",
+      "to": "funnel-commit",
+      "kind": "alias",
+      "route": "commit"
+    },
+    {
+      "from": "gf-guide",
+      "to": "funnel-commit",
+      "kind": "skip",
+      "route": "commit"
+    },
+    {
+      "from": "bridge",
+      "to": "funnel-commit",
+      "kind": "flow",
+      "route": "commit"
+    },
+    {
+      "from": "gf-bypass",
+      "to": "funnel-commit",
+      "kind": "flow",
+      "route": "commit"
+    },
+    {
+      "from": "cl-bypass",
+      "to": "compile",
+      "kind": "alias",
+      "route": "leak"
+    },
+    {
+      "from": "funnel-live",
+      "to": "compile",
+      "kind": "flow",
+      "route": "choke"
+    },
+    {
+      "from": "funnel-key",
+      "to": "compile",
+      "kind": "flow",
+      "route": "choke"
+    },
+    {
+      "from": "funnel-commit",
+      "to": "compile",
+      "kind": "flow",
+      "route": "choke"
+    },
+    {
+      "from": "compile",
+      "to": "ev-compiled",
+      "kind": "flow",
+      "route": "choke"
+    },
+    {
+      "from": "ev-compiled",
+      "to": "cv-outline",
+      "kind": "flow",
+      "route": "fan"
+    },
+    {
+      "from": "ev-compiled",
+      "to": "cv-anchor",
+      "kind": "flow",
+      "route": "fan"
+    },
+    {
+      "from": "ev-compiled",
+      "to": "cv-kern",
+      "kind": "flow",
+      "route": "fan"
+    },
+    {
+      "from": "ev-compiled",
+      "to": "cv-full",
+      "kind": "flow",
+      "route": "fan"
+    },
+    {
+      "from": "cv-outline",
+      "to": "ev-rendered",
+      "kind": "flow",
+      "route": "down"
+    },
+    {
+      "from": "cv-anchor",
+      "to": "ev-rendered",
+      "kind": "flow",
+      "route": "down"
+    },
+    {
+      "from": "cv-kern",
+      "to": "ev-rendered",
+      "kind": "flow",
+      "route": "down"
+    },
+    {
+      "from": "cv-full",
+      "to": "ev-rendered",
+      "kind": "flow",
+      "route": "down"
+    },
+    {
+      "from": "compile",
+      "to": "rs-preview",
+      "kind": "flow",
+      "route": "drop"
+    },
+    {
+      "from": "compile",
+      "to": "rs-cached",
+      "kind": "flow",
+      "route": "drop"
+    },
+    {
+      "from": "compile",
+      "to": "rs-debug",
+      "kind": "flow",
+      "route": "drop"
+    },
+    {
+      "from": "compile",
+      "to": "rs-font",
+      "kind": "flow",
+      "route": "drop"
+    }
+  ],
+  "lanes": [
+    {
+      "id": "outline-live",
+      "label": "Outline live",
+      "origin": "canvas",
+      "nodes": [
+        "g-outline",
+        "ls-outline",
+        "ev-outline",
+        "funnel-live",
+        "funnel-key",
+        "compile",
+        "rs-preview",
+        "rs-cached",
+        "rs-debug",
+        "rs-font",
+        "ev-compiled",
+        "cv-outline",
+        "ev-rendered"
+      ]
+    },
+    {
+      "id": "outline-commit",
+      "label": "Outline commit",
+      "origin": "canvas",
+      "nodes": [
+        "g-outline",
+        "cs-outline",
+        "cl-outline",
+        "ev-outline",
+        "bridge",
+        "gf-outline",
+        "funnel-commit",
+        "compile",
+        "rs-preview",
+        "rs-cached",
+        "rs-debug",
+        "rs-font",
+        "ev-compiled",
+        "cv-full",
+        "ev-rendered"
+      ]
+    },
+    {
+      "id": "outline-remote",
+      "label": "Outline remote / linked",
+      "origin": "remote",
+      "nodes": [
+        "cb-remote",
+        "bridge",
+        "gf-outline",
+        "funnel-commit",
+        "compile",
+        "rs-preview",
+        "rs-cached",
+        "rs-debug",
+        "rs-font",
+        "ev-compiled",
+        "cv-full",
+        "ev-rendered"
+      ]
+    },
+    {
+      "id": "anchor-live",
+      "label": "Anchor live",
+      "origin": "canvas",
+      "nodes": [
+        "g-anchor",
+        "ls-anchor",
+        "ev-anchor",
+        "funnel-live",
+        "funnel-key",
+        "compile",
+        "rs-preview",
+        "rs-cached",
+        "rs-debug",
+        "rs-font",
+        "ev-compiled",
+        "cv-anchor",
+        "ev-rendered"
+      ]
+    },
+    {
+      "id": "anchor-commit",
+      "label": "Anchor commit",
+      "origin": "canvas",
+      "nodes": [
+        "g-anchor",
+        "cs-anchor",
+        "cl-anchor",
+        "ev-anchor",
+        "bridge",
+        "gf-anchor",
+        "funnel-commit",
+        "compile",
+        "rs-preview",
+        "rs-cached",
+        "rs-debug",
+        "rs-font",
+        "ev-compiled",
+        "cv-full",
+        "ev-rendered"
+      ]
+    },
+    {
+      "id": "anchor-remote",
+      "label": "Anchor remote / linked",
+      "origin": "remote",
+      "nodes": [
+        "cb-remote",
+        "bridge",
+        "gf-anchor",
+        "funnel-commit",
+        "compile",
+        "rs-preview",
+        "rs-cached",
+        "rs-debug",
+        "rs-font",
+        "ev-compiled",
+        "cv-full",
+        "ev-rendered"
+      ]
+    },
+    {
+      "id": "sb-live",
+      "label": "Sidebearing live (as outline)",
+      "origin": "canvas",
+      "nodes": [
+        "g-sb",
+        "ls-sb",
+        "ev-sb",
+        "funnel-live",
+        "funnel-key",
+        "compile",
+        "rs-preview",
+        "rs-cached",
+        "rs-debug",
+        "rs-font",
+        "ev-compiled",
+        "cv-outline",
+        "ev-rendered"
+      ]
+    },
+    {
+      "id": "sb-commit",
+      "label": "Sidebearing commit",
+      "origin": "canvas",
+      "nodes": [
+        "g-sb",
+        "cs-sb",
+        "cl-sb",
+        "ev-sb",
+        "bridge",
+        "gf-sb",
+        "funnel-commit",
+        "compile",
+        "rs-preview",
+        "rs-cached",
+        "rs-debug",
+        "rs-font",
+        "ev-compiled",
+        "cv-full",
+        "ev-rendered"
+      ]
+    },
+    {
+      "id": "sb-remote",
+      "label": "Sidebearing remote / linked",
+      "origin": "remote",
+      "nodes": [
+        "cb-remote",
+        "bridge",
+        "gf-sb",
+        "funnel-commit",
+        "compile",
+        "rs-preview",
+        "rs-cached",
+        "rs-debug",
+        "rs-font",
+        "ev-compiled",
+        "cv-full",
+        "ev-rendered"
+      ]
+    },
+    {
+      "id": "guide-live",
+      "label": "Guide live (no compile)",
+      "origin": "canvas",
+      "nodes": [
+        "g-guide",
+        "ls-guide",
+        "funnel-live"
+      ]
+    },
+    {
+      "id": "guide-commit",
+      "label": "Guide commit (funnel skip)",
+      "origin": "canvas",
+      "nodes": [
+        "g-guide",
+        "cs-guide",
+        "bridge",
+        "gf-guide",
+        "funnel-commit"
+      ]
+    },
+    {
+      "id": "guide-remote",
+      "label": "Guide remote / linked",
+      "origin": "remote",
+      "nodes": [
+        "cb-remote",
+        "bridge",
+        "gf-guide",
+        "funnel-commit"
+      ]
+    },
+    {
+      "id": "kerning",
+      "label": "Kerning commit",
+      "origin": "canvas",
+      "nodes": [
+        "g-kern",
+        "cs-kern",
+        "cl-kern",
+        "ev-kern",
+        "bridge",
+        "funnel-commit",
+        "compile",
+        "rs-preview",
+        "rs-cached",
+        "rs-debug",
+        "rs-font",
+        "ev-compiled",
+        "cv-kern",
+        "ev-rendered"
+      ]
+    },
+    {
+      "id": "kerning-full",
+      "label": "Kerning deferred full",
+      "origin": "canvas",
+      "nodes": [
+        "g-kern",
+        "cs-kern",
+        "cl-kern",
+        "ev-kern",
+        "bridge",
+        "funnel-commit",
+        "compile",
+        "rs-preview",
+        "rs-cached",
+        "rs-debug",
+        "rs-font",
+        "ev-compiled",
+        "cv-full",
+        "ev-rendered"
+      ]
+    },
+    {
+      "id": "kerning-remote",
+      "label": "Kerning remote / linked",
+      "origin": "remote",
+      "nodes": [
+        "cb-remote",
+        "bridge",
+        "funnel-commit",
+        "compile",
+        "rs-preview",
+        "rs-cached",
+        "rs-debug",
+        "rs-font",
+        "ev-compiled",
+        "cv-kern",
+        "ev-rendered"
+      ]
+    },
+    {
+      "id": "bypass",
+      "label": "Bypass via funnel",
+      "origin": "canvas",
+      "nodes": [
+        "g-bypass",
+        "cs-bypass",
+        "cl-bypass",
+        "ev-bypass",
+        "bridge",
+        "gf-bypass",
+        "funnel-commit",
+        "compile",
+        "rs-preview",
+        "rs-cached",
+        "rs-debug",
+        "rs-font",
+        "ev-compiled",
+        "cv-full",
+        "ev-rendered"
+      ]
+    },
+    {
+      "id": "bypass-leak",
+      "label": "Bypass around funnel",
+      "origin": "canvas",
+      "nodes": [
+        "g-bypass",
+        "cs-bypass",
+        "cl-bypass",
+        "compile",
+        "rs-preview",
+        "rs-cached",
+        "rs-debug",
+        "rs-font",
+        "ev-compiled",
+        "cv-full",
+        "ev-rendered"
+      ]
+    },
+    {
+      "id": "bypass-remote",
+      "label": "Bypass remote / linked",
+      "origin": "remote",
+      "nodes": [
+        "cb-remote",
+        "bridge",
+        "gf-bypass",
+        "funnel-commit",
+        "compile",
+        "rs-preview",
+        "rs-cached",
+        "rs-debug",
+        "rs-font",
+        "ev-compiled",
+        "cv-full",
+        "ev-rendered"
+      ]
+    },
+    {
+      "id": "unused",
+      "label": "Unused live kinds",
+      "origin": "canvas",
+      "nodes": [
+        "g-unused",
+        "lf-unused"
+      ]
+    }
+  ]
+}

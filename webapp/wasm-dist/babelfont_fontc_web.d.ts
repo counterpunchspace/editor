@@ -54,6 +54,16 @@ export function clear_font_cache(): void;
 export function clear_preview_layer_overlay(): void;
 
 /**
+ * Compute layout closure from AFDKO feature text and glyph names without a
+ * cached full font. Used for sparse cloud hydration before glyph shards load.
+ */
+export function close_layout_from_fea(
+    feature_code: string,
+    glyph_names_json: string,
+    seed_names_json: string
+): string;
+
+/**
  * Compile a font from babelfont JSON directly to TTF
  *
  * This is the main entry point that takes a .babelfont JSON string
@@ -502,6 +512,31 @@ export type InitInput =
 
 export interface InitOutput {
     readonly memory: WebAssembly.Memory;
+    readonly get_font_axes: (
+        a: number,
+        b: number
+    ) => [number, number, number, number];
+    readonly get_font_features: (
+        a: number,
+        b: number
+    ) => [number, number, number, number];
+    readonly get_font_features_with_tables: (
+        a: number,
+        b: number
+    ) => [number, number, number, number];
+    readonly get_glyph_name: (
+        a: number,
+        b: number,
+        c: number
+    ) => [number, number, number, number];
+    readonly get_glyph_order: (
+        a: number,
+        b: number
+    ) => [number, number, number, number];
+    readonly get_stylistic_set_names: (
+        a: number,
+        b: number
+    ) => [number, number, number, number];
     readonly adopt_preview_layout_closure_from_last: () => number;
     readonly apply_preview_layer_overlay: (
         a: number,
@@ -517,6 +552,14 @@ export interface InitOutput {
     ) => [number, number, number, number];
     readonly clear_font_cache: () => void;
     readonly clear_preview_layer_overlay: () => void;
+    readonly close_layout_from_fea: (
+        a: number,
+        b: number,
+        c: number,
+        d: number,
+        e: number,
+        f: number
+    ) => [number, number, number, number];
     readonly compile_babelfont: (
         a: number,
         b: number,
@@ -666,31 +709,6 @@ export interface InitOutput {
         a: number,
         b: number
     ) => [number, number, number];
-    readonly get_font_axes: (
-        a: number,
-        b: number
-    ) => [number, number, number, number];
-    readonly get_font_features: (
-        a: number,
-        b: number
-    ) => [number, number, number, number];
-    readonly get_font_features_with_tables: (
-        a: number,
-        b: number
-    ) => [number, number, number, number];
-    readonly get_glyph_name: (
-        a: number,
-        b: number,
-        c: number
-    ) => [number, number, number, number];
-    readonly get_glyph_order: (
-        a: number,
-        b: number
-    ) => [number, number, number, number];
-    readonly get_stylistic_set_names: (
-        a: number,
-        b: number
-    ) => [number, number, number, number];
     readonly __wbindgen_malloc: (a: number, b: number) => number;
     readonly __wbindgen_realloc: (
         a: number,

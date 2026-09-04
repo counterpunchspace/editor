@@ -67,8 +67,7 @@ describe('ChangeBridge layer snapshot array replacement', () => {
         const layerMap = bridge.getYValue(['glyphs', 'oacute', 'layers', 'L0']);
 
         const initialLayerMap = layerMap;
-        // Indexed-map structure: shapesById+shapeOrder, not flat shapes
-        const initialShapesById = layerMap.get('shapesById');
+        const initialShapeData = layerMap.get('shapeDataById');
         const initialAnchorsById = layerMap.get('anchorsById');
 
         const updatedFontJson = cloneJson(fontJson);
@@ -84,8 +83,7 @@ describe('ChangeBridge layer snapshot array replacement', () => {
 
         // Layer root identity preserved (deep-merge, not replace)
         expect(layerMap).toBe(initialLayerMap);
-        // shapesById/anchorsById identity preserved (deep-merged, not replaced)
-        expect(layerMap.get('shapesById')).toBe(initialShapesById);
+        expect(layerMap.get('shapeDataById')).toBe(initialShapeData);
         expect(layerMap.get('anchorsById')).toBe(initialAnchorsById);
 
         const secondFontJson = cloneJson(updatedFontJson);

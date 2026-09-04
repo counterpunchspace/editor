@@ -15,13 +15,201 @@ import {
     toRestingComponentTransform,
     toRestingLayerJson
 } from './resting-layer-json';
+import { flattenKerningMap } from './delete-glyphs-preflight';
+import {
+    geometryHasNormalizedStorage,
+    getNodeIdAt,
+    getShapeIdAt,
+    LAYER_GEOMETRY_TOPOLOGY_KEY,
+    LAYER_NODE_POSITIONS_KEY,
+    LAYER_SHAPE_DATA_KEY,
+    readLayerGeometry,
+    writeLayerGeometry,
+    writeNodePosition
+} from './layer-geometry-ydoc';
 
 type Unsafe = ReturnType<typeof JSON.parse>;
 
 // ── helpers ──────────────────────────────────────────────────────────
 
 function isPlainObject(v: unknown): v is Record<string, unknown> {
-    return v !== null && typeof v === 'object' && !Array.isArray(v);
+    return (
+        v !== null &&
+        typeof v === 'object' &&
+        !Array.isArray(v) &&
+        !(v instanceof Y.Map) &&
+        !(v instanceof Y.Array) &&
+        !(v instanceof Y.Doc)
+    );
+}
+
+const MEMBERSHIP_ARRAY_KEYS = new Set(['codepoints']);
+const MEMBERSHIP_DICT_KEYS = new Set([
+    'first_kern_groups',
+    'second_kern_groups',
+    'codepointIndex'
+]);
+
+function writeMembershipMap(target: Y.Map<unknown>, keys: string[]): void {
+    const next = new Set(keys);
+    for (const key of Array.from(target.keys())) {
+        if (!next.has(key)) {
+            target.delete(key);
+        }
+    }
+    for (const key of next) {
+        if (target.get(key) !== true) {
+            target.set(key, true);
+        }
+    }
+}
+
+function createMembershipMap(keys: string[]): Y.Map<unknown> {
+    const map = new Y.Map<unknown>();
+    writeMembershipMap(map, keys);
+    return map;
+}
+
+function membershipMapToArray(
+    map: Y.Map<unknown>,
+    numeric: boolean
+): unknown[] {
+    const keys = Array.from(map.keys());
+    if (numeric) {
+        return keys
+            .map((key) => Number(key))
+            .filter((value) => Number.isFinite(value))
+            .sort((left, right) => left - right);
+    }
+    return keys.sort();
+}
+
+function ensureMembershipYMap(
+    parent: Y.Map<unknown>,
+    key: string
+): Y.Map<unknown> {
+    const existing = parent.get(key);
+    if (isYMap(existing)) {
+        return existing;
+    }
+    const created = new Y.Map<unknown>();
+    parent.set(key, created);
+    return created;
+}
+
+function writeKernGroupsMap(
+    target: Y.Map<unknown>,
+    record: Record<string, unknown>
+): void {
+    const nextKeys = new Set(Object.keys(record));
+    for (const key of Array.from(target.keys())) {
+        if (!nextKeys.has(key)) {
+            target.delete(key);
+        }
+    }
+    for (const [group, names] of Object.entries(record)) {
+        let child = target.get(group);
+        if (!isYMap(child)) {
+            child = new Y.Map<unknown>();
+            target.set(group, child);
+        }
+        writeMembershipMap(
+            child as Y.Map<unknown>,
+            Array.isArray(names) ? names.map(String) : []
+        );
+    }
+}
+
+function kernGroupsFromY(value: unknown): Record<string, string[]> {
+    const result: Record<string, string[]> = {};
+    if (!isYMap(value)) {
+        return isPlainObject(value)
+            ? Object.fromEntries(
+                  Object.entries(value).map(([group, names]) => [
+                      group,
+                      Array.isArray(names) ? names.map(String) : []
+                  ])
+              )
+            : result;
+    }
+    value.forEach((groupValue, group) => {
+        if (isYMap(groupValue)) {
+            result[group] = membershipMapToArray(groupValue, false) as string[];
+        } else if (isYArray(groupValue)) {
+            result[group] = groupValue.toArray().map(String);
+        }
+    });
+    return result;
+}
+
+function looksLikeKernGroupsMap(value: Y.Map<unknown>): boolean {
+    let sawMembership = false;
+    let allMembership = true;
+    value.forEach((groupValue) => {
+        if (!isYMap(groupValue)) {
+            allMembership = false;
+            return;
+        }
+        let childHasEntry = false;
+        groupValue.forEach((item) => {
+            childHasEntry = true;
+            if (item !== true) {
+                allMembership = false;
+            }
+        });
+        if (childHasEntry) {
+            sawMembership = true;
+        }
+    });
+    return sawMembership && allMembership;
+}
+
+function featureEntryRecord(
+    item: unknown,
+    byIdMap: Y.Map<unknown>,
+    usedIds: Set<string>
+): Record<string, unknown> {
+    const tag = Array.isArray(item)
+        ? item[0]
+        : isPlainObject(item)
+          ? item.tag
+          : undefined;
+    const code = Array.isArray(item)
+        ? item[1]
+        : isPlainObject(item)
+          ? item.code
+          : undefined;
+    let id = isPlainObject(item) && typeof item.id === 'string' ? item.id : '';
+    if (!id) {
+        byIdMap.forEach((entry, existingId) => {
+            if (id || usedIds.has(existingId) || !isYMap(entry)) {
+                return;
+            }
+            if (entry.get('tag') === tag) {
+                id = existingId;
+            }
+        });
+    }
+    if (!id) {
+        id = generateStableId();
+    }
+    return { id, tag, code };
+}
+
+function featureTupleField(
+    map: Y.Map<unknown>,
+    seg: string | number
+): 'tag' | 'code' | null {
+    if (!map.has('tag') || !map.has('code')) {
+        return null;
+    }
+    if (seg === 0 || seg === 'tag') {
+        return 'tag';
+    }
+    if (seg === 1 || seg === 'code') {
+        return 'code';
+    }
+    return null;
 }
 
 export function normalizeValueForYDocWrite(value: unknown): unknown {
@@ -72,10 +260,28 @@ export function normalizeValueForYDocWrite(value: unknown): unknown {
     return record === value ? value : record;
 }
 
+function isNumericPathSegment(seg: string | number): boolean {
+    return typeof seg === 'number'
+        ? Number.isInteger(seg)
+        : typeof seg === 'string' && /^\d+$/.test(seg);
+}
+
+function pathSegmentIndex(seg: string | number): number {
+    return typeof seg === 'number' ? seg : Number(seg);
+}
+
 function createYContainerForNextSegment(
     nextSegment: string | number
 ): Y.Map<unknown> | Y.Array<unknown> {
-    return typeof nextSegment === 'number' ? new Y.Array() : new Y.Map();
+    return isNumericPathSegment(nextSegment) ? new Y.Array() : new Y.Map();
+}
+
+function coerceNumericPath(path: (string | number)[]): (string | number)[] {
+    return path.map((seg) =>
+        typeof seg === 'string' && /^\d+$/.test(seg)
+            ? Number.parseInt(seg, 10)
+            : seg
+    );
 }
 
 // ── JSON → Y.Doc ────────────────────────────────────────────────────
@@ -105,7 +311,7 @@ function layerToYMap(layerData: Record<string, unknown>): Y.Map<unknown> {
     }
 
     if (Array.isArray(layerData.shapes)) {
-        map.set('shapes', toYType(layerData.shapes));
+        writeLayerGeometry(map, layerData.shapes, toYType);
     }
 
     // anchors → anchorsById + anchorOrder
@@ -159,6 +365,8 @@ function restingLayerContextFromYMap(
         const shapes = layerMap.get('shapes');
         if (shapes !== undefined) {
             existing.shapes = fromYType(shapes);
+        } else if (geometryHasNormalizedStorage(layerMap)) {
+            existing.shapes = readLayerGeometry(layerMap);
         }
     } catch {
         // Corrupt node storage must not block a later delta; identity is enough.
@@ -259,7 +467,7 @@ export function applyLayerDelta(
             }
             layerMap.delete(key);
         } else if (key === 'shapes' && Array.isArray(value)) {
-            layerMap.set(key, toYType(value));
+            writeLayerGeometry(layerMap, value, toYType);
         } else if (
             (key === 'anchors' || key === 'guides') &&
             Array.isArray(value)
@@ -268,7 +476,7 @@ export function applyLayerDelta(
         } else {
             const existing = layerMap.get(key);
             if (isYMap(existing) && isPlainObject(value)) {
-                mergeYMapContents(existing, value as Record<string, unknown>);
+                replaceYMapContents(existing, value as Record<string, unknown>);
             } else {
                 layerMap.set(key, toYType(value));
             }
@@ -279,7 +487,7 @@ export function applyLayerDelta(
 /**
  * Deep-merge a flat array into the indexed-map structure (*ById+*Order)
  * on a Y.Map. Each element is deep-merged by stable id; only changed
- elements produce Yjs operations.
+ * elements produce Yjs operations.
  */
 export function applyIndexedMapArray(
     layerMap: Y.Map<unknown>,
@@ -290,32 +498,38 @@ export function applyIndexedMapArray(
     if (!byIdMap) return;
     const mapping = INDEXED_MAP_KEYS[arrayKey]!;
     const orderArr = layerMap.get(mapping.order);
-    if (!isYArray(orderArr)) return;
-
-    const currentOrder: string[] = orderArr.toArray() as string[];
+    const orderIntegrated = isYArray(orderArr) && Boolean(orderArr.doc);
+    const currentOrder: string[] = orderIntegrated
+        ? (orderArr.toArray() as string[])
+        : [];
     const nextIds: string[] = [];
     const seenIds = new Set<string>();
 
     for (const item of nextArray) {
-        // Reject wrapped shapes
         if (
             item &&
             typeof item === 'object' &&
+            !Array.isArray(item) &&
             ('Path' in item || 'Component' in item)
         ) {
             throw new TypeError(
                 'Wrapped shapes are not allowed before writing to Y.Doc.'
             );
         }
-        const inner = item;
-        const id = (inner as any)?.id ?? generateStableId();
-        (inner as any).id = id;
+        const inner =
+            arrayKey === 'features'
+                ? featureEntryRecord(item, byIdMap, seenIds)
+                : item;
+        const id = (inner as { id?: string })?.id ?? generateStableId();
+        if (isPlainObject(inner)) {
+            (inner as Record<string, unknown>).id = id;
+        }
         nextIds.push(id);
         seenIds.add(id);
 
         const existing = byIdMap.get(id);
-        if (isYMap(existing)) {
-            mergeYMapContents(existing, inner as Record<string, unknown>);
+        if (isYMap(existing) && isPlainObject(inner)) {
+            replaceYMapContents(existing, inner as Record<string, unknown>);
         } else {
             byIdMap.set(id, toYType(inner));
         }
@@ -333,22 +547,48 @@ export function applyIndexedMapArray(
         currentOrder.length !== nextIds.length ||
         currentOrder.some((id, idx) => id !== nextIds[idx]);
     if (orderChanged) {
-        if (orderArr.length > 0) {
-            orderArr.delete(0, orderArr.length);
-        }
-        if (nextIds.length > 0) {
-            orderArr.insert(0, nextIds);
+        if (orderIntegrated && isYArray(orderArr)) {
+            // Keep stable IDs in place when an ordered collection changes.
+            // A whole-array replacement turns a one-entry insertion or
+            // removal into a packet containing every surviving ID.
+            diffYArrayOrder(orderArr, nextIds);
+        } else {
+            const nextOrder = new Y.Array<unknown>();
+            if (nextIds.length > 0) {
+                nextOrder.insert(0, nextIds);
+            }
+            layerMap.set(mapping.order, nextOrder);
         }
     }
 }
 
+const YMAP_INFRASTRUCTURE_KEYS = new Set([
+    'kind',
+    'anchorsById',
+    'anchorOrder',
+    'guidesById',
+    'guideOrder',
+    'featuresById',
+    'featureOrder',
+    'shapesById',
+    'shapeOrder',
+    LAYER_GEOMETRY_TOPOLOGY_KEY,
+    LAYER_NODE_POSITIONS_KEY,
+    LAYER_SHAPE_DATA_KEY
+]);
+
 /**
- * Recursively deep-merge a plain object into an existing Y.Map.
- * Preserves nested Y.Map/Y.Array containers where possible.
- * Indexed-map aware: handles `anchors`/`guides` arrays
- * via `applyIndexedMapArray` instead of replacing the *ById structure.
+ * Recursively replace a plain object into an existing Y.Map.
+ * Deletes keys absent from nextRecord except Y.Doc infrastructure keys.
  */
-function mergeYMapContents(
+export function replaceYMapContents(
+    targetMap: Y.Map<unknown>,
+    nextRecord: Record<string, unknown>
+): void {
+    replaceYMapContentsInternal(targetMap, nextRecord);
+}
+
+function replaceYMapContentsInternal(
     targetMap: Y.Map<unknown>,
     nextRecord: Record<string, unknown>
 ): void {
@@ -357,20 +597,46 @@ function mergeYMapContents(
         unknown
     >;
 
-    // Additive merge: only update keys present in nextRecord.
-    // Do NOT delete absent keys — the Y.Map may have infrastructure keys
-    // (kind, *ById, *Order) that aren't in the flat JSON.
+    const nextKeys = new Set(Object.keys(normalizedRecord));
+    for (const key of Array.from(targetMap.keys())) {
+        if (
+            !nextKeys.has(key) &&
+            !YMAP_INFRASTRUCTURE_KEYS.has(key) &&
+            !(RESTING_LAYER_IDENTITY_KEYS as readonly string[]).includes(key)
+        ) {
+            targetMap.delete(key);
+        }
+    }
+
     for (const [key, value] of Object.entries(normalizedRecord)) {
         const current = targetMap.get(key);
-        if ((key === 'anchors' || key === 'guides') && Array.isArray(value)) {
-            // Indexed-map array — use applyIndexedMapArray
+        if (
+            (key === 'anchors' || key === 'guides' || key === 'features') &&
+            Array.isArray(value)
+        ) {
             applyIndexedMapArray(targetMap, key, value);
+        } else if (MEMBERSHIP_ARRAY_KEYS.has(key) && Array.isArray(value)) {
+            writeMembershipMap(
+                ensureMembershipYMap(targetMap, key),
+                value.map(String)
+            );
+        } else if (MEMBERSHIP_DICT_KEYS.has(key) && isPlainObject(value)) {
+            writeKernGroupsMap(
+                ensureMembershipYMap(targetMap, key),
+                value as Record<string, unknown>
+            );
+        } else if (key === 'shapes' && Array.isArray(value)) {
+            writeLayerGeometry(targetMap, value, toYType);
         } else if (key === 'nodes' && !Array.isArray(value)) {
             throw new TypeError('Y.Doc path nodes must be arrays.');
         } else if (isYMap(current) && isPlainObject(value)) {
-            mergeYMapContents(current, value as Record<string, unknown>);
+            replaceYMapContentsInternal(
+                current,
+                value as Record<string, unknown>
+            );
+        } else if (isYArray(current) && Array.isArray(value)) {
+            diffYArray(current, value);
         } else {
-            // Only set if different (avoid spurious Yjs ops for same primitives)
             const currentVal = targetMap.get(key);
             if (currentVal !== value) {
                 targetMap.set(key, toYType(value));
@@ -388,6 +654,9 @@ function mergeYMapContents(
  * arrays and anchors/guides as indexed maps.
  */
 export function toYType(value: unknown): unknown {
+    if (value instanceof Y.Map || value instanceof Y.Array) {
+        return toYType(fromYType(value));
+    }
     if (Array.isArray(value)) {
         const arr = new Y.Array();
         const items = value.map(toYType);
@@ -415,6 +684,21 @@ export function toYType(value: unknown): unknown {
             Array.isArray(normalizedValue.shapes)
         ) {
             return layerToYMap(normalizedValue);
+        }
+
+        if (
+            Array.isArray(normalizedValue.features) &&
+            (normalizedValue.classes !== undefined ||
+                normalizedValue.prefixes !== undefined)
+        ) {
+            for (const [k, v] of Object.entries(normalizedValue)) {
+                if (k === 'features' && Array.isArray(v)) {
+                    applyIndexedMapArray(map, 'features', v);
+                } else {
+                    map.set(k, toYType(v));
+                }
+            }
+            return map;
         }
 
         for (const [k, v] of Object.entries(normalizedValue)) {
@@ -476,6 +760,8 @@ export function fillGlyphYMap(
             }
             glyphMap.set('layers', layersMap);
             glyphMap.set('layerOrder', layerOrder);
+        } else if (gk === 'codepoints' && Array.isArray(gv)) {
+            glyphMap.set('codepoints', createMembershipMap(gv.map(String)));
         } else {
             glyphMap.set(gk, toYType(gv));
         }
@@ -511,11 +797,62 @@ export function jsonToCoreFontMap(
           : Array.isArray(json.glyphOrder)
             ? (json.glyphOrder as unknown[]).map(String)
             : [];
+    let migratedCatalog: unknown;
+    let migratedCmap: unknown;
     for (const [key, value] of Object.entries(json)) {
-        if (key === 'glyphs') {
+        if (key === 'glyphs' || key === 'fontDeps') {
+            continue;
+        }
+        if (key === 'format_specific' && isPlainObject(value)) {
+            const cloned = { ...value };
+            const cloudOwned = cloned['com.counterpunch.cloud'];
+            if (isPlainObject(cloudOwned)) {
+                const rest = { ...cloudOwned };
+                delete rest.fontDeps;
+                if (rest.glyphCatalog && json.glyphCatalog === undefined) {
+                    migratedCatalog = rest.glyphCatalog;
+                    migratedCmap = rest.codepointIndex;
+                }
+                delete cloned['com.counterpunch.cloud'];
+            }
+            if (Object.keys(cloned).length) {
+                fontMap.set(key, toYType(cloned));
+            }
+            continue;
+        }
+        if (key === 'masters' && Array.isArray(value)) {
+            fontMap.set(
+                key,
+                toYType(
+                    value.map((master) => {
+                        if (!isPlainObject(master)) {
+                            return master;
+                        }
+                        return {
+                            ...master,
+                            kerning: flattenKerningMap(master.kerning),
+                            kerning_rtl: flattenKerningMap(master.kerning_rtl)
+                        };
+                    })
+                )
+            );
+            continue;
+        }
+        if (MEMBERSHIP_DICT_KEYS.has(key) && isPlainObject(value)) {
+            const groups = new Y.Map<unknown>();
+            writeKernGroupsMap(groups, value as Record<string, unknown>);
+            fontMap.set(key, groups);
             continue;
         }
         fontMap.set(key, toYType(value));
+    }
+    if (migratedCatalog !== undefined && !fontMap.has('glyphCatalog')) {
+        fontMap.set('glyphCatalog', toYType(migratedCatalog));
+        if (isPlainObject(migratedCmap)) {
+            const cmap = new Y.Map<unknown>();
+            writeKernGroupsMap(cmap, migratedCmap as Record<string, unknown>);
+            fontMap.set('codepointIndex', cmap);
+        }
     }
     const glyphOrder = new Y.Array<unknown>();
     glyphOrder.push(glyphNames);
@@ -547,6 +884,26 @@ export function jsonToYDoc(
             }
             fontMap.set('glyphs', glyphsMap);
             fontMap.set('glyphOrder', glyphOrder);
+        } else if (key === 'masters' && Array.isArray(value)) {
+            fontMap.set(
+                key,
+                toYType(
+                    value.map((master) => {
+                        if (!isPlainObject(master)) {
+                            return master;
+                        }
+                        return {
+                            ...master,
+                            kerning: flattenKerningMap(master.kerning),
+                            kerning_rtl: flattenKerningMap(master.kerning_rtl)
+                        };
+                    })
+                )
+            );
+        } else if (MEMBERSHIP_DICT_KEYS.has(key) && isPlainObject(value)) {
+            const groups = new Y.Map<unknown>();
+            writeKernGroupsMap(groups, value as Record<string, unknown>);
+            fontMap.set(key, groups);
         } else {
             fontMap.set(key, toYType(value));
         }
@@ -584,7 +941,9 @@ function fromYGlyphMap(glyphMap: Y.Map<unknown>): Record<string, unknown> {
     const glyphJson: Record<string, unknown> = {};
 
     glyphMap.forEach((value: unknown, key: string) => {
-        if (key !== 'layers' && key !== 'layerOrder') {
+        if (key === 'codepoints' && isYMap(value)) {
+            glyphJson[key] = membershipMapToArray(value, true);
+        } else if (key !== 'layers' && key !== 'layerOrder') {
             glyphJson[key] = fromYType(value);
         }
     });
@@ -632,8 +991,13 @@ export function fromYType(value: unknown): unknown {
             return fromYGlyphMap(value);
         }
 
+        if (looksLikeKernGroupsMap(value)) {
+            return kernGroupsFromY(value);
+        }
+
         // Check for indexed-map structure (any *ById key indicates a layer)
         if (
+            geometryHasNormalizedStorage(value) ||
             (value.has('anchorsById') &&
                 value.get('anchorsById') instanceof Y.Map) ||
             (value.has('guidesById') &&
@@ -643,8 +1007,31 @@ export function fromYType(value: unknown): unknown {
         }
 
         value.forEach((v: unknown, k: string) => {
+            if (k === 'featuresById' || k === 'featureOrder') {
+                return;
+            }
+            if (MEMBERSHIP_DICT_KEYS.has(k)) {
+                obj[k] = kernGroupsFromY(v);
+                return;
+            }
             obj[k] = fromYType(v);
         });
+        if (value.has('featuresById') && isYMap(value.get('featuresById'))) {
+            const byId = value.get('featuresById');
+            const order = value.get('featureOrder');
+            if (isYMap(byId) && isYArray(order)) {
+                const features: unknown[] = [];
+                for (const id of order.toArray() as string[]) {
+                    const entry = byId.get(id);
+                    if (entry === undefined) {
+                        continue;
+                    }
+                    const record = fromYType(entry) as Record<string, unknown>;
+                    features.push([record.tag, record.code]);
+                }
+                obj.features = features;
+            }
+        }
         return obj;
     }
     if (value instanceof Y.Array) {
@@ -673,15 +1060,30 @@ function fromYLayerMap(layerMap: Y.Map<unknown>): Record<string, unknown> {
             k !== 'guideOrder' &&
             k !== 'shapes' &&
             k !== 'anchors' &&
-            k !== 'guides'
+            k !== 'guides' &&
+            k !== LAYER_GEOMETRY_TOPOLOGY_KEY &&
+            k !== LAYER_NODE_POSITIONS_KEY &&
+            k !== LAYER_SHAPE_DATA_KEY
         ) {
             obj[k] = fromYType(v);
         }
     });
 
-    const shapes = layerMap.get('shapes');
-    if (shapes instanceof Y.Array) {
-        obj.shapes = fromYType(shapes);
+    try {
+        const normalizedShapes = geometryHasNormalizedStorage(layerMap)
+            ? readLayerGeometry(layerMap)
+            : null;
+        if (normalizedShapes) {
+            obj.shapes = normalizedShapes;
+        } else {
+            const shapes = layerMap.get('shapes');
+            if (shapes instanceof Y.Array) {
+                obj.shapes = fromYType(shapes);
+            }
+        }
+    } catch {
+        // Keep last reconstructed shapes out of this snapshot rather than
+        // publishing a malformed outline into the compiler cache.
     }
 
     // anchorsById + anchorOrder → anchors array
@@ -765,6 +1167,8 @@ export function yDocToJson(fontMap: Y.Map<unknown>): Record<string, unknown> {
                 glyphs.push(glyphJson);
             }
             result['glyphs'] = glyphs;
+        } else if (MEMBERSHIP_DICT_KEYS.has(key)) {
+            result[key] = kernGroupsFromY(value);
         } else if (key !== 'glyphOrder') {
             result[key] = fromYType(value);
         }
@@ -785,6 +1189,7 @@ export function getYPath(
     root: Y.Map<unknown>,
     path: (string | number)[]
 ): unknown {
+    path = coerceNumericPath(path);
     let current: unknown = root;
     let i = 0;
 
@@ -792,6 +1197,16 @@ export function getYPath(
         const seg = path[i];
         if (current instanceof Y.Map) {
             const segStr = String(seg);
+
+            if (segStr === 'shapes' && geometryHasNormalizedStorage(current)) {
+                try {
+                    current = readLayerGeometry(current) || [];
+                } catch {
+                    return undefined;
+                }
+                i += 1;
+                continue;
+            }
 
             // Check for indexed-map structure
             if (
@@ -805,6 +1220,17 @@ export function getYPath(
                     i += 2;
                     if (current === null || current === undefined)
                         return undefined;
+                    if (
+                        i >= path.length &&
+                        segStr === 'features' &&
+                        isYMap(current)
+                    ) {
+                        const record = fromYType(current) as Record<
+                            string,
+                            unknown
+                        >;
+                        return [record.tag, record.code];
+                    }
                     continue;
                 } else if (typeof nextSeg === 'string') {
                     const byIdMap = getIndexedByIdMap(current, segStr)!;
@@ -824,7 +1250,15 @@ export function getYPath(
                         for (const id of ids) {
                             const entry = byId.get(id);
                             if (entry !== undefined) {
-                                result.push(fromYType(entry));
+                                const record = fromYType(entry) as Record<
+                                    string,
+                                    unknown
+                                >;
+                                if (segStr === 'features') {
+                                    result.push([record.tag, record.code]);
+                                } else {
+                                    result.push(record);
+                                }
                             }
                         }
                         return result;
@@ -832,14 +1266,49 @@ export function getYPath(
                 }
             }
 
-            current = current.get(segStr);
+            if (
+                current.has('tag') &&
+                current.has('code') &&
+                (seg === 0 || seg === 1 || seg === 'tag' || seg === 'code')
+            ) {
+                const field = seg === 0 || seg === 'tag' ? 'tag' : 'code';
+                current = current.get(field);
+            } else {
+                current = current.get(segStr);
+            }
         } else if (current instanceof Y.Array) {
             current = current.get(Number(seg));
+        } else if (Array.isArray(current)) {
+            current = current[Number(seg)];
+        } else if (isPlainObject(current)) {
+            current = current[String(seg)];
         } else {
             return undefined;
         }
         if (current === undefined) return undefined;
         i += 1;
+    }
+    if (isYMap(current) && path.length > 0) {
+        const last = path[path.length - 1];
+        if (
+            current.has('featuresById') &&
+            isYMap(current.get('featuresById'))
+        ) {
+            return fromYType(current);
+        }
+        if (last === 'codepoints') {
+            return membershipMapToArray(current, true);
+        }
+        if (MEMBERSHIP_DICT_KEYS.has(String(last))) {
+            return kernGroupsFromY(current);
+        }
+        const parentKey = path[path.length - 2];
+        if (
+            MEMBERSHIP_DICT_KEYS.has(String(parentKey)) &&
+            typeof last === 'string'
+        ) {
+            return membershipMapToArray(current, false);
+        }
     }
     return current;
 }
@@ -850,10 +1319,45 @@ export function getYPath(
  */
 const INDEXED_MAP_KEYS: Record<string, { byId: string; order: string }> = {
     anchors: { byId: 'anchorsById', order: 'anchorOrder' },
-    guides: { byId: 'guidesById', order: 'guideOrder' }
+    guides: { byId: 'guidesById', order: 'guideOrder' },
+    features: { byId: 'featuresById', order: 'featureOrder' }
 };
 
 export { INDEXED_MAP_KEYS };
+
+/**
+ * Replace indexed-map numeric lookups with stable ids so a concurrent
+ * insert cannot retarget a committed leaf write.
+ */
+export function stabilizeIndexedMapPath(
+    root: Y.Map<unknown>,
+    path: (string | number)[]
+): (string | number)[] {
+    const next = [...path];
+    let current: unknown = root;
+    let i = 0;
+    while (i < next.length && current instanceof Y.Map) {
+        const seg = next[i];
+        const segStr = String(seg);
+        const mapping = INDEXED_MAP_KEYS[segStr];
+        if (mapping && typeof next[i + 1] === 'number') {
+            const order = current.get(mapping.order);
+            const byId = current.get(mapping.byId);
+            if (isYArray(order) && isYMap(byId)) {
+                const id = order.get(next[i + 1] as number);
+                if (typeof id === 'string' && byId.has(id)) {
+                    next[i + 1] = id;
+                    current = byId.get(id);
+                    i += 2;
+                    continue;
+                }
+            }
+        }
+        current = current.get(segStr);
+        i += 1;
+    }
+    return next;
+}
 
 /**
  * Reverse mapping from *Order key to array key.
@@ -864,6 +1368,7 @@ const ORDER_KEYS: Record<string, string> = {
     shapeOrder: 'shapes',
     anchorOrder: 'anchors',
     guideOrder: 'guides',
+    featureOrder: 'features',
     glyphOrder: 'glyphs',
     layerOrder: 'layers'
 };
@@ -1157,6 +1662,218 @@ function navigateIndexedMap(
     return isYMap(entry) ? entry : null;
 }
 
+function locateLayerMap(
+    root: Y.Map<unknown>,
+    path: (string | number)[],
+    createMissing = false
+): { layerMap: Y.Map<unknown>; rest: (string | number)[] } | null {
+    let current: unknown = root;
+    for (let i = 0; i < path.length; i++) {
+        if (!isYMap(current)) {
+            return null;
+        }
+        if (String(path[i]) === 'layers' && i + 1 < path.length) {
+            const layersMap = ensureGlyphLayersMap(current);
+            const layerId = String(path[i + 1]);
+            let layer = layersMap.get(layerId);
+            if (!isYMap(layer)) {
+                if (!createMissing) {
+                    return null;
+                }
+                const created = new Y.Map<unknown>();
+                created.set('id', layerId);
+                layersMap.set(layerId, created);
+                layer = created;
+            }
+            if (!isYMap(layer)) {
+                return null;
+            }
+            return {
+                layerMap: layer,
+                rest: path.slice(i + 2)
+            };
+        }
+        const next = current.get(String(path[i]));
+        if (!isYMap(next)) {
+            if (!createMissing || next !== undefined) {
+                return null;
+            }
+            const created = new Y.Map<unknown>();
+            current.set(String(path[i]), created);
+            current = created;
+            continue;
+        }
+        current = next;
+    }
+    return null;
+}
+
+function deleteNormalizedShapePath(
+    layerMap: Y.Map<unknown>,
+    rest: (string | number)[]
+): boolean {
+    if (rest[0] !== 'shapes' || rest.length !== 2) {
+        return false;
+    }
+    if (!geometryHasNormalizedStorage(layerMap)) {
+        return false;
+    }
+    const shapes = readLayerGeometry(layerMap);
+    if (!shapes) {
+        return false;
+    }
+    const shapeIndex = Number(rest[1]);
+    if (
+        !Number.isInteger(shapeIndex) ||
+        shapeIndex < 0 ||
+        shapeIndex >= shapes.length
+    ) {
+        return false;
+    }
+    shapes.splice(shapeIndex, 1);
+    writeLayerGeometry(layerMap, shapes, toYType);
+    return true;
+}
+
+function writeNormalizedShapePath(
+    layerMap: Y.Map<unknown>,
+    rest: (string | number)[],
+    value: unknown
+): boolean {
+    if (rest[0] !== 'shapes') {
+        if (rest[0] === LAYER_NODE_POSITIONS_KEY && rest.length === 2) {
+            const packed = typeof value === 'string' ? value : String(value);
+            let positionMap = layerMap.get(LAYER_NODE_POSITIONS_KEY);
+            if (!isYMap(positionMap)) {
+                positionMap = new Y.Map<unknown>();
+                layerMap.set(LAYER_NODE_POSITIONS_KEY, positionMap);
+            }
+            if (!isYMap(positionMap)) {
+                return false;
+            }
+            positionMap.set(String(rest[1]), packed);
+            return true;
+        }
+        return false;
+    }
+    if (!geometryHasNormalizedStorage(layerMap) && rest.length > 1) {
+        const shapeIndex = Number(rest[1]);
+        if (!Number.isInteger(shapeIndex) || shapeIndex < 0) {
+            return false;
+        }
+        const bootstrap: unknown[] = [];
+        for (let index = 0; index <= shapeIndex; index++) {
+            bootstrap.push({
+                closed: true,
+                nodes: [{ x: 0, y: 0, nodetype: 'Line', smooth: false }]
+            });
+        }
+        writeLayerGeometry(layerMap, bootstrap, toYType);
+    }
+    if (!geometryHasNormalizedStorage(layerMap) && rest.length === 1) {
+        if (Array.isArray(value)) {
+            writeLayerGeometry(layerMap, value as unknown[], toYType);
+            return true;
+        }
+        return false;
+    }
+
+    const shapes = readLayerGeometry(layerMap);
+    if (!shapes) {
+        if (Array.isArray(value) && rest.length === 1) {
+            writeLayerGeometry(layerMap, value as unknown[], toYType);
+            return true;
+        }
+        return false;
+    }
+
+    if (rest.length === 1) {
+        if (!Array.isArray(value)) {
+            throw new TypeError('Layer shapes must be an array.');
+        }
+        writeLayerGeometry(layerMap, value as unknown[], toYType);
+        return true;
+    }
+
+    const shapeIndex = Number(rest[1]);
+    if (rest.length === 2) {
+        shapes[shapeIndex] = value as Record<string, unknown>;
+        writeLayerGeometry(layerMap, shapes, toYType);
+        return true;
+    }
+
+    if (rest[2] === 'nodes') {
+        const shape = shapes[shapeIndex] as Record<string, unknown>;
+        if (rest.length === 3) {
+            shape.nodes = value;
+            writeLayerGeometry(layerMap, shapes, toYType);
+            return true;
+        }
+        const nodeIndex = Number(rest[3]);
+        const nodes = Array.isArray(shape.nodes)
+            ? (shape.nodes as Record<string, unknown>[])
+            : [];
+        if (rest.length === 4) {
+            nodes[nodeIndex] = value as Record<string, unknown>;
+            shape.nodes = nodes;
+            writeLayerGeometry(layerMap, shapes, toYType);
+            return true;
+        }
+        const property = String(rest[4]);
+        if (property === 'x' || property === 'y') {
+            const nodeId = getNodeIdAt(layerMap, shapeIndex, nodeIndex);
+            const node = (nodes[nodeIndex] || {}) as Record<string, unknown>;
+            const nextX = property === 'x' ? Number(value) : Number(node.x);
+            const nextY = property === 'y' ? Number(value) : Number(node.y);
+            writeNodePosition(layerMap, nodeId, nextX, nextY);
+            return true;
+        }
+        const node = {
+            ...((nodes[nodeIndex] as Record<string, unknown>) || {}),
+            [property]: value
+        };
+        nodes[nodeIndex] = node;
+        shape.nodes = nodes;
+        writeLayerGeometry(layerMap, shapes, toYType);
+        return true;
+    }
+
+    const shape = {
+        ...((shapes[shapeIndex] as Record<string, unknown>) || {})
+    };
+    setDeepValue(shape, rest.slice(2), value);
+    shapes[shapeIndex] = shape;
+    writeLayerGeometry(layerMap, shapes, toYType);
+    return true;
+}
+
+function setDeepValue(
+    root: Record<string, unknown>,
+    path: (string | number)[],
+    value: unknown
+): void {
+    let cursor: unknown = root;
+    for (let i = 0; i < path.length - 1; i++) {
+        const key = isNumericPathSegment(path[i])
+            ? pathSegmentIndex(path[i])
+            : String(path[i]);
+        const nextIsIndex = isNumericPathSegment(path[i + 1]);
+        const parent = cursor as Record<string | number, unknown>;
+        const existing = parent[key];
+        if (existing == null || typeof existing !== 'object') {
+            parent[key] = nextIsIndex ? [] : {};
+        } else if (nextIsIndex && !Array.isArray(existing)) {
+            parent[key] = [];
+        }
+        cursor = parent[key];
+    }
+    const last = path[path.length - 1];
+    const lastKey = isNumericPathSegment(last)
+        ? pathSegmentIndex(last)
+        : String(last);
+    (cursor as Record<string | number, unknown>)[lastKey] = value;
+}
+
 /**
  * Set a value at a deep path in a Y.Doc tree.
  * Creates intermediate Y.Maps or Y.Arrays according to the next path segment.
@@ -1173,6 +1890,15 @@ export function setYPath(
     value: unknown
 ): void {
     if (path.length === 0) return;
+    path = coerceNumericPath(path);
+
+    const located = locateLayerMap(root, path, true);
+    if (
+        located &&
+        writeNormalizedShapePath(located.layerMap, located.rest, value)
+    ) {
+        return;
+    }
 
     const nodesSegmentIndex = path.lastIndexOf('nodes');
     if (
@@ -1212,8 +1938,15 @@ export function setYPath(
             // Always use the indexed-map structure for these keys,
             // creating it if it doesn't exist yet.
             if (typeof seg === 'string' && INDEXED_MAP_KEYS[segStr]) {
-                // Ensure the indexed-map structure exists
-                const byIdMap = ensureIndexedMap(current, segStr);
+                // Font.features is a container map; only the nested
+                // `features.features` list is an indexed map. Do not
+                // create featuresById on the font root.
+                const existingById = getIndexedByIdMap(current, segStr);
+                const byIdMap =
+                    existingById ||
+                    (segStr === 'features'
+                        ? null
+                        : ensureIndexedMap(current, segStr));
                 if (byIdMap) {
                     // Next segment should be the index/id
                     const nextSeg = path[i + 1];
@@ -1274,6 +2007,17 @@ export function setYPath(
                 }
             }
 
+            const featureField = featureTupleField(current, seg);
+            if (featureField) {
+                next = current.get(featureField);
+                if (next === undefined) {
+                    return;
+                }
+                current = next;
+                i += 1;
+                continue;
+            }
+
             // Normal Y.Map navigation
             next = current.get(segStr);
             if (next === undefined) {
@@ -1313,11 +2057,9 @@ export function setYPath(
     const lastSegStr = String(lastSeg);
 
     if (current instanceof Y.Map && lastSegStr === 'nodes') {
-        if (!Array.isArray(value)) {
-            throw new TypeError('Y.Doc path nodes must be arrays.');
-        }
-        current.set(lastSegStr, toYType(value));
-        return;
+        throw new TypeError(
+            'Nested nodes arrays are not a Y.Doc authority. Write geometryTopology and nodePositionsById.'
+        );
     }
 
     // Special case: when setting a *Order key (shapeOrder, anchorOrder,
@@ -1360,6 +2102,73 @@ export function setYPath(
 
     if (
         current instanceof Y.Map &&
+        lastSegStr === 'codepoints' &&
+        Array.isArray(value)
+    ) {
+        writeMembershipMap(
+            ensureMembershipYMap(current, 'codepoints'),
+            value.map(String)
+        );
+        return;
+    }
+
+    if (
+        current instanceof Y.Map &&
+        MEMBERSHIP_DICT_KEYS.has(lastSegStr) &&
+        isPlainObject(value)
+    ) {
+        writeKernGroupsMap(
+            ensureMembershipYMap(current, lastSegStr),
+            value as Record<string, unknown>
+        );
+        return;
+    }
+
+    if (
+        current instanceof Y.Map &&
+        Array.isArray(value) &&
+        path.length >= 2 &&
+        MEMBERSHIP_DICT_KEYS.has(String(path[path.length - 2]))
+    ) {
+        writeMembershipMap(
+            ensureMembershipYMap(current, lastSegStr),
+            value.map(String)
+        );
+        return;
+    }
+
+    if (
+        current instanceof Y.Map &&
+        typeof lastSeg === 'number' &&
+        path.length >= 3 &&
+        MEMBERSHIP_DICT_KEYS.has(String(path[path.length - 3]))
+    ) {
+        const names = membershipMapToArray(current, false).map(String);
+        const next = [...names];
+        if (lastSeg < next.length) {
+            next[lastSeg] = String(value);
+        } else if (lastSeg === next.length) {
+            next.push(String(value));
+        }
+        writeMembershipMap(current, next);
+        return;
+    }
+
+    const featureField = isYMap(current)
+        ? featureTupleField(current, lastSeg)
+        : null;
+    if (current instanceof Y.Map && featureField) {
+        const existing = current.get(featureField);
+        if (isYMap(existing) && isPlainObject(value)) {
+            replaceYMapContents(existing, value as Record<string, unknown>);
+            return;
+        }
+        current.set(featureField, toYType(value));
+        return;
+    }
+
+    if (
+        current instanceof Y.Map &&
         path.length === 4 &&
         path[0] === 'glyphs' &&
         path[2] === 'layers' &&
@@ -1379,12 +2188,30 @@ export function setYPath(
 
     const yValue = toYType(value);
     if (current instanceof Y.Map) {
+        const existing = current.get(lastSegStr);
+        if (isYArray(existing) && Array.isArray(value)) {
+            diffYArray(existing, value);
+            return;
+        }
+        if (isYMap(existing) && isPlainObject(value)) {
+            replaceYMapContents(existing, value as Record<string, unknown>);
+            return;
+        }
         current.set(lastSegStr, yValue);
     } else if (current instanceof Y.Array) {
-        const idx = Number(lastSeg);
+        const idx = pathSegmentIndex(lastSeg);
         if (idx === current.length) {
             current.insert(idx, [yValue]);
         } else if (idx >= 0 && idx < current.length) {
+            const existing = current.get(idx);
+            if (isYArray(existing) && Array.isArray(value)) {
+                diffYArray(existing, value);
+                return;
+            }
+            if (isYMap(existing) && isPlainObject(value)) {
+                replaceYMapContents(existing, value as Record<string, unknown>);
+                return;
+            }
             current.delete(idx, 1);
             current.insert(idx, [yValue]);
         }
@@ -1401,6 +2228,12 @@ export function deleteYPath(
     path: (string | number)[]
 ): void {
     if (path.length === 0) return;
+    path = coerceNumericPath(path);
+
+    const located = locateLayerMap(root, path, false);
+    if (located && deleteNormalizedShapePath(located.layerMap, located.rest)) {
+        return;
+    }
 
     // Check if the last two segments are [indexedMapKey, index]
     if (path.length >= 2) {

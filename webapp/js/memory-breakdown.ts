@@ -1,5 +1,9 @@
 import { getHarfBuzzRawModule } from './font-compilation';
 import { Logger } from './logger';
+import {
+    evaluateLiveShardMemory,
+    type LiveShardMemoryReport
+} from './filesystem-plugins/cloud-shard-limits';
 
 const console = new Logger('MemoryMonitor');
 
@@ -38,6 +42,35 @@ export type BrowserHeapSnapshot = {
     usedBytes: number | null;
     limitBytes: number | null;
 };
+
+export function liveShardMemoryFromEngine(
+    bridge = typeof window !== 'undefined' ? window.patchSyncEngine : null
+): LiveShardMemoryReport | null {
+    const snapshot = bridge?.getMemoryInspectionSnapshot?.();
+    if (!snapshot) {
+        return null;
+    }
+    return evaluateLiveShardMemory({
+        decodedStructs: snapshot.decodedStructs,
+        undoStackItems: snapshot.undoStackItems
+    });
+}
+function liveMemoryNote(bridgeSnapshot: {
+    decodedStructs?: number;
+    undoStackItems?: number;
+}): string {
+    const report = evaluateLiveShardMemory({
+        decodedStructs: bridgeSnapshot.decodedStructs,
+        undoStackItems: bridgeSnapshot.undoStackItems
+    });
+    const structs =
+        typeof bridgeSnapshot.decodedStructs === 'number'
+            ? `${bridgeSnapshot.decodedStructs} structs`
+            : 'live CRDT';
+    return report.status === 'warning'
+        ? `${structs} · shard memory warning (gc:false; rebaseline keeps unsent)`
+        : structs;
+}
 
 export function estimateJsValueBytes(
     value: unknown,
@@ -333,7 +366,7 @@ function collectMainJsDomain(): MemoryDomain {
             bytes: estimateYjsStoreBytes(bridgeSnapshot.yDocStore),
             method: 'est.',
             inSum: true,
-            note: 'live CRDT'
+            note: liveMemoryNote(bridgeSnapshot)
         });
         rows.push({
             id: 'undo-stacks',

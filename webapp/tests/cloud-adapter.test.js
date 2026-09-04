@@ -1,3 +1,13 @@
+const { webcrypto } = require('crypto');
+const { TextDecoder, TextEncoder } = require('util');
+Object.defineProperty(global, 'crypto', {
+    value: webcrypto,
+    configurable: true,
+    writable: true
+});
+global.TextDecoder = TextDecoder;
+global.TextEncoder = TextEncoder;
+
 const {
     CloudAdapter,
     normalizeCloudRoomWebSocketUrl,
@@ -15,7 +25,7 @@ const {
     collaborationMessageKey
 } = require('../js/collaboration-message.ts');
 
-const TEST_YDOC_SCHEMA_VERSION = 3;
+const TEST_YDOC_SCHEMA_VERSION = 4;
 
 function createIndexedDbMock(seedRecords = []) {
     const records = new Map(
@@ -115,7 +125,7 @@ describe('CloudAdapter room worker defaults', () => {
         try {
             const adapter = new CloudAdapter({ assetId: 'asset-123' });
             expect(adapter._roomWorkerBaseUrl).toBe(
-                'https://fonts-room.fonteditor.workers.dev'
+                'https://room.fonteditor.workers.dev'
             );
         } finally {
             window.isDevelopment = originalIsDevelopment;
@@ -259,8 +269,7 @@ describe('CloudAdapter outbound updates', () => {
             }),
             json: async () => ({
                 token: 'room-token',
-                roomUrl:
-                    'https://fonts-room.fonteditor.workers.dev/room/asset-123'
+                roomUrl: 'https://room.fonteditor.workers.dev/room/asset-123'
             }),
             text: async () => ''
         });
@@ -274,7 +283,7 @@ describe('CloudAdapter outbound updates', () => {
 
             expect(openWebSocket).toHaveBeenCalledWith(
                 'room-token',
-                'wss://fonts-room.fonteditor.workers.dev/room/asset-123/shards/font-core'
+                'wss://room.fonteditor.workers.dev/room/asset-123/shards/font-core'
             );
             expect(global.fetch).toHaveBeenCalledWith(
                 'https://counterpunch.space/api/cloud/assets/asset-123/room-token',
@@ -304,8 +313,7 @@ describe('CloudAdapter outbound updates', () => {
             }),
             json: async () => ({
                 token: 'room-token',
-                roomUrl:
-                    'https://fonts-room.fonteditor.workers.dev/room/asset-123'
+                roomUrl: 'https://room.fonteditor.workers.dev/room/asset-123'
             }),
             text: async () => ''
         });
@@ -323,7 +331,7 @@ describe('CloudAdapter outbound updates', () => {
             expect(bootstrapFromR2).not.toHaveBeenCalled();
             expect(openWebSocket).toHaveBeenCalledWith(
                 'room-token',
-                'wss://fonts-room.fonteditor.workers.dev/room/asset-123/shards/font-core'
+                'wss://room.fonteditor.workers.dev/room/asset-123/shards/font-core'
             );
         } finally {
             global.fetch = originalFetch;
@@ -433,6 +441,159 @@ describe('CloudAdapter outbound updates', () => {
         expect(adapter._sendSyncComplete).toHaveBeenCalledWith(
             new Uint8Array([4, 5, 6])
         );
+    });
+
+    it('reapplies unsent local updates after a checkpoint rebaseline', () => {
+        const adapter = new CloudAdapter({ assetId: 'asset-123' });
+        const unsent = new Uint8Array([9, 9, 9]);
+        adapter._pendingOutboundPackets = [{ update: unsent }];
+        const bridge = {
+            applyFullState: jest.fn(),
+            mergeRemoteUpdates: jest.fn()
+        };
+        adapter._bridge = bridge;
+        adapter._applyServerStateToBridge(new Uint8Array([1, 2, 3]));
+        expect(bridge.applyFullState).toHaveBeenCalledWith(
+            new Uint8Array([1, 2, 3])
+        );
+        expect(bridge.mergeRemoteUpdates).toHaveBeenCalledWith([unsent]);
+        expect(adapter._pendingOutboundPackets).toEqual([{ update: unsent }]);
+    });
+
+    it('requests additional sync pages until hasMore is false', () => {
+        const adapter = new CloudAdapter({ assetId: 'asset-123' });
+        const sent = [];
+        adapter._ws = {
+            readyState: 1,
+            send: (payload) => {
+                sent.push(JSON.parse(payload));
+            }
+        };
+        adapter._bridge = {
+            mergeImportedChangeLog: jest.fn(),
+            mergeImportedCollaborationMessages: jest.fn(),
+            applyFullState: jest.fn(),
+            onLocalUpdate: jest.fn(),
+            offLocalUpdate: jest.fn()
+        };
+        adapter._registerOutboundHook = jest.fn();
+        adapter._sendSyncComplete = jest.fn(() => false);
+        adapter._encodeLocalStateVector = jest.fn(() => new Uint8Array([1]));
+        adapter._applyServerState = jest.fn().mockReturnValue(true);
+
+        adapter._handleMessage(
+            JSON.stringify({
+                type: 'sync-response',
+                update: Buffer.from([1]).toString('base64'),
+                hasMore: true,
+                throughLogId: 50,
+                collaborationMessageHistory: []
+            })
+        );
+
+        expect(adapter._appliedLogId).toBe(50);
+        expect(sent).toHaveLength(1);
+        expect(sent[0]).toMatchObject({
+            type: 'sync-request',
+            appliedLogId: 50
+        });
+
+        adapter._handleMessage(
+            JSON.stringify({
+                type: 'sync-response',
+                update: Buffer.from([2]).toString('base64'),
+                hasMore: false,
+                throughLogId: 100,
+                collaborationMessageHistory: []
+            })
+        );
+
+        expect(adapter._sendSyncComplete).toHaveBeenCalledTimes(1);
+        expect(adapter._registerOutboundHook).toHaveBeenCalledTimes(1);
+    });
+
+    it('sets appliedLogId to the R2 checkpoint after bootstrap', async () => {
+        const adapter = new CloudAdapter({ assetId: 'asset-123' });
+        adapter._bridge = {
+            applyFullState: jest.fn(),
+            applyDocumentCheckpoint: jest.fn(),
+            mergeImportedChangeLog: jest.fn(),
+            mergeImportedCollaborationMessages: jest.fn()
+        };
+        const originalFetch = global.fetch;
+        global.fetch = jest.fn(async () => ({
+            ok: true,
+            status: 200,
+            headers: new Headers({ 'X-Checkpoint-Log-Id': '12' }),
+            arrayBuffer: async () => new Uint8Array([1, 2, 3]).buffer
+        }));
+        try {
+            await adapter._bootstrapFromR2(
+                'token',
+                'wss://rooms.example.com/room/asset-123/shards/font-core'
+            );
+            expect(adapter._checkpointLogId).toBe(12);
+            expect(adapter._appliedLogId).toBe(12);
+        } finally {
+            global.fetch = originalFetch;
+        }
+    });
+
+    it('keeps appliedLogId across reconnect when bootstrap is skipped', () => {
+        const adapter = new CloudAdapter({ assetId: 'asset-123' });
+        adapter._appliedLogId = 44;
+        adapter._checkpointLogId = 40;
+        adapter._canSkipBootstrapOnReconnect = true;
+        adapter._resetBootstrapStateForReconnect();
+        expect(adapter._appliedLogId).toBe(44);
+        expect(adapter._checkpointLogId).toBe(40);
+    });
+
+    it('does not advance appliedLogId when applying a sync page fails', () => {
+        const adapter = new CloudAdapter({ assetId: 'asset-123' });
+        adapter._appliedLogId = 10;
+        adapter._bridge = {
+            applyFullState: jest.fn(),
+            applyDocumentCheckpoint: jest.fn(),
+            mergeImportedChangeLog: jest.fn(),
+            mergeImportedCollaborationMessages: jest.fn()
+        };
+        adapter._applyServerStateToBridge = jest.fn(() => {
+            throw new Error('apply failed');
+        });
+        adapter._ws = { readyState: 1, send: jest.fn() };
+        adapter._handleMessage(
+            JSON.stringify({
+                type: 'sync-response',
+                update: Buffer.from([1]).toString('base64'),
+                hasMore: true,
+                throughLogId: 50,
+                collaborationMessageHistory: []
+            })
+        );
+        expect(adapter._appliedLogId).toBe(10);
+        expect(adapter._ws.send).not.toHaveBeenCalled();
+    });
+
+    it('advances appliedLogId for live updates only after the Yjs apply', async () => {
+        const adapter = new CloudAdapter({ assetId: 'asset-123' });
+        adapter._appliedLogId = 3;
+        adapter._bridge = {
+            applyRemoteUpdate: jest.fn().mockReturnValue(true)
+        };
+        adapter._handleMessage(
+            JSON.stringify({
+                type: 'update',
+                clientId: 'peer',
+                seq: 1,
+                logId: 9,
+                update: Buffer.from([1, 2, 3]).toString('base64')
+            })
+        );
+        expect(adapter._appliedLogId).toBe(3);
+        await Promise.resolve();
+        expect(adapter._bridge.applyRemoteUpdate).toHaveBeenCalled();
+        expect(adapter._appliedLogId).toBe(9);
     });
 
     it('applies glyph-room sync-response to that shard without rewriting font-core', () => {
@@ -2762,7 +2923,7 @@ describe('CloudAdapter durability failures', () => {
                 JSON.stringify({
                     type: 'auth-ok',
                     clientId: 'c1',
-                    roomSchemaVersion: 3
+                    roomSchemaVersion: TEST_YDOC_SCHEMA_VERSION
                 })
             );
             jest.advanceTimersByTime(10000);
@@ -3224,7 +3385,9 @@ describe('R2 bootstrap (GET /state before WebSocket)', () => {
             status = 200,
             checkpointBytes = new Uint8Array([1, 2, 3]),
             checkpointLogId = '42',
-            stateRequests = []
+            stateRequests = [],
+            snapshotSha256 = '',
+            snapshotBytes = null
         } = opts || {};
 
         global.fetch = jest.fn(function (url, opts) {
@@ -3261,7 +3424,13 @@ describe('R2 bootstrap (GET /state before WebSocket)', () => {
                     status: 200,
                     headers: new Headers({
                         'content-type': 'application/octet-stream',
-                        'x-checkpoint-log-id': checkpointLogId
+                        'x-checkpoint-log-id': checkpointLogId,
+                        ...(snapshotSha256
+                            ? { 'x-snapshot-sha256': snapshotSha256 }
+                            : {}),
+                        ...(snapshotBytes !== null
+                            ? { 'x-snapshot-bytes': String(snapshotBytes) }
+                            : {})
                     }),
                     arrayBuffer: function () {
                         return Promise.resolve(checkpointBytes.buffer.slice(0));
@@ -3435,6 +3604,32 @@ describe('R2 bootstrap (GET /state before WebSocket)', () => {
         expect(syncRequest.checkpointLogId).toBe(77);
     });
 
+    it('fails closed when the R2 checkpoint digest does not match', async () => {
+        const adapter = makeAdapter();
+        adapter._bridge = {
+            encodeBridgeStateVector: function () {
+                return new Uint8Array(0);
+            },
+            applyFullState: jest.fn(),
+            applyYDocUpdateSilent: jest.fn(),
+            onLocalUpdate: jest.fn(),
+            offLocalUpdate: jest.fn()
+        };
+        mockFetchWithStateEndpoint({
+            checkpointBytes: new Uint8Array([10, 20, 30, 40]),
+            snapshotSha256: 'deadbeef'
+        });
+        await expect(
+            adapter.connectDirect(
+                adapter._bridge,
+                'room-token',
+                'wss://rooms.example.com/room/asset-123',
+                { bootstrapMode: 'required' }
+            )
+        ).rejects.toThrow(/digest mismatch/);
+        expect(adapter._bridge.applyFullState).not.toHaveBeenCalled();
+    });
+
     it('fails closed on 404 (no checkpoint) when bootstrap is required', async () => {
         const adapter = makeAdapter();
         var appliedUpdates = [];
@@ -3523,6 +3718,7 @@ describe('HTTP seed (POST /state for new rooms)', () => {
     afterEach(() => {
         global.fetch = originalFetch;
         global.WebSocket = originalWebSocket;
+        jest.useRealTimers();
     });
 
     it('does not throw or send on a replacement CONNECTING socket when HTTP seed resolves late', async () => {
@@ -3999,7 +4195,8 @@ describe('HTTP seed (POST /state for new rooms)', () => {
                 { bootstrapMode: 'skip' }
             );
 
-            await jest.advanceTimersByTimeAsync(50);
+            await Promise.resolve();
+            jest.advanceTimersByTime(50);
 
             adapter._handleMessage(
                 JSON.stringify({
@@ -4011,7 +4208,7 @@ describe('HTTP seed (POST /state for new rooms)', () => {
             );
 
             await Promise.resolve();
-            await jest.advanceTimersByTimeAsync(10000);
+            jest.advanceTimersByTime(10000);
 
             expect(scheduleReconnect).not.toHaveBeenCalled();
             expect(socket.close).not.toHaveBeenCalled();
@@ -4024,7 +4221,10 @@ describe('HTTP seed (POST /state for new rooms)', () => {
             ).toBe(false);
 
             resolveSeedRequest();
-            await jest.advanceTimersByTimeAsync(50);
+            for (let i = 0; i < 10; i++) {
+                await Promise.resolve();
+            }
+            jest.advanceTimersByTime(50);
 
             expect(sentMessages).toContainEqual(
                 expect.objectContaining({
@@ -4154,5 +4354,94 @@ describe('HTTP seed (POST /state for new rooms)', () => {
         expect(syncRequest).toBeDefined();
         expect(syncRequest.checkpointLogId).toBe(7);
         expect(adapter.status).not.toBe('error');
+    });
+
+    it('rejects HTTP seed when the snapshot digest mismatches', async () => {
+        const adapter = new CloudAdapter({
+            assetId: 'asset-123',
+            websiteBaseUrl: 'https://counterpunch.space'
+        });
+        adapter._bridge = {
+            encodeBridgeState: function () {
+                return new Uint8Array([1, 2, 3]);
+            }
+        };
+        global.fetch = jest.fn(async function () {
+            return {
+                ok: true,
+                status: 200,
+                headers: new Headers({
+                    'X-Snapshot-Sha256': 'deadbeef',
+                    'X-Snapshot-Bytes': '3'
+                }),
+                json: async function () {
+                    return { ok: true, checkpointLogId: 1 };
+                }
+            };
+        });
+        await expect(
+            adapter._seedRoomViaHttp(
+                'room-token',
+                'https://rooms.example.com/room/asset-123'
+            )
+        ).rejects.toThrow(/digest mismatch/);
+    });
+
+    it('applies a binary checkpoint page without a JSON sync-response', async () => {
+        const adapter = new CloudAdapter({
+            assetId: 'asset-123',
+            websiteBaseUrl: 'https://counterpunch.space'
+        });
+        const applied = [];
+        adapter._bridge = {
+            applyFullState: function (bytes) {
+                applied.push(Array.from(bytes));
+            },
+            applyYDocUpdateSilent: jest.fn(),
+            onLocalUpdate: jest.fn(),
+            offLocalUpdate: jest.fn()
+        };
+        const meta = new Uint8Array(
+            Buffer.from(
+                JSON.stringify({
+                    hasMore: false,
+                    throughLogId: 8,
+                    lastLogId: 8,
+                    collaborationMessageHistory: []
+                })
+            )
+        );
+        const blob = new Uint8Array([9, 8, 7]);
+        const tailPayload = new Uint8Array(12 + blob.length);
+        const tailView = new DataView(tailPayload.buffer);
+        tailView.setUint32(0, 0, false);
+        tailView.setUint32(4, 1, false);
+        tailView.setUint32(8, 0, false);
+        tailPayload.set(blob, 12);
+        function encodeFrame(type, logId, payload) {
+            const out = new Uint8Array(16 + payload.length);
+            const view = new DataView(out.buffer);
+            view.setUint32(0, type, false);
+            view.setUint32(4, 0, false);
+            view.setUint32(8, logId, false);
+            view.setUint32(12, payload.length, false);
+            out.set(payload, 16);
+            return out;
+        }
+        const frames = [
+            encodeFrame(1, 0, meta),
+            encodeFrame(2, 8, tailPayload),
+            encodeFrame(3, 8, new Uint8Array())
+        ];
+        const total = frames.reduce((sum, frame) => sum + frame.length, 0);
+        const body = new Uint8Array(total);
+        let offset = 0;
+        frames.forEach(function (frame) {
+            body.set(frame, offset);
+            offset += frame.length;
+        });
+        adapter._handleBinaryFanout(body);
+        expect(applied).toEqual([[9, 8, 7]]);
+        expect(adapter._pendingSyncPageMeta).toBeNull();
     });
 });

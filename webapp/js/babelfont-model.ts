@@ -39,6 +39,7 @@ import type { FilesystemPlugin } from './filesystem-plugins/filesystem-plugin';
 import { applyGlyphRenameUiContext } from './rename-glyphs-ui-context';
 import { assertGlyphRenamePreflight } from './rename-glyphs-preflight';
 import { applyGlyphDeleteUiContext } from './delete-glyphs-ui-context';
+import { topologyEqualsForNodes } from './layer-geometry-ydoc';
 import {
     countDeletedGlyphTokensInFeatureCode,
     collectFeatureLinesReferencingDeletedGlyphs,
@@ -3352,12 +3353,12 @@ function recordPathChangeAndMarkDirty(
 
     const bridge = getPatchSyncEngine();
     if (bridgeHasRecording(bridge) && path.length > 0) {
-        const prop = String(path[path.length - 1]);
+        const last = path[path.length - 1];
         (bridge as any).recordChange(
             path.slice(0, -1),
-            prop,
-            normalizeBridgeRecordedValue(prop, oldVal),
-            normalizeBridgeRecordedValue(prop, newVal)
+            last,
+            normalizeBridgeRecordedValue(String(last), oldVal),
+            normalizeBridgeRecordedValue(String(last), newVal)
         );
         return;
     }
@@ -3365,7 +3366,8 @@ function recordPathChangeAndMarkDirty(
 }
 
 /**
- * Record a path-level node-array change.
+ * Record a path-level node change. Coordinate-only edits emit one packed
+ * position per changed node; topology changes replace the path nodes array.
  */
 function recordGranularNodesChange(
     basePath: (string | number)[],
@@ -3382,7 +3384,106 @@ function recordGranularNodesChange(
         return;
     }
 
+    if (topologyEqualsForNodes(oldNodes, newNodes)) {
+        const count = Math.min(oldNodes.length, newNodes.length);
+        for (let i = 0; i < count; i++) {
+            const previous = oldNodes[i];
+            const next = newNodes[i];
+            if (
+                !previous ||
+                !next ||
+                (previous.x === next.x && previous.y === next.y)
+            ) {
+                continue;
+            }
+            const nodeId = next.id || previous.id || generateStableId();
+            if (!next.id) {
+                next.id = nodeId;
+            }
+            const layerPath = basePath.slice(0, basePath.indexOf('shapes'));
+            recordPathChangeAndMarkDirty(
+                [...layerPath, 'nodePositionsById', nodeId],
+                `${previous.x} ${previous.y}`,
+                `${next.x} ${next.y}`
+            );
+        }
+        return;
+    }
+
     recordPathChangeAndMarkDirty([...basePath, 'nodes'], oldNodes, newNodes);
+}
+
+function recordLayerShapesGeometryChange(
+    layerPath: (string | number)[],
+    oldShapes: unknown[],
+    newShapes: unknown[]
+): void {
+    if (oldShapes.length !== newShapes.length) {
+        recordPathChangeAndMarkDirty(
+            [...layerPath, 'shapes'],
+            oldShapes,
+            newShapes
+        );
+        return;
+    }
+
+    let topologyChanged = false;
+    for (let i = 0; i < newShapes.length; i++) {
+        const oldShape = oldShapes[i] as Unsafe | undefined;
+        const newShape = newShapes[i] as Unsafe | undefined;
+        const oldNodes = Array.isArray(oldShape?.nodes)
+            ? (oldShape.nodes as Babelfont.Node[])
+            : null;
+        const newNodes = Array.isArray(newShape?.nodes)
+            ? (newShape.nodes as Babelfont.Node[])
+            : null;
+        if (oldNodes && newNodes) {
+            if (
+                oldShape?.id !== newShape?.id ||
+                oldShape?.closed !== newShape?.closed ||
+                !topologyEqualsForNodes(oldNodes, newNodes)
+            ) {
+                topologyChanged = true;
+                break;
+            }
+        } else if (
+            Boolean(oldNodes) !== Boolean(newNodes) ||
+            oldShape?.id !== newShape?.id ||
+            oldShape?.reference !== newShape?.reference
+        ) {
+            topologyChanged = true;
+            break;
+        }
+    }
+
+    if (topologyChanged) {
+        recordPathChangeAndMarkDirty(
+            [...layerPath, 'shapes'],
+            oldShapes,
+            newShapes
+        );
+        return;
+    }
+
+    for (let i = 0; i < newShapes.length; i++) {
+        const oldShape = oldShapes[i] as Unsafe | undefined;
+        const newShape = newShapes[i] as Unsafe | undefined;
+        if (Array.isArray(oldShape?.nodes) && Array.isArray(newShape?.nodes)) {
+            recordGranularNodesChange(
+                [...layerPath, 'shapes', i],
+                oldShape.nodes as Babelfont.Node[],
+                newShape.nodes as Babelfont.Node[]
+            );
+            continue;
+        }
+        if (newShape?.transform) {
+            recordPathChangeAndMarkDirty(
+                [...layerPath, 'shapes', i, 'transform'],
+                oldShape?.transform,
+                newShape.transform
+            );
+        }
+    }
 }
 
 function recomputeMetricsKeysForModelLayer(
@@ -3593,12 +3694,10 @@ function ensureModelFormatSpecific(
     };
 
     if (!data.format_specific) {
-        const oldValue = data.format_specific;
         data.format_specific = {};
-        recordAndMarkDirty(
-            modelObj,
-            'format_specific',
-            oldValue,
+        recordPathChangeAndMarkDirty(
+            [...modelObj.getPath(), 'format_specific'],
+            undefined,
             data.format_specific
         );
     }
@@ -3947,107 +4046,11 @@ function getLiveMutableValue<T>(
     value: T,
     getCurrentValue: () => T
 ): T {
-    if (!value || typeof value !== 'object') {
-        return value;
-    }
-
-    const localProxyCache = new WeakMap<object, object>();
-
-    const wrap = (currentValue: unknown): unknown => {
-        if (!currentValue || typeof currentValue !== 'object') {
-            return currentValue;
-        }
-
-        const cachedProxy = localProxyCache.get(currentValue as object);
-        if (cachedProxy) {
-            return cachedProxy;
-        }
-
-        const proxy = new Proxy(currentValue as object, {
-            get(target, key, receiver) {
-                const result = Reflect.get(target, key, receiver);
-
-                const isMutatingCollectionMethod =
-                    typeof key === 'string' &&
-                    typeof result === 'function' &&
-                    ((Array.isArray(target) &&
-                        MUTATING_ARRAY_METHODS.has(key)) ||
-                        (target instanceof Map &&
-                            MUTATING_MAP_METHODS.has(key)) ||
-                        (target instanceof Set &&
-                            MUTATING_SET_METHODS.has(key)));
-                if (isMutatingCollectionMethod) {
-                    return (...args: unknown[]) => {
-                        assertModelMutationAllowed();
-                        const oldValue = cloneForHistory(getCurrentValue());
-                        const nextArgs = args.map(unwrapLiveMutableValue);
-                        const operationResult = Reflect.apply(
-                            result,
-                            target,
-                            nextArgs
-                        );
-                        recordAndMarkDirty(
-                            modelObj,
-                            prop,
-                            oldValue,
-                            cloneForHistory(getCurrentValue())
-                        );
-                        return operationResult;
-                    };
-                }
-
-                if (typeof result === 'function') {
-                    return (...args: unknown[]) =>
-                        Reflect.apply(
-                            result,
-                            target instanceof Map || target instanceof Set
-                                ? target
-                                : receiver,
-                            args.map(unwrapLiveMutableValue)
-                        );
-                }
-
-                return wrap(result);
-            },
-
-            set(target, key, nextValue, receiver) {
-                assertModelMutationAllowed();
-                const oldValue = cloneForHistory(getCurrentValue());
-                const success = Reflect.set(
-                    target,
-                    key,
-                    unwrapLiveMutableValue(nextValue),
-                    receiver
-                );
-                recordAndMarkDirty(
-                    modelObj,
-                    prop,
-                    oldValue,
-                    cloneForHistory(getCurrentValue())
-                );
-                return success;
-            },
-
-            deleteProperty(target, key) {
-                assertModelMutationAllowed();
-                const oldValue = cloneForHistory(getCurrentValue());
-                const success = Reflect.deleteProperty(target, key);
-                recordAndMarkDirty(
-                    modelObj,
-                    prop,
-                    oldValue,
-                    cloneForHistory(getCurrentValue())
-                );
-                return success;
-            }
-        });
-
-        liveMutableProxyTargets.set(proxy, currentValue as object);
-        localProxyCache.set(currentValue as object, proxy);
-        return proxy;
-    };
-
-    return wrap(value) as T;
+    return getPreciseLiveMutableValue(
+        [...modelObj.getPath(), prop],
+        value,
+        getCurrentValue
+    );
 }
 
 function getPreciseLiveMutableValue<T>(
@@ -4079,10 +4082,14 @@ function getPreciseLiveMutableValue<T>(
                 const result = Reflect.get(target, key, receiver);
 
                 if (
-                    Array.isArray(target) &&
                     typeof key === 'string' &&
-                    MUTATING_ARRAY_METHODS.has(key) &&
-                    typeof result === 'function'
+                    typeof result === 'function' &&
+                    ((Array.isArray(target) &&
+                        MUTATING_ARRAY_METHODS.has(key)) ||
+                        (target instanceof Map &&
+                            MUTATING_MAP_METHODS.has(key)) ||
+                        (target instanceof Set &&
+                            MUTATING_SET_METHODS.has(key)))
                 ) {
                     return (...args: unknown[]) => {
                         assertModelMutationAllowed();
@@ -4111,7 +4118,9 @@ function getPreciseLiveMutableValue<T>(
                     return (...args: unknown[]) =>
                         Reflect.apply(
                             result,
-                            receiver,
+                            target instanceof Map || target instanceof Set
+                                ? target
+                                : receiver,
                             args.map(unwrapLiveMutableValue)
                         );
                 }
@@ -6816,9 +6825,8 @@ export class Layer extends ArrayElementBase {
 
                 this.translateMaterializedBackgroundLayerContentsX(offset);
 
-                recordAndMarkDirty(
-                    this,
-                    'shapes',
+                recordLayerShapesGeometryChange(
+                    this.getPath(),
                     oldShapes,
                     cloneForHistory(layerData.shapes || [])
                 );
@@ -6903,9 +6911,8 @@ export class Layer extends ArrayElementBase {
             );
         });
 
-        recordAndMarkDirty(
-            background,
-            'shapes',
+        recordLayerShapesGeometryChange(
+            background.getPath(),
             oldShapes,
             cloneForHistory(backgroundData.shapes || [])
         );
@@ -12491,13 +12498,15 @@ export class Master extends ArrayElementBase {
 
     set kerning_rtl(value: Record<string, number>) {
         assertModelMutationAllowed();
-        const old = this.data.kerning_rtl;
-        this.data.kerning_rtl = value;
-        const font = this.parent();
-        if (font instanceof Font) {
-            syncKerningRtlToFormatSpecific(font, this.data.id, value);
-        }
-        recordAndMarkDirty(this, 'kerning_rtl', old, value);
+        withBridgeTransaction('Set RTL kerning', () => {
+            const old = this.data.kerning_rtl;
+            this.data.kerning_rtl = value;
+            const font = this.parent();
+            if (font instanceof Font) {
+                syncKerningRtlToFormatSpecific(font, this.data.id, value);
+            }
+            recordAndMarkDirty(this, 'kerning_rtl', old, value);
+        });
     }
 
     /**
@@ -12791,27 +12800,39 @@ function syncKerningRtlToFormatSpecific(
     masterId: string,
     flatRtl: Record<string, number>
 ): void {
-    const formatSpecific = font.format_specific || {};
-    const nextFormatSpecific = { ...formatSpecific };
-    const existingRtl = formatSpecific[KEY_KERNING_RTL] as
-        Record<string, Record<string, Record<string, number>>> | undefined;
-    const nextRtl = { ...existingRtl };
+    let liveFormatSpecific = font.format_specific;
+    if (!liveFormatSpecific) {
+        ensureModelFormatSpecific(font);
+        liveFormatSpecific = font.format_specific;
+    }
+    if (!liveFormatSpecific) {
+        return;
+    }
 
     if (Object.keys(flatRtl).length === 0) {
-        delete nextRtl[masterId];
-        if (Object.keys(nextRtl).length === 0) {
-            delete nextFormatSpecific[KEY_KERNING_RTL];
-        } else {
-            nextFormatSpecific[KEY_KERNING_RTL] = nextRtl;
+        const existingRtl = liveFormatSpecific[KEY_KERNING_RTL] as
+            Record<string, unknown> | undefined;
+        if (existingRtl && typeof existingRtl === 'object') {
+            delete existingRtl[masterId];
+            if (Object.keys(existingRtl).length === 0) {
+                delete liveFormatSpecific[KEY_KERNING_RTL];
+            }
         }
-        font.format_specific = nextFormatSpecific;
         return;
     }
 
     const nested = flatKerningRtlToNested(flatRtl, masterId);
-    nextRtl[masterId] = nested[masterId] || {};
-    nextFormatSpecific[KEY_KERNING_RTL] = nextRtl;
-    font.format_specific = nextFormatSpecific;
+    if (
+        !liveFormatSpecific[KEY_KERNING_RTL] ||
+        typeof liveFormatSpecific[KEY_KERNING_RTL] !== 'object'
+    ) {
+        liveFormatSpecific[KEY_KERNING_RTL] = {};
+    }
+    const rtlRoot = liveFormatSpecific[KEY_KERNING_RTL] as Record<
+        string,
+        unknown
+    >;
+    rtlRoot[masterId] = nested[masterId] || {};
 }
 
 function remapFlatKerningPairKeys(

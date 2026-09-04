@@ -54,6 +54,7 @@ import {
     FONT_CORE_DOCUMENT_ID,
     glyphIdFromDocumentId
 } from './filesystem-plugins/cloud-document-set';
+import { assertSafeRebaseline } from './filesystem-plugins/cloud-shard-limits';
 import {
     collaborationMessageKey,
     createChangeLogEntriesFromCollaborationMessageEnvelope,
@@ -67,10 +68,10 @@ const console = new Logger('CloudAdapter');
 
 /** Default room-worker URLs for production and local development. */
 const DEFAULT_PRODUCTION_ROOM_WORKER_URL =
-    'https://fonts-room.fonteditor.workers.dev';
+    'https://room.fonteditor.workers.dev';
 const DEFAULT_LOCAL_ROOM_WORKER_URL = 'ws://localhost:8787';
 const CLOUD_ASSET_DELETED_MESSAGE = 'Cloud asset was deleted';
-const YDOC_SCHEMA_VERSION = 3;
+const YDOC_SCHEMA_VERSION = 4;
 export const CLOUD_GLYPH_CATCH_UP_MAX_ATTEMPTS = 8;
 export const CLOUD_GLYPH_CATCH_UP_RETRY_MS = 50;
 export const CLOUD_GLYPH_CATCH_UP_CONCURRENCY = 4;
@@ -243,6 +244,223 @@ export type CloudLiveDocumentState = {
     collaborationMessageHistory?: CollaborationMessageEnvelope[];
 };
 
+function decodeCollabLiveFrames(bytes: Uint8Array): Array<{
+    type: number;
+    logId: number;
+    payload: Uint8Array;
+}> {
+    const frames: Array<{
+        type: number;
+        logId: number;
+        payload: Uint8Array;
+    }> = [];
+    let offset = 0;
+    while (offset + 16 <= bytes.byteLength) {
+        const view = new DataView(bytes.buffer, bytes.byteOffset + offset, 16);
+        const type = view.getUint32(0, false);
+        const logHi = view.getUint32(4, false);
+        const logLo = view.getUint32(8, false);
+        const payloadLen = view.getUint32(12, false);
+        const start = offset + 16;
+        const end = start + payloadLen;
+        if (end > bytes.byteLength) {
+            break;
+        }
+        frames.push({
+            type,
+            logId: logHi * 0x100000000 + logLo,
+            payload: bytes.subarray(start, end)
+        });
+        offset = end;
+        if (type === 3) {
+            break;
+        }
+    }
+    return frames;
+}
+
+function utf8Decode(bytes: Uint8Array): string {
+    if (typeof TextDecoder === 'function') {
+        try {
+            return new TextDecoder().decode(bytes);
+        } catch {
+            /* fall through */
+        }
+    }
+    return Array.from(bytes, (byte) => String.fromCharCode(byte)).join('');
+}
+
+function decodeCheckpointMeta(payload: Uint8Array): {
+    hasMore: boolean;
+    throughLogId: number;
+    lastLogId: number;
+    collaborationMessageHistory: CollaborationMessageEnvelope[];
+} {
+    if (!payload.byteLength) {
+        return {
+            hasMore: false,
+            throughLogId: 0,
+            lastLogId: 0,
+            collaborationMessageHistory: []
+        };
+    }
+    try {
+        const parsed = JSON.parse(utf8Decode(payload)) as {
+            hasMore?: boolean;
+            throughLogId?: number;
+            lastLogId?: number;
+            collaborationMessageHistory?: CollaborationMessageEnvelope[];
+        };
+        return {
+            hasMore: parsed.hasMore === true,
+            throughLogId: Number(parsed.throughLogId || 0),
+            lastLogId: Number(parsed.lastLogId || 0),
+            collaborationMessageHistory: Array.isArray(
+                parsed.collaborationMessageHistory
+            )
+                ? parsed.collaborationMessageHistory
+                : []
+        };
+    } catch {
+        return {
+            hasMore: false,
+            throughLogId: 0,
+            lastLogId: 0,
+            collaborationMessageHistory: []
+        };
+    }
+}
+
+function assembleTailTransactionsFromFrames(
+    frames: Array<{ type: number; logId: number; payload: Uint8Array }>
+): Uint8Array[] {
+    const pending = new Map<
+        string,
+        { chunks: Array<Uint8Array | null>; received: number; total: number }
+    >();
+    const updates: Uint8Array[] = [];
+    for (const frame of frames) {
+        if (frame.type !== 2) {
+            continue;
+        }
+        const view = new DataView(
+            frame.payload.buffer,
+            frame.payload.byteOffset,
+            frame.payload.byteLength
+        );
+        if (frame.payload.byteLength < 12) {
+            continue;
+        }
+        const chunkIndex = view.getUint32(0, false);
+        const totalChunks = Math.max(1, view.getUint32(4, false));
+        const txnLen = view.getUint32(8, false);
+        const transactionId = utf8Decode(
+            frame.payload.subarray(12, 12 + txnLen)
+        );
+        const blob = frame.payload.subarray(12 + txnLen);
+        if (totalChunks <= 1) {
+            updates.push(blob);
+            continue;
+        }
+        const key = transactionId || String(frame.logId);
+        let state = pending.get(key);
+        if (!state) {
+            state = {
+                chunks: new Array(totalChunks).fill(null),
+                received: 0,
+                total: totalChunks
+            };
+            pending.set(key, state);
+        }
+        if (!state.chunks[chunkIndex]) {
+            state.chunks[chunkIndex] = blob;
+            state.received++;
+        }
+        if (state.received === state.total) {
+            const totalLen = state.chunks.reduce(
+                (sum, chunk) => sum + (chunk ? chunk.byteLength : 0),
+                0
+            );
+            const combined = new Uint8Array(totalLen);
+            let offset = 0;
+            for (const chunk of state.chunks) {
+                combined.set(chunk as Uint8Array, offset);
+                offset += (chunk as Uint8Array).byteLength;
+            }
+            updates.push(combined);
+            pending.delete(key);
+        }
+    }
+    return updates;
+}
+
+async function sha256Hex(bytes: Uint8Array): Promise<string> {
+    const subtle = globalThis.crypto?.subtle;
+    if (!subtle?.digest) {
+        throw new Error('SHA-256 is unavailable in this environment');
+    }
+    const digest = await subtle.digest('SHA-256', bytes);
+    return Array.from(new Uint8Array(digest), (byte) =>
+        byte.toString(16).padStart(2, '0')
+    ).join('');
+}
+
+function decodeLiveUpdatePayload(payload: Uint8Array): {
+    type: 'update' | 'update-chunk';
+    clientId: string;
+    seq: number;
+    update: Uint8Array;
+    clientTransactionId: string | null;
+    collaborationMessages: CollaborationMessageEnvelope[] | undefined;
+    chunkIndex: number;
+    totalChunks: number;
+} {
+    const view = new DataView(
+        payload.buffer,
+        payload.byteOffset,
+        payload.byteLength
+    );
+    const seq = view.getInt32(0, false);
+    const clientIdLen = view.getUint32(4, false);
+    const clientId = new TextDecoder().decode(
+        payload.subarray(8, 8 + clientIdLen)
+    );
+    const updateLenOff = 8 + clientIdLen;
+    const updateLen = view.getUint32(updateLenOff, false);
+    const updateStart = updateLenOff + 4;
+    const update = payload.subarray(updateStart, updateStart + updateLen);
+    const extraLenOff = updateStart + updateLen;
+    const extraLen = view.getUint32(extraLenOff, false);
+    const extraBytes = payload.subarray(
+        extraLenOff + 4,
+        extraLenOff + 4 + extraLen
+    );
+    const extra = extraLen
+        ? (JSON.parse(new TextDecoder().decode(extraBytes)) as Record<
+              string,
+              unknown
+          >)
+        : {};
+    const totalChunks = Number(extra.totalChunks || 1);
+    const chunkIndex = Number(extra.chunkIndex || 0);
+    const isLast = totalChunks <= 1 || chunkIndex >= totalChunks - 1;
+    return {
+        type: isLast ? 'update' : 'update-chunk',
+        clientId,
+        seq,
+        update,
+        clientTransactionId:
+            typeof extra.clientTransactionId === 'string'
+                ? extra.clientTransactionId
+                : null,
+        collaborationMessages: Array.isArray(extra.collaborationMessages)
+            ? (extra.collaborationMessages as CollaborationMessageEnvelope[])
+            : undefined,
+        chunkIndex,
+        totalChunks
+    };
+}
+
 function defaultGlyphCatchUpWait(attempt: number): Promise<void> {
     const delayMs = CLOUD_GLYPH_CATCH_UP_RETRY_MS * 2 ** attempt;
     return new Promise((resolve) => {
@@ -358,7 +576,7 @@ export async function catchUpCloudDocument(options: {
                 method: 'GET',
                 headers: {
                     Authorization: `Bearer ${options.token}`,
-                    Accept: 'application/json'
+                    Accept: 'application/octet-stream, application/json'
                 }
             });
             if (response.status === 401 || response.status === 403) {
@@ -381,16 +599,46 @@ export async function catchUpCloudDocument(options: {
                 );
                 continue;
             }
-            const payload =
-                await parseRequiredJsonResponse<CloudLiveDocumentState>(
-                    response,
-                    'Live glyph catch-up'
-                );
-            const update =
-                typeof payload.update === 'string' && payload.update.length > 0
-                    ? base64ToU8(payload.update)
-                    : new Uint8Array();
-            if (!update.length) {
+            const contentType = response.headers.get('content-type') || '';
+            let update = new Uint8Array();
+            let collaborationMessageHistory:
+                CollaborationMessageEnvelope[] | undefined;
+            let payloadsToApply: Uint8Array[] = [];
+            if (
+                contentType.toLowerCase().includes('application/octet-stream')
+            ) {
+                const bytes = new Uint8Array(await response.arrayBuffer());
+                const frames = decodeCollabLiveFrames(bytes);
+                const hasTerminal = frames.some((frame) => frame.type === 3);
+                if (!hasTerminal) {
+                    lastError = new Error(
+                        `Live glyph catch-up missing terminal frame for ${options.documentId}`
+                    );
+                    continue;
+                }
+                const checkpoint = frames.find((frame) => frame.type === 1);
+                if (checkpoint) {
+                    collaborationMessageHistory = decodeCheckpointMeta(
+                        checkpoint.payload
+                    ).collaborationMessageHistory;
+                }
+                payloadsToApply = assembleTailTransactionsFromFrames(frames);
+                update = payloadsToApply[0] || new Uint8Array();
+            } else {
+                const payload =
+                    await parseRequiredJsonResponse<CloudLiveDocumentState>(
+                        response,
+                        'Live glyph catch-up'
+                    );
+                collaborationMessageHistory =
+                    payload.collaborationMessageHistory;
+                update =
+                    typeof payload.update === 'string' &&
+                    payload.update.length > 0
+                        ? base64ToU8(payload.update)
+                        : new Uint8Array();
+            }
+            if (!update.length && !payloadsToApply.length) {
                 lastError = new Error(
                     `Live glyph catch-up returned empty state for ${options.documentId}`
                 );
@@ -400,29 +648,40 @@ export async function catchUpCloudDocument(options: {
                 continue;
             }
             let applied = true;
-            if (typeof options.bridge.applyDocumentCatchUp === 'function') {
-                applied = options.bridge.applyDocumentCatchUp(
-                    options.documentId,
-                    update,
-                    payload.collaborationMessageHistory,
-                    undefined,
-                    expectedRevision
-                );
-            } else {
-                options.bridge.applyDocumentCheckpoint?.(
-                    options.documentId,
-                    update
-                );
-                if (
-                    expectedRevision &&
-                    typeof options.bridge.glyphHasCatchUpRevision ===
-                        'function' &&
-                    !options.bridge.glyphHasCatchUpRevision(
+            const updatesToApply = payloadsToApply.length
+                ? payloadsToApply
+                : [update];
+            for (const part of updatesToApply) {
+                if (!part.byteLength) {
+                    continue;
+                }
+                if (typeof options.bridge.applyDocumentCatchUp === 'function') {
+                    applied = options.bridge.applyDocumentCatchUp(
                         options.documentId,
+                        part,
+                        collaborationMessageHistory,
+                        undefined,
                         expectedRevision
-                    )
-                ) {
-                    applied = false;
+                    );
+                } else {
+                    options.bridge.applyDocumentCheckpoint?.(
+                        options.documentId,
+                        part
+                    );
+                    if (
+                        expectedRevision &&
+                        typeof options.bridge.glyphHasCatchUpRevision ===
+                            'function' &&
+                        !options.bridge.glyphHasCatchUpRevision(
+                            options.documentId,
+                            expectedRevision
+                        )
+                    ) {
+                        applied = false;
+                    }
+                }
+                if (!applied) {
+                    break;
                 }
             }
             if (!applied) {
@@ -513,6 +772,7 @@ export type CloudConnectionHealth = {
 type CloudLiveUpdateMessage = {
     update: Uint8Array;
     collaborationMessages?: CollaborationMessageEnvelope[];
+    logId?: number;
 };
 
 type CloudChunkAccumulator = {
@@ -924,6 +1184,9 @@ export class CloudAdapter implements FileSystemAdapter {
     private _assetRoles = new Map<string, CloudAssetRole>();
     private _hasSynced = false;
     private _checkpointLogId: number | null = null;
+    private _appliedLogId: number | null = null;
+    private _compactStatus = 'ok';
+    private _tailFull = false;
     private _pendingOutboundPackets: CloudOutboundUpdatePacket[] = [];
     private _outboundFlushScheduled = false;
     private _outboundBroadcastEntryCounts = new Map<number, number>();
@@ -947,6 +1210,17 @@ export class CloudAdapter implements FileSystemAdapter {
     private _syncGeneration = 0;
     /** Accumulates incoming sync-response chunks from the server. */
     private _incomingResponseChunks: CloudChunkAccumulator | null = null;
+    /** Tracks paging metadata for a chunked sync-response page. */
+    private _pendingSyncPageMeta: {
+        hasMore: boolean;
+        throughLogId: number | null;
+        serverStateVector: Uint8Array;
+    } | null = null;
+    private _pendingTailFrames: Array<{
+        type: number;
+        logId: number;
+        payload: Uint8Array;
+    }> | null = null;
     /** Accumulates incoming chunked live updates from the server. */
     private _incomingLiveUpdateChunks = new Map<
         string,
@@ -985,6 +1259,14 @@ export class CloudAdapter implements FileSystemAdapter {
 
     get checkpointLogId(): number | null {
         return this._checkpointLogId;
+    }
+
+    get compactStatus(): string {
+        return this._compactStatus;
+    }
+
+    get tailFull(): boolean {
+        return this._tailFull;
     }
 
     get pendingSyncCount(): number {
@@ -1599,6 +1881,7 @@ export class CloudAdapter implements FileSystemAdapter {
                         `CloudAdapter: R2 bootstrap skipped (${msg}), falling back to WebSocket sync`
                     );
                     this._checkpointLogId = null;
+                    this._appliedLogId = null;
                 }
             } else {
                 console.log(
@@ -1640,8 +1923,61 @@ export class CloudAdapter implements FileSystemAdapter {
         if (this._checkpointLogId !== null) {
             syncRequest.checkpointLogId = this._checkpointLogId;
         }
+        if (this._appliedLogId !== null) {
+            syncRequest.appliedLogId = this._appliedLogId;
+        }
         ws.send(JSON.stringify(syncRequest));
         this._noteTransferActivity('sending');
+    }
+
+    private _sendFollowupSyncRequest(): void {
+        if (!this._ws || this._ws.readyState !== WebSocket.OPEN) {
+            return;
+        }
+
+        const sv = this._encodeLocalStateVector();
+        const syncRequest: Record<string, unknown> = {
+            type: 'sync-request',
+            stateVector: u8ToBase64(sv)
+        };
+        if (this._checkpointLogId !== null) {
+            syncRequest.checkpointLogId = this._checkpointLogId;
+        }
+        if (this._appliedLogId !== null) {
+            syncRequest.appliedLogId = this._appliedLogId;
+        }
+        this._ws.send(JSON.stringify(syncRequest));
+        this._noteTransferActivity('sending');
+    }
+
+    private _syncPageHasMore(msg: Record<string, unknown>): boolean {
+        return msg.hasMore === true;
+    }
+
+    private _advanceAppliedLogIdFromPage(msg: Record<string, unknown>): void {
+        if (
+            typeof msg.throughLogId === 'number' &&
+            Number.isInteger(msg.throughLogId)
+        ) {
+            this._appliedLogId = Math.max(
+                this._appliedLogId ?? 0,
+                msg.throughLogId as number
+            );
+        }
+    }
+
+    private _finishInitialSyncAfterPages(serverStateVector: Uint8Array): void {
+        this._hasSynced = true;
+        this._registerOutboundHook();
+        this._initialSyncDurable = !this._sendSyncComplete(serverStateVector);
+        if (
+            this._pendingOutboundPackets.length &&
+            !this._outboundFlushScheduled
+        ) {
+            this._outboundFlushScheduled = true;
+            queueMicrotask(() => this._flushPendingOutboundUpdates());
+        }
+        void this._maybeMarkInitialSyncConnected().catch(() => {});
     }
 
     /**
@@ -1674,6 +2010,21 @@ export class CloudAdapter implements FileSystemAdapter {
             throw new Error('empty checkpoint response');
         }
 
+        const expectedBytes = response.headers.get('X-Snapshot-Bytes');
+        if (
+            expectedBytes !== null &&
+            Number.parseInt(expectedBytes, 10) !== stateBytes.length
+        ) {
+            throw new Error('checkpoint size mismatch');
+        }
+        const expectedSha = response.headers.get('X-Snapshot-Sha256');
+        if (expectedSha) {
+            const actualSha = await sha256Hex(stateBytes);
+            if (actualSha !== expectedSha.toLowerCase()) {
+                throw new Error('checkpoint digest mismatch');
+            }
+        }
+
         // Apply the checkpoint as full remote state so the live JSON/model
         // and undo managers rehydrate from the same CRDT baseline. When the
         // editing worker is already initialized, reseed it immediately so
@@ -1692,6 +2043,9 @@ export class CloudAdapter implements FileSystemAdapter {
             checkpointLogId !== null
                 ? Number.parseInt(checkpointLogId, 10)
                 : null;
+        if (Number.isInteger(this._checkpointLogId)) {
+            this._appliedLogId = this._checkpointLogId;
+        }
 
         console.log(
             `CloudAdapter: R2 bootstrap applied ${stateBytes.length} bytes (checkpointLogId=${this._checkpointLogId})`
@@ -1736,6 +2090,21 @@ export class CloudAdapter implements FileSystemAdapter {
             throw new Error(
                 `seed failed: ${response.status} ${body.slice(0, 160)}`
             );
+        }
+
+        const expectedBytes = response.headers.get('X-Snapshot-Bytes');
+        if (
+            expectedBytes !== null &&
+            Number.parseInt(expectedBytes, 10) !== bridgeState.length
+        ) {
+            throw new Error('seed size mismatch');
+        }
+        const expectedSha = response.headers.get('X-Snapshot-Sha256');
+        if (expectedSha) {
+            const actualSha = await sha256Hex(bridgeState);
+            if (actualSha !== expectedSha.toLowerCase()) {
+                throw new Error('seed digest mismatch');
+            }
         }
 
         const result = await response.json();
@@ -1849,6 +2218,17 @@ export class CloudAdapter implements FileSystemAdapter {
             ws.onmessage = (event: MessageEvent) => {
                 if (this._ws !== ws) return;
                 this._recordInboundMessage();
+                if (event.data instanceof ArrayBuffer) {
+                    this._handleBinaryFanout(new Uint8Array(event.data));
+                    return;
+                }
+                if (typeof Blob !== 'undefined' && event.data instanceof Blob) {
+                    void event.data.arrayBuffer().then((buffer) => {
+                        if (this._ws !== ws) return;
+                        this._handleBinaryFanout(new Uint8Array(buffer));
+                    });
+                    return;
+                }
                 this._handleMessage(event.data as string);
             };
 
@@ -1873,6 +2253,8 @@ export class CloudAdapter implements FileSystemAdapter {
                 this._hasSynced = false;
                 this._lastInboundMessageAt = 0;
                 this._incomingResponseChunks = null;
+                this._pendingTailFrames = null;
+                this._pendingSyncPageMeta = null;
                 this._initialServerStateApplied = false;
                 this._initialSyncDurable = false;
                 this._resetWorkerBridgeSyncState();
@@ -1907,6 +2289,97 @@ export class CloudAdapter implements FileSystemAdapter {
         }
     }
 
+    private _handleBinaryFanout(bytes: Uint8Array): void {
+        const frames = decodeCollabLiveFrames(bytes);
+        for (const frame of frames) {
+            if (frame.type === 1) {
+                const meta = decodeCheckpointMeta(frame.payload);
+                this._armInitialSyncTimeout();
+                this._noteTransferActivity('receiving');
+                const collaborationMessageHistory =
+                    meta.collaborationMessageHistory;
+                this._lastSyncCollaborationMessages =
+                    collaborationMessageHistory;
+                this._reconcileDurableCollaborationMessageHistory(
+                    collaborationMessageHistory
+                );
+                if (this._bridge) {
+                    importCollaborationMessageHistory(
+                        this._bridge,
+                        collaborationMessageHistory,
+                        this._pendingDurabilityMessages
+                    );
+                }
+                this._pendingSyncPageMeta = {
+                    hasMore: meta.hasMore,
+                    throughLogId: meta.throughLogId || null,
+                    serverStateVector: new Uint8Array(0)
+                };
+                this._pendingTailFrames = [];
+                continue;
+            }
+            if (frame.type === 4) {
+                const live = decodeLiveUpdatePayload(frame.payload);
+                const encoded = u8ToBase64(live.update);
+                const message: Record<string, unknown> = {
+                    type: live.type,
+                    update: encoded,
+                    clientId: live.clientId,
+                    seq: live.seq,
+                    logId: frame.logId
+                };
+                if (live.clientTransactionId) {
+                    message.clientTransactionId = live.clientTransactionId;
+                }
+                if (live.collaborationMessages) {
+                    message.collaborationMessages = live.collaborationMessages;
+                }
+                if (live.totalChunks > 1) {
+                    message.chunkIndex = live.chunkIndex;
+                    message.totalChunks = live.totalChunks;
+                }
+                this._handleMessage(JSON.stringify(message));
+                continue;
+            }
+            if (frame.type === 2) {
+                this._pendingTailFrames = this._pendingTailFrames || [];
+                this._pendingTailFrames.push(frame);
+                continue;
+            }
+            if (frame.type === 3) {
+                this._finishFramedSyncPage(frame.logId);
+            }
+        }
+    }
+
+    private _finishFramedSyncPage(throughLogId: number): void {
+        const frames = this._pendingTailFrames || [];
+        this._pendingTailFrames = null;
+        const updates = assembleTailTransactionsFromFrames(frames);
+        let applied = true;
+        for (const update of updates) {
+            if (!this._applyServerState(update)) {
+                applied = false;
+            }
+        }
+        const pageMeta = this._pendingSyncPageMeta;
+        this._pendingSyncPageMeta = null;
+        if (!applied) {
+            return;
+        }
+        if (pageMeta?.hasMore) {
+            this._appliedLogId = Math.max(
+                this._appliedLogId ?? 0,
+                pageMeta.throughLogId ?? throughLogId
+            );
+            this._sendFollowupSyncRequest();
+        } else if (pageMeta) {
+            this._finishInitialSyncAfterPages(pageMeta.serverStateVector);
+        } else if (updates.length) {
+            void this._maybeMarkInitialSyncConnected().catch(() => {});
+        }
+    }
+
     private _handleMessage(raw: string): void {
         let msg: Record<string, unknown>;
         try {
@@ -1919,6 +2392,19 @@ export class CloudAdapter implements FileSystemAdapter {
         switch (msg.type) {
             case 'pong':
                 break;
+
+            case 'rebaseline-required': {
+                this._checkpointLogId = Number(
+                    msg.currentCheckpointLogId ?? this._checkpointLogId
+                );
+                this._appliedLogId = null;
+                this._markVisibleRebaselineNeeded();
+                this._ws?.close(
+                    CLIENT_RECONNECT_CLOSE_CODE,
+                    'rebaseline-required'
+                );
+                break;
+            }
 
             case 'auth-ok':
                 this._clearAuthenticationTimeout();
@@ -2056,40 +2542,68 @@ export class CloudAdapter implements FileSystemAdapter {
                     );
                 }
 
+                if (msg.framed === true) {
+                    this._armInitialSyncTimeout();
+                    this._pendingSyncPageMeta = {
+                        hasMore: this._syncPageHasMore(msg),
+                        throughLogId:
+                            typeof msg.throughLogId === 'number'
+                                ? (msg.throughLogId as number)
+                                : null,
+                        serverStateVector: serverSV
+                    };
+                    this._pendingTailFrames = [];
+                    break;
+                }
+
                 if (msg.chunked) {
                     this._armInitialSyncTimeout();
-                    // Server state is large — arriving in subsequent sync-chunk
-                    // messages. Register outbound hook and start sync-complete
-                    // immediately (we already have the serverStateVector).
-                    // NOTE: do NOT set 'connected' here — wait until all
-                    // response chunks are received and applied (below).
+                    this._pendingSyncPageMeta = {
+                        hasMore: this._syncPageHasMore(msg),
+                        throughLogId:
+                            typeof msg.throughLogId === 'number'
+                                ? (msg.throughLogId as number)
+                                : null,
+                        serverStateVector: serverSV
+                    };
                     this._incomingResponseChunks = {
                         chunks: new Array(msg.totalChunks as number),
                         received: 0,
                         total: msg.totalChunks as number
                     };
-                    this._hasSynced = true;
-                    this._registerOutboundHook();
-                    this._initialSyncDurable =
-                        !this._sendSyncComplete(serverSV);
+                    if (!this._pendingSyncPageMeta.hasMore) {
+                        this._hasSynced = true;
+                        this._registerOutboundHook();
+                        this._initialSyncDurable =
+                            !this._sendSyncComplete(serverSV);
+                    }
                 } else {
                     this._armInitialSyncTimeout();
-                    // Small response — apply inline.
-                    if (
-                        typeof msg.update === 'string' &&
-                        (msg.update as string).length > 0
-                    ) {
-                        this._applyServerState(
-                            base64ToU8(msg.update as string)
-                        );
-                    } else {
-                        this._applyServerState(new Uint8Array());
+                    const encodedUpdates = Array.isArray(msg.updates)
+                        ? (msg.updates as string[])
+                        : typeof msg.update === 'string' &&
+                            (msg.update as string).length > 0
+                          ? [msg.update as string]
+                          : [];
+                    let applied = true;
+                    if (encodedUpdates.length) {
+                        for (const encoded of encodedUpdates) {
+                            if (!this._applyServerState(base64ToU8(encoded))) {
+                                applied = false;
+                            }
+                        }
+                    } else if (!this._applyServerState(new Uint8Array())) {
+                        applied = false;
                     }
-                    this._hasSynced = true;
-                    this._registerOutboundHook();
-                    this._initialSyncDurable =
-                        !this._sendSyncComplete(serverSV);
-                    void this._maybeMarkInitialSyncConnected().catch(() => {});
+                    if (!applied) {
+                        break;
+                    }
+                    if (this._syncPageHasMore(msg)) {
+                        this._advanceAppliedLogIdFromPage(msg);
+                        this._sendFollowupSyncRequest();
+                    } else {
+                        this._finishInitialSyncAfterPages(serverSV);
+                    }
                 }
                 break;
             }
@@ -2113,10 +2627,29 @@ export class CloudAdapter implements FileSystemAdapter {
                             state.chunks as Uint8Array[]
                         );
                         this._incomingResponseChunks = null;
-                        this._applyServerState(combined);
-                        void this._maybeMarkInitialSyncConnected().catch(
-                            () => {}
-                        );
+                        const applied = this._applyServerState(combined);
+                        const pageMeta = this._pendingSyncPageMeta;
+                        this._pendingSyncPageMeta = null;
+                        if (!applied) {
+                            break;
+                        }
+                        if (pageMeta?.hasMore) {
+                            if (pageMeta.throughLogId !== null) {
+                                this._appliedLogId = Math.max(
+                                    this._appliedLogId ?? 0,
+                                    pageMeta.throughLogId
+                                );
+                            }
+                            this._sendFollowupSyncRequest();
+                        } else if (pageMeta) {
+                            this._finishInitialSyncAfterPages(
+                                pageMeta.serverStateVector
+                            );
+                        } else {
+                            void this._maybeMarkInitialSyncConnected().catch(
+                                () => {}
+                            );
+                        }
                     }
                 }
                 break;
@@ -2149,7 +2682,12 @@ export class CloudAdapter implements FileSystemAdapter {
                             msg.collaborationMessages
                         )
                             ? (msg.collaborationMessages as CollaborationMessageEnvelope[])
-                            : undefined
+                            : undefined,
+                        logId:
+                            typeof msg.logId === 'number' &&
+                            Number.isInteger(msg.logId)
+                                ? (msg.logId as number)
+                                : undefined
                     });
                 }
                 break;
@@ -2200,7 +2738,10 @@ export class CloudAdapter implements FileSystemAdapter {
             case 'error': {
                 const detail = String(msg.message ?? 'server error');
                 console.warn(`CloudAdapter: server error: ${detail}`);
-                if (detail === 'Access epoch is stale') {
+                if (msg.code === 'tail_full' || detail === 'tail_full') {
+                    this._compactStatus = 'tail_full';
+                    this._setStatus('connected', 'tail_full');
+                } else if (detail === 'Access epoch is stale') {
                     // Access-epoch bumps are expected during membership changes.
                     // Reconnect with a fresh room token without surfacing a user
                     // error unless the subsequent token fetch actually fails.
@@ -2266,6 +2807,17 @@ export class CloudAdapter implements FileSystemAdapter {
         if (!this._bridge) {
             return;
         }
+        const unsent = this._pendingOutboundPackets.map(
+            (packet) => packet.update
+        );
+        assertSafeRebaseline({
+            pendingUnsentBytes: unsent.reduce(
+                (sum, bytes) => sum + bytes.byteLength,
+                0
+            ),
+            dropUnsent: false,
+            truncateHistory: false
+        });
         if (this._documentId !== FONT_CORE_DOCUMENT_ID) {
             if (typeof this._bridge.applyDocumentCatchUp === 'function') {
                 this._bridge.applyDocumentCatchUp(
@@ -2273,16 +2825,29 @@ export class CloudAdapter implements FileSystemAdapter {
                     update,
                     this._lastSyncCollaborationMessages
                 );
+                for (const localUpdate of unsent) {
+                    this._bridge.applyDocumentCatchUp(
+                        this._documentId,
+                        localUpdate
+                    );
+                }
                 refreshEditorAfterGlyphDocumentCatchUp(this._documentId);
                 return;
             }
             if (typeof this._bridge.applyDocumentCheckpoint === 'function') {
                 this._bridge.applyDocumentCheckpoint(this._documentId, update);
+                for (const localUpdate of unsent) {
+                    this._bridge.applyDocumentCheckpoint(
+                        this._documentId,
+                        localUpdate
+                    );
+                }
                 refreshEditorAfterGlyphDocumentCatchUp(this._documentId);
                 return;
             }
         }
         this._bridge.applyFullState(update);
+        this._bridge.mergeRemoteUpdates?.(unsent);
     }
 
     private _shouldReseedWorkerAfterServerState(update: Uint8Array): boolean {
@@ -2296,28 +2861,36 @@ export class CloudAdapter implements FileSystemAdapter {
     }
 
     /** Apply a full-state snapshot received from the server. */
-    private _applyServerState(update: Uint8Array): void {
+    private _applyServerState(update: Uint8Array): boolean {
         if (update.length === 0) {
             this._resyncRequestedAfterNoopUpdate = false;
             if (this._shouldReseedWorkerAfterServerState(update)) {
-                if (!this._scheduleWorkerBridgeSyncAfterServerState()) return;
+                if (!this._scheduleWorkerBridgeSyncAfterServerState()) {
+                    return false;
+                }
             }
             this._initialServerStateApplied = true;
-            return;
+            return true;
         }
-        if (!this._bridge) return;
+        if (!this._bridge) {
+            return false;
+        }
         try {
             this._applyServerStateToBridge(update);
             this._resyncRequestedAfterNoopUpdate = false;
             if (this._shouldReseedWorkerAfterServerState(update)) {
-                if (!this._scheduleWorkerBridgeSyncAfterServerState()) return;
+                if (!this._scheduleWorkerBridgeSyncAfterServerState()) {
+                    return false;
+                }
             }
             this._initialServerStateApplied = true;
             console.log(
                 `CloudAdapter: applied server state (${update.length} bytes)`
             );
+            return true;
         } catch (err) {
             console.error('CloudAdapter: failed to apply server state:', err);
+            return false;
         }
     }
 
@@ -2567,6 +3140,7 @@ export class CloudAdapter implements FileSystemAdapter {
             this._canSkipBootstrapOnReconnect = true;
             this._reconnectAttempt = 0;
             this._setStatus('connected');
+            void this._refreshCompactStatus();
         }
     }
 
@@ -2603,8 +3177,8 @@ export class CloudAdapter implements FileSystemAdapter {
     private _applyRemoteUpdate(
         update: Uint8Array,
         remoteCollaborationMessages?: CollaborationMessageEnvelope[]
-    ): void {
-        if (!this._bridge || update.length === 0) return;
+    ): boolean {
+        if (!this._bridge || update.length === 0) return false;
         try {
             const didApply = this._bridge.applyRemoteUpdate(
                 update,
@@ -2613,7 +3187,7 @@ export class CloudAdapter implements FileSystemAdapter {
                 this._documentId
             );
             if (!didApply) {
-                return;
+                return false;
             }
             if (window.windowRole?.isMainWindow()) {
                 window.windowSync?.broadcastCloudRelayUpdate?.(
@@ -2622,6 +3196,7 @@ export class CloudAdapter implements FileSystemAdapter {
                     this._documentId
                 );
             }
+            return true;
         } catch (err) {
             const detail =
                 err instanceof MetadataFreeRemoteUpdateError
@@ -2635,6 +3210,7 @@ export class CloudAdapter implements FileSystemAdapter {
                 CLIENT_RECONNECT_CLOSE_CODE,
                 'remote-update-rejected'
             );
+            return false;
         }
     }
 
@@ -3052,12 +3628,22 @@ export class CloudAdapter implements FileSystemAdapter {
                         __lastCloudInboundUpdateCount?: number;
                     }
                 ).__lastCloudInboundUpdateCount ?? 0) + 1;
-            this._applyRemoteUpdate(
+            const applied = this._applyRemoteUpdate(
                 message.update,
                 message.collaborationMessages?.length
                     ? message.collaborationMessages
                     : undefined
             );
+            if (
+                applied &&
+                typeof message.logId === 'number' &&
+                Number.isInteger(message.logId)
+            ) {
+                this._appliedLogId = Math.max(
+                    this._appliedLogId ?? 0,
+                    message.logId
+                );
+            }
             if (this._terminalCloseDetail) {
                 return;
             }
@@ -3102,6 +3688,41 @@ export class CloudAdapter implements FileSystemAdapter {
     private _setStatus(status: CloudConnectionStatus, detail?: string): void {
         this._status = status;
         this._onConnectionStatus?.(status, detail);
+    }
+
+    private async _refreshCompactStatus(): Promise<void> {
+        const connection = this._directConnection;
+        if (!connection) {
+            return;
+        }
+        try {
+            const wsUrl = normalizeCloudRoomWebSocketUrl(
+                connection.roomUrl,
+                this._websiteBaseUrl
+            );
+            const statusUrl = `${wsUrl.replace(/^ws/i, 'http').replace(/\/$/, '')}/status`;
+            const response = await fetch(statusUrl, {
+                headers: { Authorization: `Bearer ${connection.token}` }
+            });
+            if (!response.ok) {
+                return;
+            }
+            const body = (await response.json()) as {
+                compactStatus?: string;
+                tailFull?: boolean;
+            };
+            if (typeof body.compactStatus === 'string') {
+                this._compactStatus = body.compactStatus;
+            }
+            this._tailFull = body.tailFull === true;
+            if (this._tailFull || this._compactStatus === 'tail_full') {
+                this._setStatus('connected', 'tail_full');
+            } else if (this._compactStatus === 'needs-fat-compactor') {
+                this._setStatus('connected', 'needs-fat-compactor');
+            }
+        } catch {
+            /* status is advisory */
+        }
     }
 
     private _recordInboundMessage(): void {

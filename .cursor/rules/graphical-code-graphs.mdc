@@ -1,0 +1,17 @@
+---
+description: Graphical code-graph layout for architecture snapshots (swimlanes, chokepoints, Material Symbols).
+globs: instructions/GRAPHICAL_CODE_GRAPHS.md,strategy/graphs/**,strategy/**/*graph*,**/*-graph-*.canvas.tsx
+alwaysApply: false
+---
+
+# Graphical code graphs
+
+Follow [instructions/GRAPHICAL_CODE_GRAPHS.md](instructions/GRAPHICAL_CODE_GRAPHS.md) when drawing or updating a code-path graph (standalone HTML under `strategy/graphs/`, or a Cursor canvas).
+
+- Stories on the left (one row each, blank cells when a stage does not run). Generous gaps so rails are traceable.
+- Shared funnels and the real transformer are **one chip each**, with merge rails in and a consumer fan-out after.
+- JS event chips sit where they fire (`glyphChanged`, `editingFontCompiled`, `glyphCanvasRendered`). Overview filter `EVENT_TYPES` sit after the change bridge.
+- ChangeBridge is drawn once: local commits fan out into it; linked/remote windows fan in from it.
+- DEL / CMB / RM badges mark unification. Start (green, left) and stop (red octagon, right) are visible only when the highlighted path uniquely begins or ends there.
+- Hover lights in/out edges, full lanes, and a tiny legend above the details card. Ship the interactive HTML from `strategy/graphs/`; keep the Cursor canvas in sync when one exists.
+- Manhattan paths. No per-row copies of a single sink. Keep node ids stable so git diffs stay readable.

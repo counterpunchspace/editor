@@ -1,3 +1,13 @@
+const { webcrypto } = require('crypto');
+const { TextDecoder, TextEncoder } = require('util');
+Object.defineProperty(global, 'crypto', {
+    value: webcrypto,
+    configurable: true,
+    writable: true
+});
+global.TextDecoder = TextDecoder;
+global.TextEncoder = TextEncoder;
+
 /**
  * Glyphs edited outside a receiver's live WebSocket subset still arrive:
  * both peers share a seeded Yjs history, the writer publishes a core-room
@@ -139,6 +149,69 @@ function jsonLiveResponse(bytes) {
     };
 }
 
+function encodeCollabFrame(type, logId, payload) {
+    const body = payload || new Uint8Array();
+    const out = new Uint8Array(16 + body.byteLength);
+    const view = new DataView(out.buffer);
+    view.setUint32(0, type, false);
+    view.setUint32(4, Math.floor(logId / 0x100000000), false);
+    view.setUint32(8, logId >>> 0, false);
+    view.setUint32(12, body.byteLength, false);
+    out.set(body, 16);
+    return out;
+}
+
+function encodeTailChunkFrame(logId, blob) {
+    const payload = new Uint8Array(12 + blob.length);
+    const view = new DataView(payload.buffer);
+    view.setUint32(0, 0, false);
+    view.setUint32(4, 1, false);
+    view.setUint32(8, 0, false);
+    payload.set(blob, 12);
+    return encodeCollabFrame(2, logId, payload);
+}
+
+function concatBytes(parts) {
+    const total = parts.reduce((sum, part) => sum + part.length, 0);
+    const out = new Uint8Array(total);
+    let offset = 0;
+    for (const part of parts) {
+        out.set(part, offset);
+        offset += part.length;
+    }
+    return out;
+}
+
+function framedLiveResponse(bytes, { omitTerminal = false } = {}) {
+    const checkpoint = encodeCollabFrame(
+        1,
+        0,
+        new Uint8Array(
+            Buffer.from(
+                JSON.stringify({
+                    hasMore: false,
+                    throughLogId: 1,
+                    lastLogId: 1,
+                    collaborationMessageHistory: []
+                })
+            )
+        )
+    );
+    const tail = encodeTailChunkFrame(1, bytes);
+    const parts = omitTerminal
+        ? [checkpoint, tail]
+        : [checkpoint, tail, encodeCollabFrame(3, 1, new Uint8Array())];
+    const body = concatBytes(parts);
+    return {
+        ok: true,
+        status: 200,
+        headers: new Headers({
+            'content-type': 'application/octet-stream'
+        }),
+        arrayBuffer: async () => body.buffer
+    };
+}
+
 function revisionFor(bridge, glyphId) {
     return bridge
         .listGlyphRevisionTokens()
@@ -267,7 +340,11 @@ describe('glyph catch-up for edits outside the receiver subset', () => {
             )
         ).toBe(true);
         const encoded = receiver.encodeDocumentState(glyphDocumentId('id-b'));
-        expect(workerCalls).toEqual([]);
+        expect(
+            workerCalls.filter(
+                (call) => call.documentId === glyphDocumentId('id-b')
+            )
+        ).toEqual([]);
         expect(replaceCalls).toEqual([
             {
                 documentId: glyphDocumentId('id-b'),
@@ -540,5 +617,38 @@ describe('glyph catch-up for edits outside the receiver subset', () => {
             window.syncRustCacheAndRefreshCanvas = previousRefresh;
             window.glyphCanvas = previousCanvas;
         }
+    });
+
+    test('catch-up retries framed live streams that omit the terminal frame', async () => {
+        const writer = createEngine('writer');
+        const receiver = hydrateReceiverFromWriter(writer.bridge);
+        window.changeBridge = writer.bridge;
+        writer.font.findGlyph('B').layers[0].width = 777;
+        const liveTail = writer.bridge.encodeDocumentState(
+            glyphDocumentId('id-b')
+        );
+        const expectedRevision = revisionFor(writer.bridge, 'id-b');
+        const originalFetch = global.fetch;
+        let attempts = 0;
+        global.fetch = jest.fn(async () => {
+            attempts += 1;
+            return framedLiveResponse(liveTail, {
+                omitTerminal: attempts === 1
+            });
+        });
+        await catchUpCloudDocument({
+            bridge: receiver,
+            token: 'token',
+            roomUrl: 'wss://rooms.example/room/asset-1',
+            websiteBaseUrl: 'https://editor.example',
+            assetId: 'asset-1',
+            documentId: glyphDocumentId('id-b'),
+            expectedRevision,
+            maxAttempts: 4,
+            wait: async () => {}
+        });
+        expect(attempts).toBe(2);
+        expect(glyphWidth(receiver, 'B')).toBe(777);
+        global.fetch = originalFetch;
     });
 });

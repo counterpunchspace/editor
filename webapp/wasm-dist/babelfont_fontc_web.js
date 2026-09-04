@@ -134,6 +134,63 @@ export function clear_preview_layer_overlay() {
 }
 
 /**
+ * Compute layout closure from AFDKO feature text and glyph names without a
+ * cached full font. Used for sparse cloud hydration before glyph shards load.
+ * @param {string} feature_code
+ * @param {string} glyph_names_json
+ * @param {string} seed_names_json
+ * @returns {string}
+ */
+export function close_layout_from_fea(
+    feature_code,
+    glyph_names_json,
+    seed_names_json
+) {
+    let deferred5_0;
+    let deferred5_1;
+    try {
+        const ptr0 = passStringToWasm0(
+            feature_code,
+            wasm.__wbindgen_malloc,
+            wasm.__wbindgen_realloc
+        );
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(
+            glyph_names_json,
+            wasm.__wbindgen_malloc,
+            wasm.__wbindgen_realloc
+        );
+        const len1 = WASM_VECTOR_LEN;
+        const ptr2 = passStringToWasm0(
+            seed_names_json,
+            wasm.__wbindgen_malloc,
+            wasm.__wbindgen_realloc
+        );
+        const len2 = WASM_VECTOR_LEN;
+        const ret = wasm.close_layout_from_fea(
+            ptr0,
+            len0,
+            ptr1,
+            len1,
+            ptr2,
+            len2
+        );
+        var ptr4 = ret[0];
+        var len4 = ret[1];
+        if (ret[3]) {
+            ptr4 = 0;
+            len4 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred5_0 = ptr4;
+        deferred5_1 = len4;
+        return getStringFromWasm0(ptr4, len4);
+    } finally {
+        wasm.__wbindgen_free(deferred5_0, deferred5_1, 1);
+    }
+}
+
+/**
  * Compile a font from babelfont JSON directly to TTF
  *
  * This is the main entry point that takes a .babelfont JSON string

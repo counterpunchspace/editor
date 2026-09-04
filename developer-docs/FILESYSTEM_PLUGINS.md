@@ -36,6 +36,7 @@ UI lists plugins via `pluginRegistry.getAll()`. Hide a backend with `isVisibleIn
 | `canSave()` | `true` | Read-only backend; Cloud also runs shard size + owner quota |
 | `prepareToSave()` / `prepareToSeed()` | no-op | Refresh plugin-owned data (Cloud: catalog + deps) before save/seed |
 | `canAddGlyphs(n)` / `getCachedCanAddGlyphs(n)` | `{ allowed: true }` | Cloud: owner glyph quota vs live count. Dialog awaits `canAddGlyphs`; Python/`Font.addGlyph` uses the sync cache. |
+| `canSubmitCollabUpdate(requests)` / `notifyCollabSubmitRejected(decision)` | allow / no-op | Cloud: 5 MiB packet and shard cap; live commit asks before emit and force-reverts on reject. |
 | `stripOwnedFontData(fontJson)` | passthrough | Remove plugin-owned keys before Save As to another plugin |
 | `supportsUpload()` | `true` | No drag/upload (Disk) |
 | `supportsNewFolder()` / `supportsNewFile()` | `true` | Backend cannot create |
@@ -57,4 +58,4 @@ UI lists plugins via `pluginRegistry.getAll()`. Hide a backend with `isVisibleIn
 
 Disk-only helpers (`requestPermission`, `getDirectoryName`, `clearDirectory`) stay on `DiskPlugin`. Cloud sharing/rooms stay on `CloudPlugin`.
 
-Cloud live sessions keep WebSockets on `font-core` plus the glyph subset. Other glyphs catch up via `GET /shards/:path/live` after core `glyphRevisions`, retried until `sync.revision` matches. See `strategy/CLOUD_COLLABORATION_ARCHITECTURE.md`.
+Cloud live sessions keep WebSockets on `font-core` plus the glyph subset. `font-deps` is a separate Y.Doc (UUID-keyed per-edge CRDT; no reverse graph stored). Sparse hydrate seeds from the current glyph / `glyphOrder`, adds `close_layout`-style lookups from feature code for those seeds only, then `reverse*(seeds)` and forward-close. Do not GSUB-close the reverse set. Other glyphs catch up via framed `GET /shards/:path/live` after core `glyphRevisions`, retried until `sync.revision` matches. Reconnect sends `checkpointLogId` and `appliedLogId`; if `appliedLogId` is behind the current checkpoint the server sends `rebaseline-required` and the adapter must HTTP-bootstrap again (never drop unsent updates). Room `/status` exposes `compactStatus` and `tailFull`; `tail_full` keeps the socket connected read-only. Cloud Save/seed and live commit both enforce a 5 MiB packet/shard cap via `prepareToSave` and `canSubmitCollabUpdate`. See `strategy/CLOUD_COLLABORATION_ARCHITECTURE.md`.

@@ -387,9 +387,20 @@ describe('Integration: set-start-point and reverse-direction byte budgets', () =
 
         // Verify the Y.Doc state is correct — the first node is the former index 5.
         const layerMap = bridge.getYValue(['glyphs', 'A', 'layers', 'layer-1']);
-        const shapeMap = layerMap.get('shapes').get(0);
-        expect(shapeMap.get('nodes')).toBeInstanceOf(Y.Array);
-        expect(shapeMap.get('nodes').get(0).get('x')).toBe(1100);
+        expect(layerMap.get('shapes')).toBeUndefined();
+        expect(
+            bridge.getYValue([
+                'glyphs',
+                'A',
+                'layers',
+                'layer-1',
+                'shapes',
+                0,
+                'nodes',
+                0,
+                'x'
+            ])
+        ).toBe(1100);
     });
 
     test('reverse direction on 20-node contour produces a bounded Yjs delta', () => {

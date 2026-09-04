@@ -1891,4 +1891,47 @@ describe('CloudPlugin glyph add quota', () => {
         expect(plugin.getCachedCanAddGlyphs(1).allowed).toBe(true);
         expect(plugin.getCachedCanAddGlyphs(2).allowed).toBe(false);
     });
+
+    test('rejects oversize packets and shards at the hard 5MB cap', () => {
+        const {
+            MAX_SHARD_BYTES
+        } = require('../js/filesystem-plugins/cloud-shard-limits');
+        plugin._assetLimits = {
+            ownerUserId: 'owner',
+            maxFontsOwned: 1,
+            maxGlyphsPerFont: 1000,
+            glyphCount: 0,
+            fontsOwnedCount: 0,
+            remainingGlyphs: 1000,
+            maxShardBytes: MAX_SHARD_BYTES,
+            warningShardBytes: Math.floor(MAX_SHARD_BYTES * 0.75)
+        };
+        expect(
+            plugin.canSubmitCollabUpdate([
+                {
+                    documentId: 'font-core',
+                    packetBytes: MAX_SHARD_BYTES,
+                    shardBytes: 12
+                }
+            ]).kind
+        ).toBe('packet');
+        expect(
+            plugin.canSubmitCollabUpdate([
+                {
+                    documentId: 'font-core',
+                    packetBytes: 12,
+                    shardBytes: MAX_SHARD_BYTES
+                }
+            ]).kind
+        ).toBe('shard');
+        expect(
+            plugin.canSubmitCollabUpdate([
+                {
+                    documentId: 'font-core',
+                    packetBytes: 12,
+                    shardBytes: MAX_SHARD_BYTES - 1
+                }
+            ]).allowed
+        ).toBe(true);
+    });
 });
