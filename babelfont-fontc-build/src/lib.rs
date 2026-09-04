@@ -2584,7 +2584,10 @@ fn yrs_map_to_json<T: ReadTxn>(map_ref: &yrs::MapRef, txn: &T) -> serde_json::Va
         .map(|(k, v)| (k.to_string(), yrs_value_to_json(v, txn)))
         .collect();
 
-    let obj: serde_json::Map<String, serde_json::Value> = entries.into_iter().collect();
+    let mut obj: serde_json::Map<String, serde_json::Value> = entries.into_iter().collect();
+    if obj.contains_key("featuresById") || obj.contains_key("featureOrder") {
+        reconstruct_features_indexed_map(&mut obj);
+    }
     serde_json::Value::Object(obj)
 }
 
@@ -2849,6 +2852,62 @@ fn reconstruct_indexed_map_array(
     obj.remove(order_key);
 }
 
+/// JS stores OpenType features as `featuresById` + `featureOrder` with
+/// `{ tag, code }` records. Babelfont JSON needs `features: [[tag, code], ...]`.
+fn reconstruct_features_indexed_map(obj: &mut serde_json::Map<String, serde_json::Value>) {
+    let by_id = obj.get("featuresById").cloned();
+    let order = obj.get("featureOrder").cloned();
+    if let (Some(serde_json::Value::Object(by_id_map)), Some(serde_json::Value::Array(order_arr))) =
+        (by_id, order)
+    {
+        let mut arr = Vec::with_capacity(order_arr.len());
+        for id_val in &order_arr {
+            let Some(id) = id_val.as_str() else {
+                continue;
+            };
+            let Some(item) = by_id_map.get(id) else {
+                continue;
+            };
+            let tag = item.get("tag").cloned().unwrap_or(serde_json::Value::Null);
+            let code = item.get("code").cloned().unwrap_or(serde_json::Value::Null);
+            arr.push(serde_json::json!([tag, code]));
+        }
+        obj.insert("features".to_string(), serde_json::Value::Array(arr));
+    }
+    obj.remove("featuresById");
+    obj.remove("featureOrder");
+}
+
+/// JS stores kern groups as nested true-maps (`{ A: { B: true } }`).
+/// Babelfont wants `{ A: ["B"] }`.
+fn reconstruct_true_map_to_array(value: serde_json::Value, numeric: bool) -> serde_json::Value {
+    let serde_json::Value::Object(map) = value else {
+        return value;
+    };
+    if map.values().any(|v| v != &serde_json::Value::Bool(true)) {
+        return serde_json::Value::Object(map);
+    }
+    if numeric {
+        let mut nums: Vec<u32> = map.keys().filter_map(|k| k.parse().ok()).collect();
+        nums.sort_unstable();
+        return serde_json::Value::Array(nums.into_iter().map(serde_json::Value::from).collect());
+    }
+    let mut keys: Vec<String> = map.keys().cloned().collect();
+    keys.sort();
+    serde_json::Value::Array(keys.into_iter().map(serde_json::Value::String).collect())
+}
+
+fn reconstruct_kern_group_dicts(obj: &mut serde_json::Map<String, serde_json::Value>) {
+    for key in ["first_kern_groups", "second_kern_groups"] {
+        let Some(serde_json::Value::Object(groups)) = obj.get_mut(key) else {
+            continue;
+        };
+        for (_, members) in groups.iter_mut() {
+            *members = reconstruct_true_map_to_array(std::mem::take(members), false);
+        }
+    }
+}
+
 /// Convert a single glyph Y.Map to a babelfont glyph JSON object.
 /// Handles the special `layers` sub-map (Y.Map<layer_id, Y.Map>) → array.
 fn ydoc_glyph_to_json<T: ReadTxn>(
@@ -2874,6 +2933,12 @@ fn ydoc_glyph_to_json<T: ReadTxn>(
         } else {
             glyph_obj.insert(gk.to_string(), yrs_value_to_json(gv, txn));
         }
+    }
+    if let Some(codepoints) = glyph_obj.remove("codepoints") {
+        glyph_obj.insert(
+            "codepoints".to_string(),
+            reconstruct_true_map_to_array(codepoints, true),
+        );
     }
     // Ensure glyph has its name field
     if !glyph_obj.contains_key("name") {
@@ -2915,6 +2980,7 @@ fn ydoc_to_babelfont_json_with_txn<T: ReadTxn>(txn: &T) -> serde_json::Value {
         }
     }
 
+    reconstruct_kern_group_dicts(&mut result);
     serde_json::Value::Object(result)
 }
 
@@ -3645,8 +3711,19 @@ fn store_font_from_value(json_value: serde_json::Value) -> Result<(), JsValue> {
     set_canonical_json_cache(json_value.clone());
 
     // Deserialize into babelfont::Font
-    let font: babelfont::Font = serde_json::from_value(json_value.clone())
-        .map_err(|e| JsValue::from_str(&format!("Font deserialization error: {}", e)))?;
+    let font: babelfont::Font = {
+        let json_text = serde_json::to_string(&json_value).map_err(|e| {
+            JsValue::from_str(&format!("Font JSON re-encode error: {}", e))
+        })?;
+        let mut deserializer = serde_json::Deserializer::from_str(&json_text);
+        serde_path_to_error::deserialize(&mut deserializer).map_err(|e| {
+            JsValue::from_str(&format!(
+                "Font deserialization error: {} (path: {})",
+                e.inner(),
+                e.path()
+            ))
+        })?
+    };
 
     // Build FeatureFile before acquiring FONT_CACHE lock to avoid re-entrant lock
     let fea = font.features.to_fea();
@@ -6982,6 +7059,55 @@ mod tests {
         assert_eq!(layer.get("shapes"), Some(&json!([{ "id": "shape-a" }])));
         assert!(!layer.contains_key("shapesById"));
         assert!(!layer.contains_key("shapeOrder"));
+    }
+
+    #[test]
+    fn ydoc_core_indexed_features_round_trip_to_babelfont_tuples() {
+        let doc = Doc::new();
+        {
+            let font_map = doc.get_or_insert_map("font");
+            let mut txn = doc.transact_mut();
+            let features: yrs::MapRef =
+                font_map.insert(&mut txn, "features", MapPrelim::<Any>::new());
+            features.insert(&mut txn, "classes", MapPrelim::<Any>::new());
+            features.insert(&mut txn, "prefixes", MapPrelim::<Any>::new());
+            let by_id: yrs::MapRef =
+                features.insert(&mut txn, "featuresById", MapPrelim::<Any>::new());
+            let liga: yrs::MapRef = by_id.insert(&mut txn, "feat-liga", MapPrelim::<Any>::new());
+            liga.insert(&mut txn, "tag", "liga");
+            let code: yrs::MapRef = liga.insert(&mut txn, "code", MapPrelim::<Any>::new());
+            code.insert(&mut txn, "code", "sub f i by fi;");
+            features.insert(
+                &mut txn,
+                "featureOrder",
+                ArrayPrelim::from(vec![Any::String("feat-liga".into())]),
+            );
+        }
+
+        let json = ydoc_to_babelfont_json_with_txn(&doc.transact());
+        assert_eq!(
+            json["features"]["features"],
+            json!([["liga", { "code": "sub f i by fi;" }]])
+        );
+        assert!(json["features"].get("featuresById").is_none());
+        assert!(json["features"].get("featureOrder").is_none());
+    }
+
+    #[test]
+    fn ydoc_kern_groups_true_maps_round_trip_to_name_arrays() {
+        let doc = Doc::new();
+        {
+            let font_map = doc.get_or_insert_map("font");
+            let mut txn = doc.transact_mut();
+            let groups: yrs::MapRef =
+                font_map.insert(&mut txn, "first_kern_groups", MapPrelim::<Any>::new());
+            let a: yrs::MapRef = groups.insert(&mut txn, "A", MapPrelim::<Any>::new());
+            a.insert(&mut txn, "B", true);
+            a.insert(&mut txn, "A", true);
+        }
+
+        let json = ydoc_to_babelfont_json_with_txn(&doc.transact());
+        assert_eq!(json["first_kern_groups"]["A"], json!(["A", "B"]));
     }
 
     #[test]

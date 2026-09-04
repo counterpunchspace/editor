@@ -27,6 +27,13 @@ import {
     writeLayerGeometry,
     writeNodePosition
 } from './layer-geometry-ydoc';
+import {
+    yArrayToArray,
+    yMapForEach,
+    yMapGet,
+    yMapHas,
+    yMapKeys
+} from './yjs-prelim';
 
 type Unsafe = ReturnType<typeof JSON.parse>;
 
@@ -52,13 +59,13 @@ const MEMBERSHIP_DICT_KEYS = new Set([
 
 function writeMembershipMap(target: Y.Map<unknown>, keys: string[]): void {
     const next = new Set(keys);
-    for (const key of Array.from(target.keys())) {
+    for (const key of yMapKeys(target)) {
         if (!next.has(key)) {
             target.delete(key);
         }
     }
     for (const key of next) {
-        if (target.get(key) !== true) {
+        if (yMapGet(target, key) !== true) {
             target.set(key, true);
         }
     }
@@ -74,7 +81,7 @@ function membershipMapToArray(
     map: Y.Map<unknown>,
     numeric: boolean
 ): unknown[] {
-    const keys = Array.from(map.keys());
+    const keys = yMapKeys(map);
     if (numeric) {
         return keys
             .map((key) => Number(key))
@@ -88,7 +95,7 @@ function ensureMembershipYMap(
     parent: Y.Map<unknown>,
     key: string
 ): Y.Map<unknown> {
-    const existing = parent.get(key);
+    const existing = yMapGet(parent, key);
     if (isYMap(existing)) {
         return existing;
     }
@@ -102,13 +109,13 @@ function writeKernGroupsMap(
     record: Record<string, unknown>
 ): void {
     const nextKeys = new Set(Object.keys(record));
-    for (const key of Array.from(target.keys())) {
+    for (const key of yMapKeys(target)) {
         if (!nextKeys.has(key)) {
             target.delete(key);
         }
     }
     for (const [group, names] of Object.entries(record)) {
-        let child = target.get(group);
+        let child = yMapGet(target, group);
         if (!isYMap(child)) {
             child = new Y.Map<unknown>();
             target.set(group, child);
@@ -132,11 +139,11 @@ function kernGroupsFromY(value: unknown): Record<string, string[]> {
               )
             : result;
     }
-    value.forEach((groupValue, group) => {
+    yMapForEach(value, (groupValue, group) => {
         if (isYMap(groupValue)) {
             result[group] = membershipMapToArray(groupValue, false) as string[];
         } else if (isYArray(groupValue)) {
-            result[group] = groupValue.toArray().map(String);
+            result[group] = yArrayToArray(groupValue).map(String);
         }
     });
     return result;
@@ -145,13 +152,13 @@ function kernGroupsFromY(value: unknown): Record<string, string[]> {
 function looksLikeKernGroupsMap(value: Y.Map<unknown>): boolean {
     let sawMembership = false;
     let allMembership = true;
-    value.forEach((groupValue) => {
+    yMapForEach(value, (groupValue) => {
         if (!isYMap(groupValue)) {
             allMembership = false;
             return;
         }
         let childHasEntry = false;
-        groupValue.forEach((item) => {
+        yMapForEach(groupValue, (item) => {
             childHasEntry = true;
             if (item !== true) {
                 allMembership = false;
@@ -181,11 +188,11 @@ function featureEntryRecord(
           : undefined;
     let id = isPlainObject(item) && typeof item.id === 'string' ? item.id : '';
     if (!id) {
-        byIdMap.forEach((entry, existingId) => {
+        yMapForEach(byIdMap, (entry, existingId) => {
             if (id || usedIds.has(existingId) || !isYMap(entry)) {
                 return;
             }
-            if (entry.get('tag') === tag) {
+            if (yMapGet(entry, 'tag') === tag) {
                 id = existingId;
             }
         });
@@ -200,7 +207,7 @@ function featureTupleField(
     map: Y.Map<unknown>,
     seg: string | number
 ): 'tag' | 'code' | null {
-    if (!map.has('tag') || !map.has('code')) {
+    if (!yMapHas(map, 'tag') || !yMapHas(map, 'code')) {
         return null;
     }
     if (seg === 0 || seg === 'tag') {
@@ -349,20 +356,20 @@ function restingLayerContextFromYMap(
     layerMap: Y.Map<unknown>
 ): Record<string, unknown> {
     const existing: Record<string, unknown> = {};
-    const width = layerMap.get('width');
+    const width = yMapGet(layerMap, 'width');
     if (typeof width === 'number' && Number.isFinite(width)) {
         existing.width = width;
     }
-    const id = layerMap.get('id');
+    const id = yMapGet(layerMap, 'id');
     if (typeof id === 'string' && id.length) {
         existing.id = id;
     }
-    const master = layerMap.get('master');
+    const master = yMapGet(layerMap, 'master');
     if (master !== undefined) {
         existing.master = fromYType(master);
     }
     try {
-        const shapes = layerMap.get('shapes');
+        const shapes = yMapGet(layerMap, 'shapes');
         if (shapes !== undefined) {
             existing.shapes = fromYType(shapes);
         } else if (geometryHasNormalizedStorage(layerMap)) {
@@ -497,7 +504,7 @@ export function applyIndexedMapArray(
     const byIdMap = ensureIndexedMap(layerMap, arrayKey);
     if (!byIdMap) return;
     const mapping = INDEXED_MAP_KEYS[arrayKey]!;
-    const orderArr = layerMap.get(mapping.order);
+    const orderArr = yMapGet(layerMap, mapping.order);
     const orderIntegrated = isYArray(orderArr) && Boolean(orderArr.doc);
     const currentOrder: string[] = orderIntegrated
         ? (orderArr.toArray() as string[])
@@ -527,7 +534,7 @@ export function applyIndexedMapArray(
         nextIds.push(id);
         seenIds.add(id);
 
-        const existing = byIdMap.get(id);
+        const existing = yMapGet(byIdMap, id);
         if (isYMap(existing) && isPlainObject(inner)) {
             replaceYMapContents(existing, inner as Record<string, unknown>);
         } else {
@@ -598,7 +605,7 @@ function replaceYMapContentsInternal(
     >;
 
     const nextKeys = new Set(Object.keys(normalizedRecord));
-    for (const key of Array.from(targetMap.keys())) {
+    for (const key of yMapKeys(targetMap)) {
         if (
             !nextKeys.has(key) &&
             !YMAP_INFRASTRUCTURE_KEYS.has(key) &&
@@ -609,7 +616,7 @@ function replaceYMapContentsInternal(
     }
 
     for (const [key, value] of Object.entries(normalizedRecord)) {
-        const current = targetMap.get(key);
+        const current = yMapGet(targetMap, key);
         if (
             (key === 'anchors' || key === 'guides' || key === 'features') &&
             Array.isArray(value)
@@ -637,7 +644,7 @@ function replaceYMapContentsInternal(
         } else if (isYArray(current) && Array.isArray(value)) {
             diffYArray(current, value);
         } else {
-            const currentVal = targetMap.get(key);
+            const currentVal = yMapGet(targetMap, key);
             if (currentVal !== value) {
                 targetMap.set(key, toYType(value));
             }
@@ -987,7 +994,7 @@ export function fromYType(value: unknown): unknown {
     if (value instanceof Y.Map) {
         const obj: Record<string, unknown> = {};
 
-        if (value.get('layers') instanceof Y.Map) {
+        if (yMapGet(value, 'layers') instanceof Y.Map) {
             return fromYGlyphMap(value);
         }
 
@@ -998,15 +1005,15 @@ export function fromYType(value: unknown): unknown {
         // Check for indexed-map structure (any *ById key indicates a layer)
         if (
             geometryHasNormalizedStorage(value) ||
-            (value.has('anchorsById') &&
-                value.get('anchorsById') instanceof Y.Map) ||
-            (value.has('guidesById') &&
-                value.get('guidesById') instanceof Y.Map)
+            (yMapHas(value, 'anchorsById') &&
+                yMapGet(value, 'anchorsById') instanceof Y.Map) ||
+            (yMapHas(value, 'guidesById') &&
+                yMapGet(value, 'guidesById') instanceof Y.Map)
         ) {
             return fromYLayerMap(value);
         }
 
-        value.forEach((v: unknown, k: string) => {
+        yMapForEach(value, (v: unknown, k: string) => {
             if (k === 'featuresById' || k === 'featureOrder') {
                 return;
             }
@@ -1016,13 +1023,16 @@ export function fromYType(value: unknown): unknown {
             }
             obj[k] = fromYType(v);
         });
-        if (value.has('featuresById') && isYMap(value.get('featuresById'))) {
-            const byId = value.get('featuresById');
-            const order = value.get('featureOrder');
+        if (
+            yMapHas(value, 'featuresById') &&
+            isYMap(yMapGet(value, 'featuresById'))
+        ) {
+            const byId = yMapGet(value, 'featuresById');
+            const order = yMapGet(value, 'featureOrder');
             if (isYMap(byId) && isYArray(order)) {
                 const features: unknown[] = [];
-                for (const id of order.toArray() as string[]) {
-                    const entry = byId.get(id);
+                for (const id of yArrayToArray(order) as string[]) {
+                    const entry = yMapGet(byId, id);
                     if (entry === undefined) {
                         continue;
                     }
@@ -1035,11 +1045,7 @@ export function fromYType(value: unknown): unknown {
         return obj;
     }
     if (value instanceof Y.Array) {
-        const arr: unknown[] = [];
-        value.forEach((v: unknown) => {
-            arr.push(fromYType(v));
-        });
-        return arr;
+        return yArrayToArray(value).map((v) => fromYType(v));
     }
     return value;
 }
@@ -1581,23 +1587,22 @@ export function diffYArray(arr: Y.Array<unknown>, nextValues: unknown[]): void {
     }
 }
 
-/** Duck-type check for Y.Map (avoids instanceof issues across module boundaries) */
 function isYMap(v: unknown): v is Y.Map<unknown> {
     return (
         !!v &&
         typeof (v as any).get === 'function' &&
         typeof (v as any).forEach === 'function' &&
-        typeof (v as any).set === 'function'
+        typeof (v as any).set === 'function' &&
+        typeof (v as any).insert !== 'function'
     );
 }
 
-/** Duck-type check for Y.Array */
 function isYArray(v: unknown): v is Y.Array<unknown> {
     return (
         !!v &&
-        typeof (v as any).get === 'function' &&
-        typeof (v as any).length === 'number' &&
-        typeof (v as any).push === 'function'
+        typeof (v as any).insert === 'function' &&
+        typeof (v as any).push === 'function' &&
+        typeof (v as any).toArray === 'function'
     );
 }
 
@@ -1627,8 +1632,8 @@ function ensureIndexedMap(
 ): Y.Map<unknown> | null {
     const mapping = INDEXED_MAP_KEYS[arrayKey];
     if (!mapping) return null;
-    let byId = map.get(mapping.byId);
-    let order = map.get(mapping.order);
+    let byId = yMapGet(map, mapping.byId);
+    let order = yMapGet(map, mapping.order);
     if (!isYMap(byId)) {
         byId = new Y.Map<unknown>();
         map.set(mapping.byId, byId);

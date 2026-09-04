@@ -18,7 +18,9 @@ export async function hashShardBytes(bytes: Uint8Array): Promise<string> {
     if (!subtle?.digest) {
         throw new Error('SHA-256 is unavailable in this environment');
     }
-    const digest = await subtle.digest('SHA-256', bytes);
+    const buffer = new ArrayBuffer(bytes.byteLength);
+    new Uint8Array(buffer).set(bytes);
+    const digest = await subtle.digest('SHA-256', buffer);
     return Array.from(new Uint8Array(digest), (byte) =>
         byte.toString(16).padStart(2, '0')
     ).join('');

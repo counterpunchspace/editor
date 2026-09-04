@@ -112,8 +112,6 @@ function applyIsolationHeaders(sourceResponse) {
         newHeaders.set('Cross-Origin-Resource-Policy', 'cross-origin');
     }
     newHeaders.set('Cross-Origin-Opener-Policy', 'same-origin');
-    // Keep File System Access pickers enabled on SW-synthesized documents.
-    newHeaders.set('Permissions-Policy', 'directory-picker=(self)');
     return new Response(sourceResponse.body, {
         status: sourceResponse.status,
         statusText: sourceResponse.statusText,

@@ -1176,7 +1176,7 @@ export class PatchSyncEngine {
             !Array.isArray(fontRecord.format_specific)
                 ? (fontRecord.format_specific as Record<string, unknown>)
                 : {};
-        const operations: ChangeOp[] = [
+        const operations: TransactionBufferedOperation[] = [
             {
                 op: 'set',
                 path: [CORE_GLYPH_CATALOG_KEY],
@@ -6050,7 +6050,7 @@ export class PatchSyncEngine {
             this._changeLog.splice(
                 Math.max(0, this._changeLog.length - changeLogEntries.length)
             );
-            invalidateHistoryStateCache();
+            invalidateHistoryStateCache(this._changeLog);
             this._notifyChangeLogListeners();
         }
         this._rehydrateEntireFontJsonFromYDoc();

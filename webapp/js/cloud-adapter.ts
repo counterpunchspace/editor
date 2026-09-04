@@ -399,7 +399,9 @@ async function sha256Hex(bytes: Uint8Array): Promise<string> {
     if (!subtle?.digest) {
         throw new Error('SHA-256 is unavailable in this environment');
     }
-    const digest = await subtle.digest('SHA-256', bytes);
+    const buffer = new ArrayBuffer(bytes.byteLength);
+    new Uint8Array(buffer).set(bytes);
+    const digest = await subtle.digest('SHA-256', buffer);
     return Array.from(new Uint8Array(digest), (byte) =>
         byte.toString(16).padStart(2, '0')
     ).join('');
@@ -600,7 +602,7 @@ export async function catchUpCloudDocument(options: {
                 continue;
             }
             const contentType = response.headers.get('content-type') || '';
-            let update = new Uint8Array();
+            let update: Uint8Array = new Uint8Array();
             let collaborationMessageHistory:
                 CollaborationMessageEnvelope[] | undefined;
             let payloadsToApply: Uint8Array[] = [];
