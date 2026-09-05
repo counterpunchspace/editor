@@ -13,14 +13,26 @@ const {
     buildFontDepsIndex,
     buildFontDepsForGlyph,
     computeSparseHydrationSet,
+    computeSparseHydrationPartition,
     countYDocItems,
     depsNeedUpdate,
     glyphIdsForSparseHydration,
     layoutGlyphIdsFromFeatureCode,
+    layoutSubstitutionIdsFromFeatureCode,
+    closeLayoutSubstitutionsFromFeatureCode,
+    closeForwardComponentIds,
+    closeComponentNamesFromFontJson,
+    closeReverseComponentNamesFromDeps,
+    afdkoFeatureCodeFromFontJson,
     parseMetricsKeyReferencedNames,
     patchSourceEdges,
     readFontDepsIndex,
-    seedGlyphIdsFromCoreJson
+    readWorkingGlyphIds,
+    seedGlyphIdsFromCoreJson,
+    seedGlyphIdsFromText,
+    sparseHydrationSeedsFromText,
+    writeFontDepsYMap,
+    writeCompleteFontDepsIfLoaded
 } = require('../js/filesystem-plugins/cloud-font-deps');
 const {
     classifyShardByteLength,
@@ -309,6 +321,118 @@ describe('font-deps UUID edges', () => {
         ]);
         expect(parseMetricsKeyReferencedNames('=|H+10', ['H'])).toEqual(['H']);
         expect(parseMetricsKeyReferencedNames('=120', ['H'])).toEqual([]);
+        expect(parseMetricsKeyReferencedNames('n', ['n', 'l', 'a'])).toEqual([
+            'n'
+        ]);
+    });
+
+    it('records a bare metrics-key name as an upstream edge', () => {
+        expect(
+            buildFontDepsForGlyph(
+                { id: 'a-id', name: 'a', rightMetricsKey: 'n' },
+                [
+                    { glyphId: 'a-id', name: 'a' },
+                    { glyphId: 'n-id', name: 'n' }
+                ]
+            )
+        ).toEqual({ 'n-id': 'metrics-key' });
+    });
+
+    it('records Glyphs format_specific metric keys as upstream edges', () => {
+        expect(
+            buildFontDepsForGlyph(
+                {
+                    id: 'a-id',
+                    name: 'a',
+                    format_specific: { metric_right: 'n' }
+                },
+                [
+                    { glyphId: 'a-id', name: 'a' },
+                    { glyphId: 'n-id', name: 'n' }
+                ]
+            )
+        ).toEqual({ 'n-id': 'metrics-key' });
+    });
+
+    it('splits working reverse-dependents from hidden metrics sources and marks', () => {
+        const a = 'id-a';
+        const n = 'id-n';
+        const l = 'id-l';
+        const e = 'id-e';
+        const h = 'id-h';
+        const adieresis = 'id-adieresis';
+        const dieresis = 'id-dieresiscomb';
+        const ntilde = 'id-ntilde';
+        const tilde = 'id-tildecomb';
+        const lslash = 'id-lslash';
+        const ae = 'id-ae';
+        const layout = 'id-a-ss03';
+        const edges = {
+            [a]: { [n]: 'metrics-key' },
+            [n]: { [l]: 'metrics-key' },
+            [h]: { [n]: 'metrics-key' },
+            [adieresis]: { [a]: 'component', [dieresis]: 'component' },
+            [ntilde]: { [n]: 'component', [tilde]: 'component' },
+            [lslash]: { [l]: 'component' },
+            [ae]: { [a]: 'component', [e]: 'component' }
+        };
+        const partition = computeSparseHydrationPartition({
+            seedIds: [a],
+            layoutIds: [layout],
+            edges
+        });
+        expect(partition.workingIds.sort()).toEqual(
+            [a, layout, adieresis, ae].sort()
+        );
+        expect(partition.hiddenIds.sort()).toEqual([n, l, e, dieresis].sort());
+        expect(partition.loadIds).not.toEqual(
+            expect.arrayContaining([h, ntilde, tilde, lslash])
+        );
+        const hydrate = computeSparseHydrationSet({
+            seedIds: [a],
+            layoutIds: [layout],
+            edges
+        });
+        expect(hydrate.sort()).toEqual(partition.loadIds.sort());
+        expect(hydrate).toHaveLength(8);
+    });
+
+    it('rebuilds font-deps only when every catalog glyph body is loaded', () => {
+        const fontJson = {
+            upm: 1000,
+            glyphs: [
+                {
+                    id: 'a-id',
+                    name: 'a',
+                    rightMetricsKey: 'n'
+                },
+                {
+                    id: 'n-id',
+                    name: 'n',
+                    layers: []
+                },
+                {
+                    id: 'adieresis-id',
+                    name: 'adieresis',
+                    layers: [{ shapes: [{ reference: 'a' }] }]
+                }
+            ]
+        };
+        applyCloudOwnedData(fontJson);
+        const depsDoc = new Y.Doc();
+        const depsMap = depsDoc.getMap('deps');
+        expect(
+            writeCompleteFontDepsIfLoaded(depsMap, {
+                ...fontJson,
+                glyphs: [fontJson.glyphs[0]]
+            })
+        ).toBe(false);
+        expect(readFontDepsIndex(depsMap).edges).toEqual({});
+        expect(writeCompleteFontDepsIfLoaded(depsMap, fontJson)).toBe(true);
+        const { edges } = readFontDepsIndex(depsMap);
+        expect(edges['a-id']['n-id']).toBe('metrics-key');
+        expect(edges['adieresis-id']['a-id']).toBe('component');
+        depsDoc.destroy();
     });
 
     it('forward-closes after reverse so composites keep their components', () => {
@@ -335,6 +459,56 @@ describe('font-deps UUID edges', () => {
         ).toEqual(expect.arrayContaining([a, adieresis, dieresis]));
     });
 
+    it('names reverse composites from font-deps without reading glyph bodies', () => {
+        const catalog = [
+            { glyphId: 'id-a', name: 'a' },
+            { glyphId: 'id-adieresis', name: 'adieresis' },
+            { glyphId: 'id-dieresiscomb', name: 'dieresiscomb' }
+        ];
+        expect(
+            closeReverseComponentNamesFromDeps({
+                seedNames: ['a'],
+                catalog,
+                edges: {
+                    'id-adieresis': {
+                        'id-a': 'component',
+                        'id-dieresiscomb': 'component'
+                    }
+                }
+            }).sort()
+        ).toEqual(['adieresis']);
+    });
+
+    it('keeps reverse font-deps rows when a sparse glyph array cannot rebuild', () => {
+        const fontJson = {
+            glyphs: [
+                { id: 'a-id', name: 'a', layers: [] },
+                {
+                    id: 'adieresis-id',
+                    name: 'adieresis',
+                    layers: [{ shapes: [{ reference: 'a' }] }]
+                }
+            ]
+        };
+        applyCloudOwnedData(fontJson);
+        const depsDoc = new Y.Doc();
+        const depsMap = depsDoc.getMap('deps');
+        writeFontDepsYMap(depsMap, buildFontDepsIndex(fontJson));
+        expect(readFontDepsIndex(depsMap).edges['adieresis-id']['a-id']).toBe(
+            'component'
+        );
+        expect(
+            writeCompleteFontDepsIfLoaded(depsMap, {
+                ...fontJson,
+                glyphs: [fontJson.glyphs[0]]
+            })
+        ).toBe(false);
+        expect(readFontDepsIndex(depsMap).edges['adieresis-id']['a-id']).toBe(
+            'component'
+        );
+        depsDoc.destroy();
+    });
+
     it('uses glyphOrder as the default seed instead of the full catalog', () => {
         const seeds = seedGlyphIdsFromCoreJson({
             glyphOrder: ['a'],
@@ -346,6 +520,62 @@ describe('font-deps UUID edges', () => {
         expect(seeds).toEqual(['id-a']);
     });
 
+    it('maps text= characters to cmap seeds and layout alts, or nothing when empty', () => {
+        const fontJson = {
+            features: {
+                features: [
+                    ['ss03', { code: 'sub a by a.ss03;\nsub g by g.ss03;\n' }]
+                ]
+            },
+            [CORE_GLYPH_CATALOG_KEY]: {
+                'id-a': {
+                    glyphId: 'id-a',
+                    name: 'a',
+                    codepoints: [97],
+                    deleted: false
+                },
+                'id-n': {
+                    glyphId: 'id-n',
+                    name: 'n',
+                    codepoints: [110],
+                    deleted: false
+                },
+                'id-a-ss03': {
+                    glyphId: 'id-a-ss03',
+                    name: 'a.ss03',
+                    codepoints: [],
+                    deleted: false
+                },
+                'id-g-ss03': {
+                    glyphId: 'id-g-ss03',
+                    name: 'g.ss03',
+                    codepoints: [],
+                    deleted: false
+                }
+            },
+            [CORE_CODEPOINT_INDEX_KEY]: {
+                97: ['id-a'],
+                110: ['id-n']
+            }
+        };
+        expect(seedGlyphIdsFromText(fontJson, '')).toEqual([]);
+        expect(sparseHydrationSeedsFromText(fontJson, '').seedIds).toEqual([]);
+        expect(seedGlyphIdsFromText(fontJson, 'na')).toEqual(['id-n', 'id-a']);
+        expect(sparseHydrationSeedsFromText(fontJson, 'a')).toEqual({
+            seedIds: ['id-a'],
+            layoutIds: ['id-a-ss03']
+        });
+        expect(
+            computeSparseHydrationPartition({
+                seedIds: ['id-a'],
+                layoutIds: ['id-a-ss03'],
+                edges: {
+                    'id-a': { 'id-n': 'metrics-key' }
+                }
+            }).hiddenIds
+        ).toEqual(['id-n']);
+    });
+
     it('hydrates the full catalog when seedIds are empty', () => {
         expect(
             glyphIdsForSparseHydration({
@@ -354,6 +584,343 @@ describe('font-deps UUID edges', () => {
                 edges: {}
             }).sort()
         ).toEqual(['id-a', 'id-z']);
+    });
+
+    it('adds layout substitution targets of the seed, not the rest of the lookup', () => {
+        expect(
+            layoutSubstitutionIdsFromFeatureCode({
+                featureCode:
+                    'feature ss03 { sub a by a.ss03; sub g by g.ss03; } ss03; feature ss04 { sub a by a.ss04; sub l by l.ss04; } ss04;',
+                seedIds: ['id-a'],
+                catalog: [
+                    { glyphId: 'id-a', name: 'a' },
+                    { glyphId: 'id-a-ss03', name: 'a.ss03' },
+                    { glyphId: 'id-a-ss04', name: 'a.ss04' },
+                    { glyphId: 'id-g-ss03', name: 'g.ss03' },
+                    { glyphId: 'id-l-ss04', name: 'l.ss04' }
+                ]
+            }).sort()
+        ).toEqual(['id-a-ss03', 'id-a-ss04']);
+    });
+
+    it('closes Arabic ccmp then init/medi/fina without pulling unrelated ss03 letters', () => {
+        const catalog = [
+            { glyphId: 'id-beh', name: 'beh-ar' },
+            { glyphId: 'id-dotless', name: 'behDotless-ar' },
+            { glyphId: 'id-dot', name: 'dotbelow-ar' },
+            { glyphId: 'id-init', name: 'behDotless-ar.init' },
+            { glyphId: 'id-medi', name: 'behDotless-ar.medi' },
+            { glyphId: 'id-fina', name: 'behDotless-ar.fina' },
+            { glyphId: 'id-noon', name: 'noonghunna-ar' },
+            { glyphId: 'id-g', name: 'g' },
+            { glyphId: 'id-g-ss03', name: 'g.ss03' }
+        ];
+        const layout = closeLayoutSubstitutionsFromFeatureCode({
+            featureCode: `
+                feature ccmp { sub beh-ar by behDotless-ar dotbelow-ar; } ccmp;
+                feature init { sub [behDotless-ar noonghunna-ar] by behDotless-ar.init; } init;
+                feature medi { sub [behDotless-ar noonghunna-ar] by behDotless-ar.medi; } medi;
+                feature fina { sub behDotless-ar by behDotless-ar.fina; } fina;
+                feature ss03 { sub g by g.ss03; } ss03;
+            `,
+            seedIds: ['id-beh'],
+            catalog
+        });
+        expect(layout.sort()).toEqual(
+            ['id-dotless', 'id-dot', 'id-init', 'id-medi', 'id-fina'].sort()
+        );
+        expect(layout).not.toContain('id-g-ss03');
+        expect(layout).not.toContain('id-noon');
+    });
+
+    it('recursively closes nested mark components', () => {
+        expect(
+            closeForwardComponentIds({
+                glyphs: [
+                    {
+                        id: 'id-edieresis',
+                        name: 'edieresis',
+                        layers: [
+                            {
+                                shapes: [
+                                    { reference: 'e' },
+                                    { reference: 'dieresiscomb' }
+                                ]
+                            }
+                        ]
+                    },
+                    {
+                        id: 'id-dieresiscomb',
+                        name: 'dieresiscomb',
+                        layers: [
+                            {
+                                shapes: [
+                                    { reference: 'dotaccentcomb' },
+                                    { data: { reference: 'dotaccentcomb' } }
+                                ]
+                            }
+                        ]
+                    },
+                    {
+                        id: 'id-dotbelow',
+                        name: 'dotbelow-ar',
+                        layers: [{ shapes: [{ reference: 'dotabove-ar' }] }]
+                    }
+                ],
+                catalog: [
+                    { glyphId: 'id-edieresis', name: 'edieresis' },
+                    { glyphId: 'id-e', name: 'e' },
+                    { glyphId: 'id-dieresiscomb', name: 'dieresiscomb' },
+                    { glyphId: 'id-dotaccentcomb', name: 'dotaccentcomb' },
+                    { glyphId: 'id-dotbelow', name: 'dotbelow-ar' },
+                    { glyphId: 'id-dotabove', name: 'dotabove-ar' }
+                ],
+                seedIds: ['id-edieresis', 'id-dotbelow']
+            }).sort()
+        ).toEqual(
+            [
+                'id-edieresis',
+                'id-e',
+                'id-dieresiscomb',
+                'id-dotaccentcomb',
+                'id-dotbelow',
+                'id-dotabove'
+            ].sort()
+        );
+        expect(
+            closeComponentNamesFromFontJson({
+                fontJson: {
+                    glyphs: [
+                        {
+                            name: 'dotbelow-ar',
+                            layers: [{ shapes: [{ reference: 'dotabove-ar' }] }]
+                        },
+                        {
+                            name: 'dotabove-ar',
+                            layers: []
+                        }
+                    ]
+                },
+                seedNames: ['dotbelow-ar']
+            })
+        ).toEqual(['dotabove-ar']);
+    });
+
+    it('closes Fustat-style tab/newline init rules and ccmp decompositions', () => {
+        const catalog = [
+            { glyphId: 'id-beh', name: 'beh-ar' },
+            { glyphId: 'id-dotless', name: 'behDotless-ar' },
+            { glyphId: 'id-dot', name: 'dotbelow-ar' },
+            { glyphId: 'id-init', name: 'behDotless-ar.init' },
+            { glyphId: 'id-medi', name: 'behDotless-ar.medi' },
+            { glyphId: 'id-fina', name: 'behDotless-ar.fina' },
+            { glyphId: 'id-high', name: 'behDotless-ar.init.high' },
+            { glyphId: 'id-medi-high', name: 'behDotless-ar.medi.high' },
+            { glyphId: 'id-noon', name: 'noonghunna-ar' },
+            { glyphId: 'id-maksura', name: 'alefMaksura-ar' },
+            { glyphId: 'id-g', name: 'g' },
+            { glyphId: 'id-g-ss03', name: 'g.ss03' }
+        ];
+        const featureCode = afdkoFeatureCodeFromFontJson({
+            features: {
+                classes: {},
+                prefixes: {},
+                features: [
+                    [
+                        'ccmp',
+                        {
+                            code: ' sub beh-ar\t\t\t\t\t\t\t\t\tby behDotless-ar dotbelow-ar;\n'
+                        }
+                    ],
+                    [
+                        'init',
+                        {
+                            code: ' lookup center_marks;\n\n sub [behDotless-ar\tnoonghunna-ar alefMaksura-ar]\n\t\t\t\t\t\t\t\t\t\t\tby behDotless-ar.init;\n'
+                        }
+                    ],
+                    [
+                        'medi',
+                        {
+                            code: ' sub [behDotless-ar\tnoonghunna-ar alefMaksura-ar]\n\t\t\t\t\t\t\t\t\t\t\tby behDotless-ar.medi;\n'
+                        }
+                    ],
+                    [
+                        'fina',
+                        {
+                            code: ' sub behDotless-ar\t\t\t\t\t\t\tby behDotless-ar.fina;\n'
+                        }
+                    ],
+                    [
+                        'rlig',
+                        {
+                            code: " lookup high_tooth {\n lookupflag IgnoreMarks;\n rsub [behDotless-ar.init behDotless-ar.medi]'\n      [behDotless-ar.medi behDotless-ar.fina noonghunna-ar.fina]\n   by [behDotless-ar.init.high behDotless-ar.medi.high];\n} high_tooth;\n"
+                        }
+                    ],
+                    ['ss03', { code: 'sub g by g.ss03;\n' }]
+                ]
+            }
+        });
+        const layout = closeLayoutSubstitutionsFromFeatureCode({
+            featureCode,
+            seedIds: ['id-beh'],
+            catalog
+        });
+        expect(layout.sort()).toEqual(
+            [
+                'id-dotless',
+                'id-dot',
+                'id-init',
+                'id-medi',
+                'id-fina',
+                'id-high',
+                'id-medi-high'
+            ].sort()
+        );
+        expect(layout).not.toContain('id-g-ss03');
+    });
+
+    it('maps URL text ë and Arabic letters through cmap plus FEA close', () => {
+        const fontJson = {
+            features: {
+                features: [
+                    [
+                        'ccmp',
+                        { code: 'sub beh-ar by behDotless-ar dotbelow-ar;\n' }
+                    ],
+                    [
+                        'init',
+                        {
+                            code: 'sub [behDotless-ar noonghunna-ar] by behDotless-ar.init;\n'
+                        }
+                    ],
+                    [
+                        'medi',
+                        {
+                            code: 'sub [behDotless-ar noonghunna-ar] by behDotless-ar.medi;\n'
+                        }
+                    ],
+                    [
+                        'fina',
+                        { code: 'sub behDotless-ar by behDotless-ar.fina;\n' }
+                    ]
+                ]
+            },
+            [CORE_GLYPH_CATALOG_KEY]: {
+                'id-e': {
+                    glyphId: 'id-e',
+                    name: 'e',
+                    codepoints: [101],
+                    deleted: false
+                },
+                'id-edieresis': {
+                    glyphId: 'id-edieresis',
+                    name: 'edieresis',
+                    codepoints: [235],
+                    deleted: false
+                },
+                'id-beh': {
+                    glyphId: 'id-beh',
+                    name: 'beh-ar',
+                    codepoints: [1576],
+                    deleted: false
+                },
+                'id-dotless': {
+                    glyphId: 'id-dotless',
+                    name: 'behDotless-ar',
+                    codepoints: [],
+                    deleted: false
+                },
+                'id-dot': {
+                    glyphId: 'id-dot',
+                    name: 'dotbelow-ar',
+                    codepoints: [],
+                    deleted: false
+                },
+                'id-init': {
+                    glyphId: 'id-init',
+                    name: 'behDotless-ar.init',
+                    codepoints: [],
+                    deleted: false
+                },
+                'id-medi': {
+                    glyphId: 'id-medi',
+                    name: 'behDotless-ar.medi',
+                    codepoints: [],
+                    deleted: false
+                },
+                'id-fina': {
+                    glyphId: 'id-fina',
+                    name: 'behDotless-ar.fina',
+                    codepoints: [],
+                    deleted: false
+                }
+            },
+            [CORE_CODEPOINT_INDEX_KEY]: {
+                235: ['id-edieresis'],
+                1576: ['id-beh']
+            }
+        };
+        expect(sparseHydrationSeedsFromText(fontJson, 'ëب')).toEqual({
+            seedIds: ['id-edieresis', 'id-beh'],
+            layoutIds: ['id-dotless', 'id-dot', 'id-init', 'id-medi', 'id-fina']
+        });
+    });
+
+    it('reads Y.Doc [tag, codeString] feature tuples including ccmp', () => {
+        const catalog = [
+            { glyphId: 'id-beh', name: 'beh-ar' },
+            { glyphId: 'id-dotless', name: 'behDotless-ar' },
+            { glyphId: 'id-dot', name: 'dotbelow-ar' },
+            { glyphId: 'id-init', name: 'behDotless-ar.init' }
+        ];
+        const featureCode = afdkoFeatureCodeFromFontJson({
+            features: {
+                classes: { Letters: 'behDotless-ar' },
+                prefixes: {
+                    Lookups: 'lookup x { sub beh-ar by beh-ar; } x;\n'
+                },
+                features: [
+                    ['ccmp', 'sub beh-ar by behDotless-ar dotbelow-ar;'],
+                    ['init', 'sub [behDotless-ar] by behDotless-ar.init;']
+                ]
+            }
+        });
+        expect(featureCode).toContain(
+            'sub beh-ar by behDotless-ar dotbelow-ar;'
+        );
+        expect(featureCode).toContain('by behDotless-ar.init;');
+        expect(
+            closeLayoutSubstitutionsFromFeatureCode({
+                featureCode,
+                seedIds: ['id-beh'],
+                catalog
+            }).sort()
+        ).toEqual(['id-dot', 'id-dotless', 'id-init']);
+    });
+
+    it('pulls ccmp ligature partners and outputs from a single seed', () => {
+        const catalog = [
+            { glyphId: 'id-a', name: 'a' },
+            { glyphId: 'id-dieresiscomb', name: 'dieresiscomb' },
+            { glyphId: 'id-adieresis', name: 'adieresis' },
+            { glyphId: 'id-z', name: 'z' }
+        ];
+        expect(
+            closeLayoutSubstitutionsFromFeatureCode({
+                featureCode:
+                    'feature ccmp { sub a dieresiscomb by adieresis; } ccmp;',
+                seedIds: ['id-a'],
+                catalog
+            }).sort()
+        ).toEqual(['id-adieresis', 'id-dieresiscomb']);
+        expect(
+            layoutGlyphIdsFromFeatureCode({
+                featureCode:
+                    'feature ccmp { sub a dieresiscomb by adieresis; } ccmp;',
+                seedIds: ['id-a'],
+                catalog
+            }).sort()
+        ).toEqual(['id-adieresis', 'id-dieresiscomb']);
     });
 
     it('adds layout glyphs from lookups that mention a seed, not the reverse set', () => {
@@ -383,7 +950,7 @@ describe('font-deps UUID edges', () => {
                 closeLayoutFromFea: null
             })
         ).toThrow(/close_layout_from_fea is required/);
-        expect(() =>
+        expect(
             layoutGlyphIdsFromFeatureCode({
                 featureCode: 'feature liga { sub a by a.alt; } liga;',
                 seedIds: ['id-a'],
@@ -392,7 +959,7 @@ describe('font-deps UUID edges', () => {
                     { glyphId: 'id-a-alt', name: 'a.alt' }
                 ]
             })
-        ).toThrow(/close_layout_from_fea is required/);
+        ).toEqual(['id-a-alt']);
     });
 });
 
@@ -655,6 +1222,349 @@ describe('sparse hydration fixed point', () => {
         ).toEqual(expect.arrayContaining(['a', 'acute']));
         documentSet.destroy();
     });
+
+    it('repairs empty matching-revision deps so composite parts still fetch', async () => {
+        const ids = {
+            edieresis: 'id-edieresis',
+            e: 'id-e',
+            dieresiscomb: 'id-dieresiscomb',
+            dotaccentcomb: 'id-dotaccentcomb',
+            z: 'id-z'
+        };
+        const catalog = [
+            { glyphId: ids.edieresis, name: 'edieresis' },
+            { glyphId: ids.e, name: 'e' },
+            { glyphId: ids.dieresiscomb, name: 'dieresiscomb' },
+            { glyphId: ids.dotaccentcomb, name: 'dotaccentcomb' },
+            { glyphId: ids.z, name: 'z' }
+        ];
+        const glyphs = [
+            {
+                id: ids.edieresis,
+                name: 'edieresis',
+                layers: [
+                    {
+                        id: 'layer-1',
+                        shapes: [
+                            { reference: 'e' },
+                            { reference: 'dieresiscomb' }
+                        ]
+                    }
+                ]
+            },
+            {
+                id: ids.e,
+                name: 'e',
+                layers: [{ id: 'layer-1', shapes: [] }]
+            },
+            {
+                id: ids.dieresiscomb,
+                name: 'dieresiscomb',
+                layers: [
+                    {
+                        id: 'layer-1',
+                        shapes: [
+                            { reference: 'dotaccentcomb' },
+                            { reference: 'dotaccentcomb' }
+                        ]
+                    }
+                ]
+            },
+            {
+                id: ids.dotaccentcomb,
+                name: 'dotaccentcomb',
+                layers: [{ id: 'layer-1', shapes: [] }]
+            },
+            {
+                id: ids.z,
+                name: 'z',
+                layers: [{ id: 'layer-1', shapes: [] }]
+            }
+        ];
+        applyCloudOwnedData({ glyphs });
+        const shards = new Map(
+            glyphs.map((glyph) => [
+                glyphDocumentId(glyph.id),
+                encodeGlyphShard(glyph, '0')
+            ])
+        );
+        const documentSet = new CloudDocumentSet();
+        documentSet.initFromFontJson({ glyphs });
+        for (const doc of documentSet.glyphDocs.values()) {
+            doc.destroy();
+        }
+        documentSet.glyphDocs.clear();
+        patchSourceEdges(
+            documentSet.depsDoc.getMap('deps'),
+            ids.edieresis,
+            {},
+            '0'
+        );
+
+        const result = await hydrateSparseGlyphsToFixedPoint({
+            documentSet,
+            catalogIds: catalog.map((entry) => entry.glyphId),
+            seedIds: [ids.edieresis],
+            catalog,
+            fetchGlyphs: async (documentIds) => {
+                const fetched = new Map();
+                for (const documentId of documentIds) {
+                    fetched.set(documentId, shards.get(documentId));
+                }
+                return fetched;
+            }
+        });
+
+        expect(result.loadedIds.sort()).toEqual(
+            [ids.edieresis, ids.e, ids.dieresiscomb, ids.dotaccentcomb].sort()
+        );
+        expect(result.workingIds).toEqual([ids.edieresis]);
+        expect(result.hiddenIds.sort()).toEqual(
+            [ids.e, ids.dieresiscomb, ids.dotaccentcomb].sort()
+        );
+        expect(result.loadedIds).not.toContain(ids.z);
+        documentSet.destroy();
+    });
+
+    it('hydrates a plus metrics ancestors, composites, and layout alts in one download', async () => {
+        const ids = {
+            a: 'id-a',
+            n: 'id-n',
+            l: 'id-l',
+            e: 'id-e',
+            adieresis: 'id-adieresis',
+            dieresiscomb: 'id-dieresiscomb',
+            aacute: 'id-aacute',
+            acutecomb: 'id-acutecomb',
+            ntilde: 'id-ntilde',
+            tildecomb: 'id-tildecomb',
+            lslash: 'id-lslash',
+            ae: 'id-ae',
+            ss03: 'id-a-ss03',
+            z: 'id-z',
+            h: 'id-h'
+        };
+        const glyphs = [
+            {
+                id: ids.a,
+                name: 'a',
+                rightMetricsKey: 'n',
+                layers: [{ id: 'layer-1', shapes: [] }]
+            },
+            {
+                id: ids.n,
+                name: 'n',
+                leftMetricsKey: '=l-5',
+                rightMetricsKey: '=l-10',
+                layers: [{ id: 'layer-1', shapes: [] }]
+            },
+            {
+                id: ids.l,
+                name: 'l',
+                layers: [{ id: 'layer-1', shapes: [] }]
+            },
+            {
+                id: ids.e,
+                name: 'e',
+                layers: [{ id: 'layer-1', shapes: [] }]
+            },
+            {
+                id: ids.dieresiscomb,
+                name: 'dieresiscomb',
+                layers: [{ id: 'layer-1', shapes: [] }]
+            },
+            {
+                id: ids.acutecomb,
+                name: 'acutecomb',
+                layers: [{ id: 'layer-1', shapes: [] }]
+            },
+            {
+                id: ids.tildecomb,
+                name: 'tildecomb',
+                layers: [{ id: 'layer-1', shapes: [] }]
+            },
+            {
+                id: ids.adieresis,
+                name: 'adieresis',
+                layers: [
+                    {
+                        id: 'layer-1',
+                        shapes: [
+                            { reference: 'a' },
+                            { reference: 'dieresiscomb' }
+                        ]
+                    }
+                ]
+            },
+            {
+                id: ids.aacute,
+                name: 'aacute',
+                layers: [
+                    {
+                        id: 'layer-1',
+                        shapes: [{ reference: 'a' }, { reference: 'acutecomb' }]
+                    }
+                ]
+            },
+            {
+                id: ids.ntilde,
+                name: 'ntilde',
+                layers: [
+                    {
+                        id: 'layer-1',
+                        shapes: [{ reference: 'n' }, { reference: 'tildecomb' }]
+                    }
+                ]
+            },
+            {
+                id: ids.lslash,
+                name: 'lslash',
+                layers: [{ id: 'layer-1', shapes: [{ reference: 'l' }] }]
+            },
+            {
+                id: ids.ae,
+                name: 'ae',
+                layers: [
+                    {
+                        id: 'layer-1',
+                        shapes: [{ reference: 'a' }, { reference: 'e' }]
+                    }
+                ]
+            },
+            {
+                id: ids.ss03,
+                name: 'a.ss03',
+                layers: [{ id: 'layer-1', shapes: [] }]
+            },
+            {
+                id: ids.h,
+                name: 'h',
+                rightMetricsKey: 'n',
+                layers: [{ id: 'layer-1', shapes: [] }]
+            },
+            {
+                id: ids.z,
+                name: 'z',
+                layers: [{ id: 'layer-1', shapes: [] }]
+            }
+        ];
+        const fontJson = {
+            upm: 1000,
+            glyphOrder: ['a'],
+            glyphs
+        };
+        applyCloudOwnedData(fontJson);
+        const catalog = glyphs.map((glyph) => ({
+            glyphId: glyph.id,
+            name: glyph.name
+        }));
+        const shards = new Map(
+            glyphs.map((glyph) => [
+                glyphDocumentId(glyph.id),
+                encodeGlyphShard(glyph, `${glyph.name}-rev`)
+            ])
+        );
+
+        const documentSet = new CloudDocumentSet();
+        documentSet.initFromFontJson(fontJson);
+        for (const doc of documentSet.glyphDocs.values()) {
+            doc.destroy();
+        }
+        documentSet.glyphDocs.clear();
+
+        const fetchPassesRecorded = [];
+        const result = await hydrateSparseGlyphsToFixedPoint({
+            documentSet,
+            catalogIds: catalog.map((entry) => entry.glyphId),
+            seedIds: [ids.a],
+            layoutIds: [ids.ss03],
+            catalog,
+            fetchGlyphs: async (documentIds) => {
+                fetchPassesRecorded.push(documentIds.slice());
+                const fetched = new Map();
+                for (const documentId of documentIds) {
+                    fetched.set(documentId, shards.get(documentId));
+                }
+                return fetched;
+            }
+        });
+
+        const expectedWorking = [
+            ids.a,
+            ids.ss03,
+            ids.adieresis,
+            ids.aacute,
+            ids.ae
+        ];
+        const expectedHidden = [
+            ids.n,
+            ids.l,
+            ids.e,
+            ids.dieresiscomb,
+            ids.acutecomb
+        ];
+        const expectedLoad = [...expectedWorking, ...expectedHidden];
+        expect(result.workingIds.sort()).toEqual(expectedWorking.sort());
+        expect(result.hiddenIds.sort()).toEqual(expectedHidden.sort());
+        expect(result.loadedIds.sort()).toEqual(expectedLoad.sort());
+        expect(result.loadedIds).not.toEqual(
+            expect.arrayContaining([
+                ids.ntilde,
+                ids.tildecomb,
+                ids.lslash,
+                ids.h,
+                ids.z
+            ])
+        );
+        expect(result.fetchPasses).toHaveLength(1);
+        expect(fetchPassesRecorded[0].sort()).toEqual(
+            expectedLoad.map(glyphDocumentId).sort()
+        );
+        expect(
+            readWorkingGlyphIds(documentSet.depsDoc.getMap('deps')).sort()
+        ).toEqual(expectedWorking.sort());
+
+        const promoted = await hydrateSparseGlyphsToFixedPoint({
+            documentSet,
+            catalogIds: catalog.map((entry) => entry.glyphId),
+            seedIds: [ids.n],
+            catalog,
+            fetchGlyphs: async (documentIds) => {
+                fetchPassesRecorded.push(documentIds.slice());
+                const fetched = new Map();
+                for (const documentId of documentIds) {
+                    fetched.set(documentId, shards.get(documentId));
+                }
+                return fetched;
+            }
+        });
+        const expectedPromoteFetch = [ids.ntilde, ids.tildecomb, ids.h];
+        expect(promoted.fetchPasses).toHaveLength(1);
+        expect(promoted.fetchPasses[0].sort()).toEqual(
+            expectedPromoteFetch.sort()
+        );
+        expect(promoted.workingIds).toEqual(
+            expect.arrayContaining([
+                ...expectedWorking,
+                ids.n,
+                ids.ntilde,
+                ids.h
+            ])
+        );
+        expect(promoted.workingIds).not.toContain(ids.l);
+        expect(promoted.hiddenIds).toEqual(
+            expect.arrayContaining([
+                ids.l,
+                ids.e,
+                ids.dieresiscomb,
+                ids.acutecomb,
+                ids.tildecomb
+            ])
+        );
+        expect(promoted.loadedIds).not.toContain(ids.lslash);
+        expect(promoted.loadedIds).not.toContain(ids.z);
+        documentSet.destroy();
+    });
 });
 
 describe('section 2 catalog packets and freshness', () => {
@@ -778,6 +1688,7 @@ describe('section 2 catalog packets and freshness', () => {
 describe('catalog tombstones and published hydrate pair', () => {
     const {
         liveCatalogGlyphIds,
+        listOverviewGlyphRecords,
         isCatalogTombstone,
         catalogAcceptsGlyphWrite
     } = require('../js/filesystem-plugins/cloud-glyph-catalog');
@@ -805,6 +1716,94 @@ describe('catalog tombstones and published hydrate pair', () => {
         expect(isCatalogTombstone(owned.glyphCatalog, 'id-b')).toBe(true);
         expect(catalogAcceptsGlyphWrite(owned.glyphCatalog, 'id-b', 0)).toBe(
             false
+        );
+    });
+
+    it('lists catalog glyphs for overview even when Font.glyphs is empty', () => {
+        const records = listOverviewGlyphRecords({
+            fontJson: {
+                glyphOrder: ['b', 'a'],
+                [CORE_GLYPH_CATALOG_KEY]: {
+                    'id-a': {
+                        glyphId: 'id-a',
+                        name: 'a',
+                        codepoints: [97],
+                        deleted: false
+                    },
+                    'id-b': {
+                        glyphId: 'id-b',
+                        name: 'b',
+                        codepoints: [98],
+                        deleted: false
+                    },
+                    'id-gone': {
+                        glyphId: 'id-gone',
+                        name: 'gone',
+                        deleted: true
+                    }
+                }
+            },
+            hydratedGlyphs: []
+        });
+        expect(records.map((entry) => entry.name)).toEqual(['b', 'a']);
+        expect(records.every((entry) => entry.hydrated === false)).toBe(true);
+        expect(records[1].codepoints).toEqual([97]);
+    });
+
+    it('indexes catalog codepoints by glyph name when Font.glyphs is empty', () => {
+        const {
+            catalogCodepointsByGlyphName
+        } = require('../js/filesystem-plugins/cloud-glyph-catalog');
+        const byName = catalogCodepointsByGlyphName({
+            [CORE_GLYPH_CATALOG_KEY]: {
+                'id-a': {
+                    glyphId: 'id-a',
+                    name: 'a',
+                    codepoints: [97],
+                    deleted: false
+                },
+                'id-gone': {
+                    glyphId: 'id-gone',
+                    name: 'gone',
+                    codepoints: [103],
+                    deleted: true
+                }
+            }
+        });
+        expect(byName.get('a')).toEqual([97]);
+        expect(byName.has('gone')).toBe(false);
+    });
+
+    it('joins AFDKO prefixes and features for layout close', () => {
+        expect(
+            afdkoFeatureCodeFromFontJson({
+                features: {
+                    classes: { letters: { code: 'a b' } },
+                    prefixes: {
+                        anonymous: { code: 'lookup x { } x;' },
+                        Lookups: { code: 'lookup y { } y;' }
+                    },
+                    features: [
+                        ['aalt', { code: 'feature locl;\nfeature isol;' }],
+                        ['liga', { code: 'sub a by a.alt;' }]
+                    ]
+                }
+            })
+        ).toBe(
+            [
+                '@letters = [a b];',
+                'lookup x { } x;',
+                '# Prefix: Lookups',
+                'lookup y { } y;',
+                'feature aalt {',
+                'feature locl;',
+                'feature isol;',
+                '} aalt;',
+                'feature liga {',
+                'sub a by a.alt;',
+                '} liga;',
+                ''
+            ].join('\n')
         );
     });
 

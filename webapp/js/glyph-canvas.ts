@@ -1875,12 +1875,36 @@ class GlyphCanvas {
             holeRect.width > 0 &&
             holeRect.height > 0
         );
-        if (
-            !canvasRect ||
-            canvasWidth <= 0 ||
-            canvasHeight <= 0 ||
-            !holeValid
-        ) {
+        if (!canvasRect || canvasWidth <= 0 || canvasHeight <= 0) {
+            return {
+                left: 0,
+                top: 0,
+                width: canvasWidth,
+                height: canvasHeight
+            };
+        }
+        if (!holeValid) {
+            // Width-collapsed chrome hides `.view-content`, so the hole is
+            // 0×0. Keep the last camera instead of 0 (freeze + stretched
+            // bitmap) or the whole window (paint over Overview).
+            const widthCollapsed = !!(
+                this.container?.closest?.('.collapsed-width') ||
+                document
+                    .getElementById('view-editor')
+                    ?.classList.contains('collapsed-width')
+            );
+            if (
+                widthCollapsed &&
+                this.lastContainerWidth > 0 &&
+                this.lastContainerHeight > 0
+            ) {
+                return {
+                    left: this.lastCutoutLeft,
+                    top: this.lastCutoutTop,
+                    width: this.lastContainerWidth,
+                    height: this.lastContainerHeight
+                };
+            }
             return {
                 left: 0,
                 top: 0,
@@ -3464,10 +3488,6 @@ class GlyphCanvas {
             return;
         }
 
-        if (window.cloudPlugin?.canMutateCurrentAsset?.() === false) {
-            return;
-        }
-
         // Check for double-click
         if (e.detail === 2) {
             // In outline editor mode with layer selected
@@ -3486,6 +3506,12 @@ class GlyphCanvas {
                 );
                 return;
             }
+        }
+
+        // Viewer / sparse-hidden-glyph lock: still allow double-click to
+        // select a glyph. Block only mutating click paths.
+        if (window.cloudPlugin?.canMutateCurrentAsset?.() === false) {
+            return;
         }
 
         // Let the measurement tool claim the click before edit-mode selection logic.
@@ -11025,10 +11051,13 @@ class GlyphCanvas {
     }
 
     doubleClickOnGlyph(index: number): void {
-        if (index !== this.textRunEditor!.selectedGlyphIndex) {
-            this.textRunEditor!.selectGlyphByIndex(index);
+        if (
+            this.outlineEditor.active &&
+            index === this.textRunEditor!.selectedGlyphIndex
+        ) {
             return;
         }
+        void this.textRunEditor!.selectGlyphByIndex(index);
     }
 
     frameCurrentGlyph(margin: number | null = null): void {
@@ -11731,6 +11760,8 @@ class GlyphCanvas {
                 );
                 if (attempts >= maxAttempts) {
                     timelineMark('canvas.compileRepaint.timeout');
+                    this.releaseDeferredPaintAfterFailedCompile();
+                    this.render();
                     return;
                 }
 
@@ -12561,6 +12592,10 @@ function arrayBufferFromOwnedBytes(bytes: Uint8Array): ArrayBuffer {
     return bytes.slice().buffer;
 }
 
+function clearStuckIdleViewLock(): void {
+    window.glyphCanvas?.releaseDeferredPaintAfterFailedCompile?.();
+}
+
 // Set up listener for compiled fonts
 function setupFontLoadingListener() {
     console.log('🔧 Setting up font loading listeners...');
@@ -12593,6 +12628,7 @@ function setupFontLoadingListener() {
                     timelineMark(
                         'canvas.editingFontCompiled.skippedMismatchedFontPath'
                     );
+                    clearStuckIdleViewLock();
                     return;
                 }
 
@@ -12611,6 +12647,7 @@ function setupFontLoadingListener() {
                     timelineMark(
                         'canvas.editingFontCompiled.skippedSupersededRevision'
                     );
+                    clearStuckIdleViewLock();
                     return;
                 }
 
@@ -12621,6 +12658,7 @@ function setupFontLoadingListener() {
                     timelineMark(
                         'canvas.editingFontCompiled.skippedOutOfOrderRevision'
                     );
+                    clearStuckIdleViewLock();
                     return;
                 }
 
@@ -12848,6 +12886,10 @@ function setupFontLoadingListener() {
                     } else {
                         gc.requestRepaintAfterCompile();
                     }
+                    if (!isSidebearingSession && gc.hasPendingIdleViewLock()) {
+                        gc.consumeIdleViewLockAfterReshape();
+                    }
+                    gc.renderSuppressed = false;
                 } else {
                     console.warn(
                         '[GlyphCanvas]',
@@ -12856,6 +12898,7 @@ function setupFontLoadingListener() {
                     timelineMark(
                         'canvas.editingFontCompiled.skippedMissingData'
                     );
+                    clearStuckIdleViewLock();
                 }
             })
             .catch((error) => {
@@ -12867,6 +12910,8 @@ function setupFontLoadingListener() {
                 if (deferredIdleViewLock && gc) {
                     gc.renderSuppressed = false;
                     gc.clearIdleViewLock();
+                } else if (gc?.hasPendingIdleViewLock?.()) {
+                    gc.releaseDeferredPaintAfterFailedCompile();
                 }
                 console.error(
                     '[GlyphCanvas] Failed to apply editing font update:',

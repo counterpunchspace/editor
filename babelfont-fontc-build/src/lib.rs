@@ -1600,6 +1600,82 @@ fn make_debug_compile_settings_key(
     )
 }
 
+fn collect_fea_parse_universe_names(
+    font: &babelfont::Font,
+    json: Option<&serde_json::Value>,
+) -> Vec<String> {
+    let mut names: HashSet<String> = font
+        .glyphs
+        .iter()
+        .map(|glyph| glyph.name.to_string())
+        .collect();
+
+    if let Some(value) = json {
+        if let Some(glyphs) = value.get("glyphs").and_then(|v| v.as_array()) {
+            for glyph in glyphs {
+                if let Some(name) = glyph.get("name").and_then(|v| v.as_str()) {
+                    names.insert(name.to_string());
+                }
+            }
+        }
+        if let Some(order) = value.get("glyphOrder").and_then(|v| v.as_array()) {
+            for name in order {
+                if let Some(name) = name.as_str() {
+                    names.insert(name.to_string());
+                }
+            }
+        }
+        if let Some(catalog) = value.get("glyphCatalog").and_then(|v| v.as_object()) {
+            for entry in catalog.values() {
+                if entry.get("deleted").and_then(|v| v.as_bool()) == Some(true) {
+                    continue;
+                }
+                if let Some(name) = entry.get("name").and_then(|v| v.as_str()) {
+                    names.insert(name.to_string());
+                }
+            }
+        }
+    }
+
+    for class in font.features.classes.values() {
+        for token in class.code.split_whitespace() {
+            if !token.is_empty() {
+                names.insert(token.to_string());
+            }
+        }
+    }
+
+    names.into_iter().collect()
+}
+
+fn inject_stub_glyphs_for_fea_parse(font: &mut babelfont::Font, extra_names: &[String]) {
+    let existing: HashSet<SmolStr> = font.glyphs.iter().map(|glyph| glyph.name.clone()).collect();
+    for name in extra_names {
+        if existing.contains(name.as_str()) {
+            continue;
+        }
+        let mut stub = Glyph::new(name);
+        stub.exported = false;
+        font.glyphs.push(stub);
+    }
+}
+
+/// `SubsetLayout` parses FEA against `font.glyphs` names. Sparse hydration only
+/// loads bodies for the working set, so Arabic classes still name the rest of
+/// the font and FeatureFile/fontc emit a huge "glyph not found" dump. Stub the
+/// catalog/glyphOrder universe first; RetainGlyphs drops stubs not in the subset.
+fn prepare_font_for_layout_subset(font: &mut babelfont::Font, json: Option<&serde_json::Value>) {
+    let names = collect_fea_parse_universe_names(font, json);
+    inject_stub_glyphs_for_fea_parse(font, &names);
+}
+
+fn drop_fea_parse_stub_glyphs(
+    font: &mut babelfont::Font,
+    real_names: &HashSet<SmolStr>,
+) {
+    font.glyphs.retain(|glyph| real_names.contains(&glyph.name));
+}
+
 /// C1: Apply RetainGlyphs to `font` using the cached FEA string to re-parse a
 /// fresh FeatureFile for the SubsetLayout visitor.  Re-parsing from the cached
 /// string avoids the expensive `font.features.to_fea()` round-trip (~100ms).
@@ -1608,19 +1684,15 @@ fn subset_font_using_cached_fea(
     font: &mut babelfont::Font,
     closure_subset: &[String],
 ) -> Result<(), JsValue> {
-    // Current babelfont API performs SubsetLayout internally in RetainGlyphs.
-    // Keep the existing function boundary for minimal call-site changes.
-    match RetainGlyphs::new(closure_subset.to_vec()).apply(font) {
-        Ok(()) => Ok(()),
-        Err(error) => {
-            let detail = format!("{:?}", error);
-            if detail.to_ascii_lowercase().contains("feature") {
-                Ok(())
-            } else {
-                Err(JsValue::from_str(&format!("Subsetting failed: {:?}", error)))
-            }
-        }
-    }
+    let real_names: HashSet<SmolStr> =
+        font.glyphs.iter().map(|glyph| glyph.name.clone()).collect();
+    let canonical = CANONICAL_JSON_CACHE.lock().ok().and_then(|guard| guard.clone());
+    prepare_font_for_layout_subset(font, canonical.as_ref());
+    RetainGlyphs::new(closure_subset.to_vec())
+        .apply(font)
+        .map_err(|error| JsValue::from_str(&format!("Subsetting failed: {:?}", error)))?;
+    drop_fea_parse_stub_glyphs(font, &real_names);
+    Ok(())
 }
 
 fn remove_background_layers_for_generation(font: &mut babelfont::Font) {
@@ -1799,10 +1871,27 @@ fn feature_span_debug_context(fea: &str, start: usize, end: usize) -> String {
     )
 }
 
-fn render_feature_parsing_error_entries(diagnostics: &[Diagnostic]) -> String {
-    let mut rendered = String::new();
+fn truncate_utf8(text: &str, max_bytes: usize) -> String {
+    if text.len() <= max_bytes {
+        return text.to_string();
+    }
+    let mut end = max_bytes;
+    while end > 0 && !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!(
+        "{}… [truncated, original {} bytes]",
+        &text[..end],
+        text.len()
+    )
+}
 
-    for (index, diagnostic) in diagnostics.iter().enumerate() {
+fn render_feature_parsing_error_entries(diagnostics: &[Diagnostic]) -> String {
+    const MAX_ENTRIES: usize = 8;
+    let mut rendered = String::new();
+    let shown = diagnostics.len().min(MAX_ENTRIES);
+
+    for (index, diagnostic) in diagnostics.iter().take(shown).enumerate() {
         if index > 0 {
             rendered.push_str(", ");
         }
@@ -1814,6 +1903,14 @@ fn render_feature_parsing_error_entries(diagnostics: &[Diagnostic]) -> String {
             span.start,
             span.end,
             diagnostic.is_error()
+        );
+    }
+
+    if diagnostics.len() > shown {
+        let _ = write!(
+            rendered,
+            ", … and {} more FeatureError entries",
+            diagnostics.len() - shown
         );
     }
 
@@ -1853,17 +1950,18 @@ fn feature_debug_error_from_babelfont_error(
     context: &str,
 ) -> JsValue {
     let error_text = format!("{:?}", err);
+    let error_text = truncate_utf8(&error_text, 4000);
     if error_text.contains("FeatureParsing(") {
         let debug_context = extract_feature_error_span(&error_text)
             .map(|(start, end)| feature_span_debug_context(fea, start, end))
             .unwrap_or_else(|| "span not found in FeatureParsing payload".to_string());
         return JsValue::from_str(&format!(
-            "{}: {:?}\n[FeatureDebug:{}] {}",
-            prefix, err, context, debug_context
+            "{}: {}\n[FeatureDebug:{}] {}",
+            prefix, error_text, context, debug_context
         ));
     }
 
-    JsValue::from_str(&format!("{}: {:?}", prefix, err))
+    JsValue::from_str(&format!("{}: {}", prefix, error_text))
 }
 
 struct InMemoryFeatureValidationResolver {
@@ -2415,7 +2513,9 @@ fn compute_layout_closure_cached_internal(
 pub fn compile_babelfont(babelfont_json: &str, options: &JsValue) -> Result<Vec<u8>, JsValue> {
     let _compile_span = PerfSpan::start("compile_babelfont.total");
     let _parse_span = PerfSpan::start("compile_babelfont.parse_json");
-    let mut font: babelfont::Font = serde_json::from_str(babelfont_json)
+    let json_value: serde_json::Value = serde_json::from_str(babelfont_json)
+        .map_err(|e| JsValue::from_str(&format!("JSON parse error: {}", e)))?;
+    let mut font: babelfont::Font = deserialize_json(&json_value)
         .map_err(|e| JsValue::from_str(&format!("JSON parse error: {}", e)))?;
     remove_background_layers_for_generation(&mut font);
     drop(_parse_span);
@@ -2431,10 +2531,14 @@ pub fn compile_babelfont(babelfont_json: &str, options: &JsValue) -> Result<Vec<
 
                     if !subset_glyphs.is_empty() {
                         let _retain_span = PerfSpan::start("compile_babelfont.retain_glyphs");
+                        let real_names: HashSet<SmolStr> =
+                            font.glyphs.iter().map(|glyph| glyph.name.clone()).collect();
+                        prepare_font_for_layout_subset(&mut font, Some(&json_value));
                         let subsetter = babelfont::filters::RetainGlyphs::new(subset_glyphs);
                         subsetter.apply(&mut font).map_err(|e| {
                             JsValue::from_str(&format!("Subsetting failed: {:?}", e))
                         })?;
+                        drop_fea_parse_stub_glyphs(&mut font, &real_names);
                         drop(_retain_span);
                     }
                 }
@@ -3339,6 +3443,9 @@ fn assembled_babelfont_json() -> Result<serde_json::Value, JsValue> {
         let txn = core.transact();
         ydoc_to_babelfont_json_with_txn(&txn)
     };
+    if json.get("glyphs").is_none() {
+        json["glyphs"] = serde_json::Value::Array(Vec::new());
+    }
     let glyph_docs = GLYPH_DOCS.lock().unwrap();
     if glyph_docs.is_empty() {
         return Ok(json);
@@ -3745,7 +3852,10 @@ fn refresh_feature_related_caches_from_ydoc<T: ReadTxn>(txn: &T) -> Result<(), J
 
 /// Internal: store a babelfont `serde_json::Value` in all Rust caches.
 /// Equivalent to `store_font()` but accepts a pre-parsed JSON value.
-fn store_font_from_value(json_value: serde_json::Value) -> Result<(), JsValue> {
+fn store_font_from_value(mut json_value: serde_json::Value) -> Result<(), JsValue> {
+    if json_value.get("glyphs").is_none() {
+        json_value["glyphs"] = serde_json::Value::Array(Vec::new());
+    }
     // Store in canonical JSON cache
     set_canonical_json_cache(json_value.clone());
 
@@ -6254,10 +6364,7 @@ pub fn compile_cached_font(options: &JsValue) -> Result<Vec<u8>, JsValue> {
 
                     if !subset_glyphs.is_empty() {
                         let _retain_span = PerfSpan::start("compile_cached_font.retain_glyphs");
-                        let subsetter = babelfont::filters::RetainGlyphs::new(subset_glyphs);
-                        subsetter.apply(&mut font_clone).map_err(|e| {
-                            JsValue::from_str(&format!("Subsetting failed: {:?}", e))
-                        })?;
+                        subset_font_using_cached_fea(&mut font_clone, &subset_glyphs)?;
                         drop(_retain_span);
                     }
                 }
@@ -6462,6 +6569,56 @@ mod tests {
 
         assert_eq!(filtered.glyphs.len(), 1);
         assert_eq!(filtered.glyphs[0].name.as_str(), "A");
+    }
+
+    #[test]
+    fn sparse_subset_parses_fea_using_catalog_name_universe() {
+        let mut font_json: serde_json::Value = serde_json::from_str(TEST_FONT_JSON).unwrap();
+        font_json["glyphOrder"] = json!(["A", "hamza-ar", "hah-ar.init"]);
+        font_json["glyphCatalog"] = json!({
+            "gA": { "name": "A" },
+            "gHamza": { "name": "hamza-ar" },
+            "gHah": { "name": "hah-ar.init" }
+        });
+        font_json["features"] = json!({
+            "classes": { "AR": { "code": "A hamza-ar hah-ar.init" } },
+            "prefixes": {},
+            "features": [["liga", { "code": "sub A by A;" }]]
+        });
+
+        let previous_canonical = CANONICAL_JSON_CACHE.lock().unwrap().clone();
+        *CANONICAL_JSON_CACHE.lock().unwrap() = Some(font_json.clone());
+
+        let mut subset_font: babelfont::Font = serde_json::from_value(font_json).unwrap();
+        assert_eq!(
+            subset_font.glyphs.len(),
+            1,
+            "sparse JSON should hydrate only A"
+        );
+
+        subset_font_using_cached_fea(&mut subset_font, &["A".to_string()])
+            .expect("FEA that names unloaded catalog glyphs must subset after stub injection");
+
+        *CANONICAL_JSON_CACHE.lock().unwrap() = previous_canonical;
+
+        assert_eq!(subset_font.glyphs.len(), 1);
+        assert_eq!(subset_font.glyphs[0].name.as_str(), "A");
+        assert!(
+            !subset_font
+                .glyphs
+                .iter()
+                .any(|glyph| glyph.layers.is_empty() && glyph.name.as_str() != "A"),
+            "FEA parse stubs must not remain in the compiled subset"
+        );
+        let fea = subset_font.features.to_fea();
+        assert!(
+            fea.contains("sub A by A"),
+            "layout rules for the hydrated subset must survive: {fea}"
+        );
+        assert!(
+            !fea.contains("hamza-ar") && !fea.contains("hah-ar.init"),
+            "unloaded catalog names must be pruned from features: {fea}"
+        );
     }
 
     #[test]

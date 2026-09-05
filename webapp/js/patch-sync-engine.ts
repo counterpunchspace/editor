@@ -100,9 +100,11 @@ import {
 } from './filesystem-plugins/cloud-glyph-catalog';
 import {
     buildFontDepsForGlyph,
-    buildFontDepsIndex,
+    catalogEntriesForDepsParse,
     patchSourceEdges,
-    writeFontDepsYMap
+    readWorkingGlyphIds,
+    writeCompleteFontDepsIfLoaded,
+    writeWorkingGlyphIds
 } from './filesystem-plugins/cloud-font-deps';
 import {
     FONT_CORE_DOCUMENT_ID,
@@ -1039,6 +1041,28 @@ export class PatchSyncEngine {
             .map((glyphId) => glyphDocumentId(glyphId));
     }
 
+    hasSparseWorkingSet(): boolean {
+        return readWorkingGlyphIds(this.depsDoc.getMap('deps')).length > 0;
+    }
+
+    listSparseWorkingGlyphIds(): string[] {
+        return readWorkingGlyphIds(this.depsDoc.getMap('deps'));
+    }
+
+    isSparseWorkingGlyphName(glyphName: string): boolean {
+        const glyphId = this._glyphIdByName.get(glyphName);
+        if (!glyphId) {
+            return false;
+        }
+        return this.listSparseWorkingGlyphIds().includes(glyphId);
+    }
+
+    replaceSparseWorkingGlyphIds(glyphIds: string[]): void {
+        this.depsDoc.transact(() => {
+            writeWorkingGlyphIds(this.depsDoc.getMap('deps'), glyphIds);
+        }, FONT_EDIT_ORIGIN);
+    }
+
     encodeDocumentState(documentId: string = FONT_CORE_DOCUMENT_ID): YjsUpdate {
         const doc = this._docForId(documentId);
         return doc ? Y.encodeStateAsUpdate(doc) : new Uint8Array();
@@ -1232,20 +1256,30 @@ export class PatchSyncEngine {
         const depsMap = this.depsDoc.getMap('deps');
         this.depsDoc.transact(() => {
             if (!glyphNames || glyphNames.length === 0) {
-                writeFontDepsYMap(depsMap, buildFontDepsIndex(fontJson));
+                writeCompleteFontDepsIfLoaded(depsMap, fontJson);
                 return;
             }
             const glyphs = listGlyphRecords(fontJson);
             const idByName = new Map<string, string>();
             const glyphByName = new Map<string, Record<string, unknown>>();
-            const catalog: Array<{ glyphId: string; name: string }> = [];
+            const catalog = catalogEntriesForDepsParse(fontJson);
+            for (const entry of catalog) {
+                idByName.set(entry.name, entry.glyphId);
+            }
             for (const glyph of glyphs) {
                 const name = String(glyph.name || '');
                 if (name) {
                     const glyphId = ensureImmutableGlyphId(glyph);
                     idByName.set(name, glyphId);
                     glyphByName.set(name, glyph);
-                    catalog.push({ glyphId, name });
+                    if (
+                        !catalog.some(
+                            (entry) =>
+                                entry.glyphId === glyphId || entry.name === name
+                        )
+                    ) {
+                        catalog.push({ glyphId, name });
+                    }
                 }
             }
             for (const name of glyphNames) {
@@ -1268,6 +1302,19 @@ export class PatchSyncEngine {
                 );
             }
         }, FONT_EDIT_ORIGIN);
+    }
+
+    syncCompleteFontDepsFromLoadedGlyphs(
+        fontJson: Record<string, unknown>
+    ): boolean {
+        let wrote = false;
+        this.depsDoc.transact(() => {
+            wrote = writeCompleteFontDepsIfLoaded(
+                this.depsDoc.getMap('deps'),
+                fontJson
+            );
+        }, FONT_EDIT_ORIGIN);
+        return wrote;
     }
 
     encodeDocumentSet(): EncodedShard[] {

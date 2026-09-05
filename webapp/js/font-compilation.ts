@@ -25,6 +25,7 @@ import {
     timelineSpanEnd,
     timelineSpanStart
 } from './perf-timeline';
+import { ensureCoreUpdateHasGlyphsMap } from './change-bridge-ydoc';
 
 const console = new Logger('FontCompilation');
 
@@ -617,7 +618,9 @@ export class FontCompilation {
 
         const seedResult = await this.sendMessage({
             type: 'seedYdoc',
-            state: state instanceof Uint8Array ? state : new Uint8Array(state)
+            state: ensureCoreUpdateHasGlyphsMap(
+                state instanceof Uint8Array ? state : new Uint8Array(state)
+            )
         });
 
         if (seedResult?.error) {
@@ -648,9 +651,18 @@ export class FontCompilation {
         this.workerCacheDocumentReady = false;
 
         const seedWork = (async () => {
+            const seededDocuments = documents.map((document) => {
+                if (document.documentId !== 'font-core') {
+                    return document;
+                }
+                return {
+                    ...document,
+                    bytes: ensureCoreUpdateHasGlyphsMap(document.bytes)
+                };
+            });
             const seedResult = await this.sendMessage({
                 type: 'seedYdoc',
-                documents: documents.map((document) => ({
+                documents: seededDocuments.map((document) => ({
                     documentId: document.documentId,
                     state: document.bytes
                 }))

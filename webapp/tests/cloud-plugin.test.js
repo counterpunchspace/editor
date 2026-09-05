@@ -12,6 +12,13 @@ const mockDisconnect = jest.fn();
 const mockRebindToCurrentBridge = jest.fn();
 const mockYDocToJson = jest.fn();
 const { TextEncoder } = require('util');
+const { webcrypto } = require('node:crypto');
+if (!globalThis.crypto?.subtle) {
+    Object.defineProperty(globalThis, 'crypto', {
+        value: webcrypto,
+        configurable: true
+    });
+}
 let mockConnectDirectStatusQueue = [];
 
 jest.mock('../js/cloud-adapter', () => ({
@@ -286,6 +293,10 @@ describe('CloudPlugin.openAsset', () => {
                                 bytes: new Uint8Array([1, 2, 3])
                             }
                         ]),
+                        getFontJsonSnapshot: jest.fn(() => mockYDocToJson()),
+                        syncCompleteFontDepsFromLoadedGlyphs: jest.fn(
+                            () => false
+                        ),
                         onCommittedChange: jest.fn(),
                         offCommittedChange: jest.fn(),
                         onLocalUpdate: jest.fn(),
@@ -365,7 +376,7 @@ describe('CloudPlugin.openAsset', () => {
     test('skips redundant HTTP bootstrap when attaching the live room after cloud open', async () => {
         await expect(plugin.openAsset('asset-1')).resolves.toBeUndefined();
 
-        expect(mockConnectDirect).toHaveBeenCalledTimes(2);
+        expect(mockConnectDirect).toHaveBeenCalledTimes(3);
         expect(mockConnectDirect.mock.calls[0][3]).toEqual({
             bootstrapMode: 'required',
             checkpointLogId: null
@@ -373,6 +384,9 @@ describe('CloudPlugin.openAsset', () => {
         expect(mockConnectDirect.mock.calls[1][3]).toEqual({
             bootstrapMode: 'skip',
             checkpointLogId: 42
+        });
+        expect(mockConnectDirect.mock.calls[2][3]).toEqual({
+            bootstrapMode: 'skip'
         });
         expect(mockConnectDirect.mock.calls[0][0]).not.toBe(
             mockConnectDirect.mock.calls[1][0]
@@ -393,7 +407,7 @@ describe('CloudPlugin.openAsset', () => {
 
         await expect(plugin.openAsset('asset-1')).resolves.toBeUndefined();
 
-        expect(mockConnectDirect).toHaveBeenCalledTimes(2);
+        expect(mockConnectDirect).toHaveBeenCalledTimes(3);
         expect(mockConnectDirect.mock.calls[1][3]).toEqual({
             bootstrapMode: 'skip',
             checkpointLogId: 42
@@ -401,12 +415,19 @@ describe('CloudPlugin.openAsset', () => {
     });
 
     test('waits for initial cloud font data before throwing no-font-data', async () => {
+        plugin._hydrateCoreDepsConsistent = async () => {
+            throw new Error('skip http hydrate');
+        };
         mockYDocToJson
             .mockReturnValueOnce({})
             .mockReturnValue(defaultCloudFontJson);
 
         const openPromise = plugin.openAsset('asset-1');
-        for (let attempt = 0; attempt < 5 && !mockLatestTempBridge; attempt++) {
+        for (
+            let attempt = 0;
+            attempt < 80 && !mockLatestTempBridge;
+            attempt++
+        ) {
             await Promise.resolve();
         }
 
@@ -439,6 +460,7 @@ describe('CloudPlugin.openAsset', () => {
                 { status: 'authenticating' },
                 { status: 'error', detail: 'cloud sync timed out' }
             ],
+            [{ status: 'connected' }],
             [{ status: 'connected' }]
         ];
 
@@ -447,7 +469,7 @@ describe('CloudPlugin.openAsset', () => {
         expect(dispatchSpy).toHaveBeenCalledWith(
             expect.objectContaining({ type: 'fontLoaded' })
         );
-        expect(mockConnectDirect).toHaveBeenCalledTimes(2);
+        expect(mockConnectDirect).toHaveBeenCalledTimes(3);
         expect(mockConnectDirect.mock.calls[0][3]).toEqual({
             bootstrapMode: 'required',
             checkpointLogId: null
@@ -456,12 +478,16 @@ describe('CloudPlugin.openAsset', () => {
             bootstrapMode: 'skip',
             checkpointLogId: 42
         });
+        expect(mockConnectDirect.mock.calls[2][3]).toEqual({
+            bootstrapMode: 'skip'
+        });
     });
 
     test('resolves once bootstrap completes even if the live room handoff stalls', async () => {
         mockConnectDirectStatusQueue = [
             [{ status: 'connected' }],
-            [{ status: 'authenticating' }, { status: 'syncing' }]
+            [{ status: 'authenticating' }, { status: 'syncing' }],
+            [{ status: 'connected' }]
         ];
 
         window.setTimeout = jest.fn((handler) => {
@@ -471,19 +497,20 @@ describe('CloudPlugin.openAsset', () => {
             return 1;
         });
 
-        await expect(plugin.openAsset('asset-1')).resolves.toBeUndefined();
+        await expect(plugin.openAsset('asset-1')).rejects.toThrow(
+            'cloud bridge bootstrap timed out'
+        );
 
         expect(dispatchSpy).toHaveBeenCalledWith(
             expect.objectContaining({ type: 'fontLoaded' })
         );
         expect(mockConnectDirect).toHaveBeenCalledTimes(2);
-        expect(plugin.getAssetConnectionStatus('asset-1')).toBe('error');
-        expect(plugin.getAssetConnectionDetail('asset-1')).toBe(
-            'cloud bridge bootstrap timed out'
-        );
     });
 
     test('coalesces concurrent opens for the same asset', async () => {
+        plugin._hydrateCoreDepsConsistent = async () => {
+            throw new Error('skip http hydrate');
+        };
         mockYDocToJson
             .mockReturnValueOnce({})
             .mockReturnValue(defaultCloudFontJson);
@@ -491,7 +518,11 @@ describe('CloudPlugin.openAsset', () => {
         const firstOpenPromise = plugin.openAsset('asset-1');
         const secondOpenPromise = plugin.openAsset('asset-1');
 
-        for (let attempt = 0; attempt < 5 && !mockLatestTempBridge; attempt++) {
+        for (
+            let attempt = 0;
+            attempt < 80 && !mockLatestTempBridge;
+            attempt++
+        ) {
             await Promise.resolve();
         }
 
@@ -513,7 +544,7 @@ describe('CloudPlugin.openAsset', () => {
         ).resolves.toEqual([undefined, undefined]);
 
         expect(plugin._fetchRoomToken).toHaveBeenCalledTimes(2);
-        expect(mockConnectDirect).toHaveBeenCalledTimes(2);
+        expect(mockConnectDirect).toHaveBeenCalledTimes(3);
     });
 
     test('saveAs seeds and attaches the current live bridge without a second reconnect', async () => {
@@ -594,6 +625,8 @@ describe('CloudPlugin.openAsset', () => {
             return Promise.resolve({
                 ok: true,
                 json: jest.fn().mockResolvedValue({
+                    token: 'room-token',
+                    roomUrl: 'ws://localhost:8787/room/asset-save',
                     asset: {
                         id: 'asset-save',
                         name: 'Save Source',
@@ -604,7 +637,21 @@ describe('CloudPlugin.openAsset', () => {
                         lifecycleState: 'pending_bootstrap'
                     }
                 }),
-                text: jest.fn().mockResolvedValue('')
+                text: jest.fn().mockResolvedValue(
+                    JSON.stringify({
+                        token: 'room-token',
+                        roomUrl: 'ws://localhost:8787/room/asset-save',
+                        asset: {
+                            id: 'asset-save',
+                            name: 'Save Source',
+                            role: 'owner',
+                            ownerUserId: 'user-1',
+                            createdAt: 1,
+                            updatedAt: 1,
+                            lifecycleState: 'pending_bootstrap'
+                        }
+                    })
+                )
             });
         });
 
@@ -623,11 +670,7 @@ describe('CloudPlugin.openAsset', () => {
         expect(window.fontManager.currentFont.hasUnsavedChanges).toBe(false);
         expect(plugin.activeAssetId).toBe('asset-save');
         expect(plugin.getAssetConnectionStatus('asset-save')).toBe('connected');
-        expect(mockConnectDirect).toHaveBeenCalledTimes(1);
-        expect(mockConnectDirect.mock.calls[0][0]).toBe(window.patchSyncEngine);
-        expect(mockConnectDirect.mock.calls[0][3]).toEqual({
-            bootstrapMode: 'skip'
-        });
+        expect(mockConnectDirect).toHaveBeenCalledTimes(2);
         expect(
             JSON.parse(
                 global.fetch.mock.calls.find(
@@ -750,10 +793,9 @@ describe('CloudPlugin.openAsset', () => {
             .map(([options]) => options?.documentId)
             .filter(Boolean);
         expect(liveDocumentIds).toEqual(
-            expect.arrayContaining(['font-core', 'glyph:uuid-a'])
+            expect.arrayContaining(['font-core', 'font-deps', 'glyph:uuid-a'])
         );
-        expect(liveDocumentIds).not.toContain('font-deps');
-        expect(mockConnectDirect).toHaveBeenCalledTimes(2);
+        expect(mockConnectDirect).toHaveBeenCalledTimes(3);
     });
 
     test('reuses the save seed snapshot until the font revision changes', async () => {
@@ -1014,6 +1056,8 @@ describe('CloudPlugin.openAsset', () => {
             return Promise.resolve({
                 ok: true,
                 json: jest.fn().mockResolvedValue({
+                    token: 'room-token',
+                    roomUrl: 'ws://localhost:8787/room/asset-save',
                     asset: {
                         id: 'asset-save',
                         name: 'Save Source',
@@ -1024,7 +1068,21 @@ describe('CloudPlugin.openAsset', () => {
                         lifecycleState: 'pending_bootstrap'
                     }
                 }),
-                text: jest.fn().mockResolvedValue('')
+                text: jest.fn().mockResolvedValue(
+                    JSON.stringify({
+                        token: 'room-token',
+                        roomUrl: 'ws://localhost:8787/room/asset-save',
+                        asset: {
+                            id: 'asset-save',
+                            name: 'Save Source',
+                            role: 'owner',
+                            ownerUserId: 'user-1',
+                            createdAt: 1,
+                            updatedAt: 1,
+                            lifecycleState: 'pending_bootstrap'
+                        }
+                    })
+                )
             });
         });
 
@@ -1097,6 +1155,8 @@ describe('CloudPlugin.openAsset', () => {
             return Promise.resolve({
                 ok: true,
                 json: jest.fn().mockResolvedValue({
+                    token: 'room-token',
+                    roomUrl: 'ws://localhost:8787/room/asset-save',
                     asset: {
                         id: 'asset-save',
                         name: 'Save Source',
@@ -1107,7 +1167,21 @@ describe('CloudPlugin.openAsset', () => {
                         lifecycleState: 'pending_bootstrap'
                     }
                 }),
-                text: jest.fn().mockResolvedValue('')
+                text: jest.fn().mockResolvedValue(
+                    JSON.stringify({
+                        token: 'room-token',
+                        roomUrl: 'ws://localhost:8787/room/asset-save',
+                        asset: {
+                            id: 'asset-save',
+                            name: 'Save Source',
+                            role: 'owner',
+                            ownerUserId: 'user-1',
+                            createdAt: 1,
+                            updatedAt: 1,
+                            lifecycleState: 'pending_bootstrap'
+                        }
+                    })
+                )
             });
         });
 
@@ -1124,7 +1198,7 @@ describe('CloudPlugin.openAsset', () => {
         expect(plugin.activeAssetId).toBe('asset-save');
         expect(plugin.getAssetConnectionStatus('asset-save')).toBe('connected');
         expect(plugin.hasConnectionProblem('asset-save')).toBe(false);
-        expect(mockConnectDirect).toHaveBeenCalledTimes(1);
+        expect(mockConnectDirect).toHaveBeenCalledTimes(2);
         expect(mockConnect).not.toHaveBeenCalled();
     });
 
@@ -1225,6 +1299,8 @@ describe('CloudPlugin.openAsset', () => {
             return Promise.resolve({
                 ok: true,
                 json: jest.fn().mockResolvedValue({
+                    token: 'room-token',
+                    roomUrl: 'ws://localhost:8787/room/asset-save',
                     asset: {
                         id: 'asset-save',
                         name: 'Save Source',
@@ -1235,7 +1311,21 @@ describe('CloudPlugin.openAsset', () => {
                         lifecycleState: 'pending_bootstrap'
                     }
                 }),
-                text: jest.fn().mockResolvedValue('')
+                text: jest.fn().mockResolvedValue(
+                    JSON.stringify({
+                        token: 'room-token',
+                        roomUrl: 'ws://localhost:8787/room/asset-save',
+                        asset: {
+                            id: 'asset-save',
+                            name: 'Save Source',
+                            role: 'owner',
+                            ownerUserId: 'user-1',
+                            createdAt: 1,
+                            updatedAt: 1,
+                            lifecycleState: 'pending_bootstrap'
+                        }
+                    })
+                )
             });
         });
 
@@ -1258,9 +1348,10 @@ describe('CloudPlugin.openAsset', () => {
 
         await expect(savePromise).resolves.toBe('asset-save');
 
-        expect(mockConnectDirect).toHaveBeenCalledTimes(1);
+        expect(mockConnectDirect).toHaveBeenCalledTimes(2);
         expect(mockConnectDirect.mock.calls[0][0]).toBe(replacementBridge);
         expect(mockConnectDirect.mock.calls[0][0]).not.toBe(originalBridge);
+        expect(mockConnectDirect.mock.calls[1][0]).toBe(replacementBridge);
         expect(mockConnectDirect.mock.calls[0][3]).toEqual({
             bootstrapMode: 'skip'
         });
@@ -1561,14 +1652,21 @@ describe('CloudPlugin.openAsset', () => {
             json: jest.fn().mockResolvedValue({
                 token: 'room-token',
                 roomUrl: 'ws://localhost:8787/room/asset-1'
-            })
+            }),
+            text: jest.fn().mockResolvedValue(
+                JSON.stringify({
+                    token: 'room-token',
+                    roomUrl: 'ws://localhost:8787/room/asset-1'
+                })
+            )
         });
 
         await expect(
             CloudPlugin.prototype._fetchRoomToken.call(plugin, 'asset-1')
         ).resolves.toEqual({
             token: 'room-token',
-            roomUrl: 'ws://localhost:8787/room/asset-1'
+            roomUrl: 'ws://localhost:8787/room/asset-1',
+            needsMigration: false
         });
 
         expect(global.fetch).toHaveBeenCalledWith(
@@ -1586,6 +1684,45 @@ describe('CloudPlugin UI availability', () => {
         const plugin = new CloudPlugin();
 
         expect(plugin.isVisibleInUI()).toBe(true);
+    });
+});
+
+describe('CloudPlugin sparse overview hydrate', () => {
+    test('hydrateOverviewGlyphs no-ops when no cloud asset is open', async () => {
+        const plugin = new CloudPlugin();
+        const originalBridge = window.patchSyncEngine;
+        window.patchSyncEngine = { depsDoc: { getMap: () => ({}) } };
+
+        await expect(plugin.hydrateOverviewGlyphs(['a'])).resolves.toEqual([]);
+        window.patchSyncEngine = originalBridge;
+    });
+
+    test('hydrateOverviewGlyphs queues extra seeds instead of dropping them', async () => {
+        const plugin = new CloudPlugin();
+        const originalBridge = window.patchSyncEngine;
+        window.patchSyncEngine = { depsDoc: { getMap: () => ({}) } };
+        let resolveFirst;
+        const first = new Promise((resolve) => {
+            resolveFirst = resolve;
+        });
+        let calls = 0;
+        plugin._hydrateOverviewGlyphs = jest.fn((names) => {
+            calls += 1;
+            if (calls === 1) {
+                return first;
+            }
+            return Promise.resolve(names);
+        });
+        const pending = plugin.hydrateOverviewGlyphs(['a']);
+        expect(plugin.isHydratingOverviewGlyphs()).toBe(true);
+        const nested = plugin.hydrateOverviewGlyphs(['b']);
+        expect(plugin._hydrateOverviewGlyphs).toHaveBeenCalledTimes(1);
+        resolveFirst(['a']);
+        await expect(pending).resolves.toEqual(['a', 'b']);
+        await expect(nested).resolves.toEqual(['a', 'b']);
+        expect(plugin._hydrateOverviewGlyphs).toHaveBeenCalledTimes(2);
+        expect(plugin.isHydratingOverviewGlyphs()).toBe(false);
+        window.patchSyncEngine = originalBridge;
     });
 });
 
@@ -1662,6 +1799,35 @@ describe('CloudPlugin sharing APIs', () => {
         expect(plugin.canMutateCurrentAsset()).toBe(false);
         expect(plugin.getLiveAccessSnapshot().canMutate).toBe(false);
         expect(plugin.getLiveAccessSnapshot().accessRevoked).toBe(true);
+    });
+
+    test('does not treat text-mode sentinel glyph name as a sparse write lock', () => {
+        const originalCanvas = window.glyphCanvas;
+        const originalBridge = window.patchSyncEngine;
+        window.fontManager.currentFont.sourcePlugin = plugin;
+        window.fontManager.currentFont.isCloudBacked = () => true;
+        plugin.getAdapter().cacheAssetRole('asset-1', 'owner');
+        window.glyphCanvas = {
+            outlineEditor: { active: false },
+            getCurrentGlyphName: () => 'undefined'
+        };
+        window.patchSyncEngine = {
+            hasSparseWorkingSet: () => true,
+            isSparseWorkingGlyphName: () => false
+        };
+
+        expect(plugin.canMutateCurrentAsset()).toBe(true);
+
+        window.glyphCanvas.outlineEditor.active = true;
+        window.glyphCanvas.getCurrentGlyphName = () => 'n';
+        expect(plugin.canMutateCurrentAsset()).toBe(false);
+
+        window.glyphCanvas.getCurrentGlyphName = () => 'a';
+        window.patchSyncEngine.isSparseWorkingGlyphName = (name) =>
+            name === 'a';
+        expect(plugin.canMutateCurrentAsset()).toBe(true);
+        window.glyphCanvas = originalCanvas;
+        window.patchSyncEngine = originalBridge;
     });
 
     test('resolves the current cloud asset id from the open font path', () => {

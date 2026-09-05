@@ -8,7 +8,8 @@ import * as Y from 'yjs';
 import {
     catalogFromCoreJson,
     ensureImmutableGlyphId,
-    listGlyphRecords
+    listGlyphRecords,
+    liveCatalogGlyphIds
 } from './cloud-glyph-catalog';
 
 export type FontDepEdgeKind = 'component' | 'metrics-key' | 'both';
@@ -49,6 +50,29 @@ function mergeEdgeKind(
 
 function collectShapeReferences(glyph: Record<string, unknown>): string[] {
     const refs: string[] = [];
+    const visitShape = (shape: unknown) => {
+        const shapeRecord = asRecord(shape);
+        if (!shapeRecord) {
+            return;
+        }
+        const nested = asRecord(shapeRecord.Component);
+        const data = asRecord(shapeRecord.data);
+        const reference =
+            (typeof shapeRecord.reference === 'string' &&
+                shapeRecord.reference) ||
+            (typeof nested?.reference === 'string' && nested.reference) ||
+            (typeof data?.reference === 'string' && data.reference) ||
+            '';
+        if (reference) {
+            refs.push(reference);
+        }
+        const nestedShapes = Array.isArray(shapeRecord.shapes)
+            ? shapeRecord.shapes
+            : [];
+        for (const child of nestedShapes) {
+            visitShape(child);
+        }
+    };
     const layers = Array.isArray(glyph.layers) ? glyph.layers : [];
     for (const layer of layers) {
         const layerRecord = asRecord(layer);
@@ -59,22 +83,23 @@ function collectShapeReferences(glyph: Record<string, unknown>): string[] {
             ? layerRecord.shapes
             : [];
         for (const shape of shapes) {
-            const shapeRecord = asRecord(shape);
-            if (!shapeRecord) {
-                continue;
-            }
-            const nested = asRecord(shapeRecord.Component);
-            const reference =
-                (typeof shapeRecord.reference === 'string' &&
-                    shapeRecord.reference) ||
-                (typeof nested?.reference === 'string' && nested.reference) ||
-                '';
-            if (reference) {
-                refs.push(reference);
-            }
+            visitShape(shape);
         }
     }
     return refs;
+}
+
+function pushFormatSpecificMetricKeys(
+    record: Record<string, unknown> | null,
+    pushKey: (value: unknown) => void
+): void {
+    const format = asRecord(record?.format_specific);
+    if (!format) {
+        return;
+    }
+    pushKey(format.metric_left);
+    pushKey(format.metric_right);
+    pushKey(format.metric_width);
 }
 
 function collectMetricsKeyStrings(glyph: Record<string, unknown>): string[] {
@@ -86,6 +111,8 @@ function collectMetricsKeyStrings(glyph: Record<string, unknown>): string[] {
     };
     pushKey(glyph.leftMetricsKey);
     pushKey(glyph.rightMetricsKey);
+    pushKey(glyph.widthMetricsKey);
+    pushFormatSpecificMetricKeys(glyph, pushKey);
     const layers = Array.isArray(glyph.layers) ? glyph.layers : [];
     for (const layer of layers) {
         const layerRecord = asRecord(layer);
@@ -94,6 +121,8 @@ function collectMetricsKeyStrings(glyph: Record<string, unknown>): string[] {
         }
         pushKey(layerRecord.leftMetricsKey);
         pushKey(layerRecord.rightMetricsKey);
+        pushKey(layerRecord.widthMetricsKey);
+        pushFormatSpecificMetricKeys(layerRecord, pushKey);
     }
     return keys;
 }
@@ -144,13 +173,44 @@ function isFiniteNumberText(value: string): boolean {
     return /^-?\d+(?:\.\d+)?$/.test(value);
 }
 
+export function catalogEntriesForDepsParse(
+    fontJson: Record<string, unknown>
+): Array<{ glyphId: string; name: string }> {
+    const owned = catalogFromCoreJson(fontJson);
+    if (owned) {
+        return Object.values(owned.glyphCatalog)
+            .filter(
+                (entry) =>
+                    Boolean(entry.glyphId) &&
+                    Boolean(entry.name) &&
+                    entry.deleted !== true
+            )
+            .map((entry) => ({
+                glyphId: entry.glyphId,
+                name: entry.name
+            }));
+    }
+    return listGlyphRecords(fontJson)
+        .map((glyph) => ({
+            glyphId: ensureImmutableGlyphId(glyph),
+            name: String(glyph.name || '')
+        }))
+        .filter((entry) => entry.name);
+}
+
 export function buildFontDepsIndex(
     fontJson: Record<string, unknown>
 ): FontDepsIndex {
     const glyphs = listGlyphRecords(fontJson);
     const idByName = new Map<string, string>();
+    for (const entry of catalogEntriesForDepsParse(fontJson)) {
+        idByName.set(entry.name, entry.glyphId);
+    }
     for (const glyph of glyphs) {
-        idByName.set(String(glyph.name || ''), ensureImmutableGlyphId(glyph));
+        const name = String(glyph.name || '');
+        if (name) {
+            idByName.set(name, ensureImmutableGlyphId(glyph));
+        }
     }
     const namesByLength = [...idByName.keys()].sort(
         (left, right) => right.length - left.length
@@ -282,6 +342,166 @@ export function readFontDepsIndex(depsMap: Y.Map<unknown>): FontDepsIndex {
     return { edges, sourceRevision };
 }
 
+/**
+ * Directed forward close over component references stored on glyph bodies.
+ * Walks every hop: `edieresis` → `dieresiscomb` → `dotaccentcomb`.
+ * Glyphs whose bodies are not in `glyphs` still enter the set (so they can
+ * be fetched) but cannot expose a further hop until a later pass.
+ */
+export function closeForwardComponentIds(options: {
+    glyphs: Array<Record<string, unknown>>;
+    catalog: Array<{ glyphId: string; name: string }>;
+    seedIds: string[];
+}): string[] {
+    const idByName = new Map(
+        options.catalog.map((entry) => [entry.name, entry.glyphId])
+    );
+    const nameById = new Map(
+        options.catalog.map((entry) => [entry.glyphId, entry.name])
+    );
+    const glyphById = new Map<string, Record<string, unknown>>();
+    const glyphByName = new Map<string, Record<string, unknown>>();
+    for (const glyph of options.glyphs) {
+        const id = ensureImmutableGlyphId(glyph);
+        const name = String(glyph.name || '');
+        if (id) {
+            glyphById.set(id, glyph);
+        }
+        if (name) {
+            glyphByName.set(name, glyph);
+        }
+    }
+    const closed = new Set(options.seedIds.filter(Boolean));
+    const queue = [...closed];
+    while (queue.length) {
+        const current = queue.pop()!;
+        const glyph =
+            glyphById.get(current) ||
+            glyphByName.get(nameById.get(current) || '');
+        if (!glyph) {
+            continue;
+        }
+        for (const name of collectShapeReferences(glyph)) {
+            const targetId = idByName.get(name);
+            if (!targetId || closed.has(targetId)) {
+                continue;
+            }
+            closed.add(targetId);
+            queue.push(targetId);
+        }
+    }
+    return [...closed];
+}
+
+/**
+ * Glyph names that reverse* from the seeds over font-deps. Composites such as
+ * `adieresis` live as sources (`adieresis → a`), so cmap seed `a` only finds
+ * them by inverting this graph — not by walking loaded glyph bodies.
+ */
+export function closeReverseComponentNamesFromDeps(options: {
+    edges: Record<string, Record<string, FontDepEdgeKind>>;
+    seedNames: string[];
+    catalog: Array<{ glyphId: string; name: string }>;
+}): string[] {
+    const nameToId = new Map(
+        options.catalog.map((entry) => [entry.name, entry.glyphId])
+    );
+    const idToName = new Map(
+        options.catalog.map((entry) => [entry.glyphId, entry.name])
+    );
+    const seedNameSet = new Set(options.seedNames);
+    const seedIds = [
+        ...new Set(
+            options.seedNames
+                .map((name) => nameToId.get(name))
+                .filter((id): id is string => Boolean(id))
+        )
+    ];
+    if (!seedIds.length) {
+        return [];
+    }
+    const working = closeSet(seedIds, invertForwardEdges(options.edges));
+    return [...working]
+        .map((id) => idToName.get(id))
+        .filter((name): name is string => typeof name === 'string')
+        .filter((name) => !seedNameSet.has(name));
+}
+
+export function closeComponentNamesFromFontJson(options: {
+    fontJson: Record<string, unknown>;
+    seedNames: string[];
+}): string[] {
+    const catalog = catalogEntriesForDepsParse(options.fontJson);
+    const nameToId = new Map(
+        catalog.map((entry) => [entry.name, entry.glyphId])
+    );
+    const idToName = new Map(
+        catalog.map((entry) => [entry.glyphId, entry.name])
+    );
+    const seedIds = [
+        ...new Set(
+            options.seedNames
+                .map((name) => nameToId.get(name))
+                .filter((id): id is string => Boolean(id))
+        )
+    ];
+    if (!seedIds.length) {
+        return [];
+    }
+    const seedNameSet = new Set(options.seedNames);
+    return closeForwardComponentIds({
+        glyphs: listGlyphRecords(options.fontJson),
+        catalog,
+        seedIds
+    })
+        .map((id) => idToName.get(id))
+        .filter((name): name is string => typeof name === 'string')
+        .filter((name) => !seedNameSet.has(name));
+}
+
+export function expandSparsePlanWithLoadedComponents(options: {
+    plan: SparseHydrationPlan;
+    glyphs: Array<Record<string, unknown>>;
+    catalog: Array<{ glyphId: string; name: string }>;
+    catalogIds: string[];
+    loadedIds: Iterable<string>;
+}): SparseHydrationPlan {
+    const catalogIdSet = new Set(options.catalogIds);
+    const loaded = new Set(options.loadedIds);
+    const workingSet = new Set(options.plan.workingIds);
+    const componentIds = closeForwardComponentIds({
+        glyphs: options.glyphs,
+        catalog: options.catalog,
+        seedIds: options.plan.workingIds
+    }).filter((id) => catalogIdSet.has(id));
+    const hiddenIds = [
+        ...new Set([
+            ...options.plan.hiddenIds,
+            ...componentIds.filter((id) => !workingSet.has(id))
+        ])
+    ];
+    const loadIds = [...new Set([...options.plan.workingIds, ...hiddenIds])];
+    return {
+        workingIds: options.plan.workingIds,
+        hiddenIds,
+        loadIds,
+        missingIds: loadIds.filter((id) => !loaded.has(id))
+    };
+}
+
+export function mergeFontDepEdges(
+    base: Record<string, Record<string, FontDepEdgeKind>>,
+    extra: Record<string, Record<string, FontDepEdgeKind>>
+): Record<string, Record<string, FontDepEdgeKind>> {
+    const merged: Record<string, Record<string, FontDepEdgeKind>> = {};
+    for (const source of [base, extra]) {
+        for (const [glyphId, targets] of Object.entries(source)) {
+            merged[glyphId] = { ...(merged[glyphId] || {}), ...targets };
+        }
+    }
+    return merged;
+}
+
 export function invertForwardEdges(
     edges: Record<string, Record<string, FontDepEdgeKind>>
 ): Record<string, string[]> {
@@ -324,24 +544,116 @@ function closeSet(
     return closed;
 }
 
+export type SparseHydrationPartition = {
+    workingIds: string[];
+    hiddenIds: string[];
+    loadIds: string[];
+};
+
+export type SparseHydrationPlan = SparseHydrationPartition & {
+    missingIds: string[];
+};
+
 /**
- * Sparse hydration working set:
- * OT(seeds) ∪ reverse*(seeds), then forward-close.
+ * Directed sparse close.
+ *
+ * Working: requested seeds ∪ prior working ∪ layout alts of *this* request,
+ * then reverse*(those). Those glyphs are shown hydrated and may be edited.
+ *
+ * Hidden: forward*(working) − working. Metrics sources (`n`, `l`) and foreign
+ * components (marks, `e`) are loaded for inference/drawing but stay uneditable
+ * until a later request promotes them. Do not reverse from hidden glyphs.
  * Do not GSUB-close the reverse set.
+ */
+export function computeSparseHydrationPartition(options: {
+    seedIds: string[];
+    layoutIds?: string[];
+    previousWorkingIds?: string[];
+    edges: Record<string, Record<string, FontDepEdgeKind>>;
+}): SparseHydrationPartition {
+    const workingSeeds = [
+        ...new Set([
+            ...(options.previousWorkingIds || []),
+            ...options.seedIds,
+            ...(options.layoutIds || [])
+        ])
+    ];
+    const working = closeSet(workingSeeds, invertForwardEdges(options.edges));
+    const hidden = [...closeSet([...working], options.edges)].filter(
+        (id) => !working.has(id)
+    );
+    const workingIds = [...working];
+    return {
+        workingIds,
+        hiddenIds: hidden,
+        loadIds: [...workingIds, ...hidden]
+    };
+}
+
+export function planSparseHydration(options: {
+    seedIds: string[];
+    layoutIds?: string[];
+    previousWorkingIds?: string[];
+    catalogIds: string[];
+    loadedIds?: Iterable<string>;
+    edges: Record<string, Record<string, FontDepEdgeKind>>;
+}): SparseHydrationPlan {
+    const catalog = new Set(options.catalogIds);
+    const seeds = options.seedIds.length ? options.seedIds : options.catalogIds;
+    const partition = computeSparseHydrationPartition({
+        seedIds: seeds,
+        layoutIds: options.layoutIds,
+        previousWorkingIds: options.previousWorkingIds,
+        edges: options.edges
+    });
+    const workingIds = partition.workingIds.filter((id) => catalog.has(id));
+    const hiddenIds = partition.hiddenIds.filter((id) => catalog.has(id));
+    const loadIds = [...new Set([...workingIds, ...hiddenIds])];
+    const loaded = new Set(options.loadedIds || []);
+    return {
+        workingIds,
+        hiddenIds,
+        loadIds,
+        missingIds: loadIds.filter((id) => !loaded.has(id))
+    };
+}
+
+/**
+ * IDs that must be resident (working ∪ hidden). Prefer
+ * `computeSparseHydrationPartition` / `planSparseHydration` when the caller
+ * needs the working/hidden split.
  */
 export function computeSparseHydrationSet(options: {
     seedIds: string[];
     layoutIds?: string[];
+    previousWorkingIds?: string[];
     edges: Record<string, Record<string, FontDepEdgeKind>>;
 }): string[] {
-    const reverse = invertForwardEdges(options.edges);
-    const reverseClosed = closeSet(options.seedIds, reverse);
-    const forwardSeeds = new Set([
-        ...options.seedIds,
-        ...(options.layoutIds || []),
-        ...reverseClosed
-    ]);
-    return [...closeSet([...forwardSeeds], options.edges)];
+    return computeSparseHydrationPartition(options).loadIds;
+}
+
+/**
+ * When every live catalog glyph body is present, replace the denormalized
+ * projection with a full rebuild so reverse dependents survive sparse seed.
+ */
+export function writeCompleteFontDepsIfLoaded(
+    depsMap: Y.Map<unknown>,
+    fontJson: Record<string, unknown>
+): boolean {
+    const glyphs = listGlyphRecords(fontJson);
+    const owned = catalogFromCoreJson(fontJson);
+    if (!owned || !glyphs.length) {
+        return false;
+    }
+    const liveIds = liveCatalogGlyphIds(owned.glyphCatalog);
+    const loadedIds = new Set(
+        glyphs.map((glyph) => ensureImmutableGlyphId(glyph)).filter(Boolean)
+    );
+    if (liveIds.some((glyphId) => !loadedIds.has(glyphId))) {
+        return false;
+    }
+    writeFontDepsYMap(depsMap, buildFontDepsIndex(fontJson));
+    return true;
 }
 
 /**
@@ -352,17 +664,318 @@ export function glyphIdsForSparseHydration(options: {
     catalogIds: string[];
     seedIds?: string[];
     layoutIds?: string[];
+    previousWorkingIds?: string[];
+    loadedIds?: Iterable<string>;
     edges: Record<string, Record<string, FontDepEdgeKind>>;
 }): string[] {
-    const catalog = new Set(options.catalogIds);
-    const seeds = options.seedIds?.length
-        ? options.seedIds
-        : options.catalogIds;
-    return computeSparseHydrationSet({
-        seedIds: seeds,
+    return planSparseHydration({
+        catalogIds: options.catalogIds,
+        seedIds: options.seedIds || [],
         layoutIds: options.layoutIds,
+        previousWorkingIds: options.previousWorkingIds,
+        loadedIds: options.loadedIds,
         edges: options.edges
-    }).filter((id) => catalog.has(id));
+    }).loadIds;
+}
+
+const DEPS_WORKING_KEY = 'working';
+
+export function readWorkingGlyphIds(depsMap: Y.Map<unknown>): string[] {
+    const working = depsMap.get(DEPS_WORKING_KEY);
+    if (!(working instanceof Y.Map) || working.size === 0) {
+        return [];
+    }
+    const ids: string[] = [];
+    working.forEach((value, glyphId) => {
+        if (value === '1' && glyphId) {
+            ids.push(glyphId);
+        }
+    });
+    return ids;
+}
+
+export function writeWorkingGlyphIds(
+    depsMap: Y.Map<unknown>,
+    glyphIds: string[]
+): void {
+    replaceScalarMap(
+        ensureChildMap(depsMap, DEPS_WORKING_KEY),
+        Object.fromEntries(
+            [...new Set(glyphIds.filter(Boolean))].map((id) => [id, '1'])
+        )
+    );
+}
+
+/**
+ * Substitution targets of the requested seeds (`sub a by a.ss03`), not the
+ * rest of the lookup (`g`, `l`, `y` in the same ss03/ss04 feature).
+ */
+export function layoutSubstitutionIdsFromFeatureCode(options: {
+    featureCode: string;
+    seedIds: string[];
+    catalog: Array<{ glyphId: string; name: string }>;
+}): string[] {
+    return closeLayoutSubstitutionsFromFeatureCode(options);
+}
+
+/**
+ * Reachability close over GSUB `sub`/`rsub` rules: class rules, ligatures,
+ * multi-glyph ccmp decompositions, and init/medi/fina. Walks only rules that
+ * consume glyphs already in the set, so `sub a by a.ss03` does not pull `g`.
+ */
+export function closeLayoutSubstitutionsFromFeatureCode(options: {
+    featureCode: string;
+    seedIds: string[];
+    catalog: Array<{ glyphId: string; name: string }>;
+}): string[] {
+    const nameToId = new Map(
+        options.catalog.map((entry) => [entry.name, entry.glyphId])
+    );
+    const idToName = new Map(
+        options.catalog.map((entry) => [entry.glyphId, entry.name])
+    );
+    const catalogNames = new Set(
+        options.catalog.map((entry) => entry.name).filter(Boolean)
+    );
+    const seedNames = [
+        ...new Set(
+            options.seedIds
+                .map((id) => idToName.get(id))
+                .filter((name): name is string => Boolean(name))
+        )
+    ];
+    if (!seedNames.length || !options.featureCode) {
+        return [];
+    }
+    const closedNames = closeSubstitutionNames(
+        options.featureCode,
+        seedNames,
+        catalogNames
+    );
+    const ids: string[] = [];
+    const seen = new Set<string>();
+    for (const name of closedNames) {
+        if (seedNames.includes(name)) {
+            continue;
+        }
+        const id = nameToId.get(name);
+        if (!id || options.seedIds.includes(id) || seen.has(id)) {
+            continue;
+        }
+        seen.add(id);
+        ids.push(id);
+    }
+    return ids;
+}
+
+type SubstitutionRule = {
+    inputs: string[][];
+    outputs: string[][];
+};
+
+function stripFeaComments(featureCode: string): string {
+    return featureCode.replace(/#[^\n]*/g, ' ');
+}
+
+function parseFeaClasses(
+    featureCode: string,
+    catalogNames: Set<string>
+): Map<string, string[]> {
+    const classes = new Map<string, string[]>();
+    const pattern = /@([A-Za-z0-9._-]+)\s*=\s*\[([^\]]*)\]/g;
+    let match: RegExpExecArray | null;
+    while ((match = pattern.exec(featureCode))) {
+        const members = tokenizeFeaGlyphList(match[2], classes, catalogNames);
+        classes.set(match[1], members.flat());
+    }
+    return classes;
+}
+
+function tokenizeFeaGlyphList(
+    raw: string,
+    classes: Map<string, string[]>,
+    catalogNames: Set<string>
+): string[][] {
+    const sequence: string[][] = [];
+    const tokens = raw.match(/@?[A-Za-z0-9._-]+/g) || [];
+    for (let token of tokens) {
+        if (token.endsWith("'")) {
+            token = token.slice(0, -1);
+        }
+        if (token.startsWith('@')) {
+            const members = classes.get(token.slice(1));
+            if (members?.length) {
+                sequence.push([...members]);
+            }
+            continue;
+        }
+        if (catalogNames.has(token)) {
+            sequence.push([token]);
+        }
+    }
+    return sequence;
+}
+
+function parseBracketGroups(side: string): string[] {
+    const groups: string[] = [];
+    let rest = side;
+    while (rest.length) {
+        const start = rest.indexOf('[');
+        if (start < 0) {
+            if (rest.trim()) {
+                groups.push(rest);
+            }
+            break;
+        }
+        if (start > 0) {
+            groups.push(rest.slice(0, start));
+        }
+        const end = rest.indexOf(']', start);
+        if (end < 0) {
+            groups.push(rest.slice(start));
+            break;
+        }
+        groups.push(rest.slice(start, end + 1));
+        rest = rest.slice(end + 1);
+    }
+    return groups;
+}
+
+function parseFeaSubstitutionSide(
+    side: string,
+    classes: Map<string, string[]>,
+    catalogNames: Set<string>
+): string[][] {
+    const sequence: string[][] = [];
+    for (const group of parseBracketGroups(side)) {
+        const trimmed = group.trim();
+        if (!trimmed) {
+            continue;
+        }
+        if (trimmed.startsWith('[') && trimmed.endsWith(']')) {
+            const alts = tokenizeFeaGlyphList(
+                trimmed.slice(1, -1),
+                classes,
+                catalogNames
+            ).flat();
+            if (alts.length) {
+                sequence.push(alts);
+            }
+            continue;
+        }
+        sequence.push(...tokenizeFeaGlyphList(trimmed, classes, catalogNames));
+    }
+    return sequence;
+}
+
+function parseFeaSubstitutionRules(
+    featureCode: string,
+    catalogNames: Set<string>
+): SubstitutionRule[] {
+    const stripped = stripFeaComments(featureCode);
+    const classes = parseFeaClasses(stripped, catalogNames);
+    const rules: SubstitutionRule[] = [];
+    const pattern =
+        /(ignore\s+)?(?:reversesub|rsub|substitute|sub)\s+([^;]+);/gi;
+    let match: RegExpExecArray | null;
+    while ((match = pattern.exec(stripped))) {
+        if (match[1]) {
+            continue;
+        }
+        const clause = match[2];
+        const split = clause.split(/\s+by\s+/i);
+        if (split.length !== 2) {
+            continue;
+        }
+        const inputs = parseFeaSubstitutionSide(
+            split[0],
+            classes,
+            catalogNames
+        );
+        const outputs = parseFeaSubstitutionSide(
+            split[1],
+            classes,
+            catalogNames
+        );
+        if (!inputs.length || !outputs.length) {
+            continue;
+        }
+        rules.push({ inputs, outputs });
+    }
+    return rules;
+}
+
+function ruleOutputsForClosedSet(
+    rule: SubstitutionRule,
+    closed: Set<string>
+): string[] {
+    const triggered = rule.inputs.every((alts) =>
+        alts.some((name) => closed.has(name))
+    );
+    if (!triggered) {
+        return [];
+    }
+    if (
+        rule.inputs.length === 1 &&
+        rule.outputs.length === 1 &&
+        rule.inputs[0].length === rule.outputs[0].length &&
+        rule.inputs[0].length > 1
+    ) {
+        const added: string[] = [];
+        for (let index = 0; index < rule.inputs[0].length; index++) {
+            if (closed.has(rule.inputs[0][index])) {
+                added.push(rule.outputs[0][index]);
+            }
+        }
+        return added;
+    }
+    return rule.outputs.flat();
+}
+
+function ruleLigaturePartners(
+    rule: SubstitutionRule,
+    closed: Set<string>
+): string[] {
+    if (rule.inputs.length < 2) {
+        return [];
+    }
+    // Class ligatures like `sub @Letters @Marks` would pull the whole font.
+    if (rule.inputs.some((alts) => alts.length > 16)) {
+        return [];
+    }
+    const someInputClosed = rule.inputs.some((alts) =>
+        alts.some((name) => closed.has(name))
+    );
+    if (!someInputClosed) {
+        return [];
+    }
+    return [...rule.inputs.flat(), ...rule.outputs.flat()];
+}
+
+function closeSubstitutionNames(
+    featureCode: string,
+    seedNames: string[],
+    catalogNames: Set<string>
+): Set<string> {
+    const closed = new Set(seedNames);
+    const rules = parseFeaSubstitutionRules(featureCode, catalogNames);
+    let grew = true;
+    while (grew) {
+        grew = false;
+        for (const rule of rules) {
+            const added = [
+                ...ruleOutputsForClosedSet(rule, closed),
+                ...ruleLigaturePartners(rule, closed)
+            ];
+            for (const name of added) {
+                if (!closed.has(name) && catalogNames.has(name)) {
+                    closed.add(name);
+                    grew = true;
+                }
+            }
+        }
+    }
+    return closed;
 }
 
 export type CloseLayoutFromFea = (
@@ -376,27 +989,97 @@ function defaultCloseLayoutFromFea(
     glyphNames: string[],
     seedNames: string[]
 ): string[] {
-    const wasm = require('../../wasm-dist/babelfont_fontc_web');
-    if (typeof wasm.close_layout_from_fea !== 'function') {
-        throw new TypeError('close_layout_from_fea is required');
+    try {
+        const wasm = require('../../wasm-dist/babelfont_fontc_web');
+        if (typeof wasm.close_layout_from_fea === 'function') {
+            const closed = JSON.parse(
+                wasm.close_layout_from_fea(
+                    featureCode,
+                    JSON.stringify(glyphNames),
+                    JSON.stringify(seedNames)
+                )
+            ) as string[];
+            if (Array.isArray(closed)) {
+                return closed;
+            }
+        }
+    } catch {
+        // Node tests and incomplete WASM builds fall back to the JS walker.
     }
-    const closed = JSON.parse(
-        wasm.close_layout_from_fea(
-            featureCode,
-            JSON.stringify(glyphNames),
-            JSON.stringify(seedNames)
-        )
-    ) as string[];
-    if (!Array.isArray(closed)) {
-        throw new TypeError('close_layout_from_fea must return a name array');
-    }
-    return closed;
+    return [
+        ...closeSubstitutionNames(featureCode, seedNames, new Set(glyphNames))
+    ];
 }
 
 /**
  * close_layout(seeds) from AFDKO feature text + catalog names.
  * OT stays on the user-chosen seeds; never close_layout the reverse set.
  */
+function feaBlockCode(value: unknown): string {
+    if (typeof value === 'string') {
+        return value;
+    }
+    const record = asRecord(value);
+    if (typeof record?.code === 'string') {
+        return record.code;
+    }
+    return '';
+}
+
+/**
+ * AFDKO text from babelfont `features`. Y.Doc snapshots store
+ * `features.features` as `[tag, codeString]` (see `fromYType`); on-disk JSON
+ * uses `[tag, { code }]`.
+ */
+export function afdkoFeatureCodeFromFontJson(
+    fontJson: Record<string, unknown>
+): string {
+    const features = fontJson.features;
+    if (typeof features === 'string') {
+        return features;
+    }
+    if (!features || typeof features !== 'object' || Array.isArray(features)) {
+        return '';
+    }
+    const record = features as {
+        classes?: Record<string, unknown>;
+        prefixes?: Record<string, unknown>;
+        features?: unknown[];
+    };
+    const parts: string[] = [];
+    for (const [className, classData] of Object.entries(record.classes || {})) {
+        parts.push(`@${className} = [${feaBlockCode(classData)}];\n`);
+    }
+    for (const [prefixName, prefix] of Object.entries(record.prefixes || {})) {
+        if (prefixName !== 'anonymous') {
+            parts.push(`# Prefix: ${prefixName}\n`);
+        }
+        const prefixCode = feaBlockCode(prefix);
+        if (prefixCode) {
+            parts.push(prefixCode);
+        }
+        parts.push('\n');
+    }
+    const featureEntries = Array.isArray(record.features)
+        ? record.features
+        : [];
+    for (const entry of featureEntries) {
+        const tag = Array.isArray(entry)
+            ? entry[0]
+            : typeof asRecord(entry)?.tag === 'string'
+              ? asRecord(entry)?.tag
+              : '';
+        const code = Array.isArray(entry)
+            ? feaBlockCode(entry[1])
+            : feaBlockCode(entry);
+        if (typeof tag !== 'string' || !tag) {
+            continue;
+        }
+        parts.push(`feature ${tag} {\n${code}\n} ${tag};\n`);
+    }
+    return parts.join('');
+}
+
 export function layoutGlyphIdsFromFeatureCode(options: {
     featureCode: string;
     seedIds: string[];
@@ -432,14 +1115,124 @@ export function layoutGlyphIdsFromFeatureCode(options: {
         [...nameToId.keys()],
         seedNameList
     );
+    const closedNames = new Set(
+        Array.isArray(closed)
+            ? closed.filter((name) => typeof name === 'string')
+            : []
+    );
+    for (const name of closeSubstitutionNames(
+        options.featureCode,
+        seedNameList,
+        new Set(nameToId.keys())
+    )) {
+        closedNames.add(name);
+    }
     const ids: string[] = [];
-    for (const name of closed) {
+    for (const name of closedNames) {
         const id = nameToId.get(name);
         if (id && !options.seedIds.includes(id)) {
             ids.push(id);
         }
     }
     return ids;
+}
+
+/**
+ * Catalog glyph IDs encoded by `text=` characters (Unicode cmap), in first
+ * appearance order. Unmapped codepoints are skipped.
+ */
+export function seedGlyphIdsFromText(
+    fontJson: Record<string, unknown>,
+    text: string
+): string[] {
+    if (!text) {
+        return [];
+    }
+    const owned = catalogFromCoreJson(fontJson);
+    if (!owned) {
+        return [];
+    }
+    const liveIds = new Set(liveCatalogGlyphIds(owned.glyphCatalog));
+    const ids: string[] = [];
+    const seen = new Set<string>();
+    for (const codepoint of codepointsFromText(text)) {
+        const members = owned.codepointIndex[String(codepoint)] || [];
+        for (const glyphId of members) {
+            if (!liveIds.has(glyphId) || seen.has(glyphId)) {
+                continue;
+            }
+            seen.add(glyphId);
+            ids.push(glyphId);
+        }
+    }
+    return ids;
+}
+
+function codepointsFromText(text: string): number[] {
+    const seen = new Set<number>();
+    const out: number[] = [];
+    const pushText = (value: string) => {
+        for (const character of value) {
+            const codepoint = character.codePointAt(0);
+            if (codepoint === undefined || seen.has(codepoint)) {
+                continue;
+            }
+            seen.add(codepoint);
+            out.push(codepoint);
+        }
+    };
+    pushText(text);
+    pushText(text.normalize('NFC'));
+    pushText(text.normalize('NFD'));
+    return out;
+}
+
+export function sparseHydrationSeedsFromText(
+    fontJson: Record<string, unknown>,
+    text: string
+): { seedIds: string[]; layoutIds: string[] } {
+    const seedIds = seedGlyphIdsFromText(fontJson, text);
+    if (!seedIds.length) {
+        return { seedIds, layoutIds: [] };
+    }
+    return {
+        seedIds,
+        layoutIds: layoutGlyphIdsFromFeatureCode({
+            featureCode: afdkoFeatureCodeFromFontJson(fontJson),
+            seedIds,
+            catalog: catalogEntriesForDepsParse(fontJson)
+        })
+    };
+}
+
+export function layoutSubstitutionNamesFromSeeds(options: {
+    fontJson: Record<string, unknown>;
+    seedNames: string[];
+}): string[] {
+    const catalog = catalogEntriesForDepsParse(options.fontJson);
+    const nameToId = new Map(
+        catalog.map((entry) => [entry.name, entry.glyphId])
+    );
+    const idToName = new Map(
+        catalog.map((entry) => [entry.glyphId, entry.name])
+    );
+    const seedIds = [
+        ...new Set(
+            options.seedNames
+                .map((name) => nameToId.get(name))
+                .filter((id): id is string => Boolean(id))
+        )
+    ];
+    if (!seedIds.length) {
+        return [];
+    }
+    return layoutGlyphIdsFromFeatureCode({
+        featureCode: afdkoFeatureCodeFromFontJson(options.fontJson),
+        seedIds,
+        catalog
+    })
+        .map((id) => idToName.get(id))
+        .filter((name): name is string => Boolean(name));
 }
 
 export function seedGlyphIdsFromCoreJson(

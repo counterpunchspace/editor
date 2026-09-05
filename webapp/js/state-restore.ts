@@ -156,6 +156,8 @@ export async function restoreStateFromUrl(
         // 3. Restore text buffer
         if (urlState.text) {
             window.stateManager.editor_text_buffer = urlState.text;
+        } else if (urlState.sparse === true) {
+            window.stateManager.editor_text_buffer = '';
         }
 
         // 4. Restore cursor position

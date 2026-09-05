@@ -161,6 +161,23 @@
     font-weight: bold;
 }
 
+.glyph-tile-cloud-icon {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    line-height: 1;
+    font-size: max(16px, calc(var(--tile-height) * 0.28));
+    color: var(--text-secondary);
+    pointer-events: none;
+    z-index: 1;
+}
+
+.glyph-tile-cloud-icon[hidden] {
+    display: none;
+}
+
 /* Legacy canvas inside tile (kept for compatibility) */
 .glyph-tile canvas {
     position: absolute;

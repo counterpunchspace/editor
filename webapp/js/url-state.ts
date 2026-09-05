@@ -22,6 +22,8 @@ export interface AppState {
     features?: string | null; // Comma-separated list of active features
     lineheight?: number | null;
     align?: TextAlign | null;
+    /** Cloud sparse residency. `true` writes `sparse=true`; `false` removes it. */
+    sparse?: boolean | null;
 }
 
 function mustPercentEncodeQueryChar(ch: string, isKey: boolean): boolean {
@@ -131,6 +133,12 @@ export function updateUrlState(state: AppState): void {
     for (const [key, value] of Object.entries(state)) {
         if (value === null || value === undefined) {
             searchParams.delete(key);
+        } else if (key === 'sparse') {
+            if (value === true || value === 'true' || value === '1') {
+                searchParams.set('sparse', 'true');
+            } else {
+                searchParams.delete('sparse');
+            }
         } else if (key === 'text') {
             searchParams.set(key, encodeTextForUrl(String(value)));
         } else {
@@ -186,8 +194,30 @@ export function readUrlState(): AppState {
     const align = urlParams.get('align');
     if (isTextAlign(align)) state.align = align;
 
+    const sparse = parseSparseQueryValue(urlParams.get('sparse'));
+    if (sparse !== undefined) {
+        state.sparse = sparse;
+    }
+
     console.log('Read state from URL:', state);
     return state;
+}
+
+/** `sparse=true` / `sparse=1` enable sparse cloud residency. */
+export function parseSparseQueryValue(
+    raw: string | null | undefined
+): boolean | undefined {
+    if (raw == null || raw === '') {
+        return undefined;
+    }
+    const value = raw.trim().toLowerCase();
+    if (value === 'true' || value === '1') {
+        return true;
+    }
+    if (value === 'false' || value === '0') {
+        return false;
+    }
+    return undefined;
 }
 
 /**

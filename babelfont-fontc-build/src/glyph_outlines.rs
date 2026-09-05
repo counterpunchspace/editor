@@ -421,15 +421,23 @@ pub fn get_glyphs_outlines(
                 cached.clone()
             } else {
                 drop(cache);
-                let interpolated = interpolate_glyph_layer(
+                let interpolated = match interpolate_glyph_layer(
                     font,
                     glyph_name,
                     &design_location,
                     false,
-                )
-                .map_err(|e| {
-                    JsValue::from_str(&format!("Interpolation failed for '{}': {}", glyph_name, e))
-                })?;
+                ) {
+                    Ok(layer) => layer,
+                    Err(e) => {
+                        web_sys::console::warn_1(
+                            &JsValue::from_str(&format!(
+                                "Interpolation failed for '{}': {}",
+                                glyph_name, e
+                            )),
+                        );
+                        continue;
+                    }
+                };
                 layer_cache
                     .borrow_mut()
                     .insert(glyph_name.clone(), interpolated.clone());
@@ -552,13 +560,17 @@ fn flatten_layer_components_cached(
                         drop(cache);
                         comp_misses += 1;
                         let interpolated =
-                            interpolate_glyph_layer(font, &component.reference, location, false)
-                                .map_err(|e| {
-                                    JsValue::from_str(&format!(
+                            match interpolate_glyph_layer(font, &component.reference, location, false)
+                            {
+                                Ok(layer) => layer,
+                                Err(e) => {
+                                    web_sys::console::warn_1(&JsValue::from_str(&format!(
                                         "Failed to interpolate component '{}': {}",
                                         component.reference, e
-                                    ))
-                                })?;
+                                    )));
+                                    continue;
+                                }
+                            };
                         layer_cache
                             .borrow_mut()
                             .insert(ref_key.clone(), interpolated.clone());

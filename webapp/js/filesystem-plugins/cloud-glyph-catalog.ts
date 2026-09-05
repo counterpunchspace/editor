@@ -389,6 +389,103 @@ export function liveCatalogGlyphIds(
         .map((entry) => entry.glyphId);
 }
 
+export type OverviewGlyphRecord = {
+    id: string;
+    name: string;
+    glyphId?: string;
+    codepoints: number[];
+    hydrated: boolean;
+};
+
+/**
+ * All-Glyphs membership for overview tiles. Catalog + glyphOrder is the
+ * universe; Font.glyphs only marks which bodies are resident.
+ */
+/** Map live catalog glyph names to assigned Unicode codepoints. */
+export function catalogCodepointsByGlyphName(
+    fontJson?: Record<string, unknown> | null
+): Map<string, number[]> {
+    const map = new Map<string, number[]>();
+    const owned = fontJson ? catalogFromCoreJson(fontJson) : null;
+    if (!owned) {
+        return map;
+    }
+    for (const entry of Object.values(owned.glyphCatalog)) {
+        if (entry.deleted === true || !entry.name) {
+            continue;
+        }
+        if (Array.isArray(entry.codepoints) && entry.codepoints.length) {
+            map.set(entry.name, entry.codepoints);
+        }
+    }
+    return map;
+}
+
+export function listOverviewGlyphRecords(options: {
+    fontJson?: Record<string, unknown> | null;
+    hydratedGlyphs?: Array<{ name?: string; codepoints?: number[] }>;
+}): OverviewGlyphRecord[] {
+    const hydratedGlyphs = options.hydratedGlyphs || [];
+    const hydratedByName = new Map<
+        string,
+        { name: string; codepoints: number[] }
+    >();
+    for (const glyph of hydratedGlyphs) {
+        const name = typeof glyph?.name === 'string' ? glyph.name : '';
+        if (!name) {
+            continue;
+        }
+        hydratedByName.set(name, {
+            name,
+            codepoints: Array.isArray(glyph.codepoints) ? glyph.codepoints : []
+        });
+    }
+    const owned = options.fontJson
+        ? catalogFromCoreJson(options.fontJson)
+        : null;
+    if (!owned) {
+        return [...hydratedByName.values()].map((glyph) => ({
+            id: glyph.name,
+            name: glyph.name,
+            codepoints: glyph.codepoints,
+            hydrated: true
+        }));
+    }
+
+    const liveEntries = Object.values(owned.glyphCatalog).filter(
+        (entry) => entry.glyphId && entry.deleted !== true && entry.name
+    );
+    const byName = new Map(liveEntries.map((entry) => [entry.name, entry]));
+    const order = Array.isArray(options.fontJson?.glyphOrder)
+        ? options.fontJson.glyphOrder.map(String)
+        : [];
+    const seen = new Set<string>();
+    const records: OverviewGlyphRecord[] = [];
+    const pushEntry = (entry: GlyphCatalogEntry) => {
+        if (seen.has(entry.name)) {
+            return;
+        }
+        seen.add(entry.name);
+        records.push({
+            id: entry.name,
+            name: entry.name,
+            glyphId: entry.glyphId,
+            codepoints: Array.isArray(entry.codepoints) ? entry.codepoints : [],
+            hydrated: hydratedByName.has(entry.name)
+        });
+    };
+    for (const name of order) {
+        const entry = byName.get(name);
+        if (entry) {
+            pushEntry(entry);
+        }
+    }
+    for (const entry of liveEntries) {
+        pushEntry(entry);
+    }
+    return records;
+}
+
 export function isCatalogTombstone(
     catalog: Record<string, GlyphCatalogEntry> | undefined,
     glyphId: string

@@ -276,15 +276,22 @@ import {
             }
 
             const minWidth = getViewMinimumWidth(rowView);
-            if (
+            const collapseToTab =
                 nextWidth <= minWidth + threshold &&
-                rowView.closest('.top-row')
-            ) {
+                !!rowView.closest('.top-row');
+            if (collapseToTab) {
                 rowView.style.flex = `0 0 ${minWidth}px`;
+                rowView.classList.add('collapsed-width');
+                rowView.classList.remove('collapsed');
                 return;
             }
 
-            rowView.style.flex = `${nextWidth}`;
+            // Open flex must drop leftover collapsed-width immediately.
+            // Waiting for the activation animation timeout leaves
+            // `.view-content { display:none }`, so the canvas hole is 0×0
+            // and the full-window bitmap paints over Overview.
+            rowView.style.flex = `${nextWidth} 1 0%`;
+            rowView.classList.remove('collapsed-width', 'collapsed');
         });
     }
 

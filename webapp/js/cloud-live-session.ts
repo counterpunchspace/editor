@@ -1,11 +1,10 @@
 /**
  * Live cloud session: one WebSocket per Durable Object shard.
  *
- * Always connects `font-core`. Glyph rooms are opened only for the current
- * editing subset (visible/active glyphs). HTTP hydrate/seed still covers the
- * full font in v1. `font-deps` is HTTP-only at open and is live-caught on the
- * reconnect barrier. The session reports connected only after core, live glyphs,
- * and deps are fresh, then rebases the UI once.
+ * Always connects `font-core` and `font-deps`. Glyph rooms are opened only
+ * for the current editing subset (visible/active glyphs). HTTP hydrate/seed
+ * still covers the full font in v1. The session reports connected only after
+ * core, live glyphs, and deps are fresh, then rebases the UI once.
  */
 import {
     CloudAdapter,
@@ -201,7 +200,10 @@ export class CloudLiveSession {
 
     async catchUpDocuments(
         targets: Array<string | GlyphCatchUpTarget>,
-        options?: { includeLiveDocuments?: boolean }
+        options?: {
+            includeLiveDocuments?: boolean;
+            matchCoreRevision?: boolean;
+        }
     ): Promise<string[]> {
         const unique = new Map<string, GlyphCatchUpTarget>();
         for (const target of targets) {
@@ -210,6 +212,7 @@ export class CloudLiveSession {
             if (
                 !normalized.documentId ||
                 normalized.documentId === FONT_CORE_DOCUMENT_ID ||
+                normalized.documentId === FONT_DEPS_DOCUMENT_ID ||
                 (!options?.includeLiveDocuments &&
                     this._adapters.has(normalized.documentId))
             ) {
@@ -241,24 +244,32 @@ export class CloudLiveSession {
                             assetId,
                             documentId: target.documentId,
                             expectedRevision: target.expectedRevision,
-                            resolveExpectedRevision: () => {
-                                const glyphId = target.documentId.startsWith(
-                                    'glyph:'
-                                )
-                                    ? target.documentId.slice('glyph:'.length)
-                                    : '';
-                                if (
-                                    !glyphId ||
-                                    typeof bridge.listGlyphRevisionTokens !==
-                                        'function'
-                                ) {
-                                    return target.expectedRevision;
-                                }
-                                return bridge
-                                    .listGlyphRevisionTokens()
-                                    .find((entry) => entry.glyphId === glyphId)
-                                    ?.revision;
-                            }
+                            resolveExpectedRevision:
+                                options?.matchCoreRevision === false
+                                    ? undefined
+                                    : () => {
+                                          const glyphId =
+                                              target.documentId.startsWith(
+                                                  'glyph:'
+                                              )
+                                                  ? target.documentId.slice(
+                                                        'glyph:'.length
+                                                    )
+                                                  : '';
+                                          if (
+                                              !glyphId ||
+                                              typeof bridge.listGlyphRevisionTokens !==
+                                                  'function'
+                                          ) {
+                                              return target.expectedRevision;
+                                          }
+                                          return bridge
+                                              .listGlyphRevisionTokens()
+                                              .find(
+                                                  (entry) =>
+                                                      entry.glyphId === glyphId
+                                              )?.revision;
+                                      }
                         });
                         if (ok) {
                             succeeded.push(target.documentId);
@@ -311,7 +322,13 @@ export class CloudLiveSession {
     async syncLiveDocumentIds(documentIds: string[]): Promise<void> {
         const desired = new Set<string>([
             FONT_CORE_DOCUMENT_ID,
-            ...documentIds.filter((id) => id && id !== FONT_CORE_DOCUMENT_ID)
+            FONT_DEPS_DOCUMENT_ID,
+            ...documentIds.filter(
+                (id) =>
+                    id &&
+                    id !== FONT_CORE_DOCUMENT_ID &&
+                    id !== FONT_DEPS_DOCUMENT_ID
+            )
         ]);
         this._desiredDocumentIds = desired;
         for (const [documentId, adapter] of [...this._adapters]) {
@@ -550,7 +567,9 @@ export class CloudLiveSession {
 
     private async _catchUpLiveSubsetAndDeps(): Promise<void> {
         const liveGlyphs = [...this._desiredDocumentIds].filter(
-            (documentId) => documentId !== FONT_CORE_DOCUMENT_ID
+            (documentId) =>
+                documentId !== FONT_CORE_DOCUMENT_ID &&
+                documentId !== FONT_DEPS_DOCUMENT_ID
         );
         const tokens = this._options.bridge.listGlyphRevisionTokens?.() ?? [];
         const glyphTargets = liveGlyphs.map((documentId) => {

@@ -60,7 +60,10 @@ function componentReferencesFromGlyph(glyph: unknown): string[] {
     return names;
 }
 
-function collectLinkedWindowGlyphNames(): string[] {
+export function collectLinkedWindowGlyphNames(): string[] {
+    if (window.fontManager?.isHydrationSparse?.()) {
+        return window.fontManager.getHydratedGlyphNames?.() ?? [];
+    }
     const names = new Set<string>([
         ...(window.fontManager?.getEditingSubsetSnapshot?.() ?? []),
         ...(window.fontManager?.getLiveVisibleGlyphNames?.() ?? []),
@@ -335,6 +338,10 @@ export class WindowSync {
             windowId: this._bridge.windowId,
             sessionId: this._sessionId
         });
+    }
+
+    broadcastDocumentCatchUp(documentId: string, update: Uint8Array): void {
+        this.broadcastCloudRelayUpdate(update, null, documentId);
     }
 
     broadcastCloudRelayUpdate(

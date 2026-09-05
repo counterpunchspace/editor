@@ -480,6 +480,26 @@
     margin-left: auto;
 }
 
+.file-dialog-sparse-hydration {
+    display: flex;
+    align-items: center;
+}
+
+.file-dialog-sparse-hydration-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--file-dialog-subtle-text);
+    font-size: 13px;
+    cursor: pointer;
+    user-select: none;
+    white-space: nowrap;
+}
+
+.file-dialog-sparse-hydration-label input {
+    margin: 0;
+}
+
 .file-dialog-actions .dialog-button {
     min-width: 100px;
 }

@@ -1183,6 +1183,29 @@ export function yDocToJson(fontMap: Y.Map<unknown>): Record<string, unknown> {
     return result;
 }
 
+/**
+ * Worker seed of a cloud core shard has no `glyphs` map (bodies live in
+ * glyph documents). babelfont::Font still requires the field. Inject an
+ * empty map into a *copy* of the update so the live CRDT is unchanged.
+ */
+export function ensureCoreUpdateHasGlyphsMap(update: Uint8Array): Uint8Array {
+    if (!update?.byteLength) {
+        return update;
+    }
+    const doc = new Y.Doc({ gc: false });
+    try {
+        Y.applyUpdate(doc, update);
+        const font = doc.getMap('font');
+        const glyphs = font.get('glyphs');
+        if (!(glyphs instanceof Y.Map)) {
+            font.set('glyphs', new Y.Map());
+        }
+        return Y.encodeStateAsUpdate(doc);
+    } finally {
+        doc.destroy();
+    }
+}
+
 // ── Deep path access on Y.Doc ───────────────────────────────────────
 
 /**

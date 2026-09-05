@@ -55,6 +55,14 @@ import {
 } from './state-restore';
 import { decodeFeatures, formatUrl, readUrlState } from './url-state';
 import {
+    catalogEntriesForDepsParse,
+    closeComponentNamesFromFontJson,
+    closeReverseComponentNamesFromDeps,
+    layoutSubstitutionNamesFromSeeds,
+    readFontDepsIndex,
+    seedGlyphIdsFromText
+} from './filesystem-plugins/cloud-font-deps';
+import {
     normalizeWorkerReplayTargets,
     type WorkerReplayTarget
 } from './change-log';
@@ -2360,6 +2368,9 @@ class FontManager {
             if (urlText) {
                 return urlText;
             }
+            if (readUrlState().sparse === true) {
+                return '';
+            }
             const stateText = window.stateManager?.editor_text_buffer;
             if (stateText) {
                 return stateText;
@@ -2434,9 +2445,6 @@ class FontManager {
 
     isHydrationSparse(): boolean {
         const hydratedCount = this.getHydratedGlyphNames().length;
-        if (!hydratedCount) {
-            return false;
-        }
         const fontJson = this.currentFont?.babelfontData as
             Record<string, unknown> | undefined;
         const catalogObject =
@@ -2446,7 +2454,12 @@ class FontManager {
                 ? (fontJson.glyphCatalog as Record<string, unknown>)
                 : null;
         const catalogCount = catalogObject
-            ? Object.keys(catalogObject).length
+            ? Object.values(catalogObject).filter((entry) => {
+                  if (!entry || typeof entry !== 'object') {
+                      return false;
+                  }
+                  return (entry as { deleted?: unknown }).deleted !== true;
+              }).length
             : 0;
         const tokenCount =
             window.patchSyncEngine?.listGlyphRevisionTokens?.()?.length ?? 0;
@@ -2486,11 +2499,14 @@ class FontManager {
             for (const layer of layers) {
                 const shapes = Array.isArray(layer?.shapes) ? layer.shapes : [];
                 for (const shape of shapes) {
-                    const reference = (
-                        shape as unknown as {
-                            data?: { reference?: unknown };
-                        }
-                    ).data?.reference;
+                    const shapeRecord = shape as unknown as {
+                        reference?: unknown;
+                        data?: { reference?: unknown };
+                    };
+                    const reference =
+                        (typeof shapeRecord.reference === 'string' &&
+                            shapeRecord.reference) ||
+                        shapeRecord.data?.reference;
                     if (
                         typeof reference === 'string' &&
                         hydrated.has(reference) &&
@@ -2511,6 +2527,40 @@ class FontManager {
         }
         const firstHydrated = [...hydrated][0];
         return firstHydrated ? [firstHydrated] : [];
+    }
+
+    async hydrateSparseReverseDependentsFromFontDeps(
+        seedNames: string[]
+    ): Promise<void> {
+        if (!this.isHydrationSparse()) {
+            return;
+        }
+        const plugin = window.cloudPlugin;
+        if (
+            typeof plugin?.hydrateOverviewGlyphs !== 'function' ||
+            !plugin.activeAssetId
+        ) {
+            return;
+        }
+        const fontJson = this.currentFont?.babelfontData as
+            Record<string, unknown> | undefined;
+        const depsDoc = window.patchSyncEngine?.depsDoc;
+        if (!fontJson || !depsDoc) {
+            return;
+        }
+        const seeds = this.normalizeSubsetGlyphs(seedNames);
+        const reverseNames = closeReverseComponentNamesFromDeps({
+            edges: readFontDepsIndex(depsDoc.getMap('deps')).edges,
+            seedNames: seeds,
+            catalog: catalogEntriesForDepsParse(fontJson)
+        });
+        const hydrated = new Set(this.getHydratedGlyphNames());
+        if (!reverseNames.some((name) => !hydrated.has(name))) {
+            return;
+        }
+        await plugin.hydrateOverviewGlyphs([
+            ...new Set([...seeds, ...reverseNames])
+        ]);
     }
 
     getConstrainedEditingSubsetGlyphs(): string[] {
@@ -3041,6 +3091,7 @@ class FontManager {
                                 editTypeAtRequest,
                                 requestedRevisionKey
                             );
+                            window.glyphCanvas?.releaseDeferredPaintAfterFailedCompile?.();
                             return this.editingFont;
                         }
                     }
@@ -3056,6 +3107,9 @@ class FontManager {
             ) {
                 glyphsToInclude = [...glyphsToInclude, activeEditedGlyphName];
             }
+            await this.hydrateSparseReverseDependentsFromFontDeps(
+                glyphsToInclude
+            );
             glyphsToInclude =
                 this.constrainSubsetToHydratedGlyphs(glyphsToInclude);
             this.updateEditingSubsetSnapshot(glyphsToInclude);
@@ -3074,6 +3128,7 @@ class FontManager {
                         editTypeAtRequest,
                         requestedRevisionKey
                     );
+                    window.glyphCanvas?.releaseDeferredPaintAfterFailedCompile?.();
                     return this.editingFont;
                 }
                 startupOpenSessionEditingCompileCount += 1;
@@ -3173,7 +3228,6 @@ class FontManager {
                           produce_varc_table?: boolean;
                       }
                     | undefined;
-                const sparseHydration = this.isHydrationSparse();
                 if (
                     !forceFullWorkerCompile &&
                     (isInteractiveEdit ||
@@ -3214,14 +3268,6 @@ class FontManager {
                     compilationMode = 'text-input';
                     optionOverrides = {
                         produce_varc_table: false
-                    };
-                }
-
-                if (sparseHydration) {
-                    optionOverrides = {
-                        ...optionOverrides,
-                        skip_features: true,
-                        skip_kerning: true
                     };
                 }
 
@@ -3553,6 +3599,68 @@ class FontManager {
             }
         }
 
+        const fontJson = this.currentFont?.babelfontData as
+            Record<string, unknown> | undefined;
+        if (fontJson) {
+            const catalog = catalogEntriesForDepsParse(fontJson);
+            const idToName = new Map(
+                catalog.map((entry) => [entry.glyphId, entry.name])
+            );
+            for (const glyphId of seedGlyphIdsFromText(fontJson, text)) {
+                pushGlyph(idToName.get(glyphId));
+            }
+            for (const name of layoutSubstitutionNamesFromSeeds({
+                fontJson,
+                seedNames: subset.filter((name) => name !== notdefName)
+            })) {
+                pushGlyph(name);
+            }
+            for (const name of closeComponentNamesFromFontJson({
+                fontJson,
+                seedNames: subset.filter((name) => name !== notdefName)
+            })) {
+                pushGlyph(name);
+            }
+            const depsDoc = window.patchSyncEngine?.depsDoc;
+            if (depsDoc) {
+                for (const name of closeReverseComponentNamesFromDeps({
+                    edges: readFontDepsIndex(depsDoc.getMap('deps')).edges,
+                    seedNames: subset.filter((name) => name !== notdefName),
+                    catalog: catalogEntriesForDepsParse(fontJson)
+                })) {
+                    pushGlyph(name);
+                }
+            }
+        }
+
+        const componentQueue = subset.filter((name) => name !== notdefName);
+        for (let index = 0; index < componentQueue.length; index += 1) {
+            const glyph = fontModel.findGlyph(componentQueue[index]);
+            const layers = Array.isArray(glyph?.layers) ? glyph.layers : [];
+            for (const layer of layers) {
+                const shapes = Array.isArray(layer?.shapes) ? layer.shapes : [];
+                for (const shape of shapes) {
+                    const shapeRecord = shape as unknown as {
+                        reference?: unknown;
+                        data?: { reference?: unknown };
+                    };
+                    const reference =
+                        (typeof shapeRecord.reference === 'string' &&
+                            shapeRecord.reference) ||
+                        (typeof shapeRecord.data?.reference === 'string' &&
+                            shapeRecord.data.reference);
+                    if (
+                        typeof reference === 'string' &&
+                        reference &&
+                        !seen.has(reference)
+                    ) {
+                        pushGlyph(reference);
+                        componentQueue.push(reference);
+                    }
+                }
+            }
+        }
+
         return subset;
     }
 
@@ -3610,6 +3718,7 @@ class FontManager {
         }
 
         if (subsetGlyphs.length > 0) {
+            await this.hydrateSparseReverseDependentsFromFontDeps(subsetGlyphs);
             subsetGlyphs = this.constrainSubsetToHydratedGlyphs(subsetGlyphs);
             this.updateEditingSubsetSnapshot(subsetGlyphs);
         } else if (!isOutlineIncrementalChange) {

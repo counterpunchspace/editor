@@ -452,6 +452,16 @@ function updateFileDialogFooter(): void {
                 ? !isSelectedPathOpenableFont()
                 : !saveNameInput?.value.trim() || fileDialogSaveBlocked);
     }
+
+    const sparseHydration = document.getElementById(
+        'file-dialog-sparse-hydration'
+    );
+    if (sparseHydration) {
+        const showSparse =
+            activeFileDialogMode === 'open' &&
+            fileSystemCache.currentPlugin.getId() === 'cloud';
+        sparseHydration.style.display = showSparse ? 'flex' : 'none';
+    }
 }
 
 function setFileDialogSaveWarning(
@@ -616,6 +626,13 @@ async function showFontFileDialog(
     updateFileDialogFooter();
     updateFileDialogBusyUi();
     void refreshFileDialogSaveWarning();
+
+    const sparseCheckbox = document.getElementById(
+        'file-dialog-sparse-hydration-checkbox'
+    ) as HTMLInputElement | null;
+    if (sparseCheckbox) {
+        sparseCheckbox.checked = false;
+    }
 
     if (activeFileDialogMode === 'save-as') {
         setTimeout(() => saveNameInput?.focus(), 0);
@@ -2219,6 +2236,17 @@ async function confirmFileDialogPrimaryAction(): Promise<void> {
     if (!selectedDialogPath) {
         updateFileDialogFooter();
         return;
+    }
+
+    if (fileSystemCache.currentPlugin.getId() === 'cloud') {
+        const sparseCheckbox = document.getElementById(
+            'file-dialog-sparse-hydration-checkbox'
+        ) as HTMLInputElement | null;
+        const sparse = !!sparseCheckbox?.checked;
+        window.cloudPlugin?.setPendingSparseHydration?.(sparse);
+        updateUrlState({ sparse: sparse ? true : false });
+    } else {
+        updateUrlState({ sparse: false });
     }
 
     const fileHandle = (window as any)._fileHandles?.[selectedDialogPath];
@@ -4144,7 +4172,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     (async () => {
         const applyDefaultStartupText = () => {
-            if (readUrlState().text) {
+            if (readUrlState().text || readUrlState().sparse === true) {
                 return;
             }
             if (window.stateManager) {
@@ -4239,6 +4267,9 @@ document.addEventListener('DOMContentLoaded', () => {
                         await switchContext(pluginId);
 
                         if (pluginId === 'cloud') {
+                            window.cloudPlugin?.setPendingSparseHydration?.(
+                                readUrlState().sparse === true
+                            );
                             await openFont(
                                 `cloud://${fontPath.replace(/^\/+/, '')}`
                             );

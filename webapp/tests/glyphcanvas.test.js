@@ -22901,6 +22901,58 @@ describe('GlyphCanvas resize handling', () => {
         expect(after.x).toBeLessThanOrEqual(400 - 30);
     });
 
+    test('zero-size editor hole keeps last cutout instead of freeze-collapsing', () => {
+        canvas.container.classList.add('collapsed-width');
+        canvas.lastContainerWidth = 400;
+        canvas.lastContainerHeight = 300;
+        canvas.lastCutoutLeft = 12;
+        canvas.lastCutoutTop = 48;
+        canvas.collapsedViewportSnapshot = null;
+        canvas.canvas.getBoundingClientRect = () => ({
+            x: 0,
+            y: 0,
+            left: 0,
+            top: 0,
+            right: 1200,
+            bottom: 800,
+            width: 1200,
+            height: 800,
+            toJSON() {}
+        });
+        canvas.container.getBoundingClientRect = () => ({
+            x: 0,
+            y: 0,
+            left: 0,
+            top: 0,
+            right: 0,
+            bottom: 0,
+            width: 0,
+            height: 0,
+            toJSON() {}
+        });
+        Object.defineProperty(canvas.container, 'clientWidth', {
+            configurable: true,
+            get: () => 0
+        });
+        Object.defineProperty(canvas.container, 'clientHeight', {
+            configurable: true,
+            get: () => 0
+        });
+
+        expect(canvas.getCanvasCutoutFrame()).toEqual({
+            left: 12,
+            top: 48,
+            width: 400,
+            height: 300
+        });
+
+        canvas.viewportManager.scale = 0.5;
+        canvas.onResize();
+        expect(canvas.lastContainerWidth).toBe(400);
+        expect(canvas.lastContainerHeight).toBe(300);
+        expect(canvas.collapsedViewportSnapshot).toBeFalsy();
+    });
+
     test('opening the overlay property panel does not change pan or zoom', () => {
         canvas.lastContainerWidth = 800;
         canvas.lastContainerHeight = 600;

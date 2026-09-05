@@ -48,6 +48,7 @@ import {
     timelineSpanStart
 } from './perf-timeline';
 import { buildApplyYjsUpdateMetadataJson } from './apply-yjs-update-metadata';
+import { ensureCoreUpdateHasGlyphsMap } from './change-bridge-ydoc';
 
 type RustYjsBatchResult = {
     update?: Uint8Array;
@@ -1656,19 +1657,23 @@ self.onmessage = async (event) => {
                 if (Array.isArray(documents) && documents.length) {
                     reset_ydoc_set();
                     for (const document of documents) {
-                        const bytes =
+                        const raw =
                             document.state instanceof Uint8Array
                                 ? document.state
                                 : new Uint8Array(document.state);
+                        const bytes =
+                            document.documentId === 'font-core'
+                                ? ensureCoreUpdateHasGlyphsMap(raw)
+                                : raw;
                         seed_ydoc_document(document.documentId, bytes);
                     }
                     rebuild_caches_from_ydoc_set();
                 } else {
-                    init_ydoc_from_state(
+                    const raw =
                         state instanceof Uint8Array
                             ? state
-                            : new Uint8Array(state)
-                    );
+                            : new Uint8Array(state);
+                    init_ydoc_from_state(ensureCoreUpdateHasGlyphsMap(raw));
                 }
                 // init_ydoc_from_state seeds the Y.Doc AND populates all
                 // caches from it, so the worker is immediately compile-ready

@@ -105,9 +105,9 @@ describe('CloudLiveSession', () => {
             ([options]) => options.documentId
         );
         expect(documentIds.sort()).toEqual(
-            ['font-core', 'glyph:aaa', 'glyph:bbb'].sort()
+            ['font-core', 'font-deps', 'glyph:aaa', 'glyph:bbb'].sort()
         );
-        expect(mockConnectDirect.mock.calls.length).toBe(3);
+        expect(mockConnectDirect.mock.calls.length).toBe(4);
         expect(
             CloudAdapter.mock.calls.every(
                 ([options]) => options.deferVisibleRebaseline === true
@@ -117,11 +117,11 @@ describe('CloudLiveSession', () => {
             mockConnectDirect.mock.calls
                 .map((call) => call[3]?.bootstrapMode)
                 .sort()
-        ).toEqual(['skip', 'skip', 'skip']);
+        ).toEqual(['skip', 'skip', 'skip', 'skip']);
 
         await session.syncLiveDocumentIds(['glyph:aaa']);
         expect(session.liveDocumentIds().sort()).toEqual(
-            ['font-core', 'glyph:aaa'].sort()
+            ['font-core', 'font-deps', 'glyph:aaa'].sort()
         );
         expect(mockDisconnect).toHaveBeenCalledTimes(1);
 
@@ -142,8 +142,10 @@ describe('CloudLiveSession', () => {
             bootstrapMode: 'skip'
         });
         await session.syncLiveDocumentIds([]);
-        expect(session.liveDocumentIds()).toEqual(['font-core']);
-        expect(mockConnectDirect).toHaveBeenCalledTimes(1);
+        expect(session.liveDocumentIds().sort()).toEqual(
+            ['font-core', 'font-deps'].sort()
+        );
+        expect(mockConnectDirect).toHaveBeenCalledTimes(2);
     });
 
     test('catch-up fetches live glyph bytes without opening a sticky glyph room', async () => {
@@ -276,5 +278,38 @@ describe('CloudLiveSession', () => {
         });
         expect(applyDocumentCatchUp).toHaveBeenCalledTimes(1);
         expect(applyDocumentCatchUp.mock.calls[0][0]).toBe('glyph:aaa');
+    });
+
+    test('matchCoreRevision false does not require a core revision token', async () => {
+        const applyDocumentCatchUp = jest.fn().mockReturnValue(true);
+        const session = new CloudLiveSession({
+            assetId: 'asset-1',
+            websiteBaseUrl: 'https://editor.example',
+            token: 'token',
+            roomUrl: 'wss://rooms.example/room/asset-1',
+            bridge: {
+                applyDocumentCatchUp,
+                listGlyphRevisionTokens: () => [
+                    { glyphId: 'aaa', revision: 'rev-core' }
+                ]
+            },
+            bootstrapMode: 'skip'
+        });
+        await session.syncLiveDocumentIds([]);
+        applyDocumentCatchUp.mockClear();
+        global.fetch = jest.fn(async () => ({
+            ok: true,
+            status: 200,
+            headers: new Headers({
+                'content-type': 'application/json'
+            }),
+            json: async () => ({
+                update: Buffer.from([9, 9]).toString('base64')
+            })
+        }));
+        await session.catchUpDocuments(['glyph:aaa'], {
+            matchCoreRevision: false
+        });
+        expect(applyDocumentCatchUp.mock.calls[0][4]).toBeUndefined();
     });
 });

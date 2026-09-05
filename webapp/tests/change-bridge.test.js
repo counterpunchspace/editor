@@ -13,6 +13,7 @@ const { WindowSync } = require('../js/window-sync');
 const {
     jsonToYDoc,
     yDocToJson,
+    ensureCoreUpdateHasGlyphsMap,
     fromYType,
     toYType,
     getYPath,
@@ -1174,6 +1175,25 @@ describe('change-bridge-ydoc', () => {
         expect(glyphsMap).toBeInstanceOf(Y.Map);
         expect(glyphsMap.get('A')).toBeInstanceOf(Y.Map);
         expect(glyphsMap.get('B')).toBeInstanceOf(Y.Map);
+    });
+
+    test('ensureCoreUpdateHasGlyphsMap injects empty glyphs without mutating source', () => {
+        const doc = new Y.Doc({ gc: false });
+        const fontMap = doc.getMap('font');
+        fontMap.set('upm', 1000);
+        const source = Y.encodeStateAsUpdate(doc);
+        expect(fontMap.has('glyphs')).toBe(false);
+
+        const patched = ensureCoreUpdateHasGlyphsMap(source);
+        const seeded = new Y.Doc({ gc: false });
+        Y.applyUpdate(seeded, patched);
+        expect(seeded.getMap('font').get('glyphs')).toBeInstanceOf(Y.Map);
+        expect(seeded.getMap('font').get('glyphs').size).toBe(0);
+
+        const replay = new Y.Doc({ gc: false });
+        Y.applyUpdate(replay, source);
+        expect(replay.getMap('font').has('glyphs')).toBe(false);
+        expect(fontMap.has('glyphs')).toBe(false);
     });
 
     test('layers stored as Y.Map keyed by id', () => {

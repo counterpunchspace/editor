@@ -7,6 +7,9 @@ const {
 } = require('../js/url-state');
 
 describe('minimal query encoding', () => {
+    afterEach(() => {
+        window.history.replaceState(null, '', '/');
+    });
     test('leaves :, /, comma, and Unicode unencoded', () => {
         expect(encodeQueryComponent('memory:///user/Fustat.glyphs')).toBe(
             'memory:///user/Fustat.glyphs'
@@ -54,6 +57,30 @@ describe('minimal query encoding', () => {
         expect(state.mode).toBe('text');
         expect(state.location).toBe('wght:200');
         expect(state.features).toBe('liga,kern');
+    });
+
+    test('sparse=true round-trips and empty text stays empty', () => {
+        window.history.replaceState(null, '', '/');
+        updateUrlState({
+            file: 'cloud:///asset-1',
+            sparse: true,
+            text: 'na'
+        });
+        expect(window.location.search).toContain('sparse=true');
+        expect(readUrlState().sparse).toBe(true);
+        expect(readUrlState().text).toBe('na');
+
+        updateUrlState({ sparse: false });
+        expect(window.location.search).not.toContain('sparse=');
+        expect(readUrlState().sparse).toBeUndefined();
+
+        window.history.replaceState(
+            null,
+            '',
+            '/?file=cloud:///asset-1&sparse=true'
+        );
+        expect(readUrlState().sparse).toBe(true);
+        expect(readUrlState().text).toBeUndefined();
     });
 
     test('stores newlines as literal \\n and round-trips', () => {

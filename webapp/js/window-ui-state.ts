@@ -210,10 +210,13 @@ export function isViewWidthCollapsed(view: HTMLElement): boolean {
     if (grow != null && grow > 0) {
         return false;
     }
+    const width = view.offsetWidth;
+    if (width > TITLE_BAR_PX + COLLAPSE_SLOP_PX) {
+        return false;
+    }
     if (view.classList.contains('collapsed-width')) {
         return true;
     }
-    const width = view.offsetWidth;
     if (width <= 0) {
         return false;
     }

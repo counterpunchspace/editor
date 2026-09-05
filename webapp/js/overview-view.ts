@@ -4,6 +4,7 @@
 // and available on window.glyphOverviewFilterManager
 
 import { attachTopRowSidebarInterpolation } from './top-row-sidebar-interpolation';
+import { listOverviewGlyphRecords } from './filesystem-plugins/cloud-glyph-catalog';
 
 function timelineSpanStartSafe(
     stage: string,
@@ -80,13 +81,13 @@ function resolveCurrentOverviewLocation() {
 }
 
 function buildGlyphData() {
-    if (!window.currentFontModel?.glyphs) {
-        return [];
-    }
-
-    return window.currentFontModel.glyphs.map((glyph: any) => ({
-        id: glyph.name,
-        name: glyph.name
+    return listOverviewGlyphRecords({
+        fontJson: window.fontManager?.currentFont?.babelfontData,
+        hydratedGlyphs: window.currentFontModel?.glyphs || []
+    }).map((glyph) => ({
+        id: glyph.id,
+        name: glyph.name,
+        codepoints: glyph.codepoints
     }));
 }
 

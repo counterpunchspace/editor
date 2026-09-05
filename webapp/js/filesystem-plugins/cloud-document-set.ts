@@ -11,10 +11,15 @@ import {
 import {
     buildFontDepsForGlyph,
     buildFontDepsIndex,
-    glyphIdsForSparseHydration,
+    expandSparsePlanWithLoadedComponents,
+    mergeFontDepEdges,
+    planSparseHydration,
     patchSourceEdges,
     readFontDepsIndex,
-    writeFontDepsYMap
+    readWorkingGlyphIds,
+    writeCompleteFontDepsIfLoaded,
+    writeFontDepsYMap,
+    writeWorkingGlyphIds
 } from './cloud-font-deps';
 import { evaluateShardSizes, type ShardSizeGate } from './cloud-shard-limits';
 import {
@@ -98,10 +103,13 @@ export async function hydrateSparseGlyphsToFixedPoint(options: {
     catalogIds: string[];
     seedIds: string[];
     layoutIds?: string[];
+    previousWorkingIds?: string[];
     catalog: Array<{ glyphId: string; name: string }>;
     fetchGlyphs: SparseGlyphHydrationFetch;
 }): Promise<{
     loadedIds: string[];
+    workingIds: string[];
+    hiddenIds: string[];
     fetchPasses: string[][];
     glyphBytes: Map<string, Uint8Array>;
 }> {
@@ -129,21 +137,34 @@ export async function hydrateSparseGlyphsToFixedPoint(options: {
             )
     );
     const glyphBytes = new Map<string, Uint8Array>();
-    const loadedIds = new Set<string>();
+    const loadedIds = new Set(documentSet.glyphDocs.keys());
     const fetchPasses: string[][] = [];
-    let hydrateIds = glyphIdsForSparseHydration({
-        catalogIds: liveCatalogIds,
-        seedIds,
-        layoutIds,
-        edges: readFontDepsIndex(documentSet.depsDoc.getMap('deps')).edges
-    });
+    const depsMap = documentSet.depsDoc.getMap('deps');
+    const previousWorkingIds =
+        options.previousWorkingIds || readWorkingGlyphIds(depsMap);
+    let publishedEdges = readFontDepsIndex(depsMap).edges;
+    const planFromLiveEdges = () => {
+        publishedEdges = mergeFontDepEdges(
+            publishedEdges,
+            readFontDepsIndex(depsMap).edges
+        );
+        return planSparseHydration({
+            catalogIds: liveCatalogIds,
+            seedIds,
+            layoutIds,
+            previousWorkingIds,
+            loadedIds,
+            edges: publishedEdges
+        });
+    };
+    let plan = planFromLiveEdges();
 
     for (
         let pass = 0;
         pass <= Math.max(liveCatalogIds.length, catalogIds.length, 1);
         pass++
     ) {
-        const missing = hydrateIds.filter((id) => !loadedIds.has(id));
+        const missing = plan.missingIds;
         if (!missing.length) {
             break;
         }
@@ -161,7 +182,6 @@ export async function hydrateSparseGlyphsToFixedPoint(options: {
                 glyph
             ])
         );
-        const depsMap = documentSet.depsDoc.getMap('deps');
         const sourceRevisions = depsMap.get('sourceRevision');
         for (const glyphId of loadedIds) {
             const glyph = loadedGlyphs.get(glyphId);
@@ -173,34 +193,45 @@ export async function hydrateSparseGlyphsToFixedPoint(options: {
                 sourceRevisions instanceof Y.Map
                     ? sourceRevisions.get(glyphId)
                     : undefined;
+            const nextEdges = glyph
+                ? buildFontDepsForGlyph(glyph, catalog)
+                : {};
+            const existingTargets =
+                readFontDepsIndex(depsMap).edges[glyphId] || {};
+            const projectionMissingComponents =
+                Object.keys(nextEdges).length > 0 &&
+                Object.keys(existingTargets).length === 0;
             if (
                 glyph &&
                 typeof revision === 'string' &&
-                revision !== projected &&
+                (revision !== projected || projectionMissingComponents) &&
                 !isCatalogTombstone(
                     catalogFromCoreJson(documentSet.assembleFontJson())
                         ?.glyphCatalog,
                     glyphId
                 )
             ) {
-                patchSourceEdges(
-                    depsMap,
-                    glyphId,
-                    buildFontDepsForGlyph(glyph, catalog),
-                    revision
-                );
+                patchSourceEdges(depsMap, glyphId, nextEdges, revision);
             }
         }
-        hydrateIds = glyphIdsForSparseHydration({
+        plan = expandSparsePlanWithLoadedComponents({
+            plan: planFromLiveEdges(),
+            glyphs: [...loadedGlyphs.values()],
+            catalog,
             catalogIds: liveCatalogIds,
-            seedIds,
-            layoutIds,
-            edges: readFontDepsIndex(depsMap).edges
+            loadedIds
         });
     }
 
+    documentSet.depsDoc.transact(() => {
+        writeWorkingGlyphIds(depsMap, plan.workingIds);
+    });
+    writeCompleteFontDepsIfLoaded(depsMap, documentSet.assembleFontJson());
+
     return {
         loadedIds: [...loadedIds],
+        workingIds: plan.workingIds,
+        hiddenIds: plan.hiddenIds,
         fetchPasses,
         glyphBytes
     };
@@ -393,6 +424,9 @@ export class CloudDocumentSet {
         }
         if (glyphs.length > 0 || !Array.isArray(core.glyphs)) {
             core.glyphs = glyphs;
+        }
+        if (!Array.isArray(core.glyphs)) {
+            core.glyphs = [];
         }
         return core;
     }

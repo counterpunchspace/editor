@@ -14,6 +14,7 @@ import {
 // Import filter manager to bundle it with glyph-overview entry point
 // It self-registers on window.glyphOverviewFilterManager
 import './glyph-overview-filters';
+import { catalogCodepointsByGlyphName } from './filesystem-plugins/cloud-glyph-catalog';
 import { Logger } from './logger';
 import { timelineSpanStart, timelineSpanEnd } from './perf-timeline';
 import {
@@ -316,6 +317,11 @@ class GlyphOverview {
     private tileContextMenu: TippyInstance | null = null;
     private onContainerScrollBound = this.onContainerScroll.bind(this);
     private onCapturedScrollBound = this.onCapturedScroll.bind(this);
+    private onFontModelSyncBound = (): void => {
+        this.reconcileTileHydration();
+        this.updatePropertyPanel();
+    };
+    private lastOverviewFontKey = '';
     private lazyBatchSize = 240;
     private readonly minLazyBatchSize = 80;
     private readonly maxLazyBatchSize = 500;
@@ -347,8 +353,11 @@ class GlyphOverview {
     private gridModeButton: HTMLButtonElement | null = null;
     private visibleGlyphIds: string[] = [];
     private glyphOrderIds: string[] = [];
-    private glyphDataById: Map<string, { id: string; name: string }> =
-        new Map();
+    private glyphDataById: Map<
+        string,
+        { id: string; name: string; codepoints?: number[] }
+    > = new Map();
+    private catalogCodepointsByName: Map<string, number[]> | null = null;
     private totalGlyphDatasetCount = 0;
     private gridRowsForNavigation: Array<Array<string | null>> = [];
     private gridColumnCount = 0;
@@ -410,6 +419,7 @@ class GlyphOverview {
 
         // Listen for glyph changes to update tiles
         window.addEventListener('glyphChanged', this.onGlyphChanged.bind(this));
+        window.addEventListener('fontModelSync', this.onFontModelSyncBound);
 
         // Listen for glyph stack changes to update highlight immediately
         window.addEventListener(
@@ -775,9 +785,6 @@ class GlyphOverview {
         name: string;
         codepoints?: readonly number[] | null;
     }> {
-        const fontModel =
-            window.fontManager?.currentFont?.fontModel ??
-            window.currentFontModel;
         const glyphs: Array<{
             name: string;
             codepoints?: readonly number[] | null;
@@ -787,10 +794,9 @@ class GlyphOverview {
             if (!tile) {
                 continue;
             }
-            const modelGlyph = fontModel?.findGlyph?.(tile.glyphName);
             glyphs.push({
                 name: tile.glyphName,
-                codepoints: modelGlyph?.codepoints ?? null
+                codepoints: this.getOverviewCodepoints(tile.glyphName)
             });
         }
         return glyphs;
@@ -1213,8 +1219,10 @@ class GlyphOverview {
             fragment.appendChild(tile.element);
             this.touchTileViewed(tile);
             if (!tile.cachedData && !this.pendingGlyphIds.has(glyphId)) {
-                this.pendingGlyphIds.add(glyphId);
-                queuedVisibleTileCount += 1;
+                if (this.isGlyphHydrated(tile.glyphName)) {
+                    this.pendingGlyphIds.add(glyphId);
+                    queuedVisibleTileCount += 1;
+                }
             }
             if (this.intersectionObserver) {
                 this.intersectionObserver.observe(tile.element);
@@ -1808,8 +1816,8 @@ class GlyphOverview {
      * Normalize overview glyph records to stable name-keyed ids.
      */
     private normalizeGlyphRecords(
-        glyphs: Array<{ id: string; name: string }>
-    ): Array<{ id: string; name: string }> {
+        glyphs: Array<{ id: string; name: string; codepoints?: number[] }>
+    ): Array<{ id: string; name: string; codepoints?: number[] }> {
         return glyphs
             .map((glyph) => {
                 const name =
@@ -1818,7 +1826,13 @@ class GlyphOverview {
                         : typeof glyph.id === 'string'
                           ? glyph.id
                           : '';
-                return { id: name, name };
+                return {
+                    id: name,
+                    name,
+                    ...(Array.isArray(glyph.codepoints)
+                        ? { codepoints: glyph.codepoints }
+                        : {})
+                };
             })
             .filter((glyph) => glyph.name.length > 0);
     }
@@ -1836,7 +1850,12 @@ class GlyphOverview {
         }
 
         const nextGlyphs = this.normalizeGlyphRecords(glyphs);
-        if (this.tiles.size === 0) {
+        this.catalogCodepointsByName = null;
+        const fontKey = this.overviewFontIdentityKey();
+        if (
+            this.tiles.size === 0 ||
+            (this.lastOverviewFontKey && this.lastOverviewFontKey !== fontKey)
+        ) {
             return this.updateGlyphs(nextGlyphs);
         }
 
@@ -1880,7 +1899,11 @@ class GlyphOverview {
             }
             const tile = this.createGlyphTile(glyph.id, glyph.name);
             this.tiles.set(glyph.id, tile);
-            this.pendingGlyphIds.add(glyph.id);
+            if (this.isGlyphHydrated(glyph.name)) {
+                this.pendingGlyphIds.add(glyph.id);
+            } else {
+                this.applyUnhydratedTileAppearance(tile);
+            }
             addedIds.push(glyph.id);
         }
 
@@ -1936,6 +1959,8 @@ class GlyphOverview {
         if (!this.container) return Promise.resolve();
 
         glyphs = this.normalizeGlyphRecords(glyphs);
+        this.catalogCodepointsByName = null;
+        this.lastOverviewFontKey = this.overviewFontIdentityKey();
 
         this.totalGlyphDatasetCount = glyphs.length;
         this.glyphOrderIds = glyphs.map((glyph) => glyph.id);
@@ -2204,6 +2229,10 @@ class GlyphOverview {
             if (tile.cachedData) {
                 return;
             }
+            if (!this.isGlyphHydrated(tile.glyphName)) {
+                this.applyUnhydratedTileAppearance(tile);
+                return;
+            }
 
             this.pendingGlyphIds.add(glyphId);
             queued += 1;
@@ -2447,6 +2476,9 @@ class GlyphOverview {
                 continue;
             }
 
+            if (this.isGlyphHydrated(glyphName)) {
+                this.applyHydratedTileAppearance(targetTile);
+            }
             targetTile.cachedData = undefined;
             if (forceImmediateRefresh) {
                 immediateGlyphNames.add(glyphName);
@@ -2954,7 +2986,11 @@ class GlyphOverview {
                                 this.touchTileViewed(tile);
                             }
                             // Only add if not already rendered (check for cachedData instead of canvas presence)
-                            if (tile && !tile.cachedData) {
+                            if (
+                                tile &&
+                                !tile.cachedData &&
+                                this.isGlyphHydrated(tile.glyphName)
+                            ) {
                                 this.pendingGlyphIds.add(glyphId);
                                 addedCount++;
                             }
@@ -3019,6 +3055,10 @@ class GlyphOverview {
             const tile = this.tiles.get(glyphId);
             // Check cachedData instead of canvas presence (canvas is now pre-created)
             if (tile && !tile.cachedData) {
+                if (!this.isGlyphHydrated(tile.glyphName)) {
+                    this.applyUnhydratedTileAppearance(tile);
+                    continue;
+                }
                 glyphNames.push(tile.glyphName);
                 glyphNameToTile.set(tile.glyphName, tile);
             }
@@ -3036,8 +3076,8 @@ class GlyphOverview {
             return;
         }
 
+        const fontComp = window.fontCompilation;
         try {
-            const fontComp = window.fontCompilation;
             if (!fontComp) {
                 throw new Error('fontCompilation not available on window');
             }
@@ -3139,6 +3179,65 @@ class GlyphOverview {
                 return;
             }
 
+            const returnedNames = new Set(
+                (Array.isArray(outlines) ? outlines : []).map(
+                    (glyphData: { name?: string }) => glyphData?.name
+                )
+            );
+            const omitted = glyphNames.filter(
+                (glyphName) => !returnedNames.has(glyphName)
+            );
+            if (omitted.length && fontComp) {
+                for (const glyphName of omitted) {
+                    const tile = glyphNameToTile.get(glyphName);
+                    if (!tile || tile.cachedData) {
+                        continue;
+                    }
+                    try {
+                        const single = await fontComp.sendMessage({
+                            type: 'getGlyphOutlines',
+                            glyphNames: [glyphName],
+                            location: batchLocation,
+                            flattenComponents: false
+                        });
+                        if (single?.error) {
+                            console.warn(
+                                `[GlyphOverview] Failed to render tile ${glyphName}: ${single.error}`
+                            );
+                            continue;
+                        }
+                        const singleOutlines = JSON.parse(
+                            single.outlinesJson || '[]'
+                        );
+                        const glyphData = Array.isArray(singleOutlines)
+                            ? singleOutlines[0]
+                            : null;
+                        if (!glyphData) {
+                            continue;
+                        }
+                        const dims = this.getTileDimensions();
+                        if (
+                            this.renderTileCanvas(
+                                tile,
+                                glyphData,
+                                dims.width,
+                                dims.height
+                            )
+                        ) {
+                            tile.cachedData = glyphData;
+                        }
+                    } catch (inner) {
+                        const innerMsg =
+                            inner instanceof Error
+                                ? inner.message
+                                : String(inner);
+                        console.warn(
+                            `[GlyphOverview] Failed to render tile ${glyphName}: ${innerMsg}`
+                        );
+                    }
+                }
+            }
+
             if (renderDurationMs > 18) {
                 this.lazyBatchSize = Math.max(
                     this.minLazyBatchSize,
@@ -3153,6 +3252,56 @@ class GlyphOverview {
         } catch (error) {
             const msg = error instanceof Error ? error.message : String(error);
             console.error('[GlyphOverview]', `Batch render failed: ${msg}`);
+            if (glyphNames.length > 1 && fontComp) {
+                for (const glyphName of glyphNames) {
+                    const tile = glyphNameToTile.get(glyphName);
+                    if (!tile || tile.cachedData) {
+                        continue;
+                    }
+                    try {
+                        const single = await fontComp.sendMessage({
+                            type: 'getGlyphOutlines',
+                            glyphNames: [glyphName],
+                            location: batchLocation,
+                            flattenComponents: false
+                        });
+                        if (single?.error) {
+                            console.warn(
+                                `[GlyphOverview] Failed to render tile ${glyphName}: ${single.error}`
+                            );
+                            continue;
+                        }
+                        const outlines = JSON.parse(
+                            single.outlinesJson || '[]'
+                        );
+                        const glyphData = Array.isArray(outlines)
+                            ? outlines[0]
+                            : null;
+                        if (!glyphData) {
+                            continue;
+                        }
+                        const dims = this.getTileDimensions();
+                        if (
+                            this.renderTileCanvas(
+                                tile,
+                                glyphData,
+                                dims.width,
+                                dims.height
+                            )
+                        ) {
+                            tile.cachedData = glyphData;
+                        }
+                    } catch (inner) {
+                        const innerMsg =
+                            inner instanceof Error
+                                ? inner.message
+                                : String(inner);
+                        console.warn(
+                            `[GlyphOverview] Failed to render tile ${glyphName}: ${innerMsg}`
+                        );
+                    }
+                }
+            }
         } finally {
             this.isBatchRendering = false;
         }
@@ -3186,6 +3335,13 @@ class GlyphOverview {
         canvas.height = 0;
         tileElement.appendChild(canvas);
 
+        const cloudIcon = document.createElement('span');
+        cloudIcon.className = 'glyph-tile-cloud-icon material-symbols-outlined';
+        cloudIcon.textContent = 'cloud_download';
+        cloudIcon.setAttribute('aria-hidden', 'true');
+        cloudIcon.setAttribute('hidden', '');
+        tileElement.appendChild(cloudIcon);
+
         // Create label for glyph name (display name, not ID)
         const label = document.createElement('div');
         label.className = 'glyph-tile-label';
@@ -3193,7 +3349,8 @@ class GlyphOverview {
             window.fontManager?.currentFont?.fontModel ??
             window.currentFontModel
         )?.findGlyph?.(glyphName);
-        if (modelGlyph?.codepoints?.length) {
+        const catalogCodepoints = this.getOverviewCodepoints(glyphName);
+        if (modelGlyph?.codepoints?.length || catalogCodepoints.length) {
             label.classList.add('glyph-tile-label-encoded');
         }
         label.textContent = glyphName;
@@ -3242,7 +3399,7 @@ class GlyphOverview {
             this.insertGlyphToken(glyphName);
         });
 
-        return {
+        const tile: GlyphTile = {
             element: tileElement,
             glyphId: glyphId,
             glyphName: glyphName,
@@ -3250,6 +3407,123 @@ class GlyphOverview {
             lastViewedAt: 0,
             canvas: canvas
         };
+        if (this.isGlyphHydrated(glyphName)) {
+            this.applyHydratedTileAppearance(tile);
+        } else {
+            this.applyUnhydratedTileAppearance(tile);
+        }
+        return tile;
+    }
+
+    private overviewFontIdentityKey(): string {
+        const font = window.fontManager?.currentFont;
+        return [
+            window.fontManager?.currentFontId ?? '',
+            font?.sourcePlugin?.getId?.() ?? '',
+            font?.path ?? ''
+        ].join('|');
+    }
+
+    private isCloudSourceFont(): boolean {
+        return (
+            window.fontManager?.currentFont?.sourcePlugin?.getId?.() === 'cloud'
+        );
+    }
+
+    private isGlyphHydrated(glyphName: string): boolean {
+        return !!(
+            window.fontManager?.currentFont?.fontModel ??
+            window.currentFontModel
+        )?.findGlyph?.(glyphName);
+    }
+
+    private getCatalogCodepointsMap(): Map<string, number[]> {
+        if (!this.catalogCodepointsByName) {
+            this.catalogCodepointsByName = catalogCodepointsByGlyphName(
+                window.fontManager?.currentFont?.babelfontData as
+                    Record<string, unknown> | undefined
+            );
+        }
+        return this.catalogCodepointsByName;
+    }
+
+    private getOverviewCodepoints(glyphName: string): number[] {
+        const modelGlyph = (
+            window.fontManager?.currentFont?.fontModel ??
+            window.currentFontModel
+        )?.findGlyph?.(glyphName);
+        if (
+            Array.isArray(modelGlyph?.codepoints) &&
+            modelGlyph.codepoints.length
+        ) {
+            return modelGlyph.codepoints;
+        }
+        const listed = this.glyphDataById.get(glyphName);
+        if (Array.isArray(listed?.codepoints) && listed.codepoints.length) {
+            return listed.codepoints;
+        }
+        return this.getCatalogCodepointsMap().get(glyphName) || [];
+    }
+
+    private applyUnhydratedTileAppearance(tile: GlyphTile): void {
+        this.evictTileCache(tile);
+        tile.element.classList.add('glyph-tile-unhydrated');
+        const icon = tile.element.querySelector('.glyph-tile-cloud-icon');
+        if (!icon) {
+            return;
+        }
+        if (this.isCloudSourceFont()) {
+            icon.removeAttribute('hidden');
+        } else {
+            icon.setAttribute('hidden', '');
+        }
+    }
+
+    private applyHydratedTileAppearance(tile: GlyphTile): void {
+        tile.element.classList.remove('glyph-tile-unhydrated');
+        const icon = tile.element.querySelector('.glyph-tile-cloud-icon');
+        if (icon) {
+            icon.setAttribute('hidden', '');
+        }
+    }
+
+    private reconcileTileHydration(): void {
+        this.catalogCodepointsByName = null;
+        const newlyHydrated: string[] = [];
+        for (const tile of this.tiles.values()) {
+            const hydrated = this.isGlyphHydrated(tile.glyphName);
+            if (hydrated) {
+                if (tile.element.classList.contains('glyph-tile-unhydrated')) {
+                    newlyHydrated.push(tile.glyphId);
+                }
+                this.applyHydratedTileAppearance(tile);
+            } else {
+                this.applyUnhydratedTileAppearance(tile);
+            }
+        }
+        for (const glyphId of newlyHydrated) {
+            this.pendingGlyphIds.add(glyphId);
+        }
+        if (newlyHydrated.length) {
+            this.scheduleBatchRender();
+        }
+    }
+
+    private async hydrateSelectedUnhydratedGlyphs(): Promise<void> {
+        const seedNames = this.getSelectedGlyphNames().filter(
+            (name) => !this.isGlyphHydrated(name)
+        );
+        if (!seedNames.length) {
+            return;
+        }
+        try {
+            await window.cloudPlugin?.hydrateOverviewGlyphs?.(seedNames);
+            this.reconcileTileHydration();
+        } catch (error) {
+            const message =
+                error instanceof Error ? error.message : String(error);
+            console.error('[GlyphOverview] Failed to hydrate glyphs:', message);
+        }
     }
 
     private initTileContextMenu(): void {
@@ -3281,32 +3555,32 @@ class GlyphOverview {
                     return;
                 }
                 (menu as { _handlersSetup?: boolean })._handlersSetup = true;
-                menu.querySelectorAll('.plugin-menu-item').forEach(
-                    (menuItem) => {
-                        menuItem.addEventListener('click', () => {
-                            if (
-                                menuItem.classList.contains('disabled') ||
-                                menuItem.classList.contains(
-                                    'plugin-menu-item-disabled'
-                                )
-                            ) {
-                                return;
-                            }
-                            const action = menuItem.getAttribute('data-action');
-                            instance.hide();
-                            backdrop.classList.remove('visible');
-                            if (action === 'insert-as-unicode') {
-                                this.insertSelectedGlyphsAsUnicode();
-                            } else if (action === 'rename-glyphs') {
-                                window.renameGlyphsDialog?.open();
-                            } else if (action === 'delete-glyphs') {
-                                window.deleteGlyphsDialog?.open();
-                            } else if (action === 'duplicate-glyphs') {
-                                this.duplicateSelectedGlyphs();
-                            }
-                        });
+                menu.addEventListener('click', (event) => {
+                    const menuItem = (
+                        event.target as HTMLElement | null
+                    )?.closest('.plugin-menu-item');
+                    if (
+                        !menuItem ||
+                        menuItem.classList.contains('disabled') ||
+                        menuItem.classList.contains('plugin-menu-item-disabled')
+                    ) {
+                        return;
                     }
-                );
+                    const action = menuItem.getAttribute('data-action');
+                    instance.hide();
+                    backdrop.classList.remove('visible');
+                    if (action === 'insert-as-unicode') {
+                        this.insertSelectedGlyphsAsUnicode();
+                    } else if (action === 'hydrate-glyphs') {
+                        void this.hydrateSelectedUnhydratedGlyphs();
+                    } else if (action === 'rename-glyphs') {
+                        window.renameGlyphsDialog?.open();
+                    } else if (action === 'delete-glyphs') {
+                        window.deleteGlyphsDialog?.open();
+                    } else if (action === 'duplicate-glyphs') {
+                        this.duplicateSelectedGlyphs();
+                    }
+                });
             }
         });
 
@@ -3344,12 +3618,23 @@ class GlyphOverview {
                 this.keyboardAnchorGlyphId = glyphId;
             }
 
+            const selectedNames = this.getSelectedGlyphNames();
             const canAct =
-                !!window.fontManager?.currentFont &&
-                this.getSelectedGlyphNames().length > 0;
+                !!window.fontManager?.currentFont && selectedNames.length > 0;
+            const hasUnhydrated = selectedNames.some(
+                (name) => !this.isGlyphHydrated(name)
+            );
+            const canHydrate =
+                hasUnhydrated &&
+                window.fontManager?.currentFont?.sourcePlugin?.getId?.() ===
+                    'cloud';
             this.tileContextMenu.hide();
             this.tileContextMenu.setContent(
-                this.createTileContextMenuHtml(canAct)
+                this.createTileContextMenuHtml(
+                    canAct,
+                    canHydrate,
+                    hasUnhydrated
+                )
             );
             this.tileContextMenu.setProps({
                 getReferenceClientRect: () => ({
@@ -3368,11 +3653,16 @@ class GlyphOverview {
         });
     }
 
-    private createTileContextMenuHtml(canAct = true): string {
-        const disabledClass = canAct
+    private createTileContextMenuHtml(
+        canAct = true,
+        canHydrate = false,
+        hasUnhydrated = false
+    ): string {
+        const canMutate = canAct && !hasUnhydrated;
+        const disabledClass = canMutate
             ? ''
             : ' disabled plugin-menu-item-disabled';
-        const disabledAttr = canAct ? '' : ' aria-disabled="true"';
+        const disabledAttr = canMutate ? '' : ' aria-disabled="true"';
         const hasSelectedCodepoints =
             this.getSelectedGlyphUnicodeText().length > 0;
         const insertAsUnicodeItem = hasSelectedCodepoints
@@ -3386,8 +3676,16 @@ class GlyphOverview {
                     )}
                 </div>`
             : '';
+        const hydrateItem = canHydrate
+            ? `
+                <div class="plugin-menu-item" data-action="hydrate-glyphs">
+                    <span class="material-symbols-outlined">cloud_download</span>
+                    <span>Download Glyph(s)</span>
+                </div>`
+            : '';
         return `
             <div class="plugin-menu">
+                ${hydrateItem}
                 ${insertAsUnicodeItem}
                 <div class="plugin-menu-item${disabledClass}" data-action="duplicate-glyphs"${disabledAttr}>
                     <span class="material-symbols-outlined">content_copy</span>
@@ -3680,13 +3978,9 @@ class GlyphOverview {
 
     /** Return Unicode characters for selected glyphs that have valid codepoints. */
     private getSelectedGlyphUnicodeText(): string {
-        const fontModel =
-            window.fontManager?.currentFont?.fontModel ??
-            window.currentFontModel;
         return this.getSelectedGlyphNames()
             .flatMap((glyphName) => {
-                const codepoints =
-                    fontModel?.findGlyph?.(glyphName)?.codepoints;
+                const codepoints = this.getOverviewCodepoints(glyphName);
                 return Array.isArray(codepoints) ? codepoints : [];
             })
             .filter(
@@ -4227,6 +4521,7 @@ class GlyphOverview {
         }
 
         const glyphName = selectedNames[0];
+        const codepoints = this.getOverviewCodepoints(glyphName);
         const fontModel = window.currentFontModel;
         const glyph =
             typeof fontModel?.findGlyph === 'function'
@@ -4236,9 +4531,15 @@ class GlyphOverview {
                           candidate.name === glyphName
                   );
         if (!glyph) {
-            return { name: glyphName };
+            return {
+                name: glyphName,
+                ...(codepoints.length ? { codepoints } : {})
+            };
         }
-        return glyph;
+        return {
+            name: glyph.name || glyphName,
+            codepoints: codepoints.length ? codepoints : glyph.codepoints
+        };
     }
 
     private resolveOverviewMasterId(): string | null {
@@ -4537,6 +4838,8 @@ class GlyphOverview {
         const singleGlyph =
             selectedNames.length === 1 ? this.getSelectedGlyphModel() : null;
         const nameEditable = Boolean(singleGlyph);
+        const unicodeEditable =
+            nameEditable && this.isGlyphHydrated(singleGlyph?.name || '');
         const layers = this.getSelectedOverviewLayers();
         const sidebearingSummary = this.summarizeOverviewSidebearings(layers);
         const fontModel = window.currentFontModel;
@@ -4556,7 +4859,7 @@ class GlyphOverview {
         nameInput.className = 'glyph-property-input';
         nameInput.dataset.propertyField = 'glyph-name';
         nameInput.spellcheck = false;
-        nameInput.disabled = !nameEditable;
+        nameInput.disabled = !nameEditable || !unicodeEditable;
         nameInput.value = singleGlyph?.name || '';
         if (selectedNames.length > 1) {
             nameInput.placeholder = 'Multiple';
@@ -4581,10 +4884,11 @@ class GlyphOverview {
         unicodeInput.className = 'glyph-property-input';
         unicodeInput.dataset.propertyField = 'glyph-unicode';
         unicodeInput.spellcheck = false;
-        unicodeInput.disabled = !nameEditable;
-        unicodeInput.value = nameEditable
-            ? formatCodepointsHexList(singleGlyph?.codepoints)
-            : '';
+        unicodeInput.disabled = !unicodeEditable;
+        unicodeInput.value =
+            selectedNames.length === 1
+                ? formatCodepointsHexList(singleGlyph?.codepoints)
+                : '';
         if (selectedNames.length > 1) {
             unicodeInput.placeholder = 'Multiple';
         } else if (nameEditable) {
@@ -5481,6 +5785,10 @@ class GlyphOverview {
             'glyphChanged',
             this.onGlyphChanged.bind(this)
         );
+        window.removeEventListener('fontModelSync', this.onFontModelSyncBound);
+        window.removeEventListener('scroll', this.onCapturedScrollBound, {
+            capture: true
+        } as EventListenerOptions);
         if (this.container) {
             this.container.remove();
         }

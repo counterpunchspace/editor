@@ -22,6 +22,10 @@ const {
     save_font_as_glyphs
 } = require('../wasm-dist/babelfont_fontc_web');
 const { sidebarErrorDisplay } = require('../js/sidebar-error-display');
+const {
+    buildFontDepsIndex,
+    writeFontDepsYMap
+} = require('../js/filesystem-plugins/cloud-font-deps');
 
 function makeWorkerCacheStatus(overrides = {}) {
     return {
@@ -1927,6 +1931,94 @@ describe('FontManager editing subset inclusion', () => {
         expect(
             compileEditingSpy.mock.calls[0][3].optionOverrides
         ).not.toHaveProperty('skip_features');
+    });
+
+    test('sparse reverse hydrate keeps cloudPlugin as this', async () => {
+        const originalCloudPlugin = window.cloudPlugin;
+        const originalPatchSync = window.patchSyncEngine;
+        const originalBabelfontData = fontManager.currentFont.babelfontData;
+        const fontJson = {
+            glyphCatalog: {
+                'id-a': { glyphId: 'id-a', name: 'a' },
+                'id-adieresis': { glyphId: 'id-adieresis', name: 'adieresis' }
+            },
+            glyphs: [
+                { id: 'id-a', name: 'a', layers: [] },
+                {
+                    id: 'id-adieresis',
+                    name: 'adieresis',
+                    layers: [{ shapes: [{ reference: 'a' }] }]
+                }
+            ]
+        };
+        const depsDoc = new Y.Doc();
+        writeFontDepsYMap(depsDoc.getMap('deps'), buildFontDepsIndex(fontJson));
+        const plugin = {
+            _activeAssetId: 'asset-1',
+            get activeAssetId() {
+                return this._activeAssetId;
+            },
+            async hydrateOverviewGlyphs(seedNames) {
+                if (this == null || this.activeAssetId == null) {
+                    throw new TypeError(
+                        "Cannot read properties of undefined (reading '_activeAssetId')"
+                    );
+                }
+                return seedNames;
+            }
+        };
+        const hydrateSpy = jest.spyOn(plugin, 'hydrateOverviewGlyphs');
+        window.cloudPlugin = plugin;
+        window.patchSyncEngine = { depsDoc };
+        fontManager.currentFont.babelfontData = fontJson;
+        jest.spyOn(fontManager, 'isHydrationSparse').mockReturnValue(true);
+        jest.spyOn(fontManager, 'getHydratedGlyphNames').mockReturnValue(['a']);
+
+        await fontManager.hydrateSparseReverseDependentsFromFontDeps(['a']);
+
+        expect(hydrateSpy).toHaveBeenCalledWith(
+            expect.arrayContaining(['a', 'adieresis'])
+        );
+        hydrateSpy.mockRestore();
+        fontManager.isHydrationSparse.mockRestore();
+        fontManager.getHydratedGlyphNames.mockRestore();
+        window.cloudPlugin = originalCloudPlugin;
+        window.patchSyncEngine = originalPatchSync;
+        fontManager.currentFont.babelfontData = originalBabelfontData;
+    });
+
+    test('sparse reverse hydrate skips when no cloud asset is open', async () => {
+        const originalCloudPlugin = window.cloudPlugin;
+        window.cloudPlugin = {
+            activeAssetId: null,
+            hydrateOverviewGlyphs: jest.fn(async () => {
+                throw new Error('No cloud font is open');
+            })
+        };
+        jest.spyOn(fontManager, 'isHydrationSparse').mockReturnValue(true);
+
+        await expect(
+            fontManager.hydrateSparseReverseDependentsFromFontDeps(['a'])
+        ).resolves.toBeUndefined();
+        expect(window.cloudPlugin.hydrateOverviewGlyphs).not.toHaveBeenCalled();
+
+        fontManager.isHydrationSparse.mockRestore();
+        window.cloudPlugin = originalCloudPlugin;
+    });
+
+    test('sparse hydration compiles keep OpenType features and kerning', async () => {
+        jest.spyOn(fontManager, 'isHydrationSparse').mockReturnValue(true);
+        setRequestCompileContext('text-input', null);
+
+        await fontManager.compileEditingFont('a', [], ['a']);
+
+        expect(compileEditingSpy).toHaveBeenCalledTimes(1);
+        expect(
+            compileEditingSpy.mock.calls[0][3].optionOverrides
+        ).not.toHaveProperty('skip_features');
+        expect(
+            compileEditingSpy.mock.calls[0][3].optionOverrides
+        ).not.toHaveProperty('skip_kerning');
     });
 
     test('remote-anchor compiles keep kerning enabled in anchor-only mode', async () => {
@@ -5124,6 +5216,166 @@ describe('FontManager handleNewFont', () => {
 
         const withSpace = fontManager.deriveSubsetGlyphsFromText('a b');
         expect(withSpace).toEqual(['.notdef', 'space']);
+    });
+
+    test('deriveSubsetGlyphsFromText closes GSUB alts of mapped seeds only', () => {
+        const json = fontManager.generateEmptyFontJson();
+        const fontData = JSON.parse(json);
+        const space = fontData.glyphs.find((glyph) => glyph.name === 'space');
+        const layerFor = (id) => {
+            const layer = JSON.parse(JSON.stringify(space.layers[0]));
+            layer.id = id;
+            return layer;
+        };
+        fontData.glyphs.push(
+            {
+                name: 'a',
+                codepoints: [97],
+                exported: true,
+                layers: [layerFor('layer-a')]
+            },
+            {
+                name: 'a.init',
+                codepoints: [],
+                exported: true,
+                layers: [layerFor('layer-a-init')]
+            },
+            {
+                name: 'g',
+                codepoints: [103],
+                exported: true,
+                layers: [layerFor('layer-g')]
+            },
+            {
+                name: 'g.ss03',
+                codepoints: [],
+                exported: true,
+                layers: [layerFor('layer-g-ss03')]
+            }
+        );
+        fontData.features = {
+            classes: {},
+            prefixes: {},
+            features: [
+                ['init', 'sub a by a.init;'],
+                ['ss03', 'sub g by g.ss03;']
+            ]
+        };
+        const fakeCurrentFont = {
+            babelfontJson: JSON.stringify(fontData),
+            babelfontData: fontData,
+            fontModel: Font.fromData(fontData),
+            name: 'Subset Fea',
+            hasUnsavedChanges: false,
+            isCloudBacked: () => false
+        };
+        fontManager.openedFonts = new Map([['subset-fea', fakeCurrentFont]]);
+        fontManager.currentFontId = 'subset-fea';
+        window.currentFontModel = fakeCurrentFont.fontModel;
+
+        const subset = fontManager.deriveSubsetGlyphsFromText('a');
+        expect(subset).toEqual(expect.arrayContaining(['a', 'a.init']));
+        expect(subset).not.toContain('g');
+        expect(subset).not.toContain('g.ss03');
+    });
+
+    test('deriveSubsetGlyphsFromText recursively closes nested components', () => {
+        const json = fontManager.generateEmptyFontJson();
+        const fontData = JSON.parse(json);
+        const space = fontData.glyphs.find((glyph) => glyph.name === 'space');
+        const layerFor = (id, shapes = []) => {
+            const layer = JSON.parse(JSON.stringify(space.layers[0]));
+            layer.id = id;
+            layer.shapes = shapes;
+            return layer;
+        };
+        fontData.glyphs.push(
+            {
+                name: 'edieresis',
+                codepoints: [0xeb],
+                exported: true,
+                layers: [
+                    layerFor('layer-edieresis', [
+                        { reference: 'e' },
+                        { reference: 'dieresiscomb' }
+                    ])
+                ]
+            },
+            {
+                name: 'e',
+                codepoints: [101],
+                exported: true,
+                layers: [layerFor('layer-e')]
+            },
+            {
+                name: 'dieresiscomb',
+                codepoints: [],
+                exported: true,
+                layers: [
+                    layerFor('layer-dieresiscomb', [
+                        { reference: 'dotaccentcomb' },
+                        { reference: 'dotaccentcomb' }
+                    ])
+                ]
+            },
+            {
+                name: 'dotaccentcomb',
+                codepoints: [],
+                exported: true,
+                layers: [layerFor('layer-dotaccentcomb')]
+            },
+            {
+                name: 'beh-ar',
+                codepoints: [0x628],
+                exported: true,
+                layers: [layerFor('layer-beh')]
+            },
+            {
+                name: 'dotbelow-ar',
+                codepoints: [],
+                exported: true,
+                layers: [
+                    layerFor('layer-dotbelow', [{ reference: 'dotabove-ar' }])
+                ]
+            },
+            {
+                name: 'dotabove-ar',
+                codepoints: [],
+                exported: true,
+                layers: [layerFor('layer-dotabove')]
+            }
+        );
+        fontData.features = {
+            classes: {},
+            prefixes: {},
+            features: [['ccmp', 'sub beh-ar by beh-ar dotbelow-ar;']]
+        };
+        const fakeCurrentFont = {
+            babelfontJson: JSON.stringify(fontData),
+            babelfontData: fontData,
+            fontModel: Font.fromData(fontData),
+            name: 'Nested Components',
+            hasUnsavedChanges: false,
+            isCloudBacked: () => false
+        };
+        fontManager.openedFonts = new Map([['nested-comp', fakeCurrentFont]]);
+        fontManager.currentFontId = 'nested-comp';
+        window.currentFontModel = fakeCurrentFont.fontModel;
+
+        const latin = fontManager.deriveSubsetGlyphsFromText('\u00eb');
+        expect(latin).toEqual(
+            expect.arrayContaining([
+                'edieresis',
+                'e',
+                'dieresiscomb',
+                'dotaccentcomb'
+            ])
+        );
+
+        const arabic = fontManager.deriveSubsetGlyphsFromText('\u0628');
+        expect(arabic).toEqual(
+            expect.arrayContaining(['beh-ar', 'dotbelow-ar', 'dotabove-ar'])
+        );
     });
 
     test('handleNewFont clears worker cache but does not store full font JSON before dispatching fontLoaded', async () => {

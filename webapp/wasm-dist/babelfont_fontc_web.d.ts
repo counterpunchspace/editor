@@ -512,31 +512,6 @@ export type InitInput =
 
 export interface InitOutput {
     readonly memory: WebAssembly.Memory;
-    readonly get_font_axes: (
-        a: number,
-        b: number
-    ) => [number, number, number, number];
-    readonly get_font_features: (
-        a: number,
-        b: number
-    ) => [number, number, number, number];
-    readonly get_font_features_with_tables: (
-        a: number,
-        b: number
-    ) => [number, number, number, number];
-    readonly get_glyph_name: (
-        a: number,
-        b: number,
-        c: number
-    ) => [number, number, number, number];
-    readonly get_glyph_order: (
-        a: number,
-        b: number
-    ) => [number, number, number, number];
-    readonly get_stylistic_set_names: (
-        a: number,
-        b: number
-    ) => [number, number, number, number];
     readonly adopt_preview_layout_closure_from_last: () => number;
     readonly apply_preview_layer_overlay: (
         a: number,
@@ -685,6 +660,31 @@ export interface InitOutput {
         a: any
     ) => [number, number];
     readonly version: () => [number, number];
+    readonly get_font_axes: (
+        a: number,
+        b: number
+    ) => [number, number, number, number];
+    readonly get_font_features: (
+        a: number,
+        b: number
+    ) => [number, number, number, number];
+    readonly get_font_features_with_tables: (
+        a: number,
+        b: number
+    ) => [number, number, number, number];
+    readonly get_glyph_name: (
+        a: number,
+        b: number,
+        c: number
+    ) => [number, number, number, number];
+    readonly get_glyph_order: (
+        a: number,
+        b: number
+    ) => [number, number, number, number];
+    readonly get_stylistic_set_names: (
+        a: number,
+        b: number
+    ) => [number, number, number, number];
     readonly add_master_with_interpolated_layers_yjs: (
         a: number,
         b: number

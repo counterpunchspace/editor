@@ -46,6 +46,7 @@ describe('GlyphOverviewFilterManager simple filters', () => {
 
     afterEach(() => {
         jest.restoreAllMocks();
+        delete window.fontManager;
     });
 
     test('reuses an established cache when activating a filter', async () => {
@@ -146,6 +147,28 @@ describe('GlyphOverviewFilterManager simple filters', () => {
             { glyph_name: 'A', groups: [] },
             { glyph_name: 'B', groups: [] }
         ]);
+    });
+
+    test('All Glyphs includes unhydrated catalog names', () => {
+        const allGlyphs = makeFilter('com.context.allglyphs');
+        manager.plugins = [allGlyphs];
+        window.pyodide = undefined;
+        window.currentFontModel = { glyphs: [] };
+        window.fontManager = {
+            currentFont: {
+                babelfontData: {
+                    glyphOrder: ['A', 'C'],
+                    glyphCatalog: {
+                        'id-a': { glyphId: 'id-a', name: 'A', deleted: false },
+                        'id-c': { glyphId: 'id-c', name: 'C', deleted: false }
+                    }
+                }
+            }
+        };
+
+        manager.rebuildFilterCache(allGlyphs);
+
+        expect([...allGlyphs.classifications.keys()]).toEqual(['A', 'C']);
     });
 
     test('font-open cache invalidation keeps loaded Python source', () => {

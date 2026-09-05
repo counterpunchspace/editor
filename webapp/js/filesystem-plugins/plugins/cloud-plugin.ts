@@ -31,6 +31,7 @@ import {
 } from '../../patch-sync-engine';
 import { Logger } from '../../logger';
 import { resolveWebsiteURL } from '../../website-url';
+import { readUrlState } from '../../url-state';
 import {
     applyCloudOwnedData,
     catalogFromCoreJson,
@@ -40,7 +41,16 @@ import {
     patchCloudOwnedGlyph,
     stripOwnedFontData
 } from '../cloud-glyph-catalog';
-import { depsNeedUpdate } from '../cloud-font-deps';
+import {
+    afdkoFeatureCodeFromFontJson,
+    depsNeedUpdate,
+    layoutGlyphIdsFromFeatureCode,
+    expandSparsePlanWithLoadedComponents,
+    planSparseHydration,
+    readFontDepsIndex,
+    readWorkingGlyphIds,
+    sparseHydrationSeedsFromText
+} from '../cloud-font-deps';
 import {
     CloudDocumentSet,
     FONT_CORE_DOCUMENT_ID,
@@ -353,21 +363,6 @@ function catalogEntriesFromCoreJson(
     }));
 }
 
-function featureCodeFromCoreJson(coreJson: Record<string, unknown>): string {
-    const features = coreJson.features;
-    if (typeof features === 'string') {
-        return features;
-    }
-    if (!features) {
-        return '';
-    }
-    try {
-        return JSON.stringify(features);
-    } catch {
-        return '';
-    }
-}
-
 function glyphDocumentIdsFromCoreJson(
     coreJson: Record<string, unknown>
 ): string[] {
@@ -377,6 +372,9 @@ function glyphDocumentIdsFromCoreJson(
 function getCloudFontJsonFromBridge(
     bridge: Pick<PatchSyncEngine, 'getFontJsonSnapshot'>
 ): Record<string, unknown> | null {
+    if (typeof bridge.getFontJsonSnapshot !== 'function') {
+        return null;
+    }
     const fontJson = bridge.getFontJsonSnapshot();
     if (!fontJson || Object.keys(fontJson).length === 0) {
         return null;
@@ -862,6 +860,9 @@ export class CloudPlugin extends FilesystemPlugin {
         assetId: string;
         promise: Promise<void>;
     } | null = null;
+    private _pendingSparseHydration = false;
+    private _overviewHydrateInFlight: Promise<string[]> | null = null;
+    private _overviewHydrateQueuedNames: string[] = [];
     private _cloudSessionBootstrapEmail = 'local-dev@counterpunch.test';
     private _connectionStatusByAssetId = new Map<
         string,
@@ -1203,6 +1204,21 @@ export class CloudPlugin extends FilesystemPlugin {
         }
         const role = this.getCurrentAssetRole();
         if (role === 'viewer') {
+            return false;
+        }
+        const glyphName = window.glyphCanvas?.getCurrentGlyphName?.();
+        // Text mode reports the sentinel string "undefined" from
+        // getCurrentGlyphName. That must not lock the canvas: it blocked
+        // double-click-to-edit while Cmd+Enter still worked. Only refuse
+        // writes once a real sparse-hidden glyph is being edited.
+        const editingSparseHiddenGlyph =
+            !!window.glyphCanvas?.outlineEditor?.active &&
+            !!glyphName &&
+            glyphName !== 'undefined' &&
+            window.patchSyncEngine?.hasSparseWorkingSet?.() &&
+            window.patchSyncEngine.isSparseWorkingGlyphName?.(glyphName) ===
+                false;
+        if (editingSparseHiddenGlyph) {
             return false;
         }
         return true;
@@ -1864,6 +1880,218 @@ export class CloudPlugin extends FilesystemPlugin {
 
         await this.openAsset(assetId);
         return true;
+    }
+
+    setPendingSparseHydration(sparse: boolean): void {
+        this._pendingSparseHydration = sparse;
+    }
+
+    /**
+     * Hydrate selected catalog glyphs plus their layout/graph closure.
+     * Linked windows receive the shard bytes over WindowSync.
+     */
+    isHydratingOverviewGlyphs(): boolean {
+        return this._overviewHydrateInFlight !== null;
+    }
+
+    async hydrateOverviewGlyphs(seedNames: string[]): Promise<string[]> {
+        this._overviewHydrateQueuedNames.push(...seedNames);
+        if (this._overviewHydrateInFlight) {
+            return this._overviewHydrateInFlight;
+        }
+        const hydrate = (async () => {
+            const loaded: string[] = [];
+            while (this._overviewHydrateQueuedNames.length) {
+                const batch = [
+                    ...new Set(this._overviewHydrateQueuedNames.splice(0))
+                ];
+                loaded.push(...(await this._hydrateOverviewGlyphs(batch)));
+            }
+            return [...new Set(loaded)];
+        })();
+        this._overviewHydrateInFlight = hydrate;
+        try {
+            return await hydrate;
+        } finally {
+            if (this._overviewHydrateInFlight === hydrate) {
+                this._overviewHydrateInFlight = null;
+            }
+        }
+    }
+
+    private async _hydrateOverviewGlyphs(
+        seedNames: string[]
+    ): Promise<string[]> {
+        const assetId = this.activeAssetId;
+        const bridge = window.patchSyncEngine;
+        if (!assetId || !bridge) {
+            return [];
+        }
+        const fontJson =
+            this._currentFontJson() || getCloudFontJsonFromBridge(bridge) || {};
+        const owned = catalogFromCoreJson(fontJson);
+        if (!owned) {
+            return [];
+        }
+        const catalog = Object.values(owned.glyphCatalog).filter(
+            (entry) => entry.glyphId && entry.deleted !== true && entry.name
+        );
+        const nameToId = new Map(
+            catalog.map((entry) => [entry.name, entry.glyphId])
+        );
+        const seedIds = [
+            ...new Set(
+                seedNames
+                    .map((name) => nameToId.get(name))
+                    .filter((id): id is string => Boolean(id))
+            )
+        ];
+        if (!seedIds.length) {
+            return [];
+        }
+        bridge.syncCompleteFontDepsFromLoadedGlyphs?.(fontJson);
+        const layoutIds = layoutGlyphIdsFromFeatureCode({
+            featureCode: afdkoFeatureCodeFromFontJson(fontJson),
+            seedIds,
+            catalog: catalog.map((entry) => ({
+                glyphId: entry.glyphId,
+                name: entry.name
+            }))
+        });
+        const catalogIds = liveCatalogGlyphIds(owned.glyphCatalog);
+        const idToName = new Map(
+            catalog.map((entry) => [entry.glyphId, entry.name])
+        );
+        const previousWorkingIds = readWorkingGlyphIds(
+            bridge.depsDoc.getMap('deps')
+        );
+        const loadedNames: string[] = [];
+        let lastPlan = planSparseHydration({
+            catalogIds,
+            seedIds,
+            layoutIds,
+            previousWorkingIds,
+            loadedIds: [],
+            edges: readFontDepsIndex(bridge.depsDoc.getMap('deps')).edges
+        });
+        const { token, roomUrl } = await this._fetchRoomToken(assetId);
+        const hydrator = new CloudAdapter({
+            assetId,
+            websiteBaseUrl: this._websiteBaseUrl
+        });
+        try {
+            for (let pass = 0; pass <= Math.max(catalogIds.length, 1); pass++) {
+                const liveJson =
+                    this._currentFontJson() ||
+                    getCloudFontJsonFromBridge(bridge) ||
+                    fontJson;
+                const liveGlyphIds = (
+                    bridge.listLiveGlyphDocumentIds?.() ?? []
+                ).map((documentId) => documentId.slice('glyph:'.length));
+                lastPlan = expandSparsePlanWithLoadedComponents({
+                    plan: planSparseHydration({
+                        catalogIds,
+                        seedIds,
+                        layoutIds,
+                        previousWorkingIds,
+                        loadedIds: liveGlyphIds,
+                        edges: readFontDepsIndex(bridge.depsDoc.getMap('deps'))
+                            .edges
+                    }),
+                    glyphs: listGlyphRecords(liveJson),
+                    catalog: catalog.map((entry) => ({
+                        glyphId: entry.glyphId,
+                        name: entry.name
+                    })),
+                    catalogIds,
+                    loadedIds: liveGlyphIds
+                });
+                const missingIds = lastPlan.missingIds;
+                if (!missingIds.length) {
+                    break;
+                }
+                const documentIds = missingIds.map(glyphDocumentId);
+                const fetched = await hydrator.hydrateDocumentSet(
+                    token,
+                    roomUrl,
+                    documentIds
+                );
+                const missingPublished = documentIds.filter(
+                    (documentId) => !fetched.get(documentId)?.byteLength
+                );
+                if (missingPublished.length) {
+                    throw new Error(
+                        `Published glyph shards not found: ${missingPublished.join(', ')}`
+                    );
+                }
+                const passNames: string[] = [];
+                for (const [documentId, bytes] of fetched) {
+                    const applied = bridge.applyDocumentCatchUp?.(
+                        documentId,
+                        bytes
+                    );
+                    if (applied === false) {
+                        throw new Error(
+                            `Failed to apply hydrated shard ${documentId}`
+                        );
+                    }
+                }
+                for (const glyphId of missingIds) {
+                    const documentId = glyphDocumentId(glyphId);
+                    const bytes = bridge.encodeDocumentState?.(documentId);
+                    if (!bytes?.byteLength) {
+                        throw new Error(
+                            `Hydrated shard is empty: ${documentId}`
+                        );
+                    }
+                    window.windowSync?.broadcastDocumentCatchUp?.(
+                        documentId,
+                        bytes
+                    );
+                    const name = idToName.get(glyphId);
+                    if (name) {
+                        passNames.push(name);
+                        loadedNames.push(name);
+                    }
+                }
+                const nextJson =
+                    getCloudFontJsonFromBridge(bridge) ||
+                    this._currentFontJson() ||
+                    liveJson;
+                if (!bridge.syncCompleteFontDepsFromLoadedGlyphs?.(nextJson)) {
+                    bridge.syncFontDepsFromFontJson?.(nextJson, passNames);
+                }
+            }
+        } finally {
+            hydrator.disconnect();
+        }
+        bridge.replaceSparseWorkingGlyphIds?.(lastPlan.workingIds);
+        const previousWorking = new Set(previousWorkingIds);
+        const changedNames = [
+            ...new Set([
+                ...loadedNames,
+                ...lastPlan.workingIds
+                    .filter((id) => !previousWorking.has(id))
+                    .map((id) => idToName.get(id))
+                    .filter((name): name is string => Boolean(name))
+            ])
+        ];
+        if (!changedNames.length) {
+            window.dispatchEvent(new CustomEvent('fontModelSync'));
+            return lastPlan.workingIds
+                .map((id) => idToName.get(id))
+                .filter((name): name is string => Boolean(name));
+        }
+        window.dispatchEvent(new CustomEvent('fontModelSync'));
+        window.dispatchEvent(
+            new CustomEvent('glyphChanged', {
+                detail: {
+                    glyphNames: changedNames,
+                    forceImmediateRefresh: true
+                }
+            })
+        );
+        return changedNames;
     }
 
     requiresPermission(): boolean {
@@ -2607,9 +2835,12 @@ export class CloudPlugin extends FilesystemPlugin {
             return this._pendingOpenAsset.promise;
         }
 
+        const urlSparse = readUrlState().sparse === true;
         const openPromise = this._openAssetInternal(assetId, {
-            awaitLiveBridge: true
+            awaitLiveBridge: true,
+            sparseHydration: this._pendingSparseHydration || urlSparse
         });
+        this._pendingSparseHydration = false;
         this._pendingOpenAsset = {
             assetId,
             promise: openPromise
@@ -2628,6 +2859,7 @@ export class CloudPlugin extends FilesystemPlugin {
         assetId: string,
         options?: {
             awaitLiveBridge?: boolean;
+            sparseHydration?: boolean;
         }
     ): Promise<void> {
         const user = await this._ensureCloudUser({
@@ -2763,27 +2995,62 @@ export class CloudPlugin extends FilesystemPlugin {
                 const coreJson = documentSet.assembleFontJson();
                 const catalogIds = glyphIdsFromCoreJson(coreJson);
                 // Default open hydrates every live catalog glyph. Sparse
-                // closure stays available for later subset catch-up.
-                const { glyphBytes } = await hydrateSparseGlyphsToFixedPoint({
-                    documentSet,
-                    catalogIds,
-                    seedIds: [],
-                    layoutIds: [],
-                    catalog: catalogEntriesFromCoreJson(coreJson),
-                    fetchGlyphs: (documentIds) =>
-                        hydrator.hydrateDocumentSet(token, roomUrl, documentIds)
-                });
+                // residency (`?sparse=true` or the open-dialog checkbox)
+                // hydrates the `?text=` closure, or nothing if text is empty.
+                let glyphBytes = new Map<string, Uint8Array>();
+                if (!options?.sparseHydration) {
+                    glyphBytes = (
+                        await hydrateSparseGlyphsToFixedPoint({
+                            documentSet,
+                            catalogIds,
+                            seedIds: [],
+                            layoutIds: [],
+                            catalog: catalogEntriesFromCoreJson(coreJson),
+                            fetchGlyphs: (documentIds) =>
+                                hydrator.hydrateDocumentSet(
+                                    token,
+                                    roomUrl,
+                                    documentIds
+                                )
+                        })
+                    ).glyphBytes;
+                } else {
+                    const { seedIds, layoutIds } = sparseHydrationSeedsFromText(
+                        coreJson,
+                        readUrlState().text || ''
+                    );
+                    if (seedIds.length) {
+                        glyphBytes = (
+                            await hydrateSparseGlyphsToFixedPoint({
+                                documentSet,
+                                catalogIds,
+                                seedIds,
+                                layoutIds,
+                                catalog: catalogEntriesFromCoreJson(coreJson),
+                                fetchGlyphs: (documentIds) =>
+                                    hydrator.hydrateDocumentSet(
+                                        token,
+                                        roomUrl,
+                                        documentIds
+                                    )
+                            })
+                        ).glyphBytes;
+                    }
+                }
                 hydratedFontJson = documentSet.assembleFontJson();
+                const depsOut = documentSet.encodeDocument(
+                    FONT_DEPS_DOCUMENT_ID
+                );
                 hydratedShards = [
                     {
                         documentId: FONT_CORE_DOCUMENT_ID,
                         bytes: coreBytes
                     },
-                    ...(depsBytes?.byteLength
+                    ...(depsOut.byteLength
                         ? [
                               {
                                   documentId: FONT_DEPS_DOCUMENT_ID,
-                                  bytes: depsBytes
+                                  bytes: depsOut
                               }
                           ]
                         : []),
@@ -2859,6 +3126,14 @@ export class CloudPlugin extends FilesystemPlugin {
                             bridge: liveBridge,
                             bootstrapMode: 'skip'
                         });
+                        const readyJson =
+                            this._currentFontJson() ||
+                            getCloudFontJsonFromBridge(liveBridge);
+                        if (readyJson) {
+                            liveBridge.syncCompleteFontDepsFromLoadedGlyphs?.(
+                                readyJson
+                            );
+                        }
                         resolve();
                     } catch (error) {
                         reject(
@@ -2993,6 +3268,14 @@ export class CloudPlugin extends FilesystemPlugin {
                         bootstrapMode: 'skip',
                         checkpointLogId: bootstrapCheckpointLogId
                     });
+                    const readyJson =
+                        this._currentFontJson() ||
+                        getCloudFontJsonFromBridge(liveBridge);
+                    if (readyJson) {
+                        liveBridge.syncCompleteFontDepsFromLoadedGlyphs?.(
+                            readyJson
+                        );
+                    }
                     resolve();
                 } catch (error) {
                     reject(

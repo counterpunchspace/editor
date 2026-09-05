@@ -37,6 +37,7 @@ import {
     type GlyphFilterChangeBatch,
     type GlyphFilterEventType
 } from './glyph-filter-events';
+import { listOverviewGlyphRecords } from './filesystem-plugins/cloud-glyph-catalog';
 import {
     dedupeGlyphFilterChanges,
     deriveGlyphFilterChangesFromCommittedEntry,
@@ -2349,7 +2350,14 @@ export class GlyphOverviewFilterManager {
 
     private async rebuildFilterCache(plugin: GlyphFilterPlugin): Promise<void> {
         plugin.classifications.clear();
-        this.classifyGlyphs(plugin, window.currentFontModel?.glyphs || []);
+        const glyphs =
+            plugin.keyword === ALL_GLYPHS_FILTER_KEYWORD
+                ? listOverviewGlyphRecords({
+                      fontJson: window.fontManager?.currentFont?.babelfontData,
+                      hydratedGlyphs: window.currentFontModel?.glyphs || []
+                  })
+                : window.currentFontModel?.glyphs || [];
+        this.classifyGlyphs(plugin, glyphs);
         this.derivePluginResults(plugin);
         this.stampFilterCache(plugin);
     }

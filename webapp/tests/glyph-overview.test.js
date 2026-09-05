@@ -199,6 +199,60 @@ describe('GlyphOverview glyphChanged refresh scheduling', () => {
         expect(window.fontCompilation.sendMessage).not.toHaveBeenCalled();
         expect(overview.renderTile).not.toHaveBeenCalled();
     });
+
+    test('retries remaining tiles one-by-one after a batch outline failure', async () => {
+        window.glyphCanvas.outlineEditor.draggingSomething = false;
+        overview.tiles.set('glyph-b', {
+            glyphId: 'glyph-b',
+            glyphName: 'b',
+            selected: false,
+            element: document.createElement('div'),
+            cachedData: null
+        });
+        overview.tiles.get('glyph-a').cachedData = null;
+        window.currentFontModel = {
+            findGlyph: (name) => ({ name })
+        };
+        overview.renderTileCanvas = jest.fn(() => true);
+        overview.pendingGlyphIds = new Set(['glyph-a', 'glyph-b']);
+        overview.lazyBatchSize = 80;
+        window.fontCompilation.sendMessage.mockImplementation(async (msg) => {
+            if (msg.glyphNames.length > 1) {
+                throw new Error("Failed to interpolate component 'e'");
+            }
+            const name = msg.glyphNames[0];
+            return {
+                outlinesJson: JSON.stringify([
+                    { name, width: 100, shapes: [], bounds: {} }
+                ])
+            };
+        });
+
+        await overview.processBatchRender();
+
+        expect(window.fontCompilation.sendMessage.mock.calls).toEqual([
+            [
+                expect.objectContaining({
+                    type: 'getGlyphOutlines',
+                    glyphNames: ['a', 'b']
+                })
+            ],
+            [
+                expect.objectContaining({
+                    type: 'getGlyphOutlines',
+                    glyphNames: ['a']
+                })
+            ],
+            [
+                expect.objectContaining({
+                    type: 'getGlyphOutlines',
+                    glyphNames: ['b']
+                })
+            ]
+        ]);
+        expect(overview.tiles.get('glyph-a').cachedData.name).toBe('a');
+        expect(overview.tiles.get('glyph-b').cachedData.name).toBe('b');
+    });
 });
 
 describe('GlyphOverview virtualized lines rendering', () => {
@@ -237,6 +291,9 @@ describe('GlyphOverview virtualized lines rendering', () => {
         document.body.appendChild(parent);
 
         overview = new GlyphOverview(parent);
+        window.currentFontModel = {
+            findGlyph: (name) => ({ name, codepoints: [] })
+        };
         overview.getTileDimensions = jest.fn(() => ({
             width: 120,
             height: 140
@@ -293,6 +350,7 @@ describe('GlyphOverview virtualized lines rendering', () => {
         delete global.IntersectionObserver;
         delete window.IntersectionObserver;
         delete window.GlyphOverview;
+        delete window.currentFontModel;
         intersectionObserverCallback = null;
     });
 
@@ -714,6 +772,206 @@ describe('GlyphOverview syncGlyphs incremental updates', () => {
         ).toEqual(['a', 'o', 'o.001', 'p']);
         expect(overview.container.scrollTop).toBe(120);
         expect(overview.scheduleBatchRender).toHaveBeenCalled();
+    });
+
+    test('rebuilds tiles and shows cloud icons when a sparse cloud font replaces a hydrated one', async () => {
+        window.fontManager = {
+            currentFontId: 'font-hydrated',
+            currentFont: {
+                path: 'cloud://fustat',
+                sourcePlugin: { getId: () => 'cloud' },
+                fontModel: { findGlyph: () => ({ name: 'a' }) }
+            }
+        };
+        await overview.updateGlyphs([{ id: 'a', name: 'a' }]);
+        const previous = overview.tiles.get('a');
+        previous.cachedData = { name: 'a', paths: [[0, 0]] };
+        previous.canvas.width = 40;
+        previous.canvas.height = 40;
+
+        window.fontManager.currentFontId = 'font-sparse';
+        window.fontManager.currentFont.fontModel.findGlyph = () => null;
+
+        await overview.syncGlyphs([{ id: 'a', name: 'a' }]);
+
+        const next = overview.tiles.get('a');
+        expect(next).not.toBe(previous);
+        expect(next.cachedData).toBeUndefined();
+        expect(next.canvas.width).toBe(0);
+        expect(next.element.classList.contains('glyph-tile-unhydrated')).toBe(
+            true
+        );
+        expect(
+            next.element
+                .querySelector('.glyph-tile-cloud-icon')
+                .hasAttribute('hidden')
+        ).toBe(false);
+        delete window.fontManager;
+    });
+
+    test('glyphChanged reveals a newly resident reverse composite', async () => {
+        const resident = new Set(['a']);
+        window.fontManager = {
+            currentFontId: 'font-sparse',
+            currentFont: {
+                path: 'cloud://fustat',
+                sourcePlugin: { getId: () => 'cloud' },
+                fontModel: {
+                    findGlyph: (name) => (resident.has(name) ? { name } : null)
+                }
+            }
+        };
+        window.fontCompilation = {
+            sendMessage: jest.fn(async () => ({
+                outlinesJson: JSON.stringify([
+                    { name: 'adieresis', shapes: [] }
+                ])
+            }))
+        };
+        await overview.updateGlyphs([
+            { id: 'a', name: 'a' },
+            { id: 'adieresis', name: 'adieresis' }
+        ]);
+        expect(
+            overview.tiles
+                .get('adieresis')
+                .element.classList.contains('glyph-tile-unhydrated')
+        ).toBe(true);
+
+        resident.add('adieresis');
+        window.dispatchEvent(
+            new CustomEvent('glyphChanged', {
+                detail: {
+                    glyphNames: ['adieresis'],
+                    forceImmediateRefresh: true
+                }
+            })
+        );
+
+        expect(
+            overview.tiles
+                .get('adieresis')
+                .element.classList.contains('glyph-tile-unhydrated')
+        ).toBe(false);
+        expect(
+            overview.tiles
+                .get('adieresis')
+                .element.querySelector('.glyph-tile-cloud-icon')
+                .hasAttribute('hidden')
+        ).toBe(true);
+        delete window.fontManager;
+        delete window.fontCompilation;
+    });
+
+    test('shows resident hidden glyphs as hydrated in All Glyphs', async () => {
+        window.fontManager = {
+            currentFontId: 'font-sparse',
+            currentFont: {
+                path: 'cloud://fustat',
+                sourcePlugin: { getId: () => 'cloud' },
+                fontModel: {
+                    findGlyph: (name) =>
+                        name === 'a' || name === 'n' ? { name } : null
+                }
+            }
+        };
+        window.patchSyncEngine = {
+            hasSparseWorkingSet: () => true,
+            isSparseWorkingGlyphName: (name) => name === 'a'
+        };
+        await overview.updateGlyphs([
+            { id: 'a', name: 'a' },
+            { id: 'n', name: 'n' }
+        ]);
+        expect(
+            overview.tiles
+                .get('a')
+                .element.classList.contains('glyph-tile-unhydrated')
+        ).toBe(false);
+        expect(
+            overview.tiles
+                .get('n')
+                .element.classList.contains('glyph-tile-unhydrated')
+        ).toBe(false);
+        delete window.fontManager;
+        delete window.patchSyncEngine;
+    });
+
+    test('fontModelSync marks newly resident glyphs as hydrated', async () => {
+        const resident = new Set(['a']);
+        window.fontManager = {
+            currentFontId: 'font-sparse',
+            currentFont: {
+                path: 'cloud://fustat',
+                sourcePlugin: { getId: () => 'cloud' },
+                fontModel: {
+                    findGlyph: (name) => (resident.has(name) ? { name } : null)
+                }
+            }
+        };
+        await overview.updateGlyphs([
+            { id: 'a', name: 'a' },
+            { id: 'n', name: 'n' }
+        ]);
+        expect(
+            overview.tiles
+                .get('n')
+                .element.classList.contains('glyph-tile-unhydrated')
+        ).toBe(true);
+
+        resident.add('n');
+        window.dispatchEvent(new CustomEvent('fontModelSync'));
+
+        expect(
+            overview.tiles
+                .get('n')
+                .element.classList.contains('glyph-tile-unhydrated')
+        ).toBe(false);
+        delete window.fontManager;
+    });
+
+    test('hides leftover cloud icons when a local new font replaces a cloud font', async () => {
+        window.fontManager = {
+            currentFontId: 'font-cloud',
+            currentFont: {
+                path: 'cloud://fustat',
+                sourcePlugin: { getId: () => 'cloud' },
+                fontModel: { findGlyph: () => null }
+            }
+        };
+        await overview.updateGlyphs([
+            { id: 'space', name: 'space' },
+            { id: '.notdef', name: '.notdef' }
+        ]);
+        expect(
+            overview.tiles
+                .get('space')
+                .element.querySelector('.glyph-tile-cloud-icon')
+                .hasAttribute('hidden')
+        ).toBe(false);
+
+        window.fontManager.currentFontId = 'font-new';
+        window.fontManager.currentFont = {
+            path: 'unsaved',
+            sourcePlugin: { getId: () => 'memory' },
+            fontModel: { findGlyph: () => ({ name: 'space' }) }
+        };
+
+        await overview.syncGlyphs([
+            { id: 'space', name: 'space' },
+            { id: '.notdef', name: '.notdef' }
+        ]);
+
+        const spaceIcon = overview.tiles
+            .get('space')
+            .element.querySelector('.glyph-tile-cloud-icon');
+        expect(spaceIcon.hasAttribute('hidden')).toBe(true);
+        expect(
+            overview.tiles
+                .get('space')
+                .element.classList.contains('glyph-tile-unhydrated')
+        ).toBe(false);
+        delete window.fontManager;
     });
 
     test('pending paste selection scrolls new glyphs into view after sync', async () => {
@@ -1589,6 +1847,7 @@ describe('GlyphOverview encoded labels', () => {
     afterEach(() => {
         jest.restoreAllMocks();
         delete window.currentFontModel;
+        delete window.fontManager;
         delete window.GlyphOverview;
     });
 
@@ -1606,6 +1865,30 @@ describe('GlyphOverview encoded labels', () => {
                 .querySelector('.glyph-tile-label')
                 .classList.contains('glyph-tile-label-encoded')
         ).toBe(false);
+    });
+
+    test('marks catalog-only encoded glyphs for bold styling', () => {
+        window.currentFontModel = { findGlyph: () => undefined };
+        window.fontManager = {
+            currentFont: {
+                babelfontData: {
+                    glyphCatalog: {
+                        'id-a': {
+                            glyphId: 'id-a',
+                            name: 'A',
+                            codepoints: [0x41],
+                            deleted: false
+                        }
+                    }
+                }
+            }
+        };
+        const encoded = overview.createGlyphTile('A', 'A');
+        expect(
+            encoded.element
+                .querySelector('.glyph-tile-label')
+                .classList.contains('glyph-tile-label-encoded')
+        ).toBe(true);
     });
 });
 
@@ -1701,5 +1984,71 @@ describe('GlyphOverview Unicode insertion', () => {
         expect(overview.createTileContextMenuHtml()).not.toContain(
             'data-action="insert-as-unicode"'
         );
+    });
+});
+
+describe('GlyphOverview catalog unicodes', () => {
+    let overview;
+    let parent;
+
+    beforeEach(() => {
+        jest.resetModules();
+        require('../js/glyph-overview');
+
+        document.body.innerHTML = '';
+        parent = document.createElement('div');
+        document.body.appendChild(parent);
+        const panel = document.createElement('div');
+        panel.id = 'overview-property-panel';
+        panel.className = 'glyph-property-panel';
+        document.body.appendChild(panel);
+
+        window.currentFontModel = { findGlyph: () => undefined, glyphs: [] };
+        window.fontManager = {
+            currentFont: {
+                babelfontData: {
+                    glyphCatalog: {
+                        'id-a': {
+                            glyphId: 'id-a',
+                            name: 'A',
+                            codepoints: [0x41],
+                            deleted: false
+                        }
+                    }
+                }
+            }
+        };
+        overview = new window.GlyphOverview(parent);
+        overview.attachPropertyPanel(panel);
+        const tile = overview.createGlyphTile('A', 'A');
+        tile.selected = true;
+        overview.tiles = new Map([['A', tile]]);
+        overview.visibleGlyphIds = ['A'];
+        overview.glyphOrderIds = ['A'];
+    });
+
+    afterEach(() => {
+        jest.restoreAllMocks();
+        delete window.currentFontModel;
+        delete window.fontManager;
+        delete window.GlyphOverview;
+    });
+
+    test('fills the Unicode field from the catalog for unhydrated glyphs', () => {
+        overview.updatePropertyPanel();
+        const unicodeInput = document.querySelector(
+            '.glyph-property-input[data-property-field="glyph-unicode"]'
+        );
+        expect(unicodeInput.value).toBe('0041');
+        expect(unicodeInput.disabled).toBe(true);
+    });
+
+    test('typeahead matches a typed character to a catalog-encoded glyph', () => {
+        const {
+            matchGlyphOverviewTypeahead
+        } = require('../js/glyph-overview-typeahead');
+        expect(
+            matchGlyphOverviewTypeahead('A', overview.collectTypeaheadGlyphs())
+        ).toBe('A');
     });
 });

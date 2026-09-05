@@ -444,6 +444,21 @@ describe('window UI compact state', () => {
         expect(ui.isViewWidthCollapsed(history)).toBe(false);
     });
 
+    test('open top-row flex wins over leftover collapsed-width', () => {
+        document.body.innerHTML = `
+            <div class="top-row">
+                <div id="view-editor" class="view view-editor collapsed-width" style="flex: 400 1 0%"></div>
+            </div>
+        `;
+        const editor = document.getElementById('view-editor');
+        Object.defineProperty(editor, 'offsetWidth', {
+            configurable: true,
+            get: () => 403
+        });
+        const ui = loadUi();
+        expect(ui.isViewWidthCollapsed(editor)).toBe(false);
+    });
+
     test('keeps previous top shares when every top pane is a 24px tab', () => {
         document.body.innerHTML = `
             <div id="app-shell" class="app-shell">
