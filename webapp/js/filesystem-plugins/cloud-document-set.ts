@@ -154,7 +154,8 @@ export async function hydrateSparseGlyphsToFixedPoint(options: {
             layoutIds,
             previousWorkingIds,
             loadedIds,
-            edges: publishedEdges
+            edges: publishedEdges,
+            catalog
         });
     };
     let plan = planFromLiveEdges();

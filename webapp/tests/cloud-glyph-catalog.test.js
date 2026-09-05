@@ -397,6 +397,72 @@ describe('font-deps UUID edges', () => {
         expect(hydrate).toHaveLength(8);
     });
 
+    it('promotes a composite seed to its encoded base and hydrates all a-dependents', () => {
+        const a = 'id-a';
+        const n = 'id-n';
+        const e = 'id-e';
+        const adieresis = 'id-adieresis';
+        const agrave = 'id-agrave';
+        const aacute = 'id-aacute';
+        const ae = 'id-ae';
+        const aWidth = 'id-a-width';
+        const dieresis = 'id-dieresiscomb';
+        const grave = 'id-gravecomb';
+        const acute = 'id-acutecomb';
+        const ntilde = 'id-ntilde';
+        const tilde = 'id-tildecomb';
+        const catalog = [
+            { glyphId: a, name: 'a' },
+            { glyphId: n, name: 'n' },
+            { glyphId: e, name: 'e' },
+            { glyphId: adieresis, name: 'adieresis' },
+            { glyphId: agrave, name: 'agrave' },
+            { glyphId: aacute, name: 'aacute' },
+            { glyphId: ae, name: 'ae' },
+            { glyphId: aWidth, name: 'a.wide' },
+            { glyphId: dieresis, name: 'dieresiscomb' },
+            { glyphId: grave, name: 'gravecomb' },
+            { glyphId: acute, name: 'acutecomb' },
+            { glyphId: ntilde, name: 'ntilde' },
+            { glyphId: tilde, name: 'tildecomb' }
+        ];
+        const edges = {
+            [adieresis]: { [a]: 'component', [dieresis]: 'component' },
+            [agrave]: { [a]: 'component', [grave]: 'component' },
+            [aacute]: { [a]: 'component', [acute]: 'component' },
+            [ae]: { [a]: 'component', [e]: 'component' },
+            [aWidth]: { [a]: 'metrics-key' },
+            [ntilde]: { [n]: 'component', [tilde]: 'component' }
+        };
+        const fromA = computeSparseHydrationPartition({
+            seedIds: [a],
+            edges,
+            catalog
+        });
+        const fromAdieresis = computeSparseHydrationPartition({
+            seedIds: [adieresis],
+            edges,
+            catalog
+        });
+        const expectedWorking = [a, adieresis, agrave, aacute, ae, aWidth];
+        expect(fromA.workingIds.sort()).toEqual(expectedWorking.sort());
+        expect(fromAdieresis.workingIds.sort()).toEqual(expectedWorking.sort());
+        expect(fromAdieresis.workingIds).toContain(a);
+        expect(fromAdieresis.loadIds).toEqual(
+            expect.arrayContaining([dieresis, grave, acute, e])
+        );
+        expect(fromAdieresis.loadIds).not.toEqual(
+            expect.arrayContaining([ntilde, tilde, n])
+        );
+        expect(
+            closeReverseComponentNamesFromDeps({
+                edges,
+                seedNames: ['adieresis'],
+                catalog
+            }).sort()
+        ).toEqual(['a', 'a.wide', 'aacute', 'ae', 'agrave'].sort());
+    });
+
     it('rebuilds font-deps only when every catalog glyph body is loaded', () => {
         const fontJson = {
             upm: 1000,
@@ -1318,9 +1384,9 @@ describe('sparse hydration fixed point', () => {
         expect(result.loadedIds.sort()).toEqual(
             [ids.edieresis, ids.e, ids.dieresiscomb, ids.dotaccentcomb].sort()
         );
-        expect(result.workingIds).toEqual([ids.edieresis]);
+        expect(result.workingIds.sort()).toEqual([ids.edieresis, ids.e].sort());
         expect(result.hiddenIds.sort()).toEqual(
-            [ids.e, ids.dieresiscomb, ids.dotaccentcomb].sort()
+            [ids.dieresiscomb, ids.dotaccentcomb].sort()
         );
         expect(result.loadedIds).not.toContain(ids.z);
         documentSet.destroy();

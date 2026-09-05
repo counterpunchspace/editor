@@ -421,7 +421,13 @@ export function closeReverseComponentNamesFromDeps(options: {
         return [];
     }
     const working = closeSet(seedIds, invertForwardEdges(options.edges));
-    return [...working]
+    const bases = encodedBaseGlyphIds({
+        seedIds,
+        edges: options.edges,
+        catalog: options.catalog
+    });
+    const dependents = closeSet(bases, invertForwardEdges(options.edges));
+    return [...new Set([...working, ...dependents])]
         .map((id) => idToName.get(id))
         .filter((name): name is string => typeof name === 'string')
         .filter((name) => !seedNameSet.has(name));
@@ -502,6 +508,70 @@ export function mergeFontDepEdges(
     return merged;
 }
 
+function isLikelyMarkGlyphName(name: string): boolean {
+    return (
+        /(?:^|[._-])(?:comb|mark)(?:$|[._-])/i.test(name) || /comb$/i.test(name)
+    );
+}
+
+function componentTargetIds(
+    edges: Record<string, Record<string, FontDepEdgeKind>>,
+    sourceId: string
+): string[] {
+    const targets = edges[sourceId];
+    if (!targets) {
+        return [];
+    }
+    return Object.entries(targets)
+        .filter(([, kind]) => kind === 'component' || kind === 'both')
+        .map(([targetId]) => targetId);
+}
+
+/**
+ * Encoded base glyphs for a sparse seed. A simple glyph (`a`) is its own
+ * base. A composite (`adieresis`) contributes its non-mark component
+ * (`a`), preferring a name prefix match, so sidebearing edits on the
+ * base can update every composite and metrics-key dependent.
+ */
+export function encodedBaseGlyphIds(options: {
+    seedIds: string[];
+    edges: Record<string, Record<string, FontDepEdgeKind>>;
+    catalog?: Array<{ glyphId: string; name: string }>;
+}): string[] {
+    const bases = new Set(options.seedIds.filter(Boolean));
+    const idToName = new Map(
+        (options.catalog || []).map((entry) => [entry.glyphId, entry.name])
+    );
+    if (!idToName.size) {
+        return [...bases];
+    }
+    for (const seedId of bases) {
+        const seedName = idToName.get(seedId) || '';
+        const componentIds = componentTargetIds(options.edges, seedId);
+        if (!componentIds.length) {
+            continue;
+        }
+        const named = componentIds.filter((id) => {
+            const name = idToName.get(id) || '';
+            return (
+                !!name &&
+                !!seedName &&
+                seedName !== name &&
+                seedName.startsWith(name) &&
+                !isLikelyMarkGlyphName(name)
+            );
+        });
+        const nonMarks = componentIds.filter(
+            (id) => !isLikelyMarkGlyphName(idToName.get(id) || '')
+        );
+        const chosen = named[0] || nonMarks[0];
+        if (chosen) {
+            bases.add(chosen);
+        }
+    }
+    return [...bases];
+}
+
 export function invertForwardEdges(
     edges: Record<string, Record<string, FontDepEdgeKind>>
 ): Record<string, string[]> {
@@ -557,27 +627,32 @@ export type SparseHydrationPlan = SparseHydrationPartition & {
 /**
  * Directed sparse close.
  *
- * Working: requested seeds ∪ prior working ∪ layout alts of *this* request,
- * then reverse*(those). Those glyphs are shown hydrated and may be edited.
+ * Working: requested seeds ∪ prior working ∪ layout alts ∪ encoded
+ * bases of those, then reverse*(those) over component and metrics-key
+ * edges. `adieresis` promotes base `a`, so every a-dependent is editable.
  *
- * Hidden: forward*(working) − working. Metrics sources (`n`, `l`) and foreign
- * components (marks, `e`) are loaded for inference/drawing but stay uneditable
- * until a later request promotes them. Do not reverse from hidden glyphs.
- * Do not GSUB-close the reverse set.
+ * Hidden: forward*(working) − working. Metrics sources (`n`, `l`) and
+ * marks stay loaded for drawing but uneditable until promoted.
+ * Do not reverse from hidden glyphs. Do not GSUB-close the reverse set.
  */
 export function computeSparseHydrationPartition(options: {
     seedIds: string[];
     layoutIds?: string[];
     previousWorkingIds?: string[];
     edges: Record<string, Record<string, FontDepEdgeKind>>;
+    catalog?: Array<{ glyphId: string; name: string }>;
 }): SparseHydrationPartition {
-    const workingSeeds = [
-        ...new Set([
-            ...(options.previousWorkingIds || []),
-            ...options.seedIds,
-            ...(options.layoutIds || [])
-        ])
-    ];
+    const workingSeeds = encodedBaseGlyphIds({
+        seedIds: [
+            ...new Set([
+                ...(options.previousWorkingIds || []),
+                ...options.seedIds,
+                ...(options.layoutIds || [])
+            ])
+        ],
+        edges: options.edges,
+        catalog: options.catalog
+    });
     const working = closeSet(workingSeeds, invertForwardEdges(options.edges));
     const hidden = [...closeSet([...working], options.edges)].filter(
         (id) => !working.has(id)
@@ -597,6 +672,7 @@ export function planSparseHydration(options: {
     catalogIds: string[];
     loadedIds?: Iterable<string>;
     edges: Record<string, Record<string, FontDepEdgeKind>>;
+    catalog?: Array<{ glyphId: string; name: string }>;
 }): SparseHydrationPlan {
     const catalog = new Set(options.catalogIds);
     const seeds = options.seedIds.length ? options.seedIds : options.catalogIds;
@@ -604,7 +680,8 @@ export function planSparseHydration(options: {
         seedIds: seeds,
         layoutIds: options.layoutIds,
         previousWorkingIds: options.previousWorkingIds,
-        edges: options.edges
+        edges: options.edges,
+        catalog: options.catalog
     });
     const workingIds = partition.workingIds.filter((id) => catalog.has(id));
     const hiddenIds = partition.hiddenIds.filter((id) => catalog.has(id));
@@ -628,6 +705,7 @@ export function computeSparseHydrationSet(options: {
     layoutIds?: string[];
     previousWorkingIds?: string[];
     edges: Record<string, Record<string, FontDepEdgeKind>>;
+    catalog?: Array<{ glyphId: string; name: string }>;
 }): string[] {
     return computeSparseHydrationPartition(options).loadIds;
 }
@@ -667,6 +745,7 @@ export function glyphIdsForSparseHydration(options: {
     previousWorkingIds?: string[];
     loadedIds?: Iterable<string>;
     edges: Record<string, Record<string, FontDepEdgeKind>>;
+    catalog?: Array<{ glyphId: string; name: string }>;
 }): string[] {
     return planSparseHydration({
         catalogIds: options.catalogIds,
@@ -674,7 +753,8 @@ export function glyphIdsForSparseHydration(options: {
         layoutIds: options.layoutIds,
         previousWorkingIds: options.previousWorkingIds,
         loadedIds: options.loadedIds,
-        edges: options.edges
+        edges: options.edges,
+        catalog: options.catalog
     }).loadIds;
 }
 

@@ -46,6 +46,7 @@ import {
     depsNeedUpdate,
     layoutGlyphIdsFromFeatureCode,
     expandSparsePlanWithLoadedComponents,
+    mergeFontDepEdges,
     planSparseHydration,
     readFontDepsIndex,
     readWorkingGlyphIds,
@@ -1950,13 +1951,14 @@ export class CloudPlugin extends FilesystemPlugin {
             return [];
         }
         bridge.syncCompleteFontDepsFromLoadedGlyphs?.(fontJson);
+        const catalogEntries = catalog.map((entry) => ({
+            glyphId: entry.glyphId,
+            name: entry.name
+        }));
         const layoutIds = layoutGlyphIdsFromFeatureCode({
             featureCode: afdkoFeatureCodeFromFontJson(fontJson),
             seedIds,
-            catalog: catalog.map((entry) => ({
-                glyphId: entry.glyphId,
-                name: entry.name
-            }))
+            catalog: catalogEntries
         });
         const catalogIds = liveCatalogGlyphIds(owned.glyphCatalog);
         const idToName = new Map(
@@ -1965,15 +1967,26 @@ export class CloudPlugin extends FilesystemPlugin {
         const previousWorkingIds = readWorkingGlyphIds(
             bridge.depsDoc.getMap('deps')
         );
+        let publishedEdges = readFontDepsIndex(
+            bridge.depsDoc.getMap('deps')
+        ).edges;
+        const planFromLiveEdges = (loadedIds: Iterable<string>) => {
+            publishedEdges = mergeFontDepEdges(
+                publishedEdges,
+                readFontDepsIndex(bridge.depsDoc.getMap('deps')).edges
+            );
+            return planSparseHydration({
+                catalogIds,
+                seedIds,
+                layoutIds,
+                previousWorkingIds,
+                loadedIds,
+                edges: publishedEdges,
+                catalog: catalogEntries
+            });
+        };
         const loadedNames: string[] = [];
-        let lastPlan = planSparseHydration({
-            catalogIds,
-            seedIds,
-            layoutIds,
-            previousWorkingIds,
-            loadedIds: [],
-            edges: readFontDepsIndex(bridge.depsDoc.getMap('deps')).edges
-        });
+        let lastPlan = planFromLiveEdges([]);
         const { token, roomUrl } = await this._fetchRoomToken(assetId);
         const hydrator = new CloudAdapter({
             assetId,
@@ -1989,20 +2002,9 @@ export class CloudPlugin extends FilesystemPlugin {
                     bridge.listLiveGlyphDocumentIds?.() ?? []
                 ).map((documentId) => documentId.slice('glyph:'.length));
                 lastPlan = expandSparsePlanWithLoadedComponents({
-                    plan: planSparseHydration({
-                        catalogIds,
-                        seedIds,
-                        layoutIds,
-                        previousWorkingIds,
-                        loadedIds: liveGlyphIds,
-                        edges: readFontDepsIndex(bridge.depsDoc.getMap('deps'))
-                            .edges
-                    }),
+                    plan: planFromLiveEdges(liveGlyphIds),
                     glyphs: listGlyphRecords(liveJson),
-                    catalog: catalog.map((entry) => ({
-                        glyphId: entry.glyphId,
-                        name: entry.name
-                    })),
+                    catalog: catalogEntries,
                     catalogIds,
                     loadedIds: liveGlyphIds
                 });
