@@ -359,6 +359,7 @@ describe('glyph catch-up for edits outside the receiver subset', () => {
 
     test('glyph packets include the catch-up stamp before the core revision signal', () => {
         const { bridge, font } = createEngine('writer');
+        const receiver = hydrateReceiverFromWriter(bridge);
         const packets = capturePackets(bridge);
         font.findGlyph('B').layers[0].width = 777;
 
@@ -376,6 +377,25 @@ describe('glyph catch-up for edits outside the receiver subset', () => {
         expect(coreIndex).toBeGreaterThan(glyphIndex);
         expect(
             bridge.glyphHasCatchUpRevision(
+                glyphDocumentId('id-b'),
+                revisionFor(bridge, 'id-b')
+            )
+        ).toBe(true);
+
+        const glyphPacket = packets[glyphIndex];
+        expect(
+            receiver.applyRemoteUpdate(
+                glyphPacket.update,
+                glyphPacket.changeLogEntries,
+                glyphPacket.collaborationMessage
+                    ? [glyphPacket.collaborationMessage]
+                    : undefined,
+                glyphPacket.documentId
+            )
+        ).toBe(true);
+        expect(glyphWidth(receiver, 'B')).toBe(777);
+        expect(
+            receiver.glyphHasCatchUpRevision(
                 glyphDocumentId('id-b'),
                 revisionFor(bridge, 'id-b')
             )

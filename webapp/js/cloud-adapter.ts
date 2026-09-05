@@ -771,6 +771,30 @@ export type CloudConnectionHealth = {
     lastReconnectReason: string | null;
 };
 
+export type CloudAccessCloseEvent = {
+    code: number;
+    reason: string;
+};
+
+export type CloudAccessServerError = {
+    message: string;
+    code?: string;
+};
+
+export type CloudAdapterAccessSnapshot = {
+    documentId: string;
+    status: CloudConnectionStatus;
+    statusDetail?: string;
+    wsReadyState: number | null;
+    lastClose: CloudAccessCloseEvent | null;
+    lastServerError: CloudAccessServerError | null;
+    accessRevoked: boolean;
+    reconnectForbidden: boolean;
+    roomToken: string | null;
+    roomUrl: string | null;
+    role: CloudAssetRole | null;
+};
+
 type CloudLiveUpdateMessage = {
     update: Uint8Array;
     collaborationMessages?: CollaborationMessageEnvelope[];
@@ -1183,6 +1207,11 @@ export class CloudAdapter implements FileSystemAdapter {
     private _lastInboundMessageAt = 0;
     private _livenessTimeoutCount = 0;
     private _lastReconnectReason: string | null = null;
+    private _lastStatusDetail: string | undefined;
+    private _lastClose: CloudAccessCloseEvent | null = null;
+    private _lastServerError: CloudAccessServerError | null = null;
+    private _accessRevoked = false;
+    private _reconnectForbidden = false;
     private _assetRoles = new Map<string, CloudAssetRole>();
     private _hasSynced = false;
     private _checkpointLogId: number | null = null;
@@ -1312,6 +1341,40 @@ export class CloudAdapter implements FileSystemAdapter {
             livenessTimeoutCount: this._livenessTimeoutCount,
             lastReconnectReason: this._lastReconnectReason
         };
+    }
+
+    getAccessSnapshot(): CloudAdapterAccessSnapshot {
+        return {
+            documentId: this._documentId,
+            status: this._status,
+            statusDetail: this._lastStatusDetail,
+            wsReadyState: this._ws?.readyState ?? null,
+            lastClose: this._lastClose,
+            lastServerError: this._lastServerError,
+            accessRevoked: this._accessRevoked,
+            reconnectForbidden: this._reconnectForbidden,
+            roomToken: this._directConnection?.token ?? null,
+            roomUrl: this._directConnection?.roomUrl ?? null,
+            role: this.getCachedAssetRole(this._assetId)
+        };
+    }
+
+    probeUnauthorizedLiveWrite(): boolean {
+        const ws = this._ws;
+        const clientId = this._clientId;
+        if (!ws || ws.readyState !== WebSocket.OPEN || !clientId) {
+            return false;
+        }
+        this._seq += 1;
+        ws.send(
+            JSON.stringify({
+                type: 'update',
+                update: '',
+                clientId,
+                seq: this._seq
+            })
+        );
+        return true;
     }
 
     // ── Public API ───────────────────────────────────────────────
@@ -1622,6 +1685,13 @@ export class CloudAdapter implements FileSystemAdapter {
         if (!update.length) {
             return;
         }
+        if (
+            this._accessRevoked ||
+            this.getCachedAssetRole(this._assetId) === 'viewer'
+        ) {
+            this._noteServerError({ message: 'Cloud asset is read-only' });
+            return;
+        }
 
         const clientTransactionId =
             getCloudClientTransactionId(collaborationMessage);
@@ -1722,7 +1792,8 @@ export class CloudAdapter implements FileSystemAdapter {
                     base64ToU8(record.updateBase64),
                     undefined,
                     [record.collaborationMessage],
-                    this._documentId
+                    this._documentId,
+                    { captureInUndo: false }
                 );
                 existingCollaborationIds.add(record.clientTransactionId);
             } catch (error) {
@@ -1969,6 +2040,9 @@ export class CloudAdapter implements FileSystemAdapter {
     }
 
     private _finishInitialSyncAfterPages(serverStateVector: Uint8Array): void {
+        if (!this._initialServerStateApplied) {
+            this._initialServerStateApplied = true;
+        }
         this._hasSynced = true;
         this._registerOutboundHook();
         this._initialSyncDurable = !this._sendSyncComplete(serverStateVector);
@@ -2127,7 +2201,8 @@ export class CloudAdapter implements FileSystemAdapter {
         roomUrl: string,
         shards: EncodedShard[],
         glyphCount: number
-    ): Promise<void> {
+    ): Promise<number | null> {
+        let coreCheckpointLogId: number | null = null;
         for (const shard of shards) {
             const httpUrl = normalizeCloudShardHttpUrl(
                 roomUrl,
@@ -2136,15 +2211,50 @@ export class CloudAdapter implements FileSystemAdapter {
                 shard.documentId
             );
             this._noteTransferActivity('sending');
-            const response = await fetch(httpUrl, {
-                method: 'POST',
-                headers: {
-                    'Authorization': `Bearer ${token}`,
-                    'Content-Type': 'application/octet-stream',
-                    'X-Glyph-Count': String(glyphCount)
-                },
-                body: shard.bytes as unknown as BodyInit
-            });
+            let response: Response | null = null;
+            let lastError: unknown = null;
+            // Initial seeding is idempotent: a successful first attempt makes
+            // a retry return 409. Retrying transient browser/workerd transport
+            // failures prevents a single dropped glyph upload from abandoning
+            // the entire Save As operation.
+            for (let attempt = 0; attempt < 3; attempt += 1) {
+                const controller = new AbortController();
+                const timeoutId = window.setTimeout(
+                    () => controller.abort(),
+                    15_000
+                );
+                try {
+                    response = await fetch(httpUrl, {
+                        method: 'POST',
+                        headers: {
+                            'Authorization': `Bearer ${token}`,
+                            'Content-Type': 'application/octet-stream',
+                            'X-Glyph-Count': String(glyphCount)
+                        },
+                        body: shard.bytes as unknown as BodyInit,
+                        signal: controller.signal
+                    });
+                    break;
+                } catch (error) {
+                    lastError = error;
+                    if (attempt < 2) {
+                        await new Promise<void>((resolve) => {
+                            window.setTimeout(resolve, 100 * (attempt + 1));
+                        });
+                    }
+                } finally {
+                    window.clearTimeout(timeoutId);
+                }
+            }
+            if (!response) {
+                const detail =
+                    lastError instanceof Error
+                        ? lastError.message
+                        : String(lastError ?? 'unknown transport error');
+                throw new Error(
+                    `shard seed request failed (${shard.documentId}): ${detail}`
+                );
+            }
             if (response.status === 409) {
                 continue;
             }
@@ -2154,7 +2264,21 @@ export class CloudAdapter implements FileSystemAdapter {
                     `shard seed failed (${shard.documentId}): ${response.status} ${body.slice(0, 160)}`
                 );
             }
+            if (shard.documentId !== FONT_CORE_DOCUMENT_ID) {
+                continue;
+            }
+            try {
+                const result = (await response.json()) as {
+                    checkpointLogId?: unknown;
+                };
+                if (typeof result.checkpointLogId === 'number') {
+                    coreCheckpointLogId = result.checkpointLogId;
+                }
+            } catch {
+                /* seed succeeded even if the body is not JSON */
+            }
         }
+        return coreCheckpointLogId;
     }
 
     async hydrateDocumentSet(
@@ -2245,6 +2369,10 @@ export class CloudAdapter implements FileSystemAdapter {
 
             ws.onclose = (event: CloseEvent) => {
                 if (this._ws !== ws) return;
+                this._lastClose = {
+                    code: Number(event.code || 0),
+                    reason: String(event.reason || '')
+                };
                 console.log(
                     `CloudAdapter: closed (${event.code}: ${event.reason})`
                 );
@@ -2315,7 +2443,9 @@ export class CloudAdapter implements FileSystemAdapter {
                 this._pendingSyncPageMeta = {
                     hasMore: meta.hasMore,
                     throughLogId: meta.throughLogId || null,
-                    serverStateVector: new Uint8Array(0)
+                    serverStateVector:
+                        this._pendingSyncPageMeta?.serverStateVector ??
+                        new Uint8Array(0)
                 };
                 this._pendingTailFrames = [];
                 continue;
@@ -2739,6 +2869,9 @@ export class CloudAdapter implements FileSystemAdapter {
 
             case 'error': {
                 const detail = String(msg.message ?? 'server error');
+                const code =
+                    typeof msg.code === 'string' ? msg.code : undefined;
+                this._noteServerError({ message: detail, code });
                 console.warn(`CloudAdapter: server error: ${detail}`);
                 if (msg.code === 'tail_full' || detail === 'tail_full') {
                     this._compactStatus = 'tail_full';
@@ -2856,7 +2989,7 @@ export class CloudAdapter implements FileSystemAdapter {
         if (this._documentId !== FONT_CORE_DOCUMENT_ID) {
             return false;
         }
-        if (this._skipWorkerReseed && update.length === 0) {
+        if (this._skipWorkerReseed) {
             return false;
         }
         return true;
@@ -3186,7 +3319,8 @@ export class CloudAdapter implements FileSystemAdapter {
                 update,
                 undefined,
                 remoteCollaborationMessages,
-                this._documentId
+                this._documentId,
+                { captureInUndo: false }
             );
             if (!didApply) {
                 return false;
@@ -3235,10 +3369,18 @@ export class CloudAdapter implements FileSystemAdapter {
             return false;
         }
         try {
-            const diff = this._bridge.encodeStateDiff(
-                serverStateVector,
-                this._documentId
-            );
+            const diff =
+                serverStateVector?.byteLength > 0
+                    ? this._bridge.encodeStateDiff(
+                          serverStateVector,
+                          this._documentId
+                      )
+                    : this._skipWorkerReseed
+                      ? new Uint8Array()
+                      : this._bridge.encodeStateDiff(
+                            new Uint8Array(),
+                            this._documentId
+                        );
             if (diff.length === 0) return false;
             const collaborationMessages =
                 createCollaborationMessageEnvelopesFromChangeLogEntries(
@@ -3669,6 +3811,11 @@ export class CloudAdapter implements FileSystemAdapter {
         });
 
         if (!resp.ok) {
+            if (resp.status === 401 || resp.status === 403) {
+                this._reconnectForbidden = true;
+                this._accessRevoked = true;
+                this.cacheAssetRole(this._assetId, null);
+            }
             const body = await resp.text().catch(() => '');
             throw new Error(
                 `room-token request failed: ${resp.status} ${body}`
@@ -3689,7 +3836,12 @@ export class CloudAdapter implements FileSystemAdapter {
 
     private _setStatus(status: CloudConnectionStatus, detail?: string): void {
         this._status = status;
+        this._lastStatusDetail = detail;
         this._onConnectionStatus?.(status, detail);
+    }
+
+    private _noteServerError(error: CloudAccessServerError): void {
+        this._lastServerError = error;
     }
 
     private async _refreshCompactStatus(): Promise<void> {
@@ -3999,6 +4151,9 @@ export class CloudAdapter implements FileSystemAdapter {
     }
 
     private _scheduleReconnect(): void {
+        if (this._reconnectForbidden || this._accessRevoked) {
+            return;
+        }
         this._clearReconnectTimer();
         const delayMs = cloudReconnectDelayMs(this._reconnectAttempt);
         this._reconnectAttempt += 1;

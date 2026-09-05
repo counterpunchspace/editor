@@ -5646,6 +5646,52 @@ describe('WindowSync', () => {
         bridge2.destroy();
     });
 
+    test('cloud-style remote apply is not captured in undo', () => {
+        const senderFontJson = makeMinimalFont();
+        const sender = new ChangeBridge('win-sender');
+        sender.initFromJson(senderFontJson);
+
+        const receiver = new ChangeBridge('win-receiver');
+        receiver.applyDocumentSetState(sender.encodeDocumentSet());
+
+        let lastUpdate = null;
+        let lastEntries = null;
+        sender.onLocalUpdate(
+            (update, _collaborationMessage, changeLogEntries) => {
+                lastUpdate = update;
+                lastEntries = changeLogEntries;
+            }
+        );
+
+        sender.recordChange(
+            ['glyphs', 'A', 'layers', 'layer-1'],
+            'width',
+            600,
+            820
+        );
+        flushTimers();
+
+        expect(lastUpdate).toBeInstanceOf(Uint8Array);
+        receiver.applyRemoteUpdate(
+            lastUpdate,
+            lastEntries,
+            undefined,
+            undefined,
+            {
+                captureInUndo: false
+            }
+        );
+        flushTimers();
+
+        expect(
+            receiver.getYValue(['glyphs', 'A', 'layers', 'layer-1', 'width'])
+        ).toBe(820);
+        expect(receiver.canUndo('A', 'layer-1')).toBe(false);
+
+        sender.destroy();
+        receiver.destroy();
+    });
+
     test('full state request/response bootstraps new window', () => {
         const originalFontCompilation = window.fontCompilation;
         window.fontCompilation = undefined;
@@ -7614,8 +7660,7 @@ describe('syncGlyphFromJson', () => {
                 path: entry.path,
                 undoScope: entry.undoScope,
                 transactionLabel: entry.transactionLabel,
-                workerReplayTargets: entry.workerReplayTargets,
-                replayNewValue: entry.replayNewValue
+                workerReplayTargets: entry.workerReplayTargets
             }));
 
         senderBridge.initFromJson(senderFontJson);
@@ -9674,6 +9719,94 @@ describe('syncGlyphFromJson', () => {
                 (layer) => layer.id === 'stale-associated-layer'
             )
         ).toBe(false);
+
+        senderBridge.destroy();
+        receiverBridge.destroy();
+    });
+
+    test('cloud envelope glyph-snapshot layer delete prunes remote JSON without snapshot metadata', () => {
+        const senderFontJson = makeThreeMasterThreeLayerFont();
+        const receiverFontJson = cloneValue(senderFontJson);
+        const senderBridge = new ChangeBridge('sender-cloud-structural-prune');
+        const receiverBridge = new ChangeBridge(
+            'receiver-cloud-structural-prune'
+        );
+        let lastUpdate = null;
+        let lastCollaborationMessage = null;
+
+        senderBridge.initFromJson(senderFontJson);
+        receiverBridge.setFontJson(receiverFontJson);
+        receiverBridge.applyDocumentSetState(senderBridge.encodeDocumentSet());
+        senderBridge.onLocalUpdate((update, collaborationMessage) => {
+            lastUpdate = update;
+            lastCollaborationMessage = collaborationMessage;
+        });
+
+        senderFontJson.glyphs[0].layers.splice(1, 1);
+        senderBridge.syncGlyphFromJson('A', 'Delete layer sync');
+
+        expect(lastCollaborationMessage).toBeTruthy();
+        expect(
+            lastCollaborationMessage.changes[0].replayNewValue
+        ).toBeUndefined();
+        expect(
+            lastCollaborationMessage.changes[0].replayOldValue
+        ).toBeUndefined();
+        expect(JSON.stringify(lastCollaborationMessage).length).toBeLessThan(
+            65536
+        );
+
+        receiverBridge.applyRemoteUpdate(
+            lastUpdate,
+            undefined,
+            lastCollaborationMessage ? [lastCollaborationMessage] : []
+        );
+
+        expect(
+            receiverFontJson.glyphs[0].layers.map((layer) => layer.id)
+        ).toEqual(senderFontJson.glyphs[0].layers.map((layer) => layer.id));
+        expect(receiverBridge.canUndo('A')).toBe(true);
+
+        senderBridge.destroy();
+        receiverBridge.destroy();
+    });
+
+    test('cloud envelope layer edit captures remote undo without snapshot metadata', () => {
+        const senderFontJson = makeMinimalFont();
+        const receiverFontJson = cloneValue(senderFontJson);
+        const senderBridge = new ChangeBridge('sender-cloud-layer-undo');
+        const receiverBridge = new ChangeBridge('receiver-cloud-layer-undo');
+        let lastUpdate = null;
+        let lastCollaborationMessage = null;
+        const layerId = senderFontJson.glyphs[0].layers[0].id;
+
+        senderBridge.initFromJson(senderFontJson);
+        receiverBridge.setFontJson(receiverFontJson);
+        receiverBridge.applyDocumentSetState(senderBridge.encodeDocumentSet());
+        senderBridge.onLocalUpdate((update, collaborationMessage) => {
+            lastUpdate = update;
+            lastCollaborationMessage = collaborationMessage;
+        });
+
+        senderFontJson.glyphs[0].layers[0].width = 741;
+        senderBridge.syncGlyphFromJson(
+            'A',
+            'Remote width drag',
+            undefined,
+            undefined,
+            layerId
+        );
+
+        expect(lastCollaborationMessage.changes[0].replayNewValue).toBe(741);
+
+        receiverBridge.applyRemoteUpdate(
+            lastUpdate,
+            undefined,
+            lastCollaborationMessage ? [lastCollaborationMessage] : []
+        );
+
+        expect(receiverFontJson.glyphs[0].layers[0].width).toBe(741);
+        expect(receiverBridge.canUndo('A', layerId)).toBe(true);
 
         senderBridge.destroy();
         receiverBridge.destroy();

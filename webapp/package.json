@@ -4,7 +4,8 @@
     "type": "commonjs",
     "main": "coi-serviceworker.js",
     "scripts": {
-        "test": "npm run test:checks && playwright test",
+        "test": "npm run test:checks && playwright test --project=chromium",
+        "test:cloud-collab": "CLOUD_COLLAB_E2E=1 playwright test --project=cloud-collab",
         "test:checks": "npm --prefix .. exec -- gitnexus analyze && npm --prefix .. run test:graph-chokepoints && npm --prefix .. run check:graph-chokepoints && npm run test:type-drift && npm run test:tsc && npm run test:jest",
         "test:dead-code": "knip --include files,dependencies,unlisted",
         "test:type-drift": "cd .. && ./check-type-drift.sh",

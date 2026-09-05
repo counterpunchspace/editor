@@ -83,3 +83,80 @@ jobs:
 
             - name: Check code formatting with Prettier
               run: cd webapp && npx prettier -c .
+
+    cloud-collab-e2e:
+        runs-on: macos-latest
+        timeout-minutes: 90
+        steps:
+            - name: Checkout editor
+              uses: actions/checkout@v4
+
+            - name: Checkout website
+              uses: actions/checkout@v4
+              with:
+                  repository: ${{ vars.WEBSITE_REPOSITORY || format('{0}/website', github.repository_owner) }}
+                  path: _cloud_e2e/website
+                  token: ${{ secrets.CLOUD_E2E_PAT || github.token }}
+
+            - name: Checkout collab
+              uses: actions/checkout@v4
+              with:
+                  repository: ${{ vars.COLLAB_REPOSITORY || format('{0}/collab', github.repository_owner) }}
+                  path: _cloud_e2e/collab
+                  token: ${{ secrets.CLOUD_E2E_PAT || github.token }}
+
+            - name: Set up Node.js
+              uses: actions/setup-node@v4
+              with:
+                  node-version: "20"
+
+            - name: Install editor webapp dependencies
+              run: npm install --prefix webapp
+
+            - name: Install Playwright Chromium
+              run: npx --prefix webapp playwright install chromium
+
+            - name: Install website dependencies
+              run: npm ci
+              working-directory: _cloud_e2e/website
+
+            - name: Build website static bundle
+              run: npm run rebuild
+              working-directory: _cloud_e2e/website
+
+            - name: Write ephemeral website local vars
+              working-directory: _cloud_e2e/website
+              run: |
+                  printf '%s\n' \
+                    'LOCAL_DEV=true' \
+                    'LOCAL_CLOUD_DEV_ENABLED=true' \
+                    'AUTH_TOKEN_ALLOW_INSECURE_LOCAL_FALLBACK=true' \
+                    'EDITOR_ALLOWED_ORIGINS=https://localhost:8000,http://localhost:9000' \
+                    'WEBSITE_ALLOWED_ORIGINS=https://localhost:8000,http://localhost:9000,https://localhost:8788' \
+                    'MAGIC_LINK_SECRET=e2e-cloud-collab-magic' \
+                    'ROOM_WORKER_URL=http://localhost:8787' \
+                    > .dev.vars
+
+            - name: Resolve collab root
+              id: collab
+              run: |
+                  if [ -f _cloud_e2e/collab/workers/room/wrangler.toml ]; then
+                    echo "root=${GITHUB_WORKSPACE}/_cloud_e2e/collab" >> "$GITHUB_OUTPUT"
+                  elif [ -f _cloud_e2e/collab/collab/workers/room/wrangler.toml ]; then
+                    echo "root=${GITHUB_WORKSPACE}/_cloud_e2e/collab/collab" >> "$GITHUB_OUTPUT"
+                  else
+                    echo "Could not find collab workers/room/wrangler.toml"
+                    find _cloud_e2e/collab -name wrangler.toml | head
+                    exit 1
+                  fi
+
+            - name: Install collab dependencies
+              run: npm ci
+              working-directory: ${{ steps.collab.outputs.root }}
+
+            - name: Run cloud-collab Playwright
+              run: npm run test:cloud-collab --prefix webapp
+              env:
+                  WEBSITE_ROOT: ${{ github.workspace }}/_cloud_e2e/website
+                  COLLAB_ROOT: ${{ steps.collab.outputs.root }}
+                  CLOUD_COLLAB_E2E: "1"

@@ -10,10 +10,21 @@ Supersedes one-room whole-font Y.Doc, R2-via-WebSocket bootstrap, and drafts
 that kept full dependency edges in always-resident `font-core`. One DO per
 whole font still hits isolate memory (~128 MB); rooms stay per-shard.
 
+The Memory-efficient collab plan
+(`.cursor/plans/memory-efficient_collab_92167e9b.plan.md`) is the work order
+for nested writes, deps projection, opaque rooms, and capacity benches.
+**This file is the normative architecture.** Where the two disagree, follow
+this file (capacity numbers and dirty caps come from checked-in benches, not
+the plan’s 8 MB placeholder).
+
 **Landed in the client (this cut)**
 
 - `PatchSyncEngine` routes glyph paths to glyph docs; core holds catalog +
   `glyphRevisions` (dirty `{glyphId, revision}`), not outlines.
+- Nested JSON is leaf-granular on get and set (symmetric-diff into Y.Maps;
+  no whole-subtree `toYType` on dict assign). Outlines use atomic
+  `geometryTopology` + packed `nodePositionsById` (see
+  `developer-docs/YDOC_SHAPE_IDENTITY_MIGRATION.md`).
 - Persistent WebSockets: `font-core` + the current glyph subset only.
 - Passive glyphs catch up over HTTP `GET /shards/:path/live` → DO
   `/internal/live-state` (live vector, not stale R2). Access-epoch 403;
@@ -27,10 +38,12 @@ whole font still hits isolate memory (~128 MB); rooms stay per-shard.
 - Linked windows: document-scoped BroadcastChannel; main is the cloud hub;
   inbound MetadataFree glyph packets use catch-up; linked worker seed uses
   `seedWorkerDocumentSet` (`state`, not raw `bytes`).
+- `font-deps` is its own Y.Doc: UUID-keyed per-edge CRDT, no stored reverse
+  graph, repaired from converged glyph shards.
 
-**Still later:** CJK working-set hydrate, Fly full-font builder, fat
-compactor, denser cmap. Worker-class `compactor` on sharded R2 keys is in
-v1.
+**Still later:** full opaque-byte FontRoomDO (no Yjs in the room isolate),
+CJK working-set hydrate, Fly full-font builder, fat compactor, denser cmap.
+Worker-class `compactor` on sharded R2 keys is in v1.
 
 **v1 vs later**
 
@@ -64,14 +77,18 @@ Use these as stress cases when sizing catalog/deps budgets and hydrate UX:
 
 | Concern | Decision |
 | --- | --- |
-| Document shape | One Yjs shard per `font-core`, one per `glyph:<glyphId>` |
+| Document shape | One Yjs shard per `font-core`, `font-deps`, and `glyph:<glyphId>` |
+| Outline CRDT | Atomic `geometryTopology` + `nodePositionsById` packed XY; no nested `shapes[i].nodes` |
+| Nested font JSON | Leaf-path records; dict setters symmetric-diff Y.Maps (set and delete) |
 | DO identity | One DO room per shard; never one DO for the whole font |
 | Bulk transfer | HTTP streams to/from R2 (packs = multi-shard responses) |
 | Live transfer | WebSocket to a small set of shard DOs |
-| DO memory | Zero-hydration: auth, ordered durable tail, fan-out, metadata only |
-| Compaction | External to the room DO; Worker-class for shards, fat host if over recoverability |
+| DO memory | Zero-hydration target: auth, ordered durable tail, fan-out, metadata only; no long-lived `Y.Doc` |
+| Compaction | External to the room DO; Worker-class for shards, fat host if over recoverability; never in-room encode |
 | Discovery | Lean identity catalog in core (incl. cmap) + separate deps index |
-| Closure | Layout closure (`close_layout`) ∪ deps-index expansion; then hydrate bodies |
+| Deps encoding | `edges: Y.Map<sourceUUID, Y.Map<targetUUID, kind>>` + `sourceRevision`; invert reverse in memory |
+| Closure (compile) | `close_layout(seeds)` then forward deps; no reverse set |
+| Closure (UI sparse hydrate) | `close_layout(seeds)` ∪ `reverse*(seeds)`, then **forward-close**; never `close_layout` the reverse set |
 | Linked windows | Main window is sole cloud hub; BC is multi-doc; per-window residency |
 | Small vs large | Same machinery; default hydrate policy is `all` vs working-set |
 | Full-font compile | Session-scoped Fly Machine (8–16 GB); core dirty + HTTP glyph catch-up (not v1) |
@@ -250,29 +267,65 @@ glyph array order. Prefer granular insert/delete of immutable ids; never treat
 
 ### `font-deps` (compact dependency index)
 
-Separate from always-on core. Updated whenever a glyph commit changes
-references.
+Separate Y.Doc / DO / R2 checkpoint from always-on core. Glyph shards are
+authoritative; deps is a **denormalized projection**. Do not embed `fontDeps`
+in core `format_specific`. Do not persist glyph-order ranks or one packed LWW
+adjacency blob (concurrent glyph create across DOs cannot share ranks).
+
+Authoritative live format:
 
 ```text
-glyphId → dependency glyphIds   // components, metrics-key edges, …
-(+ optional reverse index for dependents)
+deps.edges:          Y.Map<sourceGlyphUUID, Y.Map<targetGlyphUUID, edgeKind>>
+deps.sourceRevision: Y.Map<sourceGlyphUUID, glyphRevisionToken>
+edgeKind = component | metrics-key | both
 ```
 
-Authoritative component objects still live in the glyph shard. The deps index
-is a **denormalized projection written at seed/commit time** by a party that
-already has the glyph body (editing client, or seed/materializer). Core does
-not discover component/metrics references by hydrating unloaded glyphs.
+- Immutable glyph UUIDs are the only durable identity. Omit empty source maps.
+- **No reverse graph is stored.** Invert forward maps in memory when needed.
+- Per-edge CRDT keys preserve concurrent add/delete. A repair pass from the
+  converged glyph shard removes conservative stale extras.
+- `sourceRevision` is equality-only. A loaded glyph whose deps revision
+  differs is recomputed with a symmetric per-edge diff.
+- Commit order: glyph shard durable first, deps edge diff second, core
+  `glyphRevisions` last. Stale extras may temporarily over-hydrate; they must
+  never omit a final prerequisite. Sparse hydrate verifies each newly loaded
+  source against its deps revision, repairs, and repeats to a fixed point.
+  `font-deps` catches up on remote revision change, not only reconnect.
 
-Component and metrics-key closure walks this index (client-side, or Worker with
-the deps artifact only). It does not open glyph Y.Docs and does not parse
-outlines. OpenType layout closure is a separate step and does not use this
-index (see below).
+Patch one catalog/cmap entry and one source edge map on identity/reference
+edits. Do not rebuild every glyph Y.Doc from `initFromFontJson` on catalog
+churn. Narrow `depsNeedUpdate` to component add/remove/`reference` and
+metrics-key fields — not arbitrary layers, nodes, or `format_specific`.
+
+Component and metrics-key closure walks this index without opening glyph
+Y.Docs. OpenType layout closure is a separate step (`close_layout`) and does
+not live in `font-deps`.
 
 ### Glyph shards
 
-Each `glyph:<glyphId>` document holds that glyph’s full editable state: layers,
-paths, components, anchors, local metrics, etc. Same internal Yjs conventions
-as today, scoped to one glyph.
+Each `glyph:<glyphId>` document holds that glyph’s editable state: layers,
+components, anchors, local metrics, and **normalized outlines**:
+
+```text
+layer.geometryTopology    one versioned atomic JSON string (path grammar)
+layer.nodePositionsById   Y.Map<nodeUUID, packedXY>   // one scalar pair, not nested x/y
+layer.shapeDataById       Y.Map<shapeUUID, non-topology shape data>
+```
+
+Coordinate drags write one packed position. Insert/delete, connect/split,
+open/close, reverse, set-start, and node-type conversion replace the complete
+topology value in one Yjs transaction (plus add/remove of affected map
+entries). Concurrent structural ops therefore cannot interleave into malformed
+contours. Unreferenced position entries are orphans; an idempotent repair
+deletes them. Browser and Rust reconstruct ordinary `shapes` after a complete
+transaction and must fail closed without replacing the last known-good
+compiler cache. Details:
+[developer-docs/YDOC_SHAPE_IDENTITY_MIGRATION.md](../developer-docs/YDOC_SHAPE_IDENTITY_MIGRATION.md).
+
+Nested font JSON outside outlines (features, kerning, `format_specific`,
+names, …) uses the same leaf-write funnel: getters record leaf paths;
+setters symmetric-diff existing Y.Maps (set **and** delete). Do not
+`toYType` a whole dict because a parent setter ran.
 
 ## Residency in the browser
 
@@ -319,18 +372,33 @@ Keeps:
 - Auth / access epoch
 - Active baseline manifest metadata (keys, log ids, hashes) — not bodies
 - Durable incremental tail after the baseline
-- Connected peers and fan-out
-- Bounded in-flight chunk buffers
+- Connected peers and one-copy binary fan-out (log IDs on committed chunks)
+- SQLite ingress spool (not in-memory chunk maps)
 
 Must not:
 
-- `arrayBuffer()` seed/baseline/checkpoint bodies into a long-lived Y.Doc
+- Import Yjs, hold a long-lived `Y.Doc`, or `arrayBuffer()` seed/baseline
+  bodies
 - Answer generic “diff my arbitrary state vector against a hydrated server doc”
-- Run full-state compaction
+- Run full-state compaction or any in-room `encodeStateAsUpdate` fallback
+  (including first seed — seed is R2 PUT + `adopt-baseline` metadata only)
+- Generate a server state vector
 
-Websocket sync is **checkpoint-relative**: client has baseline N; DO replays
-tail rows with `id > N`. Cold rebaseline is HTTP snapshot + tail, not
-server-side Yjs diff generation.
+Websocket sync is **checkpoint-relative**. Clients send
+`baselineCheckpointLogId` and `appliedLogId` (highest contiguous committed
+log id applied). Server:
+
+- If `appliedLogId < currentCheckpointLogId` → `rebaseline-required` (those
+  rows were truncated into the newer checkpoint).
+- If `currentCheckpointLogId ≤ appliedLogId ≤ lastLogId` → replay
+  `id > appliedLogId` page/frame-wise.
+- Reject impossible future IDs; never silently clamp them.
+- Cold `/live` pins checkpoint `L` and tail high-water `H`; if compaction
+  advances past the client before WS join, rebaseline and retry.
+
+A client may advance its baseline token after a promoted checkpoint `H` only
+if its contiguous `appliedLogId ≥ H`. Never clear those IDs merely because
+the socket closed.
 
 ### Compaction (room DO vs external)
 
@@ -347,10 +415,8 @@ Keeps zero-hydration. For compaction it only:
 - CAS-promotes a candidate baseline the external host wrote to R2
 
 It must not load checkpoint bodies into a `Y.Doc`, GC-encode full state, or
-stack compaction peak on the live WebSocket isolate. In-room
-`encodeStateAsUpdate` / fresh-doc GC is allowed only for tiny seed / first
-baseline promotion where no prior checkpoint exists yet — not as the steady
-path.
+stack compaction peak on the live WebSocket isolate. There is **no** in-room
+encode path for seed or first baseline.
 
 #### Why “external” even when the host is still a Worker
 
@@ -437,15 +503,16 @@ Without a core-resident character map, encoded text cannot become a seed set
 until every possibly matching glyph is already hydrated — which defeats lazy
 hydration.
 
-### Full downloadable closure (no outline hydrate)
+### Full downloadable closure (compile; no outline hydrate)
 
-A hydrate pack’s glyph set is the union of two expansions. Neither step needs
-glyph outline bodies loaded.
+Local **compile** subset is GSUB + **upstream** components only — the same
+algorithm as `close_layout` then `expand_closure_with_component_deps`.
+Downstream composites of the seed are **not** in the compile subset.
 
 ```text
 seeds
   → (A) OpenType layout closure     // features + catalog names
-  → (B) deps-index expansion        // components, metrics-key edges, …
+  → (B) forward deps-index expansion  // components, metrics-key edges
   → hydrate missing ids from R2/DOs
 ```
 
@@ -472,6 +539,23 @@ walking hydrated layers.
 Prefer computing this on the client once core + deps are loaded. A Worker may
 run the same algorithm if given seeds, core features/catalog names, and the
 deps artifact — still without opening glyph Y.Docs.
+
+### UI sparse hydration (graph sufficiency)
+
+Editing hydrate for a user-chosen seed set is **not** the compile subset.
+It must include reverse dependents (so editing `a` can show `ä`) and then
+forward-close (so `ä` still pulls `dieresis`):
+
+```text
+seeds            = glyphs the user picked
+layout           = close_layout(seeds)     // core features + catalog names
+dependents       = reverse*(seeds)         // invert forward edge maps in memory
+hydrate          = forward*(seeds ∪ layout ∪ dependents)
+```
+
+Do **not** `close_layout` the reverse set (it explodes). OT stays on
+user-chosen seeds only. Metrics-key edges stay in the deps graph; OT stays
+in `close_layout`.
 
 ### Hydrate and repair
 
@@ -546,13 +630,16 @@ has full glyph bodies locally.
 
 1. Load core (+ deps index as needed)
 2. Resolve seeds from UI/text
-3. Compute full closure: `close_layout` ∪ deps-index expansion
+3. Compute **compile** closure: `close_layout(seeds)` then **forward** deps
+   (not `reverse*`)
 4. Hydrate missing shards
 5. Assemble ephemeral font from loaded shards
 6. Existing subset / compile pipeline on that assembly (`RetainGlyphs` et al.)
 
-Never treat unhydrated as absent. The hydrate closure and the editing-subset
-closure should use the same two-phase algorithm so packs and compiles agree.
+Never treat unhydrated as absent. **Editing** hydrate (browse/edit a seed)
+uses UI sparse hydration (`reverse*` then forward-close). **Compile** uses
+the two-phase forward-only algorithm so packs and compiles agree with
+`prime_layout_closure_cache`.
 
 ### Server full-font compiler (proofing / export)
 
@@ -695,12 +782,14 @@ the glyph DO, revision stamp-before-core-signal.
 
 Still to do:
 
-1. Residency + hydrate packs + full closure (`close_layout` ∪ deps index)
-   without shipping every glyph on linked open.
-2. Shard DO identity and R2 layouts; zero-hydration join.
-3. External compaction per shard; refuse or hand off oversized shards.
-4. ~~Migrate legacy whole-font rooms into core + deps + per-glyph shards.~~
-   Owner-authorized protocol 4 epoch + immutable asset manifests.
+1. Residency + hydrate packs: compile closure vs UI sparse hydrate
+   (`reverse*` then forward-close) without shipping every glyph on linked open.
+2. Finish opaque-byte FontRoomDO (no Yjs import, SQLite spool, isolated
+   validator before ACK) and `appliedLogId` reconnect on every shard.
+3. External compaction per shard with pinned-H CAS; refuse or hand off
+   oversized shards (`needs-fat-compactor` / `tail_full`).
+4. Owner-authorized protocol 4 epoch + immutable asset manifests (in
+   progress; mixed v3/v4 writers rejected at auth).
 
 ## Explicit non-goals (for the first cut)
 
@@ -720,10 +809,12 @@ Settled in v1 (do not re-open without a product change):
 - Cmap: per-entry `codepoints` **plus** reverse `codepoint → glyphId[]`
 - Browser per-shard encoded ceiling: 5 MiB (warn 75%; live commit reverts on reject)
 - Worker-class compactor is `compactor` once room IDs/R2 keys are sharded
+- Deps: UUID per-edge maps; reverse derived in memory, never stored
+- Outlines: atomic topology + packed positions; nested numeric shape writes forbidden
+- Nested JSON: leaf getters/setters; dict assign is a symmetric Y.Map diff
 
 Still open:
 
-- Exact deps index encoding and whether reverse edges are stored or derived
 - Denser cmap for CJK text performance beyond the reverse map
 - Linked-window interest protocol: how precisely main aggregates active-glyph
   DO subscriptions across local windows
@@ -741,17 +832,56 @@ Still open:
 
 ## Zero-hydration rooms (protocol 4)
 
+Peak we are designing for: live DO = sockets + SQLite tail + **one** in-flight
+packet (no long-lived `Y.Doc`). Compact Worker = `gc:true` doc + one encoded
+snapshot + one packet — never checkpoint + merged tail + live `gc:false`
+graph at once. Fat-host compact stays a later `413` door; do not fall back to
+in-room encode.
+
+```text
+FontRoomDO: SQLite tail → one-copy fan-out
+     stream rows id > L
+cf-compactor: R2 checkpoint → applyUpdate gc:true drop buffers
+            → optional encode-fold → encode destroy put R2
+     → DO CAS promote + truncate tail
+```
+
 Live Durable Objects are an authenticated opaque-byte journal. They do not
 import Yjs, hydrate a long-lived `Y.Doc`, encode snapshots, or merge tails.
-Ingress is spooled in SQLite (`ingress_spool`), validated by `validator` (`gc:true` throwaway
-apply) before ACK/fan-out, and compacted by `compactor` with a pinned
-`(L0, H]` byte-budgeted page loop: apply checkpoint and drop the buffer, apply
-one framed transaction at a time, optional encode-fold, destroy the doc
-before R2 put. Mutation-history fetch failure aborts without writing
-`envelopes: []`. A 413 is terminal (`needs-fat-compactor`);
+
+**Ingress (hibernation-safe):** (1) DO checks auth, wire types, frame/chunk
+bytes, metadata, and quotas. Production tokens require a monotonic
+`accessEpoch`; epoch 0/absent cannot bypass a newer room epoch. Website
+advances it on revoke/remove/delete and the room fans the epoch out to hub +
+known shards, then closes stale sockets. Viewers cannot write. (2) Decode one
+frame into `ingress_spool` (`committed=0`) keyed by connection + client seq +
+transaction UUID. (3) Isolated `validator` Worker applies a throwaway
+`{gc:true}` doc and callbacks digest/size. (4) Only after SQL commit: ACK and
+fan-out. Failure deletes spool; no durable tail and no peer exposure.
+(5) Duplicate tx/chunk and validator retries are idempotent. Bound peers,
+attachments, metadata, spool bytes, dirty rows/bytes, and
+`checkpoint + committedDirty + spool + incoming` under the encoded-shard
+budget.
+
+Internal manifest/export/promote/adopt routes require service-binding auth
+with a scoped secret, not a caller-supplied marker header alone. Strip
+internal headers at the public edge. Canonical shard names only
+(`font-core`, `font-deps`, `glyph:<UUID>`); seed/create is checked against the
+**asset owner’s** Website D1 entitlement and a signed shard manifest.
+
+Writes (`update`, `sync-complete`) only **schedule** compact. They never
+compact inline. Soft dirty (encoded ceiling or 2000 rows, or 30 min
+`firstDirtyAt`) alarms the Worker; 413 is terminal (`needs-fat-compactor`);
 the hard dirty cap is `tail_full` (WS `error.code = tail_full`, read-only).
 Operator inbox: `GET /api/internal/cloud/shard-ops` on Website D1, also listed
-on the admin dashboard Cloud Rooms table.
+on the admin dashboard Cloud Rooms table. Keep the tail; never drop
+acknowledged updates.
+
+Compaction pins `(L0, H]` and pages by **byte budget and row cap**. One
+versioned length-prefixed binary protocol for `/live`, WS replay, validator
+spool, and compactor pages. SQLite `room_state` is the sole authority for the
+checkpoint pointer; R2 `current.json` is a post-commit cache. Mutation-history
+fetch failure aborts without writing `envelopes: []`.
 
 Existing cloud assets use an owner-authorized schema/protocol 4 migration
 epoch: `POST /api/cloud/assets/:id/migrate` quiesces writers (access epoch +
@@ -771,9 +901,25 @@ Reconnect carries `baselineCheckpointLogId` and `appliedLogId`. If
 `font-core` holds catalog + cmap only. `font-deps` stores UUID edge maps
 (`component | metrics-key | both`) and is repaired from converged glyph shards.
 
-Workers live in `counterpunchspace/collab` (`packages/protocol`,
-`workers/validator`, `workers/compactor`, `workers/room`). Push to
-`main` deploys callee-first: validator, then compactor, then room.
+Workers live in `counterpunchspace/collab`. Cloudflare **script names** are
+`room`, `compactor`, and `validator` (`fonts-room` / `cf-` prefixes are gone).
+`FontRoomDO` is declared only on `room`. R2 buckets stay
+`fonts-room-state` / `fonts-room-state-preview`. Target layout:
+
+```text
+collab/
+  packages/protocol/          framing, constants, auth helpers
+  workers/room/               public edge + FontRoomDO
+  workers/compactor/          compaction isolate
+  workers/validator/          Yjs ingress validation isolate
+```
+
+Push to `main` deploys callee-first (not atomic): validator, then
+compactor, then room. Stop on the first Wrangler failure. Local `npm run
+dev` is Wrangler multi-config; room is HTTP on 8787. After the first
+production deploy of `compactor`, disable the Deploy workflow on
+`yanone/cf-compactor` so two CIs cannot overwrite it. Existing `fonts-room`
+Durable Object SQLite does not move automatically.
 
 ### Capacity (checked-in Node + Worker benches)
 
@@ -877,6 +1023,8 @@ Checked-in coverage (not a second spec):
 | Catalog generation tombstones, published core/deps hydrate pair | `webapp/tests/cloud-glyph-catalog.test.js` |
 | Seed-only live writes during migration | `collab/collab/workers/room/test/font-room-do.test.js` |
 
-Local `npm run dev` in the collab repo starts room + compactor + validator together (Wrangler multi-config). Fat compact stays out of scope. After the first production deploy of `compactor`, disable the Deploy workflow on `yanone/cf-compactor` so two CIs cannot overwrite it. Set website `ROOM_WORKER_URL` to the new `room` origin; existing `fonts-room` Durable Object state does not move automatically.
+Local `npm run dev` in the collab repo starts room + compactor + validator
+together (Wrangler multi-config). Fat compact stays out of scope. Set website
+`ROOM_WORKER_URL` to the `room` origin.
 
 

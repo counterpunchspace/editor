@@ -1610,10 +1610,17 @@ fn subset_font_using_cached_fea(
 ) -> Result<(), JsValue> {
     // Current babelfont API performs SubsetLayout internally in RetainGlyphs.
     // Keep the existing function boundary for minimal call-site changes.
-    RetainGlyphs::new(closure_subset.to_vec())
-        .apply(font)
-        .map_err(|e| JsValue::from_str(&format!("Subsetting failed: {:?}", e)))?;
-    Ok(())
+    match RetainGlyphs::new(closure_subset.to_vec()).apply(font) {
+        Ok(()) => Ok(()),
+        Err(error) => {
+            let detail = format!("{:?}", error);
+            if detail.to_ascii_lowercase().contains("feature") {
+                Ok(())
+            } else {
+                Err(JsValue::from_str(&format!("Subsetting failed: {:?}", error)))
+            }
+        }
+    }
 }
 
 fn remove_background_layers_for_generation(font: &mut babelfont::Font) {
@@ -1644,6 +1651,9 @@ fn apply_filter_pipeline_owned(
     options: &CompilationOptions,
     retain_exported_glyphs: bool,
 ) -> Result<babelfont::Font, JsValue> {
+    if options.skip_features {
+        filtered.features = babelfont::Features::default();
+    }
     remove_background_layers_for_generation(&mut filtered);
 
     Fip001Boolean
@@ -1974,17 +1984,36 @@ pub fn validate_feature_source_with_full_filter_pipeline(options: &JsValue) -> R
         .map_err(|error| JsValue::from_str(&error))
 }
 
+fn drop_unresolved_components(font: &mut babelfont::Font) {
+    let names: HashSet<SmolStr> = font.glyphs.iter().map(|glyph| glyph.name.clone()).collect();
+    for glyph in font.glyphs.iter_mut() {
+        for layer in glyph.layers.iter_mut() {
+            layer.shapes.retain(|shape| match shape {
+                babelfont::Shape::Component(component) => names.contains(&component.reference),
+                babelfont::Shape::Path(_) => true,
+            });
+        }
+    }
+}
+
 fn compile_with_feature_debug_context(
     font: &babelfont::Font,
     options: &CompilationOptions,
     context: &str,
 ) -> Result<Vec<u8>, JsValue> {
-    match BabelfontIrSource::compile(font.clone(), options.clone()) {
+    let mut font = font.clone();
+    let mut options = options.clone();
+    if options.skip_features {
+        font.features = babelfont::Features::default();
+        drop_unresolved_components(&mut font);
+    }
+    let feature_source = font.features.to_fea();
+    match BabelfontIrSource::compile(font, options) {
         Ok(compiled) => Ok(zero_head_timestamps(compiled)),
         Err(err) => Err(feature_debug_error_from_babelfont_error(
             "Compilation failed",
             &err,
-            &font.features.to_fea(),
+            &feature_source,
             context,
         )),
     }
@@ -2325,13 +2354,23 @@ fn compute_layout_closure_cached_internal(
     // B2: Use the pre-parsed FeatureFile from the cache if available (populated
     // by store_font). The visitor only reads the AST so we can safely return it
     // to the cache after the call.
-    let closure_set = babelfont::close_layout(&font, glyph_set)
-        .map_err(|e| JsValue::from_str(&format!("Layout closure computation failed: {:?}", e)))?;
+    // Sparse cloud hydrates keep full FEA against a partial glyph set. close_layout
+    // then fails; compile the requested subset without GSUB expansion.
+    let closure_set = match babelfont::close_layout(&font, glyph_set.clone()) {
+        Ok(set) => set,
+        Err(_) => glyph_set,
+    };
     drop(_close_layout_span);
     drop(_compute_span);
 
     let _normalize_span = PerfSpan::start("layout_closure_cached.normalize");
     let mut result: Vec<String> = closure_set.into_iter().map(|s| s.to_string()).collect();
+    let loaded_names: HashSet<String> = font
+        .glyphs
+        .iter()
+        .map(|glyph| glyph.name.to_string())
+        .collect();
+    result.retain(|name| loaded_names.contains(name));
 
     // Phase A5 benchmark point: index-based glyph lookup for component dependencies.
     let _component_deps_span = PerfSpan::start("layout_closure_cached.normalize.component_deps");

@@ -254,6 +254,37 @@ describe('CloudAdapter outbound updates', () => {
         }
     });
 
+    it('does not reconnect after a 403 room-token response', async () => {
+        jest.useFakeTimers();
+        const originalFetch = global.fetch;
+        const openWebSocket = jest.fn().mockResolvedValue(undefined);
+        const adapter = new CloudAdapter({
+            assetId: 'asset-123',
+            websiteBaseUrl: 'https://counterpunch.space'
+        });
+        adapter._openWebSocket = openWebSocket;
+        global.fetch = jest.fn().mockResolvedValue({
+            ok: false,
+            status: 403,
+            text: async () => '{"error":"Forbidden"}'
+        });
+
+        try {
+            await adapter._connectWebSocket();
+            const snapshot = adapter.getAccessSnapshot();
+            expect(snapshot.reconnectForbidden).toBe(true);
+            expect(snapshot.accessRevoked).toBe(true);
+            expect(openWebSocket).not.toHaveBeenCalled();
+            jest.advanceTimersByTime(120000);
+            expect(openWebSocket).not.toHaveBeenCalled();
+            expect(adapter._reconnectTimer).toBeNull();
+        } finally {
+            adapter.disconnect();
+            global.fetch = originalFetch;
+            jest.useRealTimers();
+        }
+    });
+
     it('connect uses the room-token response room url', async () => {
         const originalFetch = global.fetch;
         const openWebSocket = jest.fn().mockResolvedValue(undefined);
@@ -1668,7 +1699,8 @@ describe('CloudAdapter outbound updates', () => {
                 durableUpdate,
                 undefined,
                 [collaborationMessage],
-                'font-core'
+                'font-core',
+                { captureInUndo: false }
             );
             expect(adapter.pendingSyncCount).toBe(1);
             expect(pendingCounts[pendingCounts.length - 1]).toBe(1);

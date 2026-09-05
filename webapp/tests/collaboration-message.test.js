@@ -3,6 +3,7 @@ const {
     createCollaborationMessageEnvelopeFromChangeLogEntries,
     createCollaborationMessageEnvelopesFromChangeLogEntries,
     createCollaborationMessageEnvelope,
+    collaborationWireReplayValue,
     isCollaborationMessageEnvelope,
     createNamedChangePairFromEntry,
     createNamedChangePairFromJsonPatchPair,
@@ -516,5 +517,60 @@ describe('collaboration-message scaffold', () => {
         expect(envelope.metadata.undoScope).toBe('font');
         expect(envelope.metadata.originatingGlyphName).toBeNull();
         expect(envelope.metadata.originatingLayerId).toBeNull();
+    });
+
+    test('collaboration envelopes keep primitive replay values and omit Yjs snapshots', () => {
+        expect(collaborationWireReplayValue(240)).toBe(240);
+        expect(collaborationWireReplayValue('Delete layer sync')).toBe(
+            'Delete layer sync'
+        );
+        expect(
+            collaborationWireReplayValue({
+                name: 'A',
+                layers: [{ id: 'layer-1', shapes: [] }]
+            })
+        ).toBeUndefined();
+
+        const envelope = createCollaborationMessageEnvelopeFromChangeLogEntries(
+            [
+                createLogEntry({
+                    timestamp: 1,
+                    windowId: 'main',
+                    windowRoleLabel: 'main',
+                    historyItemId: 'history-delete-layer',
+                    transactionLabel: 'Delete layer sync',
+                    transactionId: 9,
+                    op: 'set',
+                    undoScope: 'glyph',
+                    path: 'glyphs.A:',
+                    oldValue: 'A',
+                    newValue: 'Delete layer sync',
+                    replayOldValue: {
+                        name: 'A',
+                        layers: [
+                            { id: 'keep', shapes: [{ nodes: '0 0 l 1 1 l' }] },
+                            { id: 'drop', shapes: [{ nodes: '2 2 l 3 3 l' }] }
+                        ]
+                    },
+                    replayNewValue: {
+                        name: 'A',
+                        layers: [
+                            { id: 'keep', shapes: [{ nodes: '0 0 l 1 1 l' }] }
+                        ]
+                    },
+                    workerReplayTargets: [{ glyphName: 'A', layerId: 'keep' }]
+                })
+            ],
+            {
+                localSequence: 1,
+                source: 'unit-test',
+                windowId: 'main'
+            }
+        );
+
+        expect(envelope.changes[0].replayOldValue).toBeUndefined();
+        expect(envelope.changes[0].replayNewValue).toBeUndefined();
+        expect(envelope.changes[0].path).toBe('glyphs.A:');
+        expect(JSON.stringify(envelope).length).toBeLessThan(65536);
     });
 });

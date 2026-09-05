@@ -16,7 +16,7 @@ import {
 } from './patch-sync-engine';
 import { fromYType } from './change-bridge-ydoc';
 import { Font } from './babelfont-model';
-import { WindowSync } from './window-sync';
+import { WindowSync, windowSyncChannelName } from './window-sync';
 import { fontCompilation, fullFontCompilation } from './font-compilation';
 import { timelineSpanEnd, timelineSpanStart } from './perf-timeline';
 import { Logger } from './logger';
@@ -3045,18 +3045,23 @@ function initializeBridge(detail: {
     });
 
     // Derive BroadcastChannel name from font path (or a fallback)
-    const channelName = `counterpunch-font:${detail.path || 'unsaved'}`;
+    const channelName = windowSyncChannelName(detail.path || 'unsaved');
 
     if (isSyncWindow()) {
-        // Sync (secondary) window: keep Y.Doc empty — the peer's
-        // full-state response will populate it.  Only store the
-        // babelfontData reference so _syncJsonFromYDoc can patch it.
+        // Sync (secondary) window: prefer the peer's live Y.Doc, but keep any
+        // cloud HTTP hydrate we already downloaded so the UI is not empty
+        // while the BroadcastChannel handshake completes.
         bridge.setFontJson(
             detail.babelfontData as Record<
                 string,
                 ReturnType<typeof JSON.parse>
             >
         );
+        if (bootstrapDocuments?.length) {
+            bridge.applyDocumentSetState(bootstrapDocuments);
+        } else if (bootstrapState && bootstrapState.length > 0) {
+            bridge.applyFullState(bootstrapState);
+        }
     } else if (bootstrapDocuments?.length) {
         bridge.setFontJson(
             detail.babelfontData as Record<

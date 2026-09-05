@@ -12,6 +12,7 @@ import {
     catchUpCloudDocument,
     CLOUD_GLYPH_CATCH_UP_CONCURRENCY,
     runCloudVisibleReconnectRebaseline,
+    type CloudAdapterAccessSnapshot,
     type CloudConnectionStatus,
     type CloudTransferActivity,
     normalizeCloudShardWebSocketUrl
@@ -62,7 +63,10 @@ export function liveGlyphDocumentIdsFromSubset(
     if (fromNames.length) {
         return [...new Set(fromNames)];
     }
-    return [];
+    if (!glyphNames.length) {
+        return [];
+    }
+    return [...new Set(bridge.listLiveGlyphDocumentIds?.() ?? [])];
 }
 
 async function runWithConcurrency<T>(
@@ -146,6 +150,49 @@ export class CloudLiveSession {
 
     liveDocumentIds(): string[] {
         return [...this._adapters.keys()];
+    }
+
+    getAccessSnapshot(): {
+        adapters: CloudAdapterAccessSnapshot[];
+        accessRevoked: boolean;
+        reconnectForbidden: boolean;
+        lastClose: CloudAdapterAccessSnapshot['lastClose'];
+        lastServerError: CloudAdapterAccessSnapshot['lastServerError'];
+        roomToken: string | null;
+        roomUrl: string | null;
+        openSocketCount: number;
+    } {
+        const adapters = [...this._adapters.values()].map((adapter) =>
+            adapter.getAccessSnapshot()
+        );
+        const withClose = [...adapters]
+            .reverse()
+            .find((snapshot) => snapshot.lastClose);
+        const withError = [...adapters]
+            .reverse()
+            .find((snapshot) => snapshot.lastServerError);
+        const core = adapters.find(
+            (snapshot) => snapshot.documentId === FONT_CORE_DOCUMENT_ID
+        );
+        return {
+            adapters,
+            accessRevoked: adapters.some((snapshot) => snapshot.accessRevoked),
+            reconnectForbidden: adapters.some(
+                (snapshot) => snapshot.reconnectForbidden
+            ),
+            lastClose: withClose?.lastClose ?? null,
+            lastServerError: withError?.lastServerError ?? null,
+            roomToken: core?.roomToken ?? adapters[0]?.roomToken ?? null,
+            roomUrl:
+                core?.roomUrl ?? adapters[0]?.roomUrl ?? this._options.roomUrl,
+            openSocketCount: adapters.filter(
+                (snapshot) => snapshot.wsReadyState === WebSocket.OPEN
+            ).length
+        };
+    }
+
+    probeUnauthorizedLiveWrite(): boolean {
+        return this.coreAdapter?.probeUnauthorizedLiveWrite() === true;
     }
 
     hasLiveDocument(documentId: string): boolean {

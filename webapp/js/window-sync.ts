@@ -16,6 +16,88 @@ import {
     createCollaborationMessageEnvelopeFromChangeLogEntries,
     type CollaborationMessageEnvelope
 } from './collaboration-message';
+import {
+    FONT_CORE_DOCUMENT_ID,
+    FONT_DEPS_DOCUMENT_ID
+} from './filesystem-plugins/cloud-document-set';
+
+/** BroadcastChannel name for a font. Cloud URIs collapse to the asset id. */
+export function windowSyncChannelName(fontPath: string): string {
+    let path = String(fontPath || 'unsaved').trim();
+    path = path.replace(/^cloud:\/+/i, '');
+    path = path.replace(/^\/+/, '');
+    return `counterpunch-font:${path || 'unsaved'}`;
+}
+
+const LINKED_WINDOW_SEED_GLYPHS = [
+    'a',
+    'adieresis',
+    'aacute',
+    'A',
+    '.notdef',
+    'dieresiscomb',
+    'acutecomb',
+    'gravecomb',
+    'H'
+];
+
+function componentReferencesFromGlyph(glyph: unknown): string[] {
+    const names: string[] = [];
+    const layers = (
+        glyph as {
+            layers?: Array<{ shapes?: unknown[] }>;
+        }
+    )?.layers;
+    for (const layer of layers || []) {
+        for (const shape of layer.shapes || []) {
+            const reference = (shape as { data?: { reference?: unknown } })
+                ?.data?.reference;
+            if (typeof reference === 'string') {
+                names.push(reference);
+            }
+        }
+    }
+    return names;
+}
+
+function collectLinkedWindowGlyphNames(): string[] {
+    const names = new Set<string>([
+        ...(window.fontManager?.getEditingSubsetSnapshot?.() ?? []),
+        ...(window.fontManager?.getLiveVisibleGlyphNames?.() ?? []),
+        ...LINKED_WINDOW_SEED_GLYPHS
+    ]);
+    const text = String(window.stateManager?.editor_text_buffer || '');
+    for (const name of window.fontManager?.deriveSubsetGlyphsFromText?.(text) ??
+        []) {
+        names.add(name);
+    }
+    const model = window.currentFontModel;
+    const queue = [...names];
+    while (queue.length) {
+        const current = queue.pop();
+        if (!current) {
+            continue;
+        }
+        const glyph = model?.findGlyph?.(current);
+        if (!glyph) {
+            continue;
+        }
+        for (const reference of componentReferencesFromGlyph(glyph)) {
+            if (!names.has(reference)) {
+                names.add(reference);
+                queue.push(reference);
+            }
+        }
+        if (names.size > 80) {
+            break;
+        }
+    }
+    const collected = [...names];
+    return (
+        window.fontManager?.constrainSubsetToHydratedGlyphs?.(collected) ??
+        collected
+    );
+}
 
 const console = new Logger('WindowSync');
 
@@ -107,6 +189,7 @@ export class WindowSync {
     private _pendingYjsMessages: YjsUpdateMsg[] = [];
     private _inboundFlushScheduled = false;
     private _sessionId: string;
+    private _channelName: string;
 
     static enableTimingLogging(): void {
         WindowSync._timingLoggingEnabled = true;
@@ -121,12 +204,10 @@ export class WindowSync {
     constructor(bridge: PatchSyncEngine, channelName: string) {
         this._bridge = bridge;
         this._sessionId = window.windowRole?.sessionId ?? 'main';
+        this._channelName = channelName;
 
         if (typeof BroadcastChannel !== 'undefined') {
-            this._channel = new BroadcastChannel(channelName);
-            this._channel.onmessage = (ev: MessageEvent<SyncMessage>) => {
-                this._handleMessage(ev.data);
-            };
+            this._bindChannel(channelName);
 
             // Wire bridge's local updates to broadcast. The broadcast itself is
             // microtask-batched so a single user transaction that emits several
@@ -291,6 +372,25 @@ export class WindowSync {
         return this._peers;
     }
 
+    get channelName(): string {
+        return this._channelName;
+    }
+
+    /**
+     * Move this window onto the BroadcastChannel for a new font path.
+     * Save As changes identity without rebuilding the live Y.Doc; linked
+     * windows opened afterward join the new name.
+     */
+    rebindChannel(fontPath: string): void {
+        const nextName = windowSyncChannelName(fontPath);
+        if (nextName === this._channelName && this._channel) {
+            return;
+        }
+        this._channel?.close();
+        this._bindChannel(nextName);
+        console.log(`Rebound WindowSync channel to ${nextName}`);
+    }
+
     /** Clean up. */
     destroy(): void {
         this._flushOutboundBroadcast();
@@ -299,13 +399,25 @@ export class WindowSync {
         this._channel = null;
     }
 
+    private _bindChannel(channelName: string): void {
+        this._channelName = channelName;
+        if (typeof BroadcastChannel === 'undefined') {
+            this._channel = null;
+            return;
+        }
+        this._channel = new BroadcastChannel(channelName);
+        this._channel.onmessage = (ev: MessageEvent<SyncMessage>) => {
+            this._handleMessage(ev.data);
+        };
+    }
+
     // ── Internal ─────────────────────────────────────────────────
 
     private _send(msg: SyncMessage): void {
         try {
             this._channel?.postMessage(msg);
-        } catch {
-            // Channel may be closed
+        } catch (error) {
+            console.warn('WindowSync: failed to postMessage', error);
         }
     }
 
@@ -474,18 +586,34 @@ export class WindowSync {
                 this._peers.add(msg.windowId);
                 // Respond with our full state
                 const state = this._bridge.getFullState();
-                const documents = (
-                    this._bridge.getDocumentSetState?.() || []
-                ).map((shard) => ({
-                    documentId: shard.documentId,
-                    state: shard.bytes
-                }));
+                const subsetNames = collectLinkedWindowGlyphNames();
+                const documents: Array<{
+                    documentId: string;
+                    state: BinaryPayload;
+                }> = [];
+                for (const documentId of [
+                    FONT_CORE_DOCUMENT_ID,
+                    FONT_DEPS_DOCUMENT_ID,
+                    ...subsetNames
+                        .map((name) =>
+                            this._bridge.glyphDocumentIdForName?.(name)
+                        )
+                        .filter((id): id is string => !!id)
+                ]) {
+                    const bytes =
+                        this._bridge.encodeDocumentState?.(documentId);
+                    if (bytes?.byteLength) {
+                        documents.push({ documentId, state: bytes });
+                    }
+                }
                 this._send({
                     type: 'full-state-response',
                     state,
                     documents,
-                    changeLog: this._bridge.getChangeLog(),
-                    collaborationLog: this._bridge.getCollaborationLog(),
+                    changeLog: this._bridge.getChangeLog().slice(-80),
+                    collaborationLog: this._bridge
+                        .getCollaborationLog()
+                        .slice(-80),
                     cloudRelayState:
                         window.windowRole?.isMainWindow() &&
                         window.cloudPlugin?.getRelayConnectionState

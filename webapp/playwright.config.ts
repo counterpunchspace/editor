@@ -17,7 +17,11 @@ export default defineConfig({
     // Only run Playwright spec files, not Jest test files
     testMatch: '**/*.spec.ts',
 
-    globalTeardown: './scripts/format-snapshot-json.mjs',
+    globalTeardown: './scripts/playwright-global-teardown.mjs',
+    globalSetup:
+        process.env.CLOUD_COLLAB_E2E === '1'
+            ? './scripts/cloud-collab-global-setup.mjs'
+            : undefined,
 
     // The app under test keeps mutable browser-side state in memory, so
     // browser specs must not run concurrently across workers.
@@ -77,6 +81,7 @@ export default defineConfig({
     projects: [
         {
             name: 'chromium',
+            testIgnore: ['**/cloud-collab*.spec.ts'],
             use: {
                 ...devices['Desktop Chrome'],
                 // Enable SharedArrayBuffer (required for your WASM/Pyodide)
@@ -94,6 +99,28 @@ export default defineConfig({
                     chromiumSandbox: true
                 },
                 // Each Playwright test gets a fresh browser context.
+                contextOptions: {}
+            }
+        },
+        {
+            name: 'cloud-collab',
+            testMatch: '**/cloud-collab*.spec.ts',
+            timeout: 600000,
+            use: {
+                ...devices['Desktop Chrome'],
+                launchOptions: {
+                    args: [
+                        '--enable-features=SharedArrayBuffer',
+                        '--disable-http2',
+                        '--disable-extensions',
+                        '--disable-component-extensions-with-background-pages',
+                        '--disable-background-networking',
+                        '--disable-sync',
+                        '--no-default-browser-check',
+                        '--no-first-run'
+                    ],
+                    chromiumSandbox: true
+                },
                 contextOptions: {}
             }
         }

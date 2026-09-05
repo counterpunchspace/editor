@@ -3464,6 +3464,10 @@ class GlyphCanvas {
             return;
         }
 
+        if (window.cloudPlugin?.canMutateCurrentAsset?.() === false) {
+            return;
+        }
+
         // Check for double-click
         if (e.detail === 2) {
             // In outline editor mode with layer selected

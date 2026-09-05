@@ -1623,6 +1623,47 @@ describe('CloudPlugin sharing APIs', () => {
         global.fetch = originalFetch;
     });
 
+    test('treats viewers and revoked sessions as read-only', () => {
+        const roles = new Map();
+        const adapter = plugin.getAdapter();
+        adapter.cacheAssetRole.mockImplementation((assetId, role) => {
+            if (!role) {
+                roles.delete(assetId);
+                return;
+            }
+            roles.set(assetId, role);
+        });
+        adapter.getCachedAssetRole.mockImplementation(
+            (assetId) => roles.get(assetId) ?? null
+        );
+        window.fontManager.currentFont.sourcePlugin = plugin;
+        window.fontManager.currentFont.isCloudBacked = () => true;
+        plugin.getAdapter().cacheAssetRole('asset-1', 'viewer');
+        expect(plugin.getCurrentAssetRole()).toBe('viewer');
+        expect(plugin.canMutateCurrentAsset()).toBe(false);
+        expect(plugin.getLiveAccessSnapshot().canMutate).toBe(false);
+
+        plugin.getAdapter().cacheAssetRole('asset-1', 'owner');
+        expect(plugin.getCurrentAssetRole()).toBe('owner');
+        expect(plugin.canMutateCurrentAsset()).toBe(true);
+
+        plugin._liveSession = {
+            getAccessSnapshot: () => ({
+                accessRevoked: true,
+                reconnectForbidden: true,
+                lastClose: null,
+                lastServerError: null,
+                openSocketCount: 0,
+                roomToken: null,
+                roomUrl: null,
+                adapters: []
+            })
+        };
+        expect(plugin.canMutateCurrentAsset()).toBe(false);
+        expect(plugin.getLiveAccessSnapshot().canMutate).toBe(false);
+        expect(plugin.getLiveAccessSnapshot().accessRevoked).toBe(true);
+    });
+
     test('resolves the current cloud asset id from the open font path', () => {
         expect(plugin.getCurrentAssetIdForSharing()).toBe('asset-1');
     });
@@ -1776,6 +1817,24 @@ describe('CloudPlugin sharing APIs', () => {
             2,
             'http://localhost:8788/api/cloud/assets/asset-1/members/user-2',
             expect.objectContaining({ method: 'DELETE' })
+        );
+    });
+
+    test('removeMember fails when room revocation is still pending', async () => {
+        global.fetch.mockResolvedValueOnce({
+            ok: true,
+            json: jest.fn().mockResolvedValue({
+                success: true,
+                accessChange: {
+                    state: 'pending',
+                    warning:
+                        'Access change is durable, but active room revocation is pending retry.'
+                }
+            })
+        });
+
+        await expect(plugin.removeMember('user-2')).rejects.toThrow(
+            /room access revocation is still pending|pending retry/
         );
     });
 });

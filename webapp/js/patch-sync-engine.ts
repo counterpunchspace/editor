@@ -88,6 +88,7 @@ import { diffFontDataToPatchPairs } from './font-data-diff';
 import { getUndoRedoContext } from './undo-redo-context';
 import {
     stampImmutableGlyphIds,
+    applyCloudOwnedData,
     ensureImmutableGlyphId,
     listGlyphRecords,
     catalogFromCoreJson,
@@ -258,6 +259,18 @@ const SYSTEM_REMOTE_ORIGIN = 'system-remote';
 const HISTORY_REPLAY_ORIGIN = 'history-replay';
 const FONT_EDIT_ORIGIN = 'font-edit';
 const GLYPH_EDIT_ORIGIN = 'glyph-edit';
+/** Remote cloud applies; not in any UndoManager trackedOrigins. */
+export const CLOUD_REMOTE_ORIGIN = 'cloud-remote';
+
+function assertCloudAssetMutable(): void {
+    if (window.cloudPlugin?.canMutateCurrentAsset?.() === false) {
+        throw new Error('Cloud asset is read-only');
+    }
+}
+
+export type ApplyRemoteUpdateOptions = {
+    captureInUndo?: boolean;
+};
 const GLYPH_REVISION_ORIGIN = 'glyph-revision-signal';
 const LAYER_EDIT_ORIGIN_PREFIX = 'layer-edit:';
 
@@ -1298,11 +1311,6 @@ export class PatchSyncEngine {
                         : shard.documentId === FONT_DEPS_DOCUMENT_ID
                           ? this.depsDoc
                           : this._ensureGlyphDocFromShard(shard);
-                if (shard.documentId === FONT_CORE_DOCUMENT_ID) {
-                    this.fontMap.forEach((_value, key) =>
-                        this.fontMap.delete(key)
-                    );
-                }
                 Y.applyUpdate(doc, shard.bytes, SYSTEM_REMOTE_ORIGIN);
                 this._noteBroadcastStateVector(shard.documentId);
                 this._lastEncodedShardBytes.set(
@@ -1778,6 +1786,7 @@ export class PatchSyncEngine {
         this._fontJson = fontJson;
         this._isSyncing = true;
         stampImmutableGlyphIds(fontJson);
+        applyCloudOwnedData(fontJson);
         this._destroyGlyphDocs();
         this._suppressAutomaticLocalUpdateEmission = true;
         try {
@@ -1950,6 +1959,7 @@ export class PatchSyncEngine {
         newVal: unknown
     ): void {
         if (this._suppressRecording || this._isSyncing) return;
+        assertCloudAssetMutable();
 
         const fullPath = this._stabilizeRecordedPath([...path, prop]);
         this._queueOrCommitOperations([
@@ -1970,6 +1980,7 @@ export class PatchSyncEngine {
      */
     recordAdd(path: (string | number)[], value: unknown): void {
         if (this._suppressRecording || this._isSyncing) return;
+        assertCloudAssetMutable();
 
         const isObjectValue =
             !!value && typeof value === 'object' && !Array.isArray(value);
@@ -2008,6 +2019,7 @@ export class PatchSyncEngine {
      */
     recordRemove(path: (string | number)[], oldValue: unknown): void {
         if (this._suppressRecording || this._isSyncing) return;
+        assertCloudAssetMutable();
 
         const operations: TransactionBufferedOperation[] = [
             {
@@ -2109,6 +2121,7 @@ export class PatchSyncEngine {
         ) {
             return;
         }
+        assertCloudAssetMutable();
 
         if (!operations.some((operation) => operation.path.length > 0)) {
             return;
@@ -2471,6 +2484,8 @@ export class PatchSyncEngine {
             return;
         }
 
+        assertCloudAssetMutable();
+
         const uniqueTargets = normalizeWorkerReplayTargets(layerTargets);
         if (!uniqueTargets.length) {
             return;
@@ -2589,6 +2604,7 @@ export class PatchSyncEngine {
         if (this._suppressRecording || this._isSyncing) {
             return;
         }
+        assertCloudAssetMutable();
 
         const uniqueTargets: LayerSnapshotSyncTarget[] = [];
         const seenTargets = new Set<string>();
@@ -3565,6 +3581,8 @@ export class PatchSyncEngine {
         if (!this._fontJson || this._suppressRecording || this._isSyncing)
             return;
 
+        assertCloudAssetMutable();
+
         const uniqueGlyphNames = Array.from(
             new Set(glyphNames.filter((name) => typeof name === 'string'))
         );
@@ -4296,8 +4314,10 @@ export class PatchSyncEngine {
         update: Uint8Array,
         remoteEntries?: ChangeLogEntry[],
         remoteCollaborationMessages?: CollaborationMessageEnvelope[],
-        documentId?: string
+        documentId?: string,
+        options?: ApplyRemoteUpdateOptions
     ): boolean {
+        const captureInUndo = options?.captureInUndo !== false;
         this._isApplyingRemote = true;
         try {
             if (!this._fontJson) this._fontJson = {};
@@ -4353,37 +4373,25 @@ export class PatchSyncEngine {
                             clock > (transaction.beforeState.get(client) ?? 0)
                     );
             };
+            if (effectiveRemoteEntries?.length) {
+                this._ensureUndoManagersForRemoteEntries(
+                    effectiveRemoteEntries
+                );
+            }
             targetDoc.on('afterTransaction', observeRemoteTransaction);
             try {
                 Y.applyUpdate(
                     targetDoc,
                     update,
-                    this._getRemoteUpdateOrigin(effectiveRemoteEntries)
+                    captureInUndo
+                        ? this._getRemoteUpdateOrigin(effectiveRemoteEntries)
+                        : CLOUD_REMOTE_ORIGIN
                 );
             } finally {
                 targetDoc.off('afterTransaction', observeRemoteTransaction);
             }
             if (!didChange) {
                 return false;
-            }
-            if (effectiveRemoteEntries?.length) {
-                const glyphNames = new Set(
-                    effectiveRemoteEntries
-                        .map((entry) =>
-                            this._deriveGlyphNameFromPath(entry.path)
-                        )
-                        .filter((glyphName): glyphName is string => !!glyphName)
-                );
-                for (const glyphName of glyphNames) {
-                    this.getGlyphUndoManager(glyphName);
-                }
-                for (const entry of effectiveRemoteEntries) {
-                    const glyphName = this._deriveGlyphNameFromPath(entry.path);
-                    const layerId = this._deriveLayerIdFromPath(entry.path);
-                    if (glyphName && layerId) {
-                        this.getLayerUndoManager(glyphName, layerId);
-                    }
-                }
             }
             this._reconcileGlyphDocsAfterRemoteEntries(effectiveRemoteEntries);
             this._syncRemoteJsonFromYDoc(effectiveRemoteEntries);
@@ -4396,8 +4404,15 @@ export class PatchSyncEngine {
             }
             this._onAfterSync?.();
             this._onDirty?.();
-            if (effectiveRemoteEntries && effectiveRemoteEntries.length > 0) {
+            if (
+                captureInUndo &&
+                effectiveRemoteEntries &&
+                effectiveRemoteEntries.length > 0
+            ) {
                 this._appendChangeLogEntries(effectiveRemoteEntries);
+                this._recordUndoHistoryItemsFromRemoteEntries(
+                    effectiveRemoteEntries
+                );
                 this._lastBroadcastLogIndex = this._changeLog.length;
                 this._lastLocalUpdateLogIndex = this._changeLog.length;
             }
@@ -5156,6 +5171,9 @@ export class PatchSyncEngine {
         documentId: string = FONT_CORE_DOCUMENT_ID
     ): YjsUpdate {
         const doc = this._docForId(documentId) || this.yDoc;
+        if (!peerStateVector?.byteLength) {
+            return Y.encodeStateAsUpdate(doc);
+        }
         return Y.encodeStateAsUpdate(doc, peerStateVector);
     }
 
@@ -6424,13 +6442,32 @@ export class PatchSyncEngine {
                 this._glyphIdsTouchedByOperations(effectiveOperations),
                 () => {
                     for (const packet of pendingPackets) {
+                        const doc = this._docForId(packet.documentId);
+                        const baseline =
+                            localUpdateBaselineByDoc.get(packet.documentId) ||
+                            (doc ? Y.encodeStateVector(doc) : null);
+                        const stampedUpdate =
+                            doc && baseline
+                                ? Y.encodeStateAsUpdate(doc, baseline)
+                                : packet.update;
+                        const measured = doc
+                            ? measureShardBytesForSubmit({
+                                  lastEncodedBytes:
+                                      this._lastEncodedShardBytes.get(
+                                          packet.documentId
+                                      ) || 0,
+                                  packetBytes: stampedUpdate.byteLength,
+                                  encodeFullShard: () =>
+                                      Y.encodeStateAsUpdate(doc).byteLength
+                              })
+                            : { shardBytes: packet.shardBytes };
                         this._noteBroadcastStateVector(packet.documentId);
                         this._lastEncodedShardBytes.set(
                             packet.documentId,
-                            packet.shardBytes
+                            measured.shardBytes
                         );
                         this._emitLocalUpdate(
-                            packet.update,
+                            stampedUpdate,
                             packet.entries,
                             packet.documentId
                         );
@@ -7164,6 +7201,32 @@ export class PatchSyncEngine {
         stacks.undone.length = 0;
     }
 
+    private _recordUndoHistoryItemsFromRemoteEntries(
+        remoteEntries: ChangeLogEntry[]
+    ): void {
+        const recorded = new Set<string>();
+        for (const entry of remoteEntries) {
+            if (entry.historyAction !== 'change' || !entry.historyItemId) {
+                continue;
+            }
+            if (recorded.has(entry.historyItemId)) {
+                continue;
+            }
+            recorded.add(entry.historyItemId);
+            const glyphName = this._deriveGlyphNameFromPath(entry.path);
+            const layerId =
+                entry.undoScope === 'layer'
+                    ? this._deriveLayerIdFromPath(entry.path)
+                    : null;
+            this._recordUndoHistoryItem(
+                entry.undoScope,
+                glyphName,
+                layerId,
+                entry.historyItemId
+            );
+        }
+    }
+
     private _peekUndoHistoryItemId(
         scope: UndoScope,
         glyphName: string | null,
@@ -7284,6 +7347,28 @@ export class PatchSyncEngine {
         if (remoteEntries.some((entry) => entry.undoScope === 'font')) {
             return FONT_EDIT_ORIGIN;
         }
+        // Composite/dependent layer packets still undo on the originating
+        // layer surface. Treating extra replay glyphs as FONT_EDIT_ORIGIN
+        // leaves the layer UndoManager empty, so linked windows cannot undo
+        // after collaboration envelopes omit Yjs snapshot bodies.
+        if (
+            remoteEntries.some((entry) => entry.undoScope === 'layer') &&
+            !remoteEntries.some((entry) => entry.undoScope === 'glyph')
+        ) {
+            const originating = remoteEntries.find(
+                (entry) =>
+                    !!entry.originatingGlyphName && !!entry.originatingLayerId
+            );
+            if (
+                originating?.originatingGlyphName &&
+                originating.originatingLayerId
+            ) {
+                return getLayerEditOrigin(
+                    originating.originatingGlyphName,
+                    originating.originatingLayerId
+                );
+            }
+        }
         if (layerKeys.size === 1 && glyphNames.size === 1) {
             const entry =
                 targetItem ??
@@ -7304,6 +7389,55 @@ export class PatchSyncEngine {
             return GLYPH_EDIT_ORIGIN;
         }
         return FONT_EDIT_ORIGIN;
+    }
+
+    private _ensureUndoManagersForRemoteEntries(
+        remoteEntries: ChangeLogEntry[]
+    ): void {
+        const glyphNames = new Set<string>();
+        const layerTargets = new Map<
+            string,
+            { glyphName: string; layerId: string }
+        >();
+
+        for (const entry of remoteEntries) {
+            const glyphName = this._deriveGlyphNameFromPath(entry.path);
+            const layerId = this._deriveLayerIdFromPath(entry.path);
+            if (glyphName) {
+                glyphNames.add(glyphName);
+            }
+            if (glyphName && layerId) {
+                layerTargets.set(`${glyphName}@@${layerId}`, {
+                    glyphName,
+                    layerId
+                });
+            }
+            if (entry.originatingGlyphName && entry.originatingLayerId) {
+                layerTargets.set(
+                    `${entry.originatingGlyphName}@@${entry.originatingLayerId}`,
+                    {
+                        glyphName: entry.originatingGlyphName,
+                        layerId: entry.originatingLayerId
+                    }
+                );
+            }
+            for (const target of normalizeWorkerReplayTargets(
+                entry.workerReplayTargets
+            )) {
+                glyphNames.add(target.glyphName);
+                layerTargets.set(
+                    `${target.glyphName}@@${target.layerId}`,
+                    target
+                );
+            }
+        }
+
+        for (const glyphName of glyphNames) {
+            this.getGlyphUndoManager(glyphName);
+        }
+        for (const target of layerTargets.values()) {
+            this.getLayerUndoManager(target.glyphName, target.layerId);
+        }
     }
 
     private _getRemoteLayerSyncScopes(

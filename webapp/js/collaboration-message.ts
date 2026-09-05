@@ -203,6 +203,28 @@ function buildSummaryFromEntries(entries: ChangeLogEntry[]): string {
     return `${entries.length} changes`;
 }
 
+/**
+ * Collaboration envelopes are room metadata (64 KiB cap), not a JSON
+ * snapshot bus. Glyph/layer apply payloads already travel in the Yjs
+ * update; putting them on the envelope makes the room reject the whole
+ * live packet (`metadata-limit`), so cloud peers never apply the mutation.
+ * Keep only JSON primitives (property edits, labels, revision tokens).
+ */
+export function collaborationWireReplayValue(value: unknown): unknown {
+    if (value == null) {
+        return value;
+    }
+    const valueType = typeof value;
+    if (
+        valueType === 'string' ||
+        valueType === 'number' ||
+        valueType === 'boolean'
+    ) {
+        return value;
+    }
+    return undefined;
+}
+
 function haveMatchingReplayTargets(
     left: WorkerReplayTarget[] | undefined,
     right: WorkerReplayTarget[] | undefined
@@ -272,8 +294,12 @@ export function createCollaborationMessageEnvelopeFromChangeLogEntries(
                 glyphRenames: entry.glyphRenames.length
                     ? entry.glyphRenames
                     : undefined,
-                replayOldValue: entry.replayOldValue,
-                replayNewValue: entry.replayNewValue,
+                replayOldValue: collaborationWireReplayValue(
+                    entry.replayOldValue
+                ),
+                replayNewValue: collaborationWireReplayValue(
+                    entry.replayNewValue
+                ),
                 workerReplayTargets: haveMatchingReplayTargets(
                     entryReplayTargets,
                     workerReplayTargets

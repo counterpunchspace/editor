@@ -2420,6 +2420,109 @@ class FontManager {
         ]);
     }
 
+    getHydratedGlyphNames(): string[] {
+        const glyphs = this.currentFont?.fontModel?.glyphs;
+        if (!Array.isArray(glyphs)) {
+            return [];
+        }
+        return this.normalizeSubsetGlyphs(
+            glyphs
+                .map((glyph) => glyph?.name)
+                .filter((name): name is string => !!name)
+        );
+    }
+
+    isHydrationSparse(): boolean {
+        const hydratedCount = this.getHydratedGlyphNames().length;
+        if (!hydratedCount) {
+            return false;
+        }
+        const fontJson = this.currentFont?.babelfontData as
+            Record<string, unknown> | undefined;
+        const catalogObject =
+            fontJson?.glyphCatalog &&
+            typeof fontJson.glyphCatalog === 'object' &&
+            !Array.isArray(fontJson.glyphCatalog)
+                ? (fontJson.glyphCatalog as Record<string, unknown>)
+                : null;
+        const catalogCount = catalogObject
+            ? Object.keys(catalogObject).length
+            : 0;
+        const tokenCount =
+            window.patchSyncEngine?.listGlyphRevisionTokens?.()?.length ?? 0;
+        const yGlyphOrder =
+            window.patchSyncEngine?.fontMap?.get?.('glyphOrder');
+        const coreOrderCount = Array.isArray(yGlyphOrder)
+            ? yGlyphOrder.length
+            : yGlyphOrder &&
+                typeof (yGlyphOrder as { toArray?: () => unknown[] })
+                    .toArray === 'function'
+              ? (yGlyphOrder as { toArray: () => unknown[] }).toArray().length
+              : 0;
+        const universe = Math.max(catalogCount, tokenCount, coreOrderCount);
+        return universe > hydratedCount;
+    }
+
+    constrainSubsetToHydratedGlyphs(glyphNames: string[]): string[] {
+        const hydrated = new Set(this.getHydratedGlyphNames());
+        if (!hydrated.size) {
+            return this.normalizeSubsetGlyphs(glyphNames);
+        }
+
+        const fontModel = this.currentFont?.fontModel;
+        const included = new Set(
+            this.normalizeSubsetGlyphs(glyphNames).filter((name) =>
+                hydrated.has(name)
+            )
+        );
+        const queue = [...included];
+        while (queue.length) {
+            const current = queue.pop();
+            if (!current) {
+                continue;
+            }
+            const glyph = fontModel?.findGlyph?.(current);
+            const layers = Array.isArray(glyph?.layers) ? glyph.layers : [];
+            for (const layer of layers) {
+                const shapes = Array.isArray(layer?.shapes) ? layer.shapes : [];
+                for (const shape of shapes) {
+                    const reference = (
+                        shape as unknown as {
+                            data?: { reference?: unknown };
+                        }
+                    ).data?.reference;
+                    if (
+                        typeof reference === 'string' &&
+                        hydrated.has(reference) &&
+                        !included.has(reference)
+                    ) {
+                        included.add(reference);
+                        queue.push(reference);
+                    }
+                }
+            }
+        }
+
+        if (included.size > 0) {
+            return [...included];
+        }
+        if (hydrated.has('.notdef')) {
+            return ['.notdef'];
+        }
+        const firstHydrated = [...hydrated][0];
+        return firstHydrated ? [firstHydrated] : [];
+    }
+
+    getConstrainedEditingSubsetGlyphs(): string[] {
+        return this.constrainSubsetToHydratedGlyphs([
+            ...this.getEditingSubsetSnapshot(),
+            ...this.getLiveVisibleGlyphNames(),
+            ...this.deriveSubsetGlyphsFromText(
+                this.resolveEditingTextForCompile()
+            )
+        ]);
+    }
+
     getAutomaticCompositionDragScopeGlyphNames(
         sourceGlyphName: string,
         fontModel:
@@ -2917,9 +3020,6 @@ class FontManager {
                 const fallbackText =
                     this.resolveEditingTextForCompile(resolvedText);
                 glyphsToInclude = this.deriveSubsetGlyphsFromText(fallbackText);
-                if (glyphsToInclude.length > 0) {
-                    this.updateEditingSubsetSnapshot(glyphsToInclude);
-                }
 
                 if (!glyphsToInclude.length) {
                     const snapshotSubsetGlyphs =
@@ -2945,8 +3045,6 @@ class FontManager {
                         }
                     }
                 }
-            } else {
-                this.updateEditingSubsetSnapshot(glyphsToInclude);
             }
 
             const activeEditedGlyphName =
@@ -2957,8 +3055,10 @@ class FontManager {
                 !glyphsToInclude.includes(activeEditedGlyphName)
             ) {
                 glyphsToInclude = [...glyphsToInclude, activeEditedGlyphName];
-                this.updateEditingSubsetSnapshot(glyphsToInclude);
             }
+            glyphsToInclude =
+                this.constrainSubsetToHydratedGlyphs(glyphsToInclude);
+            this.updateEditingSubsetSnapshot(glyphsToInclude);
 
             if (startupOpenSessionActive) {
                 const incomingSubsetKey = this.createSubsetKey(glyphsToInclude);
@@ -3073,6 +3173,7 @@ class FontManager {
                           produce_varc_table?: boolean;
                       }
                     | undefined;
+                const sparseHydration = this.isHydrationSparse();
                 if (
                     !forceFullWorkerCompile &&
                     (isInteractiveEdit ||
@@ -3113,6 +3214,14 @@ class FontManager {
                     compilationMode = 'text-input';
                     optionOverrides = {
                         produce_varc_table: false
+                    };
+                }
+
+                if (sparseHydration) {
+                    optionOverrides = {
+                        ...optionOverrides,
+                        skip_features: true,
+                        skip_kerning: true
                     };
                 }
 
@@ -3501,10 +3610,12 @@ class FontManager {
         }
 
         if (subsetGlyphs.length > 0) {
+            subsetGlyphs = this.constrainSubsetToHydratedGlyphs(subsetGlyphs);
             this.updateEditingSubsetSnapshot(subsetGlyphs);
         } else if (!isOutlineIncrementalChange) {
-            subsetGlyphs =
-                window.glyphCanvas?.textRunEditor?.glyphNameBuffer || [];
+            subsetGlyphs = this.constrainSubsetToHydratedGlyphs(
+                window.glyphCanvas?.textRunEditor?.glyphNameBuffer || []
+            );
         }
 
         // Compile with current data

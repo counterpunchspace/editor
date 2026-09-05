@@ -391,7 +391,9 @@ export class CloudDocumentSet {
             }
             glyphs.push(glyphJson);
         }
-        core.glyphs = glyphs;
+        if (glyphs.length > 0 || !Array.isArray(core.glyphs)) {
+            core.glyphs = glyphs;
+        }
         return core;
     }
 

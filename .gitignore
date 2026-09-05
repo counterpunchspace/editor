@@ -37,6 +37,7 @@ webapp/compilation-test/output/
 webapp/worktree-config.json
 webapp/.local-certs/
 webapp/build/
+webapp/.cloud-collab-e2e-wrangler/
 webapp/playwright-report/
 webapp/test-results/
 babelfont-fontc-build/target/

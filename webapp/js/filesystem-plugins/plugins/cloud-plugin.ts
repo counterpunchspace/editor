@@ -1193,6 +1193,73 @@ export class CloudPlugin extends FilesystemPlugin {
         return this.getCachedAssetRole(assetId);
     }
 
+    canMutateCurrentAsset(): boolean {
+        const currentFont = window.fontManager?.currentFont;
+        if (!currentFont?.isCloudBacked?.()) {
+            return true;
+        }
+        const sessionSnapshot = this._liveSession?.getAccessSnapshot();
+        if (
+            sessionSnapshot?.accessRevoked === true ||
+            sessionSnapshot?.reconnectForbidden === true
+        ) {
+            return false;
+        }
+        const role = this.getCurrentAssetRole();
+        if (role === 'viewer') {
+            return false;
+        }
+        return true;
+    }
+
+    getLiveAccessSnapshot(): {
+        role: CloudAssetRole | null;
+        canMutate: boolean;
+        connectionStatus: string;
+        connectionDetail?: string;
+        accessRevoked: boolean;
+        reconnectForbidden: boolean;
+        lastClose: { code: number; reason: string } | null;
+        lastServerError: { message: string; code?: string } | null;
+        openSocketCount: number;
+        roomToken: string | null;
+        roomUrl: string | null;
+        adapters: Array<{
+            documentId: string;
+            status: string;
+            wsReadyState: number | null;
+        }>;
+    } {
+        const sessionSnapshot = this._liveSession?.getAccessSnapshot();
+        const role = this.getCurrentAssetRole();
+        const accessRevoked = sessionSnapshot?.accessRevoked === true;
+        const reconnectForbidden = sessionSnapshot?.reconnectForbidden === true;
+        return {
+            role,
+            canMutate: this.canMutateCurrentAsset(),
+            connectionStatus: this.connectionStatus,
+            connectionDetail: this._activeAssetId
+                ? this.getAssetConnectionDetail(this._activeAssetId)
+                : undefined,
+            accessRevoked,
+            reconnectForbidden,
+            lastClose: sessionSnapshot?.lastClose ?? null,
+            lastServerError: sessionSnapshot?.lastServerError ?? null,
+            openSocketCount: sessionSnapshot?.openSocketCount ?? 0,
+            roomToken: sessionSnapshot?.roomToken ?? null,
+            roomUrl: sessionSnapshot?.roomUrl ?? null,
+            adapters: (sessionSnapshot?.adapters || []).map((adapter) => ({
+                documentId: adapter.documentId,
+                status: adapter.status,
+                wsReadyState: adapter.wsReadyState
+            }))
+        };
+    }
+
+    probeUnauthorizedLiveWrite(): boolean {
+        return this._liveSession?.probeUnauthorizedLiveWrite() === true;
+    }
+
     hasConnectionProblem(assetId: string): boolean {
         const status = this.getAssetConnectionStatus(assetId);
         if (status === 'error') {
@@ -1614,7 +1681,6 @@ export class CloudPlugin extends FilesystemPlugin {
     }
 
     async prepareToSeed(): Promise<void> {
-        await this.prepareToSave();
         const fontJson = this._currentFontJson();
         if (!fontJson) {
             return;
@@ -2133,33 +2199,67 @@ export class CloudPlugin extends FilesystemPlugin {
         this._enqueueGlyphCatchUp();
     }
 
+    /**
+     * HTTP catch-up is for glyphs the live WebSocket subset does not cover.
+     * Never walk the full core revision map: that is the whole catalog and
+     * will freeze open while every glyph shard is fetched.
+     */
+    private _editingSubsetGlyphIdsForCatchUp(
+        bridge: PatchSyncEngine
+    ): string[] {
+        const names =
+            window.fontManager?.getConstrainedEditingSubsetGlyphs?.() ?? [
+                ...(window.fontManager?.getEditingSubsetSnapshot?.() ?? []),
+                ...(window.fontManager?.getLiveVisibleGlyphNames?.() ?? [])
+            ];
+        return liveGlyphDocumentIdsFromSubset(bridge, names)
+            .filter((documentId) => documentId.startsWith('glyph:'))
+            .map((documentId) => documentId.slice('glyph:'.length));
+    }
+
     private _enqueueGlyphCatchUp(glyphIds?: string[]): void {
         const bridge = this._activeAssetSizeBridge;
         if (!this._liveSession || !bridge) {
             return;
         }
         const tokens = bridge.listGlyphRevisionTokens?.() ?? [];
-        const selected = glyphIds?.length
-            ? glyphIds.map((glyphId) => {
-                  const token = tokens.find(
-                      (entry) => entry.glyphId === glyphId
-                  );
-                  return {
-                      glyphId,
-                      revision: token?.revision
-                  };
-              })
-            : tokens;
+        const subsetIds = this._editingSubsetGlyphIdsForCatchUp(bridge);
+        const requestedIds = glyphIds?.length
+            ? glyphIds.length > 64
+                ? glyphIds.filter((glyphId) => subsetIds.includes(glyphId))
+                : glyphIds
+            : subsetIds;
+        if (!requestedIds.length) {
+            return;
+        }
+        const selected = requestedIds.map((glyphId) => {
+            const token = tokens.find((entry) => entry.glyphId === glyphId);
+            return {
+                glyphId,
+                revision: token?.revision
+            };
+        });
         const targets = selected
             .map((entry) => ({
                 documentId: glyphDocumentId(entry.glyphId),
                 expectedRevision: entry.revision
             }))
-            .filter(
-                (target) =>
-                    !this._liveSession?.hasLiveDocument(target.documentId) &&
-                    !this._glyphCatchUpInFlight.has(target.documentId)
-            );
+            .filter((target) => {
+                if (this._glyphCatchUpInFlight.has(target.documentId)) {
+                    return false;
+                }
+                if (
+                    target.expectedRevision &&
+                    typeof bridge.glyphHasCatchUpRevision === 'function' &&
+                    bridge.glyphHasCatchUpRevision(
+                        target.documentId,
+                        target.expectedRevision
+                    )
+                ) {
+                    return false;
+                }
+                return true;
+            });
         if (!targets.length) {
             return;
         }
@@ -2167,7 +2267,7 @@ export class CloudPlugin extends FilesystemPlugin {
             this._glyphCatchUpInFlight.add(target.documentId);
         }
         void this._liveSession
-            .catchUpDocuments(targets)
+            .catchUpDocuments(targets, { includeLiveDocuments: true })
             .catch((error) => {
                 console.warn(
                     '[CloudPlugin] Failed to catch up glyphs outside the live subset:',
@@ -2479,9 +2579,16 @@ export class CloudPlugin extends FilesystemPlugin {
 
         const data = (await resp.json().catch(() => ({}))) as {
             error?: string;
+            accessChange?: { state?: string; warning?: string };
         };
         if (!resp.ok) {
             throw new Error(data.error || 'Failed to remove member');
+        }
+        if (data.accessChange?.state && data.accessChange.state !== 'applied') {
+            throw new Error(
+                data.accessChange.warning ||
+                    'Member removed, but room access revocation is still pending'
+            );
         }
     }
 
@@ -2505,7 +2612,7 @@ export class CloudPlugin extends FilesystemPlugin {
         }
 
         const openPromise = this._openAssetInternal(assetId, {
-            awaitLiveBridge: false
+            awaitLiveBridge: true
         });
         this._pendingOpenAsset = {
             assetId,
@@ -2659,18 +2766,34 @@ export class CloudPlugin extends FilesystemPlugin {
                 }
                 const coreJson = documentSet.assembleFontJson();
                 const catalogIds = glyphIdsFromCoreJson(coreJson);
+                const textChars = String(
+                    window.stateManager?.editor_text_buffer || ''
+                )
+                    .split('')
+                    .filter((ch) => ch.trim().length > 0);
                 const preferredNames = [
-                    window.glyphCanvas?.getCurrentGlyphName?.()
+                    window.glyphCanvas?.getCurrentGlyphName?.(),
+                    ...textChars,
+                    'a',
+                    'adieresis',
+                    'aacute',
+                    'A',
+                    '.notdef',
+                    'dieresiscomb',
+                    'acutecomb',
+                    'gravecomb',
+                    'H'
                 ].filter((name): name is string => Boolean(name));
-                const seedIds = seedGlyphIdsFromCoreJson(
-                    coreJson,
-                    preferredNames
-                );
-                const layoutIds = layoutGlyphIdsFromFeatureCode({
-                    featureCode: featureCodeFromCoreJson(coreJson),
-                    seedIds,
-                    catalog: catalogEntriesFromCoreJson(coreJson)
-                });
+                const seedIds = [
+                    ...new Set(
+                        preferredNames.flatMap((name) =>
+                            seedGlyphIdsFromCoreJson(coreJson, [name])
+                        )
+                    )
+                ];
+                // Open-time hydrate is seed glyphs only. Layout closure and the
+                // rest of the catalog catch up with the live editing subset.
+                const layoutIds: string[] = [];
                 const { glyphBytes } = await hydrateSparseGlyphsToFixedPoint({
                     documentSet,
                     catalogIds,
@@ -2752,6 +2875,10 @@ export class CloudPlugin extends FilesystemPlugin {
                             throw new Error(
                                 'cloud bridge bootstrap missing live bridge'
                             );
+                        }
+                        if (window.windowRole?.isLinkedWindow()) {
+                            resolve();
+                            return;
                         }
                         const liveTokenResponse =
                             await this._fetchRoomToken(assetId);
@@ -2882,6 +3009,10 @@ export class CloudPlugin extends FilesystemPlugin {
                             'cloud bridge bootstrap missing live bridge'
                         );
                     }
+                    if (window.windowRole?.isLinkedWindow()) {
+                        resolve();
+                        return;
+                    }
                     const liveTokenResponse =
                         await this._fetchRoomToken(assetId);
                     await this._attachLiveSession({
@@ -2950,6 +3081,12 @@ export class CloudPlugin extends FilesystemPlugin {
         currentFont.directoryHandle = undefined;
         currentFont.needsRecompile = false;
         currentFont.hasUnsavedChanges = false;
+
+        const fileUri = `cloud:///${assetId}`;
+        if (window.stateManager) {
+            window.stateManager.editor_file = fileUri;
+        }
+        window.windowSync?.rebindChannel?.(assetId);
 
         void (window as any).fontManager?.updateFontDisplay?.();
         void (window as any).fontManager?.updateDirtyIndicator?.();
@@ -3026,8 +3163,9 @@ export class CloudPlugin extends FilesystemPlugin {
             assetId,
             websiteBaseUrl: this._websiteBaseUrl
         });
+        let seededCheckpointLogId: number | null = null;
         try {
-            await seeder.seedDocumentSet(
+            seededCheckpointLogId = await seeder.seedDocumentSet(
                 token,
                 roomUrl,
                 shards,
@@ -3046,6 +3184,9 @@ export class CloudPlugin extends FilesystemPlugin {
                 roomUrl,
                 bridge: liveBridge,
                 bootstrapMode: 'skip',
+                ...(seededCheckpointLogId !== null
+                    ? { checkpointLogId: seededCheckpointLogId }
+                    : {}),
                 connectedTimeoutMs:
                     estimateCloudTransferTimeoutMs(estimatedSaveBytes)
             });
@@ -3215,7 +3356,9 @@ export class CloudPlugin extends FilesystemPlugin {
         });
         const glyphDocumentIds = liveGlyphDocumentIdsFromSubset(
             options.bridge,
-            window.fontManager?.getEditingSubsetSnapshot?.() ?? []
+            window.fontManager?.getConstrainedEditingSubsetGlyphs?.() ??
+                window.fontManager?.getEditingSubsetSnapshot?.() ??
+                []
         );
         try {
             await session.syncLiveDocumentIds(glyphDocumentIds);
@@ -3227,6 +3370,7 @@ export class CloudPlugin extends FilesystemPlugin {
         this._cloudAdapter = session.coreAdapter;
         this._startTrackingActiveAssetSize(options.assetId, options.bridge);
         this._startEditingSubsetSync(options.bridge);
+        this._editingSubsetListener?.();
         this._catchUpFromCoreRevisionMap();
     }
 
@@ -3238,7 +3382,9 @@ export class CloudPlugin extends FilesystemPlugin {
             }
             const glyphDocumentIds = liveGlyphDocumentIdsFromSubset(
                 bridge,
-                window.fontManager?.getEditingSubsetSnapshot?.() ?? []
+                window.fontManager?.getConstrainedEditingSubsetGlyphs?.() ??
+                    window.fontManager?.getEditingSubsetSnapshot?.() ??
+                    []
             );
             void this._liveSession
                 .syncLiveDocumentIds(glyphDocumentIds)
@@ -3253,6 +3399,7 @@ export class CloudPlugin extends FilesystemPlugin {
             'editingSubsetChanged',
             this._editingSubsetListener
         );
+        this._editingSubsetListener();
     }
 
     private _stopEditingSubsetSync(): void {
