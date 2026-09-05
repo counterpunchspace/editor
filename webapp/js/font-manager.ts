@@ -675,6 +675,7 @@ class FontManager {
     } | null = null;
     editingSubsetSnapshotGlyphs: string[];
     editingSubsetSnapshotKey: string;
+    coveredSparseHydrationKey: string | null = null;
     isExternalReloading: boolean = false;
     pendingDebugEditingFontSaveAfterDrag: boolean;
     pendingBabelfontJsonSyncAfterDrag: boolean;
@@ -747,6 +748,7 @@ class FontManager {
         this.closureCache = null;
         this.editingSubsetSnapshotGlyphs = [];
         this.editingSubsetSnapshotKey = '';
+        this.coveredSparseHydrationKey = null;
         this.isExternalReloading = false;
         this.pendingDebugEditingFontSaveAfterDrag = false;
         this.pendingBabelfontJsonSyncAfterDrag = false;
@@ -1609,6 +1611,7 @@ class FontManager {
         this.closureCache = null;
         this.editingSubsetSnapshotGlyphs = [];
         this.editingSubsetSnapshotKey = '';
+        this.coveredSparseHydrationKey = null;
         this.clearEditingCompileContext();
         this.lastCompilationMode = 'full';
         this.lastFullCompiledDataVersion = -1;
@@ -1951,6 +1954,7 @@ class FontManager {
             this.closureCache = null;
             this.editingSubsetSnapshotGlyphs = [];
             this.editingSubsetSnapshotKey = '';
+            this.coveredSparseHydrationKey = null;
             this.setEditingCompileContext('external-reload', null);
 
             const subsetGlyphs =
@@ -2037,6 +2041,7 @@ class FontManager {
         this.closureCache = null;
         this.editingSubsetSnapshotGlyphs = [];
         this.editingSubsetSnapshotKey = '';
+        this.coveredSparseHydrationKey = null;
 
         // Reset initialFontLoaded flag in glyphCanvas when new font is loaded
         if (window.glyphCanvas) {
@@ -2552,10 +2557,16 @@ class FontManager {
             window.glyphCanvas?.outlineEditor?.currentGlyphName ||
             window.glyphCanvas?.getCurrentGlyphName?.() ||
             null;
+        const text = this.resolveEditingTextForCompile();
+        const coverageKey = `${text}\0${currentGlyphName || ''}`;
+        if (this.coveredSparseHydrationKey === coverageKey) {
+            return;
+        }
         await plugin.ensureSparseHydration({
-            text: this.resolveEditingTextForCompile(),
+            text,
             glyphNames: currentGlyphName ? [currentGlyphName] : []
         });
+        this.coveredSparseHydrationKey = coverageKey;
     }
 
     getConstrainedEditingSubsetGlyphs(): string[] {

@@ -43,8 +43,9 @@ import {
 } from '../cloud-glyph-catalog';
 import {
     depsNeedUpdate,
-    resolveHydrationSeeds,
-    readWorkingGlyphIds
+    planSparseHydration,
+    readFontDepsIndex,
+    resolveHydrationSeeds
 } from '../cloud-font-deps';
 import {
     CloudDocumentSet,
@@ -1954,7 +1955,6 @@ export class CloudPlugin extends FilesystemPlugin {
         if (!seedIds.length) {
             return [];
         }
-        bridge.syncCompleteFontDepsFromLoadedGlyphs?.(fontJson);
         const catalog = Object.values(owned.glyphCatalog).filter(
             (entry) => entry.glyphId && entry.deleted !== true && entry.name
         );
@@ -1966,15 +1966,32 @@ export class CloudPlugin extends FilesystemPlugin {
         const idToName = new Map(
             catalog.map((entry) => [entry.glyphId, entry.name])
         );
-        const previousWorkingIds = readWorkingGlyphIds(
-            bridge.depsDoc.getMap('deps')
-        );
+        const loadedIds = [
+            ...(bridge.listLiveGlyphDocumentIds?.() ?? []).map((documentId) =>
+                documentId.slice('glyph:'.length)
+            )
+        ];
+        const planned = planSparseHydration({
+            catalogIds,
+            seedIds,
+            layoutIds,
+            previousWorkingIds: [],
+            loadedIds,
+            edges: readFontDepsIndex(bridge.depsDoc.getMap('deps')).edges,
+            catalog: catalogEntries
+        });
+        if (!planned.missingIds.length) {
+            return planned.workingIds
+                .map((id) => idToName.get(id))
+                .filter((name): name is string => Boolean(name));
+        }
         const { token, roomUrl } = await this._fetchRoomToken(assetId);
         const hydrator = new CloudAdapter({
             assetId,
             websiteBaseUrl: this._websiteBaseUrl
         });
         const loadedNames: string[] = [];
+        bridge.beginDeferredAfterSync?.();
         try {
             const result = await hydrateSparseGlyphsToFixedPoint({
                 session: {
@@ -2004,7 +2021,22 @@ export class CloudPlugin extends FilesystemPlugin {
                             ?.revision;
                     },
                     persistWorkingIds: (workingIds) => {
-                        bridge.replaceSparseWorkingGlyphIds?.(workingIds);
+                        const liveIds = (
+                            bridge.listLiveGlyphDocumentIds?.() ?? []
+                        ).map((documentId) =>
+                            documentId.slice('glyph:'.length)
+                        );
+                        const next = [...new Set([...liveIds, ...workingIds])];
+                        const previous = new Set(
+                            bridge.listSparseWorkingGlyphIds?.() ?? []
+                        );
+                        if (
+                            next.length === previous.size &&
+                            next.every((id) => previous.has(id))
+                        ) {
+                            return;
+                        }
+                        bridge.replaceSparseWorkingGlyphIds?.(next);
                     },
                     afterFetchedGlyphs: (glyphIds) => {
                         const nextJson =
@@ -2031,11 +2063,7 @@ export class CloudPlugin extends FilesystemPlugin {
                                 loadedNames.push(name);
                             }
                         }
-                        if (
-                            !bridge.syncCompleteFontDepsFromLoadedGlyphs?.(
-                                nextJson
-                            )
-                        ) {
+                        if (passNames.length) {
                             bridge.syncFontDepsFromFontJson?.(
                                 nextJson,
                                 passNames
@@ -2046,28 +2074,18 @@ export class CloudPlugin extends FilesystemPlugin {
                 catalogIds,
                 seedIds,
                 layoutIds,
+                previousWorkingIds: [],
                 catalog: catalogEntries,
                 requireFetchedGlyphs: true,
                 fetchGlyphs: (documentIds) =>
                     hydrator.hydrateDocumentSet(token, roomUrl, documentIds)
             });
-            const previousWorking = new Set(previousWorkingIds);
-            const changedNames = [
-                ...new Set([
-                    ...loadedNames,
-                    ...result.workingIds
-                        .filter((id) => !previousWorking.has(id))
-                        .map((id) => idToName.get(id))
-                        .filter((name): name is string => Boolean(name))
-                ])
-            ];
+            const changedNames = [...new Set(loadedNames)];
             if (!changedNames.length) {
-                window.dispatchEvent(new CustomEvent('fontModelSync'));
                 return result.workingIds
                     .map((id) => idToName.get(id))
                     .filter((name): name is string => Boolean(name));
             }
-            window.dispatchEvent(new CustomEvent('fontModelSync'));
             window.dispatchEvent(
                 new CustomEvent('glyphChanged', {
                     detail: {
@@ -2078,6 +2096,7 @@ export class CloudPlugin extends FilesystemPlugin {
             );
             return changedNames;
         } finally {
+            bridge.endDeferredAfterSync?.();
             hydrator.disconnect();
         }
     }

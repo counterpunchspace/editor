@@ -1198,6 +1198,19 @@ export function afdkoFeatureCodeFromFontJson(
     return parts.join('');
 }
 
+const LAYOUT_CLOSE_CACHE_LIMIT = 32;
+const layoutCloseCache = new Map<string, string[]>();
+
+function hashLayoutCloseKey(featureCode: string, seedNames: string[]): string {
+    let hash = 2166136261;
+    const key = `${featureCode.length}:${featureCode}:${seedNames.slice().sort().join('\0')}`;
+    for (let i = 0; i < key.length; i++) {
+        hash ^= key.charCodeAt(i);
+        hash = Math.imul(hash, 16777619);
+    }
+    return (hash >>> 0).toString(36);
+}
+
 export function layoutGlyphIdsFromFeatureCode(options: {
     featureCode: string;
     seedIds: string[];
@@ -1219,6 +1232,17 @@ export function layoutGlyphIdsFromFeatureCode(options: {
     ];
     if (!seedNameList.length || !options.featureCode) {
         return [];
+    }
+
+    const canCache = options.closeLayoutFromFea === undefined;
+    const cacheKey = canCache
+        ? hashLayoutCloseKey(options.featureCode, seedNameList)
+        : '';
+    if (canCache) {
+        const hit = layoutCloseCache.get(cacheKey);
+        if (hit) {
+            return hit.slice();
+        }
     }
 
     const closeLayout =
@@ -1243,6 +1267,15 @@ export function layoutGlyphIdsFromFeatureCode(options: {
         const id = nameToId.get(name);
         if (id && !options.seedIds.includes(id)) {
             ids.push(id);
+        }
+    }
+    if (canCache) {
+        layoutCloseCache.set(cacheKey, ids);
+        if (layoutCloseCache.size > LAYOUT_CLOSE_CACHE_LIMIT) {
+            const oldest = layoutCloseCache.keys().next().value;
+            if (oldest !== undefined) {
+                layoutCloseCache.delete(oldest);
+            }
         }
     }
     return ids;

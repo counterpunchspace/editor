@@ -631,6 +631,9 @@ export class PatchSyncEngine {
     private _onDirty: (() => void) | null = null;
     /** Callback after _syncJsonFromYDoc (undo/redo/remote) for external resync */
     private _onAfterSync: (() => void) | null = null;
+    /** Nested HTTP hydrate applies one Font.fromData at the end, not per shard. */
+    private _afterSyncDeferDepth = 0;
+    private _afterSyncSkipped = false;
     /** Suppress recording (used during undo/redo application) */
     private _suppressRecording = false;
     /** Number of active scoped recording suppressions. */
@@ -1114,7 +1117,7 @@ export class PatchSyncEngine {
                 }
             }
             this._repairGeometryOrphansAfterConvergedState(documentId);
-            this._onAfterSync?.();
+            this._emitAfterSync();
         } finally {
             this._isApplyingRemote = false;
         }
@@ -1932,6 +1935,39 @@ export class PatchSyncEngine {
     /** Register a callback for after _syncJsonFromYDoc (undo/redo/remote). */
     onAfterSync(cb: () => void): void {
         this._onAfterSync = cb;
+    }
+
+    /**
+     * Coalesce Font.fromData / compile-context resets across a burst of
+     * glyph-shard catch-ups (sparse typing hydrate).
+     */
+    beginDeferredAfterSync(): void {
+        this._afterSyncDeferDepth += 1;
+    }
+
+    endDeferredAfterSync(): void {
+        this._afterSyncDeferDepth = Math.max(0, this._afterSyncDeferDepth - 1);
+        if (this._afterSyncDeferDepth === 0 && this._afterSyncSkipped) {
+            this._afterSyncSkipped = false;
+            this._onAfterSync?.();
+        }
+    }
+
+    runWithDeferredAfterSync<T>(fn: () => T): T {
+        this.beginDeferredAfterSync();
+        try {
+            return fn();
+        } finally {
+            this.endDeferredAfterSync();
+        }
+    }
+
+    private _emitAfterSync(): void {
+        if (this._afterSyncDeferDepth > 0) {
+            this._afterSyncSkipped = true;
+            return;
+        }
+        this._onAfterSync?.();
     }
 
     setTransactionFinalizer(cb: TransactionFinalizer | null): void {

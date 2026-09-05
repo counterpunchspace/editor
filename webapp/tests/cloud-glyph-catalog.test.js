@@ -1458,6 +1458,34 @@ describe('sparse hydration fixed point', () => {
         documentSet.destroy();
     });
 
+    it('does not refetch when the seed closure is already loaded', async () => {
+        const aId = 'id-a';
+        const catalog = [{ glyphId: aId, name: 'a' }];
+        const documentSet = new CloudDocumentSet();
+        documentSet.initFromFontJson({
+            glyphs: [
+                {
+                    id: aId,
+                    name: 'a',
+                    layers: [{ id: 'layer-1', shapes: [] }]
+                }
+            ]
+        });
+        const fetchGlyphs = jest.fn(async () => new Map());
+        const result = await hydrateSparseGlyphsToFixedPoint({
+            documentSet,
+            catalogIds: [aId],
+            seedIds: [aId],
+            previousWorkingIds: [],
+            catalog,
+            fetchGlyphs
+        });
+        expect(fetchGlyphs).not.toHaveBeenCalled();
+        expect(result.fetchPasses).toEqual([]);
+        expect(result.loadedIds).toEqual([aId]);
+        documentSet.destroy();
+    });
+
     it('repairs empty matching-revision deps so composite parts still fetch', async () => {
         const ids = {
             edieresis: 'id-edieresis',

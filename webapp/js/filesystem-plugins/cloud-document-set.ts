@@ -237,14 +237,17 @@ export async function hydrateSparseGlyphsToFixedPoint(options: {
             appliedIds.push(glyphId);
         }
         session.afterFetchedGlyphs?.(appliedIds);
+        const assembledJson = session.assembleFontJson();
         const loadedGlyphs = new Map(
-            listGlyphRecords(session.assembleFontJson()).map((glyph) => [
+            listGlyphRecords(assembledJson).map((glyph) => [
                 String(glyph.id || ''),
                 glyph
             ])
         );
         const sourceRevisions = depsMap.get('sourceRevision');
-        for (const glyphId of loadedIds) {
+        const tombstoneCatalog =
+            catalogFromCoreJson(assembledJson)?.glyphCatalog;
+        for (const glyphId of appliedIds) {
             const glyph = loadedGlyphs.get(glyphId);
             const revision = session.glyphRevision(glyphId);
             const projected =
@@ -263,11 +266,7 @@ export async function hydrateSparseGlyphsToFixedPoint(options: {
                 glyph &&
                 typeof revision === 'string' &&
                 (revision !== projected || projectionMissingComponents) &&
-                !isCatalogTombstone(
-                    catalogFromCoreJson(session.assembleFontJson())
-                        ?.glyphCatalog,
-                    glyphId
-                )
+                !isCatalogTombstone(tombstoneCatalog, glyphId)
             ) {
                 patchSourceEdges(depsMap, glyphId, nextEdges, revision);
             }
