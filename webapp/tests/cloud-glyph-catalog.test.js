@@ -346,6 +346,16 @@ describe('font-deps UUID edges', () => {
         expect(seeds).toEqual(['id-a']);
     });
 
+    it('hydrates the full catalog when seedIds are empty', () => {
+        expect(
+            glyphIdsForSparseHydration({
+                catalogIds: ['id-a', 'id-z'],
+                seedIds: [],
+                edges: {}
+            }).sort()
+        ).toEqual(['id-a', 'id-z']);
+    });
+
     it('adds layout glyphs from lookups that mention a seed, not the reverse set', () => {
         const layout = layoutGlyphIdsFromFeatureCode({
             featureCode:

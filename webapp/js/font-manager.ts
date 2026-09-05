@@ -4671,6 +4671,12 @@ class FontManager {
                 nonGlyphChangeHints.length > 0 ||
                 layerTargets.length > 0 ||
                 glyphRenames.length > 0;
+            if (!hasRefreshMetadata) {
+                // Core stamps like glyphRevisions have no compile-cache
+                // metadata. Applying them through WASM used to discard the
+                // worker Y.Doc ("missing cache metadata for non-glyph update").
+                return true;
+            }
             const updateToSend =
                 update.length > 0
                     ? update

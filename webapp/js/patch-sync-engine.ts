@@ -1608,7 +1608,12 @@ export class PatchSyncEngine {
         for (const cb of this._localUpdateListeners) {
             cb(update, collaborationMessage, emissionEntries, documentId);
         }
-        this._yjsWorkerCallback?.(update, emissionEntries, documentId);
+        if (
+            emissionEntries.length > 0 &&
+            !areGlyphRevisionOnlyEntries(emissionEntries)
+        ) {
+            this._yjsWorkerCallback?.(update, emissionEntries, documentId);
+        }
         for (const cb of this._committedChangeListeners) {
             cb(emissionEntries, { origin: 'local', update, documentId });
         }
@@ -4395,7 +4400,10 @@ export class PatchSyncEngine {
             }
             this._reconcileGlyphDocsAfterRemoteEntries(effectiveRemoteEntries);
             this._syncRemoteJsonFromYDoc(effectiveRemoteEntries);
-            if (!areGlyphRevisionOnlyEntries(effectiveRemoteEntries)) {
+            if (
+                effectiveRemoteEntries.length > 0 &&
+                !areGlyphRevisionOnlyEntries(effectiveRemoteEntries)
+            ) {
                 this._yjsWorkerCallback?.(
                     update,
                     effectiveRemoteEntries,

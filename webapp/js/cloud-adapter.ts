@@ -209,6 +209,19 @@ export function normalizeCloudShardLiveHttpUrl(
     return url.toString();
 }
 
+export function normalizeCloudShardStatusHttpUrl(
+    roomUrl: string,
+    websiteBaseUrl: string,
+    assetId: string,
+    documentId: string
+): string {
+    const url = new URL(
+        normalizeCloudShardHttpUrl(roomUrl, websiteBaseUrl, assetId, documentId)
+    );
+    url.pathname = url.pathname.replace(/\/state$/, '/status');
+    return url.toString();
+}
+
 export function normalizeCloudShardWebSocketUrl(
     roomUrl: string,
     websiteBaseUrl: string,
@@ -3850,11 +3863,12 @@ export class CloudAdapter implements FileSystemAdapter {
             return;
         }
         try {
-            const wsUrl = normalizeCloudRoomWebSocketUrl(
+            const statusUrl = normalizeCloudShardStatusHttpUrl(
                 connection.roomUrl,
-                this._websiteBaseUrl
+                this._websiteBaseUrl,
+                this._assetId,
+                this._documentId
             );
-            const statusUrl = `${wsUrl.replace(/^ws/i, 'http').replace(/\/$/, '')}/status`;
             const response = await fetch(statusUrl, {
                 headers: { Authorization: `Bearer ${connection.token}` }
             });

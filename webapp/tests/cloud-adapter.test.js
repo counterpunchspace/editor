@@ -14,6 +14,7 @@ const {
     normalizeCloudRoomHttpUrl,
     normalizeCloudShardHttpUrl,
     normalizeCloudShardLiveHttpUrl,
+    normalizeCloudShardStatusHttpUrl,
     normalizeCloudShardWebSocketUrl
 } = require('../js/cloud-adapter.ts');
 const { MetadataFreeRemoteUpdateError } = require('../js/patch-sync-engine.ts');
@@ -3384,6 +3385,16 @@ describe('normalizeCloudShardHttpUrl / WebSocketUrl', () => {
             )
         ).toBe(
             'https://rooms.example.com/room/asset-123/shards/glyph/abc-def/live'
+        );
+        expect(
+            normalizeCloudShardStatusHttpUrl(
+                'wss://rooms.example.com/room/asset-123',
+                'https://editor.counterpunch.space',
+                'asset-123',
+                'glyph:abc-def'
+            )
+        ).toBe(
+            'https://rooms.example.com/room/asset-123/shards/glyph/abc-def/status'
         );
         expect(
             normalizeCloudShardWebSocketUrl(

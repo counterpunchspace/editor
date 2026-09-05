@@ -3501,7 +3501,7 @@ describe('bridge Yjs worker callback', () => {
         senderBridge.destroy();
     });
 
-    test('worker callback forwards empty-metadata Yjs updates when invoked directly', async () => {
+    test('worker callback ignores empty-metadata Yjs updates', async () => {
         const forwardWorkerYjsUpdate = jest.fn().mockResolvedValue(true);
         const workerSeedSpy = jest
             .spyOn(fontCompilation, 'sendMessage')
@@ -3530,23 +3530,8 @@ describe('bridge Yjs worker callback', () => {
         await Promise.resolve();
         await Promise.resolve();
 
-        expect(forwardWorkerYjsUpdate).toHaveBeenCalledWith(
-            expect.any(Uint8Array),
-            [],
-            expect.objectContaining({
-                invalidateLayoutClosure: false,
-                nonGlyphChangeHints: []
-            })
-        );
-        expect(hasWorkerCacheDocumentSpy).toHaveBeenCalled();
-        expect(fullWorkerUpdateSpy).toHaveBeenCalledWith(
-            expect.objectContaining({
-                type: 'applyYjsUpdate',
-                changedGlyphs: [],
-                nonGlyphChangeHints: [],
-                invalidateLayoutClosure: false
-            })
-        );
+        expect(forwardWorkerYjsUpdate).not.toHaveBeenCalled();
+        expect(fullWorkerUpdateSpy).not.toHaveBeenCalled();
     });
 
     test('forwards kerning-pair Yjs updates with non-glyph kerning hints', async () => {

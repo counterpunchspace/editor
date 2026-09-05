@@ -3584,19 +3584,12 @@ describe('FontManager boundary-crossing budget', () => {
         }
     });
 
-    test('forwardWorkerYjsUpdate forwards font-wide updates with no glyph metadata as raw incremental Yjs', async () => {
+    test('forwardWorkerYjsUpdate skips font-wide updates with no cache metadata', async () => {
         await expect(
             fontManager.forwardWorkerYjsUpdate(new Uint8Array([1, 2, 3]), [])
         ).resolves.toBe(true);
 
-        expect(sendMessageSpy).toHaveBeenCalledTimes(1);
-        expect(sendMessageSpy).toHaveBeenCalledWith(
-            expect.objectContaining({
-                type: 'applyYjsUpdate',
-                changedGlyphs: [],
-                invalidateLayoutClosure: true
-            })
-        );
+        expect(sendMessageSpy).not.toHaveBeenCalled();
     });
 
     test('stageLiveDragPreviewFromModel sends preview layer overlays without applyYjsUpdate', async () => {
@@ -3745,7 +3738,8 @@ describe('FontManager boundary-crossing budget', () => {
 
         const updatePromise = fontManager.forwardWorkerYjsUpdate(
             new Uint8Array([1, 2, 3]),
-            []
+            [],
+            { nonGlyphChangeHints: ['top-level:names'] }
         );
 
         expect(fontManager.workerCacheUpdatePromise).toBeTruthy();
@@ -3781,14 +3775,16 @@ describe('FontManager boundary-crossing budget', () => {
 
         const firstUpdatePromise = fontManager.forwardWorkerYjsUpdate(
             new Uint8Array([1, 2, 3]),
-            []
+            [],
+            { nonGlyphChangeHints: ['top-level:names'] }
         );
         await new Promise((resolve) => setTimeout(resolve, 0));
         expect(resolveFirstSend).toEqual(expect.any(Function));
 
         const secondUpdatePromise = fontManager.forwardWorkerYjsUpdate(
             new Uint8Array([4, 5, 6]),
-            []
+            [],
+            { nonGlyphChangeHints: ['top-level:names'] }
         );
         await Promise.resolve();
         await Promise.resolve();
@@ -3832,7 +3828,9 @@ describe('FontManager boundary-crossing budget', () => {
         });
 
         await expect(
-            fontManager.forwardWorkerYjsUpdate(new Uint8Array([1, 2, 3]), [])
+            fontManager.forwardWorkerYjsUpdate(new Uint8Array([1, 2, 3]), [], {
+                nonGlyphChangeHints: ['top-level:names']
+            })
         ).resolves.toBe(false);
 
         expect(fontCompilation.hasWorkerCacheDocument()).toBe(false);
@@ -3850,7 +3848,9 @@ describe('FontManager boundary-crossing budget', () => {
         });
 
         await expect(
-            fontManager.forwardWorkerYjsUpdate(new Uint8Array([1, 2, 3]), [])
+            fontManager.forwardWorkerYjsUpdate(new Uint8Array([1, 2, 3]), [], {
+                nonGlyphChangeHints: ['top-level:names']
+            })
         ).resolves.toBe(true);
 
         expect(fontManager.lastWorkerDocumentEpoch).toBe(7);

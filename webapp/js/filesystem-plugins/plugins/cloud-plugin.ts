@@ -40,11 +40,7 @@ import {
     patchCloudOwnedGlyph,
     stripOwnedFontData
 } from '../cloud-glyph-catalog';
-import {
-    depsNeedUpdate,
-    layoutGlyphIdsFromFeatureCode,
-    seedGlyphIdsFromCoreJson
-} from '../cloud-font-deps';
+import { depsNeedUpdate } from '../cloud-font-deps';
 import {
     CloudDocumentSet,
     FONT_CORE_DOCUMENT_ID,
@@ -2766,39 +2762,13 @@ export class CloudPlugin extends FilesystemPlugin {
                 }
                 const coreJson = documentSet.assembleFontJson();
                 const catalogIds = glyphIdsFromCoreJson(coreJson);
-                const textChars = String(
-                    window.stateManager?.editor_text_buffer || ''
-                )
-                    .split('')
-                    .filter((ch) => ch.trim().length > 0);
-                const preferredNames = [
-                    window.glyphCanvas?.getCurrentGlyphName?.(),
-                    ...textChars,
-                    'a',
-                    'adieresis',
-                    'aacute',
-                    'A',
-                    '.notdef',
-                    'dieresiscomb',
-                    'acutecomb',
-                    'gravecomb',
-                    'H'
-                ].filter((name): name is string => Boolean(name));
-                const seedIds = [
-                    ...new Set(
-                        preferredNames.flatMap((name) =>
-                            seedGlyphIdsFromCoreJson(coreJson, [name])
-                        )
-                    )
-                ];
-                // Open-time hydrate is seed glyphs only. Layout closure and the
-                // rest of the catalog catch up with the live editing subset.
-                const layoutIds: string[] = [];
+                // Default open hydrates every live catalog glyph. Sparse
+                // closure stays available for later subset catch-up.
                 const { glyphBytes } = await hydrateSparseGlyphsToFixedPoint({
                     documentSet,
                     catalogIds,
-                    seedIds,
-                    layoutIds,
+                    seedIds: [],
+                    layoutIds: [],
                     catalog: catalogEntriesFromCoreJson(coreJson),
                     fetchGlyphs: (documentIds) =>
                         hydrator.hydrateDocumentSet(token, roomUrl, documentIds)

@@ -3128,6 +3128,14 @@ function initializeBridge(detail: {
         );
         const invalidateLayoutClosure =
             shouldInvalidateLayoutClosureForCommittedEntries(changeLogEntries);
+        const hasWorkerCacheMetadata =
+            changedGlyphs.length > 0 ||
+            nonGlyphChangeHints.length > 0 ||
+            layerTargets.length > 0 ||
+            glyphRenames.length > 0;
+        if (!hasWorkerCacheMetadata) {
+            return;
+        }
 
         void window.fontManager?.forwardWorkerYjsUpdate?.(
             update,
