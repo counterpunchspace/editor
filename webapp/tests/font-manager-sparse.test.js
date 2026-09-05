@@ -84,4 +84,24 @@ describe('FontManager sparse hydration', () => {
         );
         expect(names).toEqual(expect.arrayContaining(['adieresis']));
     });
+
+    test('ensureSparseHydrationForCompile passes typed text and current glyph names', async () => {
+        const plugin = {
+            activeAssetId: 'asset-1',
+            ensureSparseHydration: jest.fn(async () => ['adieresis'])
+        };
+        window.cloudPlugin = plugin;
+        await fontManager.ensureSparseHydrationForCompile.call({
+            isHydrationSparse() {
+                return true;
+            },
+            resolveEditingTextForCompile() {
+                return 'ä';
+            }
+        });
+        expect(plugin.ensureSparseHydration).toHaveBeenCalledWith({
+            text: 'ä',
+            glyphNames: []
+        });
+    });
 });

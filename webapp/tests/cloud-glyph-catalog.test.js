@@ -31,8 +31,10 @@ const {
     seedGlyphIdsFromCoreJson,
     seedGlyphIdsFromText,
     sparseHydrationSeedsFromText,
+    resolveHydrationSeeds,
     writeFontDepsYMap,
-    writeCompleteFontDepsIfLoaded
+    writeCompleteFontDepsIfLoaded,
+    writeWorkingGlyphIds
 } = require('../js/filesystem-plugins/cloud-font-deps');
 const {
     classifyShardByteLength,
@@ -53,7 +55,8 @@ const Y = require('yjs');
 const {
     fillGlyphYMap,
     fromYType,
-    jsonToCoreFontMap
+    jsonToCoreFontMap,
+    jsonToYDoc
 } = require('../js/change-bridge-ydoc');
 const { PatchSyncEngine } = require('../js/patch-sync-engine');
 
@@ -354,7 +357,7 @@ describe('font-deps UUID edges', () => {
         ).toEqual({ 'n-id': 'metrics-key' });
     });
 
-    it('splits working reverse-dependents from hidden metrics sources and marks', () => {
+    it('splits working reverse-dependents and recursive components from hidden metrics sources', () => {
         const a = 'id-a';
         const n = 'id-n';
         const l = 'id-l';
@@ -382,9 +385,9 @@ describe('font-deps UUID edges', () => {
             edges
         });
         expect(partition.workingIds.sort()).toEqual(
-            [a, layout, adieresis, ae].sort()
+            [a, layout, adieresis, ae, dieresis, e].sort()
         );
-        expect(partition.hiddenIds.sort()).toEqual([n, l, e, dieresis].sort());
+        expect(partition.hiddenIds.sort()).toEqual([n, l].sort());
         expect(partition.loadIds).not.toEqual(
             expect.arrayContaining([h, ntilde, tilde, lslash])
         );
@@ -444,15 +447,26 @@ describe('font-deps UUID edges', () => {
             edges,
             catalog
         });
-        const expectedWorking = [a, adieresis, agrave, aacute, ae, aWidth];
+        const expectedWorking = [
+            a,
+            adieresis,
+            agrave,
+            aacute,
+            ae,
+            dieresis,
+            grave,
+            acute,
+            e
+        ];
         expect(fromA.workingIds.sort()).toEqual(expectedWorking.sort());
         expect(fromAdieresis.workingIds.sort()).toEqual(expectedWorking.sort());
         expect(fromAdieresis.workingIds).toContain(a);
-        expect(fromAdieresis.loadIds).toEqual(
+        expect(fromAdieresis.workingIds).toEqual(
             expect.arrayContaining([dieresis, grave, acute, e])
         );
+        expect(fromAdieresis.workingIds).not.toContain(aWidth);
         expect(fromAdieresis.loadIds).not.toEqual(
-            expect.arrayContaining([ntilde, tilde, n])
+            expect.arrayContaining([ntilde, tilde, n, aWidth])
         );
         expect(
             closeReverseComponentNamesFromDeps({
@@ -460,7 +474,7 @@ describe('font-deps UUID edges', () => {
                 seedNames: ['adieresis'],
                 catalog
             }).sort()
-        ).toEqual(['a', 'a.wide', 'aacute', 'ae', 'agrave'].sort());
+        ).toEqual(['a', 'aacute', 'ae', 'agrave'].sort());
     });
 
     it('rebuilds font-deps only when every catalog glyph body is loaded', () => {
@@ -543,6 +557,34 @@ describe('font-deps UUID edges', () => {
                 }
             }).sort()
         ).toEqual(['adieresis']);
+    });
+
+    it('follows nested component trees into working, not hidden', () => {
+        const adieresis = 'id-adieresis';
+        const a = 'id-a';
+        const comb = 'id-dotaccentcomb';
+        const accent = 'id-dotaccent';
+        const n = 'id-n';
+        const partition = computeSparseHydrationPartition({
+            seedIds: [adieresis],
+            catalog: [
+                { glyphId: adieresis, name: 'adieresis' },
+                { glyphId: a, name: 'a' },
+                { glyphId: comb, name: 'dotaccentcomb' },
+                { glyphId: accent, name: 'dotaccent' },
+                { glyphId: n, name: 'n' }
+            ],
+            edges: {
+                [adieresis]: { [a]: 'component', [comb]: 'component' },
+                [comb]: { [accent]: 'component' },
+                [a]: { [n]: 'metrics-key' }
+            }
+        });
+        expect(partition.workingIds.sort()).toEqual(
+            [adieresis, a, comb, accent].sort()
+        );
+        expect(partition.hiddenIds).toEqual([n]);
+        expect(partition.workingIds).not.toContain(n);
     });
 
     it('keeps reverse font-deps rows when a sparse glyph array cannot rebuild', () => {
@@ -632,6 +674,19 @@ describe('font-deps UUID edges', () => {
             layoutIds: ['id-a-ss03']
         });
         expect(
+            resolveHydrationSeeds({
+                fontJson,
+                text: 'a',
+                glyphNames: ['n']
+            })
+        ).toEqual({
+            seedIds: ['id-a', 'id-n'],
+            layoutIds: ['id-a-ss03']
+        });
+        expect(resolveHydrationSeeds({ fontJson, text: '' }).seedIds).toEqual(
+            []
+        );
+        expect(
             computeSparseHydrationPartition({
                 seedIds: ['id-a'],
                 layoutIds: ['id-a-ss03'],
@@ -642,14 +697,14 @@ describe('font-deps UUID edges', () => {
         ).toEqual(['id-n']);
     });
 
-    it('hydrates the full catalog when seedIds are empty', () => {
+    it('loads nothing when seedIds are empty', () => {
         expect(
             glyphIdsForSparseHydration({
                 catalogIds: ['id-a', 'id-z'],
                 seedIds: [],
                 edges: {}
-            }).sort()
-        ).toEqual(['id-a', 'id-z']);
+            })
+        ).toEqual([]);
     });
 
     it('adds layout substitution targets of the seed, not the rest of the lookup', () => {
@@ -964,29 +1019,65 @@ describe('font-deps UUID edges', () => {
         ).toEqual(['id-dot', 'id-dotless', 'id-init']);
     });
 
-    it('pulls ccmp ligature partners and outputs from a single seed', () => {
+    it('does not pull ordn ligature partners from a Latin letter seed', () => {
         const catalog = [
             { glyphId: 'id-a', name: 'a' },
+            { glyphId: 'id-o', name: 'o' },
+            { glyphId: 'id-A', name: 'A' },
+            { glyphId: 'id-N', name: 'N' },
+            { glyphId: 'id-one', name: 'one' },
+            { glyphId: 'id-zero', name: 'zero' },
+            { glyphId: 'id-ordf', name: 'ordfeminine' },
+            { glyphId: 'id-numero', name: 'numero' },
+            { glyphId: 'id-period', name: 'period' },
             { glyphId: 'id-dieresiscomb', name: 'dieresiscomb' },
-            { glyphId: 'id-adieresis', name: 'adieresis' },
-            { glyphId: 'id-z', name: 'z' }
+            { glyphId: 'id-adieresis', name: 'adieresis' }
         ];
+        const featureCode = `
+feature ordn {
+  sub [zero one two three four five six seven eight nine] [A a] by ordfeminine;
+  sub N o period by numero;
+} ordn;
+feature ccmp { sub a dieresiscomb by adieresis; } ccmp;
+`;
+        const layout = layoutGlyphIdsFromFeatureCode({
+            featureCode,
+            seedIds: ['id-a', 'id-o'],
+            catalog
+        });
+        for (const id of [
+            'id-one',
+            'id-zero',
+            'id-A',
+            'id-N',
+            'id-numero',
+            'id-period'
+        ]) {
+            expect(layout).not.toContain(id);
+        }
+        const jsClosed = closeLayoutSubstitutionsFromFeatureCode({
+            featureCode,
+            seedIds: ['id-a', 'id-o'],
+            catalog
+        });
+        for (const id of [
+            'id-one',
+            'id-zero',
+            'id-A',
+            'id-N',
+            'id-numero',
+            'id-period'
+        ]) {
+            expect(jsClosed).not.toContain(id);
+        }
         expect(
             closeLayoutSubstitutionsFromFeatureCode({
                 featureCode:
                     'feature ccmp { sub a dieresiscomb by adieresis; } ccmp;',
                 seedIds: ['id-a'],
                 catalog
-            }).sort()
-        ).toEqual(['id-adieresis', 'id-dieresiscomb']);
-        expect(
-            layoutGlyphIdsFromFeatureCode({
-                featureCode:
-                    'feature ccmp { sub a dieresiscomb by adieresis; } ccmp;',
-                seedIds: ['id-a'],
-                catalog
-            }).sort()
-        ).toEqual(['id-adieresis', 'id-dieresiscomb']);
+            })
+        ).toEqual([]);
     });
 
     it('adds layout glyphs from lookups that mention a seed, not the reverse set', () => {
@@ -1192,6 +1283,28 @@ describe('cloud document set', () => {
         expect(assembled.glyphs[0].id).toBeTruthy();
         set.destroy();
     });
+
+    it('does not assemble leftover font-core glyph bodies as hydrated', () => {
+        const leftover = new Y.Doc({ gc: false });
+        jsonToYDoc(
+            {
+                upm: 1000,
+                glyphs: [
+                    { name: 'A', id: 'id-A', layers: [] },
+                    { name: 'one', id: 'id-one', layers: [] }
+                ]
+            },
+            leftover.getMap('font')
+        );
+        const set = new CloudDocumentSet();
+        set.applyRemoteUpdate(
+            FONT_CORE_DOCUMENT_ID,
+            Y.encodeStateAsUpdate(leftover)
+        );
+        leftover.destroy();
+        expect(set.assembleFontJson().glyphs).toEqual([]);
+        set.destroy();
+    });
 });
 
 describe('sparse hydration fixed point', () => {
@@ -1286,6 +1399,62 @@ describe('sparse hydration fixed point', () => {
         expect(
             documentSet.assembleFontJson().glyphs.map((glyph) => glyph.name)
         ).toEqual(expect.arrayContaining(['a', 'acute']));
+        documentSet.destroy();
+    });
+
+    it('does not treat leftover deps working ids as hydration seeds', async () => {
+        const aId = 'id-a';
+        const aUpperId = 'id-A';
+        const oneId = 'id-one';
+        const catalog = [
+            { glyphId: aId, name: 'a' },
+            { glyphId: aUpperId, name: 'A' },
+            { glyphId: oneId, name: 'one' }
+        ];
+        const glyphs = catalog.map((entry) => ({
+            id: entry.glyphId,
+            name: entry.name,
+            layers: [{ id: 'layer-1', shapes: [] }]
+        }));
+        const shards = new Map(
+            glyphs.map((glyph) => [
+                glyphDocumentId(glyph.id),
+                encodeGlyphShard(glyph, `${glyph.name}-rev`)
+            ])
+        );
+        const documentSet = new CloudDocumentSet();
+        documentSet.initFromFontJson({
+            glyphOrder: ['a', 'A', 'one'],
+            glyphs
+        });
+        writeWorkingGlyphIds(documentSet.depsDoc.getMap('deps'), [
+            aUpperId,
+            oneId
+        ]);
+        for (const doc of documentSet.glyphDocs.values()) {
+            doc.destroy();
+        }
+        documentSet.glyphDocs.clear();
+
+        const result = await hydrateSparseGlyphsToFixedPoint({
+            documentSet,
+            catalogIds: catalog.map((entry) => entry.glyphId),
+            seedIds: [aId],
+            previousWorkingIds: [],
+            catalog,
+            fetchGlyphs: async (documentIds) => {
+                const fetched = new Map();
+                for (const documentId of documentIds) {
+                    fetched.set(documentId, shards.get(documentId));
+                }
+                return fetched;
+            }
+        });
+
+        expect(result.loadedIds).toEqual([aId]);
+        expect(result.loadedIds).not.toEqual(
+            expect.arrayContaining([aUpperId, oneId])
+        );
         documentSet.destroy();
     });
 
@@ -1384,10 +1553,10 @@ describe('sparse hydration fixed point', () => {
         expect(result.loadedIds.sort()).toEqual(
             [ids.edieresis, ids.e, ids.dieresiscomb, ids.dotaccentcomb].sort()
         );
-        expect(result.workingIds.sort()).toEqual([ids.edieresis, ids.e].sort());
-        expect(result.hiddenIds.sort()).toEqual(
-            [ids.dieresiscomb, ids.dotaccentcomb].sort()
+        expect(result.workingIds.sort()).toEqual(
+            [ids.edieresis, ids.e, ids.dieresiscomb, ids.dotaccentcomb].sort()
         );
+        expect(result.hiddenIds).toEqual([]);
         expect(result.loadedIds).not.toContain(ids.z);
         documentSet.destroy();
     });
@@ -1560,15 +1729,12 @@ describe('sparse hydration fixed point', () => {
             ids.ss03,
             ids.adieresis,
             ids.aacute,
-            ids.ae
-        ];
-        const expectedHidden = [
-            ids.n,
-            ids.l,
-            ids.e,
+            ids.ae,
             ids.dieresiscomb,
-            ids.acutecomb
+            ids.acutecomb,
+            ids.e
         ];
+        const expectedHidden = [ids.n, ids.l];
         const expectedLoad = [...expectedWorking, ...expectedHidden];
         expect(result.workingIds.sort()).toEqual(expectedWorking.sort());
         expect(result.hiddenIds.sort()).toEqual(expectedHidden.sort());
@@ -1593,7 +1759,9 @@ describe('sparse hydration fixed point', () => {
         const promoted = await hydrateSparseGlyphsToFixedPoint({
             documentSet,
             catalogIds: catalog.map((entry) => entry.glyphId),
-            seedIds: [ids.n],
+            seedIds: [ids.a, ids.n],
+            layoutIds: [ids.ss03],
+            previousWorkingIds: result.workingIds,
             catalog,
             fetchGlyphs: async (documentIds) => {
                 fetchPassesRecorded.push(documentIds.slice());
@@ -1604,7 +1772,7 @@ describe('sparse hydration fixed point', () => {
                 return fetched;
             }
         });
-        const expectedPromoteFetch = [ids.ntilde, ids.tildecomb, ids.h];
+        const expectedPromoteFetch = [ids.ntilde, ids.tildecomb];
         expect(promoted.fetchPasses).toHaveLength(1);
         expect(promoted.fetchPasses[0].sort()).toEqual(
             expectedPromoteFetch.sort()
@@ -1614,13 +1782,14 @@ describe('sparse hydration fixed point', () => {
                 ...expectedWorking,
                 ids.n,
                 ids.ntilde,
-                ids.h
+                ids.tildecomb
             ])
         );
+        expect(promoted.workingIds).not.toContain(ids.h);
         expect(promoted.workingIds).not.toContain(ids.l);
-        expect(promoted.hiddenIds).toEqual(
+        expect(promoted.hiddenIds).toEqual(expect.arrayContaining([ids.l]));
+        expect(promoted.hiddenIds).not.toEqual(
             expect.arrayContaining([
-                ids.l,
                 ids.e,
                 ids.dieresiscomb,
                 ids.acutecomb,

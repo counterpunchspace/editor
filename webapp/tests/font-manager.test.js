@@ -1933,74 +1933,56 @@ describe('FontManager editing subset inclusion', () => {
         ).not.toHaveProperty('skip_features');
     });
 
-    test('sparse reverse hydrate keeps cloudPlugin as this', async () => {
+    test('sparse compile hydrates from live text via ensureSparseHydration', async () => {
         const originalCloudPlugin = window.cloudPlugin;
-        const originalPatchSync = window.patchSyncEngine;
-        const originalBabelfontData = fontManager.currentFont.babelfontData;
-        const fontJson = {
-            glyphCatalog: {
-                'id-a': { glyphId: 'id-a', name: 'a' },
-                'id-adieresis': { glyphId: 'id-adieresis', name: 'adieresis' }
-            },
-            glyphs: [
-                { id: 'id-a', name: 'a', layers: [] },
-                {
-                    id: 'id-adieresis',
-                    name: 'adieresis',
-                    layers: [{ shapes: [{ reference: 'a' }] }]
-                }
-            ]
-        };
-        const depsDoc = new Y.Doc();
-        writeFontDepsYMap(depsDoc.getMap('deps'), buildFontDepsIndex(fontJson));
         const plugin = {
             _activeAssetId: 'asset-1',
             get activeAssetId() {
                 return this._activeAssetId;
             },
-            async hydrateOverviewGlyphs(seedNames) {
+            async ensureSparseHydration(input) {
                 if (this == null || this.activeAssetId == null) {
                     throw new TypeError(
                         "Cannot read properties of undefined (reading '_activeAssetId')"
                     );
                 }
-                return seedNames;
+                return input.glyphNames || [];
             }
         };
-        const hydrateSpy = jest.spyOn(plugin, 'hydrateOverviewGlyphs');
+        const hydrateSpy = jest.spyOn(plugin, 'ensureSparseHydration');
         window.cloudPlugin = plugin;
-        window.patchSyncEngine = { depsDoc };
-        fontManager.currentFont.babelfontData = fontJson;
         jest.spyOn(fontManager, 'isHydrationSparse').mockReturnValue(true);
-        jest.spyOn(fontManager, 'getHydratedGlyphNames').mockReturnValue(['a']);
+        jest.spyOn(fontManager, 'resolveEditingTextForCompile').mockReturnValue(
+            'ä'
+        );
 
-        await fontManager.hydrateSparseReverseDependentsFromFontDeps(['a']);
+        await fontManager.compileEditingFont('ä', [], ['a']);
 
         expect(hydrateSpy).toHaveBeenCalledWith(
-            expect.arrayContaining(['a', 'adieresis'])
+            expect.objectContaining({
+                text: 'ä'
+            })
         );
         hydrateSpy.mockRestore();
         fontManager.isHydrationSparse.mockRestore();
-        fontManager.getHydratedGlyphNames.mockRestore();
+        fontManager.resolveEditingTextForCompile.mockRestore();
         window.cloudPlugin = originalCloudPlugin;
-        window.patchSyncEngine = originalPatchSync;
-        fontManager.currentFont.babelfontData = originalBabelfontData;
     });
 
-    test('sparse reverse hydrate skips when no cloud asset is open', async () => {
+    test('sparse hydrate skips when no cloud asset is open', async () => {
         const originalCloudPlugin = window.cloudPlugin;
         window.cloudPlugin = {
             activeAssetId: null,
-            hydrateOverviewGlyphs: jest.fn(async () => {
+            ensureSparseHydration: jest.fn(async () => {
                 throw new Error('No cloud font is open');
             })
         };
         jest.spyOn(fontManager, 'isHydrationSparse').mockReturnValue(true);
 
         await expect(
-            fontManager.hydrateSparseReverseDependentsFromFontDeps(['a'])
+            fontManager.ensureSparseHydrationForCompile()
         ).resolves.toBeUndefined();
-        expect(window.cloudPlugin.hydrateOverviewGlyphs).not.toHaveBeenCalled();
+        expect(window.cloudPlugin.ensureSparseHydration).not.toHaveBeenCalled();
 
         fontManager.isHydrationSparse.mockRestore();
         window.cloudPlugin = originalCloudPlugin;

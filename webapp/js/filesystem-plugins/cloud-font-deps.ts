@@ -420,13 +420,19 @@ export function closeReverseComponentNamesFromDeps(options: {
     if (!seedIds.length) {
         return [];
     }
-    const working = closeSet(seedIds, invertForwardEdges(options.edges));
+    const working = closeSet(
+        seedIds,
+        invertForwardEdges(options.edges, 'component')
+    );
     const bases = encodedBaseGlyphIds({
         seedIds,
         edges: options.edges,
         catalog: options.catalog
     });
-    const dependents = closeSet(bases, invertForwardEdges(options.edges));
+    const dependents = closeSet(
+        bases,
+        invertForwardEdges(options.edges, 'component')
+    );
     return [...new Set([...working, ...dependents])]
         .map((id) => idToName.get(id))
         .filter((name): name is string => typeof name === 'string')
@@ -480,15 +486,16 @@ export function expandSparsePlanWithLoadedComponents(options: {
         catalog: options.catalog,
         seedIds: options.plan.workingIds
     }).filter((id) => catalogIdSet.has(id));
-    const hiddenIds = [
-        ...new Set([
-            ...options.plan.hiddenIds,
-            ...componentIds.filter((id) => !workingSet.has(id))
-        ])
-    ];
-    const loadIds = [...new Set([...options.plan.workingIds, ...hiddenIds])];
+    for (const id of componentIds) {
+        workingSet.add(id);
+    }
+    const workingIds = [...workingSet];
+    const hiddenIds = options.plan.hiddenIds.filter(
+        (id) => !workingSet.has(id)
+    );
+    const loadIds = [...new Set([...workingIds, ...hiddenIds])];
     return {
-        workingIds: options.plan.workingIds,
+        workingIds,
         hiddenIds,
         loadIds,
         missingIds: loadIds.filter((id) => !loaded.has(id))
@@ -572,12 +579,23 @@ export function encodedBaseGlyphIds(options: {
     return [...bases];
 }
 
+function edgeHasKind(
+    kind: FontDepEdgeKind,
+    wanted: 'component' | 'metrics-key'
+): boolean {
+    return kind === wanted || kind === 'both';
+}
+
 export function invertForwardEdges(
-    edges: Record<string, Record<string, FontDepEdgeKind>>
+    edges: Record<string, Record<string, FontDepEdgeKind>>,
+    kind?: 'component' | 'metrics-key'
 ): Record<string, string[]> {
     const reverse: Record<string, string[]> = {};
     for (const [source, targets] of Object.entries(edges)) {
-        for (const target of Object.keys(targets)) {
+        for (const [target, edgeKind] of Object.entries(targets)) {
+            if (kind && !edgeHasKind(edgeKind, kind)) {
+                continue;
+            }
             if (!reverse[target]) {
                 reverse[target] = [];
             }
@@ -587,6 +605,27 @@ export function invertForwardEdges(
         }
     }
     return reverse;
+}
+
+function forwardAdjacencyOfKind(
+    edges: Record<string, Record<string, FontDepEdgeKind>>,
+    kind: 'component' | 'metrics-key'
+): Record<string, string[]> {
+    const adjacency: Record<string, string[]> = {};
+    for (const [source, targets] of Object.entries(edges)) {
+        for (const [target, edgeKind] of Object.entries(targets)) {
+            if (!edgeHasKind(edgeKind, kind)) {
+                continue;
+            }
+            if (!adjacency[source]) {
+                adjacency[source] = [];
+            }
+            if (!adjacency[source].includes(target)) {
+                adjacency[source].push(target);
+            }
+        }
+    }
+    return adjacency;
 }
 
 function closeSet(
@@ -628,12 +667,12 @@ export type SparseHydrationPlan = SparseHydrationPartition & {
  * Directed sparse close.
  *
  * Working: requested seeds ∪ prior working ∪ layout alts ∪ encoded
- * bases of those, then reverse*(those) over component and metrics-key
- * edges. `adieresis` promotes base `a`, so every a-dependent is editable.
+ * bases of those, reverse* over component edges (`adieresis` promotes
+ * `a`, so every a-composite is editable), then forward* over component
+ * edges so nested parts (`dotaccentcomb` → `dotaccent`) are working.
  *
- * Hidden: forward*(working) − working. Metrics sources (`n`, `l`) and
- * marks stay loaded for drawing but uneditable until promoted.
- * Do not reverse from hidden glyphs. Do not GSUB-close the reverse set.
+ * Hidden: metrics-key sources of working (`n`, `l`) minus working.
+ * Do not reverse metrics-key edges. Do not GSUB-close the reverse set.
  */
 export function computeSparseHydrationPartition(options: {
     seedIds: string[];
@@ -653,10 +692,20 @@ export function computeSparseHydrationPartition(options: {
         edges: options.edges,
         catalog: options.catalog
     });
-    const working = closeSet(workingSeeds, invertForwardEdges(options.edges));
-    const hidden = [...closeSet([...working], options.edges)].filter(
-        (id) => !working.has(id)
+    const reverseWorking = closeSet(
+        workingSeeds,
+        invertForwardEdges(options.edges, 'component')
     );
+    const working = closeSet(
+        [...reverseWorking],
+        forwardAdjacencyOfKind(options.edges, 'component')
+    );
+    const hidden = [
+        ...closeSet(
+            [...working],
+            forwardAdjacencyOfKind(options.edges, 'metrics-key')
+        )
+    ].filter((id) => !working.has(id));
     const workingIds = [...working];
     return {
         workingIds,
@@ -675,9 +724,20 @@ export function planSparseHydration(options: {
     catalog?: Array<{ glyphId: string; name: string }>;
 }): SparseHydrationPlan {
     const catalog = new Set(options.catalogIds);
-    const seeds = options.seedIds.length ? options.seedIds : options.catalogIds;
+    const hasSeeds =
+        options.seedIds.length > 0 ||
+        (options.layoutIds || []).length > 0 ||
+        (options.previousWorkingIds || []).length > 0;
+    if (!hasSeeds) {
+        return {
+            workingIds: [],
+            hiddenIds: [],
+            loadIds: [],
+            missingIds: []
+        };
+    }
     const partition = computeSparseHydrationPartition({
-        seedIds: seeds,
+        seedIds: options.seedIds,
         layoutIds: options.layoutIds,
         previousWorkingIds: options.previousWorkingIds,
         edges: options.edges,
@@ -735,7 +795,7 @@ export function writeCompleteFontDepsIfLoaded(
 }
 
 /**
- * Catalog IDs to hydrate for a UI seed set. Empty seeds means "all catalog".
+ * Catalog IDs to hydrate for a UI seed set. Empty seeds load nothing.
  * OT/layout IDs are names-or-ids already resolved by the caller.
  */
 export function glyphIdsForSparseHydration(options: {
@@ -799,9 +859,10 @@ export function layoutSubstitutionIdsFromFeatureCode(options: {
 }
 
 /**
- * Reachability close over GSUB `sub`/`rsub` rules: class rules, ligatures,
- * multi-glyph ccmp decompositions, and init/medi/fina. Walks only rules that
- * consume glyphs already in the set, so `sub a by a.ss03` does not pull `g`.
+ * Reachability close over GSUB `sub`/`rsub` rules: 1:1 class rules,
+ * multi-glyph ccmp decompositions, and init/medi/fina. A rule fires only
+ * when every input slot already has a seed (no ligature-partner spill
+ * from `ordn` / `sub N o period by numero`).
  */
 export function closeLayoutSubstitutionsFromFeatureCode(options: {
     featureCode: string;
@@ -1012,26 +1073,6 @@ function ruleOutputsForClosedSet(
     return rule.outputs.flat();
 }
 
-function ruleLigaturePartners(
-    rule: SubstitutionRule,
-    closed: Set<string>
-): string[] {
-    if (rule.inputs.length < 2) {
-        return [];
-    }
-    // Class ligatures like `sub @Letters @Marks` would pull the whole font.
-    if (rule.inputs.some((alts) => alts.length > 16)) {
-        return [];
-    }
-    const someInputClosed = rule.inputs.some((alts) =>
-        alts.some((name) => closed.has(name))
-    );
-    if (!someInputClosed) {
-        return [];
-    }
-    return [...rule.inputs.flat(), ...rule.outputs.flat()];
-}
-
 function closeSubstitutionNames(
     featureCode: string,
     seedNames: string[],
@@ -1043,10 +1084,7 @@ function closeSubstitutionNames(
     while (grew) {
         grew = false;
         for (const rule of rules) {
-            const added = [
-                ...ruleOutputsForClosedSet(rule, closed),
-                ...ruleLigaturePartners(rule, closed)
-            ];
+            const added = ruleOutputsForClosedSet(rule, closed);
             for (const name of added) {
                 if (!closed.has(name) && catalogNames.has(name)) {
                     closed.add(name);
@@ -1200,13 +1238,6 @@ export function layoutGlyphIdsFromFeatureCode(options: {
             ? closed.filter((name) => typeof name === 'string')
             : []
     );
-    for (const name of closeSubstitutionNames(
-        options.featureCode,
-        seedNameList,
-        new Set(nameToId.keys())
-    )) {
-        closedNames.add(name);
-    }
     const ids: string[] = [];
     for (const name of closedNames) {
         const id = nameToId.get(name);
@@ -1267,22 +1298,44 @@ function codepointsFromText(text: string): number[] {
     return out;
 }
 
-export function sparseHydrationSeedsFromText(
-    fontJson: Record<string, unknown>,
-    text: string
-): { seedIds: string[]; layoutIds: string[] } {
-    const seedIds = seedGlyphIdsFromText(fontJson, text);
+export function resolveHydrationSeeds(options: {
+    fontJson: Record<string, unknown>;
+    text?: string;
+    glyphNames?: string[];
+}): { seedIds: string[]; layoutIds: string[] } {
+    const catalog = catalogEntriesForDepsParse(options.fontJson);
+    const nameToId = new Map(
+        catalog.map((entry) => [entry.name, entry.glyphId])
+    );
+    const fromText = options.text
+        ? seedGlyphIdsFromText(options.fontJson, options.text)
+        : [];
+    const fromNames = [
+        ...new Set(
+            (options.glyphNames || [])
+                .map((name) => nameToId.get(name))
+                .filter((id): id is string => Boolean(id))
+        )
+    ];
+    const seedIds = [...new Set([...fromText, ...fromNames])];
     if (!seedIds.length) {
         return { seedIds, layoutIds: [] };
     }
     return {
         seedIds,
         layoutIds: layoutGlyphIdsFromFeatureCode({
-            featureCode: afdkoFeatureCodeFromFontJson(fontJson),
+            featureCode: afdkoFeatureCodeFromFontJson(options.fontJson),
             seedIds,
-            catalog: catalogEntriesForDepsParse(fontJson)
+            catalog
         })
     };
+}
+
+export function sparseHydrationSeedsFromText(
+    fontJson: Record<string, unknown>,
+    text: string
+): { seedIds: string[]; layoutIds: string[] } {
+    return resolveHydrationSeeds({ fontJson, text });
 }
 
 export function layoutSubstitutionNamesFromSeeds(options: {

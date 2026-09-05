@@ -2,9 +2,10 @@
  * Live cloud session: one WebSocket per Durable Object shard.
  *
  * Always connects `font-core` and `font-deps`. Glyph rooms are opened only
- * for the current editing subset (visible/active glyphs). HTTP hydrate/seed
- * still covers the full font in v1. The session reports connected only after
- * core, live glyphs, and deps are fresh, then rebases the UI once.
+ * for the current editing subset (visible/active glyphs). HTTP hydrate
+ * loads the text/overview closure, not the full catalog. The session
+ * reports connected only after core, live glyphs, and deps are fresh,
+ * then rebases the UI once.
  */
 import {
     CloudAdapter,
@@ -62,10 +63,7 @@ export function liveGlyphDocumentIdsFromSubset(
     if (fromNames.length) {
         return [...new Set(fromNames)];
     }
-    if (!glyphNames.length) {
-        return [];
-    }
-    return [...new Set(bridge.listLiveGlyphDocumentIds?.() ?? [])];
+    return [];
 }
 
 async function runWithConcurrency<T>(

@@ -82,11 +82,15 @@ describe('CloudLiveSession', () => {
             liveGlyphDocumentIdsFromSubset(
                 {
                     glyphDocumentIdForName: () => null,
-                    listLiveGlyphDocumentIds: () => ['glyph:hydrated-a']
+                    listLiveGlyphDocumentIds: () => [
+                        'glyph:A',
+                        'glyph:B',
+                        'glyph:one'
+                    ]
                 },
                 ['a']
             )
-        ).toEqual(['glyph:hydrated-a']);
+        ).toEqual([]);
     });
 
     test('connects font-core plus subset glyph rooms only', async () => {

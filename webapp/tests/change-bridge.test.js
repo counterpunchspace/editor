@@ -2450,6 +2450,49 @@ describe('ChangeBridge', () => {
         expect(bridge.getYValue(['glyphs', 'A'])).toBeInstanceOf(Y.Map);
     });
 
+    test('sparse glyph shards ignore leftover bodies on font-core', () => {
+        const leftover = new Y.Doc({ gc: false });
+        jsonToYDoc(
+            {
+                upm: 1000,
+                glyphs: [
+                    { name: 'a', id: 'id-a', layers: [] },
+                    { name: 'A', id: 'id-A', layers: [] },
+                    { name: 'B', id: 'id-B', layers: [] },
+                    { name: 'one', id: 'id-one', layers: [] }
+                ]
+            },
+            leftover.getMap('font')
+        );
+        const coreBytes = Y.encodeStateAsUpdate(leftover);
+        leftover.destroy();
+
+        const sparse = new ChangeBridge('sparse-a-only');
+        sparse.initFromJson({
+            upm: 1000,
+            glyphs: [{ name: 'a', id: 'id-a', layers: [] }]
+        });
+        const aShard = sparse
+            .encodeDocumentSet()
+            .find((shard) => shard.documentId.startsWith('glyph:'));
+        expect(aShard).toBeTruthy();
+
+        const live = new ChangeBridge('live-sparse-core-leftover');
+        live.setFontJson({
+            upm: 1000,
+            glyphs: [{ name: 'a', id: 'id-a', layers: [] }]
+        });
+        live.applyDocumentSetState([
+            { documentId: 'font-core', bytes: coreBytes },
+            aShard
+        ]);
+        expect(
+            live.getFontJsonSnapshot().glyphs.map((glyph) => glyph.name)
+        ).toEqual(['a']);
+        sparse.destroy();
+        live.destroy();
+    });
+
     test('syncCloudOwnedProjection writes catalog into live core and deps docs', () => {
         const {
             applyCloudOwnedData,

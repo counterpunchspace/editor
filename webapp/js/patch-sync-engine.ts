@@ -990,6 +990,12 @@ export class PatchSyncEngine {
                 return glyphMap;
             }
         }
+        // Sharded fonts keep leftover glyph bodies on font-core from older
+        // protocol versions. Those must not count as hydrated — only glyph
+        // documents do. Fall back to the core map only for unsharded docs.
+        if (this._glyphDocs.size > 0) {
+            return null;
+        }
         const glyphsMap = this.fontMap.get('glyphs');
         if (!(glyphsMap instanceof Y.Map)) {
             return null;

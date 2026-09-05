@@ -2529,38 +2529,33 @@ class FontManager {
         return firstHydrated ? [firstHydrated] : [];
     }
 
-    async hydrateSparseReverseDependentsFromFontDeps(
-        seedNames: string[]
-    ): Promise<void> {
+    async ensureSparseHydrationForCompile(): Promise<void> {
         if (!this.isHydrationSparse()) {
             return;
         }
-        const plugin = window.cloudPlugin;
+        const plugin = window.cloudPlugin as
+            | {
+                  activeAssetId?: string | null;
+                  ensureSparseHydration?: (input: {
+                      text?: string;
+                      glyphNames?: string[];
+                  }) => Promise<string[]>;
+              }
+            | undefined;
         if (
-            typeof plugin?.hydrateOverviewGlyphs !== 'function' ||
+            typeof plugin?.ensureSparseHydration !== 'function' ||
             !plugin.activeAssetId
         ) {
             return;
         }
-        const fontJson = this.currentFont?.babelfontData as
-            Record<string, unknown> | undefined;
-        const depsDoc = window.patchSyncEngine?.depsDoc;
-        if (!fontJson || !depsDoc) {
-            return;
-        }
-        const seeds = this.normalizeSubsetGlyphs(seedNames);
-        const reverseNames = closeReverseComponentNamesFromDeps({
-            edges: readFontDepsIndex(depsDoc.getMap('deps')).edges,
-            seedNames: seeds,
-            catalog: catalogEntriesForDepsParse(fontJson)
+        const currentGlyphName =
+            window.glyphCanvas?.outlineEditor?.currentGlyphName ||
+            window.glyphCanvas?.getCurrentGlyphName?.() ||
+            null;
+        await plugin.ensureSparseHydration({
+            text: this.resolveEditingTextForCompile(),
+            glyphNames: currentGlyphName ? [currentGlyphName] : []
         });
-        const hydrated = new Set(this.getHydratedGlyphNames());
-        if (!reverseNames.some((name) => !hydrated.has(name))) {
-            return;
-        }
-        await plugin.hydrateOverviewGlyphs([
-            ...new Set([...seeds, ...reverseNames])
-        ]);
     }
 
     getConstrainedEditingSubsetGlyphs(): string[] {
@@ -3064,6 +3059,7 @@ class FontManager {
         let consumedStartupCompileSlot = false;
 
         try {
+            await this.ensureSparseHydrationForCompile();
             // Compute layout closure subset
             let glyphsToInclude = subsetGlyphs;
             if (!glyphsToInclude || glyphsToInclude.length === 0) {
@@ -3107,9 +3103,6 @@ class FontManager {
             ) {
                 glyphsToInclude = [...glyphsToInclude, activeEditedGlyphName];
             }
-            await this.hydrateSparseReverseDependentsFromFontDeps(
-                glyphsToInclude
-            );
             glyphsToInclude =
                 this.constrainSubsetToHydratedGlyphs(glyphsToInclude);
             this.updateEditingSubsetSnapshot(glyphsToInclude);
@@ -3702,6 +3695,7 @@ class FontManager {
         const textBuffer = this.resolveEditingTextForCompile(
             this.currentText || ''
         );
+        await this.ensureSparseHydrationForCompile();
         subsetGlyphs = this.normalizeSubsetGlyphs([
             ...subsetGlyphs,
             ...this.getLiveVisibleGlyphNames()
@@ -3718,7 +3712,6 @@ class FontManager {
         }
 
         if (subsetGlyphs.length > 0) {
-            await this.hydrateSparseReverseDependentsFromFontDeps(subsetGlyphs);
             subsetGlyphs = this.constrainSubsetToHydratedGlyphs(subsetGlyphs);
             this.updateEditingSubsetSnapshot(subsetGlyphs);
         } else if (!isOutlineIncrementalChange) {

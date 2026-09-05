@@ -1706,12 +1706,12 @@ describe('CloudPlugin sparse overview hydrate', () => {
             resolveFirst = resolve;
         });
         let calls = 0;
-        plugin._hydrateOverviewGlyphs = jest.fn((names) => {
+        plugin._hydrateOverviewGlyphs = jest.fn((input) => {
             calls += 1;
             if (calls === 1) {
                 return first;
             }
-            return Promise.resolve(names);
+            return Promise.resolve(input.glyphNames || []);
         });
         const pending = plugin.hydrateOverviewGlyphs(['a']);
         expect(plugin.isHydratingOverviewGlyphs()).toBe(true);
@@ -1720,6 +1720,15 @@ describe('CloudPlugin sparse overview hydrate', () => {
         resolveFirst(['a']);
         await expect(pending).resolves.toEqual(['a', 'b']);
         await expect(nested).resolves.toEqual(['a', 'b']);
+        expect(plugin._hydrateOverviewGlyphs).toHaveBeenCalledTimes(2);
+        expect(plugin._hydrateOverviewGlyphs.mock.calls[0][0]).toEqual({
+            text: '',
+            glyphNames: ['a']
+        });
+        expect(plugin._hydrateOverviewGlyphs.mock.calls[1][0]).toEqual({
+            text: '',
+            glyphNames: ['b']
+        });
         expect(plugin._hydrateOverviewGlyphs).toHaveBeenCalledTimes(2);
         expect(plugin.isHydratingOverviewGlyphs()).toBe(false);
         window.patchSyncEngine = originalBridge;
