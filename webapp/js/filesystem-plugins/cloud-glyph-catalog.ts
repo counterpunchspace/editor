@@ -249,14 +249,38 @@ export function applyCloudOwnedData(
 ): CloudOwnedFontData {
     const previous = catalogFromCoreJson(fontJson);
     const { entries, codepointIndex } = buildLeanGlyphCatalog(fontJson);
-    const liveIds = new Set(Object.keys(entries));
+    const bodyIds = new Set(
+        listGlyphRecords(fontJson)
+            .map((glyph) => ensureImmutableGlyphId(glyph))
+            .filter(Boolean)
+    );
+    let nextIndex = codepointIndex;
     if (previous) {
+        const previousLiveIds = liveCatalogGlyphIds(previous.glyphCatalog);
+        const sparseRebuild = previousLiveIds.some((id) => !bodyIds.has(id));
+        if (sparseRebuild) {
+            nextIndex = { ...previous.codepointIndex };
+            for (const [codepoint, members] of Object.entries(codepointIndex)) {
+                nextIndex[codepoint] = members;
+            }
+        }
         for (const [glyphId, entry] of Object.entries(previous.glyphCatalog)) {
-            if (liveIds.has(glyphId)) {
+            if (entries[glyphId]) {
+                const rebuilt = entries[glyphId];
                 entries[glyphId] = {
-                    ...entries[glyphId],
-                    generation: entry.generation || 0
+                    ...rebuilt,
+                    generation: entry.generation || 0,
+                    ...(rebuilt.componentIds?.length
+                        ? {}
+                        : Array.isArray(entry.componentIds) &&
+                            entry.componentIds.length
+                          ? { componentIds: entry.componentIds }
+                          : {})
                 };
+                continue;
+            }
+            if (sparseRebuild && entry.deleted !== true) {
+                entries[glyphId] = entry;
                 continue;
             }
             entries[glyphId] = tombstoneCatalogEntry(entry);
@@ -264,7 +288,7 @@ export function applyCloudOwnedData(
     }
     const owned: CloudOwnedFontData = {
         glyphCatalog: entries,
-        codepointIndex
+        codepointIndex: nextIndex
     };
     writeOwnedToCoreJson(fontJson, owned);
     return owned;
@@ -463,13 +487,16 @@ export function catalogNeedsUpdate(path: CatalogChangePath): boolean {
         return true;
     }
     const field = path[2];
-    return (
+    if (
         field === 'name' ||
         field === 'codepoints' ||
         field === 'production_name' ||
         field === 'exported' ||
         field === 'id'
-    );
+    ) {
+        return true;
+    }
+    return String(path[path.length - 1] ?? '') === 'reference';
 }
 
 export function tombstoneCatalogEntry(

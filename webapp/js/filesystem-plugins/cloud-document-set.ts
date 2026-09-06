@@ -3,20 +3,16 @@ import {
     applyCloudOwnedData,
     catalogFromCoreJson,
     ensureImmutableGlyphId,
-    isCatalogTombstone,
     liveCatalogGlyphIds,
     listGlyphRecords,
     type CloudOwnedFontData
 } from './cloud-glyph-catalog';
 import {
-    buildFontDepsForGlyph,
     buildFontDepsIndex,
     expandSparsePlanWithLoadedComponents,
     mergeFontDepEdges,
     planSparseHydration,
-    patchSourceEdges,
     readFontDepsIndex,
-    writeCompleteFontDepsIfLoaded,
     writeFontDepsYMap,
     writeWorkingGlyphIds
 } from './cloud-font-deps';
@@ -122,18 +118,16 @@ export function sparseHydrationSessionFromDocumentSet(
             documentSet.depsDoc.transact(() => {
                 writeWorkingGlyphIds(depsMap, workingIds);
             });
-            writeCompleteFontDepsIfLoaded(
-                depsMap,
-                documentSet.assembleFontJson()
-            );
         }
     };
 }
 
 /**
- * Hydrate a sparse glyph subset to a fixed point. Stale deps projections
- * are repaired from loaded glyph bodies; newly discovered prerequisites
- * are fetched on later passes. Catalog size bounds the loop.
+ * Hydrate a sparse glyph subset to a fixed point. Newly discovered
+ * prerequisites of already-loaded bodies are fetched on later passes.
+ * Catalog size bounds the loop. Do not rebuild catalog `componentIds`
+ * or font-deps here; those are written on cloud seed and patched live
+ * when glyph data changes.
  */
 export async function hydrateSparseGlyphsToFixedPoint(options: {
     documentSet?: CloudDocumentSet;
@@ -142,7 +136,7 @@ export async function hydrateSparseGlyphsToFixedPoint(options: {
     seedIds: string[];
     layoutIds?: string[];
     previousWorkingIds?: string[];
-    catalog: Array<{ glyphId: string; name: string }>;
+    catalog: Array<{ glyphId: string; name: string; componentIds?: string[] }>;
     fetchGlyphs: SparseGlyphHydrationFetch;
     requireFetchedGlyphs?: boolean;
 }): Promise<{
@@ -162,7 +156,8 @@ export async function hydrateSparseGlyphsToFixedPoint(options: {
             'hydrateSparseGlyphsToFixedPoint requires documentSet or session'
         );
     }
-    const { catalogIds, seedIds, layoutIds, catalog, fetchGlyphs } = options;
+    const { catalogIds, seedIds, layoutIds, fetchGlyphs } = options;
+    const hydrationCatalog = options.catalog.map((entry) => ({ ...entry }));
     const liveCatalogIds = liveCatalogGlyphIds(
         catalogFromCoreJson(session.assembleFontJson())?.glyphCatalog ||
             Object.fromEntries(
@@ -198,7 +193,7 @@ export async function hydrateSparseGlyphsToFixedPoint(options: {
             previousWorkingIds,
             loadedIds,
             edges: publishedEdges,
-            catalog
+            catalog: hydrationCatalog
         });
     };
     let plan = planFromLiveEdges();
@@ -237,44 +232,10 @@ export async function hydrateSparseGlyphsToFixedPoint(options: {
             appliedIds.push(glyphId);
         }
         session.afterFetchedGlyphs?.(appliedIds);
-        const assembledJson = session.assembleFontJson();
-        const loadedGlyphs = new Map(
-            listGlyphRecords(assembledJson).map((glyph) => [
-                String(glyph.id || ''),
-                glyph
-            ])
-        );
-        const sourceRevisions = depsMap.get('sourceRevision');
-        const tombstoneCatalog =
-            catalogFromCoreJson(assembledJson)?.glyphCatalog;
-        for (const glyphId of appliedIds) {
-            const glyph = loadedGlyphs.get(glyphId);
-            const revision = session.glyphRevision(glyphId);
-            const projected =
-                sourceRevisions instanceof Y.Map
-                    ? sourceRevisions.get(glyphId)
-                    : undefined;
-            const nextEdges = glyph
-                ? buildFontDepsForGlyph(glyph, catalog)
-                : {};
-            const existingTargets =
-                readFontDepsIndex(depsMap).edges[glyphId] || {};
-            const projectionMissingComponents =
-                Object.keys(nextEdges).length > 0 &&
-                Object.keys(existingTargets).length === 0;
-            if (
-                glyph &&
-                typeof revision === 'string' &&
-                (revision !== projected || projectionMissingComponents) &&
-                !isCatalogTombstone(tombstoneCatalog, glyphId)
-            ) {
-                patchSourceEdges(depsMap, glyphId, nextEdges, revision);
-            }
-        }
         plan = expandSparsePlanWithLoadedComponents({
             plan: planFromLiveEdges(),
-            glyphs: [...loadedGlyphs.values()],
-            catalog,
+            glyphs: listGlyphRecords(session.assembleFontJson()),
+            catalog: hydrationCatalog,
             catalogIds: liveCatalogIds,
             loadedIds
         });

@@ -2036,11 +2036,6 @@ export class CloudPlugin extends FilesystemPlugin {
                         bridge.replaceSparseWorkingGlyphIds?.(next);
                     },
                     afterFetchedGlyphs: (glyphIds) => {
-                        const nextJson =
-                            getCloudFontJsonFromBridge(bridge) ||
-                            this._currentFontJson() ||
-                            fontJson;
-                        const passNames: string[] = [];
                         for (const glyphId of glyphIds) {
                             const documentId = glyphDocumentId(glyphId);
                             const bytes =
@@ -2056,15 +2051,8 @@ export class CloudPlugin extends FilesystemPlugin {
                             );
                             const name = idToName.get(glyphId);
                             if (name) {
-                                passNames.push(name);
                                 loadedNames.push(name);
                             }
-                        }
-                        if (passNames.length) {
-                            bridge.syncFontDepsFromFontJson?.(
-                                nextJson,
-                                passNames
-                            );
                         }
                     }
                 },
@@ -3043,13 +3031,16 @@ export class CloudPlugin extends FilesystemPlugin {
                     }
                 }
                 hydratedFontJson = documentSet.assembleFontJson();
+                const coreOut = documentSet.encodeDocument(
+                    FONT_CORE_DOCUMENT_ID
+                );
                 const depsOut = documentSet.encodeDocument(
                     FONT_DEPS_DOCUMENT_ID
                 );
                 hydratedShards = [
                     {
                         documentId: FONT_CORE_DOCUMENT_ID,
-                        bytes: coreBytes
+                        bytes: coreOut.byteLength ? coreOut : coreBytes
                     },
                     ...(depsOut.byteLength
                         ? [
@@ -3134,14 +3125,6 @@ export class CloudPlugin extends FilesystemPlugin {
                             bridge: liveBridge,
                             bootstrapMode: 'skip'
                         });
-                        const readyJson =
-                            this._currentFontJson() ||
-                            getCloudFontJsonFromBridge(liveBridge);
-                        if (readyJson) {
-                            liveBridge.syncCompleteFontDepsFromLoadedGlyphs?.(
-                                readyJson
-                            );
-                        }
                         resolve();
                     } catch (error) {
                         reject(
@@ -3276,14 +3259,6 @@ export class CloudPlugin extends FilesystemPlugin {
                         bootstrapMode: 'skip',
                         checkpointLogId: bootstrapCheckpointLogId
                     });
-                    const readyJson =
-                        this._currentFontJson() ||
-                        getCloudFontJsonFromBridge(liveBridge);
-                    if (readyJson) {
-                        liveBridge.syncCompleteFontDepsFromLoadedGlyphs?.(
-                            readyJson
-                        );
-                    }
                     resolve();
                 } catch (error) {
                     reject(

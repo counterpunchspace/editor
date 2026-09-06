@@ -1,6 +1,7 @@
 const {
     applyCloudOwnedData,
     buildLeanGlyphCatalog,
+    catalogFromCoreJson,
     catalogNeedsUpdate,
     CLOUD_PLUGIN_OWNED_KEY,
     CORE_CODEPOINT_INDEX_KEY,
@@ -56,7 +57,8 @@ const {
     fillGlyphYMap,
     fromYType,
     jsonToCoreFontMap,
-    jsonToYDoc
+    jsonToYDoc,
+    toYType
 } = require('../js/change-bridge-ydoc');
 const { PatchSyncEngine } = require('../js/patch-sync-engine');
 
@@ -126,6 +128,39 @@ describe('cloud glyph catalog', () => {
         const stripped = stripOwnedFontData(font);
         expect(stripped.glyphs[0].id).toBeUndefined();
         expect(font.glyphs[0].id).toBeTruthy();
+    });
+
+    it('keeps unloaded catalog rows and componentIds on a sparse rebuild', () => {
+        const fontJson = {
+            glyphs: [
+                {
+                    id: 'a-id',
+                    name: 'a',
+                    codepoints: [97],
+                    layers: []
+                },
+                {
+                    id: 'adi-id',
+                    name: 'adieresis',
+                    codepoints: [228],
+                    layers: [{ shapes: [{ reference: 'a' }] }]
+                }
+            ]
+        };
+        applyCloudOwnedData(fontJson);
+        expect(fontJson[CORE_GLYPH_CATALOG_KEY]['adi-id'].componentIds).toEqual(
+            ['a-id']
+        );
+        const sparse = {
+            ...fontJson,
+            glyphs: [fontJson.glyphs[0]]
+        };
+        sparse[CORE_GLYPH_CATALOG_KEY] = fontJson[CORE_GLYPH_CATALOG_KEY];
+        sparse[CORE_CODEPOINT_INDEX_KEY] = fontJson[CORE_CODEPOINT_INDEX_KEY];
+        const owned = applyCloudOwnedData(sparse);
+        expect(owned.glyphCatalog['adi-id'].deleted).not.toBe(true);
+        expect(owned.glyphCatalog['adi-id'].componentIds).toEqual(['a-id']);
+        expect(owned.glyphCatalog['adi-id'].name).toBe('adieresis');
     });
 
     it('does not embed fontDeps in the core-owned catalog blob', () => {
@@ -217,6 +252,17 @@ describe('cloud glyph catalog', () => {
             catalogNeedsUpdate(['glyphs', 'A', 'format_specific', 'plugin'])
         ).toBe(false);
         expect(catalogNeedsUpdate(['glyphs', 'A', 'codepoints'])).toBe(true);
+        expect(
+            catalogNeedsUpdate([
+                'glyphs',
+                'A',
+                'layers',
+                'layer-1',
+                'shapes',
+                0,
+                'reference'
+            ])
+        ).toBe(true);
         expect(catalogNeedsUpdate(['glyphs', 'A'])).toBe(true);
     });
 });
@@ -480,80 +526,78 @@ describe('font-deps UUID edges', () => {
         ).toEqual(['a', 'aacute', 'ae', 'agrave'].sort());
     });
 
-    it('reverse-closes base dependents from catalog names without font-deps edges', () => {
+    it('does not infer hydration from glyph names', () => {
         const catalog = [
             { glyphId: 'id-a', name: 'a' },
             { glyphId: 'id-e', name: 'e' },
             { glyphId: 'id-adieresis', name: 'adieresis' },
-            { glyphId: 'id-aacute', name: 'aacute' },
-            { glyphId: 'id-agrave', name: 'agrave' },
             { glyphId: 'id-ae', name: 'ae' },
-            { glyphId: 'id-dieresiscomb', name: 'dieresiscomb' },
-            { glyphId: 'id-acutecomb', name: 'acutecomb' },
-            { glyphId: 'id-gravecomb', name: 'gravecomb' },
-            { glyphId: 'id-alef', name: 'alef' },
-            { glyphId: 'id-n', name: 'n' },
-            { glyphId: 'id-ntilde', name: 'ntilde' },
-            { glyphId: 'id-tildecomb', name: 'tildecomb' }
+            { glyphId: 'id-ae-ar', name: 'ae-ar' },
+            { glyphId: 'id-a-ss03', name: 'a.ss03' },
+            { glyphId: 'id-adieresis-ss03', name: 'adieresis.ss03' }
         ];
-        const fromA = computeSparseHydrationPartition({
-            seedIds: ['id-a'],
-            edges: {},
-            catalog
-        });
-        const fromAdieresis = computeSparseHydrationPartition({
-            seedIds: ['id-adieresis'],
-            edges: {},
-            catalog
-        });
-        const expectedWorking = [
-            'id-a',
-            'id-adieresis',
-            'id-aacute',
-            'id-agrave',
-            'id-ae',
-            'id-e',
-            'id-dieresiscomb',
-            'id-acutecomb',
-            'id-gravecomb'
-        ];
-        expect(fromA.workingIds.sort()).toEqual(expectedWorking.sort());
-        expect(fromAdieresis.workingIds.sort()).toEqual(expectedWorking.sort());
-        expect(fromA.workingIds).not.toContain('id-alef');
-        expect(fromA.workingIds).not.toContain('id-ntilde');
+        expect(
+            computeSparseHydrationPartition({
+                seedIds: ['id-a'],
+                layoutIds: ['id-a-ss03'],
+                edges: {},
+                catalog
+            }).workingIds.sort()
+        ).toEqual(['id-a', 'id-a-ss03'].sort());
         expect(
             closeReverseComponentNamesFromDeps({
                 edges: {},
                 seedNames: ['a'],
                 catalog
-            }).sort()
-        ).toEqual(['aacute', 'adieresis', 'ae', 'agrave'].sort());
+            })
+        ).toEqual([]);
     });
 
-    it('reverse-closes stylistic composites of FEA alts without GSUB-closing the unsuffixed reverse set', () => {
+    it('reverse-closes stylistic composites of FEA alts from catalog componentIds', () => {
         const catalog = [
             { glyphId: 'id-a', name: 'a' },
             { glyphId: 'id-e', name: 'e' },
-            { glyphId: 'id-adieresis', name: 'adieresis' },
-            { glyphId: 'id-aacute', name: 'aacute' },
-            { glyphId: 'id-agrave', name: 'agrave' },
-            { glyphId: 'id-ae', name: 'ae' },
+            {
+                glyphId: 'id-adieresis',
+                name: 'adieresis',
+                componentIds: ['id-a', 'id-dieresiscomb']
+            },
+            {
+                glyphId: 'id-aacute',
+                name: 'aacute',
+                componentIds: ['id-a', 'id-acutecomb']
+            },
+            {
+                glyphId: 'id-ae',
+                name: 'ae',
+                componentIds: ['id-a', 'id-e']
+            },
             { glyphId: 'id-a-ss03', name: 'a.ss03' },
             { glyphId: 'id-a-ss04', name: 'a.ss04' },
             { glyphId: 'id-e-ss03', name: 'e.ss03' },
-            { glyphId: 'id-adieresis-ss03', name: 'adieresis.ss03' },
-            { glyphId: 'id-aacute-ss03', name: 'aacute.ss03' },
-            { glyphId: 'id-agrave-ss03', name: 'agrave.ss03' },
-            { glyphId: 'id-ae-ss03', name: 'ae.ss03' },
-            { glyphId: 'id-adieresis-ss04', name: 'adieresis.ss04' },
-            { glyphId: 'id-aacute-ss04', name: 'aacute.ss04' },
+            {
+                glyphId: 'id-adieresis-ss03',
+                name: 'adieresis.ss03',
+                componentIds: ['id-a-ss03', 'id-dieresiscomb']
+            },
+            {
+                glyphId: 'id-aacute-ss03',
+                name: 'aacute.ss03',
+                componentIds: ['id-a-ss03', 'id-acutecomb']
+            },
+            {
+                glyphId: 'id-ae-ss03',
+                name: 'ae.ss03',
+                componentIds: ['id-a-ss03', 'id-e-ss03']
+            },
+            {
+                glyphId: 'id-adieresis-ss04',
+                name: 'adieresis.ss04',
+                componentIds: ['id-a-ss04', 'id-dieresiscomb']
+            },
             { glyphId: 'id-dieresiscomb', name: 'dieresiscomb' },
             { glyphId: 'id-acutecomb', name: 'acutecomb' },
-            { glyphId: 'id-gravecomb', name: 'gravecomb' },
-            { glyphId: 'id-g', name: 'g' },
-            { glyphId: 'id-g-ss03', name: 'g.ss03' },
-            { glyphId: 'id-alef', name: 'alef' },
-            { glyphId: 'id-alef-ss03', name: 'alef.ss03' }
+            { glyphId: 'id-g-ss03', name: 'g.ss03' }
         ];
         const fromA = computeSparseHydrationPartition({
             seedIds: ['id-a'],
@@ -566,25 +610,20 @@ describe('font-deps UUID edges', () => {
                 'id-a',
                 'id-adieresis',
                 'id-aacute',
-                'id-agrave',
                 'id-ae',
                 'id-a-ss03',
                 'id-a-ss04',
                 'id-adieresis-ss03',
                 'id-aacute-ss03',
-                'id-agrave-ss03',
                 'id-ae-ss03',
                 'id-e-ss03',
                 'id-adieresis-ss04',
-                'id-aacute-ss04',
                 'id-dieresiscomb',
                 'id-acutecomb',
-                'id-gravecomb',
                 'id-e'
             ])
         );
         expect(fromA.workingIds).not.toContain('id-g-ss03');
-        expect(fromA.workingIds).not.toContain('id-alef-ss03');
         expect(
             computeSparseHydrationPartition({
                 seedIds: ['id-a'],
@@ -604,9 +643,7 @@ describe('font-deps UUID edges', () => {
                 seedNames: ['a.ss03'],
                 catalog
             }).sort()
-        ).toEqual(
-            ['aacute.ss03', 'adieresis.ss03', 'ae.ss03', 'agrave.ss03'].sort()
-        );
+        ).toEqual(['aacute.ss03', 'adieresis.ss03', 'ae.ss03'].sort());
     });
 
     it('uses stored catalog componentIds when font-deps edges are empty', () => {
@@ -1472,6 +1509,45 @@ describe('sparse hydration fixed point', () => {
         return Y.encodeStateAsUpdate(doc);
     }
 
+    function publishedFontWithoutComponentIndex(glyphs) {
+        const fontJson = { upm: 1000, glyphs };
+        applyCloudOwnedData(fontJson);
+        const documentSet = new CloudDocumentSet();
+        documentSet.initFromFontJson(fontJson);
+        const strippedCatalog = catalogFromCoreJson(
+            documentSet.assembleFontJson()
+        ).glyphCatalog;
+        for (const entry of Object.values(strippedCatalog)) {
+            delete entry.componentIds;
+        }
+        documentSet.coreDoc.transact(() => {
+            documentSet.coreDoc
+                .getMap('font')
+                .set(CORE_GLYPH_CATALOG_KEY, toYType(strippedCatalog));
+        });
+        documentSet.depsDoc.transact(() => {
+            writeFontDepsYMap(documentSet.depsDoc.getMap('deps'), {
+                edges: {},
+                sourceRevision: {}
+            });
+        });
+        for (const doc of documentSet.glyphDocs.values()) {
+            doc.destroy();
+        }
+        documentSet.glyphDocs.clear();
+        const catalog = Object.values(strippedCatalog).map((entry) => ({
+            glyphId: entry.glyphId,
+            name: entry.name
+        }));
+        const shards = new Map(
+            glyphs.map((glyph) => [
+                glyphDocumentId(glyph.id),
+                encodeGlyphShard(glyph, `${glyph.name}-rev`)
+            ])
+        );
+        return { documentSet, catalog, shards };
+    }
+
     it('fetches only the seed, then repaired prerequisites, then stops', async () => {
         const aId = 'a-id';
         const acuteId = 'acute-id';
@@ -1545,12 +1621,12 @@ describe('sparse hydration fixed point', () => {
         expect(result.loadedIds.sort()).toEqual([aId, acuteId].sort());
         expect(result.loadedIds).not.toContain(zId);
         expect(result.fetchPasses.length).toBeLessThanOrEqual(catalog.length);
-        const repaired = readFontDepsIndex(documentSet.depsDoc.getMap('deps'));
-        expect(repaired.edges[aId][acuteId]).toBe('component');
-        expect(repaired.sourceRevision[aId]).toBe('authoritative');
         expect(
             documentSet.assembleFontJson().glyphs.map((glyph) => glyph.name)
         ).toEqual(expect.arrayContaining(['a', 'acute']));
+        expect(
+            readFontDepsIndex(documentSet.depsDoc.getMap('deps')).edges[aId]
+        ).toBeUndefined();
         documentSet.destroy();
     });
 
@@ -1978,6 +2054,151 @@ describe('sparse hydration fixed point', () => {
         );
         expect(promoted.loadedIds).not.toContain(ids.lslash);
         expect(promoted.loadedIds).not.toContain(ids.z);
+        documentSet.destroy();
+    });
+
+    it('does not download the catalog to infer composites during sparse hydration', async () => {
+        const ids = {
+            a: 'id-a',
+            adieresis: 'id-adieresis',
+            ss03: 'id-a-ss03',
+            adieresisSs03: 'id-adieresis-ss03'
+        };
+        const fillers = Array.from({ length: 40 }, (_, index) => ({
+            id: `id-fill-${index}`,
+            name: `fill${index}`,
+            layers: [{ id: 'layer-1', shapes: [] }]
+        }));
+        const glyphs = [
+            {
+                id: ids.a,
+                name: 'a',
+                layers: [{ id: 'layer-1', shapes: [] }]
+            },
+            {
+                id: ids.ss03,
+                name: 'a.ss03',
+                layers: [{ id: 'layer-1', shapes: [] }]
+            },
+            {
+                id: ids.adieresis,
+                name: 'adieresis',
+                layers: [
+                    {
+                        id: 'layer-1',
+                        shapes: [{ reference: 'a' }]
+                    }
+                ]
+            },
+            {
+                id: ids.adieresisSs03,
+                name: 'adieresis.ss03',
+                layers: [
+                    {
+                        id: 'layer-1',
+                        shapes: [{ reference: 'a.ss03' }]
+                    }
+                ]
+            },
+            ...fillers
+        ];
+        const { documentSet, catalog, shards } =
+            publishedFontWithoutComponentIndex(glyphs);
+        const fetchPassesRecorded = [];
+        const result = await hydrateSparseGlyphsToFixedPoint({
+            documentSet,
+            catalogIds: catalog.map((entry) => entry.glyphId),
+            seedIds: [ids.a],
+            layoutIds: [ids.ss03],
+            catalog,
+            fetchGlyphs: async (documentIds) => {
+                fetchPassesRecorded.push(documentIds.slice());
+                const fetched = new Map();
+                for (const documentId of documentIds) {
+                    fetched.set(documentId, shards.get(documentId));
+                }
+                return fetched;
+            }
+        });
+
+        expect(result.workingIds.sort()).toEqual([ids.a, ids.ss03].sort());
+        expect(result.workingIds).not.toContain(ids.adieresis);
+        expect(result.loadedIds).not.toContain('id-fill-0');
+        expect(fetchPassesRecorded).toHaveLength(1);
+        expect(fetchPassesRecorded[0].sort()).toEqual(
+            [glyphDocumentId(ids.a), glyphDocumentId(ids.ss03)].sort()
+        );
+        expect(
+            catalogFromCoreJson(documentSet.assembleFontJson()).glyphCatalog[
+                ids.adieresis
+            ].componentIds
+        ).toBeUndefined();
+        documentSet.destroy();
+    });
+
+    it('does not rebuild catalog componentIds after a full hydrate', async () => {
+        const ids = {
+            a: 'id-a',
+            adieresis: 'id-adieresis',
+            ss03: 'id-a-ss03',
+            adieresisSs03: 'id-adieresis-ss03'
+        };
+        const glyphs = [
+            {
+                id: ids.a,
+                name: 'a',
+                layers: [{ id: 'layer-1', shapes: [] }]
+            },
+            {
+                id: ids.ss03,
+                name: 'a.ss03',
+                layers: [{ id: 'layer-1', shapes: [] }]
+            },
+            {
+                id: ids.adieresis,
+                name: 'adieresis',
+                layers: [
+                    {
+                        id: 'layer-1',
+                        shapes: [{ reference: 'a' }]
+                    }
+                ]
+            },
+            {
+                id: ids.adieresisSs03,
+                name: 'adieresis.ss03',
+                layers: [
+                    {
+                        id: 'layer-1',
+                        shapes: [{ reference: 'a.ss03' }]
+                    }
+                ]
+            }
+        ];
+        const { documentSet, catalog, shards } =
+            publishedFontWithoutComponentIndex(glyphs);
+        await hydrateSparseGlyphsToFixedPoint({
+            documentSet,
+            catalogIds: catalog.map((entry) => entry.glyphId),
+            seedIds: catalog.map((entry) => entry.glyphId),
+            layoutIds: [],
+            catalog,
+            fetchGlyphs: async (documentIds) => {
+                const fetched = new Map();
+                for (const documentId of documentIds) {
+                    fetched.set(documentId, shards.get(documentId));
+                }
+                return fetched;
+            }
+        });
+        const catalogAfter = catalogFromCoreJson(
+            documentSet.assembleFontJson()
+        ).glyphCatalog;
+        expect(catalogAfter[ids.adieresis].componentIds).toBeUndefined();
+        expect(catalogAfter[ids.adieresisSs03].componentIds).toBeUndefined();
+        expect(
+            readFontDepsIndex(documentSet.depsDoc.getMap('deps')).edges
+        ).toEqual({});
         documentSet.destroy();
     });
 });
