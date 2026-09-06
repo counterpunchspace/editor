@@ -1482,7 +1482,8 @@ describe('FontManager editing subset inclusion', () => {
             outlineEditor: {
                 currentGlyphName: 'n',
                 selectedLayerId: 'layer-1',
-                draggingSomething: false
+                draggingSomething: false,
+                active: false
             },
             getCurrentGlyphName: jest.fn(() => 'n'),
             textRunEditor: {
@@ -2392,6 +2393,7 @@ describe('FontManager editing subset inclusion', () => {
             'runOnlyGlyph'
         ];
         window.glyphCanvas.outlineEditor.currentGlyphName = 'editedGlyph';
+        window.glyphCanvas.outlineEditor.active = true;
         window.glyphCanvas.getCurrentGlyphName = jest.fn(() => 'editedGlyph');
 
         expect(fontManager.getLiveVisibleGlyphNames()).toEqual([
@@ -2407,6 +2409,15 @@ describe('FontManager editing subset inclusion', () => {
         });
         fontManager.notifyActiveEditorGlyphRoom();
         expect(rooms).toEqual(['editedGlyph']);
+    });
+
+    test('getActiveEditorGlyphName is empty in text mode even if a leftover outline glyph remains', () => {
+        window.glyphCanvas.outlineEditor.currentGlyphName = 'editedGlyph';
+        window.glyphCanvas.outlineEditor.active = false;
+        window.glyphCanvas.getCurrentGlyphName = jest.fn(() => 'editedGlyph');
+
+        expect(fontManager.getActiveEditorGlyphName()).toBeNull();
+        expect(fontManager.getLiveVisibleGlyphNames()).toEqual(['a']);
     });
 
     test('recompileEditingFont widens a stale narrow subset from the current text buffer', async () => {
@@ -2701,7 +2712,18 @@ describe('FontManager share button visibility', () => {
             getAssetConnectionDetail: jest.fn(() => undefined),
             hasConnectionProblem: jest.fn(() => false),
             getAssetPendingSyncCount: jest.fn(() => 0),
-            getAssetTransferActivity: jest.fn(() => 'idle')
+            getAssetTransferActivity: jest.fn(() => 'idle'),
+            getAssetLiveShardStats: jest.fn(() => ({
+                fontCoreBytes: 2048,
+                fontDepsBytes: 512,
+                largestGlyphBytes: 4096,
+                largestGlyphName: 'a',
+                activeWebSocketCount: 3
+            })),
+            getCloudStatusTooltipHtml: jest.fn(
+                (assetId, statusTitle) =>
+                    `<div class="cloud-status-tooltip">${statusTitle} core=2048 deps=512 glyph=4096 ws=3 ${assetId}</div>`
+            )
         };
     }
 
@@ -2819,7 +2841,7 @@ describe('FontManager share button visibility', () => {
         expect(warningBadge.classList.contains('visible')).toBe(true);
         expect(warningBadge.hidden).toBe(false);
         expect(warningBadge.classList.contains('tone-warning')).toBe(true);
-        expect(warningBadge.getAttribute('title')).toBe(
+        expect(warningBadge.getAttribute('aria-label')).toBe(
             'Cloud status: Access epoch is stale'
         );
         expect(
@@ -2844,7 +2866,7 @@ describe('FontManager share button visibility', () => {
         expect(warningBadge.classList.contains('visible')).toBe(true);
         expect(warningBadge.hidden).toBe(false);
         expect(warningBadge.classList.contains('tone-warning')).toBe(true);
-        expect(warningBadge.getAttribute('title')).toBe(
+        expect(warningBadge.getAttribute('aria-label')).toBe(
             'Cloud status: Font is near the current cloud size limit (11.9 MiB of 16.0 MiB).'
         );
         expect(
@@ -2866,7 +2888,7 @@ describe('FontManager share button visibility', () => {
         expect(warningBadge.classList.contains('visible')).toBe(true);
         expect(warningBadge.hidden).toBe(false);
         expect(warningBadge.classList.contains('tone-warning')).toBe(true);
-        expect(warningBadge.getAttribute('title')).toBe(
+        expect(warningBadge.getAttribute('aria-label')).toBe(
             'Cloud status: Cloud room is disconnected'
         );
         expect(
@@ -2885,12 +2907,37 @@ describe('FontManager share button visibility', () => {
         expect(warningBadge.hidden).toBe(false);
         expect(warningBadge.classList.contains('tone-warning')).toBe(false);
         expect(warningBadge.classList.contains('tone-error')).toBe(false);
-        expect(warningBadge.getAttribute('title')).toBe(
+        expect(warningBadge.getAttribute('aria-label')).toBe(
             'Cloud status: Connected. Changes sync continuously.'
         );
+        expect(warningBadge.getAttribute('title')).toBeNull();
         expect(
             warningBadge.querySelector('.material-symbols-outlined').textContent
         ).toBe('cloud_done');
+    });
+
+    test('shows shard sizes and websocket count in a hover tippy on the cloud status chip', () => {
+        setCurrentFont({ role: 'editor', path: 'cloud://asset-1' });
+
+        fontManager.updateFontDisplay();
+
+        const warningBadge = document.querySelector('.cloud-status-chip');
+        const tippyInstance = warningBadge._tippy;
+        expect(tippyInstance).toBeTruthy();
+
+        tippyInstance.props.onShow(tippyInstance);
+
+        expect(
+            window.cloudPlugin.getCloudStatusTooltipHtml
+        ).toHaveBeenCalledWith(
+            'asset-1',
+            'Cloud status: Connected. Changes sync continuously.'
+        );
+        expect(tippyInstance.props.content).toContain(
+            'Cloud status: Connected. Changes sync continuously.'
+        );
+        expect(tippyInstance.props.content).toContain('core=2048');
+        expect(tippyInstance.props.content).toContain('ws=3');
     });
 
     test('shows cloud_upload while sending and cloud_download while receiving', () => {
@@ -2902,7 +2949,7 @@ describe('FontManager share button visibility', () => {
         const warningBadge = document.querySelector('.cloud-status-chip');
 
         expect(warningBadge.classList.contains('tone-warning')).toBe(false);
-        expect(warningBadge.getAttribute('title')).toBe(
+        expect(warningBadge.getAttribute('aria-label')).toBe(
             'Cloud status: Sending changes to the cloud'
         );
         expect(
@@ -2915,7 +2962,7 @@ describe('FontManager share button visibility', () => {
         fontManager.updateFontDisplay();
 
         expect(warningBadge.classList.contains('tone-warning')).toBe(false);
-        expect(warningBadge.getAttribute('title')).toBe(
+        expect(warningBadge.getAttribute('aria-label')).toBe(
             'Cloud status: Receiving cloud updates'
         );
         expect(
@@ -2938,7 +2985,7 @@ describe('FontManager share button visibility', () => {
         expect(warningBadge.hidden).toBe(false);
         expect(warningBadge.classList.contains('tone-warning')).toBe(false);
         expect(warningBadge.classList.contains('tone-error')).toBe(false);
-        expect(warningBadge.getAttribute('title')).toBe(
+        expect(warningBadge.getAttribute('aria-label')).toBe(
             'Cloud status: Authenticating cloud room access'
         );
         expect(
@@ -2967,7 +3014,7 @@ describe('FontManager share button visibility', () => {
         expect(warningBadge.classList.contains('visible')).toBe(true);
         expect(warningBadge.hidden).toBe(false);
         expect(warningBadge.classList.contains('tone-warning')).toBe(true);
-        expect(warningBadge.getAttribute('title')).toBe(
+        expect(warningBadge.getAttribute('aria-label')).toBe(
             'Cloud status: 3 cloud edits waiting for durable sync'
         );
         expect(

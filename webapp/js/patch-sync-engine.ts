@@ -1050,6 +1050,53 @@ export class PatchSyncEngine {
             .map((glyphId) => glyphDocumentId(glyphId));
     }
 
+    /**
+     * Cached Yjs encode sizes for the live tooltip. Encodes a shard when the
+     * cache has never seen it so hover stays accurate after sparse hydrate.
+     */
+    getLiveShardSizeSnapshot(): {
+        fontCoreBytes: number;
+        fontDepsBytes: number;
+        largestGlyphBytes: number;
+        largestGlyphName: string | null;
+    } {
+        const encodedLength = (
+            documentId: string,
+            doc: Y.Doc | null | undefined
+        ): number => {
+            const cached = this._lastEncodedShardBytes.get(documentId);
+            if (typeof cached === 'number' && Number.isFinite(cached)) {
+                return cached;
+            }
+            if (!doc) {
+                return 0;
+            }
+            const byteLength = Y.encodeStateAsUpdate(doc).byteLength;
+            this._lastEncodedShardBytes.set(documentId, byteLength);
+            return byteLength;
+        };
+
+        let largestGlyphBytes = 0;
+        let largestGlyphName: string | null = null;
+        for (const [glyphId, doc] of this._glyphDocs) {
+            if (!this._glyphNameById.has(glyphId)) {
+                continue;
+            }
+            const byteLength = encodedLength(glyphDocumentId(glyphId), doc);
+            if (byteLength > largestGlyphBytes) {
+                largestGlyphBytes = byteLength;
+                largestGlyphName = this._glyphNameById.get(glyphId) ?? null;
+            }
+        }
+
+        return {
+            fontCoreBytes: encodedLength(FONT_CORE_DOCUMENT_ID, this.yDoc),
+            fontDepsBytes: encodedLength(FONT_DEPS_DOCUMENT_ID, this.depsDoc),
+            largestGlyphBytes,
+            largestGlyphName
+        };
+    }
+
     hasSparseWorkingSet(): boolean {
         return readWorkingGlyphIds(this.depsDoc.getMap('deps')).length > 0;
     }

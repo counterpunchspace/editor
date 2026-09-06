@@ -138,6 +138,7 @@ export class CloudLiveSession {
     private readonly _httpPublishInFlight = new Set<Promise<void>>();
     private _localUpdateUnsubscribe: (() => void) | null = null;
     private _lastEmittedTransferActivity: CloudTransferActivity = 'idle';
+    private _syncLiveChain: Promise<void> = Promise.resolve();
 
     constructor(options: CloudLiveSessionOptions) {
         this._options = options;
@@ -192,6 +193,35 @@ export class CloudLiveSession {
 
     liveDocumentIds(): string[] {
         return [...this._adapters.keys()];
+    }
+
+    /** Live shard sockets that are connecting or open. */
+    activeWebSocketCount(): number {
+        let countedFromReadyState = 0;
+        let sawReadyState = false;
+        for (const adapter of this._adapters.values()) {
+            const snapshot =
+                typeof adapter.getAccessSnapshot === 'function'
+                    ? adapter.getAccessSnapshot()
+                    : typeof adapter.getConnectionHealth === 'function'
+                      ? adapter.getConnectionHealth()
+                      : null;
+            const readyState = snapshot?.wsReadyState;
+            if (typeof readyState !== 'number') {
+                continue;
+            }
+            sawReadyState = true;
+            if (
+                readyState === WebSocket.CONNECTING ||
+                readyState === WebSocket.OPEN
+            ) {
+                countedFromReadyState += 1;
+            }
+        }
+        if (sawReadyState) {
+            return countedFromReadyState;
+        }
+        return this._adapters.size;
     }
 
     getAccessSnapshot(): {
@@ -389,6 +419,24 @@ export class CloudLiveSession {
     }
 
     async syncLiveDocumentIds(documentIds: string[]): Promise<void> {
+        const run = this._syncLiveChain.then(() =>
+            this._applyLiveDocumentIds(documentIds)
+        );
+        this._syncLiveChain = run.then(
+            () => undefined,
+            () => undefined
+        );
+        return run;
+    }
+
+    private _hasLiveCoreAndDeps(): boolean {
+        return (
+            this._adapters.has(FONT_CORE_DOCUMENT_ID) &&
+            this._adapters.has(FONT_DEPS_DOCUMENT_ID)
+        );
+    }
+
+    private async _applyLiveDocumentIds(documentIds: string[]): Promise<void> {
         const desired = new Set<string>([
             FONT_CORE_DOCUMENT_ID,
             FONT_DEPS_DOCUMENT_ID,
@@ -403,6 +451,7 @@ export class CloudLiveSession {
         if (membershipUnchanged) {
             return;
         }
+        const infrastructureAlreadyLive = this._hasLiveCoreAndDeps();
         this._desiredDocumentIds = desired;
         for (const [documentId, adapter] of [...this._adapters]) {
             if (!desired.has(documentId)) {
@@ -424,7 +473,20 @@ export class CloudLiveSession {
             pending.push(this._connectDocument(documentId));
         }
         await Promise.all(pending);
+        if (infrastructureAlreadyLive) {
+            this._clearNonCoreRebaselineFlags();
+            return;
+        }
         await this._runSessionReadyBarrier();
+    }
+
+    private _clearNonCoreRebaselineFlags(): void {
+        for (const [documentId, adapter] of this._adapters) {
+            if (documentId === FONT_CORE_DOCUMENT_ID) {
+                continue;
+            }
+            adapter.clearVisibleRebaselineNeeded?.();
+        }
     }
 
     private _bindDependentPublishHook(): void {
@@ -641,20 +703,11 @@ export class CloudLiveSession {
         this._options.onConnectionStatus?.(status, detail);
     }
 
-    private _onGlyphAdapterStatus(status: CloudConnectionStatus): void {
-        if (status === 'connected' && this._adapters.size > 0) {
-            const needsBarrier = [...this._adapters.values()].some(
-                (adapter) => adapter.needsVisibleRebaseline
-            );
-            if (needsBarrier) {
-                this._reportedConnected = false;
-                this._options.onConnectionStatus?.(
-                    'syncing',
-                    'Catching up after reconnect'
-                );
-                void this._runSessionReadyBarrier();
-            }
-        }
+    private _onGlyphAdapterStatus(_status: CloudConnectionStatus): void {
+        // Glyph (and deps) sockets must not flip the session into
+        // "Catching up" / visible rebaseline. That path recompiles the
+        // editing font and redraws the overview, which freezes the UI.
+        this._clearNonCoreRebaselineFlags();
     }
 
     private async _runSessionReadyBarrier(): Promise<void> {
@@ -673,10 +726,7 @@ export class CloudLiveSession {
         this._options.onConnectionStatus?.('syncing', 'Catching up');
         await this._waitForLiveTransportSynced();
         await this._catchUpLiveSubsetAndDeps();
-        const adapters = [...this._adapters.values()];
-        const needsRebaseline = adapters.some(
-            (adapter) => adapter.needsVisibleRebaseline
-        );
+        const needsRebaseline = this.coreAdapter?.needsVisibleRebaseline;
         if (needsRebaseline) {
             this._options.onConnectionStatus?.(
                 'syncing',
@@ -684,9 +734,8 @@ export class CloudLiveSession {
             );
             try {
                 await runCloudVisibleReconnectRebaseline();
-                for (const adapter of adapters) {
-                    adapter.clearVisibleRebaselineNeeded();
-                }
+                this.coreAdapter?.clearVisibleRebaselineNeeded?.();
+                this._clearNonCoreRebaselineFlags();
             } catch (error) {
                 const detail =
                     error instanceof Error ? error.message : String(error);

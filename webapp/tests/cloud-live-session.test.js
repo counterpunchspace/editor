@@ -159,11 +159,54 @@ describe('CloudLiveSession', () => {
         await session.syncLiveDocumentIds(['glyph:aaa']);
         expect(mockConnectDirect).toHaveBeenCalledTimes(connectCount);
 
+        expect(session.activeWebSocketCount()).toBe(3);
+
         session.sendForwardedUpdate(new Uint8Array([1]), null, 'glyph:aaa');
         const glyphAdapter = [...session._adapters.values()].find(
             (adapter) => adapter.documentId === 'glyph:aaa'
         );
         expect(glyphAdapter.sendForwardedUpdate).toHaveBeenCalledTimes(1);
+    });
+
+    test('attaching or detaching the active glyph room does not recatch-up or mark the session syncing', async () => {
+        const statuses = [];
+        const session = new CloudLiveSession({
+            assetId: 'asset-1',
+            websiteBaseUrl: 'https://editor.example',
+            token: 'token',
+            roomUrl: 'wss://rooms.example/room/asset-1',
+            bridge: {},
+            onConnectionStatus: (status) => statuses.push(status),
+            bootstrapMode: 'skip'
+        });
+
+        await session.syncLiveDocumentIds([]);
+        expect(session.liveDocumentIds().sort()).toEqual(
+            ['font-core', 'font-deps'].sort()
+        );
+        expect(statuses.at(-1)).toBe('connected');
+
+        const fetchCountAfterInfrastructure = global.fetch.mock.calls.length;
+        statuses.length = 0;
+        mockConnectDirect.mockClear();
+
+        await session.syncLiveDocumentIds(['glyph:aaa']);
+        expect(session.liveDocumentIds().sort()).toEqual(
+            ['font-core', 'font-deps', 'glyph:aaa'].sort()
+        );
+        expect(mockConnectDirect).toHaveBeenCalledTimes(1);
+        expect(global.fetch.mock.calls.length).toBe(
+            fetchCountAfterInfrastructure
+        );
+        expect(statuses).toEqual([]);
+
+        mockDisconnect.mockClear();
+        await session.syncLiveDocumentIds([]);
+        expect(session.liveDocumentIds().sort()).toEqual(
+            ['font-core', 'font-deps'].sort()
+        );
+        expect(mockDisconnect).toHaveBeenCalledTimes(1);
+        expect(statuses).toEqual([]);
     });
 
     test('dependent glyph local updates POST /live without opening a socket', async () => {

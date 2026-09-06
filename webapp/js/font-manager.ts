@@ -75,6 +75,9 @@ import {
     cancelManagedFileInternalWrite,
     markManagedFileInternalWrite
 } from './managed-file-events';
+import tippy, { Instance as TippyInstance } from 'tippy.js';
+import 'tippy.js/dist/tippy.css';
+import { getTheme } from './tippy-utils';
 
 const { save_font_as_glyphs } = babelfontWasm as object as {
     save_font_as_glyphs: (babelfontJson: string) => string;
@@ -697,6 +700,7 @@ class FontManager {
     private pendingCloudBadgeVisibleAtByAssetId: Map<string, number>;
     private pendingCloudBadgeDelayTimer: ReturnType<typeof setTimeout> | null;
     private pendingCloudBadgeDelayAssetId: string | null;
+    private cloudStatusTippy: TippyInstance | null;
 
     /**
      * Memoizes the result of validateBabelfontJsonForRust.
@@ -766,6 +770,7 @@ class FontManager {
         this.pendingCloudBadgeVisibleAtByAssetId = new Map();
         this.pendingCloudBadgeDelayTimer = null;
         this.pendingCloudBadgeDelayAssetId = null;
+        this.cloudStatusTippy = null;
 
         window.addEventListener('cloudConnectionStatusChanged', () => {
             this.updateFontDisplay();
@@ -831,6 +836,68 @@ class FontManager {
         }
 
         return badge;
+    }
+
+    private destroyCloudStatusTooltip(): void {
+        this.cloudStatusTippy?.destroy();
+        this.cloudStatusTippy = null;
+    }
+
+    private ensureCloudStatusTooltip(badge: HTMLElement): void {
+        if (
+            this.cloudStatusTippy &&
+            this.cloudStatusTippy.reference !== badge
+        ) {
+            this.destroyCloudStatusTooltip();
+        }
+        if (this.cloudStatusTippy) {
+            return;
+        }
+        this.cloudStatusTippy = tippy(badge, {
+            content: '',
+            allowHTML: true,
+            interactive: false,
+            trigger: 'mouseenter focus',
+            appendTo: () => document.body,
+            placement: 'bottom',
+            theme: getTheme(),
+            maxWidth: 360,
+            onShow: (instance) => {
+                instance.setProps({ theme: getTheme() });
+                instance.setContent(this.buildCloudStatusTooltipContent());
+            }
+        });
+    }
+
+    private buildCloudStatusTooltipContent(): string {
+        const currentFont = this.currentFontId
+            ? (this.openedFonts.get(this.currentFontId) ?? null)
+            : null;
+        const warningState = this.getCloudConnectionWarningState(currentFont);
+        const assetId = this.normalizeCloudAssetId(currentFont);
+        const html = assetId
+            ? window.cloudPlugin?.getCloudStatusTooltipHtml?.(
+                  assetId,
+                  warningState.title
+              )
+            : null;
+        return html || warningState.title || '';
+    }
+
+    private syncCloudStatusTooltip(
+        badge: HTMLElement,
+        warningState: { visible: boolean; title: string }
+    ): void {
+        if (!warningState.visible) {
+            this.cloudStatusTippy?.hide();
+            return;
+        }
+        this.ensureCloudStatusTooltip(badge);
+        if (this.cloudStatusTippy?.state.isVisible) {
+            this.cloudStatusTippy.setContent(
+                this.buildCloudStatusTooltipContent()
+            );
+        }
     }
 
     /**
@@ -1399,6 +1466,12 @@ class FontManager {
     }
 
     updateFontDisplay() {
+        if (
+            this.cloudStatusTippy &&
+            !this.cloudStatusTippy.reference.isConnected
+        ) {
+            this.destroyCloudStatusTooltip();
+        }
         if (!this.fontIconElement || !this.fontNameElement) return;
 
         const shareButton = document.getElementById('share-btn');
@@ -1438,6 +1511,7 @@ class FontManager {
                 cloudConnectionWarningBadge.hidden = true;
                 cloudConnectionWarningBadge.removeAttribute('title');
                 cloudConnectionWarningBadge.removeAttribute('aria-label');
+                this.destroyCloudStatusTooltip();
             }
             if (cloudAccessRoleBadge) {
                 cloudAccessRoleBadge.classList.remove(
@@ -1482,10 +1556,7 @@ class FontManager {
                     );
                     if (warningState.visible) {
                         cloudConnectionWarningBadge.hidden = false;
-                        cloudConnectionWarningBadge.setAttribute(
-                            'title',
-                            warningState.title
-                        );
+                        cloudConnectionWarningBadge.removeAttribute('title');
                         cloudConnectionWarningBadge.setAttribute(
                             'aria-label',
                             warningState.title
@@ -1497,12 +1568,17 @@ class FontManager {
                         if (iconElement) {
                             iconElement.textContent = warningState.icon;
                         }
+                        this.syncCloudStatusTooltip(
+                            cloudConnectionWarningBadge,
+                            warningState
+                        );
                     } else {
                         cloudConnectionWarningBadge.hidden = true;
                         cloudConnectionWarningBadge.removeAttribute('title');
                         cloudConnectionWarningBadge.removeAttribute(
                             'aria-label'
                         );
+                        this.destroyCloudStatusTooltip();
                     }
                 }
                 if (cloudAccessRoleBadge) {
@@ -2434,8 +2510,12 @@ class FontManager {
     }
 
     getActiveEditorGlyphName(): string | null {
+        const outlineEditor = window.glyphCanvas?.outlineEditor;
+        if (!outlineEditor?.active) {
+            return null;
+        }
         const name =
-            window.glyphCanvas?.outlineEditor?.currentGlyphName ||
+            outlineEditor.currentGlyphName ||
             window.glyphCanvas?.getCurrentGlyphName?.() ||
             null;
         if (!name || name === 'undefined') {

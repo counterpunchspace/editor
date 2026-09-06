@@ -1353,6 +1353,23 @@ html[data-command-modifier='ctrl'] .shortcut-option-modifier::before {
     color: var(--accent-red);
 }
 
+.cloud-status-tooltip {
+    min-width: 220px;
+}
+
+.cloud-status-tooltip .cloud-status-tooltip-sentence {
+    margin: 0 0 8px 0;
+}
+
+.cloud-status-tooltip ul {
+    margin: 0;
+    padding-left: 18px;
+}
+
+.cloud-status-tooltip li {
+    margin: 4px 0;
+}
+
 .cloud-access-role-badge {
     display: none;
     align-items: center;

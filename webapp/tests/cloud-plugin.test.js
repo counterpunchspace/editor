@@ -214,7 +214,9 @@ const wrappedCloudFontJson = {
 
 require('../js/filesystem-plugins');
 const {
-    CloudPlugin
+    CloudPlugin,
+    formatCloudStatusTooltipHtml,
+    formatCloudByteCount
 } = require('../js/filesystem-plugins/plugins/cloud-plugin');
 const { CloudAdapter } = require('../js/cloud-adapter');
 
@@ -2170,5 +2172,34 @@ describe('CloudPlugin glyph add quota', () => {
                 }
             ]).allowed
         ).toBe(true);
+    });
+});
+
+describe('cloud status tooltip', () => {
+    test('formats the status sentence plus shard and websocket stats', () => {
+        const html = formatCloudStatusTooltipHtml(
+            'Cloud status: Connected. Changes sync continuously.',
+            {
+                fontCoreBytes: 2048,
+                fontDepsBytes: 512,
+                largestGlyphBytes: 4096,
+                largestGlyphName: 'a',
+                activeWebSocketCount: 3
+            }
+        );
+        expect(html).toContain(
+            'Cloud status: Connected. Changes sync continuously.'
+        );
+        expect(html).toContain('font-core: 2.0 KiB');
+        expect(html).toContain('font-deps: 512 B');
+        expect(html).toContain('Largest glyph shard: 4.0 KiB (a)');
+        expect(html).toContain('Active WebSockets: 3');
+        expect(formatCloudByteCount(0)).toBe('0 B');
+    });
+
+    test('escapes status text in the tooltip html', () => {
+        const html = formatCloudStatusTooltipHtml('<b>oops</b>');
+        expect(html).toContain('&lt;b&gt;oops&lt;/b&gt;');
+        expect(html).not.toContain('<b>oops</b>');
     });
 });

@@ -198,7 +198,7 @@ function formatCloudDebugTimestamp(timestamp: number): string {
     return new Date(timestamp).toISOString();
 }
 
-function formatCloudByteCount(bytes: number): string {
+export function formatCloudByteCount(bytes: number): string {
     if (!Number.isFinite(bytes) || bytes <= 0) {
         return '0 B';
     }
@@ -209,6 +209,40 @@ function formatCloudByteCount(bytes: number): string {
         return `${(bytes / 1024).toFixed(1)} KiB`;
     }
     return `${Math.round(bytes)} B`;
+}
+
+export type CloudLiveShardStats = {
+    fontCoreBytes: number;
+    fontDepsBytes: number;
+    largestGlyphBytes: number;
+    largestGlyphName: string | null;
+    activeWebSocketCount: number;
+};
+
+export const EMPTY_CLOUD_LIVE_SHARD_STATS: CloudLiveShardStats = {
+    fontCoreBytes: 0,
+    fontDepsBytes: 0,
+    largestGlyphBytes: 0,
+    largestGlyphName: null,
+    activeWebSocketCount: 0
+};
+
+function escapeCloudTooltipText(value: string): string {
+    return value
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+}
+
+export function formatCloudStatusTooltipHtml(
+    statusTitle: string,
+    stats: CloudLiveShardStats = EMPTY_CLOUD_LIVE_SHARD_STATS
+): string {
+    const largestLabel = stats.largestGlyphName
+        ? `${formatCloudByteCount(stats.largestGlyphBytes)} (${stats.largestGlyphName})`
+        : formatCloudByteCount(stats.largestGlyphBytes);
+    return `<div class="info-popup-content cloud-status-tooltip"><p class="cloud-status-tooltip-sentence">${escapeCloudTooltipText(statusTitle)}</p><ul><li>font-core: ${escapeCloudTooltipText(formatCloudByteCount(stats.fontCoreBytes))}</li><li>font-deps: ${escapeCloudTooltipText(formatCloudByteCount(stats.fontDepsBytes))}</li><li>Largest glyph shard: ${escapeCloudTooltipText(largestLabel)}</li><li>Active WebSockets: ${Math.max(0, Math.floor(stats.activeWebSocketCount) || 0)}</li></ul></div>`;
 }
 
 function canonicalizeCloudExportFontJson(
@@ -1013,6 +1047,47 @@ export class CloudPlugin extends FilesystemPlugin {
         const byteLength = rawByteLength;
 
         return this._getAssetSizeWarningStateForByteLength(byteLength, policy);
+    }
+
+    getAssetLiveShardStats(assetId: string): CloudLiveShardStats {
+        const matchesActiveAsset =
+            !!assetId &&
+            (this._activeAssetId === assetId ||
+                this._relayedAssetId === assetId);
+        const bridge = matchesActiveAsset ? this._activeAssetSizeBridge : null;
+        const sizeBridge =
+            bridge ??
+            (typeof window !== 'undefined'
+                ? (
+                      window as Window & {
+                          patchSyncEngine?: PatchSyncEngine;
+                      }
+                  ).patchSyncEngine
+                : null);
+        const sizes = sizeBridge?.getLiveShardSizeSnapshot?.() ?? {
+            fontCoreBytes: 0,
+            fontDepsBytes: 0,
+            largestGlyphBytes: 0,
+            largestGlyphName: null
+        };
+        const activeWebSocketCount =
+            this._activeAssetId === assetId
+                ? (this._liveSession?.activeWebSocketCount() ?? 0)
+                : 0;
+        return {
+            fontCoreBytes: sizes.fontCoreBytes,
+            fontDepsBytes: sizes.fontDepsBytes,
+            largestGlyphBytes: sizes.largestGlyphBytes,
+            largestGlyphName: sizes.largestGlyphName,
+            activeWebSocketCount
+        };
+    }
+
+    getCloudStatusTooltipHtml(assetId: string, statusTitle: string): string {
+        return formatCloudStatusTooltipHtml(
+            statusTitle,
+            this.getAssetLiveShardStats(assetId)
+        );
     }
 
     async getCurrentSaveAsWarningState(): Promise<CloudSaveSizeWarningState | null> {

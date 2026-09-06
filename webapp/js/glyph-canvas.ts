@@ -4478,6 +4478,7 @@ class GlyphCanvas {
         this.textRunEditor!.selectedGlyphIndex = -1;
         this.outlineEditor.selectedLayerId = null;
         this.outlineEditor.notifyEditToolsChanged();
+        window.fontManager?.notifyActiveEditorGlyphRoom?.();
 
         // Dispatch mode change event for URL sync
         window.dispatchEvent(
