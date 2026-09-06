@@ -530,6 +530,85 @@ describe('font-deps UUID edges', () => {
         ).toEqual(['aacute', 'adieresis', 'ae', 'agrave'].sort());
     });
 
+    it('reverse-closes stylistic composites of FEA alts without GSUB-closing the unsuffixed reverse set', () => {
+        const catalog = [
+            { glyphId: 'id-a', name: 'a' },
+            { glyphId: 'id-e', name: 'e' },
+            { glyphId: 'id-adieresis', name: 'adieresis' },
+            { glyphId: 'id-aacute', name: 'aacute' },
+            { glyphId: 'id-agrave', name: 'agrave' },
+            { glyphId: 'id-ae', name: 'ae' },
+            { glyphId: 'id-a-ss03', name: 'a.ss03' },
+            { glyphId: 'id-a-ss04', name: 'a.ss04' },
+            { glyphId: 'id-e-ss03', name: 'e.ss03' },
+            { glyphId: 'id-adieresis-ss03', name: 'adieresis.ss03' },
+            { glyphId: 'id-aacute-ss03', name: 'aacute.ss03' },
+            { glyphId: 'id-agrave-ss03', name: 'agrave.ss03' },
+            { glyphId: 'id-ae-ss03', name: 'ae.ss03' },
+            { glyphId: 'id-adieresis-ss04', name: 'adieresis.ss04' },
+            { glyphId: 'id-aacute-ss04', name: 'aacute.ss04' },
+            { glyphId: 'id-dieresiscomb', name: 'dieresiscomb' },
+            { glyphId: 'id-acutecomb', name: 'acutecomb' },
+            { glyphId: 'id-gravecomb', name: 'gravecomb' },
+            { glyphId: 'id-g', name: 'g' },
+            { glyphId: 'id-g-ss03', name: 'g.ss03' },
+            { glyphId: 'id-alef', name: 'alef' },
+            { glyphId: 'id-alef-ss03', name: 'alef.ss03' }
+        ];
+        const fromA = computeSparseHydrationPartition({
+            seedIds: ['id-a'],
+            layoutIds: ['id-a-ss03', 'id-a-ss04'],
+            edges: {},
+            catalog
+        });
+        expect(fromA.workingIds).toEqual(
+            expect.arrayContaining([
+                'id-a',
+                'id-adieresis',
+                'id-aacute',
+                'id-agrave',
+                'id-ae',
+                'id-a-ss03',
+                'id-a-ss04',
+                'id-adieresis-ss03',
+                'id-aacute-ss03',
+                'id-agrave-ss03',
+                'id-ae-ss03',
+                'id-e-ss03',
+                'id-adieresis-ss04',
+                'id-aacute-ss04',
+                'id-dieresiscomb',
+                'id-acutecomb',
+                'id-gravecomb',
+                'id-e'
+            ])
+        );
+        expect(fromA.workingIds).not.toContain('id-g-ss03');
+        expect(fromA.workingIds).not.toContain('id-alef-ss03');
+        expect(
+            computeSparseHydrationPartition({
+                seedIds: ['id-a'],
+                edges: {},
+                catalog
+            }).workingIds
+        ).not.toEqual(
+            expect.arrayContaining([
+                'id-a-ss03',
+                'id-adieresis-ss03',
+                'id-aacute-ss03'
+            ])
+        );
+        expect(
+            closeReverseComponentNamesFromDeps({
+                edges: {},
+                seedNames: ['a.ss03'],
+                catalog
+            }).sort()
+        ).toEqual(
+            ['aacute.ss03', 'adieresis.ss03', 'ae.ss03', 'agrave.ss03'].sort()
+        );
+    });
+
     it('uses stored catalog componentIds when font-deps edges are empty', () => {
         const catalog = [
             { glyphId: 'id-a', name: 'a' },

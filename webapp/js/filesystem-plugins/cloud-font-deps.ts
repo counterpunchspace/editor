@@ -555,6 +555,65 @@ function remainderComponentId(
     return undefined;
 }
 
+function glyphNameSuffix(
+    name: string
+): { stem: string; suffix: string } | null {
+    const index = name.lastIndexOf('.');
+    if (index <= 0 || index === name.length - 1) {
+        return null;
+    }
+    return {
+        stem: name.slice(0, index),
+        suffix: name.slice(index)
+    };
+}
+
+function remainderComponentIdWithSuffix(
+    remainder: string,
+    suffix: string,
+    idByName: Map<string, string>
+): string | undefined {
+    if (suffix) {
+        const suffixed = `${remainder}${suffix}`;
+        if (idByName.has(suffixed)) {
+            return idByName.get(suffixed);
+        }
+        const suffixedComb = `${remainder}comb${suffix}`;
+        if (idByName.has(suffixedComb)) {
+            return idByName.get(suffixedComb);
+        }
+    }
+    return remainderComponentId(remainder, idByName);
+}
+
+function impliedBaseRemainder(
+    compositeName: string,
+    baseName: string,
+    idByName: Map<string, string>
+): { remainder: string; suffix: string } | null {
+    if (compositeName.startsWith(baseName)) {
+        const remainder = compositeName.slice(baseName.length);
+        if (isImpliedComponentRemainder(remainder, idByName)) {
+            return { remainder, suffix: '' };
+        }
+    }
+    const compositeParts = glyphNameSuffix(compositeName);
+    const baseParts = glyphNameSuffix(baseName);
+    if (
+        !compositeParts ||
+        !baseParts ||
+        compositeParts.suffix !== baseParts.suffix ||
+        !compositeParts.stem.startsWith(baseParts.stem)
+    ) {
+        return null;
+    }
+    const remainder = compositeParts.stem.slice(baseParts.stem.length);
+    if (!isImpliedComponentRemainder(remainder, idByName)) {
+        return null;
+    }
+    return { remainder, suffix: compositeParts.suffix };
+}
+
 function isImpliedComponentRemainder(
     remainder: string,
     idByName: Map<string, string>
@@ -588,8 +647,9 @@ function componentEdgesFromCatalogIds(
 
 /**
  * When catalog/deps lack component rows, infer composites from names:
- * `adieresis` → `a` + `dieresiscomb`, `ae` → `a` + `e`. `alef` is not a
- * Latin `a` composite because `lef` is not a catalog glyph.
+ * `adieresis` → `a` + `dieresiscomb`, `ae` → `a` + `e`. Shared suffixes
+ * follow the same rule: `adieresis.ss03` → `a.ss03` + `dieresiscomb`.
+ * `alef` is not a Latin `a` composite because `lef` is not a catalog glyph.
  */
 function impliedComponentEdgesFromCatalogNames(
     catalog: HydrationCatalogEntry[]
@@ -602,33 +662,36 @@ function impliedComponentEdgesFromCatalogNames(
             continue;
         }
         let bestBase: HydrationCatalogEntry | null = null;
+        let bestMatch: { remainder: string; suffix: string } | null = null;
         for (const base of live) {
             if (
                 base.glyphId === composite.glyphId ||
-                isLikelyMarkGlyphName(base.name) ||
-                !composite.name.startsWith(base.name)
+                isLikelyMarkGlyphName(base.name)
             ) {
                 continue;
             }
-            const remainder = composite.name.slice(base.name.length);
-            if (
-                !remainder ||
-                !isImpliedComponentRemainder(remainder, idByName)
-            ) {
+            const match = impliedBaseRemainder(
+                composite.name,
+                base.name,
+                idByName
+            );
+            if (!match) {
                 continue;
             }
             if (!bestBase || base.name.length > bestBase.name.length) {
                 bestBase = base;
+                bestMatch = match;
             }
         }
-        if (!bestBase) {
+        if (!bestBase || !bestMatch) {
             continue;
         }
         const targets: Record<string, FontDepEdgeKind> = {
             [bestBase.glyphId]: 'component'
         };
-        const remainderId = remainderComponentId(
-            composite.name.slice(bestBase.name.length),
+        const remainderId = remainderComponentIdWithSuffix(
+            bestMatch.remainder,
+            bestMatch.suffix,
             idByName
         );
         if (remainderId && remainderId !== composite.glyphId) {
@@ -784,11 +847,14 @@ export type SparseHydrationPlan = SparseHydrationPartition & {
  *
  * Working: requested seeds ∪ prior working ∪ layout alts ∪ encoded
  * bases of those, reverse* over component edges (`adieresis` promotes
- * `a`, so every a-composite is editable), then forward* over component
- * edges so nested parts (`dotaccentcomb` → `dotaccent`) are working.
+ * `a`; `a.ss03` likewise pulls `adieresis.ss03`), then forward* over
+ * component edges so nested parts (`dotaccentcomb` → `dotaccent`) are
+ * working.
  *
  * Hidden: metrics-key sources of working (`n`, `l`) minus working.
- * Do not reverse metrics-key edges. Do not GSUB-close the reverse set.
+ * Do not reverse metrics-key edges. Do not GSUB-close the reverse set
+ * (`adieresis` does not pull `adieresis.ss03` unless `a.ss03` is a
+ * layout alt).
  */
 export function computeSparseHydrationPartition(options: {
     seedIds: string[];
