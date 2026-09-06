@@ -155,6 +155,10 @@ describe('CloudLiveSession', () => {
         );
         expect(mockDisconnect).toHaveBeenCalledTimes(1);
 
+        const connectCount = mockConnectDirect.mock.calls.length;
+        await session.syncLiveDocumentIds(['glyph:aaa']);
+        expect(mockConnectDirect).toHaveBeenCalledTimes(connectCount);
+
         session.sendForwardedUpdate(new Uint8Array([1]), null, 'glyph:aaa');
         const glyphAdapter = [...session._adapters.values()].find(
             (adapter) => adapter.documentId === 'glyph:aaa'

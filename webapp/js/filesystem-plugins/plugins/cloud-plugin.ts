@@ -2055,22 +2055,16 @@ export class CloudPlugin extends FilesystemPlugin {
                             ?.revision;
                     },
                     persistWorkingIds: (workingIds) => {
-                        const liveIds = (
-                            bridge.listLiveGlyphDocumentIds?.() ?? []
-                        ).map((documentId) =>
-                            documentId.slice('glyph:'.length)
-                        );
-                        const next = [...new Set([...liveIds, ...workingIds])];
                         const previous = new Set(
                             bridge.listSparseWorkingGlyphIds?.() ?? []
                         );
                         if (
-                            next.length === previous.size &&
-                            next.every((id) => previous.has(id))
+                            workingIds.length === previous.size &&
+                            workingIds.every((id) => previous.has(id))
                         ) {
                             return;
                         }
-                        bridge.replaceSparseWorkingGlyphIds?.(next);
+                        bridge.replaceSparseWorkingGlyphIds?.(workingIds);
                     },
                     afterFetchedGlyphs: (glyphIds) => {
                         for (const glyphId of glyphIds) {

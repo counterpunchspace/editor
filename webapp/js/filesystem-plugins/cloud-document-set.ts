@@ -123,11 +123,10 @@ export function sparseHydrationSessionFromDocumentSet(
 }
 
 /**
- * Hydrate a sparse glyph subset to a fixed point. Newly discovered
- * prerequisites of already-loaded bodies are fetched on later passes.
- * Catalog size bounds the loop. Do not rebuild catalog `componentIds`
- * or font-deps here; those are written on cloud seed and patched live
- * when glyph data changes.
+ * Hydrate a sparse glyph subset. Plan the working/hidden closure from
+ * font-deps + catalog once, then fetch every missing shard. Extra HTTP
+ * passes exist only when a loaded body names a component that was not in
+ * that graph. Notify `afterFetchedGlyphs` once after the last apply.
  */
 export async function hydrateSparseGlyphsToFixedPoint(options: {
     documentSet?: CloudDocumentSet;
@@ -176,6 +175,7 @@ export async function hydrateSparseGlyphsToFixedPoint(options: {
     const glyphBytes = new Map<string, Uint8Array>();
     const loadedIds = new Set(session.loadedGlyphIds());
     const fetchPasses: string[][] = [];
+    const appliedIds: string[] = [];
     const depsMap = session.depsMap();
     // Do not seed from shared font-deps `working`. That map is leftover from
     // other sessions / full opens (A–Z, digits) and is not the input string.
@@ -220,7 +220,7 @@ export async function hydrateSparseGlyphsToFixedPoint(options: {
                 );
             }
         }
-        const appliedIds: string[] = [];
+        const appliedThisPass: string[] = [];
         for (const [documentId, bytes] of fetched) {
             if (!bytes?.byteLength) {
                 continue;
@@ -229,9 +229,9 @@ export async function hydrateSparseGlyphsToFixedPoint(options: {
             glyphBytes.set(documentId, bytes);
             const glyphId = documentId.slice('glyph:'.length);
             loadedIds.add(glyphId);
-            appliedIds.push(glyphId);
+            appliedThisPass.push(glyphId);
         }
-        session.afterFetchedGlyphs?.(appliedIds);
+        appliedIds.push(...appliedThisPass);
         plan = expandSparsePlanWithLoadedComponents({
             plan: planFromLiveEdges(),
             glyphs: listGlyphRecords(session.assembleFontJson()),
@@ -241,6 +241,9 @@ export async function hydrateSparseGlyphsToFixedPoint(options: {
         });
     }
 
+    if (appliedIds.length) {
+        session.afterFetchedGlyphs?.(appliedIds);
+    }
     session.persistWorkingIds?.(plan.workingIds);
 
     return {

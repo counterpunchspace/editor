@@ -394,6 +394,15 @@ export class CloudLiveSession {
             FONT_DEPS_DOCUMENT_ID,
             ...stickyLiveGlyphDocumentIds(documentIds)
         ]);
+        const membershipUnchanged =
+            desired.size === this._desiredDocumentIds.size &&
+            [...desired].every((documentId) =>
+                this._desiredDocumentIds.has(documentId)
+            ) &&
+            [...desired].every((documentId) => this._adapters.has(documentId));
+        if (membershipUnchanged) {
+            return;
+        }
         this._desiredDocumentIds = desired;
         for (const [documentId, adapter] of [...this._adapters]) {
             if (!desired.has(documentId)) {
