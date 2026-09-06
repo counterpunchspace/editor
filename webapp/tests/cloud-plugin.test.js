@@ -89,8 +89,10 @@ jest.mock('../js/cloud-adapter', () => ({
         return adapter;
     }),
     catchUpCloudDocument: jest.fn().mockResolvedValue(false),
+    publishCloudDocumentUpdate: jest.fn().mockResolvedValue(true),
     runCloudVisibleReconnectRebaseline: jest.fn().mockResolvedValue({}),
     CLOUD_GLYPH_CATCH_UP_CONCURRENCY: 4,
+    CLOUD_GLYPH_PUBLISH_CONCURRENCY: 2,
     normalizeCloudRoomWebSocketUrl: jest.fn((roomUrl) => roomUrl),
     normalizeCloudShardWebSocketUrl: jest.fn((roomUrl) => roomUrl)
 }));
@@ -689,7 +691,7 @@ describe('CloudPlugin.openAsset', () => {
         expect(finalizeCalls).toHaveLength(1);
     });
 
-    test('saveAs opens live WebSockets for font-core and the editing-subset glyph rooms', async () => {
+    test('saveAs opens live WebSockets for font-core, font-deps, and the active glyph', async () => {
         window.glyphCanvas = {
             initialFontLoaded: true
         };
@@ -718,7 +720,8 @@ describe('CloudPlugin.openAsset', () => {
                 syncJsonFromModel: jest.fn()
             },
             editingFont: new Uint8Array([1]),
-            getEditingSubsetSnapshot: jest.fn(() => ['A'])
+            getEditingSubsetSnapshot: jest.fn(() => ['A', 'B', 'C']),
+            getActiveEditorGlyphName: jest.fn(() => 'A')
         };
         window.patchSyncEngine = {
             encodeBridgeState: jest.fn(() => new Uint8Array([1, 2, 3])),

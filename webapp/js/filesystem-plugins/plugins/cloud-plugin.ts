@@ -23,6 +23,7 @@ import {
 } from '../../cloud-adapter';
 import {
     CloudLiveSession,
+    activeEditorGlyphNames,
     liveGlyphDocumentIdsFromSubset
 } from '../../cloud-live-session';
 import {
@@ -3635,9 +3636,7 @@ export class CloudPlugin extends FilesystemPlugin {
         });
         const glyphDocumentIds = liveGlyphDocumentIdsFromSubset(
             options.bridge,
-            window.fontManager?.getConstrainedEditingSubsetGlyphs?.() ??
-                window.fontManager?.getEditingSubsetSnapshot?.() ??
-                []
+            activeEditorGlyphNames()
         );
         try {
             await session.syncLiveDocumentIds(glyphDocumentIds);
@@ -3661,9 +3660,7 @@ export class CloudPlugin extends FilesystemPlugin {
             }
             const glyphDocumentIds = liveGlyphDocumentIdsFromSubset(
                 bridge,
-                window.fontManager?.getConstrainedEditingSubsetGlyphs?.() ??
-                    window.fontManager?.getEditingSubsetSnapshot?.() ??
-                    []
+                activeEditorGlyphNames()
             );
             void this._liveSession
                 .syncLiveDocumentIds(glyphDocumentIds)
@@ -3678,6 +3675,10 @@ export class CloudPlugin extends FilesystemPlugin {
             'editingSubsetChanged',
             this._editingSubsetListener
         );
+        window.addEventListener(
+            'activeEditorGlyphChanged',
+            this._editingSubsetListener
+        );
         this._editingSubsetListener();
     }
 
@@ -3685,6 +3686,10 @@ export class CloudPlugin extends FilesystemPlugin {
         if (this._editingSubsetListener) {
             window.removeEventListener(
                 'editingSubsetChanged',
+                this._editingSubsetListener
+            );
+            window.removeEventListener(
+                'activeEditorGlyphChanged',
                 this._editingSubsetListener
             );
             this._editingSubsetListener = null;

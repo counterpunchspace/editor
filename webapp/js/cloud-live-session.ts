@@ -1,16 +1,16 @@
 /**
  * Live cloud session: one WebSocket per Durable Object shard.
  *
- * Always connects `font-core` and `font-deps`. Glyph rooms are opened only
- * for the current editing subset (visible/active glyphs). HTTP hydrate
- * loads the text/overview closure, not the full catalog. The session
- * reports connected only after core, live glyphs, and deps are fresh,
- * then rebases the UI once.
+ * Always connects `font-core` and `font-deps`. The only glyph WebSocket is
+ * the active editor glyph. Dependent glyph shards publish over HTTP POST
+ * and peers pull them with GET `/live` after font-core revision signals.
  */
 import {
     CloudAdapter,
     catchUpCloudDocument,
     CLOUD_GLYPH_CATCH_UP_CONCURRENCY,
+    CLOUD_GLYPH_PUBLISH_CONCURRENCY,
+    publishCloudDocumentUpdate,
     runCloudVisibleReconnectRebaseline,
     type CloudAdapterAccessSnapshot,
     type CloudConnectionStatus,
@@ -22,7 +22,10 @@ import {
     FONT_DEPS_DOCUMENT_ID
 } from './filesystem-plugins/cloud-document-set';
 import type { PatchSyncEngine } from './patch-sync-engine';
-import type { CollaborationMessageEnvelope } from './collaboration-message';
+import {
+    collaborationMessageKey,
+    type CollaborationMessageEnvelope
+} from './collaboration-message';
 import { Logger } from './logger';
 
 const console = new Logger('CloudLiveSession');
@@ -49,6 +52,26 @@ export type GlyphCatchUpTarget = {
     expectedRevision?: string;
 };
 
+export function activeEditorGlyphNames(
+    fontManager?: {
+        getActiveEditorGlyphName?: () => string | null;
+    } | null
+): string[] {
+    const manager =
+        fontManager ??
+        (typeof window !== 'undefined'
+            ? (
+                  window as Window & {
+                      fontManager?: {
+                          getActiveEditorGlyphName?: () => string | null;
+                      };
+                  }
+              ).fontManager
+            : null);
+    const name = manager?.getActiveEditorGlyphName?.() ?? null;
+    return name ? [name] : [];
+}
+
 export function liveGlyphDocumentIdsFromSubset(
     bridge: Pick<
         PatchSyncEngine,
@@ -64,6 +87,21 @@ export function liveGlyphDocumentIdsFromSubset(
         return [...new Set(fromNames)];
     }
     return [];
+}
+
+export function stickyLiveGlyphDocumentIds(documentIds: string[]): string[] {
+    const glyphIds = [
+        ...new Set(
+            documentIds.filter(
+                (id) =>
+                    !!id &&
+                    id !== FONT_CORE_DOCUMENT_ID &&
+                    id !== FONT_DEPS_DOCUMENT_ID &&
+                    id.startsWith('glyph:')
+            )
+        )
+    ];
+    return glyphIds.length ? [glyphIds[glyphIds.length - 1]] : [];
 }
 
 async function runWithConcurrency<T>(
@@ -93,10 +131,17 @@ export class CloudLiveSession {
     private _reportedConnected = false;
     private _barrierPromise: Promise<void> | null = null;
     private _httpReceivingCount = 0;
+    private _httpPublishingCount = 0;
+    private _httpPublishSeq = 0;
+    private _httpPublishQueue: Array<() => Promise<void>> = [];
+    private _httpPublishActive = 0;
+    private readonly _httpPublishInFlight = new Set<Promise<void>>();
+    private _localUpdateUnsubscribe: (() => void) | null = null;
     private _lastEmittedTransferActivity: CloudTransferActivity = 'idle';
 
     constructor(options: CloudLiveSessionOptions) {
         this._options = options;
+        this._bindDependentPublishHook();
     }
 
     get coreAdapter(): CloudAdapter | null {
@@ -116,8 +161,8 @@ export class CloudLiveSession {
     }
 
     get transferActivity(): CloudTransferActivity {
-        let sending = false;
         let receiving = this._httpReceivingCount > 0;
+        let sending = this._httpPublishingCount > 0;
         for (const adapter of this._adapters.values()) {
             const activity = adapter.transferActivity;
             if (activity === 'sending') {
@@ -299,13 +344,26 @@ export class CloudLiveSession {
         collaborationMessage?: CollaborationMessageEnvelope | null,
         documentId?: string
     ): void {
-        const adapter =
-            this._adapters.get(documentId || FONT_CORE_DOCUMENT_ID) ||
-            this.coreAdapter;
-        adapter?.sendForwardedUpdate(update, collaborationMessage);
+        const resolvedId = documentId || FONT_CORE_DOCUMENT_ID;
+        const adapter = this._adapters.get(resolvedId);
+        if (adapter) {
+            adapter.sendForwardedUpdate(update, collaborationMessage);
+            return;
+        }
+        if (resolvedId.startsWith('glyph:')) {
+            this._enqueueDependentPublish(
+                resolvedId,
+                update,
+                collaborationMessage
+            );
+            return;
+        }
+        this.coreAdapter?.sendForwardedUpdate(update, collaborationMessage);
     }
 
     disconnect(): void {
+        this._localUpdateUnsubscribe?.();
+        this._localUpdateUnsubscribe = null;
         for (const adapter of this._adapters.values()) {
             adapter.disconnect();
         }
@@ -314,19 +372,27 @@ export class CloudLiveSession {
         this._reportedConnected = false;
         this._barrierPromise = null;
         this._httpReceivingCount = 0;
+        this._httpPublishingCount = 0;
+        this._httpPublishQueue = [];
+        this._httpPublishActive = 0;
+        this._httpPublishInFlight.clear();
         this._lastEmittedTransferActivity = 'idle';
+    }
+
+    async flushPendingHttpPublishes(): Promise<void> {
+        while (
+            this._httpPublishQueue.length ||
+            this._httpPublishInFlight.size
+        ) {
+            await Promise.all([...this._httpPublishInFlight]);
+        }
     }
 
     async syncLiveDocumentIds(documentIds: string[]): Promise<void> {
         const desired = new Set<string>([
             FONT_CORE_DOCUMENT_ID,
             FONT_DEPS_DOCUMENT_ID,
-            ...documentIds.filter(
-                (id) =>
-                    id &&
-                    id !== FONT_CORE_DOCUMENT_ID &&
-                    id !== FONT_DEPS_DOCUMENT_ID
-            )
+            ...stickyLiveGlyphDocumentIds(documentIds)
         ]);
         this._desiredDocumentIds = desired;
         for (const [documentId, adapter] of [...this._adapters]) {
@@ -350,6 +416,98 @@ export class CloudLiveSession {
         }
         await Promise.all(pending);
         await this._runSessionReadyBarrier();
+    }
+
+    private _bindDependentPublishHook(): void {
+        const bridge = this._options.bridge;
+        if (typeof bridge?.onLocalUpdate !== 'function') {
+            return;
+        }
+        const handler = (
+            update: Uint8Array,
+            collaborationMessage?: CollaborationMessageEnvelope | null,
+            _entries?: unknown,
+            documentId?: string
+        ): void => {
+            if (!documentId || this._adapters.has(documentId)) {
+                return;
+            }
+            if (!documentId.startsWith('glyph:')) {
+                return;
+            }
+            this._enqueueDependentPublish(
+                documentId,
+                update,
+                collaborationMessage
+            );
+        };
+        bridge.onLocalUpdate(handler);
+        this._localUpdateUnsubscribe = () => {
+            bridge.offLocalUpdate?.(handler);
+        };
+    }
+
+    private _enqueueDependentPublish(
+        documentId: string,
+        update: Uint8Array,
+        collaborationMessage?: CollaborationMessageEnvelope | null
+    ): void {
+        if (!update?.length) {
+            return;
+        }
+        const seq = ++this._httpPublishSeq;
+        this._httpPublishingCount += 1;
+        this._emitTransferActivity();
+        this._httpPublishQueue.push(async () => {
+            const { assetId, websiteBaseUrl, token, roomUrl } = this._options;
+            await publishCloudDocumentUpdate({
+                token,
+                roomUrl,
+                websiteBaseUrl,
+                assetId,
+                documentId,
+                update,
+                collaborationMessage,
+                seq,
+                clientId: `http:${assetId}`,
+                clientTransactionId: collaborationMessage
+                    ? collaborationMessageKey(collaborationMessage)
+                    : null
+            });
+        });
+        this._pumpHttpPublishQueue();
+    }
+
+    private _pumpHttpPublishQueue(): void {
+        while (
+            this._httpPublishQueue.length &&
+            this._httpPublishActive < CLOUD_GLYPH_PUBLISH_CONCURRENCY
+        ) {
+            const job = this._httpPublishQueue.shift();
+            if (!job) {
+                break;
+            }
+            this._httpPublishActive += 1;
+            let running: Promise<void>;
+            running = job()
+                .catch((error) => {
+                    console.warn(
+                        'CloudLiveSession: dependent glyph HTTP publish failed:',
+                        error
+                    );
+                })
+                .finally(() => {
+                    this._httpPublishActive -= 1;
+                    this._httpPublishingCount = Math.max(
+                        0,
+                        this._httpPublishingCount - 1
+                    );
+                    this._httpPublishInFlight.delete(running);
+                    this._emitTransferActivity();
+                    this._pumpHttpPublishQueue();
+                });
+            this._httpPublishInFlight.add(running);
+        }
     }
 
     private _emitPendingSyncCount(): void {

@@ -2400,6 +2400,13 @@ describe('FontManager editing subset inclusion', () => {
             'runOnlyGlyph',
             'editedGlyph'
         ]);
+        expect(fontManager.getActiveEditorGlyphName()).toBe('editedGlyph');
+        const rooms = [];
+        window.addEventListener('activeEditorGlyphChanged', (event) => {
+            rooms.push(event.detail.glyphName);
+        });
+        fontManager.notifyActiveEditorGlyphRoom();
+        expect(rooms).toEqual(['editedGlyph']);
     });
 
     test('recompileEditingFont widens a stale narrow subset from the current text buffer', async () => {

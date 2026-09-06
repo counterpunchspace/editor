@@ -44,7 +44,9 @@ jest.mock('../js/cloud-adapter', () => {
 
 const {
     CloudLiveSession,
-    liveGlyphDocumentIdsFromSubset
+    activeEditorGlyphNames,
+    liveGlyphDocumentIdsFromSubset,
+    stickyLiveGlyphDocumentIds
 } = require('../js/cloud-live-session.ts');
 const { CloudAdapter } = require('../js/cloud-adapter.ts');
 
@@ -93,7 +95,31 @@ describe('CloudLiveSession', () => {
         ).toEqual([]);
     });
 
-    test('connects font-core plus subset glyph rooms only', async () => {
+    test('stickyLiveGlyphDocumentIds keeps only the last glyph room', () => {
+        expect(
+            stickyLiveGlyphDocumentIds([
+                'font-core',
+                'glyph:aaa',
+                'font-deps',
+                'glyph:bbb'
+            ])
+        ).toEqual(['glyph:bbb']);
+        expect(stickyLiveGlyphDocumentIds(['font-core', 'font-deps'])).toEqual(
+            []
+        );
+    });
+
+    test('activeEditorGlyphNames reads the active outline glyph only', () => {
+        expect(activeEditorGlyphNames(null)).toEqual([]);
+        expect(
+            activeEditorGlyphNames({ getActiveEditorGlyphName: () => 'B' })
+        ).toEqual(['B']);
+        window.fontManager = { getActiveEditorGlyphName: () => 'A' };
+        expect(activeEditorGlyphNames()).toEqual(['A']);
+        delete window.fontManager;
+    });
+
+    test('connects font-core, font-deps, and only the active glyph room', async () => {
         const session = new CloudLiveSession({
             assetId: 'asset-1',
             websiteBaseUrl: 'https://editor.example',
@@ -109,9 +135,9 @@ describe('CloudLiveSession', () => {
             ([options]) => options.documentId
         );
         expect(documentIds.sort()).toEqual(
-            ['font-core', 'font-deps', 'glyph:aaa', 'glyph:bbb'].sort()
+            ['font-core', 'font-deps', 'glyph:bbb'].sort()
         );
-        expect(mockConnectDirect.mock.calls.length).toBe(4);
+        expect(mockConnectDirect.mock.calls.length).toBe(3);
         expect(
             CloudAdapter.mock.calls.every(
                 ([options]) => options.deferVisibleRebaseline === true
@@ -121,7 +147,7 @@ describe('CloudLiveSession', () => {
             mockConnectDirect.mock.calls
                 .map((call) => call[3]?.bootstrapMode)
                 .sort()
-        ).toEqual(['skip', 'skip', 'skip', 'skip']);
+        ).toEqual(['skip', 'skip', 'skip']);
 
         await session.syncLiveDocumentIds(['glyph:aaa']);
         expect(session.liveDocumentIds().sort()).toEqual(
@@ -135,6 +161,105 @@ describe('CloudLiveSession', () => {
         );
         expect(glyphAdapter.sendForwardedUpdate).toHaveBeenCalledTimes(1);
     });
+
+    test('dependent glyph local updates POST /live without opening a socket', async () => {
+        const listeners = new Set();
+        const session = new CloudLiveSession({
+            assetId: 'asset-1',
+            websiteBaseUrl: 'https://editor.example',
+            token: 'token',
+            roomUrl: 'wss://rooms.example/room/asset-1',
+            bridge: {
+                onLocalUpdate: (cb) => listeners.add(cb),
+                offLocalUpdate: (cb) => listeners.delete(cb)
+            },
+            bootstrapMode: 'skip'
+        });
+        await session.syncLiveDocumentIds(['glyph:aaa']);
+        const connectCount = mockConnectDirect.mock.calls.length;
+        const posted = [];
+        global.fetch = jest.fn(async (url, opts) => {
+            posted.push({
+                url: String(url),
+                method: opts.method,
+                body: JSON.parse(opts.body)
+            });
+            return {
+                ok: true,
+                status: 200,
+                json: async () => ({ ok: true, durable: true })
+            };
+        });
+        for (const listener of listeners) {
+            listener(new Uint8Array([4, 5, 6]), null, [], 'glyph:bbb');
+        }
+        await session.flushPendingHttpPublishes();
+        expect(posted).toHaveLength(1);
+        expect(posted[0].url).toContain('/shards/glyph/bbb/live');
+        expect(posted[0].method).toBe('POST');
+        expect(posted[0].body.type).toBe('update');
+        expect(posted[0].body.seq).toBe(1);
+        expect(mockConnectDirect).toHaveBeenCalledTimes(connectCount);
+        expect(session.hasLiveDocument('glyph:bbb')).toBe(false);
+    });
+
+    test('sendForwardedUpdate POSTs when the glyph has no sticky socket', async () => {
+        const session = new CloudLiveSession({
+            assetId: 'asset-1',
+            websiteBaseUrl: 'https://editor.example',
+            token: 'token',
+            roomUrl: 'wss://rooms.example/room/asset-1',
+            bridge: {},
+            bootstrapMode: 'skip'
+        });
+        await session.syncLiveDocumentIds(['glyph:aaa']);
+        global.fetch = jest.fn(async () => ({
+            ok: true,
+            status: 200,
+            json: async () => ({ ok: true })
+        }));
+        session.sendForwardedUpdate(new Uint8Array([9]), null, 'glyph:ccc');
+        await session.flushPendingHttpPublishes();
+        expect(global.fetch).toHaveBeenCalledTimes(1);
+        expect(String(global.fetch.mock.calls[0][0])).toContain(
+            '/shards/glyph/ccc/live'
+        );
+        expect(global.fetch.mock.calls[0][1].method).toBe('POST');
+    });
+
+    test('HTTP glyph publishes cap parallel POSTs', async () => {
+        const session = new CloudLiveSession({
+            assetId: 'asset-1',
+            websiteBaseUrl: 'https://editor.example',
+            token: 'token',
+            roomUrl: 'wss://rooms.example/room/asset-1',
+            bridge: {},
+            bootstrapMode: 'skip'
+        });
+        await session.syncLiveDocumentIds([]);
+        let inflight = 0;
+        let maxInflight = 0;
+        global.fetch = jest.fn(async () => {
+            inflight += 1;
+            maxInflight = Math.max(maxInflight, inflight);
+            await new Promise((resolve) => {
+                setTimeout(resolve, 40);
+            });
+            inflight -= 1;
+            return {
+                ok: true,
+                status: 200,
+                json: async () => ({ ok: true })
+            };
+        });
+        session.sendForwardedUpdate(new Uint8Array([1]), null, 'glyph:1');
+        session.sendForwardedUpdate(new Uint8Array([1]), null, 'glyph:2');
+        session.sendForwardedUpdate(new Uint8Array([1]), null, 'glyph:3');
+        session.sendForwardedUpdate(new Uint8Array([1]), null, 'glyph:4');
+        await session.flushPendingHttpPublishes();
+        expect(global.fetch).toHaveBeenCalledTimes(4);
+        expect(maxInflight).toBe(2);
+    }, 15000);
 
     test('does not open glyph rooms when the subset has no document ids', async () => {
         const session = new CloudLiveSession({

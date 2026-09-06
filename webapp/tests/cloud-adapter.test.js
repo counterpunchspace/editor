@@ -15,7 +15,8 @@ const {
     normalizeCloudShardHttpUrl,
     normalizeCloudShardLiveHttpUrl,
     normalizeCloudShardStatusHttpUrl,
-    normalizeCloudShardWebSocketUrl
+    normalizeCloudShardWebSocketUrl,
+    publishCloudDocumentUpdate
 } = require('../js/cloud-adapter.ts');
 const { MetadataFreeRemoteUpdateError } = require('../js/patch-sync-engine.ts');
 const { createLogEntry } = require('../js/change-log');
@@ -3404,6 +3405,100 @@ describe('normalizeCloudShardHttpUrl / WebSocketUrl', () => {
                 'glyph:abc-def'
             )
         ).toBe('wss://rooms.example.com/room/asset-123/shards/glyph/abc-def');
+    });
+});
+
+describe('publishCloudDocumentUpdate', () => {
+    const originalFetch = global.fetch;
+
+    afterEach(() => {
+        global.fetch = originalFetch;
+    });
+
+    test('POSTs framed glyph updates to the shard live URL', async () => {
+        const requests = [];
+        global.fetch = jest.fn(async (url, opts) => {
+            requests.push({ url: String(url), opts });
+            return {
+                ok: true,
+                status: 200,
+                json: async () => ({ ok: true, durable: true, seq: 9 })
+            };
+        });
+        const published = await publishCloudDocumentUpdate({
+            token: 'room-token',
+            roomUrl: 'wss://rooms.example.com/room/asset-123',
+            websiteBaseUrl: 'https://editor.counterpunch.space',
+            assetId: 'asset-123',
+            documentId: 'glyph:abc-def',
+            update: new Uint8Array([1, 2, 3]),
+            seq: 9,
+            clientId: 'http:asset-123',
+            collaborationMessage: { transactionId: 'tx-1' }
+        });
+        expect(published).toBe(true);
+        expect(requests).toHaveLength(1);
+        expect(requests[0].url).toBe(
+            'https://rooms.example.com/room/asset-123/shards/glyph/abc-def/live'
+        );
+        expect(requests[0].opts.method).toBe('POST');
+        expect(requests[0].opts.headers.Authorization).toBe(
+            'Bearer room-token'
+        );
+        const body = JSON.parse(requests[0].opts.body);
+        expect(body.type).toBe('update');
+        expect(body.seq).toBe(9);
+        expect(body.clientId).toBe('http:asset-123');
+        expect(body.collaborationMessages).toEqual([{ transactionId: 'tx-1' }]);
+        expect(Buffer.from(body.update, 'base64')).toEqual(
+            Buffer.from([1, 2, 3])
+        );
+    });
+
+    test('refuses core and deps publishes', async () => {
+        global.fetch = jest.fn();
+        await expect(
+            publishCloudDocumentUpdate({
+                token: 'room-token',
+                roomUrl: 'wss://rooms.example.com/room/asset-123',
+                websiteBaseUrl: 'https://editor.counterpunch.space',
+                assetId: 'asset-123',
+                documentId: 'font-core',
+                update: new Uint8Array([1]),
+                seq: 1
+            })
+        ).resolves.toBe(false);
+        await expect(
+            publishCloudDocumentUpdate({
+                token: 'room-token',
+                roomUrl: 'wss://rooms.example.com/room/asset-123',
+                websiteBaseUrl: 'https://editor.counterpunch.space',
+                assetId: 'asset-123',
+                documentId: 'font-deps',
+                update: new Uint8Array([1]),
+                seq: 1
+            })
+        ).resolves.toBe(false);
+        expect(global.fetch).not.toHaveBeenCalled();
+    });
+
+    test('throws on 401 and 403 so callers can drop access', async () => {
+        global.fetch = jest.fn(async () => ({
+            ok: false,
+            status: 403,
+            json: async () => ({ error: 'Forbidden' })
+        }));
+        await expect(
+            publishCloudDocumentUpdate({
+                token: 'room-token',
+                roomUrl: 'wss://rooms.example.com/room/asset-123',
+                websiteBaseUrl: 'https://editor.counterpunch.space',
+                assetId: 'asset-123',
+                documentId: 'glyph:abc-def',
+                update: new Uint8Array([1, 2, 3]),
+                seq: 1
+            })
+        ).rejects.toThrow('Live glyph publish failed (403)');
     });
 });
 

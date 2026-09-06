@@ -2424,16 +2424,35 @@ class FontManager {
     getLiveVisibleGlyphNames(): string[] {
         const glyphNameBuffer =
             window.glyphCanvas?.textRunEditor?.glyphNameBuffer || [];
-        const activeGlyphName =
-            window.glyphCanvas?.outlineEditor?.currentGlyphName ||
-            window.glyphCanvas?.getCurrentGlyphName?.() ||
-            null;
+        const activeGlyphName = this.getActiveEditorGlyphName();
 
         return this.normalizeSubsetGlyphs([
             ...this.getEditingSubsetSnapshot(),
             ...glyphNameBuffer,
             ...(activeGlyphName ? [activeGlyphName] : [])
         ]);
+    }
+
+    getActiveEditorGlyphName(): string | null {
+        const name =
+            window.glyphCanvas?.outlineEditor?.currentGlyphName ||
+            window.glyphCanvas?.getCurrentGlyphName?.() ||
+            null;
+        if (!name || name === 'undefined') {
+            return null;
+        }
+        return name;
+    }
+
+    notifyActiveEditorGlyphRoom(): void {
+        if (typeof window === 'undefined' || !window.dispatchEvent) {
+            return;
+        }
+        window.dispatchEvent(
+            new CustomEvent('activeEditorGlyphChanged', {
+                detail: { glyphName: this.getActiveEditorGlyphName() }
+            })
+        );
     }
 
     getHydratedGlyphNames(): string[] {
@@ -3158,6 +3177,7 @@ class FontManager {
             glyphsToInclude =
                 this.constrainSubsetToHydratedGlyphs(glyphsToInclude);
             this.updateEditingSubsetSnapshot(glyphsToInclude);
+            this.notifyActiveEditorGlyphRoom();
 
             if (startupOpenSessionActive) {
                 const incomingSubsetKey = this.createSubsetKey(glyphsToInclude);
@@ -3766,6 +3786,7 @@ class FontManager {
         if (subsetGlyphs.length > 0) {
             subsetGlyphs = this.constrainSubsetToHydratedGlyphs(subsetGlyphs);
             this.updateEditingSubsetSnapshot(subsetGlyphs);
+            this.notifyActiveEditorGlyphRoom();
         } else if (!isOutlineIncrementalChange) {
             subsetGlyphs = this.constrainSubsetToHydratedGlyphs(
                 window.glyphCanvas?.textRunEditor?.glyphNameBuffer || []

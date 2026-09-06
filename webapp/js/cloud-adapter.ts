@@ -52,6 +52,7 @@ import type { FileInfo, FileSystemAdapter } from './file-system-adapter';
 import type { EncodedShard } from './filesystem-plugins/cloud-document-set';
 import {
     FONT_CORE_DOCUMENT_ID,
+    FONT_DEPS_DOCUMENT_ID,
     glyphIdFromDocumentId
 } from './filesystem-plugins/cloud-document-set';
 import { assertSafeRebaseline } from './filesystem-plugins/cloud-shard-limits';
@@ -75,6 +76,7 @@ const YDOC_SCHEMA_VERSION = 4;
 export const CLOUD_GLYPH_CATCH_UP_MAX_ATTEMPTS = 8;
 export const CLOUD_GLYPH_CATCH_UP_RETRY_MS = 50;
 export const CLOUD_GLYPH_CATCH_UP_CONCURRENCY = 4;
+export const CLOUD_GLYPH_PUBLISH_CONCURRENCY = 2;
 export const CLOUD_PING_INTERVAL_MS = 10_000;
 export const CLOUD_LIVENESS_STALE_MS = 25_000;
 export const CLOUD_RECONNECT_BASE_MS = 1_000;
@@ -734,6 +736,70 @@ export async function catchUpCloudDocument(options: {
         throw lastError;
     }
     return false;
+}
+
+export async function publishCloudDocumentUpdate(options: {
+    token: string;
+    roomUrl: string;
+    websiteBaseUrl: string;
+    assetId: string;
+    documentId: string;
+    update: Uint8Array;
+    collaborationMessage?: CollaborationMessageEnvelope | null;
+    clientId?: string;
+    seq: number;
+    clientTransactionId?: string | null;
+}): Promise<boolean> {
+    if (
+        !options.documentId ||
+        options.documentId === FONT_CORE_DOCUMENT_ID ||
+        options.documentId === FONT_DEPS_DOCUMENT_ID ||
+        !options.update?.length
+    ) {
+        return false;
+    }
+    const liveUrl = normalizeCloudShardLiveHttpUrl(
+        options.roomUrl,
+        options.websiteBaseUrl,
+        options.assetId,
+        options.documentId
+    );
+    const body: Record<string, unknown> = {
+        type: 'update',
+        update: u8ToBase64(options.update),
+        seq: options.seq,
+        clientId: options.clientId || `http:${options.assetId}`
+    };
+    if (options.clientTransactionId) {
+        body.clientTransactionId = options.clientTransactionId;
+    }
+    if (options.collaborationMessage) {
+        body.collaborationMessages = [options.collaborationMessage];
+    }
+    const response = await fetch(liveUrl, {
+        method: 'POST',
+        headers: {
+            'Authorization': `Bearer ${options.token}`,
+            'Accept': 'application/json',
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(body)
+    });
+    if (response.status === 401 || response.status === 403) {
+        throw new Error(
+            `Live glyph publish failed (${response.status}) for ${options.documentId}`
+        );
+    }
+    if (!response.ok) {
+        throw new Error(
+            `Live glyph publish failed (${response.status}) for ${options.documentId}`
+        );
+    }
+    const payload = (await response.json().catch(() => null)) as {
+        ok?: boolean;
+        durable?: boolean;
+    } | null;
+    return payload?.ok === true || payload?.durable === true;
 }
 
 /**

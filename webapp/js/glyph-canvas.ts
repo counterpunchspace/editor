@@ -4810,6 +4810,7 @@ class GlyphCanvas {
                 !this.outlineEditor.isEditingComponent()
             ) {
                 this.outlineEditor.currentGlyphName = this.fontData.glyphName;
+                window.fontManager?.notifyActiveEditorGlyphRoom?.();
                 console.log(
                     '[GlyphCanvas]',
                     'Set currentGlyphName from fontData:',
