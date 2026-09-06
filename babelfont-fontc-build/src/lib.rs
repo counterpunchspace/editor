@@ -3434,6 +3434,22 @@ fn ydoc_layer_json_from_shards(glyph_name: &str, layer_id: &str) -> Option<serde
     Some(ydoc_layer_to_json(layer_id, layer_val, &txn))
 }
 
+fn complete_glyph_order(
+    mut order: Vec<String>,
+    id_by_name: &HashMap<String, String>,
+) -> Vec<String> {
+    let mut seen = HashSet::new();
+    order.retain(|name| seen.insert(name.clone()));
+    let mut remaining_names = id_by_name
+        .keys()
+        .filter(|name| !seen.contains(*name))
+        .cloned()
+        .collect::<Vec<_>>();
+    remaining_names.sort();
+    order.extend(remaining_names);
+    order
+}
+
 fn assembled_babelfont_json() -> Result<serde_json::Value, JsValue> {
     let mut json = {
         let core_guard = Y_DOC.lock().unwrap();
@@ -3468,6 +3484,10 @@ fn assembled_babelfont_json() -> Result<serde_json::Value, JsValue> {
                 .collect()
         });
     let id_by_name = GLYPH_ID_BY_NAME.lock().unwrap();
+    // Sparse core keeps only the opening subset in glyphOrder. Glyph shards
+    // hydrated later must still enter the canonical worker font so overview
+    // outline requests can render them.
+    let order = complete_glyph_order(order, &id_by_name);
     let mut glyphs = Vec::new();
     for name in order {
         let Some(glyph_id) = id_by_name.get(&name) else {
@@ -10165,6 +10185,27 @@ mod tests {
         );
 
         clear_font_cache();
+    }
+
+    #[test]
+    fn complete_glyph_order_appends_sparse_glyph_shards() {
+        let ids = HashMap::from([
+            ("a".to_string(), "id-a".to_string()),
+            ("adieresis".to_string(), "id-adieresis".to_string()),
+            (
+                "adieresis.ss03".to_string(),
+                "id-adieresis-ss03".to_string(),
+            ),
+        ]);
+
+        assert_eq!(
+            complete_glyph_order(vec!["a".to_string()], &ids),
+            vec![
+                "a".to_string(),
+                "adieresis".to_string(),
+                "adieresis.ss03".to_string(),
+            ]
+        );
     }
 
     #[test]

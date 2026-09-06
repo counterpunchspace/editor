@@ -55,6 +55,28 @@ let queuedRenderRequest: {
 let pendingFallbackAttempts = 0;
 const maxFallbackAttempts = 4;
 
+function emitInitialRenderComplete(
+    openSessionId: string,
+    reason: string,
+    glyphCount: number,
+    renderDurationMs: number,
+    totalElapsedMs: number | null,
+    success: boolean
+): void {
+    window.dispatchEvent(
+        new CustomEvent('overviewInitialRenderComplete', {
+            detail: {
+                openSessionId,
+                reason,
+                glyphCount,
+                renderDurationMs,
+                totalElapsedMs,
+                success
+            }
+        })
+    );
+}
+
 function resolveCurrentOverviewLocation() {
     // Prefer StateManager (URL restore source of truth) over live axes. Axes can
     // still hold the font default when a concurrent setFont stomps them after
@@ -151,6 +173,18 @@ function scheduleFallbackRender(sessionId: string | null, delayMs = 1200) {
 
         if (pendingFallbackAttempts >= maxFallbackAttempts) {
             glyphOverviewInstance?.setOutlinePaintAllowed?.(true);
+            emitInitialRenderComplete(
+                sessionId,
+                'fontReady-fallback-exhausted',
+                window.currentFontModel?.glyphs?.length || 0,
+                0,
+                pendingInitialOpenStartedAt !== null
+                    ? performance.now() - pendingInitialOpenStartedAt
+                    : null,
+                false
+            );
+            pendingInitialOpenSession = null;
+            pendingInitialOpenStartedAt = null;
             return;
         }
 
@@ -240,16 +274,13 @@ async function renderOverviewAndEmit(
         glyphOverviewInstance.setOutlinePaintAllowed?.(true);
 
         if (openSessionId) {
-            window.dispatchEvent(
-                new CustomEvent('overviewInitialRenderComplete', {
-                    detail: {
-                        openSessionId,
-                        reason,
-                        glyphCount,
-                        renderDurationMs,
-                        totalElapsedMs
-                    }
-                })
+            emitInitialRenderComplete(
+                openSessionId,
+                reason,
+                glyphCount,
+                renderDurationMs,
+                totalElapsedMs,
+                true
             );
         }
     } catch (error) {

@@ -477,8 +477,10 @@ export class CloudLiveSession {
             this._clearNonCoreRebaselineFlags();
             return;
         }
-        // HTTP hydrate already loaded the sparse subset. Do not HTTP-catch
-        // live glyphs + deps or flip status to "Catching up" on first connect.
+        // HTTP hydration already established the opening snapshot. The shard
+        // sockets still establish their own transport state, but waiting for
+        // their durable-sync signal here turns a delayed live subscription
+        // into a failed otherwise-complete sparse open.
         this._reportedConnected = true;
         this._clearNonCoreRebaselineFlags();
         this._options.onConnectionStatus?.('connected');

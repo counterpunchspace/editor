@@ -5,7 +5,15 @@ function generateStableId(): string {
     ) {
         return crypto.randomUUID();
     }
-    return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(
+        /[xy]/g,
+        (placeholder) => {
+            const value = Math.floor(Math.random() * 16);
+            return (placeholder === 'x' ? value : (value & 0x3) | 0x8).toString(
+                16
+            );
+        }
+    );
 }
 
 export const CLOUD_PLUGIN_OWNED_KEY = 'com.counterpunch.cloud';
@@ -375,6 +383,9 @@ export function buildLeanGlyphCatalog(fontJson: Record<string, unknown>): {
     const codepointIndex: Record<string, string[]> = {};
     for (const glyph of listGlyphRecords(fontJson)) {
         const glyphId = ensureImmutableGlyphId(glyph);
+        if (entries[glyphId]) {
+            throw new Error(`Duplicate immutable glyph id: ${glyphId}`);
+        }
         const name = String(glyph.name || '');
         const codepoints = Array.isArray(glyph.codepoints)
             ? glyph.codepoints.filter(
@@ -433,7 +444,7 @@ export function catalogFromCoreJson(
     const topCatalog = catalogEntriesFromUnknown(
         coreJson[CORE_GLYPH_CATALOG_KEY]
     );
-    if (topCatalog && Object.keys(topCatalog).length) {
+    if (topCatalog) {
         return {
             glyphCatalog: topCatalog,
             codepointIndex: codepointIndexFromUnknown(

@@ -510,7 +510,13 @@ export function mergeFontDepEdges(
     const merged: Record<string, Record<string, FontDepEdgeKind>> = {};
     for (const source of [base, extra]) {
         for (const [glyphId, targets] of Object.entries(source)) {
-            merged[glyphId] = { ...(merged[glyphId] || {}), ...targets };
+            const mergedTargets = (merged[glyphId] ||= {});
+            for (const [targetId, kind] of Object.entries(targets)) {
+                mergedTargets[targetId] = mergeEdgeKind(
+                    mergedTargets[targetId],
+                    kind
+                );
+            }
         }
     }
     return merged;
@@ -670,6 +676,21 @@ function forwardAdjacencyOfKind(
     return adjacency;
 }
 
+function mergeAdjacency(
+    left: Record<string, string[]>,
+    right: Record<string, string[]>
+): Record<string, string[]> {
+    const merged: Record<string, string[]> = {};
+    for (const source of [left, right]) {
+        for (const [glyphId, targets] of Object.entries(source)) {
+            merged[glyphId] = [
+                ...new Set([...(merged[glyphId] || []), ...targets])
+            ];
+        }
+    }
+    return merged;
+}
+
 function closeSet(
     seeds: string[],
     adjacency: Record<string, string[] | Record<string, FontDepEdgeKind>>
@@ -803,9 +824,19 @@ export function computeSparseHydrationPartition(options: {
         [...metricsInheritors].filter((id) => !working.has(id)),
         forwardAdjacencyOfKind(edges, 'component')
     );
-    const hidden = [
+    const hiddenSeeds = [
         ...new Set([...metricsPool, ...metricsInheritors, ...inheritorParts])
     ].filter((id) => !working.has(id));
+    // Hidden support still needs all of its own forward prerequisites. Keep it
+    // hidden unless it was independently promoted into the working set.
+    const hiddenDependencies = closeSet(
+        hiddenSeeds,
+        mergeAdjacency(
+            forwardAdjacencyOfKind(edges, 'component'),
+            forwardAdjacencyOfKind(edges, 'metrics-key')
+        )
+    );
+    const hidden = [...hiddenDependencies].filter((id) => !working.has(id));
     const workingIds = [...working];
     return {
         workingIds,
@@ -880,7 +911,7 @@ export function writeCompleteFontDepsIfLoaded(
 ): boolean {
     const glyphs = listGlyphRecords(fontJson);
     const owned = catalogFromCoreJson(fontJson);
-    if (!owned || !glyphs.length) {
+    if (!owned) {
         return false;
     }
     const liveIds = liveCatalogGlyphIds(owned.glyphCatalog);
@@ -1302,14 +1333,18 @@ export function afdkoFeatureCodeFromFontJson(
 const LAYOUT_CLOSE_CACHE_LIMIT = 32;
 const layoutCloseCache = new Map<string, string[]>();
 
-function hashLayoutCloseKey(featureCode: string, seedNames: string[]): string {
-    let hash = 2166136261;
-    const key = `${featureCode.length}:${featureCode}:${seedNames.slice().sort().join('\0')}`;
-    for (let i = 0; i < key.length; i++) {
-        hash ^= key.charCodeAt(i);
-        hash = Math.imul(hash, 16777619);
-    }
-    return (hash >>> 0).toString(36);
+function layoutCloseCacheKey(
+    featureCode: string,
+    catalogNames: string[],
+    seedNames: string[]
+): string {
+    // Cache values are catalog-independent glyph names. Keep the complete
+    // lookup key so a hash collision cannot return another font's closure.
+    return JSON.stringify([
+        featureCode,
+        catalogNames.slice().sort(),
+        seedNames.slice().sort()
+    ]);
 }
 
 export function layoutGlyphIdsFromFeatureCode(options: {
@@ -1337,12 +1372,19 @@ export function layoutGlyphIdsFromFeatureCode(options: {
 
     const canCache = options.closeLayoutFromFea === undefined;
     const cacheKey = canCache
-        ? hashLayoutCloseKey(options.featureCode, seedNameList)
+        ? layoutCloseCacheKey(
+              options.featureCode,
+              [...nameToId.keys()],
+              seedNameList
+          )
         : '';
     if (canCache) {
         const hit = layoutCloseCache.get(cacheKey);
         if (hit) {
-            return hit.slice();
+            const ids = hit
+                .map((name) => nameToId.get(name))
+                .filter((id): id is string => Boolean(id));
+            return ids.filter((id) => !options.seedIds.includes(id));
         }
     }
 
@@ -1371,7 +1413,7 @@ export function layoutGlyphIdsFromFeatureCode(options: {
         }
     }
     if (canCache) {
-        layoutCloseCache.set(cacheKey, ids);
+        layoutCloseCache.set(cacheKey, [...closedNames]);
         if (layoutCloseCache.size > LAYOUT_CLOSE_CACHE_LIMIT) {
             const oldest = layoutCloseCache.keys().next().value;
             if (oldest !== undefined) {
@@ -1398,16 +1440,73 @@ export function seedGlyphIdsFromText(
         return [];
     }
     const liveIds = new Set(liveCatalogGlyphIds(owned.glyphCatalog));
+    const nameToId = new Map(
+        Object.values(owned.glyphCatalog)
+            .filter((entry) => entry.deleted !== true && entry.name)
+            .map((entry) => [entry.name, entry.glyphId])
+    );
     const ids: string[] = [];
     const seen = new Set<string>();
-    for (const codepoint of codepointsFromText(text)) {
-        const members = owned.codepointIndex[String(codepoint)] || [];
-        for (const glyphId of members) {
-            if (!liveIds.has(glyphId) || seen.has(glyphId)) {
-                continue;
-            }
+    const addGlyph = (glyphId: string) => {
+        if (liveIds.has(glyphId) && !seen.has(glyphId)) {
             seen.add(glyphId);
             ids.push(glyphId);
+        }
+    };
+    const addCodepoint = (codepoint: number) => {
+        const members = owned.codepointIndex[String(codepoint)] || [];
+        for (const glyphId of members) {
+            addGlyph(glyphId);
+        }
+    };
+    for (const normalized of [
+        text,
+        text.normalize('NFC'),
+        text.normalize('NFD')
+    ]) {
+        let index = 0;
+        while (index < normalized.length) {
+            if (
+                normalized[index] === '/' &&
+                index + 1 < normalized.length &&
+                normalized[index + 1] === '/'
+            ) {
+                addCodepoint('/'.codePointAt(0)!);
+                index += 2;
+                continue;
+            }
+            if (normalized[index] === '/') {
+                let cursor = index + 1;
+                while (
+                    cursor < normalized.length &&
+                    normalized[cursor] !== '/' &&
+                    !/\s/.test(normalized[cursor])
+                ) {
+                    cursor += 1;
+                }
+                const tokenName = normalized.slice(index + 1, cursor);
+                const terminator = normalized[cursor] || '';
+                if (
+                    tokenName &&
+                    (terminator === '/' ||
+                        !terminator ||
+                        /\s/.test(terminator)) &&
+                    nameToId.has(tokenName)
+                ) {
+                    addGlyph(nameToId.get(tokenName)!);
+                    index =
+                        cursor +
+                        (terminator === '/' || /\s/.test(terminator) ? 1 : 0);
+                    continue;
+                }
+            }
+            const codepoint = normalized.codePointAt(index);
+            if (codepoint === undefined) {
+                index += 1;
+                continue;
+            }
+            addCodepoint(codepoint);
+            index += codepoint > 0xffff ? 2 : 1;
         }
     }
     return ids;
@@ -1600,6 +1699,15 @@ export function depsNeedUpdate(path: Array<string | number>): boolean {
         return true;
     }
     const shapesAt = path.lastIndexOf('shapes');
+    if (
+        changedField === 'shapes' ||
+        changedField === 'format_specific' ||
+        path.length === 2 ||
+        (path.lastIndexOf('layers') >= 0 &&
+            path.length === path.lastIndexOf('layers') + 2)
+    ) {
+        return true;
+    }
     return (
         shapesAt >= 0 &&
         path.length === shapesAt + 2 &&

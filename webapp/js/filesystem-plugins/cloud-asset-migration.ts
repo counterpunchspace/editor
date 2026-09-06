@@ -10,7 +10,10 @@ import {
     GLYPH_SYNC_REVISION_KEY,
     glyphDocumentId
 } from './cloud-document-set';
-import { readFontDepsIndex } from './cloud-font-deps';
+import {
+    readFontDepsIndex,
+    writeCompleteFontDepsIfLoaded
+} from './cloud-font-deps';
 import { yDocToJson } from '../change-bridge-ydoc';
 
 export async function hashShardBytes(bytes: Uint8Array): Promise<string> {
@@ -77,7 +80,7 @@ export function revisionCoverageFromDocumentSet(
         const core = coreRevisions[glyphId];
         const glyph = glyphSyncRevisions[glyphId];
         const deps = depsRevisions[glyphId];
-        if (!core || !glyph) {
+        if (!core || !glyph || !deps) {
             missing.push(glyphId);
             continue;
         }
@@ -102,6 +105,16 @@ export function ensureMigrationRevisionTokens(
     const catalog =
         catalogFromCoreJson(documentSet.assembleFontJson())?.glyphCatalog || {};
     const liveGlyphIds = liveCatalogGlyphIds(catalog);
+    if (
+        !writeCompleteFontDepsIfLoaded(
+            documentSet.depsDoc.getMap('deps'),
+            documentSet.assembleFontJson()
+        )
+    ) {
+        throw new Error(
+            'Cannot certify migration dependencies before every live glyph is loaded'
+        );
+    }
     documentSet.coreDoc.transact(() => {
         const revisions = documentSet.coreDoc.getMap(GLYPH_REVISIONS_KEY);
         for (const glyphId of liveGlyphIds) {
@@ -119,9 +132,10 @@ export function ensureMigrationRevisionTokens(
             });
             const depsMap = documentSet.depsDoc.getMap('deps');
             const sourceRevision = depsMap.get('sourceRevision');
-            if (sourceRevision instanceof Y.Map) {
-                sourceRevision.set(glyphId, token);
+            if (!(sourceRevision instanceof Y.Map)) {
+                throw new Error('Migration dependency revisions are missing');
             }
+            sourceRevision.set(glyphId, token);
         }
     });
 }

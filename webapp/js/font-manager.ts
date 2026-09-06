@@ -2691,7 +2691,7 @@ class FontManager {
             window.glyphCanvas?.getCurrentGlyphName?.() ||
             null;
         const text = this.resolveEditingTextForCompile();
-        const coverageKey = `${text}\0${currentGlyphName || ''}`;
+        const coverageKey = `${this.currentFont?.changeVersion ?? 0}\0${text}\0${currentGlyphName || ''}`;
         if (this.coveredSparseHydrationKey === coverageKey) {
             return;
         }
@@ -3260,7 +3260,7 @@ class FontManager {
             this.notifyActiveEditorGlyphRoom();
 
             if (startupOpenSessionActive) {
-                const incomingSubsetKey = this.createSubsetKey(glyphsToInclude);
+                const incomingSubsetKey = `${this.currentFont.compileRequestVersion}\0${this.createSubsetKey(glyphsToInclude)}`;
                 if (
                     startupOpenSessionEditingCompileCount >= 1 &&
                     incomingSubsetKey === startupCompiledSubsetKey
@@ -6607,6 +6607,36 @@ window.addEventListener('fontLoaded', async (event: Event) => {
         emitOpenLifecycle(openSessionId, 'fontReadyDispatched');
     };
 
+    const waitForInitialOverviewRender = (openSessionId: string) => {
+        if (
+            !activeOpenSessionDetail ||
+            activeOpenSessionDetail.openSessionId !== openSessionId ||
+            !(window as Window & { glyphOverviewInstance?: unknown })
+                .glyphOverviewInstance
+        ) {
+            return Promise.resolve();
+        }
+        return new Promise<void>((resolve) => {
+            const onOverviewRendered = (event: Event) => {
+                const detail = (
+                    event as CustomEvent<{ openSessionId?: string }>
+                ).detail;
+                if (detail?.openSessionId !== openSessionId) {
+                    return;
+                }
+                window.removeEventListener(
+                    'overviewInitialRenderComplete',
+                    onOverviewRendered
+                );
+                resolve();
+            };
+            window.addEventListener(
+                'overviewInitialRenderComplete',
+                onOverviewRendered
+            );
+        });
+    };
+
     const releaseStartupInteractivity = (
         openSessionId: string,
         reason: string
@@ -6649,18 +6679,21 @@ window.addEventListener('fontLoaded', async (event: Event) => {
             }
 
             emitOpenLifecycle(openSessionId, 'startupStateReady');
-            releaseStartupGates(openSessionId, 'canvas+state-ready');
+            await releaseStartupGates(openSessionId, 'canvas+state-ready');
         } catch (error) {
             console.warn(
                 '[FontManager]',
                 'Startup state restore failed before fontReady; continuing:',
                 error
             );
-            releaseStartupGates(openSessionId, 'canvas+state-error');
+            await releaseStartupGates(openSessionId, 'canvas+state-error');
         }
     };
 
-    const releaseStartupGates = (openSessionId: string, reason: string) => {
+    const releaseStartupGates = async (
+        openSessionId: string,
+        reason: string
+    ) => {
         if (startupReleased) {
             return;
         }
@@ -6697,10 +6730,11 @@ window.addEventListener('fontLoaded', async (event: Event) => {
             startupInteractivityReleased = true;
         }
 
-        endLoadingCursor();
-
-        timelineSpanEnd(openSessionSpanId);
+        const overviewRender = waitForInitialOverviewRender(openSessionId);
         dispatchFontReadyIfNeeded(openSessionId);
+        await overviewRender;
+        endLoadingCursor();
+        timelineSpanEnd(openSessionSpanId);
     };
 
     try {
@@ -6816,7 +6850,7 @@ window.addEventListener('fontLoaded', async (event: Event) => {
                         );
                     })
                     .finally(() => {
-                        releaseStartupGates(
+                        void releaseStartupGates(
                             openSessionId,
                             'startup-ready-timeout'
                         );
@@ -6824,10 +6858,10 @@ window.addEventListener('fontLoaded', async (event: Event) => {
                 return;
             }
 
-            releaseStartupGates(openSessionId, 'startup-ready-timeout');
+            void releaseStartupGates(openSessionId, 'startup-ready-timeout');
         }, 8000);
     } catch (error) {
-        releaseStartupGates('open-unknown', 'error');
+        void releaseStartupGates('open-unknown', 'error');
         timelineMark('font.openSession.error');
 
         console.error('[FontManager]', 'Failed to initialize font manager:');

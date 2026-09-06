@@ -11462,7 +11462,7 @@ class GlyphCanvas {
         }
 
         this.textChangeDebounceTimer = setTimeout(() => {
-            if (fontManager && fontManager.isReady()) {
+            if (fontManager && fontManager.currentFont) {
                 const textBuffer = this.textRunEditor!.textBuffer;
                 if (!fontManager.needsEditingCompileForText(textBuffer)) {
                     return;

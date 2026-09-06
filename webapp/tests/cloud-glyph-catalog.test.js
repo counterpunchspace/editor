@@ -98,6 +98,17 @@ describe('cloud glyph catalog', () => {
         );
     });
 
+    it('rejects duplicate immutable glyph ids instead of overwriting a shard', () => {
+        expect(() =>
+            buildLeanGlyphCatalog({
+                glyphs: [
+                    { id: 'duplicate', name: 'A', layers: [] },
+                    { id: 'duplicate', name: 'B', layers: [] }
+                ]
+            })
+        ).toThrow('Duplicate immutable glyph id: duplicate');
+    });
+
     it('records component dependencies by glyph id', () => {
         const { entries } = buildLeanGlyphCatalog(font);
         const deps = buildFontDepsIndex(font);
@@ -2826,6 +2837,20 @@ describe('catalog tombstones and published hydrate pair', () => {
         expect(result.attempts).toBe(2);
     });
 
+    it('rejects a missing or mismatched published core/deps pair', async () => {
+        await expect(
+            hydrateCoreDepsToPublishedPair({
+                expected: { coreRevision: 'core', depsRevision: 'deps' },
+                hash: async () => 'wrong',
+                fetchCoreDeps: async () => ({
+                    core: new Uint8Array([1]),
+                    deps: null
+                }),
+                maxAttempts: 1
+            })
+        ).rejects.toThrow('missing published shard');
+    });
+
     it('stamps matching revision tokens across core, deps, and glyph shards', () => {
         const migrated = new CloudDocumentSet();
         migrated.initFromFontJson({
@@ -2837,5 +2862,86 @@ describe('catalog tombstones and published hydrate pair', () => {
         expect(coverage.ok).toBe(true);
         expect(coverage.liveGlyphIds).toEqual(['id-a']);
         migrated.destroy();
+    });
+});
+
+describe('sparse hydration integrity regressions', () => {
+    it('resolves named glyph tokens with the same seed parser used by open and hydration', () => {
+        const fontJson = {
+            glyphs: [
+                { id: 'id-a', name: 'a', codepoints: [97], layers: [] },
+                { id: 'id-ornament', name: 'ornament', layers: [] }
+            ]
+        };
+        applyCloudOwnedData(fontJson);
+
+        expect(seedGlyphIdsFromText(fontJson, '/ornament')).toEqual([
+            'id-ornament'
+        ]);
+        expect(seedGlyphIdsFromText(fontJson, '//a')).toEqual(['id-a']);
+    });
+
+    it('preserves both edge semantics when catalog components supplement deps', () => {
+        const partition = computeSparseHydrationPartition({
+            seedIds: ['id-alt'],
+            edges: {
+                'id-alt': { 'id-stem': 'both' }
+            },
+            catalog: [
+                {
+                    glyphId: 'id-alt',
+                    name: 'a.alt',
+                    componentIds: ['id-stem']
+                },
+                { glyphId: 'id-stem', name: 'stem' }
+            ]
+        });
+
+        expect(partition.workingIds).toEqual(['id-alt']);
+        expect(partition.hiddenIds).toEqual(['id-stem']);
+    });
+
+    it('closes hidden metrics support over component prerequisites', () => {
+        const partition = computeSparseHydrationPartition({
+            seedIds: ['id-a'],
+            edges: {
+                'id-a': { 'id-n': 'metrics-key' },
+                'id-n': { 'id-stem': 'component' }
+            },
+            catalog: [
+                { glyphId: 'id-a', name: 'a' },
+                { glyphId: 'id-n', name: 'n' },
+                { glyphId: 'id-stem', name: 'stem' }
+            ]
+        });
+
+        expect(partition.workingIds).toEqual(['id-a']);
+        expect(partition.hiddenIds).toEqual(
+            expect.arrayContaining(['id-n', 'id-stem'])
+        );
+    });
+
+    it('recognizes dependency-bearing structural snapshots', () => {
+        expect(depsNeedUpdate(['glyphs', 'id-a'])).toBe(true);
+        expect(depsNeedUpdate(['glyphs', 'id-a', 'layers', 'L1'])).toBe(true);
+        expect(
+            depsNeedUpdate(['glyphs', 'id-a', 'layers', 'L1', 'shapes'])
+        ).toBe(true);
+        expect(
+            depsNeedUpdate(['glyphs', 'id-a', 'layers', 'L1', 'paths'])
+        ).toBe(false);
+    });
+
+    it('certifies an empty but complete catalog dependency projection', () => {
+        const documentSet = new CloudDocumentSet();
+        documentSet.initFromFontJson({ glyphs: [] });
+
+        expect(
+            writeCompleteFontDepsIfLoaded(
+                documentSet.depsDoc.getMap('deps'),
+                documentSet.assembleFontJson()
+            )
+        ).toBe(true);
+        documentSet.destroy();
     });
 });

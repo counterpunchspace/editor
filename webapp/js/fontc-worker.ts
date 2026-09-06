@@ -48,6 +48,7 @@ import {
     timelineSpanStart
 } from './perf-timeline';
 import { buildApplyYjsUpdateMetadataJson } from './apply-yjs-update-metadata';
+// Keep the WASM import static so development rebuilds re-emit its worker chunk.
 import { ensureCoreUpdateHasGlyphsMap } from './change-bridge-ydoc';
 
 type RustYjsBatchResult = {

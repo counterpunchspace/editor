@@ -25,6 +25,16 @@ The policy is implemented primarily in these files:
 
 When these files disagree with this document, treat that as a bug and reconcile them immediately.
 
+## Sparse Worker Shards
+
+Sparse cloud core may retain only the opening subset in `glyphOrder`, while
+later glyph shards are authoritative and resident in the worker Y.Doc.
+`assembled_babelfont_json()` MUST preserve the declared glyph order and append
+every known glyph-shard name deterministically before rebuilding Rust caches.
+Otherwise a hydrated glyph can exist in the bridge and overview model but be
+absent from worker outline requests. This is bootstrap/reconciliation behavior,
+not a steady-state full-document JSON repair path.
+
 ## Graph Chokepoint Enforcement
 
 CI refreshes the GitNexus graph and runs `npm run check:graph-chokepoints` before

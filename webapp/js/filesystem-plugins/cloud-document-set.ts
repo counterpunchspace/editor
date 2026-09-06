@@ -9,8 +9,6 @@ import {
 } from './cloud-glyph-catalog';
 import {
     buildFontDepsIndex,
-    expandSparsePlanWithLoadedComponents,
-    mergeFontDepEdges,
     planSparseHydration,
     readFontDepsIndex,
     writeFontDepsYMap
@@ -93,6 +91,8 @@ export type SparseHydrationSession = {
     applyGlyphUpdate: (documentId: string, bytes: Uint8Array) => void;
     depsMap: () => Y.Map<unknown>;
     glyphRevision: (glyphId: string) => unknown;
+    /** False after the active asset or bridge has been replaced. */
+    isCurrent?: () => boolean;
     /** In-memory working-set remember. Must not write font-deps. */
     persistWorkingIds?: (workingIds: string[]) => void;
     afterFetchedGlyphs?: (glyphIds: string[]) => void;
@@ -174,12 +174,32 @@ export async function hydrateSparseGlyphsToFixedPoint(options: {
     // Do not seed from shared font-deps `working`. That map is leftover from
     // other sessions / full opens (A–Z, digits) and is not the input string.
     const previousWorkingIds = options.previousWorkingIds ?? [];
-    let publishedEdges = readFontDepsIndex(depsMap).edges;
     const planFromLiveEdges = () => {
-        publishedEdges = mergeFontDepEdges(
-            publishedEdges,
-            readFontDepsIndex(depsMap).edges
+        if (session.isCurrent?.() === false) {
+            throw new Error('Sparse hydration session changed');
+        }
+        const fontJson = session.assembleFontJson();
+        const loadedGlyphs = listGlyphRecords(fontJson).filter((glyph) =>
+            loadedIds.has(ensureImmutableGlyphId(glyph))
         );
+        const catalogGlyphs = hydrationCatalog.map((entry) => ({
+            id: entry.glyphId,
+            name: entry.name,
+            layers: []
+        }));
+        const bodyEdges = buildFontDepsIndex({
+            glyphs: [...catalogGlyphs, ...loadedGlyphs]
+        }).edges;
+        const publishedEdges = readFontDepsIndex(depsMap).edges;
+        // Loaded glyph bodies are authoritative. Replace only their source rows
+        // locally so stale projection entries cannot complete a sparse open.
+        for (const glyph of loadedGlyphs) {
+            const glyphId = ensureImmutableGlyphId(glyph);
+            delete publishedEdges[glyphId];
+            if (bodyEdges[glyphId]) {
+                publishedEdges[glyphId] = bodyEdges[glyphId];
+            }
+        }
         return planSparseHydration({
             catalogIds: liveCatalogIds,
             seedIds,
@@ -204,6 +224,9 @@ export async function hydrateSparseGlyphsToFixedPoint(options: {
         fetchPasses.push(missing.slice());
         const documentIds = missing.map(glyphDocumentId);
         const fetched = await fetchGlyphs(documentIds);
+        if (session.isCurrent?.() === false) {
+            throw new Error('Sparse hydration session changed');
+        }
         if (options.requireFetchedGlyphs) {
             const missingPublished = documentIds.filter(
                 (documentId) => !fetched.get(documentId)?.byteLength
@@ -225,14 +248,22 @@ export async function hydrateSparseGlyphsToFixedPoint(options: {
             loadedIds.add(glyphId);
             appliedThisPass.push(glyphId);
         }
+        if (!appliedThisPass.length) {
+            throw new Error(
+                `Sparse glyph hydration made no progress: ${documentIds.join(', ')}`
+            );
+        }
         appliedIds.push(...appliedThisPass);
-        plan = expandSparsePlanWithLoadedComponents({
-            plan: planFromLiveEdges(),
-            glyphs: listGlyphRecords(session.assembleFontJson()),
-            catalog: hydrationCatalog,
-            catalogIds: liveCatalogIds,
-            loadedIds
-        });
+        plan = planFromLiveEdges();
+    }
+
+    if (plan.missingIds.length) {
+        throw new Error(
+            `Sparse glyph hydration incomplete: ${plan.missingIds.join(', ')}`
+        );
+    }
+    if (session.isCurrent?.() === false) {
+        throw new Error('Sparse hydration session changed');
     }
 
     if (appliedIds.length) {
@@ -280,7 +311,7 @@ export async function hydrateCoreDepsToPublishedPair(options: {
         const coreRevision = await options.hash(fetched.core);
         const depsRevision = fetched.deps?.byteLength
             ? await options.hash(fetched.deps)
-            : options.expected.depsRevision;
+            : null;
         if (
             coreRevision === options.expected.coreRevision &&
             depsRevision === options.expected.depsRevision
@@ -292,10 +323,12 @@ export async function hydrateCoreDepsToPublishedPair(options: {
             };
         }
     }
-    if (!lastCore?.byteLength) {
-        throw new Error('core/deps hydrate failed: empty core shard');
+    if (!lastCore?.byteLength || !lastDeps?.byteLength) {
+        throw new Error('core/deps hydrate failed: missing published shard');
     }
-    return { core: lastCore, deps: lastDeps, attempts: maxAttempts };
+    throw new Error(
+        'core/deps hydrate failed: published revision pair did not match'
+    );
 }
 
 export type EncodedShard = {
