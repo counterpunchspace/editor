@@ -21,6 +21,7 @@ export type GlyphCatalogEntry = {
     exported?: boolean;
     deleted?: boolean;
     generation: number;
+    componentIds?: string[];
 };
 
 export type CloudOwnedFontData = {
@@ -80,6 +81,81 @@ function codepointsFromUnknown(value: unknown): number[] {
         .filter((codepoint) => Number.isFinite(codepoint));
 }
 
+function stringIdsFromUnknown(value: unknown): string[] {
+    if (!Array.isArray(value)) {
+        return [];
+    }
+    const ids: string[] = [];
+    const seen = new Set<string>();
+    for (const entry of value) {
+        if (typeof entry !== 'string' || !entry || seen.has(entry)) {
+            continue;
+        }
+        seen.add(entry);
+        ids.push(entry);
+    }
+    return ids;
+}
+
+function collectGlyphComponentNames(glyph: Record<string, unknown>): string[] {
+    const refs: string[] = [];
+    const visitShape = (shape: unknown) => {
+        const shapeRecord = asRecord(shape);
+        if (!shapeRecord) {
+            return;
+        }
+        const nested = asRecord(shapeRecord.Component);
+        const data = asRecord(shapeRecord.data);
+        const reference =
+            (typeof shapeRecord.reference === 'string' &&
+                shapeRecord.reference) ||
+            (typeof nested?.reference === 'string' && nested.reference) ||
+            (typeof data?.reference === 'string' && data.reference) ||
+            '';
+        if (reference) {
+            refs.push(reference);
+        }
+        const nestedShapes = Array.isArray(shapeRecord.shapes)
+            ? shapeRecord.shapes
+            : [];
+        for (const child of nestedShapes) {
+            visitShape(child);
+        }
+    };
+    const layers = Array.isArray(glyph.layers) ? glyph.layers : [];
+    for (const layer of layers) {
+        const layerRecord = asRecord(layer);
+        if (!layerRecord) {
+            continue;
+        }
+        const shapes = Array.isArray(layerRecord.shapes)
+            ? layerRecord.shapes
+            : [];
+        for (const shape of shapes) {
+            visitShape(shape);
+        }
+    }
+    return refs;
+}
+
+function componentIdsForGlyph(
+    glyph: Record<string, unknown>,
+    idByName: Map<string, string>
+): string[] | undefined {
+    const sourceId = ensureImmutableGlyphId(glyph);
+    const ids: string[] = [];
+    const seen = new Set<string>();
+    for (const name of collectGlyphComponentNames(glyph)) {
+        const id = idByName.get(name);
+        if (!id || id === sourceId || seen.has(id)) {
+            continue;
+        }
+        seen.add(id);
+        ids.push(id);
+    }
+    return ids.length ? ids : undefined;
+}
+
 function catalogEntriesFromUnknown(
     value: unknown
 ): Record<string, GlyphCatalogEntry> | null {
@@ -112,6 +188,10 @@ function catalogEntriesFromUnknown(
                 ? Number(nested.generation)
                 : 0
         };
+        const componentIds = stringIdsFromUnknown(nested.componentIds);
+        if (componentIds.length) {
+            entries[id].componentIds = componentIds;
+        }
     }
     return entries;
 }
@@ -238,6 +318,17 @@ export function patchCloudOwnedGlyph(
             ? (previous.generation || 0) + 1
             : previous?.generation || 0
     };
+    const idByName = new Map<string, string>();
+    for (const existing of Object.values(glyphCatalog)) {
+        if (existing.name && existing.deleted !== true) {
+            idByName.set(existing.name, existing.glyphId);
+        }
+    }
+    idByName.set(entry.name, glyphId);
+    const componentIds = componentIdsForGlyph(glyph, idByName);
+    if (componentIds) {
+        entry.componentIds = componentIds;
+    }
     glyphCatalog[glyphId] = entry;
     for (const codepoint of entry.codepoints) {
         const key = String(codepoint);
@@ -289,6 +380,23 @@ export function buildLeanGlyphCatalog(fontJson: Record<string, unknown>): {
             if (!codepointIndex[key].includes(glyphId)) {
                 codepointIndex[key].push(glyphId);
             }
+        }
+    }
+    const idByName = new Map<string, string>();
+    for (const entry of Object.values(entries)) {
+        if (entry.name && entry.deleted !== true) {
+            idByName.set(entry.name, entry.glyphId);
+        }
+    }
+    for (const glyph of listGlyphRecords(fontJson)) {
+        const glyphId = ensureImmutableGlyphId(glyph);
+        const entry = entries[glyphId];
+        if (!entry || entry.deleted === true) {
+            continue;
+        }
+        const componentIds = componentIdsForGlyph(glyph, idByName);
+        if (componentIds) {
+            entry.componentIds = componentIds;
         }
     }
     return { entries, codepointIndex };

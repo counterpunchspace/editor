@@ -42,6 +42,7 @@ import {
     stripOwnedFontData
 } from '../cloud-glyph-catalog';
 import {
+    catalogEntriesForDepsParse,
     depsNeedUpdate,
     planSparseHydration,
     readFontDepsIndex,
@@ -348,15 +349,8 @@ function glyphIdsFromCoreJson(coreJson: Record<string, unknown>): string[] {
 
 function catalogEntriesFromCoreJson(
     coreJson: Record<string, unknown>
-): Array<{ glyphId: string; name: string }> {
-    const owned = catalogFromCoreJson(coreJson);
-    if (!owned) {
-        return [];
-    }
-    return Object.values(owned.glyphCatalog).map((entry) => ({
-        glyphId: entry.glyphId,
-        name: entry.name
-    }));
+): Array<{ glyphId: string; name: string; componentIds?: string[] }> {
+    return catalogEntriesForDepsParse(coreJson);
 }
 
 function glyphDocumentIdsFromCoreJson(
@@ -1960,7 +1954,10 @@ export class CloudPlugin extends FilesystemPlugin {
         );
         const catalogEntries = catalog.map((entry) => ({
             glyphId: entry.glyphId,
-            name: entry.name
+            name: entry.name,
+            ...(Array.isArray(entry.componentIds) && entry.componentIds.length
+                ? { componentIds: entry.componentIds }
+                : {})
         }));
         const catalogIds = liveCatalogGlyphIds(owned.glyphCatalog);
         const idToName = new Map(

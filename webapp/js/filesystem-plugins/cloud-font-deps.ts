@@ -175,7 +175,7 @@ function isFiniteNumberText(value: string): boolean {
 
 export function catalogEntriesForDepsParse(
     fontJson: Record<string, unknown>
-): Array<{ glyphId: string; name: string }> {
+): Array<{ glyphId: string; name: string; componentIds?: string[] }> {
     const owned = catalogFromCoreJson(fontJson);
     if (owned) {
         return Object.values(owned.glyphCatalog)
@@ -187,7 +187,11 @@ export function catalogEntriesForDepsParse(
             )
             .map((entry) => ({
                 glyphId: entry.glyphId,
-                name: entry.name
+                name: entry.name,
+                ...(Array.isArray(entry.componentIds) &&
+                entry.componentIds.length
+                    ? { componentIds: entry.componentIds }
+                    : {})
             }));
     }
     return listGlyphRecords(fontJson)
@@ -420,19 +424,14 @@ export function closeReverseComponentNamesFromDeps(options: {
     if (!seedIds.length) {
         return [];
     }
-    const working = closeSet(
-        seedIds,
-        invertForwardEdges(options.edges, 'component')
-    );
+    const edges = mergeHydrationEdges(options.edges, options.catalog);
+    const working = closeSet(seedIds, invertForwardEdges(edges, 'component'));
     const bases = encodedBaseGlyphIds({
         seedIds,
-        edges: options.edges,
+        edges,
         catalog: options.catalog
     });
-    const dependents = closeSet(
-        bases,
-        invertForwardEdges(options.edges, 'component')
-    );
+    const dependents = closeSet(bases, invertForwardEdges(edges, 'component'));
     return [...new Set([...working, ...dependents])]
         .map((id) => idToName.get(id))
         .filter((name): name is string => typeof name === 'string')
@@ -532,6 +531,123 @@ function componentTargetIds(
     return Object.entries(targets)
         .filter(([, kind]) => kind === 'component' || kind === 'both')
         .map(([targetId]) => targetId);
+}
+
+type HydrationCatalogEntry = {
+    glyphId: string;
+    name: string;
+    componentIds?: string[];
+};
+
+function remainderComponentId(
+    remainder: string,
+    idByName: Map<string, string>
+): string | undefined {
+    if (idByName.has(remainder)) {
+        return idByName.get(remainder);
+    }
+    if (idByName.has(`${remainder}comb`)) {
+        return idByName.get(`${remainder}comb`);
+    }
+    if (remainder.endsWith('comb') && idByName.has(remainder)) {
+        return idByName.get(remainder);
+    }
+    return undefined;
+}
+
+function isImpliedComponentRemainder(
+    remainder: string,
+    idByName: Map<string, string>
+): boolean {
+    if (!remainder || remainder.startsWith('.')) {
+        return false;
+    }
+    return Boolean(remainderComponentId(remainder, idByName));
+}
+
+function componentEdgesFromCatalogIds(
+    catalog: HydrationCatalogEntry[]
+): Record<string, Record<string, FontDepEdgeKind>> {
+    const edges: Record<string, Record<string, FontDepEdgeKind>> = {};
+    for (const entry of catalog) {
+        if (!Array.isArray(entry.componentIds) || !entry.componentIds.length) {
+            continue;
+        }
+        const targets: Record<string, FontDepEdgeKind> = {};
+        for (const targetId of entry.componentIds) {
+            if (targetId && targetId !== entry.glyphId) {
+                targets[targetId] = 'component';
+            }
+        }
+        if (Object.keys(targets).length) {
+            edges[entry.glyphId] = targets;
+        }
+    }
+    return edges;
+}
+
+/**
+ * When catalog/deps lack component rows, infer composites from names:
+ * `adieresis` → `a` + `dieresiscomb`, `ae` → `a` + `e`. `alef` is not a
+ * Latin `a` composite because `lef` is not a catalog glyph.
+ */
+function impliedComponentEdgesFromCatalogNames(
+    catalog: HydrationCatalogEntry[]
+): Record<string, Record<string, FontDepEdgeKind>> {
+    const live = catalog.filter((entry) => entry.glyphId && entry.name);
+    const idByName = new Map(live.map((entry) => [entry.name, entry.glyphId]));
+    const edges: Record<string, Record<string, FontDepEdgeKind>> = {};
+    for (const composite of live) {
+        if (isLikelyMarkGlyphName(composite.name)) {
+            continue;
+        }
+        let bestBase: HydrationCatalogEntry | null = null;
+        for (const base of live) {
+            if (
+                base.glyphId === composite.glyphId ||
+                isLikelyMarkGlyphName(base.name) ||
+                !composite.name.startsWith(base.name)
+            ) {
+                continue;
+            }
+            const remainder = composite.name.slice(base.name.length);
+            if (
+                !remainder ||
+                !isImpliedComponentRemainder(remainder, idByName)
+            ) {
+                continue;
+            }
+            if (!bestBase || base.name.length > bestBase.name.length) {
+                bestBase = base;
+            }
+        }
+        if (!bestBase) {
+            continue;
+        }
+        const targets: Record<string, FontDepEdgeKind> = {
+            [bestBase.glyphId]: 'component'
+        };
+        const remainderId = remainderComponentId(
+            composite.name.slice(bestBase.name.length),
+            idByName
+        );
+        if (remainderId && remainderId !== composite.glyphId) {
+            targets[remainderId] = 'component';
+        }
+        edges[composite.glyphId] = targets;
+    }
+    return edges;
+}
+
+function mergeHydrationEdges(
+    depsEdges: Record<string, Record<string, FontDepEdgeKind>>,
+    catalog?: HydrationCatalogEntry[]
+): Record<string, Record<string, FontDepEdgeKind>> {
+    const entries = catalog || [];
+    return mergeFontDepEdges(
+        mergeFontDepEdges(depsEdges, componentEdgesFromCatalogIds(entries)),
+        impliedComponentEdgesFromCatalogNames(entries)
+    );
 }
 
 /**
@@ -681,6 +797,7 @@ export function computeSparseHydrationPartition(options: {
     edges: Record<string, Record<string, FontDepEdgeKind>>;
     catalog?: Array<{ glyphId: string; name: string }>;
 }): SparseHydrationPartition {
+    const edges = mergeHydrationEdges(options.edges, options.catalog);
     const workingSeeds = encodedBaseGlyphIds({
         seedIds: [
             ...new Set([
@@ -689,16 +806,16 @@ export function computeSparseHydrationPartition(options: {
                 ...(options.layoutIds || [])
             ])
         ],
-        edges: options.edges,
+        edges,
         catalog: options.catalog
     });
     const reverseWorking = closeSet(
         workingSeeds,
-        invertForwardEdges(options.edges, 'component')
+        invertForwardEdges(edges, 'component')
     );
     const working = closeSet(
         [...reverseWorking],
-        forwardAdjacencyOfKind(options.edges, 'component')
+        forwardAdjacencyOfKind(edges, 'component')
     );
     const hidden = [
         ...closeSet(

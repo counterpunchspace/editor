@@ -102,6 +102,9 @@ describe('cloud glyph catalog', () => {
         expect(
             deps.edges[catalogEntries[0].glyphId][catalogEntries[1].glyphId]
         ).toBe('component');
+        expect(catalogEntries[0].componentIds).toEqual([
+            catalogEntries[1].glyphId
+        ]);
     });
 
     it('strips plugin-owned catalog data', () => {
@@ -475,6 +478,76 @@ describe('font-deps UUID edges', () => {
                 catalog
             }).sort()
         ).toEqual(['a', 'aacute', 'ae', 'agrave'].sort());
+    });
+
+    it('reverse-closes base dependents from catalog names without font-deps edges', () => {
+        const catalog = [
+            { glyphId: 'id-a', name: 'a' },
+            { glyphId: 'id-e', name: 'e' },
+            { glyphId: 'id-adieresis', name: 'adieresis' },
+            { glyphId: 'id-aacute', name: 'aacute' },
+            { glyphId: 'id-agrave', name: 'agrave' },
+            { glyphId: 'id-ae', name: 'ae' },
+            { glyphId: 'id-dieresiscomb', name: 'dieresiscomb' },
+            { glyphId: 'id-acutecomb', name: 'acutecomb' },
+            { glyphId: 'id-gravecomb', name: 'gravecomb' },
+            { glyphId: 'id-alef', name: 'alef' },
+            { glyphId: 'id-n', name: 'n' },
+            { glyphId: 'id-ntilde', name: 'ntilde' },
+            { glyphId: 'id-tildecomb', name: 'tildecomb' }
+        ];
+        const fromA = computeSparseHydrationPartition({
+            seedIds: ['id-a'],
+            edges: {},
+            catalog
+        });
+        const fromAdieresis = computeSparseHydrationPartition({
+            seedIds: ['id-adieresis'],
+            edges: {},
+            catalog
+        });
+        const expectedWorking = [
+            'id-a',
+            'id-adieresis',
+            'id-aacute',
+            'id-agrave',
+            'id-ae',
+            'id-e',
+            'id-dieresiscomb',
+            'id-acutecomb',
+            'id-gravecomb'
+        ];
+        expect(fromA.workingIds.sort()).toEqual(expectedWorking.sort());
+        expect(fromAdieresis.workingIds.sort()).toEqual(expectedWorking.sort());
+        expect(fromA.workingIds).not.toContain('id-alef');
+        expect(fromA.workingIds).not.toContain('id-ntilde');
+        expect(
+            closeReverseComponentNamesFromDeps({
+                edges: {},
+                seedNames: ['a'],
+                catalog
+            }).sort()
+        ).toEqual(['aacute', 'adieresis', 'ae', 'agrave'].sort());
+    });
+
+    it('uses stored catalog componentIds when font-deps edges are empty', () => {
+        const catalog = [
+            { glyphId: 'id-a', name: 'a' },
+            { glyphId: 'id-comb', name: 'dieresiscomb' },
+            {
+                glyphId: 'id-adi',
+                name: 'adieresis',
+                componentIds: ['id-a', 'id-comb']
+            }
+        ];
+        const partition = computeSparseHydrationPartition({
+            seedIds: ['id-a'],
+            edges: {},
+            catalog
+        });
+        expect(partition.workingIds.sort()).toEqual(
+            ['id-a', 'id-adi', 'id-comb'].sort()
+        );
     });
 
     it('rebuilds font-deps only when every catalog glyph body is loaded', () => {
