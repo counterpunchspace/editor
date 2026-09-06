@@ -1617,6 +1617,9 @@ export class CloudPlugin extends FilesystemPlugin {
             }
         ).onCommittedChange?.(this._glyphCatchUpListener);
         this._coreHydratedListener = () => {
+            if (bridge.hasSparseWorkingSet?.()) {
+                return;
+            }
             this._catchUpFromCoreRevisionMap();
         };
         bridge.onCoreHydrated?.(this._coreHydratedListener);
@@ -2035,6 +2038,7 @@ export class CloudPlugin extends FilesystemPlugin {
             if (this._overviewHydrateInFlight === hydrate) {
                 this._overviewHydrateInFlight = null;
             }
+            window.dispatchEvent(new CustomEvent('fontModelSync'));
         }
     }
 
@@ -2080,16 +2084,34 @@ export class CloudPlugin extends FilesystemPlugin {
                 documentId.slice('glyph:'.length)
             )
         ];
+        const previousWorkingIds = [
+            ...(bridge.listSparseWorkingGlyphIds?.() ?? [])
+        ];
+        const rememberWorkingIds = (workingIds: string[]): boolean => {
+            const previous = new Set(
+                bridge.listSparseWorkingGlyphIds?.() ?? []
+            );
+            if (
+                workingIds.length === previous.size &&
+                workingIds.every((id) => previous.has(id))
+            ) {
+                return false;
+            }
+            bridge.replaceSparseWorkingGlyphIds?.(workingIds);
+            window.dispatchEvent(new CustomEvent('fontModelSync'));
+            return true;
+        };
         const planned = planSparseHydration({
             catalogIds,
             seedIds,
             layoutIds,
-            previousWorkingIds: [],
+            previousWorkingIds,
             loadedIds,
             edges: readFontDepsIndex(bridge.depsDoc.getMap('deps')).edges,
             catalog: catalogEntries
         });
         if (!planned.missingIds.length) {
+            rememberWorkingIds(planned.workingIds);
             return planned.workingIds
                 .map((id) => idToName.get(id))
                 .filter((name): name is string => Boolean(name));
@@ -2129,18 +2151,7 @@ export class CloudPlugin extends FilesystemPlugin {
                         return tokens.find((token) => token.glyphId === glyphId)
                             ?.revision;
                     },
-                    persistWorkingIds: (workingIds) => {
-                        const previous = new Set(
-                            bridge.listSparseWorkingGlyphIds?.() ?? []
-                        );
-                        if (
-                            workingIds.length === previous.size &&
-                            workingIds.every((id) => previous.has(id))
-                        ) {
-                            return;
-                        }
-                        bridge.replaceSparseWorkingGlyphIds?.(workingIds);
-                    },
+                    persistWorkingIds: rememberWorkingIds,
                     afterFetchedGlyphs: (glyphIds) => {
                         for (const glyphId of glyphIds) {
                             const documentId = glyphDocumentId(glyphId);
@@ -2165,7 +2176,7 @@ export class CloudPlugin extends FilesystemPlugin {
                 catalogIds,
                 seedIds,
                 layoutIds,
-                previousWorkingIds: [],
+                previousWorkingIds,
                 catalog: catalogEntries,
                 requireFetchedGlyphs: true,
                 fetchGlyphs: (documentIds) =>
@@ -2177,14 +2188,6 @@ export class CloudPlugin extends FilesystemPlugin {
                     .map((id) => idToName.get(id))
                     .filter((name): name is string => Boolean(name));
             }
-            window.dispatchEvent(
-                new CustomEvent('glyphChanged', {
-                    detail: {
-                        glyphNames: changedNames,
-                        forceImmediateRefresh: true
-                    }
-                })
-            );
             return changedNames;
         } finally {
             bridge.endDeferredAfterSync?.();
@@ -2536,6 +2539,9 @@ export class CloudPlugin extends FilesystemPlugin {
     private _editingSubsetGlyphIdsForCatchUp(
         bridge: PatchSyncEngine
     ): string[] {
+        if (bridge.hasSparseWorkingSet?.()) {
+            return bridge.listSparseWorkingGlyphIds?.() ?? [];
+        }
         const names =
             window.fontManager?.getConstrainedEditingSubsetGlyphs?.() ?? [
                 ...(window.fontManager?.getEditingSubsetSnapshot?.() ?? []),
@@ -3079,6 +3085,7 @@ export class CloudPlugin extends FilesystemPlugin {
         });
         let hydratedShards: EncodedShard[] | null = null;
         let hydratedFontJson: Record<string, unknown> | null = null;
+        let sparseWorkingGlyphIds: string[] = [];
         try {
             const coreAndDeps = await this._hydrateCoreDepsConsistent(
                 hydrator,
@@ -3125,7 +3132,7 @@ export class CloudPlugin extends FilesystemPlugin {
                         text: readUrlState().text || ''
                     });
                     if (seedIds.length) {
-                        glyphBytes = (
+                        const hydrateResult =
                             await hydrateSparseGlyphsToFixedPoint({
                                 documentSet,
                                 catalogIds,
@@ -3139,8 +3146,9 @@ export class CloudPlugin extends FilesystemPlugin {
                                         roomUrl,
                                         documentIds
                                     )
-                            })
-                        ).glyphBytes;
+                            });
+                        glyphBytes = hydrateResult.glyphBytes;
+                        sparseWorkingGlyphIds = hydrateResult.workingIds;
                     }
                 }
                 hydratedFontJson = documentSet.assembleFontJson();
@@ -3203,6 +3211,19 @@ export class CloudPlugin extends FilesystemPlugin {
             ).__skipCloudBridgeRebindMerge = true;
 
             this._activeAssetId = assetId;
+            if (options?.sparseHydration) {
+                (
+                    window as Window & {
+                        __pendingSparseSession?: boolean;
+                        __pendingSparseWorkingGlyphIds?: string[];
+                    }
+                ).__pendingSparseSession = true;
+                (
+                    window as Window & {
+                        __pendingSparseWorkingGlyphIds?: string[];
+                    }
+                ).__pendingSparseWorkingGlyphIds = sparseWorkingGlyphIds;
+            }
             const bridgeReadyPromise = new Promise<void>((resolve, reject) => {
                 const timeoutId = window.setTimeout(() => {
                     window.removeEventListener(
@@ -3718,7 +3739,14 @@ export class CloudPlugin extends FilesystemPlugin {
         this._startTrackingActiveAssetSize(options.assetId, options.bridge);
         this._startEditingSubsetSync(options.bridge);
         this._editingSubsetListener?.();
-        this._catchUpFromCoreRevisionMap();
+        if (options.bridge.hasSparseWorkingSet?.()) {
+            const text = readUrlState().text || '';
+            if (text) {
+                await this.ensureSparseHydration({ text });
+            }
+        } else {
+            this._catchUpFromCoreRevisionMap();
+        }
     }
 
     private _startEditingSubsetSync(bridge: PatchSyncEngine): void {

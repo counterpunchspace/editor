@@ -923,6 +923,64 @@ describe('font-deps UUID edges continued', () => {
         ).toEqual(['aacute.ss03', 'adieresis.ss03', 'ae.ss03'].sort());
     });
 
+    it('loads a layout-alt sidebearing stem hidden instead of reverse-closing Latin', () => {
+        const a = 'id-a';
+        const ss03 = 'id-a-ss03';
+        const o = 'id-o';
+        const d = 'id-d';
+        const e = 'id-e';
+        const adieresis = 'id-adieresis';
+        const oacute = 'id-oacute';
+        const catalog = [
+            { glyphId: a, name: 'a' },
+            { glyphId: ss03, name: 'a.ss03' },
+            { glyphId: o, name: 'o' },
+            { glyphId: d, name: 'd' },
+            { glyphId: e, name: 'e' },
+            { glyphId: adieresis, name: 'adieresis' },
+            { glyphId: oacute, name: 'oacute' }
+        ];
+        const partition = computeSparseHydrationPartition({
+            seedIds: [a],
+            layoutIds: [ss03],
+            edges: {
+                [ss03]: { [o]: 'both' },
+                [adieresis]: { [a]: 'component' },
+                [d]: { [o]: 'both' },
+                [e]: { [o]: 'both' },
+                [oacute]: { [o]: 'component' }
+            },
+            catalog
+        });
+        expect(partition.workingIds).toEqual(
+            expect.arrayContaining([a, ss03, adieresis])
+        );
+        expect(partition.workingIds).not.toContain(o);
+        expect(partition.hiddenIds).toContain(o);
+        expect(partition.loadIds).toContain(o);
+        expect(partition.workingIds).not.toEqual(
+            expect.arrayContaining([d, e, oacute])
+        );
+        expect(partition.loadIds).not.toEqual(
+            expect.arrayContaining([d, e, oacute])
+        );
+        expect(
+            computeSparseHydrationPartition({
+                seedIds: [a],
+                layoutIds: [ss03],
+                previousWorkingIds: [a, ss03, o],
+                edges: {
+                    [ss03]: { [o]: 'both' },
+                    [adieresis]: { [a]: 'component' },
+                    [d]: { [o]: 'both' },
+                    [e]: { [o]: 'both' },
+                    [oacute]: { [o]: 'component' }
+                },
+                catalog
+            }).workingIds
+        ).not.toContain(o);
+    });
+
     it('uses stored catalog componentIds when font-deps edges are empty', () => {
         const catalog = [
             { glyphId: 'id-a', name: 'a' },
@@ -1960,7 +2018,27 @@ describe('sparse hydration fixed point', () => {
         expect(result.loadedIds).not.toEqual(
             expect.arrayContaining([aUpperId, oneId])
         );
+        expect(
+            readWorkingGlyphIds(documentSet.depsDoc.getMap('deps')).sort()
+        ).toEqual([aUpperId, oneId].sort());
         documentSet.destroy();
+    });
+
+    it('keeps the sparse working set in memory instead of font-deps', () => {
+        const bridge = new PatchSyncEngine();
+        bridge.beginSparseWorkingSet(['id-a']);
+        expect(bridge.hasSparseWorkingSet()).toBe(true);
+        expect(bridge.listSparseWorkingGlyphIds()).toEqual(['id-a']);
+        expect(readWorkingGlyphIds(bridge.depsDoc.getMap('deps'))).toEqual([]);
+        bridge.replaceSparseWorkingGlyphIds(['id-a', 'id-n']);
+        expect(bridge.listSparseWorkingGlyphIds().sort()).toEqual([
+            'id-a',
+            'id-n'
+        ]);
+        expect(readWorkingGlyphIds(bridge.depsDoc.getMap('deps'))).toEqual([]);
+        bridge.initFromJson({ glyphs: [] });
+        expect(bridge.hasSparseWorkingSet()).toBe(false);
+        bridge.destroy();
     });
 
     it('does not refetch when the seed closure is already loaded', async () => {
@@ -2285,9 +2363,9 @@ describe('sparse hydration fixed point', () => {
         expect(fetchPassesRecorded[0].sort()).toEqual(
             expectedLoad.map(glyphDocumentId).sort()
         );
-        expect(
-            readWorkingGlyphIds(documentSet.depsDoc.getMap('deps')).sort()
-        ).toEqual(expectedWorking.sort());
+        expect(readWorkingGlyphIds(documentSet.depsDoc.getMap('deps'))).toEqual(
+            []
+        );
 
         const promoted = await hydrateSparseGlyphsToFixedPoint({
             documentSet,

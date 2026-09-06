@@ -318,6 +318,9 @@ class GlyphOverview {
     private onContainerScrollBound = this.onContainerScroll.bind(this);
     private onCapturedScrollBound = this.onCapturedScroll.bind(this);
     private onFontModelSyncBound = (): void => {
+        if (window.cloudPlugin?.isHydratingOverviewGlyphs?.()) {
+            return;
+        }
         this.reconcileTileHydration();
         this.updatePropertyPanel();
     };
@@ -2477,7 +2480,7 @@ class GlyphOverview {
             }
 
             if (this.isGlyphHydrated(glyphName)) {
-                this.applyHydratedTileAppearance(targetTile);
+                this.applyTileHydrationAppearance(targetTile);
             }
             targetTile.cachedData = undefined;
             if (forceImmediateRefresh) {
@@ -3408,7 +3411,7 @@ class GlyphOverview {
             canvas: canvas
         };
         if (this.isGlyphHydrated(glyphName)) {
-            this.applyHydratedTileAppearance(tile);
+            this.applyTileHydrationAppearance(tile);
         } else {
             this.applyUnhydratedTileAppearance(tile);
         }
@@ -3435,6 +3438,37 @@ class GlyphOverview {
             window.fontManager?.currentFont?.fontModel ??
             window.currentFontModel
         )?.findGlyph?.(glyphName);
+    }
+
+    /**
+     * Metrics-key (and similar) support glyphs are resident for compile
+     * but are not in the sparse working set. Show a faint outline, not a
+     * full working tile and not the unhydrated cloud.
+     */
+    private isSparseHiddenSupportGlyph(glyphName: string): boolean {
+        const bridge = window.patchSyncEngine;
+        if (!bridge?.hasSparseWorkingSet?.()) {
+            return false;
+        }
+        if (!this.isGlyphHydrated(glyphName)) {
+            return false;
+        }
+        if (typeof bridge.isSparseWorkingGlyphName !== 'function') {
+            return false;
+        }
+        return !bridge.isSparseWorkingGlyphName(glyphName);
+    }
+
+    private applyTileHydrationAppearance(tile: GlyphTile): void {
+        if (!this.isGlyphHydrated(tile.glyphName)) {
+            this.applyUnhydratedTileAppearance(tile);
+            return;
+        }
+        if (this.isSparseHiddenSupportGlyph(tile.glyphName)) {
+            this.applyHiddenSupportTileAppearance(tile);
+            return;
+        }
+        this.applyHydratedTileAppearance(tile);
     }
 
     private getCatalogCodepointsMap(): Map<string, number[]> {
@@ -3468,6 +3502,7 @@ class GlyphOverview {
     private applyUnhydratedTileAppearance(tile: GlyphTile): void {
         this.evictTileCache(tile);
         tile.element.classList.add('glyph-tile-unhydrated');
+        tile.element.classList.remove('glyph-tile-hidden-support');
         const icon = tile.element.querySelector('.glyph-tile-cloud-icon');
         if (!icon) {
             return;
@@ -3479,8 +3514,20 @@ class GlyphOverview {
         }
     }
 
-    private applyHydratedTileAppearance(tile: GlyphTile): void {
+    private applyHiddenSupportTileAppearance(tile: GlyphTile): void {
         tile.element.classList.remove('glyph-tile-unhydrated');
+        tile.element.classList.add('glyph-tile-hidden-support');
+        const icon = tile.element.querySelector('.glyph-tile-cloud-icon');
+        if (icon) {
+            icon.setAttribute('hidden', '');
+        }
+    }
+
+    private applyHydratedTileAppearance(tile: GlyphTile): void {
+        tile.element.classList.remove(
+            'glyph-tile-unhydrated',
+            'glyph-tile-hidden-support'
+        );
         const icon = tile.element.querySelector('.glyph-tile-cloud-icon');
         if (icon) {
             icon.setAttribute('hidden', '');
@@ -3491,14 +3538,16 @@ class GlyphOverview {
         this.catalogCodepointsByName = null;
         const newlyHydrated: string[] = [];
         for (const tile of this.tiles.values()) {
-            const hydrated = this.isGlyphHydrated(tile.glyphName);
-            if (hydrated) {
-                if (tile.element.classList.contains('glyph-tile-unhydrated')) {
-                    newlyHydrated.push(tile.glyphId);
-                }
-                this.applyHydratedTileAppearance(tile);
-            } else {
-                this.applyUnhydratedTileAppearance(tile);
+            const wasUnhydrated = tile.element.classList.contains(
+                'glyph-tile-unhydrated'
+            );
+            this.applyTileHydrationAppearance(tile);
+            if (
+                wasUnhydrated &&
+                this.isGlyphHydrated(tile.glyphName) &&
+                !tile.element.classList.contains('glyph-tile-unhydrated')
+            ) {
+                newlyHydrated.push(tile.glyphId);
             }
         }
         for (const glyphId of newlyHydrated) {
@@ -3509,9 +3558,16 @@ class GlyphOverview {
         }
     }
 
+    private needsSparseDownload(glyphName: string): boolean {
+        return (
+            !this.isGlyphHydrated(glyphName) ||
+            this.isSparseHiddenSupportGlyph(glyphName)
+        );
+    }
+
     private async hydrateSelectedUnhydratedGlyphs(): Promise<void> {
-        const seedNames = this.getSelectedGlyphNames().filter(
-            (name) => !this.isGlyphHydrated(name)
+        const seedNames = this.getSelectedGlyphNames().filter((name) =>
+            this.needsSparseDownload(name)
         );
         if (!seedNames.length) {
             return;
@@ -3625,7 +3681,7 @@ class GlyphOverview {
                 (name) => !this.isGlyphHydrated(name)
             );
             const canHydrate =
-                hasUnhydrated &&
+                selectedNames.some((name) => this.needsSparseDownload(name)) &&
                 window.fontManager?.currentFont?.sourcePlugin?.getId?.() ===
                     'cloud';
             this.tileContextMenu.hide();

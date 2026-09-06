@@ -102,9 +102,7 @@ import {
     buildFontDepsForGlyph,
     catalogEntriesForDepsParse,
     patchSourceEdges,
-    readWorkingGlyphIds,
-    writeCompleteFontDepsIfLoaded,
-    writeWorkingGlyphIds
+    writeCompleteFontDepsIfLoaded
 } from './filesystem-plugins/cloud-font-deps';
 import {
     FONT_CORE_DOCUMENT_ID,
@@ -627,6 +625,9 @@ export class PatchSyncEngine {
     private _glyphRevisionListeners: Set<GlyphRevisionSignalListener> =
         new Set();
     private _coreHydratedListeners: Set<() => void> = new Set();
+    /** Sparse residency: in-memory only. Never written to font-deps. */
+    private _sparseSession = false;
+    private _sparseWorkingGlyphIds: Set<string> = new Set();
     /** Callback to trigger dirty marking on the font manager side */
     private _onDirty: (() => void) | null = null;
     /** Callback after _syncJsonFromYDoc (undo/redo/remote) for external resync */
@@ -1097,12 +1098,17 @@ export class PatchSyncEngine {
         };
     }
 
+    beginSparseWorkingSet(glyphIds: string[] = []): void {
+        this._sparseSession = true;
+        this._sparseWorkingGlyphIds = new Set(glyphIds.filter(Boolean));
+    }
+
     hasSparseWorkingSet(): boolean {
-        return readWorkingGlyphIds(this.depsDoc.getMap('deps')).length > 0;
+        return this._sparseSession;
     }
 
     listSparseWorkingGlyphIds(): string[] {
-        return readWorkingGlyphIds(this.depsDoc.getMap('deps'));
+        return [...this._sparseWorkingGlyphIds];
     }
 
     isSparseWorkingGlyphName(glyphName: string): boolean {
@@ -1110,13 +1116,16 @@ export class PatchSyncEngine {
         if (!glyphId) {
             return false;
         }
-        return this.listSparseWorkingGlyphIds().includes(glyphId);
+        return this._sparseWorkingGlyphIds.has(glyphId);
     }
 
     replaceSparseWorkingGlyphIds(glyphIds: string[]): void {
-        this.depsDoc.transact(() => {
-            writeWorkingGlyphIds(this.depsDoc.getMap('deps'), glyphIds);
-        }, FONT_EDIT_ORIGIN);
+        this.beginSparseWorkingSet(glyphIds);
+    }
+
+    private _clearSparseWorkingSet(): void {
+        this._sparseSession = false;
+        this._sparseWorkingGlyphIds.clear();
     }
 
     encodeDocumentState(documentId: string = FONT_CORE_DOCUMENT_ID): YjsUpdate {
@@ -1171,8 +1180,13 @@ export class PatchSyncEngine {
         // Glyph shards are authoritative. Once a full checkpoint has been
         // merged, repair only that source's denormalized edge map against its
         // authoritative revision; the local deps update is then broadcast as
-        // an ordinary CRDT delta.
-        if (repairedGlyphName && this._fontJson) {
+        // an ordinary CRDT delta. Skip during sparse HTTP hydrate: each
+        // shard would otherwise POST/WS font-deps and trip rate limits.
+        if (
+            repairedGlyphName &&
+            this._fontJson &&
+            this._afterSyncDeferDepth === 0
+        ) {
             const glyphId = this._glyphIdByName.get(repairedGlyphName);
             const glyphRevision = glyphId
                 ? this._glyphDocs
@@ -1891,6 +1905,7 @@ export class PatchSyncEngine {
      * Yjs updates begin.
      */
     initFromJson(fontJson: Record<string, Unsafe>): void {
+        this._clearSparseWorkingSet();
         this._fontJson = fontJson;
         this._isSyncing = true;
         stampImmutableGlyphIds(fontJson);
@@ -2049,6 +2064,7 @@ export class PatchSyncEngine {
         this._committedChangeListeners.clear();
         this._glyphRevisionListeners.clear();
         this._coreHydratedListeners.clear();
+        this._clearSparseWorkingSet();
         this._onDirty = null;
         this._onAfterSync = null;
         this._changeLogListeners.clear();

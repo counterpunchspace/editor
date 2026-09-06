@@ -3096,6 +3096,18 @@ function initializeBridge(detail: {
         timelineSpanEnd(initJsonSpanId);
     }
 
+    const pendingSparse = window as Window & {
+        __pendingSparseSession?: boolean;
+        __pendingSparseWorkingGlyphIds?: string[];
+    };
+    if (pendingSparse.__pendingSparseSession) {
+        bridge.beginSparseWorkingSet(
+            pendingSparse.__pendingSparseWorkingGlyphIds ?? []
+        );
+        delete pendingSparse.__pendingSparseSession;
+        delete pendingSparse.__pendingSparseWorkingGlyphIds;
+    }
+
     // ── Wire Yjs updates → Rust compilation worker ───────────────────────
     // Every local edit and remote change emits a small binary Yjs update.
     // Forward it to the WASM worker so the Rust Y.Doc + CANONICAL_JSON_CACHE

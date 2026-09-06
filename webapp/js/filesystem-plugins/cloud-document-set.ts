@@ -13,8 +13,7 @@ import {
     mergeFontDepEdges,
     planSparseHydration,
     readFontDepsIndex,
-    writeFontDepsYMap,
-    writeWorkingGlyphIds
+    writeFontDepsYMap
 } from './cloud-font-deps';
 import { evaluateShardSizes, type ShardSizeGate } from './cloud-shard-limits';
 import {
@@ -94,6 +93,7 @@ export type SparseHydrationSession = {
     applyGlyphUpdate: (documentId: string, bytes: Uint8Array) => void;
     depsMap: () => Y.Map<unknown>;
     glyphRevision: (glyphId: string) => unknown;
+    /** In-memory working-set remember. Must not write font-deps. */
     persistWorkingIds?: (workingIds: string[]) => void;
     afterFetchedGlyphs?: (glyphIds: string[]) => void;
 };
@@ -112,13 +112,7 @@ export function sparseHydrationSessionFromDocumentSet(
             documentSet.glyphDocs
                 .get(glyphId)
                 ?.getMap(GLYPH_SYNC_MAP_KEY)
-                .get(GLYPH_SYNC_REVISION_KEY),
-        persistWorkingIds: (workingIds) => {
-            const depsMap = documentSet.depsDoc.getMap('deps');
-            documentSet.depsDoc.transact(() => {
-                writeWorkingGlyphIds(depsMap, workingIds);
-            });
-        }
+                .get(GLYPH_SYNC_REVISION_KEY)
     };
 }
 

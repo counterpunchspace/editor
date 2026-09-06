@@ -866,7 +866,7 @@ describe('GlyphOverview syncGlyphs incremental updates', () => {
         delete window.fontCompilation;
     });
 
-    test('shows resident hidden glyphs as hydrated in All Glyphs', async () => {
+    test('shows resident hidden glyphs as faint outlined support tiles', async () => {
         window.fontManager = {
             currentFontId: 'font-sparse',
             currentFont: {
@@ -893,9 +893,19 @@ describe('GlyphOverview syncGlyphs incremental updates', () => {
         ).toBe(false);
         expect(
             overview.tiles
+                .get('a')
+                .element.classList.contains('glyph-tile-hidden-support')
+        ).toBe(false);
+        expect(
+            overview.tiles
                 .get('n')
                 .element.classList.contains('glyph-tile-unhydrated')
         ).toBe(false);
+        expect(
+            overview.tiles
+                .get('n')
+                .element.classList.contains('glyph-tile-hidden-support')
+        ).toBe(true);
         expect(
             overview.tiles
                 .get('a')
@@ -943,6 +953,91 @@ describe('GlyphOverview syncGlyphs incremental updates', () => {
                 .element.classList.contains('glyph-tile-unhydrated')
         ).toBe(false);
         delete window.fontManager;
+    });
+
+    test('promotes a hidden support glyph to a full tile when it joins the working set', async () => {
+        window.fontManager = {
+            currentFontId: 'font-sparse',
+            currentFont: {
+                path: 'cloud://fustat',
+                sourcePlugin: { getId: () => 'cloud' },
+                fontModel: {
+                    findGlyph: (name) =>
+                        name === 'a' || name === 'n' ? { name } : null
+                }
+            }
+        };
+        window.patchSyncEngine = {
+            hasSparseWorkingSet: () => true,
+            isSparseWorkingGlyphName: (name) => name === 'a'
+        };
+        await overview.updateGlyphs([
+            { id: 'a', name: 'a' },
+            { id: 'n', name: 'n' }
+        ]);
+        expect(
+            overview.tiles
+                .get('n')
+                .element.classList.contains('glyph-tile-hidden-support')
+        ).toBe(true);
+
+        window.patchSyncEngine.isSparseWorkingGlyphName = (name) =>
+            name === 'a' || name === 'n';
+        window.dispatchEvent(new CustomEvent('fontModelSync'));
+
+        expect(
+            overview.tiles
+                .get('n')
+                .element.classList.contains('glyph-tile-hidden-support')
+        ).toBe(false);
+        expect(
+            overview.tiles
+                .get('n')
+                .element.classList.contains('glyph-tile-unhydrated')
+        ).toBe(false);
+        delete window.fontManager;
+        delete window.patchSyncEngine;
+    });
+
+    test('offers Download Glyphs for hydrated hidden support glyphs', async () => {
+        window.fontManager = {
+            currentFontId: 'font-sparse',
+            currentFont: {
+                path: 'cloud://fustat',
+                sourcePlugin: { getId: () => 'cloud' },
+                fontModel: {
+                    findGlyph: (name) =>
+                        name === 'a' || name === 'n' ? { name } : null
+                }
+            }
+        };
+        window.patchSyncEngine = {
+            hasSparseWorkingSet: () => true,
+            isSparseWorkingGlyphName: (name) => name === 'a'
+        };
+        window.cloudPlugin = {
+            hydrateOverviewGlyphs: jest.fn(async () => ['n'])
+        };
+        await overview.updateGlyphs([
+            { id: 'a', name: 'a' },
+            { id: 'n', name: 'n' }
+        ]);
+        overview.tiles.get('n').selected = true;
+
+        expect(overview.needsSparseDownload('n')).toBe(true);
+        expect(overview.needsSparseDownload('a')).toBe(false);
+        expect(overview.createTileContextMenuHtml(true, true, false)).toContain(
+            'data-action="hydrate-glyphs"'
+        );
+
+        await overview.hydrateSelectedUnhydratedGlyphs();
+        expect(window.cloudPlugin.hydrateOverviewGlyphs).toHaveBeenCalledWith([
+            'n'
+        ]);
+
+        delete window.fontManager;
+        delete window.patchSyncEngine;
+        delete window.cloudPlugin;
     });
 
     test('hides leftover cloud icons when a local new font replaces a cloud font', async () => {

@@ -404,7 +404,7 @@ describe('CloudLiveSession', () => {
         expect(maxInflight).toBe(4);
     }, 15000);
 
-    test('reconnect barrier HTTP-catches live glyphs and deps before connected', async () => {
+    test('first live connect does not HTTP-catch glyphs or deps', async () => {
         const statuses = [];
         const applyDocumentCatchUp = jest.fn().mockReturnValue(true);
         const session = new CloudLiveSession({
@@ -420,11 +420,49 @@ describe('CloudLiveSession', () => {
         const fetched = global.fetch.mock.calls.map(([url]) => String(url));
         expect(
             fetched.some((url) => url.includes('/shards/glyph/aaa/live'))
+        ).toBe(false);
+        expect(
+            fetched.some((url) => url.includes('/shards/font-deps/live'))
+        ).toBe(false);
+        expect(statuses).not.toContain('syncing');
+        expect(statuses.at(-1)).toBe('connected');
+        session.disconnect();
+    });
+
+    test('reconnect barrier HTTP-catches live glyphs and deps before connected', async () => {
+        const statuses = [];
+        const applyDocumentCatchUp = jest.fn().mockReturnValue(true);
+        const session = new CloudLiveSession({
+            assetId: 'asset-1',
+            websiteBaseUrl: 'https://editor.example',
+            token: 'token',
+            roomUrl: 'wss://rooms.example/room/asset-1',
+            bridge: { applyDocumentCatchUp },
+            onConnectionStatus: (status) => statuses.push(status),
+            bootstrapMode: 'skip'
+        });
+        await session.syncLiveDocumentIds(['glyph:aaa']);
+        applyDocumentCatchUp.mockClear();
+        global.fetch.mockClear();
+        const coreOptions = CloudAdapter.mock.calls
+            .map(([options]) => options)
+            .find((options) => options.documentId === 'font-core');
+        expect(coreOptions).toBeTruthy();
+        coreOptions.onConnectionStatus('connecting');
+        coreOptions.onConnectionStatus('connected');
+        await new Promise((resolve) => {
+            setTimeout(resolve, 80);
+        });
+        const fetched = global.fetch.mock.calls.map(([url]) => String(url));
+        expect(
+            fetched.some((url) => url.includes('/shards/glyph/aaa/live'))
         ).toBe(true);
         expect(
             fetched.some((url) => url.includes('/shards/font-deps/live'))
         ).toBe(true);
+        expect(statuses).toContain('syncing');
         expect(statuses.at(-1)).toBe('connected');
+        session.disconnect();
     });
 
     test('includeLiveDocuments catch-up fetches glyphs that already have a socket', async () => {

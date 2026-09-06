@@ -1738,6 +1738,66 @@ describe('CloudPlugin sparse overview hydrate', () => {
         expect(plugin.isHydratingOverviewGlyphs()).toBe(false);
         window.patchSyncEngine = originalBridge;
     });
+
+    test('overview hydrate expands the working set instead of replacing it', async () => {
+        const Y = require('yjs');
+        const plugin = new CloudPlugin();
+        plugin._activeAssetId = 'asset-1';
+        const originalBridge = window.patchSyncEngine;
+        const originalFontManager = window.fontManager;
+        const replaceSparseWorkingGlyphIds = jest.fn();
+        const fontJson = {
+            glyphs: [
+                { name: 'a', id: 'id-a' },
+                { name: 'n', id: 'id-n' }
+            ],
+            format_specific: {
+                'com.counterpunch.cloud': {
+                    glyphCatalog: {
+                        'id-a': {
+                            glyphId: 'id-a',
+                            name: 'a',
+                            codepoints: [97],
+                            latestGlyphRevision: '1',
+                            generation: 0
+                        },
+                        'id-n': {
+                            glyphId: 'id-n',
+                            name: 'n',
+                            codepoints: [110],
+                            latestGlyphRevision: '1',
+                            generation: 0
+                        }
+                    }
+                }
+            }
+        };
+        const depsDoc = new Y.Doc();
+        window.patchSyncEngine = {
+            getFontJsonSnapshot: () => fontJson,
+            listSparseWorkingGlyphIds: () => ['id-a'],
+            listLiveGlyphDocumentIds: () => ['glyph:id-a', 'glyph:id-n'],
+            replaceSparseWorkingGlyphIds,
+            depsDoc
+        };
+        window.fontManager = {
+            currentFont: { babelfontData: fontJson }
+        };
+
+        const names = await plugin._hydrateOverviewGlyphs({
+            glyphNames: ['n']
+        });
+
+        expect(names.sort()).toEqual(['a', 'n']);
+        expect(replaceSparseWorkingGlyphIds).toHaveBeenCalledTimes(1);
+        expect(replaceSparseWorkingGlyphIds.mock.calls[0][0].sort()).toEqual(
+            ['id-a', 'id-n'].sort()
+        );
+
+        window.patchSyncEngine = originalBridge;
+        window.fontManager = originalFontManager;
+        depsDoc.destroy();
+    });
 });
 
 describe('CloudPlugin sharing APIs', () => {

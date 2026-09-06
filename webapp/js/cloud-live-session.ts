@@ -477,7 +477,11 @@ export class CloudLiveSession {
             this._clearNonCoreRebaselineFlags();
             return;
         }
-        await this._runSessionReadyBarrier();
+        // HTTP hydrate already loaded the sparse subset. Do not HTTP-catch
+        // live glyphs + deps or flip status to "Catching up" on first connect.
+        this._reportedConnected = true;
+        this._clearNonCoreRebaselineFlags();
+        this._options.onConnectionStatus?.('connected');
     }
 
     private _clearNonCoreRebaselineFlags(): void {
@@ -692,7 +696,7 @@ export class CloudLiveSession {
         detail?: string
     ): void {
         if (status === 'connected') {
-            if (this._reportedConnected) {
+            if (this._reportedConnected || this._hasLiveCoreAndDeps()) {
                 void this._runSessionReadyBarrier();
             }
             return;
@@ -755,18 +759,19 @@ export class CloudLiveSession {
     ): Promise<void> {
         const deadline = Date.now() + timeoutMs;
         while (Date.now() < deadline) {
-            const pending = [...this._desiredDocumentIds].filter(
-                (documentId) => {
-                    const adapter = this._adapters.get(documentId);
-                    if (!adapter) {
-                        return true;
-                    }
-                    if (typeof adapter.isTransportSynced === 'function') {
-                        return !adapter.isTransportSynced();
-                    }
-                    return adapter.status !== 'connected';
+            const pending = [
+                FONT_CORE_DOCUMENT_ID,
+                FONT_DEPS_DOCUMENT_ID
+            ].filter((documentId) => {
+                const adapter = this._adapters.get(documentId);
+                if (!adapter) {
+                    return true;
                 }
-            );
+                if (typeof adapter.isTransportSynced === 'function') {
+                    return !adapter.isTransportSynced();
+                }
+                return adapter.status !== 'connected';
+            });
             if (!pending.length) {
                 return;
             }

@@ -89,6 +89,11 @@
 /* Glyph tile base styles */
 .glyph-tile {
     --filter-color: transparent;
+    --glyph-tile-unhydrated-bg: color-mix(
+        in srgb,
+        var(--background-secondary) 70%,
+        white
+    );
     width: var(--tile-width);
     height: var(--tile-height);
     border-radius: 3px;
@@ -193,17 +198,13 @@
 }
 
 .glyph-tile-unhydrated {
-    background-color: color-mix(
-        in srgb,
-        var(--background-secondary) 70%,
-        white
-    );
+    background-color: var(--glyph-tile-unhydrated-bg);
 }
 
 .glyph-tile-unhydrated.selected {
     background-color: color-mix(
         in srgb,
-        color-mix(in srgb, var(--background-secondary) 70%, white),
+        var(--glyph-tile-unhydrated-bg),
         var(--glyph-tile-selected-inactive)
     );
 }
@@ -211,13 +212,59 @@
 .view-overview.focused .glyph-tile-unhydrated.selected {
     background-color: color-mix(
         in srgb,
-        color-mix(in srgb, var(--background-secondary) 70%, white),
+        var(--glyph-tile-unhydrated-bg),
         var(--glyph-tile-selected-active)
     );
 }
 
 .glyph-tile-unhydrated .glyph-tile-canvas {
     visibility: hidden;
+}
+
+.glyph-tile-hidden-support {
+    background-color: color-mix(
+        in srgb,
+        var(--glyph-tile-unhydrated-bg) 50%,
+        var(--filter-color)
+    );
+}
+
+.glyph-tile-hidden-support.selected {
+    background-color: color-mix(
+        in srgb,
+        color-mix(
+                in srgb,
+                var(--glyph-tile-unhydrated-bg),
+                var(--glyph-tile-selected-inactive)
+            )
+            50%,
+        color-mix(
+            in srgb,
+            var(--filter-color),
+            var(--glyph-tile-selected-inactive)
+        )
+    );
+}
+
+.view-overview.focused .glyph-tile-hidden-support.selected {
+    background-color: color-mix(
+        in srgb,
+        color-mix(
+                in srgb,
+                var(--glyph-tile-unhydrated-bg),
+                var(--glyph-tile-selected-active)
+            )
+            50%,
+        color-mix(
+            in srgb,
+            var(--filter-color),
+            var(--glyph-tile-selected-active)
+        )
+    );
+}
+
+.glyph-tile-hidden-support .glyph-tile-canvas {
+    opacity: 0.5;
 }
 
 /* Legacy canvas inside tile (kept for compatibility) */

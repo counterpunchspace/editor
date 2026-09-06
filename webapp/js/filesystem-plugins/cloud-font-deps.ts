@@ -480,18 +480,20 @@ export function expandSparsePlanWithLoadedComponents(options: {
     const catalogIdSet = new Set(options.catalogIds);
     const loaded = new Set(options.loadedIds);
     const workingSet = new Set(options.plan.workingIds);
+    const hiddenSet = new Set(options.plan.hiddenIds);
     const componentIds = closeForwardComponentIds({
         glyphs: options.glyphs,
         catalog: options.catalog,
         seedIds: options.plan.workingIds
     }).filter((id) => catalogIdSet.has(id));
     for (const id of componentIds) {
+        if (hiddenSet.has(id)) {
+            continue;
+        }
         workingSet.add(id);
     }
     const workingIds = [...workingSet];
-    const hiddenIds = options.plan.hiddenIds.filter(
-        (id) => !workingSet.has(id)
-    );
+    const hiddenIds = [...hiddenSet].filter((id) => !workingSet.has(id));
     const loadIds = [...new Set([...workingIds, ...hiddenIds])];
     return {
         workingIds,
@@ -571,10 +573,11 @@ function mergeHydrationEdges(
 }
 
 /**
- * Encoded base glyphs for a sparse seed. A simple glyph (`a`) is its own
- * base. A composite contributes its non-mark components from the
- * component graph (`adieresis` → `a`) so reverse-close can reach the
- * rest of that family.
+ * Encoded base glyphs for a cmap/text seed. A simple glyph (`a`) is its
+ * own base. A composite seed (`adieresis`) contributes non-mark
+ * components (`a`) so reverse-close can reach that family. Do not pass
+ * layout alts through this helper — they are reverse-close origins as
+ * themselves, not via their stem components.
  */
 export function encodedBaseGlyphIds(options: {
     seedIds: string[];
@@ -586,7 +589,25 @@ export function encodedBaseGlyphIds(options: {
         (options.catalog || []).map((entry) => [entry.glyphId, entry.name])
     );
     for (const seedId of [...bases]) {
-        for (const componentId of componentTargetIds(options.edges, seedId)) {
+        const targets = Object.entries(options.edges[seedId] || {}).filter(
+            ([, kind]) => kind === 'component' || kind === 'both'
+        );
+        const strictIds = targets
+            .filter(([, kind]) => kind === 'component')
+            .map(([targetId]) => targetId);
+        const bothIds = targets
+            .filter(([, kind]) => kind === 'both')
+            .map(([targetId]) => targetId);
+        const hasMark = [...strictIds, ...bothIds].some((targetId) =>
+            isLikelyMarkGlyphName(idToName.get(targetId) || '')
+        );
+        // A lone `both` edge is usually a sidebearing stem (`a.ss03` → `o`),
+        // not an encoded letter base. Promote `both` only for composites.
+        const promote = [
+            ...strictIds,
+            ...(hasMark || targets.length >= 2 ? bothIds : [])
+        ];
+        for (const componentId of promote) {
             if (!isLikelyMarkGlyphName(idToName.get(componentId) || '')) {
                 bases.add(componentId);
             }
@@ -597,8 +618,12 @@ export function encodedBaseGlyphIds(options: {
 
 function edgeHasKind(
     kind: FontDepEdgeKind,
-    wanted: 'component' | 'metrics-key'
+    wanted: 'component' | 'metrics-key',
+    exact = false
 ): boolean {
+    if (exact) {
+        return kind === wanted;
+    }
     return kind === wanted || kind === 'both';
 }
 
@@ -625,12 +650,13 @@ export function invertForwardEdges(
 
 function forwardAdjacencyOfKind(
     edges: Record<string, Record<string, FontDepEdgeKind>>,
-    kind: 'component' | 'metrics-key'
+    kind: 'component' | 'metrics-key',
+    exact = false
 ): Record<string, string[]> {
     const adjacency: Record<string, string[]> = {};
     for (const [source, targets] of Object.entries(edges)) {
         for (const [target, edgeKind] of Object.entries(targets)) {
-            if (!edgeHasKind(edgeKind, kind)) {
+            if (!edgeHasKind(edgeKind, kind, exact)) {
                 continue;
             }
             if (!adjacency[source]) {
@@ -682,16 +708,19 @@ export type SparseHydrationPlan = SparseHydrationPartition & {
 /**
  * Directed sparse close.
  *
- * Working: requested seeds ∪ prior working ∪ layout alts ∪ encoded
- * bases of those, reverse* over component edges from font-deps and
- * catalog `componentIds`, then forward* so nested parts are working.
- * Layout alts come from feature code, not from glyph names.
+ * Working: requested seeds ∪ layout alts ∪ encoded bases of seeds,
+ * reverse* over component/`both` (composites of `a`), then forward*
+ * over strict `component` so nested outline parts are working.
+ * A `both` edge is a sidebearing plus a (often false) component tag —
+ * load that stem hidden, like `n`/`l`. Layout alts come from feature
+ * code, not from glyph names.
  *
- * Hidden: metrics-key sources of working (`n`, `l`) ∪ glyphs that
- * inherit sidebearings from working (`a.wide` keyed to `a`) ∪ those
- * inheritors' nested components, minus working. Do not reverse
- * metrics-key or component from hidden sources (`h`/`ntilde` from `n`).
- * Do not GSUB-close the reverse set. Do not infer from glyph names.
+ * Hidden: metrics-key and `both` sources of working (`n`, `l`, `o`) ∪
+ * glyphs that inherit sidebearings from working (`a.wide` keyed to
+ * `a`) ∪ those inheritors' nested components, minus working. Do not
+ * reverse metrics-key or component from hidden sources (`h`/`ntilde`
+ * from `n`). Do not GSUB-close the reverse set. Do not infer from
+ * glyph names.
  */
 export function computeSparseHydrationPartition(options: {
     seedIds: string[];
@@ -701,29 +730,68 @@ export function computeSparseHydrationPartition(options: {
     catalog?: Array<{ glyphId: string; name: string }>;
 }): SparseHydrationPartition {
     const edges = mergeHydrationEdges(options.edges, options.catalog);
-    const workingSeeds = encodedBaseGlyphIds({
-        seedIds: [
-            ...new Set([
-                ...(options.previousWorkingIds || []),
-                ...options.seedIds,
-                ...(options.layoutIds || [])
-            ])
-        ],
-        edges,
-        catalog: options.catalog
-    });
+    const layoutIds = [...new Set(options.layoutIds || [])];
+    const previousWorkingIds = [...new Set(options.previousWorkingIds || [])];
+    // Promote encoded bases only for requested seeds (`adieresis` → `a`).
+    // Layout alts (`a.ss03`) often have `both` edges onto unrelated stems
+    // (`o`); treating those as reverse-close origins hydrates most of Latin.
+    const reverseOrigins = [
+        ...encodedBaseGlyphIds({
+            seedIds: options.seedIds,
+            edges,
+            catalog: options.catalog
+        }),
+        ...layoutIds
+    ];
     const reverseWorking = closeSet(
-        workingSeeds,
+        reverseOrigins,
         invertForwardEdges(edges, 'component')
     );
-    const working = closeSet(
+    const nestedParts = closeSet(
         [...reverseWorking],
-        forwardAdjacencyOfKind(edges, 'component')
+        forwardAdjacencyOfKind(edges, 'component', true)
     );
-    const metricsPool = closeSet(
+    const seedIds = new Set(options.seedIds.filter(Boolean));
+    const layoutSet = new Set(layoutIds);
+    const metricsAdj = forwardAdjacencyOfKind(options.edges, 'metrics-key');
+    const isMetricsStemOf = (id: string, family: Iterable<string>): boolean => {
+        for (const source of family) {
+            if ((metricsAdj[source] || []).includes(id)) {
+                return true;
+            }
+        }
+        return false;
+    };
+    const working = new Set(nestedParts);
+    for (const id of previousWorkingIds) {
+        if (
+            !id ||
+            working.has(id) ||
+            isMetricsStemOf(id, working) ||
+            isMetricsStemOf(id, reverseWorking)
+        ) {
+            continue;
+        }
+        working.add(id);
+    }
+    for (const id of closeSet(
         [...working],
-        forwardAdjacencyOfKind(options.edges, 'metrics-key')
-    );
+        forwardAdjacencyOfKind(edges, 'component', true)
+    )) {
+        working.add(id);
+    }
+    for (const id of [...working]) {
+        if (reverseWorking.has(id) || seedIds.has(id) || layoutSet.has(id)) {
+            continue;
+        }
+        if (
+            isMetricsStemOf(id, working) ||
+            isMetricsStemOf(id, reverseWorking)
+        ) {
+            working.delete(id);
+        }
+    }
+    const metricsPool = closeSet([...working], metricsAdj);
     const reverseMetrics = invertForwardEdges(options.edges, 'metrics-key');
     const metricsInheritors = new Set<string>();
     for (const id of working) {
@@ -850,6 +918,7 @@ export function glyphIdsForSparseHydration(options: {
     }).loadIds;
 }
 
+/** Leftover CRDT key. The editor must not persist the sparse working set here. */
 const DEPS_WORKING_KEY = 'working';
 
 export function readWorkingGlyphIds(depsMap: Y.Map<unknown>): string[] {
