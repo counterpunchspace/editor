@@ -2153,6 +2153,8 @@ describe('FontManager editing subset inclusion', () => {
                 [],
                 ['a']
             );
+            await Promise.resolve();
+            await Promise.resolve();
 
             fontManager.currentFont.compileRequestVersion = 2;
             setRequestCompileContext('keyboard-anchor', 'anchor');
@@ -2278,6 +2280,8 @@ describe('FontManager editing subset inclusion', () => {
                 [],
                 ['a']
             );
+            await Promise.resolve();
+            await Promise.resolve();
 
             fontManager.currentFont.compileRequestVersion = 2;
             setRequestCompileContext('keyboard-anchor', 'anchor');
@@ -2299,6 +2303,8 @@ describe('FontManager editing subset inclusion', () => {
         fontManager.updateEditingSubsetSnapshot([]);
         window.glyphCanvas.textRunEditor.textBuffer = '';
         window.glyphCanvas.textRunEditor.glyphNameBuffer = [];
+        window.glyphCanvas.outlineEditor.currentGlyphName = null;
+        window.glyphCanvas.getCurrentGlyphName = jest.fn(() => null);
         const deriveSubsetSpy = jest
             .spyOn(fontManager, 'deriveSubsetGlyphsFromText')
             .mockReturnValue([]);
@@ -2406,6 +2412,9 @@ describe('FontManager editing subset inclusion', () => {
         const deriveSpy = jest
             .spyOn(fontManager, 'deriveSubsetGlyphsFromText')
             .mockReturnValue(['a', 'adieresis']);
+        const constrainSpy = jest
+            .spyOn(fontManager, 'constrainSubsetToHydratedGlyphs')
+            .mockImplementation((names) => names);
 
         try {
             await fontManager.recompileEditingFont();
@@ -2420,6 +2429,7 @@ describe('FontManager editing subset inclusion', () => {
             );
         } finally {
             deriveSpy.mockRestore();
+            constrainSpy.mockRestore();
         }
     });
 
@@ -2440,6 +2450,9 @@ describe('FontManager editing subset inclusion', () => {
         const deriveSpy = jest
             .spyOn(fontManager, 'deriveSubsetGlyphsFromText')
             .mockReturnValue(['H', 'adieresis', 'm', 'b', 'u', 'r', 'g', 'e']);
+        const constrainSpy = jest
+            .spyOn(fontManager, 'constrainSubsetToHydratedGlyphs')
+            .mockImplementation((names) => names);
 
         try {
             await fontManager.compileEditingFont();
@@ -2452,6 +2465,7 @@ describe('FontManager editing subset inclusion', () => {
             expect(fontManager.currentText).toBe('Hämburger');
         } finally {
             deriveSpy.mockRestore();
+            constrainSpy.mockRestore();
             readUrlSpy.mockRestore();
             startupReadySpy.mockRestore();
         }
@@ -2493,30 +2507,37 @@ describe('FontManager editing subset inclusion', () => {
         window.glyphCanvas.outlineEditor.currentGlyphName = null;
         window.glyphCanvas.getCurrentGlyphName = jest.fn(() => null);
         setStartupEditingCompileGateForTests({ active: true });
+        const constrainSpy = jest
+            .spyOn(fontManager, 'constrainSubsetToHydratedGlyphs')
+            .mockImplementation((names) => names);
 
-        await fontManager.compileEditingFont(
-            'Hamburgevons',
-            [],
-            ['H', 'a', 'm']
-        );
-        expect(compileEditingSpy).toHaveBeenCalledTimes(1);
+        try {
+            await fontManager.compileEditingFont(
+                'Hamburgevons',
+                [],
+                ['H', 'a', 'm']
+            );
+            expect(compileEditingSpy).toHaveBeenCalledTimes(1);
 
-        await fontManager.compileEditingFont(
-            'Hämburger',
-            [],
-            ['H', 'adieresis', 'm']
-        );
-        expect(compileEditingSpy).toHaveBeenCalledTimes(2);
-        expect(compileEditingSpy.mock.calls[1][2]).toEqual(
-            expect.arrayContaining(['adieresis'])
-        );
+            await fontManager.compileEditingFont(
+                'Hämburger',
+                [],
+                ['H', 'adieresis', 'm']
+            );
+            expect(compileEditingSpy).toHaveBeenCalledTimes(2);
+            expect(compileEditingSpy.mock.calls[1][2]).toEqual(
+                expect.arrayContaining(['adieresis'])
+            );
 
-        await fontManager.compileEditingFont(
-            'Hämburger',
-            [],
-            ['H', 'adieresis', 'm']
-        );
-        expect(compileEditingSpy).toHaveBeenCalledTimes(2);
+            await fontManager.compileEditingFont(
+                'Hämburger',
+                [],
+                ['H', 'adieresis', 'm']
+            );
+            expect(compileEditingSpy).toHaveBeenCalledTimes(2);
+        } finally {
+            constrainSpy.mockRestore();
+        }
     });
 
     test('getAutomaticCompositionDragScopeGlyphNames keeps only visible dependents and required bridges', () => {

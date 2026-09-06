@@ -350,4 +350,48 @@ describe('FontCompilation worker document readiness', () => {
             })
         );
     });
+
+    test('cached editing compiles wait for queued worker document replaces', async () => {
+        const { fontCompilation } = createReadyFontCompilation();
+        const postedTypes = [];
+        fontCompilation.worker.postMessage = jest.fn((message) => {
+            postedTypes.push(message.type);
+            queueMicrotask(() => {
+                fontCompilation.handleWorkerMessage({
+                    data: {
+                        id: message.id,
+                        type: message.type,
+                        success: true,
+                        result:
+                            message.type === 'compileEditingCached'
+                                ? new Uint8Array([1, 2, 3])
+                                : undefined,
+                        filename: 'editing-font.ttf',
+                        time_taken: 1
+                    }
+                });
+            });
+        });
+
+        fontCompilation.scheduleReplaceWorkerDocument(
+            'glyph:adieresis',
+            new Uint8Array([9, 10, 11])
+        );
+
+        await expect(
+            fontCompilation.compileEditingFromJsonCached(
+                '{"glyphs":[]}',
+                '7',
+                ['a', 'adieresis'],
+                { compileSource: 'text-input' }
+            )
+        ).resolves.toEqual(
+            expect.objectContaining({ filename: 'editing-font.ttf' })
+        );
+
+        expect(postedTypes).toEqual([
+            'replaceYdocDocuments',
+            'compileEditingCached'
+        ]);
+    });
 });

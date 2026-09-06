@@ -85,6 +85,60 @@ describe('FontManager sparse hydration', () => {
         expect(names).toEqual(expect.arrayContaining(['adieresis']));
     });
 
+    test('needsEditingCompileForText is true when a hydrated cmap glyph is missing from the compiled snapshot', () => {
+        const needs = fontManager.needsEditingCompileForText.call(
+            {
+                deriveSubsetGlyphsFromText() {
+                    return ['.notdef', 'a', 'adieresis'];
+                },
+                constrainSubsetToHydratedGlyphs(names) {
+                    return names.filter((name) => name !== '.notdef');
+                },
+                getEditingSubsetSnapshot() {
+                    return ['a', '.notdef'];
+                }
+            },
+            'hä'
+        );
+        expect(needs).toBe(true);
+    });
+
+    test('needsEditingCompileForText is true while catalog-mapped names are not hydrated yet', () => {
+        const needs = fontManager.needsEditingCompileForText.call(
+            {
+                deriveSubsetGlyphsFromText() {
+                    return ['.notdef', 'a', 'adieresis'];
+                },
+                constrainSubsetToHydratedGlyphs() {
+                    return ['a', '.notdef'];
+                },
+                getEditingSubsetSnapshot() {
+                    return ['a', '.notdef'];
+                }
+            },
+            'hä'
+        );
+        expect(needs).toBe(true);
+    });
+
+    test('needsEditingCompileForText is false when the compiled snapshot already has the constrained subset', () => {
+        const needs = fontManager.needsEditingCompileForText.call(
+            {
+                deriveSubsetGlyphsFromText() {
+                    return ['.notdef', 'a', 'adieresis'];
+                },
+                constrainSubsetToHydratedGlyphs(names) {
+                    return names.filter((name) => name !== '.notdef');
+                },
+                getEditingSubsetSnapshot() {
+                    return ['a', 'adieresis'];
+                }
+            },
+            'hä'
+        );
+        expect(needs).toBe(false);
+    });
+
     test('ensureSparseHydrationForCompile passes typed text and current glyph names', async () => {
         const plugin = {
             activeAssetId: 'asset-1',

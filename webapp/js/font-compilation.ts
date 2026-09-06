@@ -597,6 +597,33 @@ export class FontCompilation {
         await this.pendingWorkerDocumentSync;
     }
 
+    /**
+     * Wait until queued catch-up replaces have landed in the worker.
+     * `scheduleReplaceWorkerDocument` only posts after a microtask, so a
+     * compile in the same turn can still see `workerCacheDocumentReady`.
+     * Do not call this from the replace flush itself — it awaits the
+     * in-flight seed/apply sync, not this loop.
+     */
+    async awaitWorkerDocumentReadyForCompile(): Promise<void> {
+        await this.awaitWorkerDocumentSync();
+        while (
+            this.pendingWorkerDocumentReplaces.size > 0 ||
+            this.workerDocumentReplaceFlush
+        ) {
+            const flush = this.workerDocumentReplaceFlush;
+            if (flush) {
+                try {
+                    await flush;
+                } catch {
+                    // Replace failures already log; compile checks readiness.
+                }
+            } else {
+                await Promise.resolve();
+            }
+            await this.awaitWorkerDocumentSync();
+        }
+    }
+
     async seedWorkerYDocFromState(
         state: Uint8Array | ArrayBufferLike | null | undefined
     ): Promise<void> {
@@ -1572,9 +1599,7 @@ export class FontCompilation {
                 }
             }
 
-            if (!this.workerCacheDocumentReady) {
-                await this.awaitWorkerDocumentSync();
-            }
+            await this.awaitWorkerDocumentReadyForCompile();
 
             if (!this.workerCacheDocumentReady) {
                 throw new Error(
@@ -1872,9 +1897,7 @@ export class FontCompilation {
                 .join('\u001f');
             const layoutClosureKey = `${subsetKey}\u001e${selectedFeaturesKey}`;
 
-            if (!this.workerCacheDocumentReady) {
-                await this.awaitWorkerDocumentSync();
-            }
+            await this.awaitWorkerDocumentReadyForCompile();
 
             if (!this.workerCacheDocumentReady) {
                 throw new Error(
@@ -1937,9 +1960,7 @@ export class FontCompilation {
                 }
             }
 
-            if (!this.workerCacheDocumentReady) {
-                await this.awaitWorkerDocumentSync();
-            }
+            await this.awaitWorkerDocumentReadyForCompile();
 
             if (!this.workerCacheDocumentReady) {
                 throw new Error(

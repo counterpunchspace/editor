@@ -2534,6 +2534,40 @@ class FontManager {
         return firstHydrated ? [firstHydrated] : [];
     }
 
+    /**
+     * True when the live text maps to hydrated glyphs that are not in the
+     * last compiled editing subset, or to catalog glyphs still waiting to
+     * land in the model. Used to avoid a skip loop where unconstrained
+     * subset names match a previous attempt that compiled without those
+     * glyphs (cmap missing → .notdef).
+     */
+    needsEditingCompileForText(text: string): boolean {
+        if (!text) {
+            return false;
+        }
+        const derived = this.deriveSubsetGlyphsFromText(text);
+        const constrained = this.constrainSubsetToHydratedGlyphs(derived);
+        const compiled = new Set(this.getEditingSubsetSnapshot());
+        const constrainedSet = new Set(constrained);
+        if (!compiled.size && constrained.length > 0) {
+            return true;
+        }
+        for (const name of constrained) {
+            if (!compiled.has(name)) {
+                return true;
+            }
+        }
+        for (const name of derived) {
+            if (!name || name === '.notdef') {
+                continue;
+            }
+            if (!constrainedSet.has(name)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     async ensureSparseHydrationForCompile(): Promise<void> {
         if (!this.isHydrationSparse()) {
             return;
@@ -3073,6 +3107,13 @@ class FontManager {
             await this.ensureSparseHydrationForCompile();
             // Compute layout closure subset
             let glyphsToInclude = subsetGlyphs;
+            if (this.isHydrationSparse()) {
+                glyphsToInclude = this.normalizeSubsetGlyphs([
+                    ...(glyphsToInclude || []),
+                    ...this.deriveSubsetGlyphsFromText(resolvedText),
+                    ...this.getLiveVisibleGlyphNames()
+                ]);
+            }
             if (!glyphsToInclude || glyphsToInclude.length === 0) {
                 const fallbackText =
                     this.resolveEditingTextForCompile(resolvedText);

@@ -1659,8 +1659,21 @@ class GlyphCanvas {
         console.log(describePasteResult(result));
     }
 
+    private scheduleSparseTextCompileIfNeeded(): void {
+        if (!fontManager?.isHydrationSparse?.() || !fontManager.isReady?.()) {
+            return;
+        }
+        const text = this.textRunEditor?.textBuffer || '';
+        if (!text || !fontManager.needsEditingCompileForText?.(text)) {
+            return;
+        }
+        this.textChangeLastSubsetKey = '';
+        this.onTextChange();
+    }
+
     private handleFontModelSync = (): void => {
         this.invalidateTextModeKerningOverlayCache();
+        this.scheduleSparseTextCompileIfNeeded();
 
         if (
             this.textModeKerningDraftPairKey === null &&
@@ -11449,17 +11462,12 @@ class GlyphCanvas {
         this.textChangeDebounceTimer = setTimeout(() => {
             if (fontManager && fontManager.isReady()) {
                 const textBuffer = this.textRunEditor!.textBuffer;
-                const subsetGlyphs =
-                    fontManager.deriveSubsetGlyphsFromText(textBuffer);
-
-                const subsetKey = [...subsetGlyphs].sort().join('\u0000');
-
-                if (subsetKey === this.textChangeLastSubsetKey) {
+                if (!fontManager.needsEditingCompileForText(textBuffer)) {
                     return;
                 }
 
-                this.textChangeLastSubsetKey = subsetKey;
-                fontManager.updateEditingSubsetSnapshot(subsetGlyphs);
+                const subsetGlyphs =
+                    fontManager.deriveSubsetGlyphsFromText(textBuffer);
 
                 // Mark as text-input so the pipeline skips full JSON transfer
                 // and skips features/kerning for faster compilation
