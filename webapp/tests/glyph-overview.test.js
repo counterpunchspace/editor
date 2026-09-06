@@ -896,6 +896,18 @@ describe('GlyphOverview syncGlyphs incremental updates', () => {
                 .get('n')
                 .element.classList.contains('glyph-tile-unhydrated')
         ).toBe(false);
+        expect(
+            overview.tiles
+                .get('a')
+                .element.querySelector('.glyph-tile-cloud-icon')
+                .hasAttribute('hidden')
+        ).toBe(true);
+        expect(
+            overview.tiles
+                .get('n')
+                .element.querySelector('.glyph-tile-cloud-icon')
+                .hasAttribute('hidden')
+        ).toBe(true);
         delete window.fontManager;
         delete window.patchSyncEngine;
     });

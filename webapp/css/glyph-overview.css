@@ -161,22 +161,27 @@
     font-weight: bold;
 }
 
-.glyph-tile .glyph-tile-cloud-icon.material-symbols-outlined {
+.glyph-tile-cloud-icon.material-symbols-outlined {
+    display: none;
+}
+
+.glyph-tile-unhydrated
+    .glyph-tile-cloud-icon.material-symbols-outlined:not([hidden]) {
     position: absolute;
-    top: 50%;
-    left: 50%;
-    right: auto;
-    bottom: auto;
-    inset: auto;
-    display: block;
-    width: 1em;
-    height: 1em;
+    top: 0;
+    right: 0;
+    bottom: max(10px, calc(var(--tile-height) * 0.22));
+    left: 0;
+    display: grid;
+    place-items: center;
+    width: auto;
+    height: auto;
     margin: 0;
     padding: 0;
-    transform: translate(-50%, -50%);
+    transform: none;
     line-height: 1;
     text-align: center;
-    font-size: max(14px, calc(var(--tile-height) * 0.34));
+    font-size: max(16px, calc(var(--tile-height) * 0.44));
     font-variation-settings:
         'FILL' 0,
         'wght' 200,
@@ -187,18 +192,18 @@
     z-index: 1;
 }
 
-.glyph-tile .glyph-tile-cloud-icon[hidden] {
-    display: none;
-}
-
 .glyph-tile-unhydrated {
-    background-color: var(--background-secondary);
+    background-color: color-mix(
+        in srgb,
+        var(--background-secondary) 70%,
+        white
+    );
 }
 
 .glyph-tile-unhydrated.selected {
     background-color: color-mix(
         in srgb,
-        var(--background-secondary),
+        color-mix(in srgb, var(--background-secondary) 70%, white),
         var(--glyph-tile-selected-inactive)
     );
 }
@@ -206,7 +211,7 @@
 .view-overview.focused .glyph-tile-unhydrated.selected {
     background-color: color-mix(
         in srgb,
-        var(--background-secondary),
+        color-mix(in srgb, var(--background-secondary) 70%, white),
         var(--glyph-tile-selected-active)
     );
 }
