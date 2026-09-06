@@ -161,21 +161,58 @@
     font-weight: bold;
 }
 
-.glyph-tile-cloud-icon {
+.glyph-tile .glyph-tile-cloud-icon.material-symbols-outlined {
     position: absolute;
-    inset: 0;
-    display: flex;
-    align-items: center;
-    justify-content: center;
+    top: 50%;
+    left: 50%;
+    right: auto;
+    bottom: auto;
+    inset: auto;
+    display: block;
+    width: 1em;
+    height: 1em;
+    margin: 0;
+    padding: 0;
+    transform: translate(-50%, -50%);
     line-height: 1;
-    font-size: max(16px, calc(var(--tile-height) * 0.28));
-    color: var(--text-secondary);
+    text-align: center;
+    font-size: max(14px, calc(var(--tile-height) * 0.34));
+    font-variation-settings:
+        'FILL' 0,
+        'wght' 200,
+        'GRAD' 0,
+        'opsz' 24;
+    color: color-mix(in srgb, var(--text-primary) 18%, transparent);
     pointer-events: none;
     z-index: 1;
 }
 
-.glyph-tile-cloud-icon[hidden] {
+.glyph-tile .glyph-tile-cloud-icon[hidden] {
     display: none;
+}
+
+.glyph-tile-unhydrated {
+    background-color: var(--background-secondary);
+}
+
+.glyph-tile-unhydrated.selected {
+    background-color: color-mix(
+        in srgb,
+        var(--background-secondary),
+        var(--glyph-tile-selected-inactive)
+    );
+}
+
+.view-overview.focused .glyph-tile-unhydrated.selected {
+    background-color: color-mix(
+        in srgb,
+        var(--background-secondary),
+        var(--glyph-tile-selected-active)
+    );
+}
+
+.glyph-tile-unhydrated .glyph-tile-canvas {
+    visibility: hidden;
 }
 
 /* Legacy canvas inside tile (kept for compatibility) */

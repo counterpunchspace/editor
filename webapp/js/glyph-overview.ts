@@ -3337,7 +3337,7 @@ class GlyphOverview {
 
         const cloudIcon = document.createElement('span');
         cloudIcon.className = 'glyph-tile-cloud-icon material-symbols-outlined';
-        cloudIcon.textContent = 'cloud_download';
+        cloudIcon.textContent = 'cloud';
         cloudIcon.setAttribute('aria-hidden', 'true');
         cloudIcon.setAttribute('hidden', '');
         tileElement.appendChild(cloudIcon);

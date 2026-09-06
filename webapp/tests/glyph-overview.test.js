@@ -806,6 +806,9 @@ describe('GlyphOverview syncGlyphs incremental updates', () => {
                 .querySelector('.glyph-tile-cloud-icon')
                 .hasAttribute('hidden')
         ).toBe(false);
+        expect(
+            next.element.querySelector('.glyph-tile-cloud-icon').textContent
+        ).toBe('cloud');
         delete window.fontManager;
     });
 
