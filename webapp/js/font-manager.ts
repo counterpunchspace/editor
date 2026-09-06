@@ -4276,11 +4276,18 @@ class FontManager {
                 }
 
                 for (const field of arrayFields) {
+                    // Cloud catalog entries encode codepoints as a compact
+                    // membership map (for example {"65": true}); glyph
+                    // records still require their codepoints to be arrays.
+                    const isCloudCatalogCodepoints =
+                        field === 'codepoints' &&
+                        path.startsWith('.glyphCatalog.');
                     if (
                         field in val &&
                         val[field] !== null &&
                         typeof val[field] === 'object' &&
-                        !Array.isArray(val[field])
+                        !Array.isArray(val[field]) &&
+                        !isCloudCatalogCodepoints
                     ) {
                         throw new TypeError(
                             `Field "${field}" must remain an array before compile validation at ${path || 'root'}.`

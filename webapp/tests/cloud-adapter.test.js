@@ -1672,6 +1672,7 @@ describe('CloudAdapter outbound updates', () => {
         const indexedDb = createIndexedDbMock([
             {
                 assetId: 'asset-123',
+                documentId: 'font-core',
                 clientTransactionId:
                     collaborationMessageKey(collaborationMessage),
                 updateBase64: Buffer.from(durableUpdate).toString('base64'),
@@ -1709,6 +1710,23 @@ describe('CloudAdapter outbound updates', () => {
             expect(adapter._pendingDurabilityMessages).toEqual([
                 collaborationMessage
             ]);
+
+            const wrongDocumentApplyRemoteUpdate = jest.fn();
+            const wrongDocumentAdapter = new CloudAdapter({
+                assetId: 'asset-123',
+                documentId: 'font-deps'
+            });
+            wrongDocumentAdapter._bridge = {
+                getCollaborationLog: jest.fn(() => []),
+                applyRemoteUpdate: wrongDocumentApplyRemoteUpdate,
+                onLocalUpdate: jest.fn(),
+                offLocalUpdate: jest.fn()
+            };
+
+            await wrongDocumentAdapter._restorePersistentOutboxIntoBridge();
+
+            expect(wrongDocumentApplyRemoteUpdate).not.toHaveBeenCalled();
+            expect(wrongDocumentAdapter.pendingSyncCount).toBe(0);
         } finally {
             global.indexedDB = originalIndexedDb;
         }

@@ -140,7 +140,10 @@ import fontManager from './font-manager';
                     fontManager.currentFont?.needsRecompile
                 ) {
                     // Trigger recompilation - returns true if data changed and needs another compile
-                    if (fontManager && fontManager.isReady()) {
+                    // The initial editing compile is the operation that makes
+                    // the manager ready. Requiring an existing result here
+                    // turns a transient startup failure into a permanent one.
+                    if (fontManager?.currentFont) {
                         try {
                             needsRecompile =
                                 await fontManager.recompileEditingFont();

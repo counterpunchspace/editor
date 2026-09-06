@@ -164,7 +164,9 @@ export class GlyphDataIndex {
             await decompressGzipResponse(response)
         ) as GlyphData[];
         this.applyRecords(records);
-        window.dispatchEvent(new Event('counterpunch:glyph-data-ready'));
+        if (typeof window !== 'undefined') {
+            window.dispatchEvent(new Event('counterpunch:glyph-data-ready'));
+        }
         console.log(`Loaded ${this.records.length} Glyph Data records.`);
     }
 
@@ -206,7 +208,7 @@ export const glyphDataIndex = new GlyphDataIndex();
 
 // Static catalog — safe to warm during boot (no Pyodide). Skip in Jest
 // where `fetch` is unset unless a test mocks it.
-if (typeof fetch === 'function') {
+if (typeof window !== 'undefined' && typeof fetch === 'function') {
     void glyphDataIndex
         .ensureReady()
         .catch((error) =>

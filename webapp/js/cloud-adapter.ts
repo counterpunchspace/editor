@@ -894,6 +894,7 @@ type CloudOutboundUpdatePacket = {
 
 type CloudDurableOutboxRecord = {
     assetId: string;
+    documentId: string;
     clientTransactionId: string;
     updateBase64: string;
     collaborationMessage: CollaborationMessageEnvelope;
@@ -1011,7 +1012,8 @@ function openCloudOutboxDatabase(): Promise<IDBDatabase | null> {
 }
 
 async function loadCloudOutboxRecords(
-    assetId: string
+    assetId: string,
+    documentId: string
 ): Promise<CloudDurableOutboxRecord[]> {
     const db = await openCloudOutboxDatabase();
     if (!db) {
@@ -1029,6 +1031,7 @@ async function loadCloudOutboxRecords(
             const records = Array.isArray(request.result)
                 ? request.result.map((record) => ({
                       assetId: String(record.assetId ?? ''),
+                      documentId: String(record.documentId ?? ''),
                       clientTransactionId: String(
                           record.clientTransactionId ?? ''
                       ),
@@ -1042,6 +1045,7 @@ async function loadCloudOutboxRecords(
                 records.filter(
                     (record) =>
                         record.assetId === assetId &&
+                        record.documentId === documentId &&
                         !!record.clientTransactionId &&
                         !!record.updateBase64 &&
                         !!record.collaborationMessage
@@ -1068,7 +1072,7 @@ async function putCloudOutboxRecord(
         );
         const store = transaction.objectStore(CLOUD_OUTBOX_STORE_NAME);
         store.put({
-            key: `${record.assetId}:${record.clientTransactionId}`,
+            key: `${record.assetId}:${record.documentId}:${record.clientTransactionId}`,
             ...record
         });
         transaction.oncomplete = () => {
@@ -1088,6 +1092,7 @@ async function putCloudOutboxRecord(
 
 async function deleteCloudOutboxRecords(
     assetId: string,
+    documentId: string,
     clientTransactionIds: string[]
 ): Promise<void> {
     if (!clientTransactionIds.length) {
@@ -1106,7 +1111,7 @@ async function deleteCloudOutboxRecords(
         );
         const store = transaction.objectStore(CLOUD_OUTBOX_STORE_NAME);
         for (const clientTransactionId of clientTransactionIds) {
-            store.delete(`${assetId}:${clientTransactionId}`);
+            store.delete(`${assetId}:${documentId}:${clientTransactionId}`);
         }
         transaction.oncomplete = () => {
             db.close();
@@ -1806,6 +1811,7 @@ export class CloudAdapter implements FileSystemAdapter {
 
         const record: CloudDurableOutboxRecord = {
             assetId: this._assetId,
+            documentId: this._documentId,
             clientTransactionId: packet.clientTransactionId,
             updateBase64: u8ToBase64(packet.update),
             collaborationMessage: packet.collaborationMessage,
@@ -1825,15 +1831,16 @@ export class CloudAdapter implements FileSystemAdapter {
     }
 
     private async _restorePersistentOutboxIntoBridge(): Promise<void> {
-        const records = await loadCloudOutboxRecords(this._assetId).catch(
-            (error) => {
-                console.warn(
-                    'CloudAdapter: failed to load persistent cloud outbox:',
-                    error
-                );
-                return [] as CloudDurableOutboxRecord[];
-            }
-        );
+        const records = await loadCloudOutboxRecords(
+            this._assetId,
+            this._documentId
+        ).catch((error) => {
+            console.warn(
+                'CloudAdapter: failed to load persistent cloud outbox:',
+                error
+            );
+            return [] as CloudDurableOutboxRecord[];
+        });
 
         if (!records.length) {
             this._emitPendingSyncCountChange();
@@ -1984,6 +1991,7 @@ export class CloudAdapter implements FileSystemAdapter {
         this._emitPendingSyncCountChange();
         void deleteCloudOutboxRecords(
             this._assetId,
+            this._documentId,
             clientTransactionIds
         ).catch((error) => {
             console.warn(

@@ -82,7 +82,9 @@ export class QaCorpusIndex {
             await decompressGzipResponse(response)
         ) as QaCorpusTable;
         this.applyTable(table);
-        window.dispatchEvent(new Event(QA_CORPUS_READY_EVENT));
+        if (typeof window !== 'undefined') {
+            window.dispatchEvent(new Event(QA_CORPUS_READY_EVENT));
+        }
         console.log(
             `Loaded Auto QA corpus (${Object.keys(table.identities || {}).length} identities).`
         );
@@ -114,7 +116,7 @@ async function decompressGzipResponse(response: Response): Promise<string> {
 export const qaCorpusIndex = new QaCorpusIndex();
 (globalThis as { qaCorpusIndex?: QaCorpusIndex }).qaCorpusIndex = qaCorpusIndex;
 
-if (typeof fetch === 'function') {
+if (typeof window !== 'undefined' && typeof fetch === 'function') {
     void qaCorpusIndex
         .ensureReady()
         .catch((error) =>

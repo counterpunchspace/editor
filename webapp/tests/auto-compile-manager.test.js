@@ -60,4 +60,28 @@ describe('auto-compile-manager failure latch', () => {
 
         expect(recompileEditingFont).toHaveBeenCalledTimes(2);
     });
+
+    test('compiles the first loaded font without an existing editing font', async () => {
+        const currentFont = {
+            needsRecompile: true,
+            compileRequestVersion: 1
+        };
+        const recompileEditingFont = jest.fn().mockResolvedValue(false);
+
+        jest.doMock('../js/font-manager', () => ({
+            __esModule: true,
+            default: {
+                currentFont,
+                isReady: jest.fn(() => false),
+                recompileEditingFont
+            }
+        }));
+
+        require('../js/auto-compile-manager');
+
+        await window.autoCompileManager.forceTrigger();
+
+        expect(recompileEditingFont).toHaveBeenCalledTimes(1);
+        expect(currentFont.needsRecompile).toBe(true);
+    });
 });

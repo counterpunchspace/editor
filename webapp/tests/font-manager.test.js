@@ -1588,6 +1588,32 @@ describe('FontManager editing subset inclusion', () => {
         });
     });
 
+    test('validateBabelfontJsonForRust accepts cloud catalog codepoint sets', () => {
+        const fontData = cloneJson(fontManager.currentFont.babelfontData);
+        fontData.glyphCatalog = {
+            'glyph-a': {
+                glyphId: 'glyph-a',
+                name: 'A',
+                codepoints: { 65: true },
+                latestGlyphRevision: '0',
+                exported: true,
+                deleted: false,
+                generation: 0
+            }
+        };
+
+        const validatedJson = fontManager['validateBabelfontJsonForRust'](
+            JSON.stringify(fontData),
+            true
+        );
+
+        expect(
+            JSON.parse(validatedJson).glyphCatalog['glyph-a'].codepoints
+        ).toEqual({
+            65: true
+        });
+    });
+
     test('validateBabelfontJsonForRust returns the input string when needsValidation is false', () => {
         const input = fontManager.currentFont.babelfontJson;
         const parseSpy = jest.spyOn(JSON, 'parse');
