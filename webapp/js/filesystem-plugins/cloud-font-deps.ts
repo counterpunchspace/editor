@@ -687,9 +687,11 @@ export type SparseHydrationPlan = SparseHydrationPartition & {
  * catalog `componentIds`, then forward* so nested parts are working.
  * Layout alts come from feature code, not from glyph names.
  *
- * Hidden: metrics-key sources of working (`n`, `l`) minus working.
- * Do not reverse metrics-key edges. Do not GSUB-close the reverse set.
- * Do not infer components from glyph names.
+ * Hidden: metrics-key sources of working (`n`, `l`) ∪ glyphs that
+ * inherit sidebearings from working (`a.wide` keyed to `a`) ∪ those
+ * inheritors' nested components, minus working. Do not reverse
+ * metrics-key or component from hidden sources (`h`/`ntilde` from `n`).
+ * Do not GSUB-close the reverse set. Do not infer from glyph names.
  */
 export function computeSparseHydrationPartition(options: {
     seedIds: string[];
@@ -718,11 +720,23 @@ export function computeSparseHydrationPartition(options: {
         [...reverseWorking],
         forwardAdjacencyOfKind(edges, 'component')
     );
+    const metricsPool = closeSet(
+        [...working],
+        forwardAdjacencyOfKind(options.edges, 'metrics-key')
+    );
+    const reverseMetrics = invertForwardEdges(options.edges, 'metrics-key');
+    const metricsInheritors = new Set<string>();
+    for (const id of working) {
+        for (const inheritor of reverseMetrics[id] || []) {
+            metricsInheritors.add(inheritor);
+        }
+    }
+    const inheritorParts = closeSet(
+        [...metricsInheritors].filter((id) => !working.has(id)),
+        forwardAdjacencyOfKind(edges, 'component')
+    );
     const hidden = [
-        ...closeSet(
-            [...working],
-            forwardAdjacencyOfKind(options.edges, 'metrics-key')
-        )
+        ...new Set([...metricsPool, ...metricsInheritors, ...inheritorParts])
     ].filter((id) => !working.has(id));
     const workingIds = [...working];
     return {

@@ -1143,6 +1143,41 @@ export class CloudPlugin extends FilesystemPlugin {
         }
     }
 
+    /**
+     * One-time repair: rewrite the live font-deps shard with the same
+     * `buildFontDepsIndex` + `writeFontDepsYMap` path as cloud seed.
+     * Requires every catalog glyph body to be loaded (not a sparse open).
+     */
+    rebuildFontDepsFromLoadedGlyphs(): boolean {
+        const currentFont = window.fontManager?.currentFont;
+        if (!currentFont?.isCloudBacked?.()) {
+            alert('Open a cloud font first.');
+            return false;
+        }
+        if (!this.canMutateCurrentAsset()) {
+            alert('You cannot update font-deps on a read-only cloud font.');
+            return false;
+        }
+        const fontJson = this._currentFontJson();
+        const bridge = window.patchSyncEngine;
+        if (!fontJson || !bridge?.syncCompleteFontDepsFromLoadedGlyphs) {
+            alert('The current font is not ready.');
+            return false;
+        }
+        const wrote = bridge.syncCompleteFontDepsFromLoadedGlyphs(fontJson);
+        if (!wrote) {
+            alert(
+                'Cannot rebuild font-deps until every catalog glyph is loaded. Open the font without sparse hydration.'
+            );
+            return false;
+        }
+        const sourceCount = Object.keys(
+            readFontDepsIndex(bridge.depsDoc.getMap('deps')).edges
+        ).length;
+        alert(`Rebuilt font-deps from loaded glyphs (${sourceCount} sources).`);
+        return true;
+    }
+
     getCachedAssetRole(assetId: string): CloudAssetRole | null {
         return this._getCloudAdapter().getCachedAssetRole(assetId);
     }
@@ -2203,6 +2238,13 @@ export class CloudPlugin extends FilesystemPlugin {
                 icon: 'content_copy',
                 action: async () => {
                     await this.copyCloudDebugSnapshot();
+                }
+            },
+            {
+                label: 'Rebuild Font-Deps',
+                icon: 'account_tree',
+                action: async () => {
+                    this.rebuildFontDepsFromLoadedGlyphs();
                 }
             }
         ];

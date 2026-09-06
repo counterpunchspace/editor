@@ -380,6 +380,24 @@ function getToolsMenuItems(): ToolbarMenuItem[] {
     return items;
 }
 
+function isCurrentFontCloudBacked(): boolean {
+    return window.fontManager?.currentFont?.isCloudBacked?.() === true;
+}
+
+function rebuildFontDepsMenuItem(): ToolbarMenuItem {
+    return {
+        label: 'Rebuild Font-Deps',
+        icon: 'account_tree',
+        action: async () => {
+            if (!window.cloudPlugin) {
+                alert('Cloud plugin is not available.');
+                return;
+            }
+            window.cloudPlugin.rebuildFontDepsFromLoadedGlyphs();
+        }
+    };
+}
+
 function getDeveloperMenuItems(): ToolbarMenuItem[] {
     const items: ToolbarMenuItem[] = [];
 
@@ -396,6 +414,10 @@ function getDeveloperMenuItems(): ToolbarMenuItem[] {
                 await window.cloudPlugin.copyCloudDebugSnapshot();
             }
         });
+    }
+
+    if (isCurrentFontCloudBacked()) {
+        items.push(rebuildFontDepsMenuItem());
     }
 
     items.push({

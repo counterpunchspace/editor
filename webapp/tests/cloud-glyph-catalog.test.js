@@ -378,6 +378,7 @@ describe('live font-deps updates', () => {
             currentFont: {
                 sourcePlugin: plugin,
                 path: 'cloud://live-deps-asset',
+                isCloudBacked: () => true,
                 babelfontData: bridge.getFontJsonSnapshot()
             }
         };
@@ -475,7 +476,61 @@ describe('live font-deps updates', () => {
             catalog: catalogEntriesForDepsParse(live)
         });
         expect(partition.workingIds).toEqual([aId]);
-        expect(partition.hiddenIds).toEqual([nId]);
+        expect(partition.hiddenIds.sort()).toEqual([nId].sort());
+        plugin._stopTrackingActiveAssetSize();
+        bridge.destroy();
+    });
+
+    it('rebuilds font-deps from loaded glyphs with the same index as seed', () => {
+        const previousAlert = window.alert;
+        const alerts = [];
+        window.alert = (message) => {
+            alerts.push(String(message));
+        };
+        const fontJson = {
+            upm: 1000,
+            glyphs: [
+                {
+                    name: 'a',
+                    rightMetricsKey: 'n',
+                    layers: [liveLayer()]
+                },
+                {
+                    name: 'n',
+                    layers: [liveLayer()]
+                },
+                {
+                    name: 'adieresis',
+                    layers: [liveLayer([liveComponent('a')])]
+                }
+            ]
+        };
+        const { bridge, plugin, fontJson: live } = startLiveSession(fontJson);
+        const expected = buildFontDepsIndex(live);
+        bridge.depsDoc.transact(() => {
+            writeFontDepsYMap(bridge.depsDoc.getMap('deps'), {
+                edges: {},
+                sourceRevision: {}
+            });
+        });
+        expect(readFontDepsIndex(bridge.depsDoc.getMap('deps')).edges).toEqual(
+            {}
+        );
+        expect(plugin.rebuildFontDepsFromLoadedGlyphs()).toBe(true);
+        expect(readFontDepsIndex(bridge.depsDoc.getMap('deps')).edges).toEqual(
+            expected.edges
+        );
+        expect(alerts.join(' ')).toMatch(
+            /Rebuilt font-deps from loaded glyphs/
+        );
+
+        window.fontManager.currentFont.babelfontData = {
+            ...live,
+            glyphs: [live.glyphs[0]]
+        };
+        expect(plugin.rebuildFontDepsFromLoadedGlyphs()).toBe(false);
+        expect(alerts.join(' ')).toMatch(/every catalog glyph is loaded/);
+        window.alert = previousAlert;
         plugin._stopTrackingActiveAssetSize();
         bridge.destroy();
     });
@@ -626,6 +681,8 @@ describe('font-deps UUID edges continued', () => {
         const l = 'id-l';
         const e = 'id-e';
         const h = 'id-h';
+        const aWide = 'id-a-wide';
+        const ss03Wide = 'id-a-ss03-wide';
         const adieresis = 'id-adieresis';
         const dieresis = 'id-dieresiscomb';
         const ntilde = 'id-ntilde';
@@ -637,6 +694,8 @@ describe('font-deps UUID edges continued', () => {
             [a]: { [n]: 'metrics-key' },
             [n]: { [l]: 'metrics-key' },
             [h]: { [n]: 'metrics-key' },
+            [aWide]: { [a]: 'metrics-key' },
+            [ss03Wide]: { [layout]: 'metrics-key' },
             [adieresis]: { [a]: 'component', [dieresis]: 'component' },
             [ntilde]: { [n]: 'component', [tilde]: 'component' },
             [lslash]: { [l]: 'component' },
@@ -650,7 +709,9 @@ describe('font-deps UUID edges continued', () => {
         expect(partition.workingIds.sort()).toEqual(
             [a, layout, adieresis, ae, dieresis, e].sort()
         );
-        expect(partition.hiddenIds.sort()).toEqual([n, l].sort());
+        expect(partition.hiddenIds.sort()).toEqual(
+            [n, l, aWide, ss03Wide].sort()
+        );
         expect(partition.loadIds).not.toEqual(
             expect.arrayContaining([h, ntilde, tilde, lslash])
         );
@@ -660,7 +721,7 @@ describe('font-deps UUID edges continued', () => {
             edges
         });
         expect(hydrate.sort()).toEqual(partition.loadIds.sort());
-        expect(hydrate).toHaveLength(8);
+        expect(hydrate).toHaveLength(10);
     });
 
     it('promotes a composite seed to its encoded base and hydrates all a-dependents', () => {
@@ -728,8 +789,10 @@ describe('font-deps UUID edges continued', () => {
             expect.arrayContaining([dieresis, grave, acute, e])
         );
         expect(fromAdieresis.workingIds).not.toContain(aWidth);
+        expect(fromA.hiddenIds).toContain(aWidth);
+        expect(fromAdieresis.hiddenIds).toContain(aWidth);
         expect(fromAdieresis.loadIds).not.toEqual(
-            expect.arrayContaining([ntilde, tilde, n, aWidth])
+            expect.arrayContaining([ntilde, tilde, n])
         );
         expect(
             closeReverseComponentNamesFromDeps({
@@ -2211,10 +2274,10 @@ describe('sparse hydration fixed point', () => {
         expect(result.loadedIds.sort()).toEqual(expectedLoad.sort());
         expect(result.loadedIds).not.toEqual(
             expect.arrayContaining([
+                ids.h,
                 ids.ntilde,
                 ids.tildecomb,
                 ids.lslash,
-                ids.h,
                 ids.z
             ])
         );
@@ -2242,7 +2305,7 @@ describe('sparse hydration fixed point', () => {
                 return fetched;
             }
         });
-        const expectedPromoteFetch = [ids.ntilde, ids.tildecomb];
+        const expectedPromoteFetch = [ids.ntilde, ids.tildecomb, ids.h];
         expect(promoted.fetchPasses).toHaveLength(1);
         expect(promoted.fetchPasses[0].sort()).toEqual(
             expectedPromoteFetch.sort()
@@ -2257,7 +2320,9 @@ describe('sparse hydration fixed point', () => {
         );
         expect(promoted.workingIds).not.toContain(ids.h);
         expect(promoted.workingIds).not.toContain(ids.l);
-        expect(promoted.hiddenIds).toEqual(expect.arrayContaining([ids.l]));
+        expect(promoted.hiddenIds).toEqual(
+            expect.arrayContaining([ids.l, ids.h])
+        );
         expect(promoted.hiddenIds).not.toEqual(
             expect.arrayContaining([
                 ids.e,

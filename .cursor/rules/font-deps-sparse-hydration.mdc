@@ -10,6 +10,7 @@ Sparse cloud open hydrates from **font-deps** (plus catalog `componentIds` and F
 ## When the graph is written
 
 - **Cloud seed** (`initFromFontJson` / `buildFontDepsIndex`): full rebuild from every glyph body.
+- **Developers → Rebuild Font-Deps**: same `buildFontDepsIndex` write as seed, on the live deps shard, when every catalog glyph is loaded. Use this instead of re-seeding a hosted font.
 - **Live commits**: patch **that source row** when component or metrics-key data changes. Do not rebuild the whole font on open.
 
 ## Live updates must actually fire
@@ -24,7 +25,7 @@ Committed paths use colon separators (`glyphs.adieresis:layers.layer-1:shapes.0.
 
 Then `syncFontDepsFromFontJson(fontJson, [glyphName])` rewrites that source from the **current body**.
 
-Do not infer edges from glyph names. Unresolved names are omitted. Metrics edges are forward-only (hidden); component/`both` invert for reverse-close.
+Do not infer edges from glyph names. Unresolved names are omitted. Component/`both` invert for reverse-close (composites). Metrics-key edges close **forward** from working (sources `n`, `l`) **and reverse** from working only (glyphs that inherit `a` / `a.ss03` sidebearings) into hidden. Do not reverse metrics-key or component from a hidden source (`h` or `ntilde` from `n`).
 
 ## Tests
 
