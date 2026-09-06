@@ -496,7 +496,20 @@ export function catalogNeedsUpdate(path: CatalogChangePath): boolean {
     ) {
         return true;
     }
-    return String(path[path.length - 1] ?? '') === 'reference';
+    return isComponentReferencePath(path);
+}
+
+function isComponentReferencePath(path: CatalogChangePath): boolean {
+    const changedField = String(path[path.length - 1] ?? '');
+    if (changedField === 'reference') {
+        return true;
+    }
+    const shapesAt = path.lastIndexOf('shapes');
+    return (
+        shapesAt >= 0 &&
+        path.length === shapesAt + 2 &&
+        /^\d+$/.test(String(path[shapesAt + 1] ?? ''))
+    );
 }
 
 export function tombstoneCatalogEntry(

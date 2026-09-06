@@ -30,6 +30,7 @@ import {
     type CommittedChangeListener
 } from '../../patch-sync-engine';
 import { Logger } from '../../logger';
+import { getPathSegments } from '../../change-log';
 import { resolveWebsiteURL } from '../../website-url';
 import { readUrlState } from '../../url-state';
 import {
@@ -101,7 +102,7 @@ function pathFromCommittedEntry(entry: {
         return rawPath;
     }
     if (typeof rawPath === 'string') {
-        return rawPath.split('.');
+        return getPathSegments(rawPath);
     }
     return [];
 }

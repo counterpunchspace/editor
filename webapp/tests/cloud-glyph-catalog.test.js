@@ -25,6 +25,7 @@ const {
     closeComponentNamesFromFontJson,
     closeReverseComponentNamesFromDeps,
     afdkoFeatureCodeFromFontJson,
+    catalogEntriesForDepsParse,
     parseMetricsKeyReferencedNames,
     patchSourceEdges,
     readFontDepsIndex,
@@ -263,6 +264,16 @@ describe('cloud glyph catalog', () => {
                 'reference'
             ])
         ).toBe(true);
+        expect(
+            catalogNeedsUpdate([
+                'glyphs',
+                'adieresis',
+                'layers',
+                'layer-1',
+                'shapes',
+                0
+            ])
+        ).toBe(true);
         expect(catalogNeedsUpdate(['glyphs', 'A'])).toBe(true);
     });
 });
@@ -281,6 +292,21 @@ describe('font-deps UUID edges', () => {
             ])
         ).toBe(true);
         expect(depsNeedUpdate(['glyphs', 'A', 'leftMetricsKey'])).toBe(true);
+        expect(depsNeedUpdate(['glyphs', 'A', 'rightMetricsKey'])).toBe(true);
+        expect(depsNeedUpdate(['glyphs', 'A', 'widthMetricsKey'])).toBe(true);
+        expect(
+            depsNeedUpdate(['glyphs', 'A', 'format_specific', 'metric_left'])
+        ).toBe(true);
+        expect(
+            depsNeedUpdate([
+                'glyphs',
+                'adieresis',
+                'layers',
+                'layer-1',
+                'shapes',
+                0
+            ])
+        ).toBe(true);
         expect(
             depsNeedUpdate([
                 'glyphs',
@@ -304,7 +330,195 @@ describe('font-deps UUID edges', () => {
             ])
         ).toBe(false);
     });
+});
 
+describe('live font-deps updates', () => {
+    const {
+        CloudPlugin
+    } = require('../js/filesystem-plugins/plugins/cloud-plugin');
+    const previousFontManager = window.fontManager;
+    const previousPatchSync = window.patchSyncEngine;
+    const previousCloudPlugin = window.cloudPlugin;
+
+    afterEach(() => {
+        window.fontManager = previousFontManager;
+        window.patchSyncEngine = previousPatchSync;
+        window.cloudPlugin = previousCloudPlugin;
+    });
+
+    function liveLayer(shapes = []) {
+        return { id: 'layer-1', width: 600, shapes };
+    }
+
+    function liveComponent(reference) {
+        return {
+            reference,
+            transform: {
+                translation: [0, 0],
+                rotation: 0,
+                scale: [1, 1],
+                skew: [0, 0],
+                order: 'RestOfTheWorld'
+            }
+        };
+    }
+
+    function startLiveSession(fontJson) {
+        applyCloudOwnedData(fontJson);
+        const bridge = new PatchSyncEngine('live-deps');
+        bridge.initFromJson(fontJson);
+        const owned = catalogFromCoreJson(fontJson);
+        bridge.syncCloudOwnedProjection(owned);
+        bridge.syncFontDepsFromFontJson(fontJson);
+        const plugin = new CloudPlugin();
+        plugin._refreshAssetLimitsAfterCatalogChange = async () => {};
+        plugin._recomputeActiveAssetSize = () => {};
+        window.patchSyncEngine = bridge;
+        window.fontManager = {
+            currentFont: {
+                sourcePlugin: plugin,
+                path: 'cloud://live-deps-asset',
+                babelfontData: bridge.getFontJsonSnapshot()
+            }
+        };
+        plugin._startTrackingActiveAssetSize('live-deps-asset', bridge);
+        return { bridge, plugin, fontJson: bridge.getFontJsonSnapshot() };
+    }
+
+    it('patches component edges and reverse-close when a reference is committed', () => {
+        const fontJson = {
+            upm: 1000,
+            glyphs: [
+                {
+                    name: 'a',
+                    layers: [liveLayer()]
+                },
+                {
+                    name: 'n',
+                    layers: [liveLayer()]
+                },
+                {
+                    name: 'adieresis',
+                    layers: [liveLayer([liveComponent('n')])]
+                }
+            ]
+        };
+        const { bridge, plugin, fontJson: live } = startLiveSession(fontJson);
+        const aId = live.glyphs.find((glyph) => glyph.name === 'a').id;
+        const nId = live.glyphs.find((glyph) => glyph.name === 'n').id;
+        const adiId = live.glyphs.find(
+            (glyph) => glyph.name === 'adieresis'
+        ).id;
+        expect(
+            readFontDepsIndex(bridge.depsDoc.getMap('deps')).edges[adiId][nId]
+        ).toBe('component');
+        expect(
+            computeSparseHydrationPartition({
+                seedIds: [aId],
+                edges: readFontDepsIndex(bridge.depsDoc.getMap('deps')).edges,
+                catalog: catalogEntriesForDepsParse(live)
+            }).workingIds
+        ).toEqual([aId]);
+
+        live.glyphs.find(
+            (glyph) => glyph.name === 'adieresis'
+        ).layers[0].shapes[0].reference = 'a';
+        bridge.recordChange(
+            ['glyphs', 'adieresis', 'layers', 'layer-1', 'shapes', 0],
+            'reference',
+            'n',
+            'a'
+        );
+
+        const edges = readFontDepsIndex(bridge.depsDoc.getMap('deps')).edges;
+        expect(edges[adiId][aId]).toBe('component');
+        expect(edges[adiId][nId]).toBeUndefined();
+        expect(
+            catalogFromCoreJson(live).glyphCatalog[adiId].componentIds
+        ).toEqual([aId]);
+        expect(
+            computeSparseHydrationPartition({
+                seedIds: [aId],
+                edges,
+                catalog: catalogEntriesForDepsParse(live)
+            }).workingIds.sort()
+        ).toEqual([aId, adiId].sort());
+        plugin._stopTrackingActiveAssetSize();
+        bridge.destroy();
+    });
+
+    it('patches metrics-key edges into hidden hydration when a metrics key is committed', () => {
+        const fontJson = {
+            upm: 1000,
+            glyphs: [
+                {
+                    name: 'a',
+                    layers: [liveLayer()]
+                },
+                {
+                    name: 'n',
+                    layers: [liveLayer()]
+                }
+            ]
+        };
+        const { bridge, plugin, fontJson: live } = startLiveSession(fontJson);
+        const aId = live.glyphs[0].id;
+        const nId = live.glyphs[1].id;
+        live.glyphs[0].leftMetricsKey = 'n';
+        bridge.recordChange(['glyphs', 'a'], 'leftMetricsKey', undefined, 'n');
+
+        const edges = readFontDepsIndex(bridge.depsDoc.getMap('deps')).edges;
+        expect(edges[aId][nId]).toBe('metrics-key');
+        const partition = computeSparseHydrationPartition({
+            seedIds: [aId],
+            edges,
+            catalog: catalogEntriesForDepsParse(live)
+        });
+        expect(partition.workingIds).toEqual([aId]);
+        expect(partition.hiddenIds).toEqual([nId]);
+        plugin._stopTrackingActiveAssetSize();
+        bridge.destroy();
+    });
+
+    it('patches component edges when a whole component shape is added', () => {
+        const fontJson = {
+            upm: 1000,
+            glyphs: [
+                {
+                    name: 'a',
+                    layers: [liveLayer()]
+                },
+                {
+                    name: 'adieresis',
+                    layers: [liveLayer()]
+                }
+            ]
+        };
+        const { bridge, plugin, fontJson: live } = startLiveSession(fontJson);
+        const aId = live.glyphs[0].id;
+        const adiId = live.glyphs[1].id;
+        const shape = liveComponent('a');
+        live.glyphs[1].layers[0].shapes.push(shape);
+        bridge.recordAdd(
+            ['glyphs', 'adieresis', 'layers', 'layer-1', 'shapes', 0],
+            shape
+        );
+
+        const edges = readFontDepsIndex(bridge.depsDoc.getMap('deps')).edges;
+        expect(edges[adiId][aId]).toBe('component');
+        expect(
+            computeSparseHydrationPartition({
+                seedIds: [aId],
+                edges,
+                catalog: catalogEntriesForDepsParse(live)
+            }).workingIds.sort()
+        ).toEqual([aId, adiId].sort());
+        plugin._stopTrackingActiveAssetSize();
+        bridge.destroy();
+    });
+});
+
+describe('font-deps UUID edges continued', () => {
     it('repairs a loaded source using only the lean catalog', () => {
         const glyph = {
             id: 'source',

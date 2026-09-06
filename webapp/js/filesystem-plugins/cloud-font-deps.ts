@@ -1502,12 +1502,24 @@ export function depsNeedUpdate(path: Array<string | number>): boolean {
         return false;
     }
     const changedField = String(path[path.length - 1] ?? '');
-    // Only the dependency-bearing leaves can change the forward graph. A
-    // drag, topology reorder, arbitrary shape data, or plugin JSON must not
+    // Only dependency-bearing leaves, plus whole-shape add/remove at a
+    // `shapes` index. A drag, topology reorder, or plugin JSON must not
     // rebuild this glyph's dependency projection.
-    return (
+    if (
         changedField === 'reference' ||
         changedField === 'leftMetricsKey' ||
-        changedField === 'rightMetricsKey'
+        changedField === 'rightMetricsKey' ||
+        changedField === 'widthMetricsKey' ||
+        changedField === 'metric_left' ||
+        changedField === 'metric_right' ||
+        changedField === 'metric_width'
+    ) {
+        return true;
+    }
+    const shapesAt = path.lastIndexOf('shapes');
+    return (
+        shapesAt >= 0 &&
+        path.length === shapesAt + 2 &&
+        /^\d+$/.test(String(path[shapesAt + 1] ?? ''))
     );
 }

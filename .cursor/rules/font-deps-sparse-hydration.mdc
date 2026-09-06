@@ -1,0 +1,31 @@
+---
+description: Keep font-deps correct; sparse hydration depends on it.
+alwaysApply: true
+---
+
+# Font-deps correctness (sparse hydration)
+
+Sparse cloud open hydrates from **font-deps** (plus catalog `componentIds` and FEA). Stale deps silently drop composites and metrics ancestors. **Keeping that graph current is a first-class requirement**, not a follow-up.
+
+## When the graph is written
+
+- **Cloud seed** (`initFromFontJson` / `buildFontDepsIndex`): full rebuild from every glyph body.
+- **Live commits**: patch **that source row** when component or metrics-key data changes. Do not rebuild the whole font on open.
+
+## Live updates must actually fire
+
+Committed paths use colon separators (`glyphs.adieresis:layers.layer-1:shapes.0.reference`). Parse with `getPathSegments` from `change-log.ts`. Never `path.split('.')` — that makes the glyph name `adieresis:layers` and the row is skipped.
+
+`depsNeedUpdate` must catch:
+
+- `reference`, `leftMetricsKey`, `rightMetricsKey`, `widthMetricsKey`
+- Glyphs `metric_left` / `metric_right` / `metric_width`
+- Whole-shape add/remove at a `shapes` index (not node drags)
+
+Then `syncFontDepsFromFontJson(fontJson, [glyphName])` rewrites that source from the **current body**.
+
+Do not infer edges from glyph names. Unresolved names are omitted. Metrics edges are forward-only (hidden); component/`both` invert for reverse-close.
+
+## Tests
+
+A path-filter unit test is not enough. Cover `recordChange` / `recordAdd` through the CloudPlugin committed-change listener, then assert `readFontDepsIndex` **and** `computeSparseHydrationPartition` (reverse-close / hidden metrics).

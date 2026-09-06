@@ -10,6 +10,17 @@ Per-shard encoded Y.Doc ceiling: 5 MiB (warn at 75%; live commit asks the
 cloud plugin and reverts on reject). See
 `strategy/CLOUD_COLLABORATION_ARCHITECTURE.md`.
 
+## Font-deps (sparse hydration)
+
+Sparse cloud hydration is only as correct as **font-deps**. Prefer keeping that
+graph current over incidental refactors in the same change. Write the full
+index on **cloud seed**; patch the edited glyph’s row on **live** component and
+metrics-key commits (parse committed paths with `getPathSegments`, not
+`String.split('.')`). Do not rebuild deps on open. Live-update tests must go
+through `recordChange` / the CloudPlugin listener and then assert sparse
+close, not only `depsNeedUpdate`. See
+`.cursor/rules/font-deps-sparse-hydration.mdc`.
+
 ## Project Overview
 
 Counterpunch is a browser-based font editor with live compilation and rendering capabilities. It uses a WebAssembly-based font compilation pipeline (Rust fontc/babelfont-rs compiled to WASM) and a JavaScript/TypeScript/HTML/CSS frontend. The editor provides a Python scripting environment via Pyodide, allowing users to manipulate font data programmatically.
