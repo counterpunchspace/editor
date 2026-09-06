@@ -88,7 +88,7 @@ Use these as stress cases when sizing catalog/deps budgets and hydrate UX:
 | Discovery | Lean identity catalog in core (incl. cmap) + separate deps index |
 | Deps encoding | `edges: Y.Map<sourceUUID, Y.Map<targetUUID, kind>>` + `sourceRevision`; invert reverse in memory |
 | Closure (compile) | `close_layout(seeds)` then forward deps; no reverse set |
-| Closure (UI sparse hydrate) | `close_layout(seeds)` ∪ `reverse*(seeds)`, then **forward-close**; never `close_layout` the reverse set |
+| Closure (UI sparse hydrate) | Live `font-deps` first; FEA alts of **seeds only**; reverse\* component/`both` from seeds+alts; forward\* **strict component** into working; metrics/`both` stems **hidden**; never GSUB-close the reverse set; one plan, one glyph fetch |
 | Linked windows | Main window is sole cloud hub; BC is multi-doc; per-window residency |
 | Small vs large | Same machinery; default hydrate policy is `all` vs working-set |
 | Full-font compile | Session-scoped Fly Machine (8–16 GB); core dirty + HTTP glyph catch-up (not v1) |
@@ -543,30 +543,97 @@ deps artifact — still without opening glyph Y.Docs.
 ### UI sparse hydration (graph sufficiency)
 
 Editing hydrate for a user-chosen seed set is **not** the compile subset.
-It must include reverse dependents (so editing `a` can show `ä`) and then
-forward-close (so `ä` still pulls `dieresis`):
+Compile is layout + **forward** deps only. Editing must also reverse-close
+composites (so opening `a` loads `adieresis`) and then forward-close nested
+outline parts (so `adieresis` still loads `dieresiscomb`). Sidebearing
+sources (`n`, `l`, `o`) load as **hidden** support, not working tiles.
+
+Implementation: `computeSparseHydrationPartition` in
+`webapp/js/filesystem-plugins/cloud-font-deps.ts`. Tests:
+`webapp/tests/cloud-glyph-catalog.test.js`.
+
+#### Building `font-deps`
+
+Glyph shards are authoritative. `font-deps` is a denormalized forward graph:
 
 ```text
-seeds            = glyphs the user picked
-layout           = close_layout(seeds)     // core features + catalog names
-dependents       = reverse*(seeds)         // invert forward edge maps in memory
-hydrate          = forward*(seeds ∪ layout ∪ dependents)
+deps.edges[sourceUUID][targetUUID] = component | metrics-key | both
 ```
 
-Do **not** `close_layout` the reverse set (it explodes). OT stays on
-user-chosen seeds only. Metrics-key edges stay in the deps graph; OT stays
-in `close_layout`.
+- **component:** outline `reference` (and catalog `componentIds` when present).
+- **metrics-key:** `leftMetricsKey` / `rightMetricsKey` / `widthMetricsKey` and
+  Glyphs `metric_left` / `metric_right` / `metric_width`, parsed against
+  longest-first glyph names (`=n`, `=|l-5`, `==a@-20`).
+- **both:** the same target is a component **and** a metrics key. Do not infer
+  edges from glyph names. Unresolved names are omitted. No reverse graph is
+  stored; invert in memory.
+
+Write the full index on **cloud seed**. Patch **that source row** on live
+component or metrics-key commits (`getPathSegments`, not `split('.')`). Do
+not rebuild the whole index on open. Do not rewrite `font-deps` while HTTP
+glyph hydrate applies shards. The sparse **working set is in-memory only**
+(`PatchSyncEngine`); never persist it in `font-deps`.
+
+#### Which glyphs to hydrate
+
+```text
+seeds     = cmap(`?text=`) and/or Download Glyph(s) names
+layout    = FEA substitution targets of seeds only   // close_layout(seeds)
+origins   = encodedBases(seeds) ∪ layout
+            // composite seed adieresis → non-mark component a
+            // do not treat layout alts (a.ss03) as encoded-base origins
+reverseW  = reverse*(origins) over component and both
+            // a → adieresis, aacute, ae; a.ss03 → adieresis.ss03
+working   = reverseW, then forward* over strict `component` only
+            // nested outline parts (dieresiscomb, e of ae)
+            // previous working ids unioned only if they are not
+            // metrics-key/both stems of this family
+hidden    = forward*(working) over metrics-key and both   // n, l, o
+            ∪ reverse metrics inheritors of working       // a.wide keyed to a
+            ∪ forward* component of those inheritors
+            minus working
+load      = working ∪ hidden
+```
+
+Hard rules:
+
+- Do **not** `close_layout` (GSUB) the reverse set. OT stays on user-chosen
+  seeds only.
+- Do **not** reverse-close from hidden metrics sources (`n` must not pull
+  `h` / `ntilde`).
+- Do **not** put metrics-key or `both` stems in the working set. `a.ss03 → o`
+  (`leftMetricsKey: "o"`, often stored as `both`) loads `o` **hidden**. Reverse
+  from `o` would walk Latin.
+- Forward working close is **strict `component`**, not `both`. Reverse
+  working close **does** follow `both` so composites that also inherit
+  metrics from their base still reverse-close.
+- Hidden glyphs are resident for compile/sidebearings. Overview shows a faint
+  tile. Download Glyph(s) may promote a hidden glyph to a seed (then it
+  becomes working and reverse-closes *its* family).
+
+#### One plan, one fetch
+
+Sparse `?sparse=true` open:
+
+1. HTTP `font-core` + published `font-deps`.
+2. Overlay **live** `GET …/shards/font-deps/live` before planning (published
+   deps is often empty or stale).
+3. Compute `load` once. Fetch every missing glyph shard. Then show the font.
+4. Do **not** paint a seed-only set and expand composites after the live
+   WebSocket attaches.
+
+A later body-named component absent from deps may trigger one repair fetch
+(fixed point). That is not a second UI stage. Layout closure for arbitrary
+CJK feature sets can still explode past browser budget. Bound hydrate size;
+beyond budget use subset compile or server preview rather than loading the
+world. That budget is a product policy on the *result* of closure, not a
+reason to skip layout closure.
 
 ### Hydrate and repair
 
-1. **Hydrate** the missing set as a pack (or parallel per-shard GETs).
+1. **Hydrate** the missing `load` set (parallel per-shard GETs).
 2. **Fallback:** if a loaded glyph references an id absent from deps, repair
    (request that id, patch deps). Not the steady-state path.
-
-Layout closure for arbitrary CJK feature sets can still explode past browser
-budget. Bound hydrate size; beyond budget use subset compile or server preview
-rather than loading the world. That budget limit is a product policy on the
-*result* of closure, not a reason to skip layout closure.
 
 ## Live subscription vs freshness
 

@@ -25,7 +25,18 @@ Committed paths use colon separators (`glyphs.adieresis:layers.layer-1:shapes.0.
 
 Then `syncFontDepsFromFontJson(fontJson, [glyphName])` rewrites that source from the **current body**.
 
-Do not infer edges from glyph names. Unresolved names are omitted. Component/`both` invert for reverse-close (composites). Metrics-key edges close **forward** from working (sources `n`, `l`) **and reverse** from working only (glyphs that inherit `a` / `a.ss03` sidebearings) into hidden. Do not reverse metrics-key or component from a hidden source (`h` or `ntilde` from `n`).
+Do not infer edges from glyph names. Unresolved names are omitted.
+
+Partition (`computeSparseHydrationPartition`): reverse\* component/`both` from
+seeds ∪ FEA alts ∪ encoded bases of **seeds only** (not layout alts). Forward\*
+**strict component** into working. Metrics-key/`both` stems (`n`, `l`, `o`) are
+**hidden**, never working — do not reverse-close Latin from them. Reverse
+metrics inheritors of working (`a.wide`) are hidden. Do not reverse from a
+hidden source (`h` / `ntilde` from `n`). Do not GSUB-close the reverse set.
+Plan from **live** font-deps; one glyph fetch; working set is in-memory only.
+
+Normative prose: `APP.md` (Sparse cloud hydration) and
+`strategy/CLOUD_COLLABORATION_ARCHITECTURE.md` (UI sparse hydration).
 
 ## Tests
 

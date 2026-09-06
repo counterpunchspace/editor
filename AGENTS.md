@@ -18,7 +18,9 @@ index on **cloud seed**; patch the edited glyph’s row on **live** component an
 metrics-key commits (parse committed paths with `getPathSegments`, not
 `String.split('.')`). Do not rebuild deps on open. Live-update tests must go
 through `recordChange` / the CloudPlugin listener and then assert sparse
-close, not only `depsNeedUpdate`. See
+close, not only `depsNeedUpdate`. Working vs hidden partition, live-deps-first
+open, and one-shot glyph fetch: `APP.md` and
+`strategy/CLOUD_COLLABORATION_ARCHITECTURE.md`. Agent checklist:
 `.cursor/rules/font-deps-sparse-hydration.mdc`.
 
 ## Project Overview

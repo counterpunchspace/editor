@@ -73,6 +73,49 @@ until `sync.revision` matches, and main relays that to linked windows.
 Catch-up is a checkpoint, not history replay. Linked bootstrap seeds the
 Rust worker with the full document set (`seedWorkerDocumentSet`).
 
+### Sparse cloud hydration (working vs hidden)
+
+Sparse cloud open (`?sparse=true`) and Download Glyph(s) must hydrate a
+**directed closure**, not the whole catalog and not “whatever is already
+loaded.” Compile subset is different: layout plus **forward** deps only, no
+reverse composites.
+
+**Seeds** are cmap hits for `?text=` and/or names chosen in Download Glyph(s).
+**Layout alts** are FEA substitution targets of those seeds only. Do not run
+layout closure on the reverse-dependent set.
+
+**Working glyphs** (full overview tiles, in-memory working set — never written
+to `font-deps`):
+
+- seeds, layout alts, and encoded bases of **seeds** (a composite seed such as
+  `adieresis` promotes its non-mark component `a`; layout alts such as
+  `a.ss03` must not be treated as encoded-base origins)
+- reverse-close over component and `both` edges from those origins
+  (`a` → `adieresis`, `aacute`, `ae`; `a.ss03` → `adieresis.ss03`)
+- then forward-close over **strict `component`** edges (nested outline parts)
+
+**Hidden glyphs** (resident, faint overview tiles, not first-class working):
+
+- metrics-key and `both` sources of working (`n`, `l`; `a.ss03` keyed to `o`)
+- glyphs that inherit sidebearings **from** working (`a.wide` keyed to `a`)
+- nested components of those inheritors
+
+Must not reverse-close from a hidden metrics source (`n` must not pull `h` or
+`ntilde`). Must not put a sidebearing stem in the working set even when
+font-deps stores the edge as `both`. Download Glyph(s) must be available on
+hidden tiles so the user can promote that glyph to a seed.
+
+Plan the full working∪hidden set from **live** `font-deps` (not only the
+published snapshot) and fetch it **once** before the font is shown. Do not
+hydrate a seed-only set and then expand composites after the live socket
+connects. Do not rewrite `font-deps` while applying HTTP glyph shards. Do not
+infer hydration from glyph names.
+
+The graph is built from glyph bodies (component `reference`; metrics-key
+strings including Glyphs `metric_*`). Keep it current: full rebuild on cloud
+seed; patch the edited source row on live component/metrics commits. See
+`strategy/CLOUD_COLLABORATION_ARCHITECTURE.md` (UI sparse hydration).
+
 ## The Editing Pipeline
 
 ### Central cascading recomposition engine
