@@ -66,6 +66,15 @@ import {
     HYDRATE_BATCH_MAX_BYTES,
     HYDRATE_BATCH_MAX_REQUESTS
 } from './filesystem-plugins/cloud-shard-limits';
+import {
+    createPackParser,
+    encodePackBody,
+    encodePackShardFrame,
+    PACK_FRAME_TYPE,
+    PACK_MAX_SHARDS,
+    partitionPackItems,
+    type PackFrame
+} from './filesystem-plugins/cloud-shard-pack';
 import { missingRequiredCloudCapabilities } from './filesystem-plugins/cloud-collab-capabilities';
 import {
     collaborationMessageKey,
@@ -150,6 +159,7 @@ export type CloudShardIoOptions = {
     concurrency?: number;
     maxRequests?: number;
     maxBytes?: number;
+    transport?: 'auto' | 'pack' | 'per-shard';
 };
 
 function shardIoConcurrency(
@@ -249,6 +259,17 @@ export function normalizeCloudShardHttpUrl(
     const url = new URL(httpUrl);
     const shardPath = documentId.replace(/:/g, '/');
     url.pathname = `/room/${encodeURIComponent(assetId)}/shards/${shardPath}/state`;
+    return url.toString();
+}
+
+export function normalizeCloudShardPackUrl(
+    roomUrl: string,
+    websiteBaseUrl: string,
+    assetId: string
+): string {
+    const httpUrl = normalizeCloudRoomHttpUrl(roomUrl, websiteBaseUrl);
+    const url = new URL(httpUrl);
+    url.pathname = `/room/${encodeURIComponent(assetId)}/pack`;
     return url.toString();
 }
 
@@ -463,17 +484,25 @@ function assembleTailTransactionsFromFrames(
     return updates;
 }
 
-async function sha256Hex(bytes: Uint8Array): Promise<string> {
+async function sha256Digest(bytes: Uint8Array): Promise<Uint8Array> {
     const subtle = globalThis.crypto?.subtle;
     if (!subtle?.digest) {
         throw new Error('SHA-256 is unavailable in this environment');
     }
     const buffer = new ArrayBuffer(bytes.byteLength);
     new Uint8Array(buffer).set(bytes);
-    const digest = await subtle.digest('SHA-256', buffer);
-    return Array.from(new Uint8Array(digest), (byte) =>
+    return new Uint8Array(await subtle.digest('SHA-256', buffer));
+}
+
+async function sha256Hex(bytes: Uint8Array): Promise<string> {
+    const digest = await sha256Digest(bytes);
+    return Array.from(digest, (byte) =>
         byte.toString(16).padStart(2, '0')
     ).join('');
+}
+
+function isPackUnsupportedStatus(status: number): boolean {
+    return status === 404 || status === 405;
 }
 
 function decodeLiveUpdatePayload(payload: Uint8Array): {
@@ -2395,27 +2424,66 @@ export class CloudAdapter implements FileSystemAdapter {
         migrationNonce?: string,
         options?: CloudShardIoOptions
     ): Promise<CloudSeedDocumentSetResult> {
-        assertHydrateBatchBudget({
-            requestCount: shards.length,
-            byteLength: shards.reduce(
-                (sum, shard) => sum + shard.bytes.byteLength,
-                0
-            ),
-            maxRequests: options?.maxRequests,
-            maxBytes: options?.maxBytes
-        });
-        const rows = await mapPool(
+        const batches = partitionPackItems(
             shards,
-            shardIoConcurrency(options, SEED_SHARD_CONCURRENCY),
-            async (shard) =>
-                this._seedOneShard(
-                    token,
-                    roomUrl,
-                    shard,
-                    glyphCount,
-                    migrationNonce
-                )
+            (shard) => shard.bytes.byteLength,
+            Math.min(options?.maxRequests ?? PACK_MAX_SHARDS, PACK_MAX_SHARDS),
+            options?.maxBytes ?? HYDRATE_BATCH_MAX_BYTES
         );
+        for (const batch of batches) {
+            assertHydrateBatchBudget({
+                requestCount: batch.length,
+                byteLength: batch.reduce(
+                    (sum, shard) => sum + shard.bytes.byteLength,
+                    0
+                ),
+                maxRequests: options?.maxRequests,
+                maxBytes: options?.maxBytes
+            });
+        }
+        let usePack = options?.transport !== 'per-shard';
+        const rows: Array<{
+            coreCheckpointLogId: number | null;
+            attestation: CloudSeededShardAttestation | null;
+        }> = [];
+        for (const batch of batches) {
+            if (usePack) {
+                try {
+                    rows.push(
+                        ...(await this._seedPack(
+                            token,
+                            roomUrl,
+                            batch,
+                            glyphCount,
+                            migrationNonce
+                        ))
+                    );
+                    continue;
+                } catch (error) {
+                    if (
+                        options?.transport === 'pack' ||
+                        !this._isPackUnsupportedError(error)
+                    ) {
+                        throw error;
+                    }
+                    usePack = false;
+                }
+            }
+            rows.push(
+                ...(await mapPool(
+                    batch,
+                    shardIoConcurrency(options, SEED_SHARD_CONCURRENCY),
+                    async (shard) =>
+                        this._seedOneShard(
+                            token,
+                            roomUrl,
+                            shard,
+                            glyphCount,
+                            migrationNonce
+                        )
+                ))
+            );
+        }
         let coreCheckpointLogId: number | null = null;
         const attestations: CloudSeededShardAttestation[] = [];
         for (const row of rows) {
@@ -2427,6 +2495,150 @@ export class CloudAdapter implements FileSystemAdapter {
             }
         }
         return { coreCheckpointLogId, attestations };
+    }
+
+    private _isPackUnsupportedError(error: unknown): boolean {
+        const message = error instanceof Error ? error.message : String(error);
+        return /pack (unsupported|not found)/i.test(message);
+    }
+
+    private async _seedPack(
+        token: string,
+        roomUrl: string,
+        shards: EncodedShard[],
+        glyphCount: number,
+        migrationNonce?: string
+    ): Promise<
+        Array<{
+            coreCheckpointLogId: number | null;
+            attestation: CloudSeededShardAttestation | null;
+        }>
+    > {
+        const frames: Uint8Array[] = [];
+        for (const shard of shards) {
+            frames.push(
+                encodePackShardFrame(
+                    shard.documentId,
+                    shard.bytes,
+                    await sha256Digest(shard.bytes)
+                )
+            );
+        }
+        const body = encodePackBody(frames);
+        this._noteTransferActivity('sending');
+        const response = await fetch(
+            normalizeCloudShardPackUrl(
+                roomUrl,
+                this._websiteBaseUrl,
+                this._assetId
+            ),
+            {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${token}`,
+                    'Content-Type': 'application/octet-stream',
+                    'X-Glyph-Count': String(glyphCount),
+                    ...(migrationNonce
+                        ? { 'X-Cloud-Migration-Nonce': migrationNonce }
+                        : {})
+                },
+                body: body as unknown as BodyInit
+            }
+        );
+        if (isPackUnsupportedStatus(response.status)) {
+            throw new Error('pack unsupported');
+        }
+        if (!response.body) {
+            throw new Error(
+                `shard pack seed failed: ${response.status} empty body`
+            );
+        }
+        const rows: Array<{
+            coreCheckpointLogId: number | null;
+            attestation: CloudSeededShardAttestation | null;
+        }> = [];
+        let packError: string | null = null;
+        const parser = createPackParser();
+        const reader = response.body.getReader();
+        try {
+            while (true) {
+                const { done, value } = await reader.read();
+                if (value) {
+                    for (const frame of parser.push(value)) {
+                        this._collectPackSeedFrame(frame, rows, (message) => {
+                            packError = message;
+                        });
+                    }
+                }
+                if (done) {
+                    break;
+                }
+            }
+            parser.finish();
+        } finally {
+            reader.releaseLock();
+        }
+        if (!response.ok || packError) {
+            throw new Error(
+                packError || `shard pack seed failed: ${response.status}`
+            );
+        }
+        return rows;
+    }
+
+    private _collectPackSeedFrame(
+        frame: PackFrame,
+        rows: Array<{
+            coreCheckpointLogId: number | null;
+            attestation: CloudSeededShardAttestation | null;
+        }>,
+        onError: (message: string) => void
+    ): void {
+        if (frame.type === PACK_FRAME_TYPE.ERROR) {
+            const message =
+                typeof frame.receipt?.error === 'string'
+                    ? frame.receipt.error
+                    : 'shard pack seed failed';
+            onError(message);
+            return;
+        }
+        if (frame.type !== PACK_FRAME_TYPE.RECEIPT || !frame.receipt) {
+            return;
+        }
+        const receipt = frame.receipt;
+        const shardId = String(receipt.shardId || frame.shardId || '');
+        const attestation =
+            typeof receipt.checkpointObjectKey === 'string' &&
+            typeof (receipt.checkpointSha256 || receipt.snapshotSha256) ===
+                'string' &&
+            typeof (receipt.checkpointByteLength || receipt.snapshotBytes) ===
+                'number'
+                ? {
+                      shardId,
+                      checkpointObjectKey: String(receipt.checkpointObjectKey),
+                      checkpointSha256: String(
+                          receipt.checkpointSha256 || receipt.snapshotSha256
+                      ),
+                      checkpointByteLength: Number(
+                          receipt.checkpointByteLength || receipt.snapshotBytes
+                      ),
+                      checkpointLogId:
+                          typeof receipt.checkpointLogId === 'number'
+                              ? receipt.checkpointLogId
+                              : 0,
+                      checkpointAt:
+                          typeof receipt.checkpointAt === 'number'
+                              ? receipt.checkpointAt
+                              : undefined
+                  }
+                : null;
+        rows.push({
+            coreCheckpointLogId:
+                attestation && shardId === FONT_CORE_DOCUMENT_ID
+                    ? attestation.checkpointLogId
+                    : null,
+            attestation
+        });
     }
 
     private async _seedOneShard(
@@ -2560,12 +2772,130 @@ export class CloudAdapter implements FileSystemAdapter {
         documentIds: string[],
         options?: CloudShardIoOptions
     ): Promise<Map<string, Uint8Array>> {
-        assertHydrateBatchBudget({
-            requestCount: documentIds.length,
-            byteLength: 0,
-            maxRequests: options?.maxRequests,
-            maxBytes: options?.maxBytes
-        });
+        const batches = partitionPackItems(
+            documentIds,
+            () => 0,
+            Math.min(options?.maxRequests ?? PACK_MAX_SHARDS, PACK_MAX_SHARDS),
+            options?.maxBytes ?? HYDRATE_BATCH_MAX_BYTES
+        );
+        for (const batch of batches) {
+            assertHydrateBatchBudget({
+                requestCount: batch.length,
+                byteLength: 0,
+                maxRequests: options?.maxRequests,
+                maxBytes: options?.maxBytes
+            });
+        }
+        const result = new Map<string, Uint8Array>();
+        let usePack = options?.transport !== 'per-shard';
+        for (const batch of batches) {
+            let batchResult: Map<string, Uint8Array> | null = null;
+            if (usePack) {
+                try {
+                    batchResult = await this._hydratePack(
+                        token,
+                        roomUrl,
+                        batch
+                    );
+                } catch (error) {
+                    if (
+                        options?.transport === 'pack' ||
+                        !this._isPackUnsupportedError(error)
+                    ) {
+                        throw error;
+                    }
+                    usePack = false;
+                }
+            }
+            if (!batchResult) {
+                batchResult = await this._hydratePerShard(
+                    token,
+                    roomUrl,
+                    batch,
+                    options
+                );
+            }
+            for (const [documentId, bytes] of batchResult) {
+                result.set(documentId, bytes);
+            }
+        }
+        return result;
+    }
+
+    private async _hydratePack(
+        token: string,
+        roomUrl: string,
+        documentIds: string[]
+    ): Promise<Map<string, Uint8Array>> {
+        this._noteTransferActivity('receiving');
+        const response = await fetch(
+            normalizeCloudShardPackUrl(
+                roomUrl,
+                this._websiteBaseUrl,
+                this._assetId
+            ),
+            {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${token}`,
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ ids: documentIds })
+            }
+        );
+        if (isPackUnsupportedStatus(response.status)) {
+            throw new Error('pack unsupported');
+        }
+        if (!response.body) {
+            throw new Error(
+                `shard pack hydrate failed: ${response.status} empty body`
+            );
+        }
+        const result = new Map<string, Uint8Array>();
+        let packError: string | null = null;
+        const parser = createPackParser();
+        const reader = response.body.getReader();
+        try {
+            while (true) {
+                const { done, value } = await reader.read();
+                if (value) {
+                    for (const frame of parser.push(value)) {
+                        if (frame.type === PACK_FRAME_TYPE.ERROR) {
+                            packError =
+                                typeof frame.receipt?.error === 'string'
+                                    ? frame.receipt.error
+                                    : 'shard pack hydrate failed';
+                        } else if (
+                            frame.type === PACK_FRAME_TYPE.SHARD &&
+                            !frame.missing &&
+                            frame.payload.byteLength
+                        ) {
+                            result.set(frame.shardId, frame.payload.slice());
+                        }
+                    }
+                }
+                if (done) {
+                    break;
+                }
+            }
+            parser.finish();
+        } finally {
+            reader.releaseLock();
+        }
+        if (!response.ok || packError) {
+            throw new Error(
+                packError || `shard pack hydrate failed: ${response.status}`
+            );
+        }
+        return result;
+    }
+
+    private async _hydratePerShard(
+        token: string,
+        roomUrl: string,
+        documentIds: string[],
+        options?: CloudShardIoOptions
+    ): Promise<Map<string, Uint8Array>> {
         const result = new Map<string, Uint8Array>();
         const rows = await mapPool(
             documentIds,
@@ -2595,19 +2925,11 @@ export class CloudAdapter implements FileSystemAdapter {
                 };
             }
         );
-        let totalBytes = 0;
         for (const row of rows) {
             if (row.bytes) {
-                totalBytes += row.bytes.byteLength;
                 result.set(row.documentId, row.bytes);
             }
         }
-        assertHydrateBatchBudget({
-            requestCount: documentIds.length,
-            byteLength: totalBytes,
-            maxRequests: options?.maxRequests ?? HYDRATE_BATCH_MAX_REQUESTS,
-            maxBytes: options?.maxBytes ?? HYDRATE_BATCH_MAX_BYTES
-        });
         return result;
     }
 

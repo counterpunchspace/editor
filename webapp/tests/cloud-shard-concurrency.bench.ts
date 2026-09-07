@@ -110,6 +110,10 @@ test.describe('Cloud shard GET/POST concurrency bench (Fustat)', () => {
         browser,
         request
     }) => {
+        test.skip(
+            process.env.SHARD_IO_BENCH_SWEEP !== '1',
+            'Opt in with SHARD_IO_BENCH_SWEEP=1'
+        );
         test.setTimeout(5_400_000);
         const levels = parseLevels();
         await assertServiceReachable(
@@ -298,6 +302,173 @@ test.describe('Cloud shard GET/POST concurrency bench (Fustat)', () => {
             console.log(`[shard-io-bench] wrote ${RESULTS_PATH}`);
             expect(postPick.concurrency).toBeGreaterThanOrEqual(1);
             expect(getPick.concurrency).toBeGreaterThanOrEqual(1);
+        } finally {
+            await ownerContext.close();
+            await cleanupCloudCollabUsers(request, [emails.owner]);
+        }
+    });
+
+    test('pack vs sequential seed and full hydrate', async ({
+        browser,
+        request
+    }) => {
+        test.setTimeout(5_400_000);
+        await assertServiceReachable(
+            request,
+            `${LOCAL_EDITOR_ORIGIN}/?test=true`,
+            'Editor'
+        );
+        await assertServiceReachable(
+            request,
+            `${LOCAL_WEBSITE_ORIGIN}/`,
+            'Website'
+        );
+        await assertServiceReachable(
+            request,
+            `${LOCAL_ROOM_ORIGIN}/`,
+            'Collab room'
+        );
+
+        const runId = `packio-${Date.now().toString(36)}`;
+        const emails = makeCloudCollabEmails(runId);
+        const ownerSession = await bootstrapCloudCollabSession(
+            request,
+            emails.owner,
+            'owner'
+        );
+        const ownerContext = await browser.newContext();
+        await attachCloudCollabCookies(ownerContext, ownerSession);
+        const page = await ownerContext.newPage();
+        try {
+            await page.goto('/?test=true');
+            await waitForCanvasReady(page);
+            await openFileFromFilesView(page, 'Fustat.glyphs');
+            await waitForOpenSessionReady(page, 'Fustat.glyphs');
+            await waitForBridgeReady(page);
+
+            const sequentialSeed = await page.evaluate(async (assetName) => {
+                const plugin = (window as any).cloudPlugin;
+                return plugin.measureCloudSeedBatch(assetName, 1, {
+                    transport: 'per-shard'
+                });
+            }, `Fustat-seq-${runId}`);
+            console.log(
+                formatRow(
+                    'POST-seq',
+                    1,
+                    sequentialSeed.seedMs,
+                    sequentialSeed.shardCount,
+                    sequentialSeed.byteLength
+                )
+            );
+
+            const sequentialHydrate = await page.evaluate(
+                async ({ assetId, documentIds }) => {
+                    const plugin = (window as any).cloudPlugin;
+                    return plugin.measureCloudHydrateBatch(
+                        assetId,
+                        documentIds,
+                        1,
+                        { transport: 'per-shard' }
+                    );
+                },
+                {
+                    assetId: sequentialSeed.assetId,
+                    documentIds: sequentialSeed.documentIds
+                }
+            );
+            console.log(
+                formatRow(
+                    'GET-seq',
+                    1,
+                    sequentialHydrate.hydrateMs,
+                    sequentialHydrate.loaded,
+                    sequentialHydrate.byteLength
+                )
+            );
+
+            const packSeed = await page.evaluate(async (assetName) => {
+                const plugin = (window as any).cloudPlugin;
+                return plugin.measureCloudSeedBatch(assetName, 1, {
+                    transport: 'pack'
+                });
+            }, `Fustat-pack-${runId}`);
+            console.log(
+                formatRow(
+                    'POST-pack',
+                    1,
+                    packSeed.seedMs,
+                    packSeed.shardCount,
+                    packSeed.byteLength
+                )
+            );
+
+            await page.evaluate(
+                async ({ assetId, documentIds }) => {
+                    const plugin = (window as any).cloudPlugin;
+                    return plugin.measureCloudHydrateBatch(
+                        assetId,
+                        documentIds,
+                        6,
+                        { transport: 'pack' }
+                    );
+                },
+                {
+                    assetId: packSeed.assetId,
+                    documentIds: packSeed.documentIds
+                }
+            );
+            const packHydrate = await page.evaluate(
+                async ({ assetId, documentIds }) => {
+                    const plugin = (window as any).cloudPlugin;
+                    return plugin.measureCloudHydrateBatch(
+                        assetId,
+                        documentIds,
+                        6,
+                        { transport: 'pack' }
+                    );
+                },
+                {
+                    assetId: packSeed.assetId,
+                    documentIds: packSeed.documentIds
+                }
+            );
+            console.log(
+                formatRow(
+                    'GET-pack',
+                    6,
+                    packHydrate.hydrateMs,
+                    packHydrate.loaded,
+                    packHydrate.byteLength
+                )
+            );
+
+            const seedSpeedup = sequentialSeed.seedMs / packSeed.seedMs;
+            const hydrateSpeedup =
+                sequentialHydrate.hydrateMs / packHydrate.hydrateMs;
+            const report = {
+                at: new Date().toISOString(),
+                font: 'Fustat.glyphs',
+                sequentialSeedMs: sequentialSeed.seedMs,
+                packSeedMs: packSeed.seedMs,
+                seedSpeedup,
+                sequentialHydrateMs: sequentialHydrate.hydrateMs,
+                packHydrateMs: packHydrate.hydrateMs,
+                hydrateSpeedup,
+                shardCount: packSeed.shardCount,
+                loaded: packHydrate.loaded
+            };
+            fs.writeFileSync(
+                RESULTS_PATH,
+                `${JSON.stringify(report, null, 2)}\n`
+            );
+            console.log(
+                `[shard-io-bench] pack seed ${seedSpeedup.toFixed(2)}x vs sequential, pack hydrate ${hydrateSpeedup.toFixed(2)}x vs sequential`
+            );
+            expect(packSeed.shardCount).toBe(sequentialSeed.shardCount);
+            expect(packHydrate.loaded).toBe(sequentialHydrate.loaded);
+            expect(packSeed.seedMs).toBeGreaterThan(0);
+            expect(packHydrate.hydrateMs).toBeGreaterThan(0);
         } finally {
             await ownerContext.close();
             await cleanupCloudCollabUsers(request, [emails.owner]);

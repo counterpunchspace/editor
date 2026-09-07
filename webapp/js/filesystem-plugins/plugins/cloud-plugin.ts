@@ -3856,7 +3856,8 @@ export class CloudPlugin extends FilesystemPlugin {
      */
     async measureCloudSeedBatch(
         assetName: string,
-        concurrency: number
+        concurrency: number,
+        options?: { transport?: 'auto' | 'pack' | 'per-shard' }
     ): Promise<{
         assetId: string;
         seedMs: number;
@@ -3895,8 +3896,7 @@ export class CloudPlugin extends FilesystemPlugin {
         );
         const ioOptions: CloudShardIoOptions = {
             concurrency,
-            maxRequests: shards.length,
-            maxBytes: Math.max(byteLength, 1)
+            transport: options?.transport
         };
 
         const resp = await fetch(`${this._websiteBaseUrl}/api/cloud/assets`, {
@@ -3963,7 +3963,8 @@ export class CloudPlugin extends FilesystemPlugin {
     async measureCloudHydrateBatch(
         assetId: string,
         documentIds: string[],
-        concurrency: number
+        concurrency: number,
+        options?: { transport?: 'auto' | 'pack' | 'per-shard' }
     ): Promise<{
         hydrateMs: number;
         loaded: number;
@@ -3976,8 +3977,7 @@ export class CloudPlugin extends FilesystemPlugin {
         });
         const ioOptions: CloudShardIoOptions = {
             concurrency,
-            maxRequests: documentIds.length,
-            maxBytes: Number.MAX_SAFE_INTEGER
+            transport: options?.transport
         };
         try {
             const startedAt = performance.now();
