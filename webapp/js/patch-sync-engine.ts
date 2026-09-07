@@ -119,6 +119,7 @@ import {
 } from './filesystem-plugins/cloud-document-set';
 import {
     measureShardBytesForSubmit,
+    evaluateCollabSubmit,
     type CollabSubmitDecision,
     type CollabSubmitRequest
 } from './filesystem-plugins/cloud-shard-limits';
@@ -6265,6 +6266,7 @@ export class PatchSyncEngine {
     }
 
     private _collabSubmitPlugin(): {
+        getId?: () => string;
         canSubmitCollabUpdate?: (
             requests: CollabSubmitRequest[]
         ) => CollabSubmitDecision;
@@ -6272,6 +6274,7 @@ export class PatchSyncEngine {
     } | null {
         const plugin = window.fontManager?.currentFont?.sourcePlugin as
             | {
+                  getId?: () => string;
                   canSubmitCollabUpdate?: (
                       requests: CollabSubmitRequest[]
                   ) => CollabSubmitDecision;
@@ -6292,6 +6295,12 @@ export class PatchSyncEngine {
         const plugin = this._collabSubmitPlugin();
         if (typeof plugin?.canSubmitCollabUpdate !== 'function') {
             return { allowed: true };
+        }
+        if (plugin.getId?.() === 'cloud') {
+            const settingsDecision = evaluateCollabSubmit(requests);
+            if (!settingsDecision.allowed) {
+                return settingsDecision;
+            }
         }
         return plugin.canSubmitCollabUpdate(requests);
     }

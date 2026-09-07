@@ -1,8 +1,13 @@
-export const MAX_SHARD_BYTES = 5 * 1024 * 1024;
-export const MAX_YJS_PACKET_BYTES = MAX_SHARD_BYTES;
-export const WARNING_SHARD_BYTES = Math.floor(MAX_SHARD_BYTES * 0.75);
+import APP_SETTINGS from '../settings';
+
+export const MAX_SHARD_BYTES = APP_SETTINGS.CLOUD_COLLAB.MAX_SHARD_BYTES;
+export const MAX_YJS_PACKET_BYTES =
+    APP_SETTINGS.CLOUD_COLLAB.MAX_YJS_PACKET_BYTES;
+export const WARNING_SHARD_BYTES =
+    APP_SETTINGS.CLOUD_COLLAB.WARNING_SHARD_BYTES;
 /** Live `{gc:false}` warning — not the Worker compact peak. Keep in sync with collab protocol. */
-export const CLIENT_LIVE_MEMORY_WARNING_STRUCTS = 80_000;
+export const CLIENT_LIVE_MEMORY_WARNING_STRUCTS =
+    APP_SETTINGS.CLOUD_COLLAB.CLIENT_LIVE_MEMORY_WARNING_STRUCTS;
 export const CLIENT_LIVE_MEMORY_WARNING_ENCODED_BYTES = WARNING_SHARD_BYTES;
 
 export type ShardSizeStatus = 'ok' | 'warning' | 'blocked';
@@ -60,6 +65,13 @@ export type CollabSubmitLimits = {
     maxPacketBytes?: number;
 };
 
+export function collabSubmitHardLimits(): CollabSubmitLimits {
+    return {
+        maxShardBytes: APP_SETTINGS.CLOUD_COLLAB.MAX_SHARD_BYTES,
+        maxPacketBytes: APP_SETTINGS.CLOUD_COLLAB.MAX_YJS_PACKET_BYTES
+    };
+}
+
 export function classifyShardByteLength(byteLength: number): ShardSizeStatus {
     if (byteLength >= MAX_SHARD_BYTES) {
         return 'blocked';
@@ -106,7 +118,8 @@ export function measureShardBytesForSubmit(options: {
     encodeFullShard: () => number;
     maxShardBytes?: number;
 }): { shardBytes: number; encodedFull: boolean } {
-    const cap = options.maxShardBytes ?? MAX_SHARD_BYTES;
+    const cap =
+        options.maxShardBytes ?? APP_SETTINGS.CLOUD_COLLAB.MAX_SHARD_BYTES;
     const last = Math.max(0, Number(options.lastEncodedBytes) || 0);
     const packet = Math.max(0, Number(options.packetBytes) || 0);
     if (last <= 0) {
@@ -123,8 +136,15 @@ export function evaluateCollabSubmit(
     requests: CollabSubmitRequest[],
     limits?: CollabSubmitLimits
 ): CollabSubmitDecision {
-    const maxPacket = limits?.maxPacketBytes ?? MAX_YJS_PACKET_BYTES;
-    const maxShard = limits?.maxShardBytes ?? MAX_SHARD_BYTES;
+    const hard = collabSubmitHardLimits();
+    const maxPacket = Math.min(
+        limits?.maxPacketBytes ?? hard.maxPacketBytes,
+        hard.maxPacketBytes
+    );
+    const maxShard = Math.min(
+        limits?.maxShardBytes ?? hard.maxShardBytes,
+        hard.maxShardBytes
+    );
     for (const request of requests) {
         const packetBytes = Math.max(0, Number(request.packetBytes) || 0);
         const shardBytes = Math.max(0, Number(request.shardBytes) || 0);
@@ -158,12 +178,19 @@ export function formatCollabSubmitRejection(
     if (decision.allowed) {
         return '';
     }
-    const limitMb = MAX_SHARD_BYTES / (1024 * 1024);
+    const packetLimit =
+        decision.kind === 'packet'
+            ? APP_SETTINGS.CLOUD_COLLAB.MAX_YJS_PACKET_BYTES
+            : APP_SETTINGS.CLOUD_COLLAB.MAX_SHARD_BYTES;
+    const limitLabel =
+        packetLimit >= 1024 * 1024
+            ? `${packetLimit / (1024 * 1024)} MB`
+            : `${Math.round(packetLimit / 1024)} KB`;
     const shardName = decision.documentId || 'this shard';
     if (decision.kind === 'packet') {
-        return `This change was reverted because the Yjs update for ${shardName} is ${decision.packetBytes} bytes, which exceeds the ${limitMb} MB cloud packet limit.`;
+        return `This change was reverted because the Yjs update for ${shardName} is ${decision.packetBytes} bytes, which exceeds the ${limitLabel} cloud packet limit.`;
     }
-    return `This change was reverted because ${shardName} would be ${decision.shardBytes} bytes, which exceeds the ${limitMb} MB cloud shard limit.`;
+    return `This change was reverted because ${shardName} would be ${decision.shardBytes} bytes, which exceeds the ${limitLabel} cloud shard limit.`;
 }
 
 export function evaluateLiveShardMemory(

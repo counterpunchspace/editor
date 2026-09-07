@@ -15,7 +15,8 @@ const {
     MAX_YJS_PACKET_BYTES,
     evaluateCollabSubmit,
     evaluateShardSizes,
-    measureShardBytesForSubmit
+    measureShardBytesForSubmit,
+    collabSubmitHardLimits
 } = require('../js/filesystem-plugins/cloud-shard-limits');
 const {
     FONT_CORE_DOCUMENT_ID
@@ -73,9 +74,34 @@ function installPlugin(plugin) {
 }
 
 describe('collab submit size helpers', () => {
-    test('hard caps are 5MiB for both shard and packet', () => {
+    test('hard caps are 5MiB per shard and 256KiB per packet', () => {
+        const settings = require('../js/settings').default;
+        expect(MAX_SHARD_BYTES).toBe(settings.CLOUD_COLLAB.MAX_SHARD_BYTES);
+        expect(MAX_YJS_PACKET_BYTES).toBe(
+            settings.CLOUD_COLLAB.MAX_YJS_PACKET_BYTES
+        );
         expect(MAX_SHARD_BYTES).toBe(5 * 1024 * 1024);
-        expect(MAX_YJS_PACKET_BYTES).toBe(MAX_SHARD_BYTES);
+        expect(MAX_YJS_PACKET_BYTES).toBe(256 * 1024);
+        expect(MAX_YJS_PACKET_BYTES).toBeLessThan(MAX_SHARD_BYTES);
+        expect(collabSubmitHardLimits()).toEqual({
+            maxShardBytes: MAX_SHARD_BYTES,
+            maxPacketBytes: MAX_YJS_PACKET_BYTES
+        });
+    });
+
+    test('settings hard floor wins even if a caller passes a larger packet cap', () => {
+        const decision = evaluateCollabSubmit(
+            [
+                {
+                    documentId: FONT_CORE_DOCUMENT_ID,
+                    packetBytes: MAX_YJS_PACKET_BYTES,
+                    shardBytes: 100
+                }
+            ],
+            { maxPacketBytes: MAX_SHARD_BYTES, maxShardBytes: MAX_SHARD_BYTES }
+        );
+        expect(decision.allowed).toBe(false);
+        expect(decision.kind).toBe('packet');
     });
 
     test('rejects a packet at the cap even when the shard estimate is smaller', () => {
@@ -167,17 +193,39 @@ describe('commit-time hard rejection', () => {
         const fat = 'p'.repeat(MAX_YJS_PACKET_BYTES);
         try {
             bridge.recordChange([], 'note', '', fat);
-            expect(plugin.submissions.length).toBeGreaterThan(0);
-            const asked = plugin.submissions[plugin.submissions.length - 1][0];
-            expect(asked.packetBytes).toBeGreaterThanOrEqual(
-                MAX_YJS_PACKET_BYTES
-            );
             expect(plugin.rejections).toHaveLength(1);
             expect(plugin.rejections[0].kind).toBe('packet');
+            expect(plugin.rejections[0].packetBytes).toBeGreaterThanOrEqual(
+                MAX_YJS_PACKET_BYTES
+            );
             expect(emitted).toEqual([]);
             expect(bridge.getFontJsonSnapshot().note).toBe('');
             expect(bridge.getChangeLog()).toEqual([]);
             expect(bridge.fontMap.get('note') || '').not.toBe(fat);
+        } finally {
+            restore();
+            bridge.destroy();
+        }
+    });
+
+    test('settings envelope fails closed even if the cloud plugin would allow the packet', () => {
+        const plugin = createCloudSubmitPlugin();
+        plugin.canSubmitCollabUpdate = () => ({ allowed: true });
+        const restore = installPlugin(plugin);
+        const bridge = new PatchSyncEngine('submit-settings-floor');
+        const emitted = [];
+        bridge.initFromJson(makeFont());
+        window.patchSyncEngine = bridge;
+        bridge.onLocalUpdate((update) => {
+            emitted.push(update.byteLength);
+        });
+        const fat = 'p'.repeat(MAX_YJS_PACKET_BYTES);
+        try {
+            bridge.recordChange([], 'note', '', fat);
+            expect(plugin.rejections).toHaveLength(1);
+            expect(plugin.rejections[0].kind).toBe('packet');
+            expect(emitted).toEqual([]);
+            expect(bridge.getFontJsonSnapshot().note).toBe('');
         } finally {
             restore();
             bridge.destroy();
@@ -204,11 +252,14 @@ describe('commit-time hard rejection', () => {
                 'LimitTest',
                 'LimitTest2'
             );
-            expect(plugin.submissions.length).toBeGreaterThan(0);
-            const asked = plugin.submissions[plugin.submissions.length - 1][0];
-            expect(asked.packetBytes).toBeLessThan(MAX_YJS_PACKET_BYTES);
-            expect(asked.shardBytes).toBeGreaterThanOrEqual(MAX_SHARD_BYTES);
+            expect(plugin.rejections).toHaveLength(1);
             expect(plugin.rejections[0].kind).toBe('shard');
+            expect(plugin.rejections[0].packetBytes).toBeLessThan(
+                MAX_YJS_PACKET_BYTES
+            );
+            expect(plugin.rejections[0].shardBytes).toBeGreaterThanOrEqual(
+                MAX_SHARD_BYTES
+            );
             expect(emitted).toEqual([]);
             expect(bridge.getFontJsonSnapshot().names.familyName).toBe(
                 'LimitTest'

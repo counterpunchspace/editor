@@ -73,6 +73,7 @@ import {
     evaluateCollabSubmit,
     formatCollabSubmitRejection,
     MAX_SHARD_BYTES,
+    MAX_YJS_PACKET_BYTES,
     type ShardSizeGate,
     type CollabSubmitDecision,
     type CollabSubmitRequest
@@ -807,6 +808,7 @@ export interface CloudEligibility {
     warningCloudAssetBytes?: number;
     maxShardBytes?: number;
     warningShardBytes?: number;
+    maxPacketBytes?: number;
 }
 
 export interface CloudAssetLimits {
@@ -818,6 +820,7 @@ export interface CloudAssetLimits {
     remainingGlyphs: number | null;
     maxShardBytes: number;
     warningShardBytes: number;
+    maxPacketBytes?: number;
 }
 
 export interface CloudAssetMember {
@@ -1920,9 +1923,13 @@ export class CloudPlugin extends FilesystemPlugin {
             this._assetLimits?.maxShardBytes ?? MAX_SHARD_BYTES,
             MAX_SHARD_BYTES
         );
+        const maxPacket = Math.min(
+            this._assetLimits?.maxPacketBytes ?? MAX_YJS_PACKET_BYTES,
+            MAX_YJS_PACKET_BYTES
+        );
         return evaluateCollabSubmit(requests, {
             maxShardBytes: max,
-            maxPacketBytes: max
+            maxPacketBytes: maxPacket
         });
     }
 

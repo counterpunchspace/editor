@@ -95,7 +95,9 @@ Use these as stress cases when sizing catalog/deps budgets and hydrate UX:
 | Quotas | Website is source of truth; **asset owner** subscription; plugin **and** collab enforce |
 | Basic plan | 1 owned font, 1000 glyphs (`null` = unlimited for future tiers) |
 | Client shard ceiling | 5 MiB encoded per Y.Doc (`MAX_SHARD_BYTES` = 5 242 880); warn at 75%; seed/save/commit block at cap |
-| Compaction host | `compactor` Worker-class; recoverable matches the shard ceiling |
+| Live Yjs packet | **256 KiB** (`MAX_YJS_PACKET_BYTES`); fail-closed at send (`settings.ts` / `evaluateCollabSubmit`) |
+| Dirty tail / compact trigger | Soft **256 KiB** or **64** rows; hard **262 893** B (~257 KiB leftover); then `tail_full`, compact still runs |
+| Compaction host | `compactor` Worker-class; recoverable matches the shard ceiling; fold/txn = packet |
 | Catalog / deps | Built in CloudPlugin (`prepareToSeed` / `prepareToSave`); live incremental updates |
 | Plugin-owned data | Namespaced; stripped on Save As to another plugin (`stripOwnedFontData`) |
 | Collab → website | Service-token internal limits API on seed and catalog growth |
@@ -133,29 +135,39 @@ metadata. Rooms must **not** hydrate glyph bodies to count glyphs.
 
 ## Client shard size gate
 
-Encoded Yjs state per document, independently:
+Encoded Yjs state per document, independently of the live packet:
 
-- Ceiling: **5 242 880 bytes** (5 MiB, `MAX_SHARD_BYTES` / `MAX_YJS_PACKET_BYTES`)
-- Warning: **75%** (3 932 160 bytes)
+- Shard ceiling: **5 242 880 bytes** (5 MiB, `MAX_SHARD_BYTES`) — checkpoint / seed / merged state
+- Live packet: **262 144 bytes** (256 KiB, `MAX_YJS_PACKET_BYTES`) — one validator/compactor transaction
+- Compact trigger: **262 144 bytes** or **64** dirty rows (`CHECKPOINT_DELTA_*`)
+- Tail hard cap: **262 893 bytes** (`MAX_DIRTY_HARD_BYTES`) — leftover under last-OK compact × 0.7 minus a full shard
+- Fold / validator txn / compact txn: **262 144 bytes**
+- Spool: **524 288 bytes** (two max packets)
+- Warning: **75%** of the shard (3 932 160 bytes)
 - Applies to `font-core`, `font-deps`, and each `glyph:<id>`
 
-Isolate last-OK on Cloudflare preview was ~7.87 MB compact / ~8.65 MB validate.
-Last-OK × 0.7 is **5 505 773 bytes**; the product gate is a round **5 MiB** so
-the validator and compactor keep headroom. Approaching 75% shows a Preferences
-CRDT warning. At/over the cap:
+Editor hard limits live in `webapp/js/settings.ts` (`APP_SETTINGS.CLOUD_COLLAB`) and are the fail-closed floor at live commit. Collab protocol constants must match. A plugin or Website `maxPacketBytes` cannot raise the packet cap.
 
-- **Seed / Save:** `prepareToSave` encodes shards, alerts, and throws.
+Isolate last-OK on Cloudflare preview was ~7.87 MB compact / ~8.65 MB validate.
+Last-OK × 0.7 is **5 505 773 bytes**; the product shard gate is a round **5 MiB** so
+the validator and compactor keep headroom. Dense compact first-OOM was **~5.54 MB**,
+so a 5 MiB checkpoint plus a 5 MiB edit is forbidden. Approaching 75% shows a Preferences
+CRDT warning. At/over the caps:
+
+- **Seed / Save:** `prepareToSave` encodes shards, alerts, and throws at `MAX_SHARD_BYTES`.
 - **Live commit:** change-bridge measures packet bytes and an efficient shard
   estimate (cached encode + packet; full encode of that shard only if the
-  estimate would reject), then `canSubmitCollabUpdate` on the cloud plugin.
-  Reject rolls the Yjs transact back immediately, restores font JSON, and
-  alerts. Local backends do not enforce this.
+  estimate would reject), then `evaluateCollabSubmit` against **settings**
+  (packet 256 KiB, shard 5 MiB) before `canSubmitCollabUpdate`. Reject rolls
+  the Yjs transact back immediately, restores font JSON, and alerts. Local
+  backends do not enforce this.
 
 Collab `POST .../state` also rejects shard bodies ≥ `MAX_SHARD_BYTES`.
+Room writes reject `packet_too_large` or `tail_full` before journal.
 
 Do not encode every glyph on every edit. Cache last admitted encoded size per
 shard and only `Y.encodeStateAsUpdate(doc)` the touched shard when the cheap
-sum would cross the cap.
+sum would cross the shard cap.
 
 ## Cloud plugin: catalog, hooks, owned data
 
@@ -169,7 +181,7 @@ Hooks on `FilesystemPlugin` (Cloud overrides):
 | `prepareToSeed()` / `prepareToSave()` | Refresh catalog + deps from the live model **before** `canSave` / seed; Cloud also gates shard bytes |
 | `canSave()` | Quota + per-shard size |
 | `canAddGlyphs(n)` | Website limits (eligibility if no asset; **owner** limits if open cloud font) |
-| `canSubmitCollabUpdate(requests)` | Sync live-commit admit: packet + shard bytes. Cloud rejects at 5 MiB; Memory/Disk allow |
+| `canSubmitCollabUpdate(requests)` | Sync live-commit admit: packet + shard bytes. Cloud rejects at settings envelope (256 KiB packet / 5 MiB shard); Memory/Disk allow |
 | `notifyCollabSubmitRejected(decision)` | Visible alert; change-bridge already reverted the commit |
 | `stripOwnedFontData(fontJson)` | Restore baseline JSON without this plugin’s catalog/deps |
 
@@ -446,16 +458,19 @@ limits`. Last successful compact was 7.87 MB; last successful validate 8.65 
 Last-OK × 0.7 = **5 505 773 bytes**. The product admission ceiling is a hard
 **5 MiB (5 242 880)** (`HARD_ADMISSION_BYTES`) so Workers keep the rest as
 headroom. The old 10 MB target is not raised (7.87 MB is below 10 MB / 0.7).
+Leftover on a full shard is **262 893 bytes**; that is `MAX_DIRTY_HARD_BYTES`
+and the live packet stays **256 KiB** so compact never applies checkpoint +
+tail + one max edit in one session.
 
 Worker recoverable compact is `MAX_COMPACTION_RECOVERABLE_BYTES` (5 242 880
-bytes, same as the shard ceiling). Do not
-raise it toward 100 MB.
+bytes, same as the shard ceiling). Fold and each tail transaction are the
+packet cap (262 144). Do not raise recoverable toward 100 MB.
 
 #### Two external host classes
 
 | Host | Role | Memory contract |
 | --- | --- | --- |
-| **Worker-class compactor** (current `compactor`) | Steady-state per-shard compact | `checkpointBytes + dirtyTailBytes ≤ MAX_COMPACTION_RECOVERABLE_BYTES`; reject/queue elsewhere if over |
+| **Worker-class compactor** (current `compactor`) | Steady-state per-shard compact | `applyCheckpoint(S)` then tail txns ≤ 256 KiB; fold every 256 KiB; `S + dirty ≤ 5 MiB` encoded by room admission; never `S + T + P` |
 | **Fat-process compactor** (same class as full-font builder VM / Containers) | Oversized shards, legacy whole-font migration, pathological cores | May hold multi‑100 MB Yjs GC peaks; not a DO or Worker isolate |
 
 Flow (both hosts):
@@ -900,10 +915,9 @@ Still open:
 ## Zero-hydration rooms (protocol 4)
 
 Peak we are designing for: live DO = sockets + SQLite tail + **one** in-flight
-packet (no long-lived `Y.Doc`). Compact Worker = `gc:true` doc + one encoded
-snapshot + one packet — never checkpoint + merged tail + live `gc:false`
-graph at once. Fat-host compact stays a later `413` door; do not fall back to
-in-room encode.
+packet ≤ 256 KiB (no long-lived `Y.Doc`). Validator = empty `{gc:true}` doc +
+one packet. Compact Worker = `{gc:true}` doc of checkpoint + packet-sized tail
+applies and folds — never checkpoint + merged tail + a max live packet at once.
 
 ```text
 FontRoomDO: SQLite tail → one-copy fan-out
@@ -937,10 +951,10 @@ internal headers at the public edge. Canonical shard names only
 **asset owner’s** Website D1 entitlement and a signed shard manifest.
 
 Writes (`update`, `sync-complete`) only **schedule** compact. They never
-compact inline. Soft dirty (encoded ceiling or 2000 rows, or 30 min
+compact inline. Soft dirty (256 KiB or 64 rows, or 30 min
 `firstDirtyAt`) alarms the Worker; 413 is terminal (`needs-fat-compactor`);
-the hard dirty cap is `tail_full` (WS `error.code = tail_full`, read-only).
-Operator inbox: `GET /api/internal/cloud/shard-ops` on Website D1, also listed
+the hard dirty cap is `tail_full` (WS `error.code = tail_full`, read-only)
+but compact still runs so the room can drain. Operator inbox: `GET /api/internal/cloud/shard-ops` on Website D1, also listed
 on the admin dashboard Cloud Rooms table. Keep the tail; never drop
 acknowledged updates.
 
@@ -1058,13 +1072,14 @@ benchmark only.
 | Limit | Value | Source |
 | --- | --- | --- |
 | Client shard encoded ceiling | 5 242 880 B (5 MiB) | Product admit; isolate last-OK × 0.7 was 5.50 MB |
-| Validator / compact transaction | 5 242 880 B | same envelope |
+| Live Yjs packet | 262 144 B (256 KiB) | Leftover under compact last-OK × 0.7 minus full shard; `settings.ts` fail-closed |
+| Validator / compact transaction | 262 144 B | same as packet |
 | Validator / compact decoded structs | 280 000 | last OK 400k structs × 0.7 |
 | Worker recoverable compact | 5 242 880 B | 413 → fat-compactor |
-| Fold output | 5 242 880 B | one transaction-sized fold |
+| Fold output / fold threshold | 262 144 B | packet-sized fold, never a second 5 MiB copy of pending tail |
 | Export / stream page | 512 KB / 64 rows | one in-flight `/live` page |
-| SQLite spool | 12 MB | ingress before ACK |
-| Dirty soft / hard | 5 MiB or 2000 rows / 32 MB | alarm vs `tail_full` |
+| SQLite spool | 524 288 B | two max packets |
+| Dirty soft / hard | 256 KiB or 64 rows / 262 893 B | alarm vs `tail_full` (compact still runs) |
 | Authenticated peers | 32 | FontRoomDO; slow peer closed |
 | Unauthenticated sockets | 8 | pre-auth |
 | Metadata / attachment | 64 KB / 8 192 B | live extras / hibernation |
@@ -1085,7 +1100,7 @@ Checked-in coverage (not a second spec):
 | Nested writes, outline topology, last-good compile cache | `webapp/tests/nested-json-leaf-writes.test.js`, `layer-geometry-ydoc.test.js`, `babelfont-fontc-build` last-good shapes test |
 | Deps repair, over-hydrate never under-hydrate, core has no deps | `webapp/tests/cloud-glyph-catalog.test.js` |
 | `appliedLogId` only after apply | `webapp/tests/cloud-adapter.test.js` |
-| 5 MiB packet/shard reject + rollback | `webapp/tests/collab-submit-limits.test.js` |
+| 256 KiB packet / 5 MiB shard reject + rollback (`settings.ts`) | `webapp/tests/collab-submit-limits.test.js`, `webapp/tests/settings.test.js` |
 | Schema migration epoch, immutable manifests, rollback-by-revision | `website/test/cloud-schema-migration.test.js` |
 | Catalog generation tombstones, published core/deps hydrate pair | `webapp/tests/cloud-glyph-catalog.test.js` |
 | Seed-only live writes during migration | `collab/collab/workers/room/test/font-room-do.test.js` |

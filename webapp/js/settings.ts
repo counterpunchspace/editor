@@ -14,6 +14,9 @@ const COMPONENT_FILLS = {
     AUTO_SELECTED: '#0066ffff'
 };
 
+const CLOUD_MAX_SHARD_BYTES = 5 * 1024 * 1024;
+const CLOUD_MAX_YJS_PACKET_BYTES = 256 * 1024;
+
 const APP_SETTINGS = {
     // App internal ID
     APP_ID: 'org.context.fonteditor',
@@ -54,6 +57,30 @@ const APP_SETTINGS = {
     GLYPH_OVERVIEW: {
         // Cap cached tile backing stores (canvas pixels), not V8 heap.
         TILE_CACHE_MAX_BYTES: 500 * 1024 * 1024
+    },
+
+    /**
+     * Cloud collab isolate envelope. Fail-closed at live commit before a
+     * packet is emitted. Must stay in lockstep with collab protocol constants
+     * and CLOUD_COLLABORATION_ARCHITECTURE.md.
+     *
+     * Cloudflare preview: compact first OOM ~5.54 MB encoded; last-OK compact
+     * ~7.87 MB; last-OK validate ~8.65 MB. Last-OK compact × 0.7 ≈ 5.51 MB.
+     * Leftover on a full 5 MiB shard is ~257 KiB — that is the packet/tail band.
+     */
+    CLOUD_COLLAB: {
+        MAX_SHARD_BYTES: CLOUD_MAX_SHARD_BYTES,
+        MAX_YJS_PACKET_BYTES: CLOUD_MAX_YJS_PACKET_BYTES,
+        WARNING_SHARD_BYTES: Math.floor(CLOUD_MAX_SHARD_BYTES * 0.75),
+        CHECKPOINT_DELTA_BYTES_THRESHOLD: CLOUD_MAX_YJS_PACKET_BYTES,
+        CHECKPOINT_DELTA_ROWS_THRESHOLD: 64,
+        MAX_DIRTY_HARD_BYTES: 262893,
+        MAX_SPOOL_BYTES: CLOUD_MAX_YJS_PACKET_BYTES * 2,
+        MAX_VALIDATOR_TRANSACTION_BYTES: CLOUD_MAX_YJS_PACKET_BYTES,
+        MAX_COMPACTION_TRANSACTION_BYTES: CLOUD_MAX_YJS_PACKET_BYTES,
+        MAX_COMPACTION_FOLD_BYTES: CLOUD_MAX_YJS_PACKET_BYTES,
+        MAX_COMPACTION_RECOVERABLE_BYTES: CLOUD_MAX_SHARD_BYTES,
+        CLIENT_LIVE_MEMORY_WARNING_STRUCTS: 80_000
     },
 
     // Outline editor display settings

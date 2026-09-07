@@ -75,6 +75,42 @@ describe('settings bootstrap', () => {
         ).toBe(false);
     });
 
+    test('cloud collab envelope is the isolate-safe packet/tail/shard split', () => {
+        const collab = require('../js/settings').default.CLOUD_COLLAB;
+        expect(collab.MAX_SHARD_BYTES).toBe(5 * 1024 * 1024);
+        expect(collab.MAX_YJS_PACKET_BYTES).toBe(256 * 1024);
+        expect(collab.MAX_YJS_PACKET_BYTES).toBeLessThan(
+            collab.MAX_SHARD_BYTES
+        );
+        expect(collab.CHECKPOINT_DELTA_BYTES_THRESHOLD).toBe(
+            collab.MAX_YJS_PACKET_BYTES
+        );
+        expect(collab.CHECKPOINT_DELTA_ROWS_THRESHOLD).toBe(64);
+        expect(collab.MAX_DIRTY_HARD_BYTES).toBe(262893);
+        expect(collab.MAX_DIRTY_HARD_BYTES).toBeGreaterThan(
+            collab.MAX_YJS_PACKET_BYTES
+        );
+        expect(collab.MAX_DIRTY_HARD_BYTES).toBeLessThanOrEqual(
+            collab.MAX_YJS_PACKET_BYTES * 2
+        );
+        expect(collab.MAX_VALIDATOR_TRANSACTION_BYTES).toBe(
+            collab.MAX_YJS_PACKET_BYTES
+        );
+        expect(collab.MAX_COMPACTION_TRANSACTION_BYTES).toBe(
+            collab.MAX_YJS_PACKET_BYTES
+        );
+        expect(collab.MAX_COMPACTION_FOLD_BYTES).toBe(
+            collab.MAX_YJS_PACKET_BYTES
+        );
+        expect(collab.MAX_COMPACTION_RECOVERABLE_BYTES).toBe(
+            collab.MAX_SHARD_BYTES
+        );
+        expect(collab.MAX_SPOOL_BYTES).toBe(collab.MAX_YJS_PACKET_BYTES * 2);
+        expect(collab.WARNING_SHARD_BYTES).toBe(
+            Math.floor(collab.MAX_SHARD_BYTES * 0.75)
+        );
+    });
+
     test('enables in-browser live drift checks by default outside production', () => {
         delete global.window;
         globalThis.isDevelopment = () => true;
