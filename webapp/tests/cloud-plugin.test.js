@@ -905,6 +905,23 @@ describe('CloudPlugin.openAsset', () => {
         expect(syncJsonFromModel).toHaveBeenCalledTimes(2);
     });
 
+    test('prepareToSeed fails closed when glyph quota is exhausted', async () => {
+        window.fontManager = {
+            currentFont: {
+                babelfontData: defaultCloudFontJson,
+                babelfontJson: JSON.stringify(defaultCloudFontJson)
+            }
+        };
+        plugin.checkEligibility = async () => {};
+        plugin.canAddGlyphs = async () => ({
+            allowed: false,
+            reason: 'Glyph limit reached (10/10)'
+        });
+        await expect(plugin.prepareToSeed()).rejects.toThrow(
+            'Glyph limit reached (10/10)'
+        );
+    });
+
     test('saveAs blocks fonts above the current cloud size limit before creating an asset', async () => {
         plugin._eligibility = {
             cloudHostingEnabled: true,

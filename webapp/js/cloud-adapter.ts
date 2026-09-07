@@ -56,6 +56,7 @@ import {
     glyphIdFromDocumentId
 } from './filesystem-plugins/cloud-document-set';
 import { assertSafeRebaseline } from './filesystem-plugins/cloud-shard-limits';
+import { missingRequiredCloudCapabilities } from './filesystem-plugins/cloud-collab-capabilities';
 import {
     collaborationMessageKey,
     createChangeLogEntriesFromCollaborationMessageEnvelope,
@@ -2753,7 +2754,7 @@ export class CloudAdapter implements FileSystemAdapter {
                 break;
             }
 
-            case 'auth-ok':
+            case 'auth-ok': {
                 this._clearAuthenticationTimeout();
                 this._clearInitialSyncTimeout();
                 if (msg.roomSchemaVersion !== YDOC_SCHEMA_VERSION) {
@@ -2766,6 +2767,22 @@ export class CloudAdapter implements FileSystemAdapter {
                     this._ws?.close(
                         CLIENT_RECONNECT_CLOSE_CODE,
                         'server-upgrade-required'
+                    );
+                    break;
+                }
+                const missingCaps = missingRequiredCloudCapabilities(
+                    msg.capabilities
+                );
+                if (missingCaps.length) {
+                    this._terminalCloseDetail =
+                        CLOUD_COLLAB_SERVICE_UPDATING_MESSAGE;
+                    this._setStatus(
+                        'error',
+                        CLOUD_COLLAB_SERVICE_UPDATING_MESSAGE
+                    );
+                    this._ws?.close(
+                        CLIENT_RECONNECT_CLOSE_CODE,
+                        'capability-mismatch'
                     );
                     break;
                 }
@@ -2824,6 +2841,7 @@ export class CloudAdapter implements FileSystemAdapter {
                     }
                 }
                 break;
+            }
 
             case 'auth-error':
                 this._clearAuthenticationTimeout();

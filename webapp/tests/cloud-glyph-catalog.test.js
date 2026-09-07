@@ -394,6 +394,7 @@ describe('live font-deps updates', () => {
             }
         };
         plugin._startTrackingActiveAssetSize('live-deps-asset', bridge);
+        plugin.canMutateCurrentAsset = () => true;
         return { bridge, plugin, fontJson: bridge.getFontJsonSnapshot() };
     }
 
@@ -2704,7 +2705,7 @@ describe('catalog tombstones and published hydrate pair', () => {
         revisionCoverageFromDocumentSet
     } = require('../js/filesystem-plugins/cloud-asset-migration');
 
-    it('keeps a generation tombstone when a glyph leaves the live array', () => {
+    it('keeps a generation tombstone only when deletion is explicit', () => {
         const fontJson = {
             glyphs: [
                 { name: 'A', id: 'id-a', codepoints: [65], layers: [] },
@@ -2713,7 +2714,16 @@ describe('catalog tombstones and published hydrate pair', () => {
         };
         applyCloudOwnedData(fontJson);
         fontJson.glyphs = [fontJson.glyphs[0]];
-        const owned = applyCloudOwnedData(fontJson);
+        const sparse = applyCloudOwnedData(fontJson);
+        expect(sparse.glyphCatalog['id-b'].deleted).not.toBe(true);
+        expect(liveCatalogGlyphIds(sparse.glyphCatalog)).toEqual([
+            'id-a',
+            'id-b'
+        ]);
+
+        const owned = applyCloudOwnedData(fontJson, {
+            deletedGlyphIds: ['id-b']
+        });
         expect(owned.glyphCatalog['id-b'].deleted).toBe(true);
         expect(owned.glyphCatalog['id-b'].generation).toBe(1);
         expect(liveCatalogGlyphIds(owned.glyphCatalog)).toEqual(['id-a']);
@@ -2721,6 +2731,20 @@ describe('catalog tombstones and published hydrate pair', () => {
         expect(catalogAcceptsGlyphWrite(owned.glyphCatalog, 'id-b', 0)).toBe(
             false
         );
+    });
+
+    it('fails closed when seed catalog bodies are missing', () => {
+        const {
+            incompleteCloudSeedReason
+        } = require('../js/filesystem-plugins/cloud-glyph-catalog');
+        const fontJson = {
+            glyphs: [{ name: 'A', id: 'id-a', codepoints: [65], layers: [] }],
+            [CORE_GLYPH_CATALOG_KEY]: {
+                'id-a': { glyphId: 'id-a', name: 'A', deleted: false },
+                'id-b': { glyphId: 'id-b', name: 'B', deleted: false }
+            }
+        };
+        expect(incompleteCloudSeedReason(fontJson)).toMatch(/not loaded/);
     });
 
     it('lists catalog glyphs for overview even when Font.glyphs is empty', () => {

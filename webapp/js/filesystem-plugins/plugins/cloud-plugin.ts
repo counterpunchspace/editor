@@ -40,11 +40,13 @@ import {
     applyCloudOwnedData,
     catalogFromCoreJson,
     catalogNeedsUpdate,
+    incompleteCloudSeedReason,
     liveCatalogGlyphIds,
     listGlyphRecords,
     patchCloudOwnedGlyph,
     stripOwnedFontData
 } from '../cloud-glyph-catalog';
+import { missingRequiredCloudCapabilities } from '../cloud-collab-capabilities';
 import {
     catalogEntriesForDepsParse,
     depsNeedUpdate,
@@ -98,6 +100,36 @@ type CloudAssetSizeWarningState = {
 type CloudSaveSizeWarningState = CloudAssetSizeWarningState & {
     canSave: boolean;
 };
+
+function deletedGlyphIdsFromCommittedEntries(
+    entries: Array<{ op?: string; path?: string | Array<string | number> }>,
+    fontJson: Record<string, unknown>
+): string[] {
+    const owned = catalogFromCoreJson(fontJson);
+    const ids = new Set<string>();
+    for (const entry of entries) {
+        if (entry.op !== 'remove') {
+            continue;
+        }
+        const path = pathFromCommittedEntry(entry);
+        if (path[0] !== 'glyphs' || path.length !== 2 || !path[1]) {
+            continue;
+        }
+        const name = String(path[1]);
+        const fromCatalog = Object.values(owned?.glyphCatalog || {}).find(
+            (item) => item.name === name && item.deleted !== true
+        )?.glyphId;
+        const fromBody = listGlyphRecords(fontJson).find(
+            (glyph) => String(glyph.name || '') === name
+        );
+        const glyphId =
+            fromCatalog || (fromBody ? String(fromBody.id || '') : '') || name;
+        if (glyphId) {
+            ids.add(glyphId);
+        }
+    }
+    return [...ids];
+}
 
 function pathFromCommittedEntry(entry: {
     path?: string | Array<string | number>;
@@ -809,6 +841,7 @@ export interface CloudEligibility {
     maxShardBytes?: number;
     warningShardBytes?: number;
     maxPacketBytes?: number;
+    capabilities?: Record<string, number>;
 }
 
 export interface CloudAssetLimits {
@@ -1356,6 +1389,13 @@ export class CloudPlugin extends FilesystemPlugin {
         } else if (this.connectionStatus !== 'connected') {
             return false;
         }
+        if (
+            this._eligibility &&
+            missingRequiredCloudCapabilities(this._eligibility.capabilities)
+                .length
+        ) {
+            return false;
+        }
         const glyphName = window.glyphCanvas?.getCurrentGlyphName?.();
         // Text mode reports the sentinel string "undefined" from
         // getCurrentGlyphName. That must not lock the canvas: it blocked
@@ -1880,8 +1920,39 @@ export class CloudPlugin extends FilesystemPlugin {
         if (!fontJson) {
             return;
         }
+        await this.checkEligibility();
+        if (this._eligibility?.capabilities) {
+            const missingCaps = missingRequiredCloudCapabilities(
+                this._eligibility.capabilities
+            );
+            if (missingCaps.length) {
+                throw new Error(
+                    `Cloud seed blocked: server is missing capabilities (${missingCaps.join(', ')}).`
+                );
+            }
+        }
+        const owned = applyCloudOwnedData(fontJson);
+        window.patchSyncEngine?.syncCloudOwnedProjection?.(owned);
+        const incomplete = incompleteCloudSeedReason(fontJson);
+        if (incomplete) {
+            throw new Error(incomplete);
+        }
+        const wroteDeps =
+            window.patchSyncEngine?.syncCompleteFontDepsFromLoadedGlyphs?.(
+                fontJson
+            );
+        if (wroteDeps === false) {
+            throw new Error(
+                'Cloud seed blocked: font-deps could not be rebuilt from loaded glyphs.'
+            );
+        }
         const glyphCount = listGlyphRecords(fontJson).length;
         const gate = await this.canAddGlyphs(0);
+        if (!gate.allowed) {
+            throw new Error(
+                gate.reason || 'Cloud seed blocked: glyph quota exceeded.'
+            );
+        }
         if (
             this._eligibility?.maxGlyphsPerFont != null &&
             glyphCount > this._eligibility.maxGlyphsPerFont
@@ -1890,7 +1961,6 @@ export class CloudPlugin extends FilesystemPlugin {
                 `Cloud seed blocked: font has ${glyphCount} glyphs but this account allows ${this._eligibility.maxGlyphsPerFont}.`
             );
         }
-        void gate;
     }
 
     async canAddGlyphs(
@@ -2544,6 +2614,10 @@ export class CloudPlugin extends FilesystemPlugin {
         const catalogDirty = entries.some((entry) =>
             catalogNeedsUpdate(pathFromCommittedEntry(entry))
         );
+        const deletedGlyphIds = deletedGlyphIdsFromCommittedEntries(
+            entries,
+            fontJson
+        );
         const depsGlyphs = new Set<string>();
         for (const entry of entries) {
             const path = pathFromCommittedEntry(entry);
@@ -2574,9 +2648,9 @@ export class CloudPlugin extends FilesystemPlugin {
                     )
                 ];
                 const owned =
-                    catalogGlyphs.length === 1
-                        ? patchCloudOwnedGlyph(fontJson, catalogGlyphs[0])
-                        : applyCloudOwnedData(fontJson);
+                    deletedGlyphIds.length || catalogGlyphs.length !== 1
+                        ? applyCloudOwnedData(fontJson, { deletedGlyphIds })
+                        : patchCloudOwnedGlyph(fontJson, catalogGlyphs[0]);
                 window.patchSyncEngine?.syncCloudOwnedProjection?.(owned);
             }
             if (depsGlyphs.size > 0) {

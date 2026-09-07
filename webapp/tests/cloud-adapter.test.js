@@ -28,6 +28,13 @@ const {
 } = require('../js/collaboration-message.ts');
 
 const TEST_YDOC_SCHEMA_VERSION = 5;
+const TEST_REQUIRED_CAPABILITIES = {
+    durableWal: 1,
+    certifiedGeneration: 1,
+    packetEnvelope: 1,
+    glyphTombstones: 1,
+    glyphQuotaReservation: 1
+};
 
 function createIndexedDbMock(seedRecords = []) {
     const records = new Map(
@@ -184,9 +191,12 @@ function createIndexedDbMock(seedRecords = []) {
     };
 }
 
-async function flushCloudIo() {
+async function flushCloudIo(adapter) {
     if (!global.indexedDB) {
         global.indexedDB = createIndexedDbMock();
+    }
+    if (adapter?._outboundPersistChain) {
+        await adapter._outboundPersistChain.catch(() => {});
     }
     for (let i = 0; i < 12; i += 1) {
         await Promise.resolve();
@@ -296,6 +306,10 @@ describe('normalizeCloudRoomWebSocketUrl', () => {
 });
 
 describe('CloudAdapter outbound updates', () => {
+    afterEach(() => {
+        delete global.indexedDB;
+    });
+
     it('treats transient websocket transport errors as reconnecting', async () => {
         const statuses = [];
         const originalWebSocket = global.WebSocket;
@@ -1207,10 +1221,12 @@ describe('CloudAdapter outbound updates', () => {
             close: jest.fn()
         };
         adapter._clientId = 'client-1';
+        adapter._hasSynced = true;
 
+        global.indexedDB = createIndexedDbMock();
         adapter._registerOutboundHook();
         localUpdateHandler(localUpdate, collaborationMessage);
-        await flushCloudIo();
+        await flushCloudIo(adapter);
 
         expect(getFullState).not.toHaveBeenCalled();
         expect(sentFrames).toHaveLength(1);
@@ -1279,10 +1295,12 @@ describe('CloudAdapter outbound updates', () => {
             send: (payload) => sentFrames.push(JSON.parse(payload))
         };
         adapter._clientId = 'client-1';
+        adapter._hasSynced = true;
 
+        global.indexedDB = createIndexedDbMock();
         adapter._registerOutboundHook();
         localUpdateHandler(localUpdate, collaborationMessage);
-        await flushCloudIo();
+        await flushCloudIo(adapter);
 
         expect(sentFrames).toHaveLength(2);
         expect(sentFrames[0]).toEqual(
@@ -1511,6 +1529,13 @@ describe('CloudAdapter outbound updates', () => {
                     type: 'auth-ok',
                     clientId: 'client-1',
                     roomSchemaVersion: TEST_YDOC_SCHEMA_VERSION,
+                    capabilities: {
+                        durableWal: 1,
+                        certifiedGeneration: 1,
+                        packetEnvelope: 1,
+                        glyphTombstones: 1,
+                        glyphQuotaReservation: 1
+                    },
                     seedRequired: true
                 })
             );
@@ -1528,7 +1553,19 @@ describe('CloudAdapter outbound updates', () => {
                 })
             );
 
-            expect(adapter._pendingOutboundPackets).toHaveLength(2);
+            expect(adapter._pendingOutboundPackets).toHaveLength(1);
+            expect(adapter._pendingOutboundPackets[0]).toEqual(
+                expect.objectContaining({
+                    update: expect.any(Uint8Array),
+                    collaborationMessage: expect.objectContaining({
+                        transactionId: collaborationMessage.transactionId,
+                        label: 'Queued offline edit'
+                    })
+                })
+            );
+            expect(
+                Array.from(adapter._pendingOutboundPackets[0].update)
+            ).toEqual([9, 9, 9]);
             expect(sentFrames[sentFrames.length - 1]).toEqual(
                 expect.objectContaining({
                     type: 'sync-complete',
@@ -1607,10 +1644,12 @@ describe('CloudAdapter outbound updates', () => {
             send: jest.fn()
         };
         adapter._clientId = 'client-1';
+        adapter._hasSynced = true;
 
+        global.indexedDB = createIndexedDbMock();
         adapter._registerOutboundHook();
         localUpdateHandler(localUpdate, collaborationMessage);
-        await flushCloudIo();
+        await flushCloudIo(adapter);
 
         adapter._handleMessage(JSON.stringify({ type: 'ack', seq: 1 }));
 
@@ -1660,10 +1699,12 @@ describe('CloudAdapter outbound updates', () => {
             send: jest.fn()
         };
         adapter._clientId = 'client-1';
+        adapter._hasSynced = true;
 
+        global.indexedDB = createIndexedDbMock();
         adapter._registerOutboundHook();
         localUpdateHandler(localUpdate, collaborationMessage);
-        await flushCloudIo();
+        await flushCloudIo(adapter);
 
         expect(adapter.pendingSyncCount).toBe(1);
         let durable = false;
@@ -1751,9 +1792,10 @@ describe('CloudAdapter outbound updates', () => {
         };
         adapter._clientId = 'client-1';
 
+        global.indexedDB = createIndexedDbMock();
         adapter._registerOutboundHook();
         localUpdateHandler(localUpdate, collaborationMessage);
-        await flushCloudIo();
+        await flushCloudIo(adapter);
 
         adapter._handleMessage(
             JSON.stringify({
@@ -1849,9 +1891,10 @@ describe('CloudAdapter outbound updates', () => {
         adapter._status = 'connected';
         adapter._hasSynced = true;
 
+        global.indexedDB = createIndexedDbMock();
         adapter._registerOutboundHook();
         localUpdateHandler(localUpdate, collaborationMessage);
-        await flushCloudIo();
+        await flushCloudIo(adapter);
 
         expect(adapter.pendingSyncCount).toBe(1);
 
@@ -2255,6 +2298,10 @@ describe('CloudAdapter outbound updates', () => {
 });
 
 describe('CloudAdapter durability failures', () => {
+    afterEach(() => {
+        delete global.indexedDB;
+    });
+
     it('does not repair true noop remote updates', () => {
         const adapter = new CloudAdapter({ assetId: 'asset-123' });
 
@@ -2631,6 +2678,13 @@ describe('CloudAdapter durability failures', () => {
                     type: 'auth-ok',
                     clientId: 'client-1',
                     roomSchemaVersion: TEST_YDOC_SCHEMA_VERSION,
+                    capabilities: {
+                        durableWal: 1,
+                        certifiedGeneration: 1,
+                        packetEnvelope: 1,
+                        glyphTombstones: 1,
+                        glyphQuotaReservation: 1
+                    },
                     seedRequired: false
                 })
             );
@@ -2716,9 +2770,10 @@ describe('CloudAdapter durability failures', () => {
             .mockImplementation(() => {});
 
         try {
+            global.indexedDB = createIndexedDbMock();
             adapter._registerOutboundHook();
             localUpdateHandler(localUpdate, collaborationMessage);
-            await flushCloudIo();
+            await flushCloudIo(adapter);
 
             expect(adapter.pendingSyncCount).toBe(1);
 
@@ -2801,9 +2856,10 @@ describe('CloudAdapter durability failures', () => {
             .mockImplementation(() => {});
 
         try {
+            global.indexedDB = createIndexedDbMock();
             adapter._registerOutboundHook();
             localUpdateHandler(localUpdate, collaborationMessage);
-            await flushCloudIo();
+            await flushCloudIo(adapter);
 
             jest.advanceTimersByTime(5000);
             adapter._lastInboundMessageAt = Date.now();
@@ -2888,9 +2944,10 @@ describe('CloudAdapter durability failures', () => {
             .mockImplementation(() => {});
 
         try {
+            global.indexedDB = createIndexedDbMock();
             adapter._registerOutboundHook();
             localUpdateHandler(localUpdate, collaborationMessage);
-            await flushCloudIo();
+            await flushCloudIo(adapter);
 
             jest.advanceTimersByTime(9000);
             adapter._lastInboundMessageAt = Date.now();
@@ -3045,7 +3102,7 @@ describe('CloudAdapter durability failures', () => {
         }
     });
 
-    it('marks the active room offline and reconnects on browser network events', () => {
+    it('marks the active room offline and reconnects on browser network events', async () => {
         const statuses = [];
         const adapter = new CloudAdapter({
             assetId: 'asset-123',
@@ -3072,6 +3129,8 @@ describe('CloudAdapter durability failures', () => {
         adapter._ws = socket;
         adapter._status = 'connected';
         adapter._hasSynced = true;
+        const originalFetch = global.fetch;
+        global.fetch = jest.fn().mockRejectedValue(new Error('no checkpoint'));
 
         try {
             adapter._subscribeBrowserNetworkEvents();
@@ -3086,6 +3145,7 @@ describe('CloudAdapter durability failures', () => {
             expect(adapter._hasSynced).toBe(false);
 
             window.dispatchEvent(new Event('online'));
+            await flushCloudIo(adapter);
 
             expect(statuses).toContainEqual({
                 status: 'connecting',
@@ -3096,6 +3156,7 @@ describe('CloudAdapter durability failures', () => {
                 'wss://rooms.example.com/room/asset-123'
             );
         } finally {
+            global.fetch = originalFetch;
             openWebSocket.mockRestore();
             adapter.disconnect();
         }
@@ -3248,7 +3309,14 @@ describe('CloudAdapter durability failures', () => {
                 JSON.stringify({
                     type: 'auth-ok',
                     clientId: 'c1',
-                    roomSchemaVersion: TEST_YDOC_SCHEMA_VERSION
+                    roomSchemaVersion: TEST_YDOC_SCHEMA_VERSION,
+                    capabilities: {
+                        durableWal: 1,
+                        certifiedGeneration: 1,
+                        packetEnvelope: 1,
+                        glyphTombstones: 1,
+                        glyphQuotaReservation: 1
+                    }
                 })
             );
             jest.advanceTimersByTime(10000);
@@ -3603,6 +3671,72 @@ describe('CloudAdapter durability failures', () => {
             expect(socket.close).toHaveBeenCalledWith(
                 4000,
                 'server-upgrade-required'
+            );
+            expect(scheduleReconnect).not.toHaveBeenCalled();
+        } finally {
+            scheduleReconnect.mockRestore();
+            adapter.disconnect();
+            global.WebSocket = originalWebSocket;
+        }
+    });
+
+    it('rejects auth-ok responses that omit required collab capabilities', async () => {
+        const statuses = [];
+        const originalWebSocket = global.WebSocket;
+        let socket;
+
+        class FakeWebSocket {
+            constructor(_url) {
+                this.readyState = 1;
+                this.send = jest.fn();
+                this.close = jest.fn((code, reason) => {
+                    this.readyState = 3;
+                    this.onclose?.({ code, reason });
+                });
+                socket = this;
+            }
+        }
+
+        global.WebSocket = FakeWebSocket;
+
+        const adapter = new CloudAdapter({
+            assetId: 'asset-123',
+            websiteBaseUrl: 'https://counterpunch.space',
+            onConnectionStatus: (status, detail) => {
+                statuses.push({ status, detail });
+            }
+        });
+
+        const scheduleReconnect = jest
+            .spyOn(adapter, '_scheduleReconnect')
+            .mockImplementation(() => {});
+
+        try {
+            await adapter.connectDirect(
+                {
+                    onLocalUpdate: jest.fn(),
+                    offLocalUpdate: jest.fn()
+                },
+                'room-token',
+                'wss://rooms.example.com/room/asset-123',
+                { bootstrapMode: 'skip' }
+            );
+
+            adapter._handleMessage(
+                JSON.stringify({
+                    type: 'auth-ok',
+                    clientId: 'client-1',
+                    roomSchemaVersion: TEST_YDOC_SCHEMA_VERSION
+                })
+            );
+
+            expect(statuses).toContainEqual({
+                status: 'error',
+                detail: 'The collaboration service is updating. Please try again in a moment.'
+            });
+            expect(socket.close).toHaveBeenCalledWith(
+                4000,
+                'capability-mismatch'
             );
             expect(scheduleReconnect).not.toHaveBeenCalled();
         } finally {
@@ -3989,7 +4123,14 @@ describe('R2 bootstrap (GET /state before WebSocket)', () => {
                 JSON.stringify({
                     type: 'auth-ok',
                     clientId: 'client-1',
-                    roomSchemaVersion: TEST_YDOC_SCHEMA_VERSION
+                    roomSchemaVersion: TEST_YDOC_SCHEMA_VERSION,
+                    capabilities: {
+                        durableWal: 1,
+                        certifiedGeneration: 1,
+                        packetEnvelope: 1,
+                        glyphTombstones: 1,
+                        glyphQuotaReservation: 1
+                    }
                 })
             );
 
@@ -4044,7 +4185,14 @@ describe('R2 bootstrap (GET /state before WebSocket)', () => {
             JSON.stringify({
                 type: 'auth-ok',
                 clientId: 'client-1',
-                roomSchemaVersion: TEST_YDOC_SCHEMA_VERSION
+                roomSchemaVersion: TEST_YDOC_SCHEMA_VERSION,
+                capabilities: {
+                    durableWal: 1,
+                    certifiedGeneration: 1,
+                    packetEnvelope: 1,
+                    glyphTombstones: 1,
+                    glyphQuotaReservation: 1
+                }
             })
         );
 
@@ -4283,6 +4431,13 @@ describe('HTTP seed (POST /state for new rooms)', () => {
                     type: 'auth-ok',
                     clientId: 'client-1',
                     roomSchemaVersion: TEST_YDOC_SCHEMA_VERSION,
+                    capabilities: {
+                        durableWal: 1,
+                        certifiedGeneration: 1,
+                        packetEnvelope: 1,
+                        glyphTombstones: 1,
+                        glyphQuotaReservation: 1
+                    },
                     seedRequired: true
                 })
             );
@@ -4398,6 +4553,13 @@ describe('HTTP seed (POST /state for new rooms)', () => {
                 type: 'auth-ok',
                 clientId: 'client-1',
                 roomSchemaVersion: TEST_YDOC_SCHEMA_VERSION,
+                capabilities: {
+                    durableWal: 1,
+                    certifiedGeneration: 1,
+                    packetEnvelope: 1,
+                    glyphTombstones: 1,
+                    glyphQuotaReservation: 1
+                },
                 seedRequired: true
             })
         );
@@ -4419,7 +4581,14 @@ describe('HTTP seed (POST /state for new rooms)', () => {
             JSON.stringify({
                 type: 'auth-ok',
                 clientId: 'client-2',
-                roomSchemaVersion: TEST_YDOC_SCHEMA_VERSION
+                roomSchemaVersion: TEST_YDOC_SCHEMA_VERSION,
+                capabilities: {
+                    durableWal: 1,
+                    certifiedGeneration: 1,
+                    packetEnvelope: 1,
+                    glyphTombstones: 1,
+                    glyphQuotaReservation: 1
+                }
             })
         );
 
@@ -4519,6 +4688,13 @@ describe('HTTP seed (POST /state for new rooms)', () => {
                 type: 'auth-ok',
                 clientId: 'client-1',
                 roomSchemaVersion: TEST_YDOC_SCHEMA_VERSION,
+                capabilities: {
+                    durableWal: 1,
+                    certifiedGeneration: 1,
+                    packetEnvelope: 1,
+                    glyphTombstones: 1,
+                    glyphQuotaReservation: 1
+                },
                 seedRequired: true
             })
         );
@@ -4654,6 +4830,13 @@ describe('HTTP seed (POST /state for new rooms)', () => {
                     type: 'auth-ok',
                     clientId: 'client-1',
                     roomSchemaVersion: TEST_YDOC_SCHEMA_VERSION,
+                    capabilities: {
+                        durableWal: 1,
+                        certifiedGeneration: 1,
+                        packetEnvelope: 1,
+                        glyphTombstones: 1,
+                        glyphQuotaReservation: 1
+                    },
                     seedRequired: true
                 })
             );
@@ -4790,6 +4973,13 @@ describe('HTTP seed (POST /state for new rooms)', () => {
                 type: 'auth-ok',
                 clientId: 'client-1',
                 roomSchemaVersion: TEST_YDOC_SCHEMA_VERSION,
+                capabilities: {
+                    durableWal: 1,
+                    certifiedGeneration: 1,
+                    packetEnvelope: 1,
+                    glyphTombstones: 1,
+                    glyphQuotaReservation: 1
+                },
                 seedRequired: true
             })
         );

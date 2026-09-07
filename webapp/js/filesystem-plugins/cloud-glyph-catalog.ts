@@ -253,7 +253,8 @@ function writeOwnedToCoreJson(
 }
 
 export function applyCloudOwnedData(
-    fontJson: Record<string, unknown>
+    fontJson: Record<string, unknown>,
+    options: { deletedGlyphIds?: Iterable<string> } = {}
 ): CloudOwnedFontData {
     const previous = catalogFromCoreJson(fontJson);
     const { entries, codepointIndex } = buildLeanGlyphCatalog(fontJson);
@@ -261,6 +262,9 @@ export function applyCloudOwnedData(
         listGlyphRecords(fontJson)
             .map((glyph) => ensureImmutableGlyphId(glyph))
             .filter(Boolean)
+    );
+    const deletedGlyphIds = new Set(
+        [...(options.deletedGlyphIds || [])].filter(Boolean)
     );
     let nextIndex = codepointIndex;
     if (previous) {
@@ -273,7 +277,7 @@ export function applyCloudOwnedData(
             }
         }
         for (const [glyphId, entry] of Object.entries(previous.glyphCatalog)) {
-            if (entries[glyphId]) {
+            if (entries[glyphId] && !deletedGlyphIds.has(glyphId)) {
                 const rebuilt = entries[glyphId];
                 entries[glyphId] = {
                     ...rebuilt,
@@ -287,7 +291,9 @@ export function applyCloudOwnedData(
                 };
                 continue;
             }
-            if (sparseRebuild && entry.deleted !== true) {
+            const explicitDelete =
+                deletedGlyphIds.has(glyphId) || entry.deleted === true;
+            if (sparseRebuild && !explicitDelete) {
                 entries[glyphId] = entry;
                 continue;
             }
@@ -316,6 +322,14 @@ export function patchCloudOwnedGlyph(
         (entry) => String(entry.name || '') === glyphName
     );
     if (!glyph) {
+        const deletedId = Object.values(existing.glyphCatalog).find(
+            (entry) => entry.name === glyphName && entry.deleted !== true
+        )?.glyphId;
+        if (deletedId) {
+            return applyCloudOwnedData(fontJson, {
+                deletedGlyphIds: [deletedId]
+            });
+        }
         return applyCloudOwnedData(fontJson);
     }
     const glyphId = ensureImmutableGlyphId(glyph);
@@ -665,4 +679,32 @@ export function catalogAcceptsGlyphWrite(
         return true;
     }
     return (entry.generation || 0) === generation;
+}
+
+export function incompleteCloudSeedReason(
+    fontJson: Record<string, unknown>
+): string | null {
+    const owned = catalogFromCoreJson(fontJson);
+    if (!owned) {
+        return 'Cloud seed blocked: glyph catalog is missing.';
+    }
+    const liveIds = liveCatalogGlyphIds(owned.glyphCatalog);
+    const loadedIds = new Set(
+        listGlyphRecords(fontJson)
+            .map((glyph) => ensureImmutableGlyphId(glyph))
+            .filter(Boolean)
+    );
+    const missingBodies = liveIds.filter((glyphId) => !loadedIds.has(glyphId));
+    if (missingBodies.length) {
+        return `Cloud seed blocked: ${missingBodies.length} catalog glyph(s) are not loaded.`;
+    }
+    const extraBodies = [...loadedIds].filter(
+        (glyphId) =>
+            !liveIds.includes(glyphId) &&
+            owned.glyphCatalog[glyphId]?.deleted !== true
+    );
+    if (extraBodies.length) {
+        return 'Cloud seed blocked: glyph bodies exist outside the live catalog.';
+    }
+    return null;
 }
