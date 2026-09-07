@@ -63,8 +63,8 @@ Font data is a **document set**: `font-core`, `font-deps`, and one Y.Doc per
 seeded and updated per `documentId`; glyph-revision-only core packets are
 not forwarded to the worker.
 
-Only the main window holds cloud Durable Object sockets (`font-core` plus the
-live glyph subset). Linked windows talk to main over document-scoped
+Only the main window holds cloud Durable Object sockets (`font-core`,
+`font-deps`, and the sticky live glyph). Linked windows talk to main over document-scoped
 BroadcastChannel. Chrome stays per window (`windowUi.*`).
 
 Edits that are not on a peer’s WebSocket subset still arrive: core publishes

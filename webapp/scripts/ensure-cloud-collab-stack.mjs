@@ -95,7 +95,9 @@ export function localCloudEnv() {
             'https://localhost:8000,http://localhost:9000,https://localhost:8788',
         MAGIC_LINK_SECRET:
             process.env.MAGIC_LINK_SECRET || 'e2e-cloud-collab-magic',
-        ROOM_WORKER_URL: 'http://localhost:8787'
+        ROOM_WORKER_URL: 'http://localhost:8787',
+        VALIDATOR_SHARED_TOKEN: 'e2e-p0-validator',
+        COMPACTOR_SHARED_TOKEN: 'e2e-p0-compactor'
     };
 }
 
@@ -215,7 +217,11 @@ export async function ensureCloudCollabStack() {
                 '-c',
                 'workers/compactor/wrangler.toml',
                 '-c',
-                'workers/validator/wrangler.toml'
+                'workers/validator/wrangler.toml',
+                '--var',
+                'VALIDATOR_SHARED_TOKEN:e2e-p0-validator',
+                '--var',
+                'COMPACTOR_SHARED_TOKEN:e2e-p0-compactor'
             ],
             {
                 cwd: collabRoot,

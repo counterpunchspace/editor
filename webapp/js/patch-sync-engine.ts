@@ -31,6 +31,7 @@ import {
 } from './change-bridge-ydoc';
 import {
     repairLayerGeometryOrphans,
+    readLayerGeometry,
     writeLayerGeometry
 } from './layer-geometry-ydoc';
 import {
@@ -72,6 +73,7 @@ import {
     isDerivedLayerChangePath
 } from './change-log';
 import { Logger } from './logger';
+import { pushCollabIntegrityEvent } from './cloud-collab-integrity-debug';
 import {
     collaborationMessageKey,
     createChangeLogEntriesFromCollaborationMessageEnvelope,
@@ -574,6 +576,13 @@ export class PatchSyncEngine {
     private _txStartTimeMs: number | null = null;
     /** Next transaction ID counter */
     private _nextTxId = 1;
+    /** When set, cloud WAL intent already persisted; Yjs apply may proceed. */
+    private _cloudWalApplyReady = false;
+    /** Serializes cloud WAL-before-apply commits so callers can await them. */
+    private _cloudWalCommitChain: Promise<void> = Promise.resolve();
+    /** Serializes persist-then-deliver of local cloud emits after apply. */
+    private _cloudEmitPersistChain: Promise<void> = Promise.resolve();
+    private _lastCloudCommitDebug: Record<string, unknown> | null = null;
     /** Next logical history item counter */
     private _nextHistoryItemId = 1;
     /** Current transaction-level history item ID */
@@ -1043,6 +1052,76 @@ export class PatchSyncEngine {
     glyphDocumentIdForName(glyphName: string): string | null {
         const glyphId = this._glyphIdByName.get(glyphName);
         return glyphId ? glyphDocumentId(glyphId) : null;
+    }
+
+    /** Playwright/debug: first path node x from the glyph Y.Doc, or null. */
+    debugGlyphFirstNodeX(glyphName: string): number | null {
+        const glyphMap = this._glyphMapForName(glyphName);
+        if (!glyphMap) {
+            return null;
+        }
+        const layers = glyphMap.get('layers');
+        if (!(layers instanceof Y.Map) || layers.size === 0) {
+            return null;
+        }
+        const firstLayer = layers.values().next().value;
+        if (!(firstLayer instanceof Y.Map)) {
+            return null;
+        }
+        try {
+            const shapes = readLayerGeometry(firstLayer);
+            const nodes = Array.isArray(shapes?.[0]?.nodes)
+                ? (shapes[0].nodes as Array<{ x?: unknown }>)
+                : [];
+            const x = nodes[0]?.x;
+            return typeof x === 'number' && Number.isFinite(x) ? x : null;
+        } catch {
+            return null;
+        }
+    }
+
+    debugCollabGlyphSnapshot(glyphName: string): Record<string, unknown> {
+        const modelGlyph = (
+            window as Window & {
+                currentFontModel?: {
+                    findGlyph?: (name: string) => {
+                        layers?: Array<{
+                            paths?: Array<{ nodes?: Array<{ x?: unknown }> }>;
+                        }>;
+                    };
+                };
+            }
+        ).currentFontModel?.findGlyph?.(glyphName);
+        const modelX = modelGlyph?.layers?.[0]?.paths?.[0]?.nodes?.[0]?.x;
+        const jsonGlyphs = (this._fontJson as { glyphs?: unknown } | null)
+            ?.glyphs;
+        const jsonGlyph = Array.isArray(jsonGlyphs)
+            ? jsonGlyphs.find(
+                  (glyph) =>
+                      glyph &&
+                      typeof glyph === 'object' &&
+                      (glyph as { name?: unknown }).name === glyphName
+              )
+            : null;
+        const jsonLayer =
+            jsonGlyph && typeof jsonGlyph === 'object'
+                ? (jsonGlyph as { layers?: Array<Record<string, unknown>> })
+                      .layers?.[0]
+                : null;
+        const jsonShapes = jsonLayer?.shapes as
+            Array<{ nodes?: Array<{ x?: unknown }> }> | undefined;
+        const jsonPaths = jsonLayer?.paths as
+            Array<{ nodes?: Array<{ x?: unknown }> }> | undefined;
+        const jsonX =
+            jsonShapes?.[0]?.nodes?.[0]?.x ?? jsonPaths?.[0]?.nodes?.[0]?.x;
+        return {
+            glyphName,
+            glyphDocumentId: this.glyphDocumentIdForName(glyphName),
+            modelX: typeof modelX === 'number' ? modelX : null,
+            jsonX: typeof jsonX === 'number' ? jsonX : null,
+            yDocX: this.debugGlyphFirstNodeX(glyphName),
+            lastCloudCommit: this._lastCloudCommitDebug
+        };
     }
 
     listLiveGlyphDocumentIds(): string[] {
@@ -1722,18 +1801,67 @@ export class PatchSyncEngine {
                 )
             ]);
         }
-        for (const cb of this._localUpdateListeners) {
-            cb(update, collaborationMessage, emissionEntries, documentId);
-        }
+        const deliver = (): void => {
+            pushCollabIntegrityEvent('emit-local', {
+                documentId,
+                bytes: update.length,
+                hasCollaborationMessage: Boolean(collaborationMessage),
+                entries: emissionEntries.length
+            });
+            for (const cb of this._localUpdateListeners) {
+                cb(update, collaborationMessage, emissionEntries, documentId);
+            }
+            if (
+                emissionEntries.length > 0 &&
+                !areGlyphRevisionOnlyEntries(emissionEntries)
+            ) {
+                this._yjsWorkerCallback?.(update, emissionEntries, documentId);
+            }
+            for (const cb of this._committedChangeListeners) {
+                cb(emissionEntries, { origin: 'local', update, documentId });
+            }
+        };
+        const plugin = window.cloudPlugin;
         if (
-            emissionEntries.length > 0 &&
-            !areGlyphRevisionOnlyEntries(emissionEntries)
+            typeof plugin?.persistOutgoingCloudUpdate === 'function' &&
+            collaborationMessage
         ) {
-            this._yjsWorkerCallback?.(update, emissionEntries, documentId);
+            const pending = Promise.resolve(
+                plugin.persistOutgoingCloudUpdate(
+                    update,
+                    collaborationMessage,
+                    documentId
+                )
+            ).then(
+                (ok) => {
+                    pushCollabIntegrityEvent('emit-persist', {
+                        documentId,
+                        bytes: update.length,
+                        ok: ok !== false
+                    });
+                    if (ok !== false) {
+                        deliver();
+                    }
+                },
+                (error) => {
+                    pushCollabIntegrityEvent('emit-persist', {
+                        documentId,
+                        bytes: update.length,
+                        ok: false,
+                        error: String(error)
+                    });
+                }
+            );
+            this._cloudEmitPersistChain = Promise.all([
+                this._cloudEmitPersistChain,
+                pending
+            ]).then(
+                () => undefined,
+                () => undefined
+            );
+            return;
         }
-        for (const cb of this._committedChangeListeners) {
-            cb(emissionEntries, { origin: 'local', update, documentId });
-        }
+        deliver();
     }
 
     private _documentIdsForHistoryItem(
@@ -1798,6 +1926,10 @@ export class PatchSyncEngine {
                 continue;
             }
             if (!docEntries.length) {
+                pushCollabIntegrityEvent('emit-skip-no-changelog', {
+                    documentId,
+                    bytes: incrementalUpdate.length
+                });
                 continue;
             }
             this._emitLocalUpdate(incrementalUpdate, docEntries, documentId);
@@ -1969,6 +2101,15 @@ export class PatchSyncEngine {
     /** Unregister a callback previously passed to onLocalUpdate. */
     offLocalUpdate(cb: LocalUpdateListener): void {
         this._localUpdateListeners.delete(cb);
+    }
+
+    /**
+     * Wait until cloud WAL-before-apply commits queued by this engine have
+     * finished applying to Yjs. UI edits return before that async path.
+     */
+    async waitForPendingCloudCommits(): Promise<void> {
+        await this._cloudWalCommitChain;
+        await this._cloudEmitPersistChain;
     }
 
     /** Register a callback for committed local and remote changes. */
@@ -6274,6 +6415,77 @@ export class PatchSyncEngine {
         );
     }
 
+    private _shouldPersistCloudWalBeforeApply(): boolean {
+        if (this._cloudWalApplyReady) {
+            return false;
+        }
+        if (window.fontManager?.currentFont?.isCloudBacked?.() !== true) {
+            return false;
+        }
+        return (
+            typeof window.cloudPlugin?.persistCloudMutationIntent === 'function'
+        );
+    }
+
+    private async _commitOperationsAfterCloudWal(
+        operations: TransactionBufferedOperation[],
+        label: string | null,
+        transactionId: number | null,
+        historyItemId?: string | null,
+        historyTarget?: TransactionHistoryTarget | null,
+        promptGroupId?: string | null,
+        historySummary?: string | null,
+        skipTransactionFinalizer = false
+    ): Promise<void> {
+        const documentIds = [
+            ...new Set(
+                operations.map((operation) =>
+                    this.documentIdForPath(
+                        this._toYDocPath(operation.applyPath ?? operation.path)
+                    )
+                )
+            )
+        ];
+        const persisted =
+            await window.cloudPlugin?.persistCloudMutationIntent?.(documentIds);
+        this._lastCloudCommitDebug = {
+            documentIds,
+            operationCount: operations.length,
+            persisted
+        };
+        pushCollabIntegrityEvent('wal-before-apply', {
+            documentIds,
+            operationCount: operations.length,
+            persisted
+        });
+        if (persisted === false) {
+            console.warn(
+                'PatchSyncEngine: cloud write-ahead persist failed; local apply skipped'
+            );
+            return;
+        }
+        this._cloudWalApplyReady = true;
+        try {
+            this._commitOperations(
+                operations,
+                label,
+                transactionId,
+                historyItemId,
+                historyTarget,
+                promptGroupId,
+                historySummary,
+                skipTransactionFinalizer
+            );
+            await this._cloudEmitPersistChain;
+            this._lastCloudCommitDebug = {
+                ...this._lastCloudCommitDebug,
+                applied: true
+            };
+        } finally {
+            this._cloudWalApplyReady = false;
+        }
+    }
+
     private _normalizeBufferedOperation(
         operation: TransactionBufferedOperation
     ): TransactionBufferedOperation {
@@ -6383,6 +6595,32 @@ export class PatchSyncEngine {
                 ? finalizedOperations
                 : this._reduceToNetChangingOperations(finalizedOperations);
         if (!effectiveOperations.length) {
+            return null;
+        }
+
+        if (this._shouldPersistCloudWalBeforeApply()) {
+            const pending = this._commitOperationsAfterCloudWal(
+                effectiveOperations,
+                label,
+                transactionId,
+                historyItemId,
+                historyTarget,
+                promptGroupId,
+                historySummary,
+                skipTransactionFinalizer
+            );
+            this._cloudWalCommitChain = Promise.all([
+                this._cloudWalCommitChain,
+                pending
+            ]).then(
+                () => undefined,
+                (error) => {
+                    console.warn(
+                        'PatchSyncEngine: cloud WAL commit failed:',
+                        error
+                    );
+                }
+            );
             return null;
         }
 
@@ -7264,7 +7502,18 @@ export class PatchSyncEngine {
         const tokens = this._allocateGlyphRevisionTokens(glyphIds);
         this._stampGlyphCatchUpRevisions(tokens);
         emitLocalGlyphUpdates();
-        this._publishGlyphRevisionCoreSignal(tokens);
+        const publish = (): void => {
+            this._publishGlyphRevisionCoreSignal(tokens);
+        };
+        const plugin = window.cloudPlugin;
+        if (typeof plugin?.waitForCloudGlyphDurability === 'function') {
+            void Promise.resolve(plugin.waitForCloudGlyphDurability()).then(
+                publish,
+                publish
+            );
+            return;
+        }
+        publish();
     }
 
     private _notifyCoreHydrated(): void {

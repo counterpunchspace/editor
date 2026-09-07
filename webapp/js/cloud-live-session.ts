@@ -18,6 +18,11 @@ import {
     normalizeCloudShardWebSocketUrl
 } from './cloud-adapter';
 import {
+    CloudDurableWal,
+    type CloudWalHealth,
+    type CloudWalRecord
+} from './cloud-durable-wal';
+import {
     FONT_CORE_DOCUMENT_ID,
     FONT_DEPS_DOCUMENT_ID
 } from './filesystem-plugins/cloud-document-set';
@@ -27,6 +32,7 @@ import {
     type CollaborationMessageEnvelope
 } from './collaboration-message';
 import { Logger } from './logger';
+import { pushCollabIntegrityEvent } from './cloud-collab-integrity-debug';
 
 const console = new Logger('CloudLiveSession');
 
@@ -45,6 +51,7 @@ export type CloudLiveSessionOptions = {
     ) => void;
     onPendingSyncCountChange?: (count: number) => void;
     onTransferActivityChange?: (activity: CloudTransferActivity) => void;
+    refreshCredentials?: () => Promise<{ token: string; roomUrl: string }>;
 };
 
 export type GlyphCatchUpTarget = {
@@ -139,10 +146,21 @@ export class CloudLiveSession {
     private _localUpdateUnsubscribe: (() => void) | null = null;
     private _lastEmittedTransferActivity: CloudTransferActivity = 'idle';
     private _syncLiveChain: Promise<void> = Promise.resolve();
+    private readonly _wal = new CloudDurableWal();
+    private _walLoad: Promise<void> | null = null;
+    private _token: string;
+    private _roomUrl: string;
 
     constructor(options: CloudLiveSessionOptions) {
         this._options = options;
+        this._token = options.token;
+        this._roomUrl = options.roomUrl;
         this._bindDependentPublishHook();
+        void this._ensureWalLoaded();
+    }
+
+    get walHealth(): CloudWalHealth {
+        return this._wal.health;
     }
 
     get coreAdapter(): CloudAdapter | null {
@@ -154,11 +172,7 @@ export class CloudLiveSession {
     }
 
     get pendingSyncCount(): number {
-        let count = 0;
-        for (const adapter of this._adapters.values()) {
-            count += adapter.pendingSyncCount;
-        }
-        return count;
+        return this._wal.pendingCount;
     }
 
     get transferActivity(): CloudTransferActivity {
@@ -260,6 +274,27 @@ export class CloudLiveSession {
             openSocketCount: adapters.filter(
                 (snapshot) => snapshot.wsReadyState === WebSocket.OPEN
             ).length
+        };
+    }
+
+    captureIntegritySnapshot(): Record<string, unknown> {
+        return {
+            status: this.status,
+            pendingSyncCount: this.pendingSyncCount,
+            liveDocumentIds: this.liveDocumentIds(),
+            walHealth: this._wal.health,
+            walRecords: this._wal.recordsFor().map((record) => ({
+                documentId: record.documentId,
+                hasUpdate: Boolean(record.updateBase64),
+                updateBytes: record.updateBase64
+                    ? atob(record.updateBase64).length
+                    : 0,
+                source: record.collaborationMessage?.source ?? null,
+                createdAt: record.createdAt
+            })),
+            adapters: [...this._adapters.values()].map((adapter) =>
+                adapter.captureIntegritySnapshot()
+            )
         };
     }
 
@@ -381,7 +416,7 @@ export class CloudLiveSession {
             return;
         }
         if (resolvedId.startsWith('glyph:')) {
-            this._enqueueDependentPublish(
+            void this._enqueueDependentPublish(
                 resolvedId,
                 update,
                 collaborationMessage
@@ -409,12 +444,133 @@ export class CloudLiveSession {
         this._lastEmittedTransferActivity = 'idle';
     }
 
+    async replayPendingOfflinePublishes(): Promise<void> {
+        await this._replayPendingHttpWal({ includeLiveAdapters: false });
+        await this.flushPendingHttpPublishes();
+    }
+
     async flushPendingHttpPublishes(): Promise<void> {
         while (
             this._httpPublishQueue.length ||
             this._httpPublishInFlight.size
         ) {
             await Promise.all([...this._httpPublishInFlight]);
+        }
+    }
+
+    async persistOutgoingUpdate(
+        update: Uint8Array,
+        collaborationMessage?: CollaborationMessageEnvelope | null,
+        documentId?: string
+    ): Promise<boolean> {
+        if (!collaborationMessage || !update?.length) {
+            pushCollabIntegrityEvent('persist-outgoing-skip', {
+                documentId: documentId || FONT_CORE_DOCUMENT_ID,
+                bytes: update?.length ?? 0,
+                hasCollaborationMessage: Boolean(collaborationMessage)
+            });
+            return true;
+        }
+        await this._ensureWalLoaded();
+        if (this._wal.health !== 'ready') {
+            return false;
+        }
+        const clientTransactionId =
+            collaborationMessageKey(collaborationMessage);
+        if (!clientTransactionId) {
+            return true;
+        }
+        let binary = '';
+        for (let i = 0; i < update.length; i++) {
+            binary += String.fromCharCode(update[i]);
+        }
+        try {
+            await this._wal.append({
+                assetId: this._options.assetId,
+                documentId: documentId || FONT_CORE_DOCUMENT_ID,
+                clientTransactionId,
+                updateBase64: btoa(binary),
+                collaborationMessage,
+                createdAt: Date.now(),
+                attempts: 0
+            });
+            this._emitPendingSyncCount();
+            pushCollabIntegrityEvent('persist-outgoing', {
+                documentId: documentId || FONT_CORE_DOCUMENT_ID,
+                bytes: update.length,
+                clientTransactionId
+            });
+            return true;
+        } catch (error) {
+            console.warn(
+                'CloudLiveSession: write-ahead persist failed before send:',
+                error
+            );
+            return false;
+        }
+    }
+
+    async persistMutationIntents(documentIds: string[]): Promise<boolean> {
+        await this._ensureWalLoaded();
+        if (this._wal.health !== 'ready') {
+            return false;
+        }
+        try {
+            await this._wal.verifyWritable();
+            const timestamp = Date.now();
+            for (const documentId of documentIds) {
+                const clientTransactionId = `intent:${this._options.assetId}:${documentId}:${timestamp}`;
+                const collaborationMessage = {
+                    schemaVersion: 1 as const,
+                    transactionId: clientTransactionId,
+                    localSequence: 0,
+                    roomSequence: null,
+                    baseRevision: null,
+                    changes: [],
+                    metadata: {
+                        editType: 'font' as const,
+                        changedGlyphNames: [],
+                        changedLayerIds: [],
+                        workerReplayTargets: [],
+                        historyItemId: clientTransactionId,
+                        historyAction: 'change' as const,
+                        undoScope: 'font' as const
+                    },
+                    source: 'cloud-wal-intent',
+                    label: null,
+                    summary: 'cloud mutation intent',
+                    windowId: null,
+                    timestamp
+                };
+                await this._wal.append({
+                    assetId: this._options.assetId,
+                    documentId,
+                    clientTransactionId,
+                    updateBase64: '',
+                    collaborationMessage,
+                    createdAt: timestamp,
+                    attempts: 0
+                });
+            }
+            this._emitPendingSyncCount();
+            pushCollabIntegrityEvent('persist-intent', { documentIds });
+            return true;
+        } catch (error) {
+            console.warn(
+                'CloudLiveSession: write-ahead intent persist failed:',
+                error
+            );
+            return false;
+        }
+    }
+
+    async waitForGlyphAndDepsDurability(): Promise<void> {
+        if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+            return;
+        }
+        const deps = this._adapters.get(FONT_DEPS_DOCUMENT_ID);
+        if (typeof deps?.waitUntilDurable === 'function') {
+            await deps.waitUntilDurable();
         }
     }
 
@@ -512,7 +668,7 @@ export class CloudLiveSession {
             if (!documentId.startsWith('glyph:')) {
                 return;
             }
-            this._enqueueDependentPublish(
+            void this._enqueueDependentPublish(
                 documentId,
                 update,
                 collaborationMessage
@@ -524,33 +680,122 @@ export class CloudLiveSession {
         };
     }
 
-    private _enqueueDependentPublish(
+    private async _ensureWalLoaded(): Promise<void> {
+        if (!this._walLoad) {
+            this._walLoad = this._wal
+                .load(this._options.assetId)
+                .then(() => undefined)
+                .catch((error) => {
+                    console.warn(
+                        'CloudLiveSession: write-ahead log is unavailable:',
+                        error
+                    );
+                });
+        }
+        await this._walLoad;
+    }
+
+    private async _refreshCredentialsOnce(): Promise<boolean> {
+        if (!this._options.refreshCredentials) {
+            return false;
+        }
+        try {
+            const next = await this._options.refreshCredentials();
+            if (!next?.token || !next?.roomUrl) {
+                return false;
+            }
+            this._token = next.token;
+            this._roomUrl = next.roomUrl;
+            return true;
+        } catch (error) {
+            console.warn('CloudLiveSession: credential refresh failed:', error);
+            return false;
+        }
+    }
+
+    private async _enqueueDependentPublish(
         documentId: string,
         update: Uint8Array,
         collaborationMessage?: CollaborationMessageEnvelope | null
-    ): void {
+    ): Promise<void> {
         if (!update?.length) {
             return;
         }
-        const seq = ++this._httpPublishSeq;
         this._httpPublishingCount += 1;
         this._emitTransferActivity();
+        const seq = ++this._httpPublishSeq;
         this._httpPublishQueue.push(async () => {
-            const { assetId, websiteBaseUrl, token, roomUrl } = this._options;
-            await publishCloudDocumentUpdate({
-                token,
-                roomUrl,
-                websiteBaseUrl,
-                assetId,
-                documentId,
-                update,
-                collaborationMessage,
-                seq,
-                clientId: `http:${assetId}`,
-                clientTransactionId: collaborationMessage
-                    ? collaborationMessageKey(collaborationMessage)
-                    : null
-            });
+            await this._ensureWalLoaded();
+            const clientTransactionId = collaborationMessage
+                ? collaborationMessageKey(collaborationMessage)
+                : null;
+            let walRecord = null as
+                | Awaited<ReturnType<CloudDurableWal['recordsFor']>>[number]
+                | null;
+            if (collaborationMessage && clientTransactionId) {
+                let binary = '';
+                for (let i = 0; i < update.length; i++) {
+                    binary += String.fromCharCode(update[i]);
+                }
+                const existing = this._wal
+                    .recordsFor(documentId)
+                    .find(
+                        (record) =>
+                            record.clientTransactionId === clientTransactionId
+                    );
+                walRecord =
+                    existing ??
+                    ({
+                        assetId: this._options.assetId,
+                        documentId,
+                        clientTransactionId,
+                        updateBase64: btoa(binary),
+                        collaborationMessage,
+                        createdAt: Date.now(),
+                        attempts: 0
+                    } as CloudWalRecord);
+                if (!existing) {
+                    await this._wal.append(walRecord);
+                    this._emitPendingSyncCount();
+                }
+            }
+            const { assetId, websiteBaseUrl } = this._options;
+            let refreshed = false;
+            for (let attempt = 0; attempt < 5; attempt += 1) {
+                try {
+                    const durable = await publishCloudDocumentUpdate({
+                        token: this._token,
+                        roomUrl: this._roomUrl,
+                        websiteBaseUrl,
+                        assetId,
+                        documentId,
+                        update,
+                        collaborationMessage,
+                        seq,
+                        clientId: `http:${assetId}`,
+                        clientTransactionId
+                    });
+                    if (durable && walRecord) {
+                        await this._wal.acknowledge(walRecord);
+                        this._emitPendingSyncCount();
+                    }
+                    return;
+                } catch (error) {
+                    const status = (error as { status?: number }).status;
+                    if ((status === 401 || status === 403) && !refreshed) {
+                        refreshed = await this._refreshCredentialsOnce();
+                        if (refreshed) {
+                            continue;
+                        }
+                    }
+                    if (attempt === 4) {
+                        throw error;
+                    }
+                    await new Promise((resolve) => {
+                        setTimeout(resolve, 50 * 2 ** attempt);
+                    });
+                }
+            }
         });
         this._pumpHttpPublishQueue();
     }
@@ -569,7 +814,7 @@ export class CloudLiveSession {
             running = job()
                 .catch((error) => {
                     console.warn(
-                        'CloudLiveSession: dependent glyph HTTP publish failed:',
+                        'CloudLiveSession: dependent glyph HTTP publish failed; retained for retry:',
                         error
                     );
                 })
@@ -604,8 +849,6 @@ export class CloudLiveSession {
         const {
             assetId,
             websiteBaseUrl,
-            token,
-            roomUrl,
             bridge,
             bootstrapMode,
             checkpointLogId,
@@ -625,6 +868,7 @@ export class CloudLiveSession {
             websiteBaseUrl,
             documentId,
             deferVisibleRebaseline: true,
+            wal: this._wal,
             onConnectionStatus: (status, detail) => {
                 if (isCore) {
                     this._onCoreAdapterStatus(status, detail);
@@ -645,10 +889,22 @@ export class CloudLiveSession {
             },
             onTransferActivityChange: () => {
                 this._emitTransferActivity();
+            },
+            refreshCredentials: async () => {
+                await this._refreshCredentialsOnce();
+                return {
+                    token: this._token,
+                    roomUrl: normalizeCloudShardWebSocketUrl(
+                        this._roomUrl,
+                        websiteBaseUrl,
+                        assetId,
+                        documentId
+                    )
+                };
             }
         });
         const wsUrl = normalizeCloudShardWebSocketUrl(
-            roomUrl,
+            this._roomUrl,
             websiteBaseUrl,
             assetId,
             documentId
@@ -664,7 +920,12 @@ export class CloudLiveSession {
             connectOptions.checkpointLogId = checkpointLogId;
         }
         try {
-            await adapter.connectDirect(bridge, token, wsUrl, connectOptions);
+            await adapter.connectDirect(
+                bridge,
+                this._token,
+                wsUrl,
+                connectOptions
+            );
             if (connectedPromise) {
                 const timeout = new Promise<never>((_, rej) =>
                     setTimeout(
@@ -732,6 +993,8 @@ export class CloudLiveSession {
         this._options.onConnectionStatus?.('syncing', 'Catching up');
         await this._waitForLiveTransportSynced();
         await this._catchUpLiveSubsetAndDeps();
+        await this._replayPendingHttpWal({ includeLiveAdapters: false });
+        await this.flushPendingHttpPublishes();
         const needsRebaseline = this.coreAdapter?.needsVisibleRebaseline;
         if (needsRebaseline) {
             this._options.onConnectionStatus?.(
@@ -754,6 +1017,52 @@ export class CloudLiveSession {
         }
         this._reportedConnected = true;
         this._options.onConnectionStatus?.('connected');
+    }
+
+    private async _replayPendingHttpWal(options?: {
+        includeLiveAdapters?: boolean;
+    }): Promise<void> {
+        await this._ensureWalLoaded();
+        if (this._wal.health !== 'ready') {
+            return;
+        }
+        const includeLiveAdapters = options?.includeLiveAdapters === true;
+        pushCollabIntegrityEvent('replay-http-wal', {
+            includeLiveAdapters,
+            records: this._wal.recordsFor().map((record) => ({
+                documentId: record.documentId,
+                hasUpdate: Boolean(record.updateBase64)
+            }))
+        });
+        for (const record of this._wal.recordsFor()) {
+            if (!record.documentId.startsWith('glyph:')) {
+                continue;
+            }
+            if (!includeLiveAdapters && this._adapters.has(record.documentId)) {
+                continue;
+            }
+            if (!record.updateBase64 || !record.collaborationMessage) {
+                continue;
+            }
+            let binary = '';
+            try {
+                binary = atob(record.updateBase64);
+            } catch {
+                continue;
+            }
+            const update = new Uint8Array(binary.length);
+            for (let i = 0; i < binary.length; i += 1) {
+                update[i] = binary.charCodeAt(i);
+            }
+            if (!update.length) {
+                continue;
+            }
+            await this._enqueueDependentPublish(
+                record.documentId,
+                update,
+                record.collaborationMessage
+            );
+        }
     }
 
     private async _waitForLiveTransportSynced(

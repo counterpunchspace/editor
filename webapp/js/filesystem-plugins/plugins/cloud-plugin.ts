@@ -30,6 +30,7 @@ import {
     PatchSyncEngine,
     type CommittedChangeListener
 } from '../../patch-sync-engine';
+import { setCollabIntegritySnapshotProvider } from '../../cloud-collab-integrity-debug';
 import { Logger } from '../../logger';
 import { getPathSegments } from '../../change-log';
 import { resolveWebsiteURL } from '../../website-url';
@@ -76,6 +77,7 @@ import {
     type CollabSubmitDecision,
     type CollabSubmitRequest
 } from '../cloud-shard-limits';
+import type { CollaborationMessageEnvelope } from '../../collaboration-message';
 
 const console = new Logger('CloudPlugin');
 const CLOUD_PLUGIN_UI_ENABLED = true;
@@ -1005,6 +1007,35 @@ export class CloudPlugin extends FilesystemPlugin {
             assetId: options.assetId ?? '__none__'
         });
         super(stubAdapter);
+        setCollabIntegritySnapshotProvider((glyphName) =>
+            this.captureCollabIntegritySnapshot(glyphName)
+        );
+    }
+
+    captureCollabIntegritySnapshot(
+        glyphName?: string
+    ): Record<string, unknown> {
+        const bridge =
+            this._activeAssetSizeBridge ??
+            (
+                window as Window & {
+                    patchSyncEngine?: PatchSyncEngine;
+                }
+            ).patchSyncEngine;
+        const glyphSnapshot = glyphName
+            ? bridge?.debugCollabGlyphSnapshot?.(glyphName)
+            : null;
+        return {
+            connectionStatus: this.connectionStatus,
+            activeAssetId: this._activeAssetId,
+            pendingSyncCount: this._activeAssetId
+                ? this.getAssetPendingSyncCount(this._activeAssetId)
+                : null,
+            liveAccess: this.getLiveAccessSnapshot(),
+            session: this._liveSession?.captureIntegritySnapshot() ?? null,
+            glyph: glyphSnapshot ?? null,
+            online: typeof navigator !== 'undefined' ? navigator.onLine : null
+        };
     }
 
     private _getCloudAdapter(): CloudAdapter {
@@ -1314,6 +1345,14 @@ export class CloudPlugin extends FilesystemPlugin {
         if (role === 'viewer') {
             return false;
         }
+        const walHealth = this._liveSession?.walHealth;
+        if (this._liveSession) {
+            if (walHealth !== 'ready') {
+                return false;
+            }
+        } else if (this.connectionStatus !== 'connected') {
+            return false;
+        }
         const glyphName = window.glyphCanvas?.getCurrentGlyphName?.();
         // Text mode reports the sentinel string "undefined" from
         // getCurrentGlyphName. That must not lock the canvas: it blocked
@@ -1330,6 +1369,36 @@ export class CloudPlugin extends FilesystemPlugin {
             return false;
         }
         return true;
+    }
+
+    async persistOutgoingCloudUpdate(
+        update: Uint8Array,
+        collaborationMessage: CollaborationMessageEnvelope | null | undefined,
+        documentId: string
+    ): Promise<boolean> {
+        if (!this._liveSession) {
+            return true;
+        }
+        return this._liveSession.persistOutgoingUpdate(
+            update,
+            collaborationMessage,
+            documentId
+        );
+    }
+
+    async persistCloudMutationIntent(documentIds: string[]): Promise<boolean> {
+        if (!this._liveSession) {
+            return true;
+        }
+        return this._liveSession.persistMutationIntents(documentIds);
+    }
+
+    async replayPendingOfflinePublishes(): Promise<void> {
+        await this._liveSession?.replayPendingOfflinePublishes();
+    }
+
+    async waitForCloudGlyphDurability(): Promise<void> {
+        await this._liveSession?.waitForGlyphAndDepsDurability();
     }
 
     getLiveAccessSnapshot(): {
@@ -3010,7 +3079,7 @@ export class CloudPlugin extends FilesystemPlugin {
         let { token, roomUrl, needsMigration } =
             await this._fetchRoomToken(assetId);
         if (needsMigration) {
-            await this._migrateAssetToProtocol4(assetId);
+            await this._migrateAssetToProtocol5(assetId);
             ({ token, roomUrl } = await this._fetchRoomToken(assetId));
         }
         const wsUrl = normalizeCloudRoomWebSocketUrl(
@@ -3558,12 +3627,18 @@ export class CloudPlugin extends FilesystemPlugin {
         });
         let seededCheckpointLogId: number | null = null;
         try {
-            seededCheckpointLogId = await seeder.seedDocumentSet(
+            const seeded = await seeder.seedDocumentSet(
                 token,
                 roomUrl,
                 shards,
                 estimatedGlyphCount
             );
+            seededCheckpointLogId =
+                seeded && typeof seeded === 'object'
+                    ? seeded.coreCheckpointLogId
+                    : typeof seeded === 'number'
+                      ? seeded
+                      : null;
         } finally {
             seeder.disconnect();
         }
@@ -3747,6 +3822,10 @@ export class CloudPlugin extends FilesystemPlugin {
             },
             onTransferActivityChange: (activity) => {
                 this._updateTransferActivity(options.assetId, activity);
+            },
+            refreshCredentials: async () => {
+                const next = await this._fetchRoomToken(options.assetId);
+                return { token: next.token, roomUrl: next.roomUrl };
             }
         });
         const glyphDocumentIds = liveGlyphDocumentIdsFromSubset(
@@ -4015,7 +4094,7 @@ export class CloudPlugin extends FilesystemPlugin {
         };
     }
 
-    private async _migrateAssetToProtocol4(assetId: string): Promise<void> {
+    private async _migrateAssetToProtocol5(assetId: string): Promise<void> {
         const migrateUrl = `${this._websiteBaseUrl}/api/cloud/assets/${encodeURIComponent(assetId)}/migrate`;
         const migrateResp = await fetch(migrateUrl, {
             method: 'POST',
@@ -4025,12 +4104,27 @@ export class CloudPlugin extends FilesystemPlugin {
                 'Content-Type': 'application/json'
             })
         });
-        if (!migrateResp.ok && migrateResp.status !== 409) {
+        if (!migrateResp.ok) {
             const body = await migrateResp.text().catch(() => '');
             throw new Error(
                 `schema migration failed: ${migrateResp.status} ${body}`
             );
         }
+        const migration = (await migrateResp.json()) as {
+            migrationNonce?: string;
+            nextManifestRevision?: number;
+        };
+        if (
+            !migration.migrationNonce ||
+            typeof migration.nextManifestRevision !== 'number' ||
+            !Number.isInteger(migration.nextManifestRevision) ||
+            migration.nextManifestRevision < 1
+        ) {
+            throw new Error(
+                'schema migration did not return a migration nonce'
+            );
+        }
+        const expectedCurrentRevision = migration.nextManifestRevision - 1;
         const { token, roomUrl } = await this._fetchRoomToken(assetId);
         const hydrator = new CloudAdapter({
             assetId,
@@ -4109,7 +4203,8 @@ export class CloudPlugin extends FilesystemPlugin {
                 token,
                 roomUrl,
                 encoded,
-                coverage.liveGlyphIds.length
+                coverage.liveGlyphIds.length,
+                migration.migrationNonce
             );
             const core = encoded.find(
                 (shard) => shard.documentId === FONT_CORE_DOCUMENT_ID
@@ -4132,7 +4227,9 @@ export class CloudPlugin extends FilesystemPlugin {
                     coreRevision: await hashShardBytes(core.bytes),
                     depsRevision: await hashShardBytes(deps.bytes),
                     shardIds: encoded.map((shard) => shard.documentId),
-                    coverage
+                    coverage,
+                    migrationNonce: migration.migrationNonce,
+                    expectedCurrentRevision
                 })
             });
             if (!commitResp.ok) {

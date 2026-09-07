@@ -385,7 +385,7 @@ Must not:
 - Generate a server state vector
 
 Websocket sync is **checkpoint-relative**. Clients send
-`baselineCheckpointLogId` and `appliedLogId` (highest contiguous committed
+`checkpointLogId` and `appliedLogId` (highest contiguous committed
 log id applied). Server:
 
 - If `appliedLogId < currentCheckpointLogId` → `rebaseline-required` (those
@@ -962,7 +962,7 @@ generation tombstones; delayed orphan shard rows use `font_shard_ops` status
 `orphan-pending`. Sparse hydrate retries until the published core/deps
 revision pair matches.
 
-Reconnect carries `baselineCheckpointLogId` and `appliedLogId`. If
+Reconnect carries `checkpointLogId` and `appliedLogId`. If
 `appliedLogId < currentCheckpointLogId`, the client must rebaseline.
 
 `font-core` holds catalog + cmap only. `font-deps` stores UUID edge maps

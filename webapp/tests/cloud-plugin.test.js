@@ -1856,6 +1856,8 @@ describe('CloudPlugin sharing APIs', () => {
 
         plugin.getAdapter().cacheAssetRole('asset-1', 'owner');
         expect(plugin.getCurrentAssetRole()).toBe('owner');
+        expect(plugin.canMutateCurrentAsset()).toBe(false);
+        plugin._cloudAdapter = { status: 'connected' };
         expect(plugin.canMutateCurrentAsset()).toBe(true);
 
         plugin._liveSession = {
@@ -1889,6 +1891,7 @@ describe('CloudPlugin sharing APIs', () => {
             hasSparseWorkingSet: () => true,
             isSparseWorkingGlyphName: () => false
         };
+        plugin._cloudAdapter = { status: 'connected' };
 
         expect(plugin.canMutateCurrentAsset()).toBe(true);
 

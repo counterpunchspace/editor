@@ -35,7 +35,15 @@ jest.mock('../js/cloud-adapter', () => {
                     adapter.status = 'disconnected';
                 }),
                 sendForwardedUpdate: jest.fn(),
-                getConnectionHealth: jest.fn(() => null)
+                getConnectionHealth: jest.fn(() => null),
+                waitUntilDurable: jest.fn(async () => {
+                    if (adapter.pendingSyncCount < 1) {
+                        return;
+                    }
+                    await new Promise((resolve) => {
+                        adapter._durableResolve = resolve;
+                    });
+                })
             };
             return adapter;
         })
@@ -272,6 +280,107 @@ describe('CloudLiveSession', () => {
             '/shards/glyph/ccc/live'
         );
         expect(global.fetch.mock.calls[0][1].method).toBe('POST');
+    });
+
+    test('HTTP glyph publishes retry after a failed POST', async () => {
+        const session = new CloudLiveSession({
+            assetId: 'asset-1',
+            websiteBaseUrl: 'https://editor.example',
+            token: 'token',
+            roomUrl: 'wss://rooms.example/room/asset-1',
+            bridge: {},
+            bootstrapMode: 'skip'
+        });
+        await session.syncLiveDocumentIds(['glyph:aaa']);
+        let attempts = 0;
+        global.fetch = jest.fn(async () => {
+            attempts += 1;
+            if (attempts === 1) {
+                return { ok: false, status: 503, json: async () => ({}) };
+            }
+            return {
+                ok: true,
+                status: 200,
+                json: async () => ({ ok: true, durable: true })
+            };
+        });
+        session.sendForwardedUpdate(new Uint8Array([9]), null, 'glyph:ccc');
+        await session.flushPendingHttpPublishes();
+        expect(global.fetch).toHaveBeenCalledTimes(2);
+    }, 15000);
+
+    test('HTTP glyph publishes retry after 429 then succeed', async () => {
+        const session = new CloudLiveSession({
+            assetId: 'asset-1',
+            websiteBaseUrl: 'https://editor.example',
+            token: 'token',
+            roomUrl: 'wss://rooms.example/room/asset-1',
+            bridge: {},
+            bootstrapMode: 'skip'
+        });
+        await session.syncLiveDocumentIds(['glyph:aaa']);
+        let attempts = 0;
+        global.fetch = jest.fn(async () => {
+            attempts += 1;
+            if (attempts === 1) {
+                return { ok: false, status: 429, json: async () => ({}) };
+            }
+            return {
+                ok: true,
+                status: 200,
+                json: async () => ({ ok: true, durable: true })
+            };
+        });
+        session.sendForwardedUpdate(new Uint8Array([9]), null, 'glyph:ccc');
+        await session.flushPendingHttpPublishes();
+        expect(global.fetch).toHaveBeenCalledTimes(2);
+    }, 15000);
+
+    test('waitForGlyphAndDepsDurability waits for font-deps ACK', async () => {
+        const session = new CloudLiveSession({
+            assetId: 'asset-1',
+            websiteBaseUrl: 'https://editor.example',
+            token: 'token',
+            roomUrl: 'wss://rooms.example/room/asset-1',
+            bridge: {},
+            bootstrapMode: 'skip'
+        });
+        await session.syncLiveDocumentIds([]);
+        const deps = [...session._adapters.values()].find(
+            (adapter) => adapter.documentId === 'font-deps'
+        );
+        expect(deps).toBeDefined();
+        deps.pendingSyncCount = 1;
+        let done = false;
+        const wait = session.waitForGlyphAndDepsDurability().then(() => {
+            done = true;
+        });
+        await Promise.resolve();
+        expect(done).toBe(false);
+        deps.pendingSyncCount = 0;
+        deps._durableResolve();
+        await wait;
+        expect(done).toBe(true);
+    });
+
+    test('persistMutationIntents fails closed when IndexedDB is missing', async () => {
+        const originalIndexedDb = global.indexedDB;
+        delete global.indexedDB;
+        try {
+            const session = new CloudLiveSession({
+                assetId: 'asset-1',
+                websiteBaseUrl: 'https://editor.example',
+                token: 'token',
+                roomUrl: 'wss://rooms.example/room/asset-1',
+                bridge: {},
+                bootstrapMode: 'skip'
+            });
+            await expect(
+                session.persistMutationIntents(['font-core'])
+            ).resolves.toBe(false);
+        } finally {
+            global.indexedDB = originalIndexedDb;
+        }
     });
 
     test('HTTP glyph publishes cap parallel POSTs', async () => {

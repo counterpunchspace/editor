@@ -64,6 +64,12 @@ import {
 } from './collaboration-message';
 import { isProduction } from './settings';
 import { resolveWebsiteURL } from './website-url';
+import {
+    CloudDurableWal,
+    type CloudWalHealth,
+    type CloudWalRecord
+} from './cloud-durable-wal';
+import { pushCollabIntegrityEvent } from './cloud-collab-integrity-debug';
 
 const console = new Logger('CloudAdapter');
 
@@ -72,7 +78,7 @@ const DEFAULT_PRODUCTION_ROOM_WORKER_URL =
     'https://room.fonteditor.workers.dev';
 const DEFAULT_LOCAL_ROOM_WORKER_URL = 'ws://localhost:8787';
 const CLOUD_ASSET_DELETED_MESSAGE = 'Cloud asset was deleted';
-const YDOC_SCHEMA_VERSION = 4;
+const YDOC_SCHEMA_VERSION = 5;
 export const CLOUD_GLYPH_CATCH_UP_MAX_ATTEMPTS = 8;
 export const CLOUD_GLYPH_CATCH_UP_RETRY_MS = 50;
 export const CLOUD_GLYPH_CATCH_UP_CONCURRENCY = 4;
@@ -114,6 +120,20 @@ type CloudDeleteResponse = {
 
 type CloudAssetRole = 'owner' | 'editor' | 'viewer';
 
+export type CloudSeededShardAttestation = {
+    shardId: string;
+    checkpointObjectKey: string;
+    checkpointSha256: string;
+    checkpointByteLength: number;
+    checkpointLogId: number;
+    checkpointAt?: number;
+};
+
+export type CloudSeedDocumentSetResult = {
+    coreCheckpointLogId: number | null;
+    attestations: CloudSeededShardAttestation[];
+};
+
 function getCloudRequestHeaders(
     extraHeaders: Record<string, string> = {}
 ): Record<string, string> {
@@ -123,6 +143,15 @@ function getCloudRequestHeaders(
         headers.Authorization = `Bearer ${sessionToken}`;
     }
     return headers;
+}
+
+export function withCloudAccessToken(wsUrl: string, token: string): string {
+    if (!token) {
+        return wsUrl;
+    }
+    const url = new URL(wsUrl);
+    url.searchParams.set('access_token', token);
+    return url.toString();
 }
 
 export function normalizeCloudRoomWebSocketUrl(
@@ -708,11 +737,15 @@ export async function catchUpCloudDocument(options: {
                 continue;
             }
             if (window.windowRole?.isMainWindow()) {
-                window.windowSync?.broadcastCloudRelayUpdate?.(
-                    update,
-                    null,
-                    options.documentId
-                );
+                for (const part of updatesToApply) {
+                    if (part.byteLength) {
+                        window.windowSync?.broadcastCloudRelayUpdate?.(
+                            part,
+                            null,
+                            options.documentId
+                        );
+                    }
+                }
             }
             refreshEditorAfterGlyphDocumentCatchUp(options.documentId);
             return true;
@@ -786,14 +819,18 @@ export async function publishCloudDocumentUpdate(options: {
         body: JSON.stringify(body)
     });
     if (response.status === 401 || response.status === 403) {
-        throw new Error(
+        const error = new Error(
             `Live glyph publish failed (${response.status}) for ${options.documentId}`
-        );
+        ) as Error & { status?: number };
+        error.status = response.status;
+        throw error;
     }
     if (!response.ok) {
-        throw new Error(
+        const error = new Error(
             `Live glyph publish failed (${response.status}) for ${options.documentId}`
-        );
+        ) as Error & { status?: number };
+        error.status = response.status;
+        throw error;
     }
     const payload = (await response.json().catch(() => null)) as {
         ok?: boolean;
@@ -840,6 +877,8 @@ export type CloudAdapterOptions = {
     onTransferActivityChange?: (activity: CloudTransferActivity) => void;
     /** Session owns the one reconnect rebaseline after every live shard is fresh. */
     deferVisibleRebaseline?: boolean;
+    wal?: CloudDurableWal;
+    refreshCredentials?: () => Promise<{ token: string; roomUrl: string }>;
 };
 
 export type CloudConnectionHealth = {
@@ -890,15 +929,6 @@ type CloudOutboundUpdatePacket = {
     update: Uint8Array;
     collaborationMessage?: CollaborationMessageEnvelope;
     clientTransactionId?: string;
-};
-
-type CloudDurableOutboxRecord = {
-    assetId: string;
-    documentId: string;
-    clientTransactionId: string;
-    updateBase64: string;
-    collaborationMessage: CollaborationMessageEnvelope;
-    createdAt: number;
 };
 
 type CloudVisibleRebaselineTargets = {
@@ -967,165 +997,6 @@ export async function runCloudVisibleReconnectRebaseline(): Promise<CloudVisible
     }
 
     return refreshed;
-}
-
-const CLOUD_OUTBOX_DB_NAME = 'counterpunch-cloud-outbox';
-const CLOUD_OUTBOX_DB_VERSION = 1;
-const CLOUD_OUTBOX_STORE_NAME = 'pending-transactions';
-const CLOUD_OUTBOX_ASSET_ID_INDEX = 'by-asset-id';
-
-function canUseIndexedDb(): boolean {
-    return typeof indexedDB !== 'undefined';
-}
-
-function openCloudOutboxDatabase(): Promise<IDBDatabase | null> {
-    if (!canUseIndexedDb()) {
-        return Promise.resolve(null);
-    }
-
-    return new Promise((resolve, reject) => {
-        const request = indexedDB.open(
-            CLOUD_OUTBOX_DB_NAME,
-            CLOUD_OUTBOX_DB_VERSION
-        );
-
-        request.onupgradeneeded = () => {
-            const db = request.result;
-            const store = db.objectStoreNames.contains(CLOUD_OUTBOX_STORE_NAME)
-                ? request.transaction?.objectStore(CLOUD_OUTBOX_STORE_NAME)
-                : db.createObjectStore(CLOUD_OUTBOX_STORE_NAME, {
-                      keyPath: 'key'
-                  });
-            if (
-                store &&
-                !store.indexNames.contains(CLOUD_OUTBOX_ASSET_ID_INDEX)
-            ) {
-                store.createIndex(CLOUD_OUTBOX_ASSET_ID_INDEX, 'assetId', {
-                    unique: false
-                });
-            }
-        };
-
-        request.onsuccess = () => resolve(request.result);
-        request.onerror = () => reject(request.error);
-    });
-}
-
-async function loadCloudOutboxRecords(
-    assetId: string,
-    documentId: string
-): Promise<CloudDurableOutboxRecord[]> {
-    const db = await openCloudOutboxDatabase();
-    if (!db) {
-        return [];
-    }
-
-    return new Promise((resolve, reject) => {
-        const transaction = db.transaction(CLOUD_OUTBOX_STORE_NAME, 'readonly');
-        const store = transaction.objectStore(CLOUD_OUTBOX_STORE_NAME);
-        const request = store
-            .index(CLOUD_OUTBOX_ASSET_ID_INDEX)
-            .getAll(assetId);
-
-        request.onsuccess = () => {
-            const records = Array.isArray(request.result)
-                ? request.result.map((record) => ({
-                      assetId: String(record.assetId ?? ''),
-                      documentId: String(record.documentId ?? ''),
-                      clientTransactionId: String(
-                          record.clientTransactionId ?? ''
-                      ),
-                      updateBase64: String(record.updateBase64 ?? ''),
-                      collaborationMessage:
-                          record.collaborationMessage as CollaborationMessageEnvelope,
-                      createdAt: Number(record.createdAt ?? 0)
-                  }))
-                : [];
-            resolve(
-                records.filter(
-                    (record) =>
-                        record.assetId === assetId &&
-                        record.documentId === documentId &&
-                        !!record.clientTransactionId &&
-                        !!record.updateBase64 &&
-                        !!record.collaborationMessage
-                )
-            );
-        };
-        request.onerror = () => reject(request.error);
-        transaction.oncomplete = () => db.close();
-    });
-}
-
-async function putCloudOutboxRecord(
-    record: CloudDurableOutboxRecord
-): Promise<void> {
-    const db = await openCloudOutboxDatabase();
-    if (!db) {
-        return;
-    }
-
-    await new Promise<void>((resolve, reject) => {
-        const transaction = db.transaction(
-            CLOUD_OUTBOX_STORE_NAME,
-            'readwrite'
-        );
-        const store = transaction.objectStore(CLOUD_OUTBOX_STORE_NAME);
-        store.put({
-            key: `${record.assetId}:${record.documentId}:${record.clientTransactionId}`,
-            ...record
-        });
-        transaction.oncomplete = () => {
-            db.close();
-            resolve();
-        };
-        transaction.onerror = () => {
-            db.close();
-            reject(transaction.error);
-        };
-        transaction.onabort = () => {
-            db.close();
-            reject(transaction.error);
-        };
-    });
-}
-
-async function deleteCloudOutboxRecords(
-    assetId: string,
-    documentId: string,
-    clientTransactionIds: string[]
-): Promise<void> {
-    if (!clientTransactionIds.length) {
-        return;
-    }
-
-    const db = await openCloudOutboxDatabase();
-    if (!db) {
-        return;
-    }
-
-    await new Promise<void>((resolve, reject) => {
-        const transaction = db.transaction(
-            CLOUD_OUTBOX_STORE_NAME,
-            'readwrite'
-        );
-        const store = transaction.objectStore(CLOUD_OUTBOX_STORE_NAME);
-        for (const clientTransactionId of clientTransactionIds) {
-            store.delete(`${assetId}:${documentId}:${clientTransactionId}`);
-        }
-        transaction.oncomplete = () => {
-            db.close();
-            resolve();
-        };
-        transaction.onerror = () => {
-            db.close();
-            reject(transaction.error);
-        };
-        transaction.onabort = () => {
-            db.close();
-            reject(transaction.error);
-        };
-    });
 }
 
 function getCloudClientTransactionId(
@@ -1308,7 +1179,10 @@ export class CloudAdapter implements FileSystemAdapter {
     private _outboundPendingTransactionIds = new Map<number, string[]>();
     private _outboundAckSentAtBySeq = new Map<number, number>();
     private _pendingDurabilityMessages: CollaborationMessageEnvelope[] = [];
-    private _durableOutboxEntries = new Map<string, CloudDurableOutboxRecord>();
+    private _durableOutboxEntries = new Map<string, CloudWalRecord>();
+    private _durableWaiters: Array<() => void> = [];
+    private _wal: CloudDurableWal;
+    private _outboundPersistChain: Promise<void> = Promise.resolve();
     private _pendingSyncCompleteTransactionIds: string[] = [];
     private _pendingSyncCompleteOutboundPackets =
         new Set<CloudOutboundUpdatePacket>();
@@ -1342,6 +1216,10 @@ export class CloudAdapter implements FileSystemAdapter {
         CloudChunkAccumulator
     >();
     private _directConnection: { token: string; roomUrl: string } | null = null;
+    private _outboxNeedsServerRetarget = false;
+    private _lastAppliedServerUpdate: Uint8Array | null = null;
+    private _refreshCredentials:
+        (() => Promise<{ token: string; roomUrl: string }>) | null = null;
     private _terminalCloseDetail: string | null = null;
     private _documentId: string;
     private _skipWorkerReseed = false;
@@ -1362,6 +1240,12 @@ export class CloudAdapter implements FileSystemAdapter {
             options.onPendingSyncCountChange ?? null;
         this._onTransferActivityChange =
             options.onTransferActivityChange ?? null;
+        this._wal = options.wal ?? new CloudDurableWal();
+        this._refreshCredentials = options.refreshCredentials ?? null;
+    }
+
+    get walHealth(): CloudWalHealth {
+        return this._wal.health;
     }
 
     get status(): CloudConnectionStatus {
@@ -1386,6 +1270,26 @@ export class CloudAdapter implements FileSystemAdapter {
 
     get pendingSyncCount(): number {
         return this._durableOutboxEntries.size;
+    }
+
+    waitUntilDurable(): Promise<void> {
+        if (this._durableOutboxEntries.size === 0) {
+            return Promise.resolve();
+        }
+        return new Promise((resolve) => {
+            this._durableWaiters.push(resolve);
+        });
+    }
+
+    private _flushDurableWaiters(): void {
+        if (this._durableOutboxEntries.size > 0) {
+            return;
+        }
+        const waiters = this._durableWaiters;
+        this._durableWaiters = [];
+        for (const waiter of waiters) {
+            waiter();
+        }
     }
 
     get transferActivity(): CloudTransferActivity {
@@ -1424,6 +1328,23 @@ export class CloudAdapter implements FileSystemAdapter {
                 : null,
             livenessTimeoutCount: this._livenessTimeoutCount,
             lastReconnectReason: this._lastReconnectReason
+        };
+    }
+
+    captureIntegritySnapshot(): Record<string, unknown> {
+        return {
+            documentId: this._documentId,
+            status: this._status,
+            wsReadyState: this._ws?.readyState ?? null,
+            lastReconnectReason: this._lastReconnectReason,
+            lastOutboundSeq: this._seq,
+            pendingOutbound: this._pendingOutboundPackets.length,
+            durableOutbox: this._durableOutboxEntries.size,
+            pendingSyncCount: this.pendingSyncCount,
+            transportSynced: this.isTransportSynced(),
+            browserOnline:
+                typeof navigator !== 'undefined' ? navigator.onLine : null,
+            walHealth: this._wal.health
         };
     }
 
@@ -1698,6 +1619,9 @@ export class CloudAdapter implements FileSystemAdapter {
         this._initialSyncDurable = false;
         this._lastInboundMessageAt = 0;
         this._resetWorkerBridgeSyncState();
+        // Hold every reconnect flush until we have the post-compact server
+        // vector — including font-deps repairs emitted during R2 bootstrap.
+        this._outboxNeedsServerRetarget = true;
     }
 
     private _resetWorkerBridgeSyncState(): void {
@@ -1722,6 +1646,7 @@ export class CloudAdapter implements FileSystemAdapter {
         this._resetBootstrapStateForReconnect();
         this._pendingInboundUpdates = [];
         this._inboundFlushScheduled = false;
+        this._requeueUnackedOutboxPackets();
 
         const ws = this._ws;
         if (ws) {
@@ -1742,6 +1667,7 @@ export class CloudAdapter implements FileSystemAdapter {
         this._clearReconnectTimer();
         this._markVisibleRebaselineNeeded();
         this._resetBootstrapStateForReconnect();
+        this._requeueUnackedOutboxPackets();
         this._setStatus('connecting', detail);
 
         const ws = this._ws;
@@ -1753,10 +1679,7 @@ export class CloudAdapter implements FileSystemAdapter {
 
         const directConnection = this._directConnection;
         if (directConnection) {
-            void this._openWebSocket(
-                directConnection.token,
-                directConnection.roomUrl
-            );
+            void this._reconnectDirectConnection();
         } else {
             void this._connectWebSocket();
         }
@@ -1786,9 +1709,41 @@ export class CloudAdapter implements FileSystemAdapter {
         };
 
         this._pendingOutboundPackets.push(packet);
+        if (!this._hasSynced) {
+            this._outboxNeedsServerRetarget = true;
+        }
+        pushCollabIntegrityEvent('enqueue-outbound', {
+            documentId: this._documentId,
+            bytes: update.length,
+            hasTx: Boolean(clientTransactionId),
+            pending: this._pendingOutboundPackets.length
+        });
         if (collaborationMessage) {
             this._enqueuePendingDurabilityMessages([collaborationMessage]);
-            void this._persistDurableOutboxPacket(packet);
+            this._outboundPersistChain = this._outboundPersistChain
+                .then(() => this._persistDurableOutboxPacket(packet))
+                .then(() => {
+                    this._noteTransferActivity('sending');
+                    this._outboundFlushScheduled = true;
+                    this._flushPendingOutboundUpdates();
+                })
+                .catch((error) => {
+                    console.warn(
+                        'CloudAdapter: durable WAL persist failed; update was not sent:',
+                        error
+                    );
+                    this._pendingOutboundPackets =
+                        this._pendingOutboundPackets.filter(
+                            (queued) => queued !== packet
+                        );
+                    if (packet.clientTransactionId) {
+                        this._durableOutboxEntries.delete(
+                            packet.clientTransactionId
+                        );
+                    }
+                    this._emitPendingSyncCountChange();
+                });
+            return;
         }
         this._noteTransferActivity('sending');
         if (this._outboundFlushScheduled) {
@@ -1809,38 +1764,46 @@ export class CloudAdapter implements FileSystemAdapter {
             return;
         }
 
-        const record: CloudDurableOutboxRecord = {
+        const record: CloudWalRecord = {
             assetId: this._assetId,
             documentId: this._documentId,
             clientTransactionId: packet.clientTransactionId,
             updateBase64: u8ToBase64(packet.update),
             collaborationMessage: packet.collaborationMessage,
-            createdAt: Date.now()
+            createdAt: Date.now(),
+            attempts: 0
         };
+        await this._wal.append(record);
         this._durableOutboxEntries.set(packet.clientTransactionId, record);
         this._emitPendingSyncCountChange();
-
-        try {
-            await putCloudOutboxRecord(record);
-        } catch (error) {
-            console.warn(
-                'CloudAdapter: failed to persist cloud outbox entry:',
-                error
-            );
-        }
+        pushCollabIntegrityEvent('wal-outbox-append', {
+            documentId: this._documentId,
+            bytes: packet.update.length,
+            clientTransactionId: packet.clientTransactionId
+        });
     }
 
     private async _restorePersistentOutboxIntoBridge(): Promise<void> {
-        const records = await loadCloudOutboxRecords(
-            this._assetId,
-            this._documentId
-        ).catch((error) => {
+        let records: CloudWalRecord[] = [];
+        try {
+            if (this._wal.health === 'initializing') {
+                await this._wal.load(this._assetId);
+            }
+            records = this._wal
+                .recordsFor(this._documentId)
+                .filter(
+                    (record) =>
+                        record.assetId === this._assetId &&
+                        !!record.clientTransactionId &&
+                        !!record.updateBase64 &&
+                        !!record.collaborationMessage
+                );
+        } catch (error) {
             console.warn(
                 'CloudAdapter: failed to load persistent cloud outbox:',
                 error
             );
-            return [] as CloudDurableOutboxRecord[];
-        });
+        }
 
         if (!records.length) {
             this._emitPendingSyncCountChange();
@@ -1854,6 +1817,7 @@ export class CloudAdapter implements FileSystemAdapter {
         this._enqueuePendingDurabilityMessages(
             records.map((record) => record.collaborationMessage)
         );
+        this._requeueUnackedOutboxPackets();
 
         const bridge = this._bridge as
             | (PatchSyncEngine & {
@@ -1892,6 +1856,115 @@ export class CloudAdapter implements FileSystemAdapter {
         }
 
         this._emitPendingSyncCountChange();
+    }
+
+    private _encodeStateVectorFromUpdate(update: Uint8Array): Uint8Array {
+        if (!update?.byteLength) {
+            return new Uint8Array();
+        }
+        const doc = new Y.Doc();
+        try {
+            Y.applyUpdate(doc, update);
+            return Y.encodeStateVector(doc);
+        } finally {
+            doc.destroy();
+        }
+    }
+
+    /**
+     * Compact (and other server-side rebases) invalidate queued incremental
+     * bytes. Replace them with a diff against the server state we just synced.
+     */
+    private _retargetOutboxToServerState(serverStateVector: Uint8Array): void {
+        if (!this._bridge || !this._pendingOutboundPackets.length) {
+            this._outboxNeedsServerRetarget = false;
+            return;
+        }
+        let peerStateVector = serverStateVector;
+        if (!peerStateVector?.byteLength && this._lastAppliedServerUpdate) {
+            peerStateVector = this._encodeStateVectorFromUpdate(
+                this._lastAppliedServerUpdate
+            );
+            pushCollabIntegrityEvent('retarget-sv-from-checkpoint', {
+                documentId: this._documentId,
+                bytes: peerStateVector.byteLength
+            });
+        }
+        if (!peerStateVector?.byteLength) {
+            pushCollabIntegrityEvent('retarget-hold-empty-sv', {
+                documentId: this._documentId,
+                pending: this._pendingOutboundPackets.length
+            });
+            this._outboxNeedsServerRetarget = true;
+            return;
+        }
+        const fresh = this._bridge.encodeStateDiff(
+            peerStateVector,
+            this._documentId
+        );
+        if (!fresh.length) {
+            pushCollabIntegrityEvent('retarget-empty-diff', {
+                documentId: this._documentId,
+                dropped: this._pendingOutboundPackets.length
+            });
+            this._pendingOutboundPackets = [];
+            this._outboxNeedsServerRetarget = false;
+            return;
+        }
+        const keep =
+            this._pendingOutboundPackets.find(
+                (packet) => packet.collaborationMessage
+            ) ?? this._pendingOutboundPackets[0];
+        this._pendingOutboundPackets = [
+            {
+                ...keep,
+                update: fresh
+            }
+        ];
+        this._outboxNeedsServerRetarget = false;
+        pushCollabIntegrityEvent('retarget-outbox', {
+            documentId: this._documentId,
+            bytes: fresh.length,
+            packets: 1
+        });
+    }
+
+    /**
+     * Rebuild live send queue from WAL rows that have not been ACKed.
+     * Needed after a reconnect when a zombie OPEN socket already dequeued
+     * packets, or after crash restore which previously only reapplied locally.
+     */
+    private _requeueUnackedOutboxPackets(): void {
+        const queuedIds = new Set(
+            this._pendingOutboundPackets
+                .map((packet) => packet.clientTransactionId)
+                .filter((id): id is string => typeof id === 'string')
+        );
+        const inFlightIds = new Set<string>();
+        for (const ids of this._outboundPendingTransactionIds.values()) {
+            for (const id of ids) {
+                inFlightIds.add(id);
+            }
+        }
+
+        for (const [clientTransactionId, record] of this
+            ._durableOutboxEntries) {
+            if (
+                queuedIds.has(clientTransactionId) ||
+                inFlightIds.has(clientTransactionId)
+            ) {
+                continue;
+            }
+            if (!record.updateBase64 || !record.collaborationMessage) {
+                continue;
+            }
+            this._pendingOutboundPackets.push({
+                update: base64ToU8(record.updateBase64),
+                collaborationMessage: record.collaborationMessage,
+                clientTransactionId
+            });
+            queuedIds.add(clientTransactionId);
+        }
     }
 
     private _emitPendingSyncCountChange(): void {
@@ -1988,17 +2061,20 @@ export class CloudAdapter implements FileSystemAdapter {
         for (const clientTransactionId of durableTransactionIds) {
             this._durableOutboxEntries.delete(clientTransactionId);
         }
+        this._flushDurableWaiters();
         this._emitPendingSyncCountChange();
-        void deleteCloudOutboxRecords(
-            this._assetId,
-            this._documentId,
-            clientTransactionIds
-        ).catch((error) => {
-            console.warn(
-                'CloudAdapter: failed to prune cloud outbox entries:',
-                error
-            );
-        });
+        void this._wal
+            .acknowledgeMany(
+                this._assetId,
+                this._documentId,
+                clientTransactionIds
+            )
+            .catch((error) => {
+                console.warn(
+                    'CloudAdapter: failed to prune cloud outbox entries:',
+                    error
+                );
+            });
     }
 
     private _dropSyncCompleteCoveredOutboundPackets(): void {
@@ -2132,6 +2208,8 @@ export class CloudAdapter implements FileSystemAdapter {
         }
         this._hasSynced = true;
         this._registerOutboundHook();
+        this._requeueUnackedOutboxPackets();
+        this._retargetOutboxToServerState(serverStateVector);
         this._initialSyncDurable = !this._sendSyncComplete(serverStateVector);
         if (
             this._pendingOutboundPackets.length &&
@@ -2194,6 +2272,7 @@ export class CloudAdapter implements FileSystemAdapter {
         // local edits cannot land against a pre-checkpoint Rust Y.Doc before
         // the later sync-response rebaseline (COMPILATION_EDIT_POLICY §28).
         if (this._bridge) {
+            this._lastAppliedServerUpdate = stateBytes;
             this._applyServerStateToBridge(stateBytes);
             if (this._shouldReseedWorkerAfterServerState(stateBytes)) {
                 await this._reseedEditingWorkerFromBridgeAfterCheckpoint(
@@ -2287,9 +2366,11 @@ export class CloudAdapter implements FileSystemAdapter {
         token: string,
         roomUrl: string,
         shards: EncodedShard[],
-        glyphCount: number
-    ): Promise<number | null> {
+        glyphCount: number,
+        migrationNonce?: string
+    ): Promise<CloudSeedDocumentSetResult> {
         let coreCheckpointLogId: number | null = null;
+        const attestations: CloudSeededShardAttestation[] = [];
         for (const shard of shards) {
             const httpUrl = normalizeCloudShardHttpUrl(
                 roomUrl,
@@ -2316,7 +2397,10 @@ export class CloudAdapter implements FileSystemAdapter {
                         headers: {
                             'Authorization': `Bearer ${token}`,
                             'Content-Type': 'application/octet-stream',
-                            'X-Glyph-Count': String(glyphCount)
+                            'X-Glyph-Count': String(glyphCount),
+                            ...(migrationNonce
+                                ? { 'X-Cloud-Migration-Nonce': migrationNonce }
+                                : {})
                         },
                         body: shard.bytes as unknown as BodyInit,
                         signal: controller.signal
@@ -2343,7 +2427,21 @@ export class CloudAdapter implements FileSystemAdapter {
                 );
             }
             if (response.status === 409) {
-                continue;
+                const conflictBody = await response.text().catch(() => '');
+                let code = '';
+                try {
+                    code = String(JSON.parse(conflictBody)?.code || '');
+                } catch {
+                    /* not JSON */
+                }
+                if (code === 'seed_digest_conflict') {
+                    throw new Error(
+                        `shard seed digest conflict (${shard.documentId})`
+                    );
+                }
+                throw new Error(
+                    `shard seed failed (${shard.documentId}): 409 ${conflictBody.slice(0, 160)}`
+                );
             }
             if (!response.ok) {
                 const body = await response.text().catch(() => '');
@@ -2351,21 +2449,45 @@ export class CloudAdapter implements FileSystemAdapter {
                     `shard seed failed (${shard.documentId}): ${response.status} ${body.slice(0, 160)}`
                 );
             }
-            if (shard.documentId !== FONT_CORE_DOCUMENT_ID) {
-                continue;
-            }
             try {
                 const result = (await response.json()) as {
                     checkpointLogId?: unknown;
+                    checkpointObjectKey?: unknown;
+                    snapshotSha256?: unknown;
+                    snapshotBytes?: unknown;
+                    checkpointAt?: unknown;
                 };
-                if (typeof result.checkpointLogId === 'number') {
+                if (
+                    typeof result.checkpointLogId === 'number' &&
+                    shard.documentId === FONT_CORE_DOCUMENT_ID
+                ) {
                     coreCheckpointLogId = result.checkpointLogId;
+                }
+                if (
+                    typeof result.checkpointObjectKey === 'string' &&
+                    typeof result.snapshotSha256 === 'string' &&
+                    typeof result.snapshotBytes === 'number'
+                ) {
+                    attestations.push({
+                        shardId: shard.documentId,
+                        checkpointObjectKey: result.checkpointObjectKey,
+                        checkpointSha256: result.snapshotSha256,
+                        checkpointByteLength: result.snapshotBytes,
+                        checkpointLogId:
+                            typeof result.checkpointLogId === 'number'
+                                ? result.checkpointLogId
+                                : 0,
+                        checkpointAt:
+                            typeof result.checkpointAt === 'number'
+                                ? result.checkpointAt
+                                : undefined
+                    });
                 }
             } catch {
                 /* seed succeeded even if the body is not JSON */
             }
         }
-        return coreCheckpointLogId;
+        return { coreCheckpointLogId, attestations };
     }
 
     async hydrateDocumentSet(
@@ -2411,7 +2533,9 @@ export class CloudAdapter implements FileSystemAdapter {
             console.log(
                 `Connecting to room ${this._assetId} at ${normalizedWsUrl}`
             );
-            const ws = new WebSocket(normalizedWsUrl);
+            const ws = new WebSocket(
+                withCloudAccessToken(normalizedWsUrl, token)
+            );
             this._ws = ws;
             ws.binaryType = 'arraybuffer';
 
@@ -2478,17 +2602,18 @@ export class CloudAdapter implements FileSystemAdapter {
                 this._outboundFlushScheduled = false;
                 this._pendingInboundUpdates = [];
                 this._inboundFlushScheduled = false;
-                this._localUpdateUnsubscribe?.();
-                this._localUpdateUnsubscribe = null;
                 const terminalDetail = this._getTerminalCloseDetail(
                     event.code,
                     event.reason
                 );
                 if (terminalDetail) {
+                    this._localUpdateUnsubscribe?.();
+                    this._localUpdateUnsubscribe = null;
                     this._terminalCloseDetail = null;
                     this._setStatus('error', terminalDetail);
                     return;
                 }
+                this._requeueUnackedOutboxPackets();
                 if (!this._destroyed) {
                     this._lastReconnectReason = event.reason || 'ws-close';
                     this._setStatus('connecting');
@@ -2617,6 +2742,9 @@ export class CloudAdapter implements FileSystemAdapter {
                     msg.currentCheckpointLogId ?? this._checkpointLogId
                 );
                 this._appliedLogId = null;
+                // The server compacted past the local checkpoint. A routine
+                // reconnect cannot safely reuse the previous bootstrap.
+                this._canSkipBootstrapOnReconnect = false;
                 this._markVisibleRebaselineNeeded();
                 this._ws?.close(
                     CLIENT_RECONNECT_CLOSE_CODE,
@@ -2791,10 +2919,7 @@ export class CloudAdapter implements FileSystemAdapter {
                         total: msg.totalChunks as number
                     };
                     if (!this._pendingSyncPageMeta.hasMore) {
-                        this._hasSynced = true;
-                        this._registerOutboundHook();
-                        this._initialSyncDurable =
-                            !this._sendSyncComplete(serverSV);
+                        this._finishInitialSyncAfterPages(serverSV);
                     }
                 } else {
                     this._armInitialSyncTimeout();
@@ -3029,9 +3154,9 @@ export class CloudAdapter implements FileSystemAdapter {
         if (!this._bridge) {
             return;
         }
-        const unsent = this._pendingOutboundPackets.map(
-            (packet) => packet.update
-        );
+        const unsent = this._outboxNeedsServerRetarget
+            ? []
+            : this._pendingOutboundPackets.map((packet) => packet.update);
         assertSafeRebaseline({
             pendingUnsentBytes: unsent.reduce(
                 (sum, bytes) => sum + bytes.byteLength,
@@ -3099,6 +3224,7 @@ export class CloudAdapter implements FileSystemAdapter {
         }
         try {
             this._applyServerStateToBridge(update);
+            this._lastAppliedServerUpdate = update;
             this._resyncRequestedAfterNoopUpdate = false;
             if (this._shouldReseedWorkerAfterServerState(update)) {
                 if (!this._scheduleWorkerBridgeSyncAfterServerState()) {
@@ -3456,7 +3582,7 @@ export class CloudAdapter implements FileSystemAdapter {
             return false;
         }
         try {
-            const diff =
+            let diff =
                 serverStateVector?.byteLength > 0
                     ? this._bridge.encodeStateDiff(
                           serverStateVector,
@@ -3469,6 +3595,11 @@ export class CloudAdapter implements FileSystemAdapter {
                             this._documentId
                         );
             if (diff.length === 0) return false;
+            pushCollabIntegrityEvent('sync-complete', {
+                documentId: this._documentId,
+                bytes: diff.length,
+                reconnect: this._lastReconnectReason
+            });
             const collaborationMessages =
                 createCollaborationMessageEnvelopesFromChangeLogEntries(
                     this._bridge.getNewChangeLogEntries(),
@@ -3688,21 +3819,57 @@ export class CloudAdapter implements FileSystemAdapter {
         }
         this._outboundFlushScheduled = false;
 
+        if (this._outboxNeedsServerRetarget) {
+            pushCollabIntegrityEvent('flush-hold-retarget', {
+                documentId: this._documentId,
+                pending: this._pendingOutboundPackets.length
+            });
+            return;
+        }
+
+        if (this._isBrowserOffline()) {
+            pushCollabIntegrityEvent('flush-skip-offline', {
+                documentId: this._documentId,
+                pending: this._pendingOutboundPackets.length
+            });
+            return;
+        }
+
         if (
             !this._ws ||
             this._ws.readyState !== WebSocket.OPEN ||
             !this._bridge
         ) {
+            pushCollabIntegrityEvent('flush-skip-ws', {
+                documentId: this._documentId,
+                pending: this._pendingOutboundPackets.length,
+                wsReadyState: this._ws?.readyState ?? null
+            });
             return;
         }
 
-        const packets = this._pendingOutboundPackets;
-        this._pendingOutboundPackets = [];
+        const packets = this._pendingOutboundPackets.filter((packet) => {
+            if (!packet.clientTransactionId) {
+                return true;
+            }
+            return this._durableOutboxEntries.has(packet.clientTransactionId);
+        });
+        this._pendingOutboundPackets = this._pendingOutboundPackets.filter(
+            (packet) => !packets.includes(packet)
+        );
         if (!packets.length) {
             return;
         }
 
-        for (const packet of packets) {
+        const restoreUnsent = (fromIndex: number): void => {
+            this._pendingOutboundPackets = [
+                ...packets.slice(fromIndex),
+                ...this._pendingOutboundPackets
+            ];
+        };
+
+        for (let packetIndex = 0; packetIndex < packets.length; packetIndex++) {
+            const packet = packets[packetIndex];
             const seq = ++this._seq;
             const collaborationMessages = packet.collaborationMessage
                 ? [packet.collaborationMessage]
@@ -3768,9 +3935,26 @@ export class CloudAdapter implements FileSystemAdapter {
                 if (isLast && collaborationMessages.length) {
                     frame.collaborationMessages = collaborationMessages;
                 }
-                this._ws.send(JSON.stringify(frame));
+                try {
+                    this._ws.send(JSON.stringify(frame));
+                } catch (error) {
+                    console.warn(
+                        'CloudAdapter: failed to send outbound update; will retry after reconnect:',
+                        error
+                    );
+                    this._outboundPendingTransactionIds.delete(seq);
+                    this._outboundBroadcastEntryCounts.delete(seq);
+                    this._outboundAckSentAtBySeq.delete(seq);
+                    restoreUnsent(packetIndex);
+                    return;
+                }
             }
         }
+        pushCollabIntegrityEvent('flush-sent', {
+            documentId: this._documentId,
+            packets: packets.length,
+            lastSeq: this._seq
+        });
         this._noteTransferActivity('sending');
     }
 
@@ -4143,6 +4327,7 @@ export class CloudAdapter implements FileSystemAdapter {
         this._clearAuthenticationTimeout();
         this._clearOutboundAckTimeout();
         this._resetLiveAckTracking();
+        this._requeueUnackedOutboxPackets();
         this._setStatus('connecting', detail);
         this._markVisibleRebaselineNeeded();
         this._resetBootstrapStateForReconnect();
@@ -4238,6 +4423,45 @@ export class CloudAdapter implements FileSystemAdapter {
         return null;
     }
 
+    private async _reconnectDirectConnection(): Promise<void> {
+        this._requeueUnackedOutboxPackets();
+        let token = this._directConnection?.token;
+        let roomUrl = this._directConnection?.roomUrl;
+        if (this._refreshCredentials) {
+            try {
+                const next = await this._refreshCredentials();
+                if (next?.token && next?.roomUrl) {
+                    token = next.token;
+                    roomUrl = next.roomUrl;
+                    this._directConnection = { token, roomUrl };
+                }
+            } catch (error) {
+                console.warn(
+                    'CloudAdapter: credential refresh failed; retrying with existing token:',
+                    error
+                );
+            }
+        }
+        if (!token || !roomUrl) {
+            return;
+        }
+        if (
+            !this._canSkipBootstrapOnReconnect ||
+            this._outboxNeedsServerRetarget
+        ) {
+            try {
+                await this._bootstrapFromR2(token, roomUrl);
+            } catch (error) {
+                console.log(
+                    `CloudAdapter: reconnect R2 bootstrap skipped (${
+                        error instanceof Error ? error.message : String(error)
+                    })`
+                );
+            }
+        }
+        await this._openWebSocket(token, roomUrl);
+    }
+
     private _scheduleReconnect(): void {
         if (this._reconnectForbidden || this._accessRevoked) {
             return;
@@ -4246,10 +4470,16 @@ export class CloudAdapter implements FileSystemAdapter {
         const delayMs = cloudReconnectDelayMs(this._reconnectAttempt);
         this._reconnectAttempt += 1;
         this._reconnectTimer = setTimeout(() => {
-            if (!this._destroyed) {
-                console.log('CloudAdapter: reconnecting...');
-                this._connectWebSocket().catch(() => {});
+            if (this._destroyed) {
+                return;
             }
+            console.log('CloudAdapter: reconnecting...');
+            const directConnection = this._directConnection;
+            if (directConnection) {
+                void this._reconnectDirectConnection();
+                return;
+            }
+            this._connectWebSocket().catch(() => {});
         }, delayMs);
     }
 

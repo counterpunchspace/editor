@@ -36,6 +36,10 @@ declare global {
         // Undo/redo & collaboration
         patchSyncEngine: PatchSyncEngine | undefined;
         changeBridge: PatchSyncEngine | undefined;
+        __collabIntegrity?: {
+            snapshot: (glyphName?: string) => Record<string, unknown>;
+            events: () => Array<Record<string, unknown>>;
+        };
         windowSync: WindowSync | undefined;
         windowRole: WindowRoleManager | undefined;
         syncRustCacheAndRefreshCanvas:

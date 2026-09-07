@@ -212,6 +212,36 @@ function framedLiveResponse(bytes, { omitTerminal = false } = {}) {
     };
 }
 
+function framedLiveResponseWithTails(tails) {
+    const checkpoint = encodeCollabFrame(
+        1,
+        0,
+        new Uint8Array(
+            Buffer.from(
+                JSON.stringify({
+                    hasMore: false,
+                    throughLogId: tails.length,
+                    lastLogId: tails.length,
+                    collaborationMessageHistory: []
+                })
+            )
+        )
+    );
+    const body = concatBytes([
+        checkpoint,
+        ...tails.map((bytes, index) => encodeTailChunkFrame(index + 1, bytes)),
+        encodeCollabFrame(3, tails.length, new Uint8Array())
+    ]);
+    return {
+        ok: true,
+        status: 200,
+        headers: new Headers({
+            'content-type': 'application/octet-stream'
+        }),
+        arrayBuffer: async () => body.buffer
+    };
+}
+
 function revisionFor(bridge, glyphId) {
     return bridge
         .listGlyphRevisionTokens()
@@ -670,5 +700,45 @@ describe('glyph catch-up for edits outside the receiver subset', () => {
         expect(attempts).toBe(2);
         expect(glyphWidth(receiver, 'B')).toBe(777);
         global.fetch = originalFetch;
+    });
+
+    test('relays every framed tail transaction to linked windows', async () => {
+        const previousRole = window.windowRole;
+        const previousSync = window.windowSync;
+        const relay = jest.fn();
+        const bridge = {
+            applyDocumentCatchUp: jest.fn(() => true)
+        };
+        window.windowRole = { isMainWindow: () => true };
+        window.windowSync = { broadcastCloudRelayUpdate: relay };
+        const originalFetch = global.fetch;
+        global.fetch = jest.fn(async () =>
+            framedLiveResponseWithTails([
+                new Uint8Array([1, 2, 3]),
+                new Uint8Array([4, 5, 6])
+            ])
+        );
+        try {
+            await expect(
+                catchUpCloudDocument({
+                    bridge,
+                    token: 'token',
+                    roomUrl: 'wss://rooms.example/room/asset-1',
+                    websiteBaseUrl: 'https://editor.example',
+                    assetId: 'asset-1',
+                    documentId: glyphDocumentId('id-b')
+                })
+            ).resolves.toBe(true);
+            expect(bridge.applyDocumentCatchUp).toHaveBeenCalledTimes(2);
+            expect(relay).toHaveBeenCalledTimes(2);
+            expect(relay.mock.calls.map(([bytes]) => [...bytes])).toEqual([
+                [1, 2, 3],
+                [4, 5, 6]
+            ]);
+        } finally {
+            global.fetch = originalFetch;
+            window.windowRole = previousRole;
+            window.windowSync = previousSync;
+        }
     });
 });

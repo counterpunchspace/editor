@@ -1,6 +1,8 @@
 # Before you begin
 
-Counterpunch is a font studio that runs in the browser. There is no install, download, or local server. Open [editor.counterpunch.space](https://editor.counterpunch.space) (or [preview.editor.counterpunch.space](https://preview.editor.counterpunch.space) for preview versions) and the studio loads in the browser. Font data, edits, and scripts stay on your computer. Nothing is uploaded for editing or compilation.
+Counterpunch is a font studio that runs in the browser. There is no install, download, or local server. Open [editor.counterpunch.space](https://editor.counterpunch.space) (or [preview.editor.counterpunch.space](https://preview.editor.counterpunch.space) for preview versions) and the studio loads in the browser.
+
+**Local fonts stay on your computer.** Opening a disk file, editing, compiling, and running scripts does not upload that font. Nothing is uploaded unless you explicitly save or share a **cloud font**. Cloud fonts are stored as encrypted-in-transit collaboration shards on Counterpunch servers (Cloudflare R2 checkpoints plus Durable Object tails) so you and invited collaborators can edit them. You can keep working on a cloud font while disconnected; pending edits wait in a write-ahead log in this browser until they sync. Viewers, revoked sessions, and a failed write-ahead log stay **read-only**. Forced schema migrations pause live writes until the owner republishes a certified generation.
 
 That architecture means you can start immediately on macOS, Windows, or Linux, pick up updates without a separate installer, and keep source files private by default.
 

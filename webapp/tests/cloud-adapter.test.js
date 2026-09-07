@@ -27,14 +27,15 @@ const {
     collaborationMessageKey
 } = require('../js/collaboration-message.ts');
 
-const TEST_YDOC_SCHEMA_VERSION = 4;
+const TEST_YDOC_SCHEMA_VERSION = 5;
 
 function createIndexedDbMock(seedRecords = []) {
     const records = new Map(
         seedRecords.map((record) => [
-            `${record.assetId}:${record.clientTransactionId}`,
+            `${record.assetId}:${record.documentId || 'font-core'}:${record.clientTransactionId}`,
             {
-                key: `${record.assetId}:${record.clientTransactionId}`,
+                key: `${record.assetId}:${record.documentId || 'font-core'}:${record.clientTransactionId}`,
+                attempts: 0,
                 ...record
             }
         ])
@@ -51,18 +52,66 @@ function createIndexedDbMock(seedRecords = []) {
                     result: Array.from(records.values()).filter(
                         (record) => record.assetId === assetId
                     ),
-                    onsuccess: null,
                     onerror: null
                 };
-                queueMicrotask(() => request.onsuccess?.());
+                Object.defineProperty(request, 'onsuccess', {
+                    configurable: true,
+                    set(fn) {
+                        this._onsuccess = fn;
+                        if (typeof fn === 'function') {
+                            fn();
+                        }
+                    },
+                    get() {
+                        return this._onsuccess;
+                    }
+                });
                 return request;
             })
         })),
         put: jest.fn((value) => {
             records.set(value.key, value);
         }),
+        get: jest.fn((key) => {
+            const request = {
+                result: records.get(key),
+                onerror: null
+            };
+            Object.defineProperty(request, 'onsuccess', {
+                configurable: true,
+                set(fn) {
+                    this._onsuccess = fn;
+                    if (typeof fn === 'function') {
+                        fn();
+                    }
+                },
+                get() {
+                    return this._onsuccess;
+                }
+            });
+            return request;
+        }),
         delete: jest.fn((key) => {
             records.delete(key);
+        }),
+        getAll: jest.fn(() => {
+            const request = {
+                result: Array.from(records.values()),
+                onerror: null
+            };
+            Object.defineProperty(request, 'onsuccess', {
+                configurable: true,
+                set(fn) {
+                    this._onsuccess = fn;
+                    if (typeof fn === 'function') {
+                        fn();
+                    }
+                },
+                get() {
+                    return this._onsuccess;
+                }
+            });
+            return request;
         })
     };
 
@@ -74,12 +123,22 @@ function createIndexedDbMock(seedRecords = []) {
         transaction: jest.fn(() => {
             const transaction = {
                 objectStore: jest.fn(() => store),
-                oncomplete: null,
                 onerror: null,
                 onabort: null,
                 error: null
             };
-            queueMicrotask(() => transaction.oncomplete?.());
+            Object.defineProperty(transaction, 'oncomplete', {
+                configurable: true,
+                set(fn) {
+                    this._oncomplete = fn;
+                    if (typeof fn === 'function') {
+                        fn();
+                    }
+                },
+                get() {
+                    return this._oncomplete;
+                }
+            });
             return transaction;
         }),
         close: jest.fn()
@@ -93,18 +152,45 @@ function createIndexedDbMock(seedRecords = []) {
                 transaction: {
                     objectStore: jest.fn(() => store)
                 },
-                onupgradeneeded: null,
-                onsuccess: null,
                 onerror: null,
                 error: null
             };
-            queueMicrotask(() => {
-                request.onupgradeneeded?.();
-                request.onsuccess?.();
+            Object.defineProperty(request, 'onupgradeneeded', {
+                configurable: true,
+                set(fn) {
+                    this._onupgradeneeded = fn;
+                    if (typeof fn === 'function') {
+                        fn();
+                    }
+                },
+                get() {
+                    return this._onupgradeneeded;
+                }
+            });
+            Object.defineProperty(request, 'onsuccess', {
+                configurable: true,
+                set(fn) {
+                    this._onsuccess = fn;
+                    if (typeof fn === 'function') {
+                        fn();
+                    }
+                },
+                get() {
+                    return this._onsuccess;
+                }
             });
             return request;
         })
     };
+}
+
+async function flushCloudIo() {
+    if (!global.indexedDB) {
+        global.indexedDB = createIndexedDbMock();
+    }
+    for (let i = 0; i < 12; i += 1) {
+        await Promise.resolve();
+    }
 }
 
 describe('CloudAdapter room worker defaults', () => {
@@ -582,6 +668,25 @@ describe('CloudAdapter outbound updates', () => {
         expect(adapter._checkpointLogId).toBe(40);
     });
 
+    it('forces a checkpoint bootstrap after rebaseline is required', () => {
+        const adapter = new CloudAdapter({ assetId: 'asset-123' });
+        adapter._canSkipBootstrapOnReconnect = true;
+        adapter._checkpointLogId = 40;
+        adapter._appliedLogId = 44;
+        adapter._ws = { close: jest.fn() };
+
+        adapter._handleMessage(
+            JSON.stringify({
+                type: 'rebaseline-required',
+                currentCheckpointLogId: 50
+            })
+        );
+
+        expect(adapter._canSkipBootstrapOnReconnect).toBe(false);
+        expect(adapter._checkpointLogId).toBe(50);
+        expect(adapter._appliedLogId).toBeNull();
+    });
+
     it('does not advance appliedLogId when applying a sync page fails', () => {
         const adapter = new CloudAdapter({ assetId: 'asset-123' });
         adapter._appliedLogId = 10;
@@ -1057,6 +1162,8 @@ describe('CloudAdapter outbound updates', () => {
     });
 
     it('sends incremental updates without re-encoding full state', async () => {
+        const originalIndexedDb = global.indexedDB;
+        global.indexedDB = createIndexedDbMock();
         const adapter = new CloudAdapter({ assetId: 'asset-123' });
         const localUpdate = new Uint8Array([1, 2, 3, 4]);
         const sentFrames = [];
@@ -1103,7 +1210,7 @@ describe('CloudAdapter outbound updates', () => {
 
         adapter._registerOutboundHook();
         localUpdateHandler(localUpdate, collaborationMessage);
-        await Promise.resolve();
+        await flushCloudIo();
 
         expect(getFullState).not.toHaveBeenCalled();
         expect(sentFrames).toHaveLength(1);
@@ -1126,6 +1233,9 @@ describe('CloudAdapter outbound updates', () => {
         expect(sentFrames[0].update).toBe(
             Buffer.from(localUpdate).toString('base64')
         );
+        expect(global.indexedDB.open).toHaveBeenCalled();
+        expect(sentFrames).toHaveLength(1);
+        global.indexedDB = originalIndexedDb;
     });
 
     it('chunks oversized incremental updates into update-chunk frames', async () => {
@@ -1172,7 +1282,7 @@ describe('CloudAdapter outbound updates', () => {
 
         adapter._registerOutboundHook();
         localUpdateHandler(localUpdate, collaborationMessage);
-        await Promise.resolve();
+        await flushCloudIo();
 
         expect(sentFrames).toHaveLength(2);
         expect(sentFrames[0]).toEqual(
@@ -1262,6 +1372,66 @@ describe('CloudAdapter outbound updates', () => {
 
         expect(adapter._pendingOutboundPackets).toEqual([packet]);
         expect(adapter._outboundFlushScheduled).toBe(false);
+    });
+
+    it('retains pending outbound packets while the browser reports offline', () => {
+        const adapter = new CloudAdapter({ assetId: 'asset-123' });
+        const packet = {
+            update: new Uint8Array([1, 2, 3]),
+            clientTransactionId: 'tx-offline',
+            collaborationMessage: { changes: [] }
+        };
+        const send = jest.fn();
+
+        adapter._bridge = {
+            advanceBroadcastLogCursor: jest.fn()
+        };
+        adapter._ws = { readyState: 1, send };
+        adapter._durableOutboxEntries.set('tx-offline', {
+            clientTransactionId: 'tx-offline',
+            updateBase64: 'AQID'
+        });
+        adapter._pendingOutboundPackets = [packet];
+        adapter._outboundFlushScheduled = true;
+        jest.spyOn(adapter, '_isBrowserOffline').mockReturnValue(true);
+
+        adapter._flushPendingOutboundUpdates();
+
+        expect(send).not.toHaveBeenCalled();
+        expect(adapter._pendingOutboundPackets).toEqual([packet]);
+    });
+
+    it('requeues WAL outbox packets after a zombie send is forgotten on reconnect', () => {
+        const adapter = new CloudAdapter({ assetId: 'asset-123' });
+        const collaborationMessage = {
+            transactionId: 'tx-zombie',
+            changes: [{ path: 'glyphs.A:name' }]
+        };
+        const record = {
+            assetId: 'asset-123',
+            documentId: 'font-core',
+            clientTransactionId: 'tx-zombie',
+            updateBase64: Buffer.from([9, 8, 7]).toString('base64'),
+            collaborationMessage,
+            createdAt: 1,
+            attempts: 1
+        };
+
+        adapter._durableOutboxEntries.set('tx-zombie', record);
+        adapter._pendingOutboundPackets = [];
+        adapter._outboundPendingTransactionIds.clear();
+        adapter._requeueUnackedOutboxPackets();
+
+        expect(adapter._pendingOutboundPackets).toHaveLength(1);
+        expect(adapter._pendingOutboundPackets[0].clientTransactionId).toBe(
+            'tx-zombie'
+        );
+        expect(Array.from(adapter._pendingOutboundPackets[0].update)).toEqual([
+            9, 8, 7
+        ]);
+
+        adapter._requeueUnackedOutboxPackets();
+        expect(adapter._pendingOutboundPackets).toHaveLength(1);
     });
 
     it('retains queued outbound commits through auth and drops them after sync-complete durability', () => {
@@ -1440,12 +1610,73 @@ describe('CloudAdapter outbound updates', () => {
 
         adapter._registerOutboundHook();
         localUpdateHandler(localUpdate, collaborationMessage);
-        await Promise.resolve();
+        await flushCloudIo();
 
         adapter._handleMessage(JSON.stringify({ type: 'ack', seq: 1 }));
 
         expect(advanceBroadcastLogCursor).toHaveBeenCalledWith(1);
         expect(adapter._pendingDurabilityMessages).toEqual([]);
+    });
+
+    it('resolves waitUntilDurable only after the live ACK drops the outbox', async () => {
+        const adapter = new CloudAdapter({ assetId: 'asset-123' });
+        const localUpdate = new Uint8Array([1, 2, 3, 4]);
+        let localUpdateHandler = null;
+        const changeLogEntries = [
+            createLogEntry({
+                timestamp: 1,
+                windowId: 'client-1',
+                windowRoleLabel: 'main',
+                transactionLabel: 'Drag',
+                transactionId: 1,
+                op: 'set',
+                undoScope: 'layer',
+                path: 'glyphs.A:layers.L0:width',
+                oldValue: 600,
+                newValue: 700,
+                workerReplayTargets: []
+            })
+        ];
+        const collaborationMessage =
+            createCollaborationMessageEnvelopeFromChangeLogEntries(
+                changeLogEntries,
+                {
+                    localSequence: 1,
+                    source: 'cloud-adapter.test',
+                    windowId: 'client-1'
+                }
+            );
+
+        adapter._bridge = {
+            onLocalUpdate: (handler) => {
+                localUpdateHandler = handler;
+            },
+            offLocalUpdate: jest.fn(),
+            advanceBroadcastLogCursor: jest.fn(),
+            getFullState: jest.fn()
+        };
+        adapter._ws = {
+            readyState: 1,
+            send: jest.fn()
+        };
+        adapter._clientId = 'client-1';
+
+        adapter._registerOutboundHook();
+        localUpdateHandler(localUpdate, collaborationMessage);
+        await flushCloudIo();
+
+        expect(adapter.pendingSyncCount).toBe(1);
+        let durable = false;
+        const wait = adapter.waitUntilDurable().then(() => {
+            durable = true;
+        });
+        await Promise.resolve();
+        expect(durable).toBe(false);
+
+        adapter._handleMessage(JSON.stringify({ type: 'ack', seq: 1 }));
+        await wait;
+        expect(durable).toBe(true);
+        expect(adapter.pendingSyncCount).toBe(0);
     });
 
     it('ignores echoed live updates from the same cloud client', () => {
@@ -1522,7 +1753,7 @@ describe('CloudAdapter outbound updates', () => {
 
         adapter._registerOutboundHook();
         localUpdateHandler(localUpdate, collaborationMessage);
-        await Promise.resolve();
+        await flushCloudIo();
 
         adapter._handleMessage(
             JSON.stringify({
@@ -1620,7 +1851,7 @@ describe('CloudAdapter outbound updates', () => {
 
         adapter._registerOutboundHook();
         localUpdateHandler(localUpdate, collaborationMessage);
-        await Promise.resolve();
+        await flushCloudIo();
 
         expect(adapter.pendingSyncCount).toBe(1);
 
@@ -1710,6 +1941,16 @@ describe('CloudAdapter outbound updates', () => {
             expect(adapter._pendingDurabilityMessages).toEqual([
                 collaborationMessage
             ]);
+            expect(adapter._pendingOutboundPackets).toEqual([
+                expect.objectContaining({
+                    clientTransactionId:
+                        collaborationMessageKey(collaborationMessage),
+                    collaborationMessage
+                })
+            ]);
+            expect(
+                Array.from(adapter._pendingOutboundPackets[0].update)
+            ).toEqual(Array.from(durableUpdate));
 
             const wrongDocumentApplyRemoteUpdate = jest.fn();
             const wrongDocumentAdapter = new CloudAdapter({
@@ -1912,6 +2153,38 @@ describe('CloudAdapter outbound updates', () => {
         expect(sentFrames[0].fullState).toBeUndefined();
         expect(sentFrames[0].layerRepairSnapshots).toBeUndefined();
         expect(sentFrames[0].update).toBe(Buffer.from(diff).toString('base64'));
+    });
+
+    it('sends a skipped-bootstrap sync-complete when WAL outbox is still unacked', () => {
+        const adapter = new CloudAdapter({
+            assetId: 'asset-123',
+            documentId: 'glyph:a'
+        });
+        const sentFrames = [];
+        adapter._skipWorkerReseed = true;
+        adapter._lastReconnectReason = 'browser-online';
+        adapter._durableOutboxEntries.set('tx-offline', {
+            clientTransactionId: 'tx-offline',
+            updateBase64: Buffer.from([1, 2, 3]).toString('base64')
+        });
+        adapter._pendingOutboundPackets = [
+            {
+                update: new Uint8Array([1, 2, 3]),
+                clientTransactionId: 'tx-offline'
+            }
+        ];
+        adapter._bridge = {
+            encodeStateDiff: jest.fn(() => new Uint8Array([9, 9, 9])),
+            getNewChangeLogEntries: jest.fn(() => [])
+        };
+        adapter._ws = {
+            readyState: 1,
+            send: (payload) => sentFrames.push(JSON.parse(payload))
+        };
+
+        expect(adapter._sendSyncComplete(new Uint8Array())).toBe(false);
+        expect(adapter._bridge.encodeStateDiff).not.toHaveBeenCalled();
+        expect(sentFrames).toEqual([]);
     });
 
     it('splits sync-complete metadata by logical history item', () => {
@@ -2445,7 +2718,7 @@ describe('CloudAdapter durability failures', () => {
         try {
             adapter._registerOutboundHook();
             localUpdateHandler(localUpdate, collaborationMessage);
-            await Promise.resolve();
+            await flushCloudIo();
 
             expect(adapter.pendingSyncCount).toBe(1);
 
@@ -2530,7 +2803,7 @@ describe('CloudAdapter durability failures', () => {
         try {
             adapter._registerOutboundHook();
             localUpdateHandler(localUpdate, collaborationMessage);
-            await Promise.resolve();
+            await flushCloudIo();
 
             jest.advanceTimersByTime(5000);
             adapter._lastInboundMessageAt = Date.now();
@@ -2617,7 +2890,7 @@ describe('CloudAdapter durability failures', () => {
         try {
             adapter._registerOutboundHook();
             localUpdateHandler(localUpdate, collaborationMessage);
-            await Promise.resolve();
+            await flushCloudIo();
 
             jest.advanceTimersByTime(9000);
             adapter._lastInboundMessageAt = Date.now();
@@ -3518,6 +3791,28 @@ describe('publishCloudDocumentUpdate', () => {
             })
         ).rejects.toThrow('Live glyph publish failed (403)');
     });
+
+    test.each([401, 429, 503])(
+        'throws on %s so callers can refresh, back off, or fail closed',
+        async (status) => {
+            global.fetch = jest.fn(async () => ({
+                ok: false,
+                status,
+                json: async () => ({ error: 'unavailable' })
+            }));
+            await expect(
+                publishCloudDocumentUpdate({
+                    token: 'room-token',
+                    roomUrl: 'wss://rooms.example.com/room/asset-123',
+                    websiteBaseUrl: 'https://editor.counterpunch.space',
+                    assetId: 'asset-123',
+                    documentId: 'glyph:abc-def',
+                    update: new Uint8Array([1, 2, 3]),
+                    seq: 1
+                })
+            ).rejects.toThrow(`Live glyph publish failed (${status})`);
+        }
+    );
 });
 
 describe('R2 bootstrap (GET /state before WebSocket)', () => {
