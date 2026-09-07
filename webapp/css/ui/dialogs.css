@@ -182,6 +182,37 @@
     margin-bottom: 0;
 }
 
+.transfer-progress-dialog {
+    max-width: 420px;
+}
+
+.transfer-progress-message {
+    margin: 0 0 12px 0;
+    color: var(--text-primary);
+}
+
+.transfer-progress-bar {
+    display: block;
+    width: 100%;
+    height: 8px;
+    margin: 0 0 16px 0;
+    border: none;
+    border-radius: 999px;
+    overflow: hidden;
+    background-color: var(--background-hover);
+    accent-color: var(--accent-primary, var(--folder-setup-callout-border));
+}
+
+.transfer-progress-bar::-webkit-progress-bar {
+    background-color: var(--background-hover);
+    border-radius: 999px;
+}
+
+.transfer-progress-bar::-webkit-progress-value {
+    background-color: var(--folder-setup-callout-border);
+    border-radius: 999px;
+}
+
 .confirm-dialog-actions {
     display: flex;
     justify-content: flex-end;

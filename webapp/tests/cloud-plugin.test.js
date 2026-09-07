@@ -76,6 +76,7 @@ jest.mock('../js/cloud-adapter', () => ({
             rebindToCurrentBridge: mockRebindToCurrentBridge,
             seedDocumentSet: jest.fn().mockResolvedValue(),
             hydrateDocumentSet: jest.fn().mockResolvedValue(new Map()),
+            discardSeededShards: jest.fn().mockResolvedValue(),
             disconnect: jest.fn(() => {
                 mockDisconnect();
                 adapter.status = 'disconnected';

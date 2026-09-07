@@ -502,6 +502,38 @@ Worker implementation rules:
 - Cap batch size per request; schedule remaining ids in further batches —
   capping paces work, it does not drop updates
 
+### Transfer progress and cancel
+
+Bulk seed and hydrate are user-visible transfers. Progress UI lives in
+`webapp/js/ui/transfer-progress.ts` — a general dialog, not CloudPlugin
+chrome — so any document-set I/O can reuse it.
+
+The bar is **receipt/frame counted**, not a fake timer:
+
+- **Seed:** one step per pack receipt (or per-shard POST completion)
+- **Load:** one step per hydrated shard frame (or per-shard GET completion)
+
+The adapter **yields to the event loop** between shards (`yieldToUi`) so the
+dialog paints and Cancel/Escape remain clickable. Do not run seed/hydrate in
+a tight synchronous loop on the main thread.
+
+Cancel sends `AbortSignal` on in-flight HTTP. The Worker pack seed/hydrate
+loops stop at `request.signal.aborted` so they do not keep writing after the
+browser disconnects.
+
+- **Load cancel:** abort the open. Do not delete remote shards. Drop any
+  in-memory document set that was not yet installed as the current font.
+- **Seed cancel (and failed pending seed):** abort the current pack, then
+  `POST /room/:assetId/pack/discard` with shard ids that already **landed**
+  (receipts). That deletes those shards’ R2 objects. Then website
+  `POST /api/cloud/assets/:id/abort` archives the pending asset and drops
+  attestations and glyph reservations so the half-created room cannot
+  finalize.
+
+Late Worker writes that race past abort are still under the pending asset;
+abort + discard is the rollback. Do not leave a pending asset with live
+shard bytes after the user cancelled Save As.
+
 ## Who chooses glyphs; who computes closure
 
 ### Seeds
@@ -1104,6 +1136,7 @@ Checked-in coverage (not a second spec):
 | Schema migration epoch, immutable manifests, rollback-by-revision | `website/test/cloud-schema-migration.test.js` |
 | Catalog generation tombstones, published core/deps hydrate pair | `webapp/tests/cloud-glyph-catalog.test.js` |
 | Seed-only live writes during migration | `collab/collab/workers/room/test/font-room-do.test.js` |
+| Transfer progress + seed cancel discards landed shards | `webapp/tests/transfer-progress.test.js`, `webapp/tests/cancellable-shard-transfer.test.js`, `workers/room/test/index.test.js` pack discard, `website/test/cloud-asset-lifecycle.test.js` |
 
 Local `npm run dev` in the collab repo starts room + compactor + validator
 together (Wrangler multi-config). Fat compact stays out of scope. Set website

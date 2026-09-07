@@ -24,6 +24,12 @@ import {
     normalizeCloudRoomWebSocketUrl
 } from '../../cloud-adapter';
 import {
+    isTransferCancelled,
+    loadDocumentSetWithProgress,
+    seedDocumentSetWithProgress,
+    shardIoOptionsFromSession
+} from '../cancellable-shard-transfer';
+import {
     CloudLiveSession,
     activeEditorGlyphNames,
     liveGlyphDocumentIdsFromSubset
@@ -2151,8 +2157,15 @@ export class CloudPlugin extends FilesystemPlugin {
     }
 
     async handleSaveAs(name: string): Promise<boolean> {
-        await this.saveAs(name);
-        return true;
+        try {
+            await this.saveAs(name);
+            return true;
+        } catch (error) {
+            if (isTransferCancelled(error)) {
+                return false;
+            }
+            throw error;
+        }
     }
 
     async handleOpenPath(path: string): Promise<boolean> {
@@ -2165,8 +2178,15 @@ export class CloudPlugin extends FilesystemPlugin {
             throw new Error('Missing cloud asset id');
         }
 
-        await this.openAsset(assetId);
-        return true;
+        try {
+            await this.openAsset(assetId);
+            return true;
+        } catch (error) {
+            if (isTransferCancelled(error)) {
+                return false;
+            }
+            throw error;
+        }
     }
 
     setPendingSparseHydration(sparse: boolean): void {
@@ -3328,99 +3348,123 @@ export class CloudPlugin extends FilesystemPlugin {
         let sparseWorkingGlyphIds: string[] = [];
         let usedSparseHydration = options?.sparseHydration === true;
         try {
-            const coreAndDeps = await this._hydrateCoreDepsConsistent(
-                hydrator,
-                token,
-                roomUrl,
-                assetId
-            );
-            const coreBytes = coreAndDeps.get(FONT_CORE_DOCUMENT_ID);
-            if (coreBytes?.byteLength) {
-                const documentSet = new CloudDocumentSet();
-                documentSet.applyRemoteUpdate(FONT_CORE_DOCUMENT_ID, coreBytes);
-                const depsBytes = coreAndDeps.get(FONT_DEPS_DOCUMENT_ID);
-                if (depsBytes?.byteLength) {
-                    documentSet.applyRemoteUpdate(
-                        FONT_DEPS_DOCUMENT_ID,
-                        depsBytes
-                    );
-                }
-                const coreJson = documentSet.assembleFontJson();
-                const catalogIds = glyphIdsFromCoreJson(coreJson);
-                const urlText = readUrlState().text || '';
-                const useSparse =
-                    usedSparseHydration ||
-                    shouldAutoSparseHydrate(catalogIds.length);
-                usedSparseHydration = useSparse;
-                let glyphBytes = new Map<string, Uint8Array>();
-                if (!useSparse) {
-                    glyphBytes = (
-                        await hydrateSparseGlyphsToFixedPoint({
-                            documentSet,
-                            catalogIds,
-                            seedIds: catalogIds,
-                            layoutIds: [],
-                            catalog: catalogEntriesFromCoreJson(coreJson),
-                            requireFetchedGlyphs: true,
-                            fetchGlyphs: (documentIds) =>
-                                hydrator.hydrateDocumentSet(
-                                    token,
-                                    roomUrl,
-                                    documentIds
-                                )
-                        })
-                    ).glyphBytes;
-                } else {
-                    const { seedIds, layoutIds } = resolveHydrationSeeds({
-                        fontJson: coreJson,
-                        text: urlText || 'Hamburgevons'
+            await loadDocumentSetWithProgress({
+                total: 2,
+                work: async (session) => {
+                    const io = shardIoOptionsFromSession(session, {
+                        progressTotal: 2
                     });
-                    if (seedIds.length) {
-                        const hydrateResult =
+                    const coreAndDeps = await this._hydrateCoreDepsConsistent(
+                        hydrator,
+                        token,
+                        roomUrl,
+                        assetId,
+                        io
+                    );
+                    const coreBytes = coreAndDeps.get(FONT_CORE_DOCUMENT_ID);
+                    if (!coreBytes?.byteLength) {
+                        return;
+                    }
+                    const documentSet = new CloudDocumentSet();
+                    documentSet.applyRemoteUpdate(
+                        FONT_CORE_DOCUMENT_ID,
+                        coreBytes
+                    );
+                    const depsBytes = coreAndDeps.get(FONT_DEPS_DOCUMENT_ID);
+                    if (depsBytes?.byteLength) {
+                        documentSet.applyRemoteUpdate(
+                            FONT_DEPS_DOCUMENT_ID,
+                            depsBytes
+                        );
+                    }
+                    const coreJson = documentSet.assembleFontJson();
+                    const catalogIds = glyphIdsFromCoreJson(coreJson);
+                    const urlText = readUrlState().text || '';
+                    const useSparse =
+                        usedSparseHydration ||
+                        shouldAutoSparseHydrate(catalogIds.length);
+                    usedSparseHydration = useSparse;
+                    let glyphBytes = new Map<string, Uint8Array>();
+                    const fetchGlyphs = (documentIds: string[]) =>
+                        hydrator.hydrateDocumentSet(
+                            token,
+                            roomUrl,
+                            documentIds,
+                            shardIoOptionsFromSession(session, {
+                                progressOffset: session.completed,
+                                progressTotal: session.total
+                            })
+                        );
+                    if (!useSparse) {
+                        session.update({
+                            total: 2 + catalogIds.length,
+                            message: 'Loading font…'
+                        });
+                        glyphBytes = (
                             await hydrateSparseGlyphsToFixedPoint({
                                 documentSet,
                                 catalogIds,
-                                seedIds,
-                                layoutIds,
-                                previousWorkingIds: [],
+                                seedIds: catalogIds,
+                                layoutIds: [],
                                 catalog: catalogEntriesFromCoreJson(coreJson),
                                 requireFetchedGlyphs: true,
-                                fetchGlyphs: (documentIds) =>
-                                    hydrator.hydrateDocumentSet(
-                                        token,
-                                        roomUrl,
-                                        documentIds
-                                    )
-                            });
-                        glyphBytes = hydrateResult.glyphBytes;
-                        sparseWorkingGlyphIds = hydrateResult.workingIds;
-                        this._sparsePreviewOnly =
-                            hydrateResult.previewOnly === true;
+                                fetchGlyphs
+                            })
+                        ).glyphBytes;
+                    } else {
+                        const { seedIds, layoutIds } = resolveHydrationSeeds({
+                            fontJson: coreJson,
+                            text: urlText || 'Hamburgevons'
+                        });
+                        session.update({
+                            total: 2 + seedIds.length,
+                            message: 'Loading font…'
+                        });
+                        if (seedIds.length) {
+                            const hydrateResult =
+                                await hydrateSparseGlyphsToFixedPoint({
+                                    documentSet,
+                                    catalogIds,
+                                    seedIds,
+                                    layoutIds,
+                                    previousWorkingIds: [],
+                                    catalog:
+                                        catalogEntriesFromCoreJson(coreJson),
+                                    requireFetchedGlyphs: true,
+                                    fetchGlyphs
+                                });
+                            glyphBytes = hydrateResult.glyphBytes;
+                            sparseWorkingGlyphIds = hydrateResult.workingIds;
+                            this._sparsePreviewOnly =
+                                hydrateResult.previewOnly === true;
+                        }
                     }
+                    hydratedFontJson = documentSet.assembleFontJson();
+                    hydratedShards = [
+                        {
+                            documentId: FONT_CORE_DOCUMENT_ID,
+                            bytes: coreBytes
+                        },
+                        ...(depsBytes?.byteLength
+                            ? [
+                                  {
+                                      documentId: FONT_DEPS_DOCUMENT_ID,
+                                      bytes: depsBytes
+                                  }
+                              ]
+                            : []),
+                        ...[...glyphBytes.entries()].map(
+                            ([documentId, bytes]) => ({
+                                documentId,
+                                bytes
+                            })
+                        )
+                    ];
+                    documentSet.destroy();
                 }
-                hydratedFontJson = documentSet.assembleFontJson();
-                hydratedShards = [
-                    {
-                        documentId: FONT_CORE_DOCUMENT_ID,
-                        bytes: coreBytes
-                    },
-                    ...(depsBytes?.byteLength
-                        ? [
-                              {
-                                  documentId: FONT_DEPS_DOCUMENT_ID,
-                                  bytes: depsBytes
-                              }
-                          ]
-                        : []),
-                    ...[...glyphBytes.entries()].map(([documentId, bytes]) => ({
-                        documentId,
-                        bytes
-                    }))
-                ];
-                documentSet.destroy();
-            }
+            });
         } catch (error) {
-            if (usedSparseHydration) {
+            if (isTransferCancelled(error) || usedSparseHydration) {
                 throw error instanceof Error ? error : new Error(String(error));
             }
             console.warn(
@@ -3787,12 +3831,13 @@ export class CloudPlugin extends FilesystemPlugin {
         let seededCheckpointLogId: number | null = null;
         let seedReceipts: CloudSeededShardAttestation[] = [];
         try {
-            const seeded = await seeder.seedDocumentSet(
+            const seeded = await seedDocumentSetWithProgress({
+                seeder,
                 token,
                 roomUrl,
                 shards,
-                estimatedGlyphCount
-            );
+                glyphCount: estimatedGlyphCount
+            });
             seededCheckpointLogId =
                 seeded && typeof seeded === 'object'
                     ? seeded.coreCheckpointLogId
@@ -3806,6 +3851,15 @@ export class CloudPlugin extends FilesystemPlugin {
             ) {
                 seedReceipts = seeded.attestations;
             }
+        } catch (error) {
+            await this._abortPendingAsset(assetId).catch((abortError) => {
+                console.warn(
+                    '[CloudPlugin]',
+                    'Failed to abort pending cloud asset after seed failure:',
+                    abortError
+                );
+            });
+            throw error;
         } finally {
             seeder.disconnect();
         }
@@ -4359,14 +4413,17 @@ export class CloudPlugin extends FilesystemPlugin {
         hydrator: CloudAdapter,
         token: string,
         roomUrl: string,
-        assetId: string
+        assetId: string,
+        ioOptions?: CloudShardIoOptions
     ): Promise<Map<string, Uint8Array>> {
         const published = await this._fetchPublishedManifestForAsset(assetId);
         if (!published) {
-            return hydrator.hydrateDocumentSet(token, roomUrl, [
-                FONT_CORE_DOCUMENT_ID,
-                FONT_DEPS_DOCUMENT_ID
-            ]);
+            return hydrator.hydrateDocumentSet(
+                token,
+                roomUrl,
+                [FONT_CORE_DOCUMENT_ID, FONT_DEPS_DOCUMENT_ID],
+                ioOptions
+            );
         }
         const aligned = await hydrateCoreDepsToPublishedPair({
             expected: {
@@ -4378,7 +4435,8 @@ export class CloudPlugin extends FilesystemPlugin {
                 const fetched = await hydrator.hydrateDocumentSet(
                     token,
                     roomUrl,
-                    [FONT_CORE_DOCUMENT_ID, FONT_DEPS_DOCUMENT_ID]
+                    [FONT_CORE_DOCUMENT_ID, FONT_DEPS_DOCUMENT_ID],
+                    ioOptions
                 );
                 return {
                     core: fetched.get(FONT_CORE_DOCUMENT_ID) || null,

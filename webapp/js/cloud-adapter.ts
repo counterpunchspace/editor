@@ -76,6 +76,7 @@ import {
     type PackFrame
 } from './filesystem-plugins/cloud-shard-pack';
 import { missingRequiredCloudCapabilities } from './filesystem-plugins/cloud-collab-capabilities';
+import { throwIfAborted, yieldToUi } from './yield-to-ui';
 import {
     collaborationMessageKey,
     createChangeLogEntriesFromCollaborationMessageEnvelope,
@@ -154,12 +155,29 @@ export type CloudSeedDocumentSetResult = {
     attestations: CloudSeededShardAttestation[];
 };
 
+export type CloudShardIoProgress = {
+    completed: number;
+    total: number;
+    bytesCompleted: number;
+    bytesTotal: number;
+    shardId?: string;
+};
+
 /** Overrides for bounded shard HTTP. Production callers omit this. */
 export type CloudShardIoOptions = {
     concurrency?: number;
     maxRequests?: number;
     maxBytes?: number;
     transport?: 'auto' | 'pack' | 'per-shard';
+    signal?: AbortSignal;
+    progressOffset?: number;
+    progressTotal?: number;
+    progressBytesOffset?: number;
+    progressBytesTotal?: number;
+    onProgress?: (progress: CloudShardIoProgress) => void | Promise<void>;
+    onShardLanded?: (
+        attestation: CloudSeededShardAttestation
+    ) => void | Promise<void>;
 };
 
 function shardIoConcurrency(
@@ -167,6 +185,34 @@ function shardIoConcurrency(
     fallback: number
 ): number {
     return Math.max(1, options?.concurrency ?? fallback);
+}
+
+function shardIoTotals(
+    options: CloudShardIoOptions | undefined,
+    itemCount: number,
+    byteLength: number
+): {
+    completed: number;
+    total: number;
+    bytesCompleted: number;
+    bytesTotal: number;
+} {
+    return {
+        completed: options?.progressOffset ?? 0,
+        total: options?.progressTotal ?? itemCount,
+        bytesCompleted: options?.progressBytesOffset ?? 0,
+        bytesTotal: options?.progressBytesTotal ?? byteLength
+    };
+}
+
+async function emitShardIoProgress(
+    options: CloudShardIoOptions | undefined,
+    progress: CloudShardIoProgress
+): Promise<void> {
+    throwIfAborted(options?.signal);
+    await options?.onProgress?.(progress);
+    await yieldToUi();
+    throwIfAborted(options?.signal);
 }
 
 function getCloudRequestHeaders(
@@ -270,6 +316,18 @@ export function normalizeCloudShardPackUrl(
     const httpUrl = normalizeCloudRoomHttpUrl(roomUrl, websiteBaseUrl);
     const url = new URL(httpUrl);
     url.pathname = `/room/${encodeURIComponent(assetId)}/pack`;
+    return url.toString();
+}
+
+export function normalizeCloudShardPackDiscardUrl(
+    roomUrl: string,
+    websiteBaseUrl: string,
+    assetId: string
+): string {
+    const url = new URL(
+        normalizeCloudShardPackUrl(roomUrl, websiteBaseUrl, assetId)
+    );
+    url.pathname = `/room/${encodeURIComponent(assetId)}/pack/discard`;
     return url.toString();
 }
 
@@ -2446,7 +2504,19 @@ export class CloudAdapter implements FileSystemAdapter {
             coreCheckpointLogId: number | null;
             attestation: CloudSeededShardAttestation | null;
         }> = [];
+        const bytesTotal = shards.reduce(
+            (sum, shard) => sum + shard.bytes.byteLength,
+            0
+        );
+        const cursor = shardIoTotals(options, shards.length, bytesTotal);
+        await emitShardIoProgress(options, {
+            completed: cursor.completed,
+            total: cursor.total,
+            bytesCompleted: cursor.bytesCompleted,
+            bytesTotal: cursor.bytesTotal
+        });
         for (const batch of batches) {
+            throwIfAborted(options?.signal);
             if (usePack) {
                 try {
                     rows.push(
@@ -2455,7 +2525,9 @@ export class CloudAdapter implements FileSystemAdapter {
                             roomUrl,
                             batch,
                             glyphCount,
-                            migrationNonce
+                            migrationNonce,
+                            options,
+                            cursor
                         ))
                     );
                     continue;
@@ -2479,7 +2551,9 @@ export class CloudAdapter implements FileSystemAdapter {
                             roomUrl,
                             shard,
                             glyphCount,
-                            migrationNonce
+                            migrationNonce,
+                            options,
+                            cursor
                         )
                 ))
             );
@@ -2507,15 +2581,21 @@ export class CloudAdapter implements FileSystemAdapter {
         roomUrl: string,
         shards: EncodedShard[],
         glyphCount: number,
-        migrationNonce?: string
+        migrationNonce: string | undefined,
+        options: CloudShardIoOptions | undefined,
+        cursor: CloudShardIoProgress
     ): Promise<
         Array<{
             coreCheckpointLogId: number | null;
             attestation: CloudSeededShardAttestation | null;
         }>
     > {
+        const bytesById = new Map(
+            shards.map((shard) => [shard.documentId, shard.bytes.byteLength])
+        );
         const frames: Uint8Array[] = [];
         for (const shard of shards) {
+            throwIfAborted(options?.signal);
             frames.push(
                 encodePackShardFrame(
                     shard.documentId,
@@ -2523,6 +2603,7 @@ export class CloudAdapter implements FileSystemAdapter {
                     await sha256Digest(shard.bytes)
                 )
             );
+            await yieldToUi();
         }
         const body = encodePackBody(frames);
         this._noteTransferActivity('sending');
@@ -2542,7 +2623,8 @@ export class CloudAdapter implements FileSystemAdapter {
                         ? { 'X-Cloud-Migration-Nonce': migrationNonce }
                         : {})
                 },
-                body: body as unknown as BodyInit
+                body: body as unknown as BodyInit,
+                signal: options?.signal
             }
         );
         if (isPackUnsupportedStatus(response.status)) {
@@ -2565,9 +2647,25 @@ export class CloudAdapter implements FileSystemAdapter {
                 const { done, value } = await reader.read();
                 if (value) {
                     for (const frame of parser.push(value)) {
+                        const before = rows.length;
                         this._collectPackSeedFrame(frame, rows, (message) => {
                             packError = message;
                         });
+                        if (rows.length > before) {
+                            const row = rows[rows.length - 1];
+                            if (row?.attestation) {
+                                await options?.onShardLanded?.(row.attestation);
+                                cursor.completed += 1;
+                                cursor.bytesCompleted +=
+                                    bytesById.get(row.attestation.shardId) ||
+                                    row.attestation.checkpointByteLength ||
+                                    0;
+                                await emitShardIoProgress(options, {
+                                    ...cursor,
+                                    shardId: row.attestation.shardId
+                                });
+                            }
+                        }
                     }
                 }
                 if (done) {
@@ -2646,11 +2744,14 @@ export class CloudAdapter implements FileSystemAdapter {
         roomUrl: string,
         shard: EncodedShard,
         glyphCount: number,
-        migrationNonce?: string
+        migrationNonce: string | undefined,
+        options: CloudShardIoOptions | undefined,
+        cursor: CloudShardIoProgress
     ): Promise<{
         coreCheckpointLogId: number | null;
         attestation: CloudSeededShardAttestation | null;
     }> {
+        throwIfAborted(options?.signal);
         const httpUrl = normalizeCloudShardHttpUrl(
             roomUrl,
             this._websiteBaseUrl,
@@ -2665,7 +2766,10 @@ export class CloudAdapter implements FileSystemAdapter {
         // failures prevents a single dropped glyph upload from abandoning
         // the entire Save As operation.
         for (let attempt = 0; attempt < 3; attempt += 1) {
+            throwIfAborted(options?.signal);
             const controller = new AbortController();
+            const onUserAbort = () => controller.abort();
+            options?.signal?.addEventListener('abort', onUserAbort);
             const timeoutId = window.setTimeout(
                 () => controller.abort(),
                 15_000
@@ -2687,12 +2791,14 @@ export class CloudAdapter implements FileSystemAdapter {
                 break;
             } catch (error) {
                 lastError = error;
+                throwIfAborted(options?.signal);
                 if (attempt < 2) {
                     await new Promise<void>((resolve) => {
                         window.setTimeout(resolve, 100 * (attempt + 1));
                     });
                 }
             } finally {
+                options?.signal?.removeEventListener('abort', onUserAbort);
                 window.clearTimeout(timeoutId);
             }
         }
@@ -2760,6 +2866,15 @@ export class CloudAdapter implements FileSystemAdapter {
                                   : undefined
                       }
                     : null;
+            if (attestation) {
+                await options?.onShardLanded?.(attestation);
+                cursor.completed += 1;
+                cursor.bytesCompleted += shard.bytes.byteLength;
+                await emitShardIoProgress(options, {
+                    ...cursor,
+                    shardId: attestation.shardId
+                });
+            }
             return { coreCheckpointLogId, attestation };
         } catch {
             return { coreCheckpointLogId: null, attestation: null };
@@ -2788,14 +2903,24 @@ export class CloudAdapter implements FileSystemAdapter {
         }
         const result = new Map<string, Uint8Array>();
         let usePack = options?.transport !== 'per-shard';
+        const cursor = shardIoTotals(options, documentIds.length, 0);
+        await emitShardIoProgress(options, {
+            completed: cursor.completed,
+            total: cursor.total,
+            bytesCompleted: cursor.bytesCompleted,
+            bytesTotal: cursor.bytesTotal
+        });
         for (const batch of batches) {
+            throwIfAborted(options?.signal);
             let batchResult: Map<string, Uint8Array> | null = null;
             if (usePack) {
                 try {
                     batchResult = await this._hydratePack(
                         token,
                         roomUrl,
-                        batch
+                        batch,
+                        options,
+                        cursor
                     );
                 } catch (error) {
                     if (
@@ -2812,7 +2937,8 @@ export class CloudAdapter implements FileSystemAdapter {
                     token,
                     roomUrl,
                     batch,
-                    options
+                    options,
+                    cursor
                 );
             }
             for (const [documentId, bytes] of batchResult) {
@@ -2825,7 +2951,9 @@ export class CloudAdapter implements FileSystemAdapter {
     private async _hydratePack(
         token: string,
         roomUrl: string,
-        documentIds: string[]
+        documentIds: string[],
+        options: CloudShardIoOptions | undefined,
+        cursor: CloudShardIoProgress
     ): Promise<Map<string, Uint8Array>> {
         this._noteTransferActivity('receiving');
         const response = await fetch(
@@ -2840,7 +2968,8 @@ export class CloudAdapter implements FileSystemAdapter {
                     'Authorization': `Bearer ${token}`,
                     'Content-Type': 'application/json'
                 },
-                body: JSON.stringify({ ids: documentIds })
+                body: JSON.stringify({ ids: documentIds }),
+                signal: options?.signal
             }
         );
         if (isPackUnsupportedStatus(response.status)) {
@@ -2857,6 +2986,7 @@ export class CloudAdapter implements FileSystemAdapter {
         const reader = response.body.getReader();
         try {
             while (true) {
+                throwIfAborted(options?.signal);
                 const { done, value } = await reader.read();
                 if (value) {
                     for (const frame of parser.push(value)) {
@@ -2867,10 +2997,20 @@ export class CloudAdapter implements FileSystemAdapter {
                                     : 'shard pack hydrate failed';
                         } else if (
                             frame.type === PACK_FRAME_TYPE.SHARD &&
-                            !frame.missing &&
-                            frame.payload.byteLength
+                            !frame.missing
                         ) {
-                            result.set(frame.shardId, frame.payload.slice());
+                            if (frame.payload.byteLength) {
+                                result.set(
+                                    frame.shardId,
+                                    frame.payload.slice()
+                                );
+                            }
+                            cursor.completed += 1;
+                            cursor.bytesCompleted += frame.payload.byteLength;
+                            await emitShardIoProgress(options, {
+                                ...cursor,
+                                shardId: frame.shardId
+                            });
                         }
                     }
                 }
@@ -2894,13 +3034,15 @@ export class CloudAdapter implements FileSystemAdapter {
         token: string,
         roomUrl: string,
         documentIds: string[],
-        options?: CloudShardIoOptions
+        options: CloudShardIoOptions | undefined,
+        cursor: CloudShardIoProgress
     ): Promise<Map<string, Uint8Array>> {
         const result = new Map<string, Uint8Array>();
         const rows = await mapPool(
             documentIds,
             shardIoConcurrency(options, HYDRATE_SHARD_CONCURRENCY),
             async (documentId) => {
+                throwIfAborted(options?.signal);
                 const httpUrl = normalizeCloudShardHttpUrl(
                     roomUrl,
                     this._websiteBaseUrl,
@@ -2909,9 +3051,15 @@ export class CloudAdapter implements FileSystemAdapter {
                 );
                 this._noteTransferActivity('receiving');
                 const response = await fetch(httpUrl, {
-                    headers: { Authorization: `Bearer ${token}` }
+                    headers: { Authorization: `Bearer ${token}` },
+                    signal: options?.signal
                 });
                 if (response.status === 404) {
+                    cursor.completed += 1;
+                    await emitShardIoProgress(options, {
+                        ...cursor,
+                        shardId: documentId
+                    });
                     return { documentId, bytes: null as Uint8Array | null };
                 }
                 if (!response.ok) {
@@ -2919,10 +3067,14 @@ export class CloudAdapter implements FileSystemAdapter {
                         `shard hydrate failed (${documentId}): ${response.status}`
                     );
                 }
-                return {
-                    documentId,
-                    bytes: new Uint8Array(await response.arrayBuffer())
-                };
+                const bytes = new Uint8Array(await response.arrayBuffer());
+                cursor.completed += 1;
+                cursor.bytesCompleted += bytes.byteLength;
+                await emitShardIoProgress(options, {
+                    ...cursor,
+                    shardId: documentId
+                });
+                return { documentId, bytes };
             }
         );
         for (const row of rows) {
@@ -2931,6 +3083,49 @@ export class CloudAdapter implements FileSystemAdapter {
             }
         }
         return result;
+    }
+
+    async discardSeededShards(
+        token: string,
+        roomUrl: string,
+        shardIds: string[],
+        options?: { signal?: AbortSignal }
+    ): Promise<void> {
+        const ids = [...new Set(shardIds.filter((id) => id))];
+        if (!ids.length) {
+            return;
+        }
+        const batches = partitionPackItems(
+            ids,
+            () => 0,
+            1024,
+            HYDRATE_BATCH_MAX_BYTES
+        );
+        for (const batch of batches) {
+            throwIfAborted(options?.signal);
+            const response = await fetch(
+                normalizeCloudShardPackDiscardUrl(
+                    roomUrl,
+                    this._websiteBaseUrl,
+                    this._assetId
+                ),
+                {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${token}`,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ ids: batch }),
+                    signal: options?.signal
+                }
+            );
+            if (!response.ok) {
+                const body = await response.text().catch(() => '');
+                throw new Error(
+                    `shard discard failed: ${response.status} ${body.slice(0, 160)}`
+                );
+            }
+        }
     }
 
     private async _openWebSocket(token: string, wsUrl: string): Promise<void> {
