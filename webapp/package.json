@@ -20,6 +20,7 @@
         "test:snapshots": "playwright test --update-snapshots=changed",
         "format:snapshot-json": "node scripts/format-snapshot-json.mjs",
         "test:compile-bench": "COMPILE_BENCH=1 playwright test tests/compilation-lane-benchmark.spec.ts",
+        "bench:cloud-shard-io": "CLOUD_COLLAB_E2E=1 SHARD_IO_BENCH=1 playwright test --config=playwright.shard-io-bench.config.ts",
         "test:jest": "jest --runInBand --verbose tests/",
         "test:rename-glyphs-wasm": "node tests/rename-glyphs-wasm-integration.mjs",
         "format": "prettier --write .",

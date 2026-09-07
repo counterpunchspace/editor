@@ -81,8 +81,16 @@ const APP_SETTINGS = {
         MAX_COMPACTION_FOLD_BYTES: CLOUD_MAX_YJS_PACKET_BYTES,
         MAX_COMPACTION_RECOVERABLE_BYTES: CLOUD_MAX_SHARD_BYTES,
         CLIENT_LIVE_MEMORY_WARNING_STRUCTS: 80_000,
-        /** Parallel shard GET/POST workers. Per-shard identity and digests still apply. */
+        /**
+         * Parallel shard GET workers (full Fustat hydrate bench, HTTP/2 local
+         * stack). See tests/cloud-shard-concurrency.bench.ts.
+         */
         HYDRATE_SHARD_CONCURRENCY: 6,
+        /**
+         * Parallel shard POST workers. The same Fustat seed bench is fastest
+         * at 1 — extra POSTs convoy on D1 quota + per-glyph DOs.
+         */
+        SEED_SHARD_CONCURRENCY: 1,
         /** Default open uses sparse closure at or above this live catalog size. */
         AUTO_SPARSE_CATALOG_GLYPHS: 256,
         /** Cap accumulated sparse residency (working + previous + hidden). */

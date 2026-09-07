@@ -57,7 +57,8 @@ import {
 } from './filesystem-plugins/cloud-document-set';
 import {
     mapPool,
-    HYDRATE_SHARD_CONCURRENCY
+    HYDRATE_SHARD_CONCURRENCY,
+    SEED_SHARD_CONCURRENCY
 } from './filesystem-plugins/cloud-bounded-io';
 import {
     assertSafeRebaseline,
@@ -143,6 +144,20 @@ export type CloudSeedDocumentSetResult = {
     coreCheckpointLogId: number | null;
     attestations: CloudSeededShardAttestation[];
 };
+
+/** Overrides for bounded shard HTTP. Production callers omit this. */
+export type CloudShardIoOptions = {
+    concurrency?: number;
+    maxRequests?: number;
+    maxBytes?: number;
+};
+
+function shardIoConcurrency(
+    options: CloudShardIoOptions | undefined,
+    fallback: number
+): number {
+    return Math.max(1, options?.concurrency ?? fallback);
+}
 
 function getCloudRequestHeaders(
     extraHeaders: Record<string, string> = {}
@@ -2377,18 +2392,21 @@ export class CloudAdapter implements FileSystemAdapter {
         roomUrl: string,
         shards: EncodedShard[],
         glyphCount: number,
-        migrationNonce?: string
+        migrationNonce?: string,
+        options?: CloudShardIoOptions
     ): Promise<CloudSeedDocumentSetResult> {
         assertHydrateBatchBudget({
             requestCount: shards.length,
             byteLength: shards.reduce(
                 (sum, shard) => sum + shard.bytes.byteLength,
                 0
-            )
+            ),
+            maxRequests: options?.maxRequests,
+            maxBytes: options?.maxBytes
         });
         const rows = await mapPool(
             shards,
-            HYDRATE_SHARD_CONCURRENCY,
+            shardIoConcurrency(options, SEED_SHARD_CONCURRENCY),
             async (shard) =>
                 this._seedOneShard(
                     token,
@@ -2539,16 +2557,19 @@ export class CloudAdapter implements FileSystemAdapter {
     async hydrateDocumentSet(
         token: string,
         roomUrl: string,
-        documentIds: string[]
+        documentIds: string[],
+        options?: CloudShardIoOptions
     ): Promise<Map<string, Uint8Array>> {
         assertHydrateBatchBudget({
             requestCount: documentIds.length,
-            byteLength: 0
+            byteLength: 0,
+            maxRequests: options?.maxRequests,
+            maxBytes: options?.maxBytes
         });
         const result = new Map<string, Uint8Array>();
         const rows = await mapPool(
             documentIds,
-            HYDRATE_SHARD_CONCURRENCY,
+            shardIoConcurrency(options, HYDRATE_SHARD_CONCURRENCY),
             async (documentId) => {
                 const httpUrl = normalizeCloudShardHttpUrl(
                     roomUrl,
@@ -2584,8 +2605,8 @@ export class CloudAdapter implements FileSystemAdapter {
         assertHydrateBatchBudget({
             requestCount: documentIds.length,
             byteLength: totalBytes,
-            maxRequests: HYDRATE_BATCH_MAX_REQUESTS,
-            maxBytes: HYDRATE_BATCH_MAX_BYTES
+            maxRequests: options?.maxRequests ?? HYDRATE_BATCH_MAX_REQUESTS,
+            maxBytes: options?.maxBytes ?? HYDRATE_BATCH_MAX_BYTES
         });
         return result;
     }

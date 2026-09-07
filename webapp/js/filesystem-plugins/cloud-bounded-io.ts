@@ -1,6 +1,9 @@
 /** Bounded parallel I/O for cloud shard hydrate/seed. Fail the batch if any worker throws. */
 
-export { HYDRATE_SHARD_CONCURRENCY } from './cloud-shard-limits';
+export {
+    HYDRATE_SHARD_CONCURRENCY,
+    SEED_SHARD_CONCURRENCY
+} from './cloud-shard-limits';
 
 export async function mapPool<T, R>(
     items: readonly T[],

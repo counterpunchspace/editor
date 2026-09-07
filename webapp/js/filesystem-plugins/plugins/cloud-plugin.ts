@@ -20,6 +20,7 @@ import {
     CloudConnectionStatus,
     type CloudTransferActivity,
     type CloudSeededShardAttestation,
+    type CloudShardIoOptions,
     normalizeCloudRoomWebSocketUrl
 } from '../../cloud-adapter';
 import {
@@ -3846,6 +3847,159 @@ export class CloudPlugin extends FilesystemPlugin {
         this._finalizeCurrentFontAsSavedCloudAsset(assetId);
 
         return assetId;
+    }
+
+    /**
+     * Seed the current in-memory font to a new pending asset using the same
+     * HTTP path as Save As, with an explicit shard POST concurrency.
+     * Does not attach a live WebSocket. Used by the shard-I/O bench.
+     */
+    async measureCloudSeedBatch(
+        assetName: string,
+        concurrency: number
+    ): Promise<{
+        assetId: string;
+        seedMs: number;
+        shardCount: number;
+        byteLength: number;
+        documentIds: string[];
+        glyphCount: number;
+    }> {
+        const user = await this._ensureCloudUser({
+            allowLoginRedirect: true
+        });
+        if (!user) {
+            throw new Error('Authentication required');
+        }
+
+        await this.prepareToSeed();
+        const liveBridge = await waitForCloudSaveBridge();
+        assertCloudBridgeStateCanBeSaved(liveBridge);
+        const shards = (liveBridge.encodeDocumentSet?.() ?? []).map(
+            (shard) => ({
+                documentId: shard.documentId,
+                bytes: shard.bytes.slice()
+            })
+        );
+        if (!shards.length) {
+            throw new Error('No live document set to seed to cloud');
+        }
+        const seedFontJson = canonicalizeCloudExportFontJson(
+            await waitForCloudSaveSeedFontJson()
+        );
+        validateCloudExportForFontOpen(seedFontJson, 'save');
+        const glyphCount = listGlyphRecords(seedFontJson).length;
+        const byteLength = shards.reduce(
+            (sum, shard) => sum + shard.bytes.byteLength,
+            0
+        );
+        const ioOptions: CloudShardIoOptions = {
+            concurrency,
+            maxRequests: shards.length,
+            maxBytes: Math.max(byteLength, 1)
+        };
+
+        const resp = await fetch(`${this._websiteBaseUrl}/api/cloud/assets`, {
+            method: 'POST',
+            credentials: 'include',
+            headers: getCloudRequestHeaders({
+                'Content-Type': 'application/json'
+            }),
+            body: JSON.stringify({
+                name: assetName,
+                estimatedSeedBytes: byteLength,
+                estimatedGlyphCount: glyphCount
+            })
+        });
+        if (!resp.ok) {
+            const err = await resp.text().catch(() => '');
+            throw new Error(
+                `Failed to create cloud asset: ${resp.status} ${err}`
+            );
+        }
+        const { asset } = (await resp.json()) as { asset: CloudAsset };
+        const assetId = asset.id;
+        const { token, roomUrl } = await this._fetchRoomToken(assetId);
+        const seeder = new CloudAdapter({
+            assetId,
+            websiteBaseUrl: this._websiteBaseUrl
+        });
+        const startedAt = performance.now();
+        try {
+            const seeded = await seeder.seedDocumentSet(
+                token,
+                roomUrl,
+                shards,
+                glyphCount,
+                undefined,
+                ioOptions
+            );
+            const seedMs = performance.now() - startedAt;
+            await this._finalizePendingAsset(assetId, {
+                shards,
+                receipts: seeded.attestations,
+                glyphCount
+            });
+            return {
+                assetId,
+                seedMs,
+                shardCount: shards.length,
+                byteLength,
+                documentIds: shards.map((shard) => shard.documentId),
+                glyphCount
+            };
+        } catch (error) {
+            await this._abortPendingAsset(assetId).catch(() => undefined);
+            throw error;
+        } finally {
+            seeder.disconnect();
+        }
+    }
+
+    /**
+     * GET every listed shard through CloudAdapter.hydrateDocumentSet.
+     * Used by the shard-I/O bench for a full Fustat load.
+     */
+    async measureCloudHydrateBatch(
+        assetId: string,
+        documentIds: string[],
+        concurrency: number
+    ): Promise<{
+        hydrateMs: number;
+        loaded: number;
+        byteLength: number;
+    }> {
+        const { token, roomUrl } = await this._fetchRoomToken(assetId);
+        const hydrator = new CloudAdapter({
+            assetId,
+            websiteBaseUrl: this._websiteBaseUrl
+        });
+        const ioOptions: CloudShardIoOptions = {
+            concurrency,
+            maxRequests: documentIds.length,
+            maxBytes: Number.MAX_SAFE_INTEGER
+        };
+        try {
+            const startedAt = performance.now();
+            const shards = await hydrator.hydrateDocumentSet(
+                token,
+                roomUrl,
+                documentIds,
+                ioOptions
+            );
+            const hydrateMs = performance.now() - startedAt;
+            let byteLength = 0;
+            for (const bytes of shards.values()) {
+                byteLength += bytes.byteLength;
+            }
+            return {
+                hydrateMs,
+                loaded: shards.size,
+                byteLength
+            };
+        } finally {
+            hydrator.disconnect();
+        }
     }
 
     /**

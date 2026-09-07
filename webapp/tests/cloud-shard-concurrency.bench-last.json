@@ -1,0 +1,109 @@
+{
+    "at": "2026-09-07T15:59:48.911Z",
+    "font": "Fustat.glyphs",
+    "http2": true,
+    "shardCount": 1060,
+    "seedBytes": 11073156,
+    "levels": [1, 4, 6, 8, 16, 24, 32],
+    "seedSamples": [
+        {
+            "concurrency": 1,
+            "seedMs": 68634.30999994278,
+            "shardCount": 1060,
+            "byteLength": 11073156,
+            "assetId": "9oF3kyLe0N4Eby2V0q2o0"
+        },
+        {
+            "concurrency": 4,
+            "seedMs": 83840.91999983788,
+            "shardCount": 1060,
+            "byteLength": 11073156,
+            "assetId": "krE5VZSUxPdyUu4PD5LZi"
+        },
+        {
+            "concurrency": 6,
+            "seedMs": 76917.95000004768,
+            "shardCount": 1060,
+            "byteLength": 11073156,
+            "assetId": "R9pTFcSAHVGSOYWtWnsJX"
+        },
+        {
+            "concurrency": 8,
+            "seedMs": 73132.16000008583,
+            "shardCount": 1060,
+            "byteLength": 11073156,
+            "assetId": "BaQrVd0NCFvwHbcuxaSLv"
+        },
+        {
+            "concurrency": 16,
+            "seedMs": 88499.67499995232,
+            "shardCount": 1060,
+            "byteLength": 11073156,
+            "assetId": "g6FrlzcxVclLXKlTTA1D7"
+        },
+        {
+            "concurrency": 24,
+            "seedMs": 95491.76999998093,
+            "shardCount": 1060,
+            "byteLength": 11073156,
+            "assetId": "IAB04QkGvYB8wXdOG6YXk"
+        },
+        {
+            "concurrency": 32,
+            "seedMs": 104873.74000000954,
+            "shardCount": 1060,
+            "byteLength": 11073156,
+            "assetId": "EBeHSflJgh5TSmDetsSzi"
+        }
+    ],
+    "hydrateSamples": [
+        {
+            "concurrency": 1,
+            "hydrateMs": 39204.64499998093,
+            "loaded": 1060,
+            "byteLength": 11073156
+        },
+        {
+            "concurrency": 4,
+            "hydrateMs": 33626.97000002861,
+            "loaded": 1060,
+            "byteLength": 11073156
+        },
+        {
+            "concurrency": 6,
+            "hydrateMs": 31947.379999876022,
+            "loaded": 1060,
+            "byteLength": 11073156
+        },
+        {
+            "concurrency": 8,
+            "hydrateMs": 36318.265000104904,
+            "loaded": 1060,
+            "byteLength": 11073156
+        },
+        {
+            "concurrency": 16,
+            "hydrateMs": 34898.454999923706,
+            "loaded": 1060,
+            "byteLength": 11073156
+        },
+        {
+            "concurrency": 24,
+            "hydrateMs": 33876.40499997139,
+            "loaded": 1060,
+            "byteLength": 11073156
+        },
+        {
+            "concurrency": 32,
+            "hydrateMs": 35246.544999837875,
+            "loaded": 1060,
+            "byteLength": 11073156
+        }
+    ],
+    "recommended": {
+        "SEED_SHARD_CONCURRENCY": 1,
+        "HYDRATE_SHARD_CONCURRENCY": 6,
+        "seedReason": "lowest concurrency within 8% of fastest (1 @ 68634ms)",
+        "hydrateReason": "lowest concurrency within 5% of fastest (6 @ 31947ms)"
+    }
+}
