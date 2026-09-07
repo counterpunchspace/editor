@@ -679,6 +679,8 @@ class FontManager {
     editingSubsetSnapshotGlyphs: string[];
     editingSubsetSnapshotKey: string;
     coveredSparseHydrationKey: string | null = null;
+    private editingCompileInFlight: Promise<unknown> | null = null;
+    private editingCompileEnqueueGen = 0;
     isExternalReloading: boolean = false;
     pendingDebugEditingFontSaveAfterDrag: boolean;
     pendingBabelfontJsonSyncAfterDrag: boolean;
@@ -2677,6 +2679,7 @@ class FontManager {
                   ensureSparseHydration?: (input: {
                       text?: string;
                       glyphNames?: string[];
+                      purpose?: 'ui' | 'compile';
                   }) => Promise<string[]>;
               }
             | undefined;
@@ -2697,7 +2700,11 @@ class FontManager {
         }
         await plugin.ensureSparseHydration({
             text,
-            glyphNames: currentGlyphName ? [currentGlyphName] : []
+            glyphNames: [
+                ...(currentGlyphName ? [currentGlyphName] : []),
+                ...this.getLiveVisibleGlyphNames()
+            ],
+            purpose: 'compile'
         });
         this.coveredSparseHydrationKey = coverageKey;
     }
@@ -3078,6 +3085,55 @@ class FontManager {
      * @param {Array<string>} subsetGlyphs - Glyph names to include in the subset
      */
     async compileEditingFont(
+        text: string = '',
+        features: string[] = [],
+        subsetGlyphs?: string[]
+    ) {
+        if (!this.currentFont) {
+            throw new Error('No font loaded');
+        }
+
+        if (!fontCompilation || !fontCompilation.isInitialized) {
+            throw new Error('Font compilation system not initialized');
+        }
+
+        const generation = ++this.editingCompileEnqueueGen;
+        if (this.editingCompileInFlight) {
+            if (
+                typeof this.currentFont.requestRecompileWithoutDataChange ===
+                'function'
+            ) {
+                this.currentFont.requestRecompileWithoutDataChange();
+            } else {
+                this.currentFont.compileRequestVersion =
+                    Number(this.currentFont.compileRequestVersion || 0) + 1;
+            }
+            try {
+                await this.editingCompileInFlight;
+            } catch {
+                /* in-flight compile already reported */
+            }
+            if (generation !== this.editingCompileEnqueueGen) {
+                return this.editingFont;
+            }
+        }
+
+        const run = this.compileEditingFontUnqueued(
+            text,
+            features,
+            subsetGlyphs
+        );
+        this.editingCompileInFlight = run;
+        try {
+            return await run;
+        } finally {
+            if (this.editingCompileInFlight === run) {
+                this.editingCompileInFlight = null;
+            }
+        }
+    }
+
+    private async compileEditingFontUnqueued(
         text: string = '',
         features: string[] = [],
         subsetGlyphs?: string[]

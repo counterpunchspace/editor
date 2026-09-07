@@ -55,7 +55,16 @@ import {
     FONT_DEPS_DOCUMENT_ID,
     glyphIdFromDocumentId
 } from './filesystem-plugins/cloud-document-set';
-import { assertSafeRebaseline } from './filesystem-plugins/cloud-shard-limits';
+import {
+    mapPool,
+    HYDRATE_SHARD_CONCURRENCY
+} from './filesystem-plugins/cloud-bounded-io';
+import {
+    assertSafeRebaseline,
+    assertHydrateBatchBudget,
+    HYDRATE_BATCH_MAX_BYTES,
+    HYDRATE_BATCH_MAX_REQUESTS
+} from './filesystem-plugins/cloud-shard-limits';
 import { missingRequiredCloudCapabilities } from './filesystem-plugins/cloud-collab-capabilities';
 import {
     collaborationMessageKey,
@@ -2370,125 +2379,161 @@ export class CloudAdapter implements FileSystemAdapter {
         glyphCount: number,
         migrationNonce?: string
     ): Promise<CloudSeedDocumentSetResult> {
+        assertHydrateBatchBudget({
+            requestCount: shards.length,
+            byteLength: shards.reduce(
+                (sum, shard) => sum + shard.bytes.byteLength,
+                0
+            )
+        });
+        const rows = await mapPool(
+            shards,
+            HYDRATE_SHARD_CONCURRENCY,
+            async (shard) =>
+                this._seedOneShard(
+                    token,
+                    roomUrl,
+                    shard,
+                    glyphCount,
+                    migrationNonce
+                )
+        );
         let coreCheckpointLogId: number | null = null;
         const attestations: CloudSeededShardAttestation[] = [];
-        for (const shard of shards) {
-            const httpUrl = normalizeCloudShardHttpUrl(
-                roomUrl,
-                this._websiteBaseUrl,
-                this._assetId,
-                shard.documentId
-            );
-            this._noteTransferActivity('sending');
-            let response: Response | null = null;
-            let lastError: unknown = null;
-            // Initial seeding is idempotent: a successful first attempt makes
-            // a retry return 409. Retrying transient browser/workerd transport
-            // failures prevents a single dropped glyph upload from abandoning
-            // the entire Save As operation.
-            for (let attempt = 0; attempt < 3; attempt += 1) {
-                const controller = new AbortController();
-                const timeoutId = window.setTimeout(
-                    () => controller.abort(),
-                    15_000
-                );
-                try {
-                    response = await fetch(httpUrl, {
-                        method: 'POST',
-                        headers: {
-                            'Authorization': `Bearer ${token}`,
-                            'Content-Type': 'application/octet-stream',
-                            'X-Glyph-Count': String(glyphCount),
-                            ...(migrationNonce
-                                ? { 'X-Cloud-Migration-Nonce': migrationNonce }
-                                : {})
-                        },
-                        body: shard.bytes as unknown as BodyInit,
-                        signal: controller.signal
-                    });
-                    break;
-                } catch (error) {
-                    lastError = error;
-                    if (attempt < 2) {
-                        await new Promise<void>((resolve) => {
-                            window.setTimeout(resolve, 100 * (attempt + 1));
-                        });
-                    }
-                } finally {
-                    window.clearTimeout(timeoutId);
-                }
+        for (const row of rows) {
+            if (row.coreCheckpointLogId !== null) {
+                coreCheckpointLogId = row.coreCheckpointLogId;
             }
-            if (!response) {
-                const detail =
-                    lastError instanceof Error
-                        ? lastError.message
-                        : String(lastError ?? 'unknown transport error');
-                throw new Error(
-                    `shard seed request failed (${shard.documentId}): ${detail}`
-                );
-            }
-            if (response.status === 409) {
-                const conflictBody = await response.text().catch(() => '');
-                let code = '';
-                try {
-                    code = String(JSON.parse(conflictBody)?.code || '');
-                } catch {
-                    /* not JSON */
-                }
-                if (code === 'seed_digest_conflict') {
-                    throw new Error(
-                        `shard seed digest conflict (${shard.documentId})`
-                    );
-                }
-                throw new Error(
-                    `shard seed failed (${shard.documentId}): 409 ${conflictBody.slice(0, 160)}`
-                );
-            }
-            if (!response.ok) {
-                const body = await response.text().catch(() => '');
-                throw new Error(
-                    `shard seed failed (${shard.documentId}): ${response.status} ${body.slice(0, 160)}`
-                );
-            }
-            try {
-                const result = (await response.json()) as {
-                    checkpointLogId?: unknown;
-                    checkpointObjectKey?: unknown;
-                    snapshotSha256?: unknown;
-                    snapshotBytes?: unknown;
-                    checkpointAt?: unknown;
-                };
-                if (
-                    typeof result.checkpointLogId === 'number' &&
-                    shard.documentId === FONT_CORE_DOCUMENT_ID
-                ) {
-                    coreCheckpointLogId = result.checkpointLogId;
-                }
-                if (
-                    typeof result.checkpointObjectKey === 'string' &&
-                    typeof result.snapshotSha256 === 'string' &&
-                    typeof result.snapshotBytes === 'number'
-                ) {
-                    attestations.push({
-                        shardId: shard.documentId,
-                        checkpointObjectKey: result.checkpointObjectKey,
-                        checkpointSha256: result.snapshotSha256,
-                        checkpointByteLength: result.snapshotBytes,
-                        checkpointLogId:
-                            typeof result.checkpointLogId === 'number'
-                                ? result.checkpointLogId
-                                : 0,
-                        checkpointAt:
-                            typeof result.checkpointAt === 'number'
-                                ? result.checkpointAt
-                                : undefined
-                    });
-                }
-            } catch {
-                /* seed succeeded even if the body is not JSON */
+            if (row.attestation) {
+                attestations.push(row.attestation);
             }
         }
         return { coreCheckpointLogId, attestations };
+    }
+
+    private async _seedOneShard(
+        token: string,
+        roomUrl: string,
+        shard: EncodedShard,
+        glyphCount: number,
+        migrationNonce?: string
+    ): Promise<{
+        coreCheckpointLogId: number | null;
+        attestation: CloudSeededShardAttestation | null;
+    }> {
+        const httpUrl = normalizeCloudShardHttpUrl(
+            roomUrl,
+            this._websiteBaseUrl,
+            this._assetId,
+            shard.documentId
+        );
+        this._noteTransferActivity('sending');
+        let response: Response | null = null;
+        let lastError: unknown = null;
+        // Initial seeding is idempotent: a successful first attempt makes
+        // a retry return 409. Retrying transient browser/workerd transport
+        // failures prevents a single dropped glyph upload from abandoning
+        // the entire Save As operation.
+        for (let attempt = 0; attempt < 3; attempt += 1) {
+            const controller = new AbortController();
+            const timeoutId = window.setTimeout(
+                () => controller.abort(),
+                15_000
+            );
+            try {
+                response = await fetch(httpUrl, {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${token}`,
+                        'Content-Type': 'application/octet-stream',
+                        'X-Glyph-Count': String(glyphCount),
+                        ...(migrationNonce
+                            ? { 'X-Cloud-Migration-Nonce': migrationNonce }
+                            : {})
+                    },
+                    body: shard.bytes as unknown as BodyInit,
+                    signal: controller.signal
+                });
+                break;
+            } catch (error) {
+                lastError = error;
+                if (attempt < 2) {
+                    await new Promise<void>((resolve) => {
+                        window.setTimeout(resolve, 100 * (attempt + 1));
+                    });
+                }
+            } finally {
+                window.clearTimeout(timeoutId);
+            }
+        }
+        if (!response) {
+            const detail =
+                lastError instanceof Error
+                    ? lastError.message
+                    : String(lastError ?? 'unknown transport error');
+            throw new Error(
+                `shard seed request failed (${shard.documentId}): ${detail}`
+            );
+        }
+        if (response.status === 409) {
+            const conflictBody = await response.text().catch(() => '');
+            let code = '';
+            try {
+                code = String(JSON.parse(conflictBody)?.code || '');
+            } catch {
+                /* not JSON */
+            }
+            if (code === 'seed_digest_conflict') {
+                throw new Error(
+                    `shard seed digest conflict (${shard.documentId})`
+                );
+            }
+            throw new Error(
+                `shard seed failed (${shard.documentId}): 409 ${conflictBody.slice(0, 160)}`
+            );
+        }
+        if (!response.ok) {
+            const body = await response.text().catch(() => '');
+            throw new Error(
+                `shard seed failed (${shard.documentId}): ${response.status} ${body.slice(0, 160)}`
+            );
+        }
+        try {
+            const result = (await response.json()) as {
+                checkpointLogId?: unknown;
+                checkpointObjectKey?: unknown;
+                snapshotSha256?: unknown;
+                snapshotBytes?: unknown;
+                checkpointAt?: unknown;
+            };
+            const coreCheckpointLogId =
+                typeof result.checkpointLogId === 'number' &&
+                shard.documentId === FONT_CORE_DOCUMENT_ID
+                    ? result.checkpointLogId
+                    : null;
+            const attestation =
+                typeof result.checkpointObjectKey === 'string' &&
+                typeof result.snapshotSha256 === 'string' &&
+                typeof result.snapshotBytes === 'number'
+                    ? {
+                          shardId: shard.documentId,
+                          checkpointObjectKey: result.checkpointObjectKey,
+                          checkpointSha256: result.snapshotSha256,
+                          checkpointByteLength: result.snapshotBytes,
+                          checkpointLogId:
+                              typeof result.checkpointLogId === 'number'
+                                  ? result.checkpointLogId
+                                  : 0,
+                          checkpointAt:
+                              typeof result.checkpointAt === 'number'
+                                  ? result.checkpointAt
+                                  : undefined
+                      }
+                    : null;
+            return { coreCheckpointLogId, attestation };
+        } catch {
+            return { coreCheckpointLogId: null, attestation: null };
+        }
     }
 
     async hydrateDocumentSet(
@@ -2496,31 +2541,52 @@ export class CloudAdapter implements FileSystemAdapter {
         roomUrl: string,
         documentIds: string[]
     ): Promise<Map<string, Uint8Array>> {
+        assertHydrateBatchBudget({
+            requestCount: documentIds.length,
+            byteLength: 0
+        });
         const result = new Map<string, Uint8Array>();
-        for (const documentId of documentIds) {
-            const httpUrl = normalizeCloudShardHttpUrl(
-                roomUrl,
-                this._websiteBaseUrl,
-                this._assetId,
-                documentId
-            );
-            this._noteTransferActivity('receiving');
-            const response = await fetch(httpUrl, {
-                headers: { Authorization: `Bearer ${token}` }
-            });
-            if (response.status === 404) {
-                continue;
-            }
-            if (!response.ok) {
-                throw new Error(
-                    `shard hydrate failed (${documentId}): ${response.status}`
+        const rows = await mapPool(
+            documentIds,
+            HYDRATE_SHARD_CONCURRENCY,
+            async (documentId) => {
+                const httpUrl = normalizeCloudShardHttpUrl(
+                    roomUrl,
+                    this._websiteBaseUrl,
+                    this._assetId,
+                    documentId
                 );
+                this._noteTransferActivity('receiving');
+                const response = await fetch(httpUrl, {
+                    headers: { Authorization: `Bearer ${token}` }
+                });
+                if (response.status === 404) {
+                    return { documentId, bytes: null as Uint8Array | null };
+                }
+                if (!response.ok) {
+                    throw new Error(
+                        `shard hydrate failed (${documentId}): ${response.status}`
+                    );
+                }
+                return {
+                    documentId,
+                    bytes: new Uint8Array(await response.arrayBuffer())
+                };
             }
-            result.set(
-                documentId,
-                new Uint8Array(await response.arrayBuffer())
-            );
+        );
+        let totalBytes = 0;
+        for (const row of rows) {
+            if (row.bytes) {
+                totalBytes += row.bytes.byteLength;
+                result.set(row.documentId, row.bytes);
+            }
         }
+        assertHydrateBatchBudget({
+            requestCount: documentIds.length,
+            byteLength: totalBytes,
+            maxRequests: HYDRATE_BATCH_MAX_REQUESTS,
+            maxBytes: HYDRATE_BATCH_MAX_BYTES
+        });
         return result;
     }
 
@@ -2771,7 +2837,8 @@ export class CloudAdapter implements FileSystemAdapter {
                     break;
                 }
                 const missingCaps = missingRequiredCloudCapabilities(
-                    msg.capabilities
+                    (msg.capabilities as
+                        Record<string, unknown> | null | undefined) ?? null
                 );
                 if (missingCaps.length) {
                     this._terminalCloseDetail =

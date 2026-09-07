@@ -202,23 +202,75 @@ export function catalogEntriesForDepsParse(
         .filter((entry) => entry.name);
 }
 
-export function buildFontDepsIndex(
-    fontJson: Record<string, unknown>
-): FontDepsIndex {
-    const glyphs = listGlyphRecords(fontJson);
-    const idByName = new Map<string, string>();
-    for (const entry of catalogEntriesForDepsParse(fontJson)) {
-        idByName.set(entry.name, entry.glyphId);
+type CatalogNameIndex = {
+    idByName: Map<string, string>;
+    namesByLength: string[];
+};
+
+let catalogNameIndexCacheKey = '';
+let catalogNameIndexCache: CatalogNameIndex | null = null;
+
+export function catalogNameIndexCacheKeyFromEntries(
+    catalog: Array<{ glyphId: string; name: string; generation?: number }>
+): string {
+    return catalog
+        .map(
+            (entry) =>
+                `${entry.glyphId}\0${entry.name}\0${Number(entry.generation || 0)}`
+        )
+        .sort()
+        .join('\n');
+}
+
+export function catalogNameIndexFromEntries(
+    catalog: Array<{ glyphId: string; name: string }>
+): CatalogNameIndex {
+    const key = catalogNameIndexCacheKeyFromEntries(catalog);
+    if (catalogNameIndexCache && catalogNameIndexCacheKey === key) {
+        return catalogNameIndexCache;
     }
-    for (const glyph of glyphs) {
-        const name = String(glyph.name || '');
-        if (name) {
-            idByName.set(name, ensureImmutableGlyphId(glyph));
+    const idByName = new Map<string, string>();
+    for (const entry of catalog) {
+        if (entry.name && entry.glyphId) {
+            idByName.set(entry.name, entry.glyphId);
         }
     }
     const namesByLength = [...idByName.keys()].sort(
         (left, right) => right.length - left.length
     );
+    catalogNameIndexCacheKey = key;
+    catalogNameIndexCache = { idByName, namesByLength };
+    return catalogNameIndexCache;
+}
+
+export function resetCatalogNameIndexCacheForTests(): void {
+    catalogNameIndexCacheKey = '';
+    catalogNameIndexCache = null;
+}
+
+export function buildFontDepsIndex(
+    fontJson: Record<string, unknown>
+): FontDepsIndex {
+    const glyphs = listGlyphRecords(fontJson);
+    const catalog = catalogEntriesForDepsParse(fontJson);
+    const cached = catalogNameIndexFromEntries(catalog);
+    const idByName = new Map(cached.idByName);
+    let namesByLength = cached.namesByLength;
+    let addedName = false;
+    for (const glyph of glyphs) {
+        const name = String(glyph.name || '');
+        if (name) {
+            idByName.set(name, ensureImmutableGlyphId(glyph));
+            if (!cached.idByName.has(name)) {
+                addedName = true;
+            }
+        }
+    }
+    if (addedName) {
+        namesByLength = [...idByName.keys()].sort(
+            (left, right) => right.length - left.length
+        );
+    }
     const edges: Record<string, Record<string, FontDepEdgeKind>> = {};
     const sourceRevision: Record<string, string> = {};
 
@@ -258,13 +310,10 @@ export function buildFontDepsForGlyph(
     glyph: Record<string, unknown>,
     catalog: Array<{ glyphId: string; name: string }>
 ): Record<string, FontDepEdgeKind> {
-    const idByName = new Map(
-        catalog.map((entry) => [entry.name, entry.glyphId])
-    );
+    const cached = catalogNameIndexFromEntries(catalog);
+    const idByName = new Map(cached.idByName);
+    const namesByLength = cached.namesByLength;
     const sourceId = ensureImmutableGlyphId(glyph);
-    const namesByLength = [...idByName.keys()].sort(
-        (left, right) => right.length - left.length
-    );
     const targets: Record<string, FontDepEdgeKind> = {};
     for (const name of collectShapeReferences(glyph)) {
         const id = idByName.get(name);
@@ -842,6 +891,58 @@ export function computeSparseHydrationPartition(options: {
         workingIds,
         hiddenIds: hidden,
         loadIds: [...workingIds, ...hidden]
+    };
+}
+
+/**
+ * Compile hydration: seeds + layout + explicit visible dependents, then
+ * forward component/metrics-key prerequisites only. Does not reverse-close
+ * the composite family of a typed base glyph.
+ */
+export function planCompileHydration(options: {
+    seedIds: string[];
+    layoutIds?: string[];
+    visibleIds?: string[];
+    catalogIds: string[];
+    loadedIds?: Iterable<string>;
+    edges: Record<string, Record<string, FontDepEdgeKind>>;
+    catalog?: Array<{ glyphId: string; name: string }>;
+}): SparseHydrationPlan {
+    const catalog = new Set(options.catalogIds);
+    const working = [
+        ...new Set([
+            ...options.seedIds,
+            ...(options.layoutIds || []),
+            ...(options.visibleIds || [])
+        ])
+    ].filter((id) => id && catalog.has(id));
+    if (!working.length) {
+        return {
+            workingIds: [],
+            hiddenIds: [],
+            loadIds: [],
+            missingIds: []
+        };
+    }
+    const edges = mergeHydrationEdges(options.edges, options.catalog);
+    const forward = closeSet(
+        working,
+        mergeAdjacency(
+            forwardAdjacencyOfKind(edges, 'component'),
+            forwardAdjacencyOfKind(edges, 'metrics-key')
+        )
+    );
+    const workingSet = new Set(working);
+    const hiddenIds = [...forward].filter(
+        (id) => catalog.has(id) && !workingSet.has(id)
+    );
+    const loadIds = [...new Set([...working, ...hiddenIds])];
+    const loaded = new Set(options.loadedIds || []);
+    return {
+        workingIds: working,
+        hiddenIds,
+        loadIds,
+        missingIds: loadIds.filter((id) => !loaded.has(id))
     };
 }
 

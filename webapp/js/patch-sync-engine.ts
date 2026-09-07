@@ -550,6 +550,7 @@ export class PatchSyncEngine {
     private _lastBroadcastStateVectorByDoc = new Map<string, Uint8Array>();
     private _lastEncodedShardBytes = new Map<string, number>();
     private _docUpdateUnsubscribers: Array<() => void> = [];
+    private _docUpdateUnsubById = new Map<string, () => void>();
     /** Per-glyph undo managers (keyed by glyph name) */
     private _undoManagers = new Map<string, Y.UndoManager>();
     /** Per-layer undo managers (keyed by glyph@@layer) */
@@ -898,6 +899,9 @@ export class PatchSyncEngine {
         };
         doc.on('update', handler);
         this._docUpdateUnsubscribers.push(() => {
+            doc.off('update', handler);
+        });
+        this._docUpdateUnsubById.set(documentId, () => {
             doc.off('update', handler);
         });
     }
@@ -1494,6 +1498,150 @@ export class PatchSyncEngine {
             );
         }
         return shards;
+    }
+
+    getEstimatedLiveEncodedBytes(): number {
+        let total = 0;
+        for (const byteLength of this._lastEncodedShardBytes.values()) {
+            if (Number.isFinite(byteLength) && byteLength > 0) {
+                total += byteLength;
+            }
+        }
+        return total;
+    }
+
+    private _glyphHasRetainedLocalState(
+        glyphId: string,
+        glyphName: string | undefined
+    ): boolean {
+        if (this._txDepth > 0) {
+            return true;
+        }
+        const documentId = glyphDocumentId(glyphId);
+        const doc = this._glyphDocs.get(glyphId);
+        const lastVector = this._lastBroadcastStateVectorByDoc.get(documentId);
+        if (doc && lastVector) {
+            const delta = Y.encodeStateAsUpdate(doc, lastVector);
+            if (delta.byteLength > 2) {
+                return true;
+            }
+        }
+        if (!glyphName) {
+            return false;
+        }
+        const glyphUndo = this._undoManagers.get(glyphName);
+        if (
+            glyphUndo &&
+            (glyphUndo.undoStack.length > 0 || glyphUndo.redoStack.length > 0)
+        ) {
+            return true;
+        }
+        const glyphHistory = this._undoHistoryStacks.get(glyphName);
+        if (
+            glyphHistory &&
+            (glyphHistory.active.length > 0 || glyphHistory.undone.length > 0)
+        ) {
+            return true;
+        }
+        const layerPrefix = `${glyphName}@@`;
+        for (const [key, entry] of this._layerUndoManagers) {
+            if (!key.startsWith(layerPrefix)) {
+                continue;
+            }
+            if (
+                entry.manager.undoStack.length > 0 ||
+                entry.manager.redoStack.length > 0
+            ) {
+                return true;
+            }
+        }
+        for (const [key, stacks] of this._undoHistoryStacks) {
+            if (!key.startsWith(layerPrefix)) {
+                continue;
+            }
+            if (stacks.active.length > 0 || stacks.undone.length > 0) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private _releaseGlyphLocalManagers(glyphName: string): void {
+        const glyphUndo = this._undoManagers.get(glyphName);
+        glyphUndo?.destroy();
+        this._undoManagers.delete(glyphName);
+        this._undoHistoryStacks.delete(glyphName);
+        const layerPrefix = `${glyphName}@@`;
+        for (const key of [...this._layerUndoManagers.keys()]) {
+            if (!key.startsWith(layerPrefix)) {
+                continue;
+            }
+            this._layerUndoManagers.get(key)?.manager.destroy();
+            this._layerUndoManagers.delete(key);
+        }
+        for (const key of [...this._undoHistoryStacks.keys()]) {
+            if (key.startsWith(layerPrefix)) {
+                this._undoHistoryStacks.delete(key);
+            }
+        }
+    }
+
+    unloadCleanGlyphDocuments(keepIds: Iterable<string>): string[] {
+        const keep = new Set([...keepIds].filter(Boolean));
+        const linkedPeers = (
+            window as Window & {
+                windowSync?: { peers?: { size?: number } };
+            }
+        ).windowSync?.peers;
+        if (linkedPeers && Number(linkedPeers.size) > 0) {
+            return [];
+        }
+        const liveName =
+            (
+                window as Window & {
+                    glyphCanvas?: {
+                        outlineEditor?: { currentGlyphName?: string };
+                        getCurrentGlyphName?: () => string | null;
+                    };
+                }
+            ).glyphCanvas?.outlineEditor?.currentGlyphName ||
+            (
+                window as Window & {
+                    glyphCanvas?: { getCurrentGlyphName?: () => string | null };
+                }
+            ).glyphCanvas?.getCurrentGlyphName?.() ||
+            null;
+        if (liveName) {
+            const liveId = this._glyphIdByName.get(liveName);
+            if (liveId) {
+                keep.add(liveId);
+            }
+        }
+        const unloaded: string[] = [];
+        for (const glyphId of [...this._glyphDocs.keys()]) {
+            if (keep.has(glyphId) || this._sparseWorkingGlyphIds.has(glyphId)) {
+                continue;
+            }
+            const name = this._glyphNameById.get(glyphId);
+            if (this._glyphHasRetainedLocalState(glyphId, name)) {
+                continue;
+            }
+            const documentId = glyphDocumentId(glyphId);
+            this._docUpdateUnsubById.get(documentId)?.();
+            this._docUpdateUnsubById.delete(documentId);
+            this._lastBroadcastStateVectorByDoc.delete(documentId);
+            const doc = this._glyphDocs.get(glyphId);
+            doc?.destroy();
+            this._glyphDocs.delete(glyphId);
+            this._glyphNameById.delete(glyphId);
+            if (name) {
+                this._glyphIdByName.delete(name);
+                this._releaseGlyphLocalManagers(name);
+            }
+            this._lastEncodedShardBytes.delete(documentId);
+            unloaded.push(glyphId);
+        }
+        return unloaded;
     }
 
     applyDocumentSetState(shards: EncodedShard[]): void {
@@ -2195,6 +2343,7 @@ export class PatchSyncEngine {
             unsub();
         }
         this._docUpdateUnsubscribers = [];
+        this._docUpdateUnsubById.clear();
         this._destroyGlyphDocs();
         this.depsDoc.destroy();
         this.yDoc.destroy();
@@ -2503,7 +2652,17 @@ export class PatchSyncEngine {
             normalizedPreviousSnapshot,
             nextSnapshot
         );
+        this._stampLiveShapeIdsOnReloadSnapshots(
+            this._fontJson,
+            normalizedPreviousSnapshot,
+            nextSnapshot
+        );
         this._adoptGlyphIds(normalizedPreviousSnapshot, nextSnapshot);
+        this._preserveLiveCoreKeysAbsentFromSource(
+            storageFontSnapshot,
+            normalizedPreviousSnapshot,
+            nextSnapshot
+        );
         this._omitLiveOnlyModelKeys(
             nextSnapshot,
             normalizedPreviousSnapshot,
@@ -3529,6 +3688,95 @@ export class PatchSyncEngine {
         );
     }
 
+    private _alignReloadShapeIdentities(
+        previousShapes: unknown,
+        nextShapes: unknown
+    ): void {
+        if (!Array.isArray(previousShapes) || !Array.isArray(nextShapes)) {
+            return;
+        }
+        if (previousShapes.length !== nextShapes.length) {
+            this._adoptIndexedArrayIds(previousShapes, nextShapes, true);
+            return;
+        }
+        for (let index = 0; index < nextShapes.length; index += 1) {
+            const previousShape = previousShapes[index];
+            const nextShape = nextShapes[index];
+            if (
+                !previousShape ||
+                typeof previousShape !== 'object' ||
+                Array.isArray(previousShape) ||
+                !nextShape ||
+                typeof nextShape !== 'object' ||
+                Array.isArray(nextShape)
+            ) {
+                continue;
+            }
+            const previousId = (previousShape as Record<string, unknown>).id;
+            if (typeof previousId === 'string' && previousId) {
+                (nextShape as Record<string, unknown>).id = previousId;
+            } else {
+                delete (nextShape as Record<string, unknown>).id;
+            }
+        }
+    }
+
+    private _stampLiveShapeIdsOnReloadSnapshots(
+        liveSnapshot: unknown,
+        previousSnapshot: unknown,
+        nextSnapshot: unknown
+    ): void {
+        const liveGlyphs = this._coerceFontGlyphSnapshots(
+            (liveSnapshot as Record<string, unknown> | null)?.glyphs
+        );
+        const previousGlyphs = this._coerceFontGlyphSnapshots(
+            (previousSnapshot as Record<string, unknown> | null)?.glyphs
+        );
+        const nextGlyphs = this._coerceFontGlyphSnapshots(
+            (nextSnapshot as Record<string, unknown> | null)?.glyphs
+        );
+        const liveByName = new Map(
+            liveGlyphs.map((glyph) => [String(glyph.name || ''), glyph])
+        );
+        const previousByName = new Map(
+            previousGlyphs.map((glyph) => [String(glyph.name || ''), glyph])
+        );
+        for (const nextGlyph of nextGlyphs) {
+            const name = String(nextGlyph.name || '');
+            const liveGlyph = liveByName.get(name);
+            const previousGlyph = previousByName.get(name);
+            if (!liveGlyph && !previousGlyph) {
+                continue;
+            }
+            const liveLayers = new Map(
+                this._coerceGlyphLayerSnapshots(liveGlyph?.layers).map(
+                    (layer) => [String(layer.id || ''), layer]
+                )
+            );
+            const previousLayers = new Map(
+                this._coerceGlyphLayerSnapshots(previousGlyph?.layers).map(
+                    (layer) => [String(layer.id || ''), layer]
+                )
+            );
+            for (const nextLayer of this._coerceGlyphLayerSnapshots(
+                nextGlyph.layers
+            )) {
+                const layerId = String(nextLayer.id || '');
+                const identityShapes =
+                    liveLayers.get(layerId)?.shapes ??
+                    previousLayers.get(layerId)?.shapes;
+                this._alignReloadShapeIdentities(
+                    identityShapes,
+                    nextLayer.shapes
+                );
+                this._alignReloadShapeIdentities(
+                    identityShapes,
+                    previousLayers.get(layerId)?.shapes
+                );
+            }
+        }
+    }
+
     private _adoptIndexedFontLayerIds(
         previousSnapshot: unknown,
         nextSnapshot: unknown
@@ -3608,6 +3856,10 @@ export class PatchSyncEngine {
                 );
                 if (previousLayer) {
                     this._adoptIndexedLayerIds(previousLayer, nextLayer, true);
+                    this._alignReloadShapeIdentities(
+                        previousLayer.shapes,
+                        nextLayer.shapes
+                    );
                 }
             }
         }
@@ -3649,6 +3901,47 @@ export class PatchSyncEngine {
                 continue;
             }
             usedIds.add(incomingId);
+        }
+    }
+
+    private _preserveLiveCoreKeysAbsentFromSource(
+        incomingSnapshot: unknown,
+        previousSnapshot: unknown,
+        nextSnapshot: unknown
+    ): void {
+        const incoming =
+            incomingSnapshot &&
+            typeof incomingSnapshot === 'object' &&
+            !Array.isArray(incomingSnapshot)
+                ? (incomingSnapshot as Record<string, unknown>)
+                : null;
+        const previous =
+            previousSnapshot &&
+            typeof previousSnapshot === 'object' &&
+            !Array.isArray(previousSnapshot)
+                ? (previousSnapshot as Record<string, unknown>)
+                : null;
+        const next =
+            nextSnapshot &&
+            typeof nextSnapshot === 'object' &&
+            !Array.isArray(nextSnapshot)
+                ? (nextSnapshot as Record<string, unknown>)
+                : null;
+        if (!previous || !next) {
+            return;
+        }
+        for (const key of [CORE_GLYPH_CATALOG_KEY, CORE_CODEPOINT_INDEX_KEY]) {
+            if (
+                incoming &&
+                Object.prototype.hasOwnProperty.call(incoming, key)
+            ) {
+                continue;
+            }
+            if (Object.prototype.hasOwnProperty.call(previous, key)) {
+                next[key] = previous[key];
+            } else {
+                delete next[key];
+            }
         }
     }
 

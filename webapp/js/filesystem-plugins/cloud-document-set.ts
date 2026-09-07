@@ -9,11 +9,17 @@ import {
 } from './cloud-glyph-catalog';
 import {
     buildFontDepsIndex,
+    planCompileHydration,
     planSparseHydration,
     readFontDepsIndex,
     writeFontDepsYMap
 } from './cloud-font-deps';
-import { evaluateShardSizes, type ShardSizeGate } from './cloud-shard-limits';
+import {
+    evaluateShardSizes,
+    applySparseResidencyBudget,
+    HYDRATE_BATCH_MAX_REQUESTS,
+    type ShardSizeGate
+} from './cloud-shard-limits';
 import {
     fillGlyphYMap,
     fromYType,
@@ -132,12 +138,16 @@ export async function hydrateSparseGlyphsToFixedPoint(options: {
     catalog: Array<{ glyphId: string; name: string; componentIds?: string[] }>;
     fetchGlyphs: SparseGlyphHydrationFetch;
     requireFetchedGlyphs?: boolean;
+    /** UI reverse-closes composites; compile only walks forward prerequisites. */
+    planner?: 'ui' | 'compile';
+    visibleIds?: string[];
 }): Promise<{
     loadedIds: string[];
     workingIds: string[];
     hiddenIds: string[];
     fetchPasses: string[][];
     glyphBytes: Map<string, Uint8Array>;
+    previewOnly: boolean;
 }> {
     const session =
         options.session ||
@@ -171,9 +181,17 @@ export async function hydrateSparseGlyphsToFixedPoint(options: {
     const fetchPasses: string[][] = [];
     const appliedIds: string[] = [];
     const depsMap = session.depsMap();
-    // Do not seed from shared font-deps `working`. That map is leftover from
-    // other sessions / full opens (A–Z, digits) and is not the input string.
-    const previousWorkingIds = options.previousWorkingIds ?? [];
+    const requiredIds = [
+        ...options.seedIds,
+        ...(options.layoutIds || []),
+        ...(options.visibleIds || [])
+    ];
+    const residency = applySparseResidencyBudget({
+        requiredIds,
+        extraIds: options.previousWorkingIds ?? []
+    });
+    const previousWorkingIds = residency.keepExtraIds;
+    const previewOnly = residency.previewOnly;
     const planFromLiveEdges = () => {
         if (session.isCurrent?.() === false) {
             throw new Error('Sparse hydration session changed');
@@ -200,6 +218,17 @@ export async function hydrateSparseGlyphsToFixedPoint(options: {
                 publishedEdges[glyphId] = bodyEdges[glyphId];
             }
         }
+        if (options.planner === 'compile') {
+            return planCompileHydration({
+                catalogIds: liveCatalogIds,
+                seedIds,
+                layoutIds,
+                visibleIds: options.visibleIds,
+                loadedIds,
+                edges: publishedEdges,
+                catalog: hydrationCatalog
+            });
+        }
         return planSparseHydration({
             catalogIds: liveCatalogIds,
             seedIds,
@@ -217,9 +246,18 @@ export async function hydrateSparseGlyphsToFixedPoint(options: {
         pass <= Math.max(liveCatalogIds.length, catalogIds.length, 1);
         pass++
     ) {
-        const missing = plan.missingIds;
+        const missing = previewOnly
+            ? plan.missingIds.filter((id) =>
+                  new Set([...requiredIds, ...previousWorkingIds]).has(id)
+              )
+            : plan.missingIds;
         if (!missing.length) {
             break;
+        }
+        if (missing.length > HYDRATE_BATCH_MAX_REQUESTS) {
+            throw new Error(
+                `Sparse glyph hydration of ${missing.length} shards exceeds the ${HYDRATE_BATCH_MAX_REQUESTS} request cap`
+            );
         }
         fetchPasses.push(missing.slice());
         const documentIds = missing.map(glyphDocumentId);
@@ -257,7 +295,7 @@ export async function hydrateSparseGlyphsToFixedPoint(options: {
         plan = planFromLiveEdges();
     }
 
-    if (plan.missingIds.length) {
+    if (plan.missingIds.length && !previewOnly) {
         throw new Error(
             `Sparse glyph hydration incomplete: ${plan.missingIds.join(', ')}`
         );
@@ -273,10 +311,15 @@ export async function hydrateSparseGlyphsToFixedPoint(options: {
 
     return {
         loadedIds: [...loadedIds],
-        workingIds: plan.workingIds,
-        hiddenIds: plan.hiddenIds,
+        workingIds: previewOnly
+            ? [...new Set([...requiredIds, ...previousWorkingIds])].filter(
+                  (id) => liveCatalogIds.includes(id) || catalogIds.includes(id)
+              )
+            : plan.workingIds,
+        hiddenIds: previewOnly ? [] : plan.hiddenIds,
         fetchPasses,
-        glyphBytes
+        glyphBytes,
+        previewOnly
     };
 }
 

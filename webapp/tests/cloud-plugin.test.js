@@ -552,6 +552,12 @@ describe('CloudPlugin.openAsset', () => {
     });
 
     test('saveAs seeds and attaches the current live bridge without a second reconnect', async () => {
+        window.patchSyncEngine = {
+            encodeDocumentSet: jest.fn(() => [
+                { documentId: 'font-core', bytes: new Uint8Array(2) }
+            ]),
+            getFontJsonSnapshot: jest.fn(() => defaultCloudFontJson)
+        };
         window.glyphCanvas = {
             initialFontLoaded: true
         };
@@ -694,6 +700,12 @@ describe('CloudPlugin.openAsset', () => {
     });
 
     test('saveAs opens live WebSockets for font-core, font-deps, and the active glyph', async () => {
+        window.patchSyncEngine = {
+            encodeDocumentSet: jest.fn(() => [
+                { documentId: 'font-core', bytes: new Uint8Array(2) }
+            ]),
+            getFontJsonSnapshot: jest.fn(() => defaultCloudFontJson)
+        };
         window.glyphCanvas = {
             initialFontLoaded: true
         };
@@ -804,6 +816,12 @@ describe('CloudPlugin.openAsset', () => {
     });
 
     test('reuses the save seed snapshot until the font revision changes', async () => {
+        window.patchSyncEngine = {
+            encodeDocumentSet: jest.fn(() => [
+                { documentId: 'font-core', bytes: new Uint8Array(2) }
+            ]),
+            getFontJsonSnapshot: jest.fn(() => defaultCloudFontJson)
+        };
         window.glyphCanvas = {
             initialFontLoaded: true
         };
@@ -859,6 +877,12 @@ describe('CloudPlugin.openAsset', () => {
     });
 
     test('does not reuse save seed snapshots without a font revision', async () => {
+        window.patchSyncEngine = {
+            encodeDocumentSet: jest.fn(() => [
+                { documentId: 'font-core', bytes: new Uint8Array(2) }
+            ]),
+            getFontJsonSnapshot: jest.fn(() => defaultCloudFontJson)
+        };
         window.glyphCanvas = {
             initialFontLoaded: true
         };
@@ -931,6 +955,12 @@ describe('CloudPlugin.openAsset', () => {
             maxCloudAssetBytes: 1,
             warningCloudAssetBytes: 1
         };
+        window.patchSyncEngine = {
+            encodeDocumentSet: jest.fn(() => [
+                { documentId: 'font-core', bytes: new Uint8Array(2) }
+            ]),
+            getFontJsonSnapshot: jest.fn(() => defaultCloudFontJson)
+        };
         window.glyphCanvas = {
             initialFontLoaded: true
         };
@@ -977,6 +1007,12 @@ describe('CloudPlugin.openAsset', () => {
             warningCloudAssetBytes: 1
         };
         window.confirm = jest.fn(() => false);
+        window.patchSyncEngine = {
+            encodeDocumentSet: jest.fn(() => [
+                { documentId: 'font-core', bytes: new Uint8Array(2) }
+            ]),
+            getFontJsonSnapshot: jest.fn(() => defaultCloudFontJson)
+        };
         window.glyphCanvas = {
             initialFontLoaded: true
         };
@@ -1015,6 +1051,12 @@ describe('CloudPlugin.openAsset', () => {
     });
 
     test('saveAs rejects when the direct live-room attach fails', async () => {
+        window.patchSyncEngine = {
+            encodeDocumentSet: jest.fn(() => [
+                { documentId: 'font-core', bytes: new Uint8Array(2) }
+            ]),
+            getFontJsonSnapshot: jest.fn(() => defaultCloudFontJson)
+        };
         window.glyphCanvas = {
             initialFontLoaded: true
         };
@@ -1121,6 +1163,12 @@ describe('CloudPlugin.openAsset', () => {
     });
 
     test('saveAs returns only after the direct live-room attach reaches connected', async () => {
+        window.patchSyncEngine = {
+            encodeDocumentSet: jest.fn(() => [
+                { documentId: 'font-core', bytes: new Uint8Array(2) }
+            ]),
+            getFontJsonSnapshot: jest.fn(() => defaultCloudFontJson)
+        };
         window.glyphCanvas = {
             initialFontLoaded: true
         };
@@ -1225,6 +1273,12 @@ describe('CloudPlugin.openAsset', () => {
     });
 
     test('saveAs attaches the latest live bridge if patchSyncEngine is replaced mid-flight', async () => {
+        window.patchSyncEngine = {
+            encodeDocumentSet: jest.fn(() => [
+                { documentId: 'font-core', bytes: new Uint8Array(2) }
+            ]),
+            getFontJsonSnapshot: jest.fn(() => defaultCloudFontJson)
+        };
         window.glyphCanvas = {
             initialFontLoaded: true
         };
@@ -1745,11 +1799,13 @@ describe('CloudPlugin sparse overview hydrate', () => {
         expect(plugin._hydrateOverviewGlyphs).toHaveBeenCalledTimes(2);
         expect(plugin._hydrateOverviewGlyphs.mock.calls[0][0]).toEqual({
             text: '',
-            glyphNames: ['a']
+            glyphNames: ['a'],
+            purpose: 'ui'
         });
         expect(plugin._hydrateOverviewGlyphs.mock.calls[1][0]).toEqual({
             text: '',
-            glyphNames: ['b']
+            glyphNames: ['b'],
+            purpose: 'ui'
         });
         expect(plugin._hydrateOverviewGlyphs).toHaveBeenCalledTimes(2);
         expect(plugin.isHydratingOverviewGlyphs()).toBe(false);

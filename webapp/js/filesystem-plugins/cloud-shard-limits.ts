@@ -9,6 +9,18 @@ export const WARNING_SHARD_BYTES =
 export const CLIENT_LIVE_MEMORY_WARNING_STRUCTS =
     APP_SETTINGS.CLOUD_COLLAB.CLIENT_LIVE_MEMORY_WARNING_STRUCTS;
 export const CLIENT_LIVE_MEMORY_WARNING_ENCODED_BYTES = WARNING_SHARD_BYTES;
+export const HYDRATE_SHARD_CONCURRENCY =
+    APP_SETTINGS.CLOUD_COLLAB.HYDRATE_SHARD_CONCURRENCY;
+export const AUTO_SPARSE_CATALOG_GLYPHS =
+    APP_SETTINGS.CLOUD_COLLAB.AUTO_SPARSE_CATALOG_GLYPHS;
+export const SPARSE_RESIDENT_GLYPH_BUDGET =
+    APP_SETTINGS.CLOUD_COLLAB.SPARSE_RESIDENT_GLYPH_BUDGET;
+export const HYDRATE_BATCH_MAX_REQUESTS =
+    APP_SETTINGS.CLOUD_COLLAB.HYDRATE_BATCH_MAX_REQUESTS;
+export const HYDRATE_BATCH_MAX_BYTES =
+    APP_SETTINGS.CLOUD_COLLAB.HYDRATE_BATCH_MAX_BYTES;
+export const SPARSE_ESTIMATED_BYTES_PER_GLYPH =
+    APP_SETTINGS.CLOUD_COLLAB.SPARSE_ESTIMATED_BYTES_PER_GLYPH;
 
 export type ShardSizeStatus = 'ok' | 'warning' | 'blocked';
 
@@ -107,6 +119,103 @@ export function estimatePendingShardBytes(
     return lastEncodedBytes + Math.max(0, pendingUpdateBytes);
 }
 
+/** Exact core encode only when the running estimate is near a cloud size gate. */
+export function shouldExactEncodeAssetSize(
+    estimatedBytes: number,
+    maxBytes: number | null | undefined,
+    warningBytes: number | null | undefined
+): boolean {
+    const ceiling = Number(warningBytes || maxBytes || 0);
+    if (!Number.isFinite(ceiling) || ceiling <= 0) {
+        return false;
+    }
+    return estimatedBytes >= ceiling * 0.9;
+}
+
+export function shouldAutoSparseHydrate(catalogGlyphCount: number): boolean {
+    return Number(catalogGlyphCount) >= AUTO_SPARSE_CATALOG_GLYPHS;
+}
+
+export function trimPreviousWorkingIds(options: {
+    previousWorkingIds: string[];
+    requiredIds: Iterable<string>;
+    budget?: number;
+}): string[] {
+    const budget = options.budget ?? SPARSE_RESIDENT_GLYPH_BUDGET;
+    const required = [...new Set([...options.requiredIds].filter(Boolean))];
+    if (required.length >= budget) {
+        return [];
+    }
+    const requiredSet = new Set(required);
+    const extras = options.previousWorkingIds.filter(
+        (id) => id && !requiredSet.has(id)
+    );
+    return extras.slice(-(budget - required.length));
+}
+
+export function estimateSparseResidentBytes(
+    glyphCount: number,
+    encodedBytes: number = 0
+): number {
+    if (encodedBytes > 0) {
+        return encodedBytes;
+    }
+    return Math.max(0, glyphCount) * SPARSE_ESTIMATED_BYTES_PER_GLYPH;
+}
+
+/**
+ * Keep layout/compile-required IDs even when over budget; drop extras and
+ * mark preview-only so the rest of the catalog stays on the server.
+ */
+export function applySparseResidencyBudget(options: {
+    requiredIds: Iterable<string>;
+    extraIds?: Iterable<string>;
+    encodedBytes?: number;
+    glyphBudget?: number;
+    byteBudget?: number;
+}): { keepExtraIds: string[]; previewOnly: boolean } {
+    const required = [...new Set([...options.requiredIds].filter(Boolean))];
+    const glyphBudget = options.glyphBudget ?? SPARSE_RESIDENT_GLYPH_BUDGET;
+    const byteBudget = options.byteBudget ?? HYDRATE_BATCH_MAX_BYTES;
+    const requiredBytes = estimateSparseResidentBytes(
+        required.length,
+        options.encodedBytes
+    );
+    const previewOnly =
+        required.length > glyphBudget || requiredBytes > byteBudget;
+    if (previewOnly) {
+        return { keepExtraIds: [], previewOnly: true };
+    }
+    return {
+        keepExtraIds: trimPreviousWorkingIds({
+            previousWorkingIds: [...(options.extraIds || [])],
+            requiredIds: required,
+            budget: glyphBudget
+        }),
+        previewOnly: false
+    };
+}
+
+export function assertHydrateBatchBudget(options: {
+    requestCount: number;
+    byteLength: number;
+    maxRequests?: number;
+    maxBytes?: number;
+}): void {
+    const maxRequests = options.maxRequests ?? HYDRATE_BATCH_MAX_REQUESTS;
+    const maxBytes = options.maxBytes ?? HYDRATE_BATCH_MAX_BYTES;
+    if (options.requestCount > maxRequests) {
+        throw new Error(
+            `Hydrate batch of ${options.requestCount} shards exceeds the ${maxRequests} request cap`
+        );
+    }
+    if (options.byteLength > maxBytes) {
+        throw new Error(
+            `Hydrate batch of ${options.byteLength} bytes exceeds the ${maxBytes} byte cap`
+        );
+    }
+}
+
 /**
  * Avoid a full encode when cached size plus this packet is still under the
  * cap (the sum overestimates merged state). Encode that shard only when the
@@ -138,12 +247,12 @@ export function evaluateCollabSubmit(
 ): CollabSubmitDecision {
     const hard = collabSubmitHardLimits();
     const maxPacket = Math.min(
-        limits?.maxPacketBytes ?? hard.maxPacketBytes,
-        hard.maxPacketBytes
+        limits?.maxPacketBytes ?? hard.maxPacketBytes ?? MAX_YJS_PACKET_BYTES,
+        hard.maxPacketBytes ?? MAX_YJS_PACKET_BYTES
     );
     const maxShard = Math.min(
-        limits?.maxShardBytes ?? hard.maxShardBytes,
-        hard.maxShardBytes
+        limits?.maxShardBytes ?? hard.maxShardBytes ?? MAX_SHARD_BYTES,
+        hard.maxShardBytes ?? MAX_SHARD_BYTES
     );
     for (const request of requests) {
         const packetBytes = Math.max(0, Number(request.packetBytes) || 0);

@@ -80,7 +80,19 @@ const APP_SETTINGS = {
         MAX_COMPACTION_TRANSACTION_BYTES: CLOUD_MAX_YJS_PACKET_BYTES,
         MAX_COMPACTION_FOLD_BYTES: CLOUD_MAX_YJS_PACKET_BYTES,
         MAX_COMPACTION_RECOVERABLE_BYTES: CLOUD_MAX_SHARD_BYTES,
-        CLIENT_LIVE_MEMORY_WARNING_STRUCTS: 80_000
+        CLIENT_LIVE_MEMORY_WARNING_STRUCTS: 80_000,
+        /** Parallel shard GET/POST workers. Per-shard identity and digests still apply. */
+        HYDRATE_SHARD_CONCURRENCY: 6,
+        /** Default open uses sparse closure at or above this live catalog size. */
+        AUTO_SPARSE_CATALOG_GLYPHS: 256,
+        /** Cap accumulated sparse residency (working + previous + hidden). */
+        SPARSE_RESIDENT_GLYPH_BUDGET: 512,
+        /** Max shard GETs/POSTs in one hydrate or seed batch. */
+        HYDRATE_BATCH_MAX_REQUESTS: 512,
+        /** Fail closed if one hydrate/seed batch exceeds this many downloaded bytes. */
+        HYDRATE_BATCH_MAX_BYTES: 48 * 1024 * 1024,
+        /** Estimated bytes used to preflight residency when shard sizes are unknown. */
+        SPARSE_ESTIMATED_BYTES_PER_GLYPH: 24 * 1024
     },
 
     // Outline editor display settings

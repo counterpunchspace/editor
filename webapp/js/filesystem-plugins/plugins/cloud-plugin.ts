@@ -19,6 +19,7 @@ import {
     CloudAdapterOptions,
     CloudConnectionStatus,
     type CloudTransferActivity,
+    type CloudSeededShardAttestation,
     normalizeCloudRoomWebSocketUrl
 } from '../../cloud-adapter';
 import {
@@ -76,6 +77,8 @@ import {
     formatCollabSubmitRejection,
     MAX_SHARD_BYTES,
     MAX_YJS_PACKET_BYTES,
+    shouldAutoSparseHydrate,
+    shouldExactEncodeAssetSize,
     type ShardSizeGate,
     type CollabSubmitDecision,
     type CollabSubmitRequest
@@ -914,6 +917,7 @@ export class CloudPlugin extends FilesystemPlugin {
     private _relayedConnectionDetail: string | undefined;
     private _relayedPendingSyncCount = 0;
     private _relayedTransferActivity: CloudTransferActivity = 'idle';
+    private _sparsePreviewOnly = false;
     private _eligibility: CloudEligibility | null = null;
     private _assetLimits: CloudAssetLimits | null = null;
     private _documentSet: CloudDocumentSet | null = null;
@@ -932,6 +936,7 @@ export class CloudPlugin extends FilesystemPlugin {
     private _overviewHydrateQueued: Array<{
         text?: string;
         glyphNames?: string[];
+        purpose?: 'ui' | 'compile';
     }> = [];
     private _cloudSessionBootstrapEmail = 'local-dev@counterpunch.test';
     private _connectionStatusByAssetId = new Map<
@@ -1166,9 +1171,17 @@ export class CloudPlugin extends FilesystemPlugin {
         );
         validateCloudExportForFontOpen(seedFontJson, 'save');
 
-        const byteLength = new TextEncoder().encode(
-            JSON.stringify(seedFontJson)
-        ).length;
+        const shards = window.patchSyncEngine?.encodeDocumentSet?.() ?? [];
+        const estimated =
+            window.patchSyncEngine?.getEstimatedLiveEncodedBytes?.() ?? 0;
+        const byteLength =
+            estimated > 0
+                ? estimated
+                : shards.reduce(
+                      (sum, shard) => sum + shard.bytes.byteLength,
+                      0
+                  ) ||
+                  new TextEncoder().encode(JSON.stringify(seedFontJson)).length;
         const policy = await this._ensureCloudSizePolicy();
         if (!policy) {
             return null;
@@ -1685,13 +1698,29 @@ export class CloudPlugin extends FilesystemPlugin {
 
         const bridge = this._activeAssetSizeBridge as PatchSyncEngine & {
             encodeBridgeState?: () => Uint8Array;
+            getEstimatedLiveEncodedBytes?: () => number;
         };
-        const encodedState = bridge.encodeBridgeState?.();
-        if (!encodedState) {
-            return;
+        const estimated = bridge.getEstimatedLiveEncodedBytes?.() ?? 0;
+        const policy = this._getCloudAssetSizePolicy();
+        if (
+            shouldExactEncodeAssetSize(
+                estimated,
+                policy?.maxCloudAssetBytes,
+                policy?.warningCloudAssetBytes
+            )
+        ) {
+            const encodedState = bridge.encodeBridgeState?.();
+            if (encodedState) {
+                this._setAssetEstimatedBytes(
+                    this._activeAssetId,
+                    encodedState.length
+                );
+                return;
+            }
         }
-
-        this._setAssetEstimatedBytes(this._activeAssetId, encodedState.length);
+        if (estimated > 0) {
+            this._setAssetEstimatedBytes(this._activeAssetId, estimated);
+        }
     }
 
     private _scheduleActiveAssetSizeRecompute(): void {
@@ -2151,6 +2180,11 @@ export class CloudPlugin extends FilesystemPlugin {
         return this._overviewHydrateInFlight !== null;
     }
 
+    /** True when sparse closure exceeded the residency budget and remaining glyphs stay on the server. */
+    isSparsePreviewOnly(): boolean {
+        return this._sparsePreviewOnly;
+    }
+
     async hydrateOverviewGlyphs(seedNames: string[]): Promise<string[]> {
         return this.ensureSparseHydration({ glyphNames: seedNames });
     }
@@ -2158,6 +2192,7 @@ export class CloudPlugin extends FilesystemPlugin {
     async ensureSparseHydration(input: {
         text?: string;
         glyphNames?: string[];
+        purpose?: 'ui' | 'compile';
     }): Promise<string[]> {
         const generation = this._hydrationGeneration;
         if (
@@ -2170,7 +2205,8 @@ export class CloudPlugin extends FilesystemPlugin {
         }
         this._overviewHydrateQueued.push({
             text: input.text,
-            glyphNames: input.glyphNames
+            glyphNames: input.glyphNames,
+            purpose: input.purpose
         });
         if (this._overviewHydrateInFlight) {
             return this._overviewHydrateInFlight;
@@ -2178,13 +2214,24 @@ export class CloudPlugin extends FilesystemPlugin {
         const hydrate = (async () => {
             const loaded: string[] = [];
             while (this._overviewHydrateQueued.length) {
-                const batch = this._overviewHydrateQueued.splice(0);
+                const purpose = this._overviewHydrateQueued[0].purpose || 'ui';
+                const batch: typeof this._overviewHydrateQueued = [];
+                while (
+                    this._overviewHydrateQueued.length &&
+                    (this._overviewHydrateQueued[0].purpose || 'ui') === purpose
+                ) {
+                    batch.push(this._overviewHydrateQueued.shift()!);
+                }
                 const glyphNames = [
                     ...new Set(batch.flatMap((entry) => entry.glyphNames || []))
                 ];
                 const text = batch.map((entry) => entry.text || '').join('');
                 loaded.push(
-                    ...(await this._hydrateOverviewGlyphs({ text, glyphNames }))
+                    ...(await this._hydrateOverviewGlyphs({
+                        text,
+                        glyphNames,
+                        purpose
+                    }))
                 );
             }
             return [...new Set(loaded)];
@@ -2207,6 +2254,7 @@ export class CloudPlugin extends FilesystemPlugin {
     private async _hydrateOverviewGlyphs(input: {
         text?: string;
         glyphNames?: string[];
+        purpose?: 'ui' | 'compile';
     }): Promise<string[]> {
         const assetId = this.activeAssetId;
         const bridge = window.patchSyncEngine;
@@ -2334,6 +2382,14 @@ export class CloudPlugin extends FilesystemPlugin {
                 previousWorkingIds,
                 catalog: catalogEntries,
                 requireFetchedGlyphs: true,
+                planner: input.purpose === 'compile' ? 'compile' : 'ui',
+                visibleIds:
+                    input.purpose === 'compile'
+                        ? resolveHydrationSeeds({
+                              fontJson,
+                              glyphNames: input.glyphNames
+                          }).seedIds
+                        : undefined,
                 fetchGlyphs: async (documentIds) => {
                     credentials ||= this._fetchRoomToken(assetId);
                     const { token, roomUrl } = await credentials;
@@ -2347,6 +2403,18 @@ export class CloudPlugin extends FilesystemPlugin {
                     );
                 }
             });
+            if (
+                isCurrent() &&
+                typeof bridge.unloadCleanGlyphDocuments === 'function'
+            ) {
+                bridge.unloadCleanGlyphDocuments([
+                    ...result.workingIds,
+                    ...result.hiddenIds
+                ]);
+            }
+            if (isCurrent()) {
+                this._sparsePreviewOnly = result.previewOnly === true;
+            }
             const changedNames = [...new Set(loadedNames)];
             if (!changedNames.length) {
                 return result.workingIds
@@ -3257,6 +3325,7 @@ export class CloudPlugin extends FilesystemPlugin {
         let hydratedShards: EncodedShard[] | null = null;
         let hydratedFontJson: Record<string, unknown> | null = null;
         let sparseWorkingGlyphIds: string[] = [];
+        let usedSparseHydration = options?.sparseHydration === true;
         try {
             const coreAndDeps = await this._hydrateCoreDepsConsistent(
                 hydrator,
@@ -3277,11 +3346,13 @@ export class CloudPlugin extends FilesystemPlugin {
                 }
                 const coreJson = documentSet.assembleFontJson();
                 const catalogIds = glyphIdsFromCoreJson(coreJson);
-                // Default open hydrates every live catalog glyph. Sparse
-                // residency (`?sparse=true` or the open-dialog checkbox)
-                // hydrates the `?text=` closure, or nothing if text is empty.
+                const urlText = readUrlState().text || '';
+                const useSparse =
+                    usedSparseHydration ||
+                    shouldAutoSparseHydrate(catalogIds.length);
+                usedSparseHydration = useSparse;
                 let glyphBytes = new Map<string, Uint8Array>();
-                if (!options?.sparseHydration) {
+                if (!useSparse) {
                     glyphBytes = (
                         await hydrateSparseGlyphsToFixedPoint({
                             documentSet,
@@ -3301,7 +3372,7 @@ export class CloudPlugin extends FilesystemPlugin {
                 } else {
                     const { seedIds, layoutIds } = resolveHydrationSeeds({
                         fontJson: coreJson,
-                        text: readUrlState().text || ''
+                        text: urlText || 'Hamburgevons'
                     });
                     if (seedIds.length) {
                         const hydrateResult =
@@ -3322,25 +3393,21 @@ export class CloudPlugin extends FilesystemPlugin {
                             });
                         glyphBytes = hydrateResult.glyphBytes;
                         sparseWorkingGlyphIds = hydrateResult.workingIds;
+                        this._sparsePreviewOnly =
+                            hydrateResult.previewOnly === true;
                     }
                 }
                 hydratedFontJson = documentSet.assembleFontJson();
-                const coreOut = documentSet.encodeDocument(
-                    FONT_CORE_DOCUMENT_ID
-                );
-                const depsOut = documentSet.encodeDocument(
-                    FONT_DEPS_DOCUMENT_ID
-                );
                 hydratedShards = [
                     {
                         documentId: FONT_CORE_DOCUMENT_ID,
-                        bytes: coreOut.byteLength ? coreOut : coreBytes
+                        bytes: coreBytes
                     },
-                    ...(depsOut.byteLength
+                    ...(depsBytes?.byteLength
                         ? [
                               {
                                   documentId: FONT_DEPS_DOCUMENT_ID,
-                                  bytes: depsOut
+                                  bytes: depsBytes
                               }
                           ]
                         : []),
@@ -3352,7 +3419,7 @@ export class CloudPlugin extends FilesystemPlugin {
                 documentSet.destroy();
             }
         } catch (error) {
-            if (options?.sparseHydration) {
+            if (usedSparseHydration) {
                 throw error instanceof Error ? error : new Error(String(error));
             }
             console.warn(
@@ -3384,7 +3451,7 @@ export class CloudPlugin extends FilesystemPlugin {
             ).__skipCloudBridgeRebindMerge = true;
 
             this._activeAssetId = assetId;
-            if (options?.sparseHydration) {
+            if (usedSparseHydration) {
                 (
                     window as Window & {
                         __pendingSparseSession?: boolean;
@@ -3655,14 +3722,22 @@ export class CloudPlugin extends FilesystemPlugin {
         }
 
         await this.prepareToSeed();
+        let liveBridge = await waitForCloudSaveBridge();
+        assertCloudBridgeStateCanBeSaved(liveBridge);
+        let shards = liveBridge.encodeDocumentSet?.() ?? [];
+        if (!shards.length) {
+            throw new Error('No live document set to seed to cloud');
+        }
+        let encodedFromBridge = liveBridge;
         const seedFontJson = canonicalizeCloudExportFontJson(
             await waitForCloudSaveSeedFontJson()
         );
         validateCloudExportForFontOpen(seedFontJson, 'save');
         const estimatedGlyphCount = listGlyphRecords(seedFontJson).length;
-        const estimatedSaveBytes = new TextEncoder().encode(
-            JSON.stringify(seedFontJson)
-        ).length;
+        const estimatedSaveBytes = shards.reduce(
+            (sum, shard) => sum + shard.bytes.byteLength,
+            0
+        );
         const sizePolicy = await this._ensureCloudSizePolicy();
         if (sizePolicy && estimatedSaveBytes > sizePolicy.maxCloudAssetBytes) {
             throw new Error(
@@ -3696,17 +3771,20 @@ export class CloudPlugin extends FilesystemPlugin {
 
         const { token, roomUrl } = await this._fetchRoomToken(assetId);
         this._disconnectCurrent();
-        const liveBridge = await waitForCloudSaveBridge();
+        liveBridge = await waitForCloudSaveBridge();
         assertCloudBridgeStateCanBeSaved(liveBridge);
-        const shards = liveBridge.encodeDocumentSet?.() ?? [];
-        if (!shards.length) {
-            throw new Error('No live document set to seed to cloud');
+        if (liveBridge !== encodedFromBridge) {
+            shards = liveBridge.encodeDocumentSet?.() ?? [];
+            if (!shards.length) {
+                throw new Error('No live document set to seed to cloud');
+            }
         }
         const seeder = new CloudAdapter({
             assetId,
             websiteBaseUrl: this._websiteBaseUrl
         });
         let seededCheckpointLogId: number | null = null;
+        let seedReceipts: CloudSeededShardAttestation[] = [];
         try {
             const seeded = await seeder.seedDocumentSet(
                 token,
@@ -3720,6 +3798,13 @@ export class CloudPlugin extends FilesystemPlugin {
                     : typeof seeded === 'number'
                       ? seeded
                       : null;
+            if (
+                seeded &&
+                typeof seeded === 'object' &&
+                Array.isArray(seeded.attestations)
+            ) {
+                seedReceipts = seeded.attestations;
+            }
         } finally {
             seeder.disconnect();
         }
@@ -3739,7 +3824,11 @@ export class CloudPlugin extends FilesystemPlugin {
                 connectedTimeoutMs:
                     estimateCloudTransferTimeoutMs(estimatedSaveBytes)
             });
-            await this._finalizePendingAsset(assetId);
+            await this._finalizePendingAsset(assetId, {
+                shards,
+                receipts: seedReceipts,
+                glyphCount: estimatedGlyphCount
+            });
         } catch (error) {
             this._disconnectCurrent();
             await this._abortPendingAsset(assetId).catch((abortError) => {
@@ -4377,14 +4466,27 @@ export class CloudPlugin extends FilesystemPlugin {
         };
     }
 
-    private async _finalizePendingAsset(assetId: string): Promise<void> {
-        const liveBridge = window.patchSyncEngine;
-        const shards = liveBridge?.encodeDocumentSet?.() ?? [];
+    private async _finalizePendingAsset(
+        assetId: string,
+        seed?: {
+            shards: Array<{ documentId: string; bytes: Uint8Array }>;
+            receipts: CloudSeededShardAttestation[];
+            glyphCount: number;
+        }
+    ): Promise<void> {
+        const shards = seed?.shards ?? [];
+        const receipts = seed?.receipts ?? [];
         const core = shards.find(
             (shard) => shard.documentId === FONT_CORE_DOCUMENT_ID
         );
         const deps = shards.find(
             (shard) => shard.documentId === FONT_DEPS_DOCUMENT_ID
+        );
+        const coreReceipt = receipts.find(
+            (receipt) => receipt.shardId === FONT_CORE_DOCUMENT_ID
+        );
+        const depsReceipt = receipts.find(
+            (receipt) => receipt.shardId === FONT_DEPS_DOCUMENT_ID
         );
         const url = `${this._websiteBaseUrl}/api/cloud/assets/${encodeURIComponent(assetId)}/finalize`;
         const resp = await fetch(url, {
@@ -4395,15 +4497,19 @@ export class CloudPlugin extends FilesystemPlugin {
                 'Content-Type': 'application/json'
             }),
             body: JSON.stringify({
-                glyphCount: listGlyphRecords(this._currentFontJson() || {})
-                    .length,
-                coreRevision: core
-                    ? await hashShardBytes(core.bytes)
-                    : 'bootstrap',
-                depsRevision: deps
-                    ? await hashShardBytes(deps.bytes)
-                    : 'bootstrap',
-                shardIds: shards.map((shard) => shard.documentId)
+                glyphCount:
+                    seed?.glyphCount ??
+                    listGlyphRecords(this._currentFontJson() || {}).length,
+                coreRevision:
+                    coreReceipt?.checkpointSha256 ||
+                    (core ? await hashShardBytes(core.bytes) : 'bootstrap'),
+                depsRevision:
+                    depsReceipt?.checkpointSha256 ||
+                    (deps ? await hashShardBytes(deps.bytes) : 'bootstrap'),
+                shardIds: shards.length
+                    ? shards.map((shard) => shard.documentId)
+                    : receipts.map((receipt) => receipt.shardId),
+                receipts
             })
         });
         if (!resp.ok) {

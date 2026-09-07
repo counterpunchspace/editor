@@ -26,6 +26,8 @@ const {
     closeReverseComponentNamesFromDeps,
     afdkoFeatureCodeFromFontJson,
     catalogEntriesForDepsParse,
+    catalogNameIndexFromEntries,
+    planCompileHydration,
     parseMetricsKeyReferencedNames,
     patchSourceEdges,
     readFontDepsIndex,
@@ -38,11 +40,17 @@ const {
     writeCompleteFontDepsIfLoaded,
     writeWorkingGlyphIds
 } = require('../js/filesystem-plugins/cloud-font-deps');
+const { mapPool } = require('../js/filesystem-plugins/cloud-bounded-io');
 const {
     classifyShardByteLength,
     evaluateShardSizes,
     MAX_SHARD_BYTES,
-    WARNING_SHARD_BYTES
+    WARNING_SHARD_BYTES,
+    shouldAutoSparseHydrate,
+    shouldExactEncodeAssetSize,
+    trimPreviousWorkingIds,
+    applySparseResidencyBudget,
+    assertHydrateBatchBudget
 } = require('../js/filesystem-plugins/cloud-shard-limits');
 const {
     CloudDocumentSet,
@@ -2967,5 +2975,96 @@ describe('sparse hydration integrity regressions', () => {
             )
         ).toBe(true);
         documentSet.destroy();
+    });
+
+    it('compile hydration does not reverse-close composites of a typed base', () => {
+        const catalog = [
+            { glyphId: 'id-a', name: 'a' },
+            { glyphId: 'id-adi', name: 'adieresis' },
+            { glyphId: 'id-mark', name: 'dieresiscomb' }
+        ];
+        const edges = {
+            'id-adi': { 'id-a': 'component', 'id-mark': 'component' }
+        };
+        const compile = planCompileHydration({
+            seedIds: ['id-a'],
+            catalogIds: catalog.map((entry) => entry.glyphId),
+            edges,
+            catalog
+        });
+        expect(compile.workingIds).toEqual(['id-a']);
+        expect(compile.loadIds).not.toContain('id-adi');
+        expect(
+            planCompileHydration({
+                seedIds: ['id-a'],
+                visibleIds: ['id-adi'],
+                catalogIds: catalog.map((entry) => entry.glyphId),
+                edges,
+                catalog
+            }).loadIds
+        ).toEqual(expect.arrayContaining(['id-a', 'id-adi', 'id-mark']));
+    });
+
+    it('reuses catalog name indexes for the same generation key', () => {
+        const catalog = [
+            { glyphId: 'id-a', name: 'a', generation: 3 },
+            { glyphId: 'id-b', name: 'b', generation: 3 }
+        ];
+        const first = catalogNameIndexFromEntries(catalog);
+        const second = catalogNameIndexFromEntries(catalog);
+        expect(second).toBe(first);
+        expect(first.idByName.get('a')).toBe('id-a');
+    });
+
+    it('caps previous working ids to the sparse residency budget', () => {
+        expect(
+            trimPreviousWorkingIds({
+                previousWorkingIds: ['old-1', 'old-2', 'seed'],
+                requiredIds: ['seed'],
+                budget: 2
+            })
+        ).toEqual(['old-2']);
+    });
+
+    it('auto-sparses large catalogs and exact-encodes near the size gate', () => {
+        expect(shouldAutoSparseHydrate(255)).toBe(false);
+        expect(shouldAutoSparseHydrate(256)).toBe(true);
+        expect(shouldExactEncodeAssetSize(89, 100, 100)).toBe(false);
+        expect(shouldExactEncodeAssetSize(90, 100, 100)).toBe(true);
+    });
+
+    it('runs shard work with bounded concurrency', async () => {
+        let inFlight = 0;
+        let peak = 0;
+        const started = [];
+        await mapPool([1, 2, 3, 4, 5], 2, async (value) => {
+            inFlight += 1;
+            peak = Math.max(peak, inFlight);
+            started.push(value);
+            await Promise.resolve();
+            inFlight -= 1;
+            return value;
+        });
+        expect(peak).toBe(2);
+        expect(started).toEqual([1, 2, 3, 4, 5]);
+    });
+
+    it('marks preview-only when required glyphs exceed the residency budget', () => {
+        const budgeted = applySparseResidencyBudget({
+            requiredIds: ['a', 'b', 'c'],
+            extraIds: ['old'],
+            glyphBudget: 2
+        });
+        expect(budgeted.previewOnly).toBe(true);
+        expect(budgeted.keepExtraIds).toEqual([]);
+        expect(() =>
+            assertHydrateBatchBudget({ requestCount: 513, byteLength: 1 })
+        ).toThrow(/request cap/);
+        expect(() =>
+            assertHydrateBatchBudget({
+                requestCount: 1,
+                byteLength: 48 * 1024 * 1024 + 1
+            })
+        ).toThrow(/byte cap/);
     });
 });

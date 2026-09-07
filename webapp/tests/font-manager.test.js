@@ -2234,6 +2234,37 @@ describe('FontManager editing subset inclusion', () => {
         }
     });
 
+    test('overlapping compileEditingFont waits for in-flight then runs the latest request', async () => {
+        let resolveFirst;
+        compileEditingSpy.mockImplementationOnce(
+            () =>
+                new Promise((resolve) => {
+                    resolveFirst = resolve;
+                })
+        );
+        compileEditingSpy.mockResolvedValueOnce({
+            result: new Uint8Array([9, 9, 9]),
+            filename: 'editing.ttf',
+            time_taken: 1,
+            fontRevisionKey: '2'
+        });
+
+        const first = fontManager.compileEditingFont('a', [], ['a']);
+        const second = fontManager.compileEditingFont('ab', [], ['a', 'b']);
+        await Promise.resolve();
+        expect(compileEditingSpy).toHaveBeenCalledTimes(1);
+
+        resolveFirst({
+            result: new Uint8Array([1, 2, 3]),
+            filename: 'editing.ttf',
+            time_taken: 1,
+            fontRevisionKey: '1'
+        });
+        await first;
+        await second;
+        expect(compileEditingSpy).toHaveBeenCalledTimes(2);
+    });
+
     test('active mouse-drag compiles use the cached incremental worker path', async () => {
         const compileFromJsonSpy = jest
             .spyOn(fontCompilation, 'compileFromJson')
@@ -5090,6 +5121,10 @@ describe('FontManager worker seed export', () => {
 
         try {
             const state = fontManager.buildWorkerSeedYjsState();
+            expect(encodeBridgeState).toHaveBeenCalledTimes(1);
+            expect(parseSpy).not.toHaveBeenCalled();
+            parseSpy.mockRestore();
+
             const roundTripDoc = new Y.Doc();
             Y.applyUpdate(roundTripDoc, state);
             const roundTripJson = yDocToJson(roundTripDoc.getMap('font'));
@@ -5101,8 +5136,6 @@ describe('FontManager worker seed export', () => {
                 (shape) => !shape.reference && Array.isArray(shape.nodes)
             );
 
-            expect(encodeBridgeState).toHaveBeenCalledTimes(1);
-            expect(parseSpy).not.toHaveBeenCalled();
             expect(state).toBeInstanceOf(Uint8Array);
             expect(firstPathShape).toBeDefined();
         } finally {
