@@ -43,7 +43,26 @@ jest.mock('../js/cloud-adapter', () => {
                     await new Promise((resolve) => {
                         adapter._durableResolve = resolve;
                     });
-                })
+                }),
+                markAccessRevoked: jest.fn((detail) => {
+                    adapter.accessRevoked = true;
+                    adapter.reconnectForbidden = true;
+                    adapter.status = 'error';
+                    adapter.statusDetail = detail;
+                }),
+                getAccessSnapshot: jest.fn(() => ({
+                    documentId: adapter.documentId,
+                    status: adapter.status,
+                    statusDetail: adapter.statusDetail,
+                    wsReadyState: null,
+                    lastClose: null,
+                    lastServerError: null,
+                    accessRevoked: adapter.accessRevoked === true,
+                    reconnectForbidden: adapter.reconnectForbidden === true,
+                    roomToken: null,
+                    roomUrl: null,
+                    role: null
+                }))
             };
             return adapter;
         })
@@ -362,6 +381,44 @@ describe('CloudLiveSession', () => {
         await wait;
         expect(done).toBe(true);
     });
+
+    test('waitForGlyphAndDepsDurability waits for HTTP glyph publishes', async () => {
+        const session = new CloudLiveSession({
+            assetId: 'asset-1',
+            websiteBaseUrl: 'https://editor.example',
+            token: 'token',
+            roomUrl: 'wss://rooms.example/room/asset-1',
+            bridge: {},
+            bootstrapMode: 'skip'
+        });
+        await session.syncLiveDocumentIds([]);
+        let releaseFetch;
+        const fetchStarted = new Promise((resolve) => {
+            global.fetch = jest.fn(
+                () =>
+                    new Promise((resolveFetch) => {
+                        releaseFetch = () =>
+                            resolveFetch({
+                                ok: true,
+                                status: 200,
+                                json: async () => ({ ok: true, durable: true })
+                            });
+                        resolve();
+                    })
+            );
+        });
+        session.sendForwardedUpdate(new Uint8Array([9]), null, 'glyph:ccc');
+        let done = false;
+        const wait = session.waitForGlyphAndDepsDurability().then(() => {
+            done = true;
+        });
+        await fetchStarted;
+        await Promise.resolve();
+        expect(done).toBe(false);
+        releaseFetch();
+        await wait;
+        expect(done).toBe(true);
+    }, 15000);
 
     test('persistMutationIntents fails closed when IndexedDB is missing', async () => {
         const originalIndexedDb = global.indexedDB;
@@ -699,6 +756,29 @@ describe('CloudLiveSession', () => {
         await expect(session.syncLiveDocumentIds([])).rejects.toThrow();
         expect(statuses).not.toContain('connected');
         expect(statuses).toContain('error');
+        session.disconnect();
+    });
+
+    test('marks adapters revoked when credential refresh returns 403', async () => {
+        const session = new CloudLiveSession({
+            assetId: 'asset-1',
+            websiteBaseUrl: 'https://editor.example',
+            token: 'token',
+            roomUrl: 'wss://rooms.example/room/asset-1',
+            bridge: {},
+            bootstrapMode: 'skip',
+            refreshCredentials: async () => {
+                throw new Error(
+                    'room-token request failed: 403 {"error":"Forbidden"}'
+                );
+            }
+        });
+        await session.syncLiveDocumentIds([]);
+        await expect(session._refreshCredentialsOnce()).rejects.toThrow(
+            /room-token request failed: 403/
+        );
+        expect(session.getAccessSnapshot().accessRevoked).toBe(true);
+        expect(session.getAccessSnapshot().reconnectForbidden).toBe(true);
         session.disconnect();
     });
 });

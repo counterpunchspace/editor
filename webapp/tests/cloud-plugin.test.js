@@ -233,7 +233,9 @@ require('../js/filesystem-plugins');
 const {
     CloudPlugin,
     formatCloudStatusTooltipHtml,
-    formatCloudByteCount
+    formatCloudByteCount,
+    captureCloudSaveSeedState,
+    recaptureCloudSaveSeedIfBridgeChanged
 } = require('../js/filesystem-plugins/plugins/cloud-plugin');
 const { CloudAdapter } = require('../js/cloud-adapter');
 const {
@@ -508,6 +510,43 @@ describe('CloudPlugin.openAsset', () => {
         expect(mockConnectDirect).toHaveBeenCalledTimes(2);
     });
 
+    test('linked windows request sparse hydration on open', async () => {
+        window.windowRole = {
+            isMainWindow: () => false,
+            isLinkedWindow: () => true
+        };
+        const internal = jest
+            .spyOn(plugin, '_openAssetInternal')
+            .mockResolvedValue(undefined);
+
+        await plugin.openAsset('asset-1');
+
+        expect(internal).toHaveBeenCalledWith(
+            'asset-1',
+            expect.objectContaining({
+                awaitLiveBridge: true,
+                sparseHydration: true
+            })
+        );
+    });
+
+    test('main windows do not force sparse hydration from window role', async () => {
+        window.windowRole = {
+            isMainWindow: () => true,
+            isLinkedWindow: () => false
+        };
+        const internal = jest
+            .spyOn(plugin, '_openAssetInternal')
+            .mockResolvedValue(undefined);
+
+        await plugin.openAsset('asset-1');
+
+        expect(internal).toHaveBeenCalledWith(
+            'asset-1',
+            expect.objectContaining({ sparseHydration: false })
+        );
+    });
+
     test('saveAs seeds and attaches the current live bridge without a second reconnect', async () => {
         window.patchSyncEngine = {
             encodeDocumentSet: jest.fn(() => [
@@ -772,104 +811,26 @@ describe('CloudPlugin.openAsset', () => {
         expect(mockConnectDirect).toHaveBeenCalledTimes(3);
     });
 
-    test('reuses the save seed snapshot until the font revision changes', async () => {
+    test('save-as warning captures live bridge state without model JSON polling', async () => {
+        const encodeDocumentSet = jest.fn(() => [
+            { documentId: 'font-core', bytes: new Uint8Array(2) }
+        ]);
+        const getFontJsonSnapshot = jest.fn(() => defaultCloudFontJson);
         window.patchSyncEngine = {
-            encodeDocumentSet: jest.fn(() => [
-                { documentId: 'font-core', bytes: new Uint8Array(2) }
-            ]),
-            getFontJsonSnapshot: jest.fn(() => defaultCloudFontJson)
+            encodeDocumentSet,
+            getFontJsonSnapshot
         };
         window.glyphCanvas = {
-            initialFontLoaded: true
+            initialFontLoaded: false
         };
-        window.currentFontModel = {
-            glyphs: [
-                {
-                    name: 'A',
-                    layers: [
-                        {
-                            id: 'L0',
-                            shapes: [{}, {}],
-                            anchors: [],
-                            guides: []
-                        }
-                    ]
-                }
-            ]
-        };
-        const syncJsonFromModel = jest.fn(function () {
-            this.babelfontData = defaultCloudFontJson;
-            this.babelfontJson = JSON.stringify(defaultCloudFontJson);
-        });
-        const currentFont = {
-            babelfontJson: JSON.stringify(defaultCloudFontJson),
-            babelfontData: defaultCloudFontJson,
-            changeVersion: 3,
-            fontModel: window.currentFontModel,
-            syncJsonFromModel
-        };
-        window.fontManager = {
-            currentFont,
-            editingFont: new Uint8Array([1])
-        };
-        plugin._eligibility = {
-            cloudHostingEnabled: true,
-            maxFontsOwned: null,
-            snapshotRetentionDays: null,
-            fontsOwnedCount: 0,
-            maxCloudAssetBytes: 1024 * 1024,
-            warningCloudAssetBytes: 512 * 1024
-        };
-
-        await expect(plugin.getCurrentSaveAsWarningState()).resolves.toBeNull();
-        await expect(plugin.getCurrentSaveAsWarningState()).resolves.toBeNull();
-
-        expect(syncJsonFromModel).toHaveBeenCalledTimes(1);
-
-        currentFont.changeVersion++;
-
-        await expect(plugin.getCurrentSaveAsWarningState()).resolves.toBeNull();
-
-        expect(syncJsonFromModel).toHaveBeenCalledTimes(2);
-    });
-
-    test('does not reuse save seed snapshots without a font revision', async () => {
-        window.patchSyncEngine = {
-            encodeDocumentSet: jest.fn(() => [
-                { documentId: 'font-core', bytes: new Uint8Array(2) }
-            ]),
-            getFontJsonSnapshot: jest.fn(() => defaultCloudFontJson)
-        };
-        window.glyphCanvas = {
-            initialFontLoaded: true
-        };
-        window.currentFontModel = {
-            glyphs: [
-                {
-                    name: 'A',
-                    layers: [
-                        {
-                            id: 'L0',
-                            shapes: [{}, {}],
-                            anchors: [],
-                            guides: []
-                        }
-                    ]
-                }
-            ]
-        };
-        const syncJsonFromModel = jest.fn(function () {
-            this.babelfontData = defaultCloudFontJson;
-            this.babelfontJson = JSON.stringify(defaultCloudFontJson);
-        });
+        const syncJsonFromModel = jest.fn();
         window.fontManager = {
             currentFont: {
-                babelfontJson: JSON.stringify(defaultCloudFontJson),
-                babelfontData: defaultCloudFontJson,
-                fontModel: window.currentFontModel,
+                babelfontJson: JSON.stringify({ glyphs: [] }),
+                babelfontData: { glyphs: [] },
                 syncJsonFromModel
             },
-            editingFont: new Uint8Array([1])
+            editingFont: null
         };
         plugin._eligibility = {
             cloudHostingEnabled: true,
@@ -883,7 +844,9 @@ describe('CloudPlugin.openAsset', () => {
         await expect(plugin.getCurrentSaveAsWarningState()).resolves.toBeNull();
         await expect(plugin.getCurrentSaveAsWarningState()).resolves.toBeNull();
 
-        expect(syncJsonFromModel).toHaveBeenCalledTimes(2);
+        expect(syncJsonFromModel).not.toHaveBeenCalled();
+        expect(getFontJsonSnapshot).toHaveBeenCalled();
+        expect(encodeDocumentSet).toHaveBeenCalledTimes(2);
     });
 
     test('prepareToSeed fails closed when glyph quota is exhausted', async () => {
@@ -2135,7 +2098,7 @@ describe('CloudPlugin sharing APIs', () => {
         );
     });
 
-    test('removeMember fails when room revocation is still pending', async () => {
+    test('removeMember succeeds when membership is durable even if room revocation is still pending', async () => {
         global.fetch.mockResolvedValueOnce({
             ok: true,
             json: jest.fn().mockResolvedValue({
@@ -2148,9 +2111,7 @@ describe('CloudPlugin sharing APIs', () => {
             })
         });
 
-        await expect(plugin.removeMember('user-2')).rejects.toThrow(
-            /room access revocation is still pending|pending retry/
-        );
+        await expect(plugin.removeMember('user-2')).resolves.toBeUndefined();
     });
 });
 
@@ -2309,6 +2270,167 @@ describe('CloudPlugin glyph add quota', () => {
                 }
             ]).allowed
         ).toBe(true);
+    });
+});
+
+describe('cloud save seed capture', () => {
+    afterEach(() => {
+        delete window.patchSyncEngine;
+        delete window.glyphCanvas;
+        delete window.fontManager;
+    });
+
+    test('captures bridge JSON and shards without waiting for editingFont', async () => {
+        const flush = jest.fn().mockResolvedValue();
+        window.glyphCanvas = {
+            initialFontLoaded: false,
+            outlineEditor: {
+                flushPendingKeyboardPreviewCommit: flush
+            }
+        };
+        window.fontManager = {
+            editingFont: null,
+            currentFont: {
+                babelfontData: { glyphs: [] }
+            }
+        };
+        const shards = [
+            { documentId: 'font-core', bytes: new Uint8Array([1, 2]) },
+            { documentId: 'font-deps', bytes: new Uint8Array([3]) },
+            { documentId: 'glyph:gA', bytes: new Uint8Array([4, 5, 6]) }
+        ];
+        const bridge = {
+            getFontJsonSnapshot: jest.fn(() => defaultCloudFontJson),
+            encodeDocumentSet: jest.fn(() => shards)
+        };
+        window.patchSyncEngine = bridge;
+
+        const capture = await captureCloudSaveSeedState();
+
+        expect(flush).toHaveBeenCalledTimes(1);
+        expect(capture.bridge).toBe(bridge);
+        expect(capture.glyphCount).toBe(1);
+        expect(capture.byteLength).toBe(6);
+        expect(capture.shards).toHaveLength(3);
+        expect(capture.shards[0].bytes).not.toBe(shards[0].bytes);
+        expect(Array.from(capture.shards[0].bytes)).toEqual([1, 2]);
+        expect(capture.fontJson.glyphs[0].name).toBe('A');
+        expect(bridge.encodeDocumentSet).toHaveBeenCalledTimes(1);
+        expect(bridge.getFontJsonSnapshot).toHaveBeenCalled();
+    });
+
+    test('captures after a skipped first compile when canvas is not loaded', async () => {
+        window.glyphCanvas = { initialFontLoaded: false };
+        window.fontManager = { editingFont: null };
+        window.patchSyncEngine = {
+            getFontJsonSnapshot: jest.fn(() => defaultCloudFontJson),
+            encodeDocumentSet: jest.fn(() => [
+                { documentId: 'font-core', bytes: new Uint8Array([9]) }
+            ])
+        };
+
+        await expect(captureCloudSaveSeedState()).resolves.toMatchObject({
+            glyphCount: 1,
+            byteLength: 1
+        });
+    });
+
+    test('recaptures JSON and shards together when the live bridge is replaced', async () => {
+        const originalJson = defaultCloudFontJson;
+        const replacementJson = {
+            glyphs: [
+                ...defaultCloudFontJson.glyphs,
+                {
+                    name: 'B',
+                    layers: [{ id: 'L0', shapes: [] }]
+                }
+            ]
+        };
+        const originalBridge = {
+            getFontJsonSnapshot: jest.fn(() => originalJson),
+            encodeDocumentSet: jest.fn(() => [
+                { documentId: 'font-core', bytes: new Uint8Array([1]) }
+            ])
+        };
+        const replacementBridge = {
+            getFontJsonSnapshot: jest.fn(() => replacementJson),
+            encodeDocumentSet: jest.fn(() => [
+                { documentId: 'font-core', bytes: new Uint8Array([7, 8]) },
+                { documentId: 'glyph:gB', bytes: new Uint8Array([9]) }
+            ])
+        };
+        window.patchSyncEngine = originalBridge;
+        const originalCapture = await captureCloudSaveSeedState();
+        expect(originalCapture.glyphCount).toBe(1);
+        expect(originalCapture.byteLength).toBe(1);
+
+        window.patchSyncEngine = replacementBridge;
+        const recapture =
+            await recaptureCloudSaveSeedIfBridgeChanged(originalCapture);
+
+        expect(recapture.bridge).toBe(replacementBridge);
+        expect(recapture.glyphCount).toBe(2);
+        expect(recapture.byteLength).toBe(3);
+        expect(recapture.shards.map((shard) => shard.documentId)).toEqual([
+            'font-core',
+            'glyph:gB'
+        ]);
+        expect(originalBridge.encodeDocumentSet).toHaveBeenCalledTimes(1);
+        expect(replacementBridge.encodeDocumentSet).toHaveBeenCalledTimes(1);
+    });
+
+    test('keeps the original capture when the live bridge identity is unchanged', async () => {
+        const bridge = {
+            getFontJsonSnapshot: jest.fn(() => defaultCloudFontJson),
+            encodeDocumentSet: jest.fn(() => [
+                { documentId: 'font-core', bytes: new Uint8Array([1]) }
+            ])
+        };
+        window.patchSyncEngine = bridge;
+        const capture = await captureCloudSaveSeedState();
+        const again = await recaptureCloudSaveSeedIfBridgeChanged(capture);
+        expect(again).toBe(capture);
+        expect(bridge.encodeDocumentSet).toHaveBeenCalledTimes(1);
+    });
+});
+
+describe('CloudPlugin glyph catch-up from core revision map', () => {
+    test('HTTP-catches glyphs whose docs lag the live core, even outside the editing subset', async () => {
+        const plugin = new CloudPlugin();
+        const catchUpDocuments = jest.fn().mockResolvedValue(['glyph:stale-a']);
+        plugin._liveSession = { catchUpDocuments };
+        plugin._activeAssetSizeBridge = {
+            hasSparseWorkingSet: () => false,
+            listSparseWorkingGlyphIds: () => [],
+            listGlyphRevisionTokens: () => [
+                { glyphId: 'stale-a', revision: 'rev-2' },
+                { glyphId: 'fresh-b', revision: 'rev-1' }
+            ],
+            glyphHasCatchUpRevision: (documentId, revision) =>
+                documentId === 'glyph:fresh-b' && revision === 'rev-1'
+        };
+        const originalFontManager = window.fontManager;
+        window.fontManager = {
+            getConstrainedEditingSubsetGlyphs: () => [],
+            getEditingSubsetSnapshot: () => [],
+            getLiveVisibleGlyphNames: () => []
+        };
+
+        try {
+            plugin._catchUpFromCoreRevisionMap();
+            await Promise.resolve();
+            expect(catchUpDocuments).toHaveBeenCalledWith(
+                [
+                    {
+                        documentId: 'glyph:stale-a',
+                        expectedRevision: 'rev-2'
+                    }
+                ],
+                { includeLiveDocuments: true }
+            );
+        } finally {
+            window.fontManager = originalFontManager;
+        }
     });
 });
 

@@ -702,6 +702,38 @@ describe('glyph catch-up for edits outside the receiver subset', () => {
         global.fetch = originalFetch;
     });
 
+    test('framed catch-up applies every tail before checking the core revision', async () => {
+        const writer = createEngine('writer');
+        const receiver = hydrateReceiverFromWriter(writer.bridge);
+        const staleTail = writer.bridge.encodeDocumentState(
+            glyphDocumentId('id-b')
+        );
+        window.changeBridge = writer.bridge;
+        writer.font.findGlyph('B').layers[0].width = 777;
+        const liveTail = writer.bridge.encodeDocumentState(
+            glyphDocumentId('id-b')
+        );
+        const expectedRevision = revisionFor(writer.bridge, 'id-b');
+        const originalFetch = global.fetch;
+        global.fetch = jest.fn(async () =>
+            framedLiveResponseWithTails([staleTail, liveTail])
+        );
+        await catchUpCloudDocument({
+            bridge: receiver,
+            token: 'token',
+            roomUrl: 'wss://rooms.example/room/asset-1',
+            websiteBaseUrl: 'https://editor.example',
+            assetId: 'asset-1',
+            documentId: glyphDocumentId('id-b'),
+            expectedRevision,
+            maxAttempts: 1,
+            wait: async () => {}
+        });
+        expect(global.fetch).toHaveBeenCalledTimes(1);
+        expect(glyphWidth(receiver, 'B')).toBe(777);
+        global.fetch = originalFetch;
+    });
+
     test('relays every framed tail transaction to linked windows', async () => {
         const previousRole = window.windowRole;
         const previousSync = window.windowSync;

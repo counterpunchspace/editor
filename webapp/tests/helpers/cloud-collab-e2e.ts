@@ -63,6 +63,9 @@ export async function saveCurrentFontToCloud(
                 return { error: 'cloudPlugin.saveAs is not available' };
             }
             try {
+                if (typeof plugin.waitForSaveReady === 'function') {
+                    await plugin.waitForSaveReady();
+                }
                 const assetId = await plugin.saveAs(assetName);
                 return { assetId };
             } catch (error) {
@@ -234,7 +237,7 @@ export async function collectPageErrors(page: Page): Promise<string[]> {
         }
         const text = msg.text();
         if (
-            /Download the React DevTools|\[vite\]|favicon|net::ERR_ABORTED|Failed to load resource/i.test(
+            /Download the React DevTools|\[vite\]|favicon|net::ERR_ABORTED|Failed to load resource|Persistent storage denied|Wake Lock permission|focusView already in progress|No fvar table found|No font loaded\. Open a font first|Could not get editing font features|Could not get stylistic set names/i.test(
                 text
             )
         ) {

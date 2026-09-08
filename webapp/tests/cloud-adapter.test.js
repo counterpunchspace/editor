@@ -387,6 +387,31 @@ describe('CloudAdapter outbound updates', () => {
         }
     });
 
+    it('marks access revoked when refreshCredentials fails with 403 on reconnect', async () => {
+        const openWebSocket = jest.fn().mockResolvedValue(undefined);
+        const adapter = new CloudAdapter({
+            assetId: 'asset-123',
+            websiteBaseUrl: 'https://counterpunch.space',
+            refreshCredentials: async () => {
+                throw new Error(
+                    'room-token request failed: 403 {"error":"Forbidden"}'
+                );
+            }
+        });
+        adapter._openWebSocket = openWebSocket;
+        adapter._directConnection = {
+            token: 'stale-token',
+            roomUrl: 'wss://rooms.example.com/room/asset-123'
+        };
+
+        await adapter._reconnectDirectConnection();
+
+        const snapshot = adapter.getAccessSnapshot();
+        expect(snapshot.reconnectForbidden).toBe(true);
+        expect(snapshot.accessRevoked).toBe(true);
+        expect(openWebSocket).not.toHaveBeenCalled();
+    });
+
     it('connect uses the room-token response room url', async () => {
         const originalFetch = global.fetch;
         const openWebSocket = jest.fn().mockResolvedValue(undefined);
@@ -3413,6 +3438,47 @@ describe('CloudAdapter durability failures', () => {
                 detail: 'Cloud asset was deleted'
             });
             expect(scheduleReconnect).not.toHaveBeenCalled();
+        } finally {
+            scheduleReconnect.mockRestore();
+            adapter.disconnect();
+            global.WebSocket = originalWebSocket;
+        }
+    });
+
+    it('reconnects immediately after a stale access epoch close', async () => {
+        const originalWebSocket = global.WebSocket;
+        let socket;
+        class FakeWebSocket {
+            constructor() {
+                this.readyState = 1;
+                this.send = jest.fn();
+                this.close = jest.fn();
+                socket = this;
+            }
+        }
+        global.WebSocket = FakeWebSocket;
+        const adapter = new CloudAdapter({
+            assetId: 'asset-123',
+            websiteBaseUrl: 'https://counterpunch.space'
+        });
+        const scheduleReconnect = jest
+            .spyOn(adapter, '_scheduleReconnect')
+            .mockImplementation(() => {});
+
+        try {
+            await adapter.connectDirect(
+                {
+                    onLocalUpdate: jest.fn(),
+                    offLocalUpdate: jest.fn()
+                },
+                'room-token',
+                'wss://rooms.example.com/room/asset-123',
+                { bootstrapMode: 'skip' }
+            );
+            adapter._reconnectAttempt = 8;
+            socket.onclose?.({ code: 4008, reason: 'stale-access' });
+            expect(adapter._reconnectAttempt).toBe(0);
+            expect(scheduleReconnect).toHaveBeenCalled();
         } finally {
             scheduleReconnect.mockRestore();
             adapter.disconnect();

@@ -471,142 +471,18 @@ function cloneCloudFontJson(
     return JSON.parse(JSON.stringify(fontJson)) as Record<string, unknown>;
 }
 
-function parseCloudFontJsonString(
-    fontJson: string | null | undefined
-): Record<string, unknown> | null {
-    if (!fontJson) {
-        return null;
-    }
-
-    try {
-        return JSON.parse(fontJson) as Record<string, unknown>;
-    } catch {
-        return null;
-    }
-}
-
-function getCloudFontJsonStructureSignature(
-    fontJson: Record<string, unknown> | null | undefined
-): string | null {
-    if (!fontJson || typeof fontJson !== 'object') {
-        return null;
-    }
-
-    const glyphs = Array.isArray(fontJson.glyphs)
-        ? (fontJson.glyphs as Array<Record<string, unknown>>)
-        : [];
-
-    return JSON.stringify(
-        glyphs
-            .map((glyph) => {
-                const layers = Array.isArray(glyph?.layers)
-                    ? (glyph.layers as Array<Record<string, unknown>>)
-                    : [];
-
-                return {
-                    name: String(glyph?.name || ''),
-                    layers: layers
-                        .map((layer) => ({
-                            id: String(layer?.id || ''),
-                            shapes: Array.isArray(layer?.shapes)
-                                ? layer.shapes.length
-                                : 0,
-                            anchors: Array.isArray(layer?.anchors)
-                                ? layer.anchors.length
-                                : 0,
-                            guides: Array.isArray(layer?.guides)
-                                ? layer.guides.length
-                                : 0
-                        }))
-                        .sort((left, right) => left.id.localeCompare(right.id))
-                };
-            })
-            .sort((left, right) => left.name.localeCompare(right.name))
-    );
-}
-
-function getCloudFontModelStructureSignature(
-    fontModel: unknown
-): string | null {
-    const glyphs = Array.isArray((fontModel as { glyphs?: unknown[] })?.glyphs)
-        ? ((fontModel as { glyphs: Array<Record<string, unknown>> })
-              .glyphs as Array<Record<string, unknown>>)
-        : [];
-
-    return JSON.stringify(
-        glyphs
-            .map((glyph) => {
-                const layers = Array.isArray(glyph?.layers)
-                    ? (glyph.layers as Array<Record<string, unknown>>)
-                    : [];
-
-                return {
-                    name: String(glyph?.name || ''),
-                    layers: layers
-                        .map((layer) => ({
-                            id: String(layer?.id || ''),
-                            shapes: Array.isArray(layer?.shapes)
-                                ? layer.shapes.length
-                                : (Array.isArray(layer?.paths)
-                                      ? layer.paths.length
-                                      : 0) +
-                                  (Array.isArray(layer?.components)
-                                      ? layer.components.length
-                                      : 0),
-                            anchors: Array.isArray(layer?.anchors)
-                                ? layer.anchors.length
-                                : 0,
-                            guides: Array.isArray(layer?.guides)
-                                ? layer.guides.length
-                                : 0
-                        }))
-                        .sort((left, right) => left.id.localeCompare(right.id))
-                };
-            })
-            .sort((left, right) => left.name.localeCompare(right.name))
-    );
-}
-
-function getCloudFontContentScore(
-    fontJson: Record<string, unknown> | null | undefined
-): number {
-    if (!fontJson || typeof fontJson !== 'object') {
-        return -1;
-    }
-
-    const glyphs = Array.isArray(fontJson.glyphs)
-        ? (fontJson.glyphs as Array<Record<string, unknown>>)
-        : [];
-    let score = glyphs.length * 1000;
-
-    for (const glyph of glyphs) {
-        const layers = Array.isArray(glyph?.layers)
-            ? (glyph.layers as Array<Record<string, unknown>>)
-            : [];
-        score += layers.length * 100;
-        for (const layer of layers) {
-            score += Array.isArray(layer?.shapes)
-                ? layer.shapes.length * 10
-                : 0;
-            score += Array.isArray(layer?.anchors) ? layer.anchors.length : 0;
-            score += Array.isArray(layer?.guides) ? layer.guides.length : 0;
-        }
-    }
-
-    return score;
-}
-
 const CLOUD_TRANSFER_TIMEOUT_FLOOR_MS = 5 * 60_000;
 const CLOUD_TRANSFER_TIMEOUT_CHUNK_BYTES = 750_000;
 const CLOUD_TRANSFER_TIMEOUT_PER_CHUNK_MS = 15_000;
 
-interface CloudSaveSeedCacheEntry {
-    currentFont: object;
-    changeVersion: number | null;
+export type CloudSaveSeedCapture = {
+    bridge: PatchSyncEngine;
     fontJson: Record<string, unknown>;
-}
-
-let cloudSaveSeedCache: CloudSaveSeedCacheEntry | null = null;
+    shards: EncodedShard[];
+    glyphCount: number;
+    byteLength: number;
+    captureEncodeMs: number;
+};
 
 function estimateCloudTransferTimeoutMs(
     approximateByteLength?: number | null
@@ -629,135 +505,27 @@ function estimateCloudTransferTimeoutMs(
     );
 }
 
-async function waitForCloudSaveSeedFontJson(
-    timeoutMs = 15000
-): Promise<Record<string, unknown>> {
-    return await new Promise((resolve, reject) => {
-        const startedAt = Date.now();
-        let bestCandidate: Record<string, unknown> | null = null;
-        let bestCandidateScore = -1;
-        let lastAttemptedFont: object | null = null;
-        let lastAttemptedChangeVersion: number | null = null;
+function cloneEncodedShards(shards: EncodedShard[]): EncodedShard[] {
+    return shards.map((shard) => ({
+        documentId: shard.documentId,
+        bytes: shard.bytes.slice()
+    }));
+}
 
-        const poll = () => {
-            const currentFont = (window as any).fontManager?.currentFont;
-            const fontModel =
-                (window as any).currentFontModel || currentFont?.fontModel;
-            const startupReady = Boolean(
-                (window as any).glyphCanvas?.initialFontLoaded &&
-                (window as any).fontManager?.editingFont
-            );
+function encodedShardByteLength(shards: EncodedShard[]): number {
+    return shards.reduce((sum, shard) => sum + shard.bytes.byteLength, 0);
+}
 
-            if (currentFont && fontModel && startupReady) {
-                const changeVersion =
-                    typeof currentFont.changeVersion === 'number'
-                        ? currentFont.changeVersion
-                        : null;
-                const cachedSeed = cloudSaveSeedCache;
-                if (changeVersion === null) {
-                    cloudSaveSeedCache = null;
-                }
-                if (
-                    changeVersion !== null &&
-                    cachedSeed &&
-                    cachedSeed.currentFont === currentFont &&
-                    cachedSeed.changeVersion === changeVersion
-                ) {
-                    resolve(cachedSeed.fontJson);
-                    return;
-                }
-
-                if (
-                    changeVersion !== null &&
-                    lastAttemptedFont === currentFont &&
-                    lastAttemptedChangeVersion === changeVersion
-                ) {
-                    if (Date.now() - startedAt >= timeoutMs) {
-                        if (bestCandidate) {
-                            resolve(bestCandidate);
-                            return;
-                        }
-
-                        reject(
-                            new Error(
-                                'Cloud font model did not settle into a savable JSON snapshot'
-                            )
-                        );
-                        return;
-                    }
-
-                    window.requestAnimationFrame(poll);
-                    return;
-                }
-
-                lastAttemptedFont = currentFont;
-                lastAttemptedChangeVersion = changeVersion;
-                const preSyncFontJson = parseCloudFontJsonString(
-                    currentFont.babelfontJson
-                );
-                const preSyncScore = getCloudFontContentScore(preSyncFontJson);
-                if (preSyncFontJson && preSyncScore > bestCandidateScore) {
-                    bestCandidate = canonicalizeCloudExportFontJson(
-                        cloneCloudFontJson(preSyncFontJson)
-                    );
-                    bestCandidateScore = preSyncScore;
-                }
-
-                currentFont.syncJsonFromModel?.();
-                const fontJson = currentFont.babelfontData as
-                    Record<string, unknown> | undefined;
-                const syncedScore = getCloudFontContentScore(fontJson);
-                if (fontJson && syncedScore > bestCandidateScore) {
-                    bestCandidate = canonicalizeCloudExportFontJson(
-                        cloneCloudFontJson(fontJson)
-                    );
-                    bestCandidateScore = syncedScore;
-                }
-                const modelSignature =
-                    getCloudFontModelStructureSignature(fontModel);
-                const fontJsonSignature =
-                    getCloudFontJsonStructureSignature(fontJson);
-
-                if (
-                    fontJson &&
-                    modelSignature &&
-                    fontJsonSignature &&
-                    modelSignature === fontJsonSignature
-                ) {
-                    const canonicalFontJson = canonicalizeCloudExportFontJson(
-                        cloneCloudFontJson(fontJson)
-                    );
-                    if (changeVersion !== null) {
-                        cloudSaveSeedCache = {
-                            currentFont,
-                            changeVersion,
-                            fontJson: canonicalFontJson
-                        };
-                    }
-                    resolve(canonicalFontJson);
-                    return;
-                }
-            }
-
-            if (Date.now() - startedAt >= timeoutMs) {
-                if (bestCandidate) {
-                    resolve(bestCandidate);
-                    return;
-                }
-
-                reject(
-                    new Error(
-                        'Cloud font model did not settle into a savable JSON snapshot'
-                    )
-                );
-                return;
-            }
-
-            window.requestAnimationFrame(poll);
-        };
-
-        poll();
-    });
+async function flushPendingCloudSaveMutations(): Promise<void> {
+    await (
+        window as Window & {
+            glyphCanvas?: {
+                outlineEditor?: {
+                    flushPendingKeyboardPreviewCommit?: () => Promise<void>;
+                };
+            };
+        }
+    ).glyphCanvas?.outlineEditor?.flushPendingKeyboardPreviewCommit?.();
 }
 
 async function waitForCloudSaveBridge(
@@ -783,6 +551,63 @@ async function waitForCloudSaveBridge(
 
         poll();
     });
+}
+
+export async function captureCloudSaveSeedState(
+    preferredBridge?: PatchSyncEngine | null
+): Promise<CloudSaveSeedCapture> {
+    const captureStartedAt =
+        typeof performance !== 'undefined' && performance.now
+            ? performance.now()
+            : Date.now();
+    await flushPendingCloudSaveMutations();
+    const liveBridge = window.patchSyncEngine;
+    const bridge =
+        preferredBridge && liveBridge === preferredBridge
+            ? preferredBridge
+            : liveBridge || (await waitForCloudSaveBridge());
+    assertCloudBridgeStateCanBeSaved(bridge);
+    const snapshot = getCloudFontJsonFromBridge(bridge);
+    if (!snapshot) {
+        throw new Error('No active font data to save to cloud');
+    }
+    const fontJson = canonicalizeCloudExportFontJson(
+        cloneCloudFontJson(snapshot)
+    );
+    validateCloudExportForFontOpen(fontJson, 'save');
+    const shards = cloneEncodedShards(bridge.encodeDocumentSet?.() ?? []);
+    if (!shards.length) {
+        throw new Error('No live document set to seed to cloud');
+    }
+    const captureEncodeMs =
+        (typeof performance !== 'undefined' && performance.now
+            ? performance.now()
+            : Date.now()) - captureStartedAt;
+    return {
+        bridge,
+        fontJson,
+        shards,
+        glyphCount: listGlyphRecords(fontJson).length,
+        byteLength: encodedShardByteLength(shards),
+        captureEncodeMs
+    };
+}
+
+export async function recaptureCloudSaveSeedIfBridgeChanged(
+    capture: CloudSaveSeedCapture
+): Promise<CloudSaveSeedCapture> {
+    const liveBridge = window.patchSyncEngine;
+    if (liveBridge && liveBridge === capture.bridge) {
+        return capture;
+    }
+    return await captureCloudSaveSeedState(liveBridge);
+}
+
+export async function waitForCloudSaveReady(): Promise<PatchSyncEngine> {
+    await flushPendingCloudSaveMutations();
+    const bridge = await waitForCloudSaveBridge();
+    assertCloudBridgeStateCanBeSaved(bridge);
+    return bridge;
 }
 
 /**
@@ -1173,23 +998,14 @@ export class CloudPlugin extends FilesystemPlugin {
         );
     }
 
-    async getCurrentSaveAsWarningState(): Promise<CloudSaveSizeWarningState | null> {
-        const seedFontJson = canonicalizeCloudExportFontJson(
-            await waitForCloudSaveSeedFontJson()
-        );
-        validateCloudExportForFontOpen(seedFontJson, 'save');
+    async waitForSaveReady(): Promise<PatchSyncEngine> {
+        return await waitForCloudSaveReady();
+    }
 
-        const shards = window.patchSyncEngine?.encodeDocumentSet?.() ?? [];
-        const estimated =
-            window.patchSyncEngine?.getEstimatedLiveEncodedBytes?.() ?? 0;
-        const byteLength =
-            estimated > 0
-                ? estimated
-                : shards.reduce(
-                      (sum, shard) => sum + shard.bytes.byteLength,
-                      0
-                  ) ||
-                  new TextEncoder().encode(JSON.stringify(seedFontJson)).length;
+    async getCurrentSaveAsWarningState(): Promise<CloudSaveSizeWarningState | null> {
+        const seed = await captureCloudSaveSeedState();
+        const estimated = seed.bridge.getEstimatedLiveEncodedBytes?.() ?? 0;
+        const byteLength = estimated > 0 ? estimated : seed.byteLength;
         const policy = await this._ensureCloudSizePolicy();
         if (!policy) {
             return null;
@@ -2798,13 +2614,20 @@ export class CloudPlugin extends FilesystemPlugin {
     };
 
     private _catchUpFromCoreRevisionMap(): void {
-        this._enqueueGlyphCatchUp();
+        const bridge = this._activeAssetSizeBridge;
+        if (!bridge) {
+            return;
+        }
+        const subsetIds = this._editingSubsetGlyphIdsForCatchUp(bridge);
+        const staleIds = this._staleGlyphIdsForCatchUp(bridge);
+        this._enqueueGlyphCatchUp([...new Set([...subsetIds, ...staleIds])]);
     }
 
     /**
      * HTTP catch-up is for glyphs the live WebSocket subset does not cover.
-     * Never walk the full core revision map: that is the whole catalog and
-     * will freeze open while every glyph shard is fetched.
+     * After R2 hydrate the in-memory glyph docs can lag the live core
+     * revision map; those mismatches are the edits since last attestation,
+     * not the whole catalog. Cap remains in `_enqueueGlyphCatchUp`.
      */
     private _editingSubsetGlyphIdsForCatchUp(
         bridge: PatchSyncEngine
@@ -2820,6 +2643,24 @@ export class CloudPlugin extends FilesystemPlugin {
         return liveGlyphDocumentIdsFromSubset(bridge, names)
             .filter((documentId) => documentId.startsWith('glyph:'))
             .map((documentId) => documentId.slice('glyph:'.length));
+    }
+
+    private _staleGlyphIdsForCatchUp(bridge: PatchSyncEngine): string[] {
+        const tokens = bridge.listGlyphRevisionTokens?.() ?? [];
+        if (typeof bridge.glyphHasCatchUpRevision !== 'function') {
+            return [];
+        }
+        return tokens
+            .filter(
+                (token) =>
+                    !!token.glyphId &&
+                    !!token.revision &&
+                    !bridge.glyphHasCatchUpRevision(
+                        glyphDocumentId(token.glyphId),
+                        token.revision
+                    )
+            )
+            .map((token) => token.glyphId);
     }
 
     private _enqueueGlyphCatchUp(glyphIds?: string[]): void {
@@ -3190,7 +3031,7 @@ export class CloudPlugin extends FilesystemPlugin {
             throw new Error(data.error || 'Failed to remove member');
         }
         if (data.accessChange?.state && data.accessChange.state !== 'applied') {
-            throw new Error(
+            console.warn(
                 data.accessChange.warning ||
                     'Member removed, but room access revocation is still pending'
             );
@@ -3218,9 +3059,14 @@ export class CloudPlugin extends FilesystemPlugin {
 
         beginLoadingCursor();
         const urlSparse = readUrlState().sparse === true;
+        const linkedOrSync =
+            window.windowRole?.isLinkedWindow?.() === true ||
+            (typeof location !== 'undefined' &&
+                new URLSearchParams(location.search).has('sync'));
         const openPromise = this._openAssetInternal(assetId, {
             awaitLiveBridge: true,
-            sparseHydration: this._pendingSparseHydration || urlSparse
+            sparseHydration:
+                this._pendingSparseHydration || urlSparse || linkedOrSync
         });
         this._pendingSparseHydration = false;
         this._pendingOpenAsset = {
@@ -3332,17 +3178,20 @@ export class CloudPlugin extends FilesystemPlugin {
                             total: 2 + catalogIds.length,
                             message: 'Loading font…'
                         });
-                        glyphBytes = (
-                            await hydrateSparseGlyphsToFixedPoint({
-                                documentSet,
-                                catalogIds,
-                                seedIds: catalogIds,
-                                layoutIds: [],
-                                catalog: catalogEntriesFromCoreJson(coreJson),
-                                requireFetchedGlyphs: true,
-                                fetchGlyphs
-                            })
-                        ).glyphBytes;
+                        const documentIds = catalogIds.map(glyphDocumentId);
+                        glyphBytes = await fetchGlyphs(documentIds);
+                        const missingPublished = documentIds.filter(
+                            (documentId) =>
+                                !glyphBytes.get(documentId)?.byteLength
+                        );
+                        if (missingPublished.length) {
+                            throw new Error(
+                                `Published glyph shards not found: ${missingPublished.join(', ')}`
+                            );
+                        }
+                        for (const [documentId, bytes] of glyphBytes) {
+                            documentSet.applyRemoteUpdate(documentId, bytes);
+                        }
                     } else {
                         const { seedIds, layoutIds } = resolveHydrationSeeds({
                             fontJson: coreJson,
@@ -3569,29 +3418,14 @@ export class CloudPlugin extends FilesystemPlugin {
         }
 
         await this.prepareToSeed();
-        let liveBridge = await waitForCloudSaveBridge();
-        assertCloudBridgeStateCanBeSaved(liveBridge);
-        let shards = liveBridge.encodeDocumentSet?.() ?? [];
-        if (!shards.length) {
-            throw new Error('No live document set to seed to cloud');
-        }
-        let encodedFromBridge = liveBridge;
-        const seedFontJson = canonicalizeCloudExportFontJson(
-            await waitForCloudSaveSeedFontJson()
-        );
-        validateCloudExportForFontOpen(seedFontJson, 'save');
-        const estimatedGlyphCount = listGlyphRecords(seedFontJson).length;
-        const estimatedSaveBytes = shards.reduce(
-            (sum, shard) => sum + shard.bytes.byteLength,
-            0
-        );
+        let seed = await captureCloudSaveSeedState();
         const sizePolicy = await this._ensureCloudSizePolicy();
-        if (sizePolicy && estimatedSaveBytes > sizePolicy.maxCloudAssetBytes) {
+        if (sizePolicy && seed.byteLength > sizePolicy.maxCloudAssetBytes) {
             throw new Error(
-                `Cloud save blocked: font is ${formatCloudByteCount(estimatedSaveBytes)} but the current cloud tier only supports up to ${formatCloudByteCount(sizePolicy.maxCloudAssetBytes)}.`
+                `Cloud save blocked: font is ${formatCloudByteCount(seed.byteLength)} but the current cloud tier only supports up to ${formatCloudByteCount(sizePolicy.maxCloudAssetBytes)}.`
             );
         }
-        this._warnBeforeNearLimitCloudSave(estimatedSaveBytes);
+        this._warnBeforeNearLimitCloudSave(seed.byteLength);
 
         const resp = await fetch(`${this._websiteBaseUrl}/api/cloud/assets`, {
             method: 'POST',
@@ -3601,8 +3435,8 @@ export class CloudPlugin extends FilesystemPlugin {
             }),
             body: JSON.stringify({
                 name,
-                estimatedSeedBytes: estimatedSaveBytes,
-                estimatedGlyphCount
+                estimatedSeedBytes: seed.byteLength,
+                estimatedGlyphCount: seed.glyphCount
             })
         });
 
@@ -3618,14 +3452,7 @@ export class CloudPlugin extends FilesystemPlugin {
 
         const { token, roomUrl } = await this._fetchRoomToken(assetId);
         this._disconnectCurrent();
-        liveBridge = await waitForCloudSaveBridge();
-        assertCloudBridgeStateCanBeSaved(liveBridge);
-        if (liveBridge !== encodedFromBridge) {
-            shards = liveBridge.encodeDocumentSet?.() ?? [];
-            if (!shards.length) {
-                throw new Error('No live document set to seed to cloud');
-            }
-        }
+        seed = await recaptureCloudSaveSeedIfBridgeChanged(seed);
         const seeder = new CloudAdapter({
             assetId,
             websiteBaseUrl: this._websiteBaseUrl
@@ -3637,8 +3464,8 @@ export class CloudPlugin extends FilesystemPlugin {
                 seeder,
                 token,
                 roomUrl,
-                shards,
-                glyphCount: estimatedGlyphCount
+                shards: seed.shards,
+                glyphCount: seed.glyphCount
             });
             seededCheckpointLogId =
                 seeded && typeof seeded === 'object'
@@ -3668,24 +3495,31 @@ export class CloudPlugin extends FilesystemPlugin {
 
         this._disconnectCurrent();
 
+        let attachMs = 0;
+        let finalizeMs = 0;
         try {
+            const attachStartedAt = performance.now();
             await this._attachLiveSession({
                 assetId,
                 token,
                 roomUrl,
-                bridge: liveBridge,
+                bridge: seed.bridge,
                 bootstrapMode: 'skip',
                 ...(seededCheckpointLogId !== null
                     ? { checkpointLogId: seededCheckpointLogId }
                     : {}),
-                connectedTimeoutMs:
-                    estimateCloudTransferTimeoutMs(estimatedSaveBytes)
+                connectedTimeoutMs: estimateCloudTransferTimeoutMs(
+                    seed.byteLength
+                )
             });
+            attachMs = performance.now() - attachStartedAt;
+            const finalizeStartedAt = performance.now();
             await this._finalizePendingAsset(assetId, {
-                shards,
+                shards: seed.shards,
                 receipts: seedReceipts,
-                glyphCount: estimatedGlyphCount
+                glyphCount: seed.glyphCount
             });
+            finalizeMs = performance.now() - finalizeStartedAt;
         } catch (error) {
             this._disconnectCurrent();
             await this._abortPendingAsset(assetId).catch((abortError) => {
@@ -3701,6 +3535,13 @@ export class CloudPlugin extends FilesystemPlugin {
         this._activeAssetId = assetId;
         this._cacheAssetRole(assetId, asset.role);
         this._finalizeCurrentFontAsSavedCloudAsset(assetId);
+        console.log('[CloudPlugin] saveAs phases', {
+            captureEncodeMs: seed.captureEncodeMs,
+            attachMs,
+            finalizeMs,
+            shardCount: seed.shards.length,
+            byteLength: seed.byteLength
+        });
 
         return assetId;
     }
@@ -3730,26 +3571,7 @@ export class CloudPlugin extends FilesystemPlugin {
         }
 
         await this.prepareToSeed();
-        const liveBridge = await waitForCloudSaveBridge();
-        assertCloudBridgeStateCanBeSaved(liveBridge);
-        const shards = (liveBridge.encodeDocumentSet?.() ?? []).map(
-            (shard) => ({
-                documentId: shard.documentId,
-                bytes: shard.bytes.slice()
-            })
-        );
-        if (!shards.length) {
-            throw new Error('No live document set to seed to cloud');
-        }
-        const seedFontJson = canonicalizeCloudExportFontJson(
-            await waitForCloudSaveSeedFontJson()
-        );
-        validateCloudExportForFontOpen(seedFontJson, 'save');
-        const glyphCount = listGlyphRecords(seedFontJson).length;
-        const byteLength = shards.reduce(
-            (sum, shard) => sum + shard.bytes.byteLength,
-            0
-        );
+        const seed = await captureCloudSaveSeedState();
         const ioOptions: CloudShardIoOptions = {
             concurrency,
             transport: options?.transport
@@ -3763,8 +3585,8 @@ export class CloudPlugin extends FilesystemPlugin {
             }),
             body: JSON.stringify({
                 name: assetName,
-                estimatedSeedBytes: byteLength,
-                estimatedGlyphCount: glyphCount
+                estimatedSeedBytes: seed.byteLength,
+                estimatedGlyphCount: seed.glyphCount
             })
         });
         if (!resp.ok) {
@@ -3785,24 +3607,24 @@ export class CloudPlugin extends FilesystemPlugin {
             const seeded = await seeder.seedDocumentSet(
                 token,
                 roomUrl,
-                shards,
-                glyphCount,
+                seed.shards,
+                seed.glyphCount,
                 undefined,
                 ioOptions
             );
             const seedMs = performance.now() - startedAt;
             await this._finalizePendingAsset(assetId, {
-                shards,
+                shards: seed.shards,
                 receipts: seeded.attestations,
-                glyphCount
+                glyphCount: seed.glyphCount
             });
             return {
                 assetId,
                 seedMs,
-                shardCount: shards.length,
-                byteLength,
-                documentIds: shards.map((shard) => shard.documentId),
-                glyphCount
+                shardCount: seed.shards.length,
+                byteLength: seed.byteLength,
+                documentIds: seed.shards.map((shard) => shard.documentId),
+                glyphCount: seed.glyphCount
             };
         } catch (error) {
             await this._abortPendingAsset(assetId).catch(() => undefined);

@@ -3041,8 +3041,8 @@ describe('sparse hydration integrity regressions', () => {
     });
 
     it('auto-sparses large catalogs and exact-encodes near the size gate', () => {
-        expect(shouldAutoSparseHydrate(255)).toBe(false);
-        expect(shouldAutoSparseHydrate(256)).toBe(true);
+        expect(shouldAutoSparseHydrate(9999)).toBe(false);
+        expect(shouldAutoSparseHydrate(10000)).toBe(true);
         expect(shouldExactEncodeAssetSize(89, 100, 100)).toBe(false);
         expect(shouldExactEncodeAssetSize(90, 100, 100)).toBe(true);
     });

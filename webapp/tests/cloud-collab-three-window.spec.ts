@@ -180,6 +180,9 @@ async function saveCurrentFontToCloud(
                 return { error: 'cloudPlugin.saveAs is not available' };
             }
             try {
+                if (typeof plugin.waitForSaveReady === 'function') {
+                    await plugin.waitForSaveReady();
+                }
                 const assetId = await plugin.saveAs(assetName);
                 return { assetId };
             } catch (error) {
@@ -475,6 +478,7 @@ test.describe('Cloud collab three-window ChangeBridge sync', () => {
             expect(compileErrors.missingField).toBe(false);
             expect(compileErrors.kernGroups).toBe(false);
 
+            await waitForCloudLiveIdle(mainPage);
             await focusView(mainPage, 'Meta+Shift+E', 'view-editor');
             await alignEditorCanvas(mainPage, 'a', { wght: 200 });
             await mainPage.waitForFunction(() => {
@@ -1959,19 +1963,70 @@ test.describe('Cloud collab three-window ChangeBridge sync', () => {
 
             await inviteePage.reload();
             await waitForCanvasReady(inviteePage);
-            await waitForFontLoaded(inviteePage);
+            try {
+                await waitForFontLoaded(inviteePage);
+            } catch (error) {
+                const dump = await inviteePage.evaluate(() => {
+                    const plugin = (window as any).cloudPlugin;
+                    return {
+                        href: String(location.href),
+                        path:
+                            (window as any).fontManager?.currentFont?.path ??
+                            null,
+                        cloudOpenError:
+                            (window as any).__cloudOpenError ?? null,
+                        assetId: plugin?.activeAssetId ?? null,
+                        status: plugin?.connectionStatus ?? null,
+                        detail: plugin?.connectionDetail ?? null
+                    };
+                });
+                throw new Error(
+                    `invitee reload waitForFontLoaded: ${JSON.stringify(dump)}: ${
+                        error instanceof Error ? error.message : String(error)
+                    }`
+                );
+            }
             await waitForOpenSessionReady(inviteePage, assetId);
             await waitForBridgeReady(inviteePage);
             await installJsonCanonicalizer(inviteePage);
+            await inviteePage.evaluate(() => {
+                const gc = (window as any).glyphCanvas;
+                gc?.textRunEditor?.setTextBuffer?.('a');
+                gc?.textRunEditor?.shapeText?.(true);
+            });
+            await waitForCloudLiveIdle(inviteePage, 60000);
 
             await mainPage.reload();
             await waitForCanvasReady(mainPage);
-            await waitForFontLoaded(mainPage);
+            try {
+                await waitForFontLoaded(mainPage);
+            } catch (error) {
+                const dump = await mainPage.evaluate(() => {
+                    const plugin = (window as any).cloudPlugin;
+                    return {
+                        href: String(location.href),
+                        path:
+                            (window as any).fontManager?.currentFont?.path ??
+                            null,
+                        cloudOpenError:
+                            (window as any).__cloudOpenError ?? null,
+                        assetId: plugin?.activeAssetId ?? null,
+                        status: plugin?.connectionStatus ?? null,
+                        detail: plugin?.connectionDetail ?? null
+                    };
+                });
+                throw new Error(
+                    `owner reload waitForFontLoaded: ${JSON.stringify(dump)}: ${
+                        error instanceof Error ? error.message : String(error)
+                    }`
+                );
+            }
             await waitForOpenSessionReady(mainPage, assetId);
             await waitForBridgeReady(mainPage);
             await installJsonCanonicalizer(mainPage);
-            await waitForCloudLiveIdle(mainPage);
-            await waitForCloudLiveIdle(inviteePage);
+            await alignEditorCanvas(mainPage, 'a', { wght: 200 });
+            await waitForCloudLiveIdle(mainPage, 60000);
+            await waitForCloudLiveIdle(inviteePage, 60000);
 
             // Reloading the owner window closes the WindowSync popup.
             linkedPage = await openLinkedEditorWindow(mainPage);

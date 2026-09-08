@@ -10,6 +10,7 @@ import {
     catchUpCloudDocument,
     CLOUD_GLYPH_CATCH_UP_CONCURRENCY,
     CLOUD_GLYPH_PUBLISH_CONCURRENCY,
+    isForbiddenCloudCredentialError,
     publishCloudDocumentUpdate,
     runCloudVisibleReconnectRebaseline,
     type CloudAdapterAccessSnapshot,
@@ -286,6 +287,12 @@ export class CloudLiveSession {
         };
     }
 
+    markAccessRevoked(detail = 'Access revoked'): void {
+        for (const adapter of this._adapters.values()) {
+            adapter.markAccessRevoked?.(detail);
+        }
+    }
+
     captureIntegritySnapshot(): Record<string, unknown> {
         return {
             status: this.status,
@@ -541,9 +548,14 @@ export class CloudLiveSession {
         if (typeof navigator !== 'undefined' && navigator.onLine === false) {
             return;
         }
-        const deps = this._adapters.get(FONT_DEPS_DOCUMENT_ID);
-        if (typeof deps?.waitUntilDurable === 'function') {
-            await deps.waitUntilDurable();
+        await this.flushPendingHttpPublishes();
+        for (const [documentId, adapter] of this._adapters) {
+            if (documentId === FONT_CORE_DOCUMENT_ID) {
+                continue;
+            }
+            if (typeof adapter.waitUntilDurable === 'function') {
+                await adapter.waitUntilDurable();
+            }
         }
     }
 
@@ -680,6 +692,10 @@ export class CloudLiveSession {
             return true;
         } catch (error) {
             console.warn('CloudLiveSession: credential refresh failed:', error);
+            if (isForbiddenCloudCredentialError(error)) {
+                this.markAccessRevoked();
+                throw error;
+            }
             return false;
         }
     }

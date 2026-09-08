@@ -118,6 +118,11 @@ export function cloudReconnectDelayMs(attempt: number): number {
     const jitter = 0.8 + Math.random() * 0.4;
     return Math.round(exponential * jitter);
 }
+
+export function isForbiddenCloudCredentialError(error: unknown): boolean {
+    const message = error instanceof Error ? error.message : String(error);
+    return /room-token request failed: 40[13]\b/.test(message);
+}
 const CLOUD_COLLAB_RELOAD_MESSAGE =
     'Please reload the editor to continue collaborating.';
 const CLOUD_COLLAB_FORMAT_CHANGED_MESSAGE =
@@ -821,7 +826,7 @@ export async function catchUpCloudDocument(options: {
                 }
                 continue;
             }
-            let applied = true;
+            let applied = false;
             const updatesToApply = payloadsToApply.length
                 ? payloadsToApply
                 : [update];
@@ -833,30 +838,26 @@ export async function catchUpCloudDocument(options: {
                     applied = options.bridge.applyDocumentCatchUp(
                         options.documentId,
                         part,
-                        collaborationMessageHistory,
-                        undefined,
-                        expectedRevision
+                        collaborationMessageHistory
                     );
                 } else {
                     options.bridge.applyDocumentCheckpoint?.(
                         options.documentId,
                         part
                     );
-                    if (
-                        expectedRevision &&
-                        typeof options.bridge.glyphHasCatchUpRevision ===
-                            'function' &&
-                        !options.bridge.glyphHasCatchUpRevision(
-                            options.documentId,
-                            expectedRevision
-                        )
-                    ) {
-                        applied = false;
-                    }
+                    applied = true;
                 }
-                if (!applied) {
-                    break;
-                }
+            }
+            if (
+                applied &&
+                expectedRevision &&
+                typeof options.bridge.glyphHasCatchUpRevision === 'function' &&
+                !options.bridge.glyphHasCatchUpRevision(
+                    options.documentId,
+                    expectedRevision
+                )
+            ) {
+                applied = false;
             }
             if (!applied) {
                 lastError = new Error(
@@ -1490,6 +1491,14 @@ export class CloudAdapter implements FileSystemAdapter {
             roomUrl: this._directConnection?.roomUrl ?? null,
             role: this.getCachedAssetRole(this._assetId)
         };
+    }
+
+    markAccessRevoked(detail = 'Access revoked'): void {
+        this._reconnectForbidden = true;
+        this._accessRevoked = true;
+        this.cacheAssetRole(this._assetId, null);
+        this._clearReconnectTimer();
+        this._setStatus('error', detail);
     }
 
     probeUnauthorizedLiveWrite(): boolean {
@@ -2592,6 +2601,11 @@ export class CloudAdapter implements FileSystemAdapter {
         return /pack (unsupported|not found)/i.test(message);
     }
 
+    private _isTransientPackHydrateError(error: unknown): boolean {
+        const message = error instanceof Error ? error.message : String(error);
+        return /shard pack hydrate failed: 5\d\d/.test(message);
+    }
+
     private async _seedPack(
         token: string,
         roomUrl: string,
@@ -2640,6 +2654,7 @@ export class CloudAdapter implements FileSystemAdapter {
             try {
                 this._noteTransferActivity('sending');
                 const remainingFrames: Uint8Array[] = [];
+                const assemblyStartedAt = performance.now();
                 for (const shard of remaining) {
                     throwIfAborted(options?.signal);
                     remainingFrames.push(
@@ -2652,6 +2667,10 @@ export class CloudAdapter implements FileSystemAdapter {
                     await yieldToUi();
                 }
                 const remainingBody = encodePackBody(remainingFrames);
+                console.log('[CloudAdapter] pack seed assembly', {
+                    packAssemblyMs: performance.now() - assemblyStartedAt,
+                    shardCount: remaining.length
+                });
                 const response = await fetch(
                     normalizeCloudShardPackUrl(
                         roomUrl,
@@ -3016,13 +3035,29 @@ export class CloudAdapter implements FileSystemAdapter {
                         cursor
                     );
                 } catch (error) {
+                    if (this._isTransientPackHydrateError(error)) {
+                        try {
+                            batchResult = await this._hydratePack(
+                                token,
+                                roomUrl,
+                                batch,
+                                options,
+                                cursor
+                            );
+                        } catch (retryError) {
+                            error = retryError;
+                        }
+                    }
                     if (
-                        options?.transport === 'pack' ||
-                        !this._isPackUnsupportedError(error)
+                        !batchResult &&
+                        (options?.transport === 'pack' ||
+                            !this._isPackUnsupportedError(error))
                     ) {
                         throw error;
                     }
-                    usePack = false;
+                    if (!batchResult) {
+                        usePack = false;
+                    }
                 }
             }
             if (!batchResult) {
@@ -3248,6 +3283,12 @@ export class CloudAdapter implements FileSystemAdapter {
                 console.log(
                     `CloudAdapter: closed (${event.code}: ${event.reason})`
                 );
+                if (
+                    event.reason === 'stale-access' ||
+                    event.reason === 'missing-access-epoch'
+                ) {
+                    this._reconnectAttempt = 0;
+                }
                 this._clearAuthenticationTimeout();
                 this._stopLiveness();
                 this._clientId = null;
@@ -4762,9 +4803,9 @@ export class CloudAdapter implements FileSystemAdapter {
 
         if (!resp.ok) {
             if (resp.status === 401 || resp.status === 403) {
-                this._reconnectForbidden = true;
-                this._accessRevoked = true;
-                this.cacheAssetRole(this._assetId, null);
+                this.markAccessRevoked(
+                    resp.status === 403 ? 'Access revoked' : 'Unauthorized'
+                );
             }
             const body = await resp.text().catch(() => '');
             throw new Error(
@@ -5103,6 +5144,9 @@ export class CloudAdapter implements FileSystemAdapter {
     }
 
     private async _reconnectDirectConnection(): Promise<void> {
+        if (this._reconnectForbidden || this._accessRevoked) {
+            return;
+        }
         this._requeueUnackedOutboxPackets();
         let token = this._directConnection?.token;
         let roomUrl = this._directConnection?.roomUrl;
@@ -5115,11 +5159,18 @@ export class CloudAdapter implements FileSystemAdapter {
                     this._directConnection = { token, roomUrl };
                 }
             } catch (error) {
+                if (isForbiddenCloudCredentialError(error)) {
+                    this.markAccessRevoked('Access revoked');
+                    return;
+                }
                 console.warn(
                     'CloudAdapter: credential refresh failed; retrying with existing token:',
                     error
                 );
             }
+        }
+        if (this._reconnectForbidden || this._accessRevoked) {
+            return;
         }
         if (!token || !roomUrl) {
             return;

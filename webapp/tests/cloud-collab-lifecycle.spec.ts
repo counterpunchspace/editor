@@ -11,7 +11,8 @@ import {
     installJsonCanonicalizer,
     installFontModelSyncTracker,
     installEditingFontCompileTracker,
-    installCrossWindowTrackersOnContext
+    installCrossWindowTrackersOnContext,
+    setupEditTextMode
 } from './helpers/change-bridge-cross-window';
 import {
     attachCloudCollabCookies,
@@ -27,6 +28,7 @@ import {
     collectPageErrors,
     editorHrefWithTestMode,
     gotoEditorPage,
+    glyphNodeX,
     nudgeGlyphNode,
     saveCurrentFontToCloud,
     waitForCloudLiveIdle
@@ -315,23 +317,20 @@ test.describe('Cloud collab seed/load cancel and two-tab', () => {
             await installJsonCanonicalizer(tab2);
             await installFontModelSyncTracker(page);
             await installEditingFontCompileTracker(page);
+            await setupEditTextMode(page, 'a');
+            await setupEditTextMode(tab2, 'a');
+            await waitForCloudLiveIdle(page, 60000);
             await waitForCloudLiveIdle(tab2, 60000);
 
             const first = await nudgeGlyphNode(page, 'a', 11, 'Tab one edit');
+            await expect
+                .poll(async () => glyphNodeX(tab2, 'a'), { timeout: 60000 })
+                .toBe(first.newX);
             const second = await nudgeGlyphNode(tab2, 'a', 7, 'Tab two edit');
             expect(first.newX).toBe(first.oldX + 11);
             expect(second.newX).toBe(second.oldX + 7);
             await expect
-                .poll(
-                    async () =>
-                        page.evaluate(() => {
-                            const glyph = (
-                                window as any
-                            ).currentFontModel.findGlyph('a');
-                            return glyph.layers[0].paths[0].nodes[0].x;
-                        }),
-                    { timeout: 60000 }
-                )
+                .poll(async () => glyphNodeX(page, 'a'), { timeout: 60000 })
                 .toBe(second.newX);
             await tab2.close();
         } finally {
