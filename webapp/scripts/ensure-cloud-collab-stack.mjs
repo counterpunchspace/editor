@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { spawn } from 'node:child_process';
+import { execSync, spawn } from 'node:child_process';
 
 const webappRoot = path.resolve(
     path.dirname(fileURLToPath(import.meta.url)),
@@ -10,9 +10,15 @@ const webappRoot = path.resolve(
 );
 const editorRoot = path.resolve(webappRoot, '..');
 
-export const CLOUD_COLLAB_PERSIST_ROOT = path.join(
+export const CLOUD_COLLAB_STACK_ROOT = path.join(
     webappRoot,
     '.cloud-collab-e2e-wrangler'
+);
+export const CLOUD_COLLAB_RUN_ID =
+    process.env.CLOUD_COLLAB_RUN_ID || String(process.pid);
+export const CLOUD_COLLAB_PERSIST_ROOT = path.join(
+    CLOUD_COLLAB_STACK_ROOT,
+    CLOUD_COLLAB_RUN_ID
 );
 export const CLOUD_COLLAB_PID_FILE = path.join(
     CLOUD_COLLAB_PERSIST_ROOT,
@@ -71,17 +77,195 @@ export async function waitForPort(port, label, timeoutMs = 120000) {
     throw new Error(`Timed out waiting for ${label} on port ${port}`);
 }
 
-function spawnLogged(command, args, options) {
-    const child = spawn(command, args, {
-        ...options,
-        stdio: ['ignore', 'pipe', 'pipe']
+const REQUIRED_ROOM_CAPABILITIES = {
+    durableWal: 1,
+    certifiedGeneration: 1,
+    packetEnvelope: 1,
+    glyphTombstones: 1,
+    glyphQuotaReservation: 1
+};
+
+function allowInsecureLocalTls() {
+    process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
+}
+
+async function probeJsonHealth(url) {
+    try {
+        const response = await fetch(url, {
+            signal: AbortSignal.timeout(2500)
+        });
+        if (!response.ok) {
+            return null;
+        }
+        return await response.json();
+    } catch {
+        return null;
+    }
+}
+
+async function probeHttpOk(url) {
+    try {
+        const response = await fetch(url, {
+            signal: AbortSignal.timeout(2500)
+        });
+        return response.ok;
+    } catch {
+        return false;
+    }
+}
+
+function pidAlive(pid) {
+    if (!pid) {
+        return false;
+    }
+    try {
+        process.kill(pid, 0);
+        return true;
+    } catch {
+        return false;
+    }
+}
+
+function killPid(pid, signal = 'SIGTERM') {
+    if (!pid) {
+        return;
+    }
+    try {
+        process.kill(-pid, signal);
+    } catch {
+        try {
+            process.kill(pid, signal);
+        } catch {
+            /* already gone */
+        }
+    }
+}
+
+function pidsListeningOnPort(port) {
+    try {
+        const out = execSync(`lsof -nP -iTCP:${port} -sTCP:LISTEN -t`, {
+            encoding: 'utf8'
+        }).trim();
+        if (!out) {
+            return [];
+        }
+        return [...new Set(out.split(/\s+/).map(Number).filter(Boolean))];
+    } catch {
+        return [];
+    }
+}
+
+function killSpawnedFromPidFile(pidFile) {
+    if (!fs.existsSync(pidFile)) {
+        return [];
+    }
+    try {
+        const state = JSON.parse(fs.readFileSync(pidFile, 'utf8'));
+        const spawned = state.spawned || [];
+        for (const item of spawned) {
+            killPid(item?.pid);
+        }
+        return spawned;
+    } catch {
+        return [];
+    }
+}
+
+async function stopTrackedStacks() {
+    if (!fs.existsSync(CLOUD_COLLAB_STACK_ROOT)) {
+        return;
+    }
+    const runs = fs.readdirSync(CLOUD_COLLAB_STACK_ROOT, {
+        withFileTypes: true
     });
-    const logPath = options.logPath;
-    const stream = fs.createWriteStream(logPath, { flags: 'a' });
-    child.stdout?.pipe(stream);
-    child.stderr?.pipe(stream);
-    child.on('exit', () => stream.end());
-    return child;
+    for (const entry of runs) {
+        if (!entry.isDirectory()) {
+            continue;
+        }
+        killSpawnedFromPidFile(
+            path.join(CLOUD_COLLAB_STACK_ROOT, entry.name, 'pids.json')
+        );
+    }
+}
+
+async function waitForPortClosed(port, timeoutMs = 15000) {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+        if (!(await isPortOpen(port))) {
+            return;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+}
+
+async function stopListenersOnPort(port) {
+    for (const pid of pidsListeningOnPort(port)) {
+        killPid(pid, 'SIGTERM');
+    }
+    await waitForPortClosed(port, 15000);
+    if (await isPortOpen(port)) {
+        for (const pid of pidsListeningOnPort(port)) {
+            killPid(pid, 'SIGKILL');
+        }
+        await waitForPortClosed(port, 5000);
+    }
+}
+
+export async function stopCloudCollabPorts() {
+    await stopTrackedStacks();
+    await stopListenersOnPort(8787);
+    await stopListenersOnPort(8788);
+}
+
+function ownedPidFileLive(persistRoot) {
+    const pidFile = path.join(persistRoot, 'pids.json');
+    if (!fs.existsSync(pidFile)) {
+        return false;
+    }
+    try {
+        const state = JSON.parse(fs.readFileSync(pidFile, 'utf8'));
+        const spawned = state.spawned || [];
+        if (!spawned.length) {
+            return false;
+        }
+        return spawned.every((item) => pidAlive(item?.pid));
+    } catch {
+        return false;
+    }
+}
+
+async function stackIdentityMatches() {
+    const roomHealth = await probeJsonHealth('http://127.0.0.1:8787/health');
+    if (
+        !roomHealth?.ok ||
+        roomHealth.service !== 'room' ||
+        roomHealth.protocol !== 'p5'
+    ) {
+        return false;
+    }
+    const capabilities = roomHealth.capabilities || {};
+    for (const [name, version] of Object.entries(REQUIRED_ROOM_CAPABILITIES)) {
+        if (Number(capabilities[name]) !== Number(version)) {
+            return false;
+        }
+    }
+    return probeHttpOk('https://localhost:8788/');
+}
+
+function spawnLogged(command, args, options) {
+    const { logPath, ...spawnOptions } = options;
+    fs.mkdirSync(path.dirname(logPath), { recursive: true });
+    const logFd = fs.openSync(logPath, 'a');
+    try {
+        const child = spawn(command, args, {
+            ...spawnOptions,
+            detached: true,
+            stdio: ['ignore', logFd, logFd]
+        });
+        return child;
+    } finally {
+        fs.closeSync(logFd);
+    }
 }
 
 export function localCloudEnv() {
@@ -96,12 +280,15 @@ export function localCloudEnv() {
         MAGIC_LINK_SECRET:
             process.env.MAGIC_LINK_SECRET || 'e2e-cloud-collab-magic',
         ROOM_WORKER_URL: 'http://localhost:8787',
+        WEBSITE_CONTROL_URL: 'https://localhost:8788',
+        CLOUD_ROOM_LIMITS_SERVICE_TOKEN: 'e2e-p0-limits',
         VALIDATOR_SHARED_TOKEN: 'e2e-p0-validator',
         COMPACTOR_SHARED_TOKEN: 'e2e-p0-compactor'
     };
 }
 
 export async function ensureCloudCollabStack() {
+    allowInsecureLocalTls();
     const persistRoot = CLOUD_COLLAB_PERSIST_ROOT;
     fs.mkdirSync(path.join(persistRoot, 'website'), { recursive: true });
     fs.mkdirSync(path.join(persistRoot, 'collab'), { recursive: true });
@@ -121,9 +308,21 @@ export async function ensureCloudCollabStack() {
 
     const websiteUp = await isPortOpen(8788);
     const roomUp = await isPortOpen(8787);
-    const spawned = [];
+    const canReuse =
+        websiteUp &&
+        roomUp &&
+        ownedPidFileLive(persistRoot) &&
+        (await stackIdentityMatches());
+    if ((websiteUp || roomUp) && !canReuse) {
+        await stopCloudCollabPorts();
+    }
 
-    if (!websiteUp) {
+    const spawned = [];
+    const children = [];
+    const websiteStillUp = canReuse && (await isPortOpen(8788));
+    const roomStillUp = canReuse && (await isPortOpen(8787));
+
+    if (!websiteStillUp) {
         const certScript = path.join(
             websiteRoot,
             'scripts',
@@ -184,7 +383,9 @@ export async function ensureCloudCollabStack() {
                 '--binding',
                 'ROOM_WORKER_URL=http://localhost:8787',
                 '--binding',
-                'MAGIC_LINK_SECRET=e2e-cloud-collab-magic'
+                'MAGIC_LINK_SECRET=e2e-cloud-collab-magic',
+                '--binding',
+                'CLOUD_ROOM_LIMITS_SERVICE_TOKEN=e2e-p0-limits'
             ],
             {
                 cwd: websiteRoot,
@@ -193,9 +394,10 @@ export async function ensureCloudCollabStack() {
             }
         );
         spawned.push({ name: 'website', pid: child.pid });
+        children.push(child);
     }
 
-    if (!roomUp) {
+    if (!roomStillUp) {
         const collabPersist = path.join(persistRoot, 'collab');
         const collabWrangler = path.join(
             collabRoot,
@@ -221,7 +423,13 @@ export async function ensureCloudCollabStack() {
                 '--var',
                 'VALIDATOR_SHARED_TOKEN:e2e-p0-validator',
                 '--var',
-                'COMPACTOR_SHARED_TOKEN:e2e-p0-compactor'
+                'COMPACTOR_SHARED_TOKEN:e2e-p0-compactor',
+                '--var',
+                'CLOUD_ROOM_LIMITS_SERVICE_TOKEN:e2e-p0-limits',
+                '--var',
+                'WEBSITE_CONTROL_URL:https://localhost:8788',
+                '--var',
+                'EDITOR_ALLOWED_ORIGINS:https://localhost:8000,http://localhost:9000'
             ],
             {
                 cwd: collabRoot,
@@ -230,16 +438,32 @@ export async function ensureCloudCollabStack() {
             }
         );
         spawned.push({ name: 'collab', pid: child.pid });
+        children.push(child);
     } else {
         console.log(
-            '[ensure-cloud-collab-stack] reusing existing collab worker on port 8787'
+            '[ensure-cloud-collab-stack] reusing healthy collab worker on port 8787'
         );
     }
 
-    if (websiteUp) {
+    if (websiteStillUp) {
         console.log(
-            '[ensure-cloud-collab-stack] reusing existing website worker on port 8788'
+            '[ensure-cloud-collab-stack] reusing healthy website worker on port 8788'
         );
+    }
+
+    if (canReuse && fs.existsSync(CLOUD_COLLAB_PID_FILE)) {
+        try {
+            const previous = JSON.parse(
+                fs.readFileSync(CLOUD_COLLAB_PID_FILE, 'utf8')
+            );
+            for (const item of previous.spawned || []) {
+                if (item?.pid && !spawned.some((row) => row.pid === item.pid)) {
+                    spawned.push(item);
+                }
+            }
+        } catch {
+            /* ignore corrupt pid files */
+        }
     }
 
     fs.writeFileSync(
@@ -247,8 +471,8 @@ export async function ensureCloudCollabStack() {
         JSON.stringify(
             {
                 spawned,
-                reusedWebsite: websiteUp,
-                reusedRoom: roomUp,
+                reusedWebsite: websiteStillUp,
+                reusedRoom: roomStillUp,
                 websiteRoot,
                 collabRoot
             },
@@ -257,11 +481,26 @@ export async function ensureCloudCollabStack() {
         )
     );
 
-    if (!websiteUp) {
+    if (!websiteStillUp) {
         await waitForPort(8788, 'website');
     }
-    if (!roomUp) {
+    if (!roomStillUp) {
         await waitForPort(8787, 'collab room');
+    }
+    const identityDeadline = Date.now() + 120000;
+    while (Date.now() < identityDeadline) {
+        if (await stackIdentityMatches()) {
+            break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+    if (!(await stackIdentityMatches())) {
+        throw new Error(
+            'Cloud collab stack started but health/protocol identity did not match'
+        );
+    }
+    for (const child of children) {
+        child.unref();
     }
 }
 

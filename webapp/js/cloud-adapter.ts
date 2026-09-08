@@ -226,6 +226,22 @@ function getCloudRequestHeaders(
     return headers;
 }
 
+const HYDRATE_PACK_FETCH_TIMEOUT_MS = 90_000;
+
+function abortSignalWithTimeout(
+    signal: AbortSignal | undefined,
+    timeoutMs: number
+): AbortSignal {
+    const timeout = AbortSignal.timeout(timeoutMs);
+    if (!signal) {
+        return timeout;
+    }
+    if (typeof AbortSignal.any === 'function') {
+        return AbortSignal.any([signal, timeout]);
+    }
+    return timeout;
+}
+
 export function withCloudAccessToken(wsUrl: string, token: string): string {
     if (!token) {
         return wsUrl;
@@ -2593,95 +2609,172 @@ export class CloudAdapter implements FileSystemAdapter {
         const bytesById = new Map(
             shards.map((shard) => [shard.documentId, shard.bytes.byteLength])
         );
-        const frames: Uint8Array[] = [];
-        for (const shard of shards) {
-            throwIfAborted(options?.signal);
-            frames.push(
-                encodePackShardFrame(
-                    shard.documentId,
-                    shard.bytes,
-                    await sha256Digest(shard.bytes)
-                )
-            );
-            await yieldToUi();
-        }
-        const body = encodePackBody(frames);
-        this._noteTransferActivity('sending');
-        const response = await fetch(
-            normalizeCloudShardPackUrl(
-                roomUrl,
-                this._websiteBaseUrl,
-                this._assetId
-            ),
-            {
-                method: 'POST',
-                headers: {
-                    'Authorization': `Bearer ${token}`,
-                    'Content-Type': 'application/octet-stream',
-                    'X-Glyph-Count': String(glyphCount),
-                    ...(migrationNonce
-                        ? { 'X-Cloud-Migration-Nonce': migrationNonce }
-                        : {})
-                },
-                body: body as unknown as BodyInit,
-                signal: options?.signal
-            }
-        );
-        if (isPackUnsupportedStatus(response.status)) {
-            throw new Error('pack unsupported');
-        }
-        if (!response.body) {
-            throw new Error(
-                `shard pack seed failed: ${response.status} empty body`
-            );
-        }
-        const rows: Array<{
+        const completedBefore = cursor.completed;
+        const bytesBefore = cursor.bytesCompleted;
+        const idempotencyKey =
+            globalThis.crypto?.randomUUID?.() ||
+            `seed-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+        let lastError: unknown = null;
+        let remaining = shards.slice();
+        const allRows: Array<{
             coreCheckpointLogId: number | null;
             attestation: CloudSeededShardAttestation | null;
         }> = [];
-        let packError: string | null = null;
-        const parser = createPackParser();
-        const reader = response.body.getReader();
-        try {
-            while (true) {
-                const { done, value } = await reader.read();
-                if (value) {
-                    for (const frame of parser.push(value)) {
-                        const before = rows.length;
-                        this._collectPackSeedFrame(frame, rows, (message) => {
-                            packError = message;
-                        });
-                        if (rows.length > before) {
-                            const row = rows[rows.length - 1];
-                            if (row?.attestation) {
-                                await options?.onShardLanded?.(row.attestation);
-                                cursor.completed += 1;
-                                cursor.bytesCompleted +=
-                                    bytesById.get(row.attestation.shardId) ||
-                                    row.attestation.checkpointByteLength ||
-                                    0;
-                                await emitShardIoProgress(options, {
-                                    ...cursor,
-                                    shardId: row.attestation.shardId
-                                });
+        for (let attempt = 0; attempt < 4; attempt += 1) {
+            throwIfAborted(options?.signal);
+            cursor.completed =
+                completedBefore +
+                allRows.filter((row) => row.attestation).length;
+            cursor.bytesCompleted =
+                bytesBefore +
+                allRows.reduce(
+                    (sum, row) =>
+                        sum +
+                        (row.attestation
+                            ? bytesById.get(row.attestation.shardId) ||
+                              row.attestation.checkpointByteLength ||
+                              0
+                            : 0),
+                    0
+                );
+            try {
+                this._noteTransferActivity('sending');
+                const remainingFrames: Uint8Array[] = [];
+                for (const shard of remaining) {
+                    throwIfAborted(options?.signal);
+                    remainingFrames.push(
+                        encodePackShardFrame(
+                            shard.documentId,
+                            shard.bytes,
+                            await sha256Digest(shard.bytes)
+                        )
+                    );
+                    await yieldToUi();
+                }
+                const remainingBody = encodePackBody(remainingFrames);
+                const response = await fetch(
+                    normalizeCloudShardPackUrl(
+                        roomUrl,
+                        this._websiteBaseUrl,
+                        this._assetId
+                    ),
+                    {
+                        method: 'POST',
+                        headers: {
+                            'Authorization': `Bearer ${token}`,
+                            'Content-Type': 'application/octet-stream',
+                            'X-Glyph-Count': String(glyphCount),
+                            'X-Collab-Idempotency-Key': idempotencyKey,
+                            ...(migrationNonce
+                                ? { 'X-Cloud-Migration-Nonce': migrationNonce }
+                                : {})
+                        },
+                        body: remainingBody as unknown as BodyInit,
+                        signal: options?.signal
+                    }
+                );
+                if (isPackUnsupportedStatus(response.status)) {
+                    throw new Error('pack unsupported');
+                }
+                if (!response.ok) {
+                    throw new Error(
+                        `shard pack seed failed: ${response.status}`
+                    );
+                }
+                if (!response.body) {
+                    throw new Error(
+                        `shard pack seed failed: ${response.status} empty body`
+                    );
+                }
+                const rows: Array<{
+                    coreCheckpointLogId: number | null;
+                    attestation: CloudSeededShardAttestation | null;
+                }> = [];
+                let packError: string | null = null;
+                const parser = createPackParser();
+                const reader = response.body.getReader();
+                try {
+                    while (true) {
+                        const { done, value } = await reader.read();
+                        if (value) {
+                            for (const frame of parser.push(value)) {
+                                const before = rows.length;
+                                this._collectPackSeedFrame(
+                                    frame,
+                                    rows,
+                                    (message) => {
+                                        packError = message;
+                                    }
+                                );
+                                if (rows.length > before) {
+                                    const row = rows[rows.length - 1];
+                                    if (row?.attestation) {
+                                        await options?.onShardLanded?.(
+                                            row.attestation
+                                        );
+                                        cursor.completed += 1;
+                                        cursor.bytesCompleted +=
+                                            bytesById.get(
+                                                row.attestation.shardId
+                                            ) ||
+                                            row.attestation
+                                                .checkpointByteLength ||
+                                            0;
+                                        await emitShardIoProgress(options, {
+                                            ...cursor,
+                                            shardId: row.attestation.shardId
+                                        });
+                                    }
+                                }
                             }
                         }
+                        if (done) {
+                            break;
+                        }
                     }
+                    parser.finish();
+                } finally {
+                    reader.releaseLock();
                 }
-                if (done) {
-                    break;
+                if (packError) {
+                    throw new Error(
+                        packError ||
+                            `shard pack seed failed: ${response.status}`
+                    );
                 }
+                allRows.push(...rows);
+                const landed = new Set(
+                    allRows
+                        .map((row) => row.attestation?.shardId)
+                        .filter((shardId): shardId is string => !!shardId)
+                );
+                remaining = remaining.filter(
+                    (shard) => !landed.has(shard.documentId)
+                );
+                if (!remaining.length) {
+                    return allRows;
+                }
+                throw new Error('shard pack seed incomplete');
+            } catch (error) {
+                lastError = error;
+                const message =
+                    error instanceof Error ? error.message : String(error);
+                const retryable =
+                    !options?.signal?.aborted &&
+                    /503|Failed to fetch|ERR_ABORTED|ERR_FAILED|NETWORK_CHANGED|unavailable|do_timeout|incomplete/i.test(
+                        message
+                    );
+                if (!retryable || attempt === 3) {
+                    throw error;
+                }
+                await new Promise((resolve) =>
+                    setTimeout(resolve, 800 * 2 ** attempt)
+                );
             }
-            parser.finish();
-        } finally {
-            reader.releaseLock();
         }
-        if (!response.ok || packError) {
-            throw new Error(
-                packError || `shard pack seed failed: ${response.status}`
-            );
-        }
-        return rows;
+        throw lastError instanceof Error
+            ? lastError
+            : new Error(String(lastError));
     }
 
     private _collectPackSeedFrame(
@@ -2969,11 +3062,17 @@ export class CloudAdapter implements FileSystemAdapter {
                     'Content-Type': 'application/json'
                 },
                 body: JSON.stringify({ ids: documentIds }),
-                signal: options?.signal
+                signal: abortSignalWithTimeout(
+                    options?.signal,
+                    HYDRATE_PACK_FETCH_TIMEOUT_MS
+                )
             }
         );
         if (isPackUnsupportedStatus(response.status)) {
             throw new Error('pack unsupported');
+        }
+        if (!response.ok) {
+            throw new Error(`shard pack hydrate failed: ${response.status}`);
         }
         if (!response.body) {
             throw new Error(
@@ -3083,49 +3182,6 @@ export class CloudAdapter implements FileSystemAdapter {
             }
         }
         return result;
-    }
-
-    async discardSeededShards(
-        token: string,
-        roomUrl: string,
-        shardIds: string[],
-        options?: { signal?: AbortSignal }
-    ): Promise<void> {
-        const ids = [...new Set(shardIds.filter((id) => id))];
-        if (!ids.length) {
-            return;
-        }
-        const batches = partitionPackItems(
-            ids,
-            () => 0,
-            1024,
-            HYDRATE_BATCH_MAX_BYTES
-        );
-        for (const batch of batches) {
-            throwIfAborted(options?.signal);
-            const response = await fetch(
-                normalizeCloudShardPackDiscardUrl(
-                    roomUrl,
-                    this._websiteBaseUrl,
-                    this._assetId
-                ),
-                {
-                    method: 'POST',
-                    headers: {
-                        'Authorization': `Bearer ${token}`,
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({ ids: batch }),
-                    signal: options?.signal
-                }
-            );
-            if (!response.ok) {
-                const body = await response.text().catch(() => '');
-                throw new Error(
-                    `shard discard failed: ${response.status} ${body.slice(0, 160)}`
-                );
-            }
-        }
     }
 
     private async _openWebSocket(token: string, wsUrl: string): Promise<void> {

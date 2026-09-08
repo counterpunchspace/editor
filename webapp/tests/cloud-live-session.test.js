@@ -513,7 +513,7 @@ describe('CloudLiveSession', () => {
         expect(maxInflight).toBe(4);
     }, 15000);
 
-    test('first live connect does not HTTP-catch glyphs or deps', async () => {
+    test('first live connect HTTP-catches glyphs and deps before connected', async () => {
         const statuses = [];
         const applyDocumentCatchUp = jest.fn().mockReturnValue(true);
         const session = new CloudLiveSession({
@@ -529,11 +529,11 @@ describe('CloudLiveSession', () => {
         const fetched = global.fetch.mock.calls.map(([url]) => String(url));
         expect(
             fetched.some((url) => url.includes('/shards/glyph/aaa/live'))
-        ).toBe(false);
+        ).toBe(true);
         expect(
             fetched.some((url) => url.includes('/shards/font-deps/live'))
-        ).toBe(false);
-        expect(statuses).not.toContain('syncing');
+        ).toBe(true);
+        expect(statuses).toContain('syncing');
         expect(statuses.at(-1)).toBe('connected');
         session.disconnect();
     });
@@ -634,5 +634,71 @@ describe('CloudLiveSession', () => {
             matchCoreRevision: false
         });
         expect(applyDocumentCatchUp.mock.calls[0][4]).toBeUndefined();
+    });
+
+    test('reconnect catch-up failure reports error after a successful first connect', async () => {
+        const statuses = [];
+        const session = new CloudLiveSession({
+            assetId: 'asset-1',
+            websiteBaseUrl: 'https://editor.example',
+            token: 'token',
+            roomUrl: 'wss://rooms.example/room/asset-1',
+            readyBarrierTimeoutMs: 40,
+            bridge: {},
+            bootstrapMode: 'skip',
+            onConnectionStatus: (status, detail) => {
+                statuses.push({ status, detail });
+            }
+        });
+        await session.syncLiveDocumentIds([]);
+        expect(statuses.some((entry) => entry.status === 'connected')).toBe(
+            true
+        );
+        jest.useFakeTimers();
+        try {
+            session.coreAdapter.isTransportSynced.mockReturnValue(false);
+            const coreOptions = CloudAdapter.mock.calls.find(
+                (call) =>
+                    !call[0].documentId || call[0].documentId === 'font-core'
+            )[0];
+            expect(coreOptions).toBeTruthy();
+            coreOptions.onConnectionStatus('connected');
+            await jest.advanceTimersByTimeAsync(80);
+            await Promise.resolve();
+            expect(statuses.some((entry) => entry.status === 'error')).toBe(
+                true
+            );
+        } finally {
+            session.disconnect();
+            jest.useRealTimers();
+        }
+    });
+
+    test('does not emit connected after a failed first ready barrier', async () => {
+        const statuses = [];
+        global.fetch = jest.fn(async () => ({
+            ok: false,
+            status: 401,
+            headers: new Headers({
+                'content-type': 'application/json'
+            }),
+            json: async () => ({ error: 'unauthorized' })
+        }));
+        const session = new CloudLiveSession({
+            assetId: 'asset-1',
+            websiteBaseUrl: 'https://editor.example',
+            token: 'token',
+            roomUrl: 'wss://rooms.example/room/asset-1',
+            readyBarrierTimeoutMs: 40,
+            bridge: {},
+            bootstrapMode: 'skip',
+            onConnectionStatus: (status) => {
+                statuses.push(status);
+            }
+        });
+        await expect(session.syncLiveDocumentIds([])).rejects.toThrow();
+        expect(statuses).not.toContain('connected');
+        expect(statuses).toContain('error');
+        session.disconnect();
     });
 });

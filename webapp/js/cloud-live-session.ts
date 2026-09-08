@@ -45,6 +45,7 @@ export type CloudLiveSessionOptions = {
     bootstrapMode?: 'required' | 'skip';
     checkpointLogId?: number | null;
     connectedTimeoutMs?: number;
+    readyBarrierTimeoutMs?: number;
     onConnectionStatus?: (
         status: CloudConnectionStatus,
         detail?: string
@@ -136,6 +137,7 @@ export class CloudLiveSession {
     private readonly _options: CloudLiveSessionOptions;
     private _desiredDocumentIds = new Set<string>([FONT_CORE_DOCUMENT_ID]);
     private _reportedConnected = false;
+    private _readyOnce = false;
     private _barrierPromise: Promise<void> | null = null;
     private _httpReceivingCount = 0;
     private _httpPublishingCount = 0;
@@ -168,7 +170,14 @@ export class CloudLiveSession {
     }
 
     get status(): CloudConnectionStatus {
-        return this.coreAdapter?.status ?? 'disconnected';
+        if (this._reportedConnected) {
+            return this.pendingSyncCount > 0 ? 'syncing' : 'connected';
+        }
+        const coreStatus = this.coreAdapter?.status ?? 'disconnected';
+        if (coreStatus === 'connected' || coreStatus === 'syncing') {
+            return 'syncing';
+        }
+        return coreStatus;
     }
 
     get pendingSyncCount(): number {
@@ -435,6 +444,7 @@ export class CloudLiveSession {
         this._adapters.clear();
         this._desiredDocumentIds = new Set([FONT_CORE_DOCUMENT_ID]);
         this._reportedConnected = false;
+        this._readyOnce = false;
         this._barrierPromise = null;
         this._httpReceivingCount = 0;
         this._httpPublishingCount = 0;
@@ -510,50 +520,13 @@ export class CloudLiveSession {
         }
     }
 
-    async persistMutationIntents(documentIds: string[]): Promise<boolean> {
+    async persistMutationIntents(_documentIds: string[]): Promise<boolean> {
         await this._ensureWalLoaded();
         if (this._wal.health !== 'ready') {
             return false;
         }
         try {
             await this._wal.verifyWritable();
-            const timestamp = Date.now();
-            for (const documentId of documentIds) {
-                const clientTransactionId = `intent:${this._options.assetId}:${documentId}:${timestamp}`;
-                const collaborationMessage = {
-                    schemaVersion: 1 as const,
-                    transactionId: clientTransactionId,
-                    localSequence: 0,
-                    roomSequence: null,
-                    baseRevision: null,
-                    changes: [],
-                    metadata: {
-                        editType: 'font' as const,
-                        changedGlyphNames: [],
-                        changedLayerIds: [],
-                        workerReplayTargets: [],
-                        historyItemId: clientTransactionId,
-                        historyAction: 'change' as const,
-                        undoScope: 'font' as const
-                    },
-                    source: 'cloud-wal-intent',
-                    label: null,
-                    summary: 'cloud mutation intent',
-                    windowId: null,
-                    timestamp
-                };
-                await this._wal.append({
-                    assetId: this._options.assetId,
-                    documentId,
-                    clientTransactionId,
-                    updateBase64: '',
-                    collaborationMessage,
-                    createdAt: timestamp,
-                    attempts: 0
-                });
-            }
-            this._emitPendingSyncCount();
-            pushCollabIntegrityEvent('persist-intent', { documentIds });
             return true;
         } catch (error) {
             console.warn(
@@ -633,13 +606,11 @@ export class CloudLiveSession {
             this._clearNonCoreRebaselineFlags();
             return;
         }
-        // HTTP hydration already established the opening snapshot. The shard
-        // sockets still establish their own transport state, but waiting for
-        // their durable-sync signal here turns a delayed live subscription
-        // into a failed otherwise-complete sparse open.
-        this._reportedConnected = true;
-        this._clearNonCoreRebaselineFlags();
-        this._options.onConnectionStatus?.('connected');
+        this._options.onConnectionStatus?.(
+            'syncing',
+            'Live catch-up after HTTP hydrate'
+        );
+        await this._runSessionReadyBarrier();
     }
 
     private _clearNonCoreRebaselineFlags(): void {
@@ -959,8 +930,18 @@ export class CloudLiveSession {
         detail?: string
     ): void {
         if (status === 'connected') {
-            if (this._reportedConnected || this._hasLiveCoreAndDeps()) {
-                void this._runSessionReadyBarrier();
+            this._options.onConnectionStatus?.('syncing', 'Catching up');
+            // First open connects core before deps/glyphs exist in
+            // `_adapters`. That path awaits the barrier after membership
+            // is complete. Reconnect reuses the live adapter set.
+            if (this._adapters.has(FONT_CORE_DOCUMENT_ID)) {
+                void this._runSessionReadyBarrier().catch((error) => {
+                    const message =
+                        error instanceof Error ? error.message : String(error);
+                    if (!this._readyOnce) {
+                        this._options.onConnectionStatus?.('error', message);
+                    }
+                });
             }
             return;
         }
@@ -991,31 +972,31 @@ export class CloudLiveSession {
 
     private async _completeSessionReadyBarrier(): Promise<void> {
         this._options.onConnectionStatus?.('syncing', 'Catching up');
-        await this._waitForLiveTransportSynced();
-        await this._catchUpLiveSubsetAndDeps();
-        await this._replayPendingHttpWal({ includeLiveAdapters: false });
-        await this.flushPendingHttpPublishes();
-        const needsRebaseline = this.coreAdapter?.needsVisibleRebaseline;
-        if (needsRebaseline) {
-            this._options.onConnectionStatus?.(
-                'syncing',
-                'Rebuilding visible state after reconnect'
+        try {
+            await this._waitForLiveTransportSynced(
+                this._options.readyBarrierTimeoutMs ?? 30_000
             );
-            try {
+            await this._catchUpLiveSubsetAndDeps();
+            await this._replayPendingHttpWal({ includeLiveAdapters: false });
+            await this.flushPendingHttpPublishes();
+            const needsRebaseline = this.coreAdapter?.needsVisibleRebaseline;
+            if (needsRebaseline) {
+                this._options.onConnectionStatus?.(
+                    'syncing',
+                    'Rebuilding visible state after reconnect'
+                );
                 await runCloudVisibleReconnectRebaseline();
                 this.coreAdapter?.clearVisibleRebaselineNeeded?.();
                 this._clearNonCoreRebaselineFlags();
-            } catch (error) {
-                const detail =
-                    error instanceof Error ? error.message : String(error);
-                this._options.onConnectionStatus?.(
-                    'error',
-                    `Reconnect refresh failed: ${detail}`
-                );
-                throw error;
             }
+        } catch (error) {
+            const detail =
+                error instanceof Error ? error.message : String(error);
+            this._options.onConnectionStatus?.('error', detail);
+            throw error;
         }
         this._reportedConnected = true;
+        this._readyOnce = true;
         this._options.onConnectionStatus?.('connected');
     }
 
@@ -1070,29 +1051,33 @@ export class CloudLiveSession {
     ): Promise<void> {
         const deadline = Date.now() + timeoutMs;
         while (Date.now() < deadline) {
-            const pending = [
-                FONT_CORE_DOCUMENT_ID,
-                FONT_DEPS_DOCUMENT_ID
-            ].filter((documentId) => {
-                const adapter = this._adapters.get(documentId);
-                if (!adapter) {
-                    return true;
+            const pending = [...this._desiredDocumentIds].filter(
+                (documentId) => {
+                    const adapter = this._adapters.get(documentId);
+                    if (!adapter) {
+                        return true;
+                    }
+                    if (typeof adapter.isTransportSynced === 'function') {
+                        return !adapter.isTransportSynced();
+                    }
+                    return adapter.status !== 'connected';
                 }
-                if (typeof adapter.isTransportSynced === 'function') {
-                    return !adapter.isTransportSynced();
-                }
-                return adapter.status !== 'connected';
-            });
+            );
             if (!pending.length) {
                 return;
             }
+            const remaining = deadline - Date.now();
+            if (remaining <= 0) {
+                break;
+            }
             await new Promise((resolve) => {
-                window.setTimeout(resolve, 50);
+                window.setTimeout(resolve, Math.min(50, remaining));
             });
         }
         console.warn(
             'CloudLiveSession: live shard sync timed out; continuing with HTTP catch-up'
         );
+        throw new Error('live shard sync timed out');
     }
 
     private async _catchUpLiveSubsetAndDeps(): Promise<void> {
@@ -1127,6 +1112,7 @@ export class CloudLiveSession {
             });
         } catch (error) {
             console.warn('CloudLiveSession: reconnect catch-up failed:', error);
+            throw error;
         }
     }
 }

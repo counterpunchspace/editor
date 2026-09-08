@@ -92,7 +92,7 @@ const APP_SETTINGS = {
          */
         SEED_SHARD_CONCURRENCY: 1,
         /** Default open uses sparse closure at or above this live catalog size. */
-        AUTO_SPARSE_CATALOG_GLYPHS: 10000,
+        AUTO_SPARSE_CATALOG_GLYPHS: 256,
         /** Cap accumulated sparse residency (working + previous + hidden). */
         SPARSE_RESIDENT_GLYPH_BUDGET: 512,
         /** Max shard GETs/POSTs in one hydrate or seed batch. */

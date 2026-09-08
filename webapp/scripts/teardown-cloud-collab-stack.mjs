@@ -3,43 +3,28 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
     CLOUD_COLLAB_PERSIST_ROOT,
-    CLOUD_COLLAB_PID_FILE
+    CLOUD_COLLAB_PID_FILE,
+    stopCloudCollabPorts
 } from './ensure-cloud-collab-stack.mjs';
 
-function killPid(pid) {
-    try {
-        process.kill(pid, 'SIGTERM');
-    } catch {
-        // already gone
-    }
-}
-
 export async function teardownCloudCollabStack() {
+    if (process.env.CLOUD_COLLAB_KEEP_STACK === '1') {
+        return [];
+    }
     let spawned = [];
     if (fs.existsSync(CLOUD_COLLAB_PID_FILE)) {
         try {
-            const state = JSON.parse(
-                fs.readFileSync(CLOUD_COLLAB_PID_FILE, 'utf8')
-            );
-            spawned = state.spawned || [];
-            for (const entry of spawned) {
-                if (entry?.pid) {
-                    killPid(entry.pid);
-                }
-            }
+            spawned =
+                JSON.parse(fs.readFileSync(CLOUD_COLLAB_PID_FILE, 'utf8'))
+                    .spawned || [];
         } catch {
-            // ignore corrupt pid file
+            spawned = [];
         }
     }
-
-    if (!spawned.length) {
-        return;
-    }
-
+    await stopCloudCollabPorts();
     await new Promise((resolve) => setTimeout(resolve, 500));
-    if (process.env.CLOUD_COLLAB_KEEP_LOGS !== '1') {
-        fs.rmSync(CLOUD_COLLAB_PERSIST_ROOT, { recursive: true, force: true });
-    }
+    fs.rmSync(CLOUD_COLLAB_PERSIST_ROOT, { recursive: true, force: true });
+    return spawned;
 }
 
 const isMain =

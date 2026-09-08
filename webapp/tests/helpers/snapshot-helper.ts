@@ -949,7 +949,8 @@ export async function waitForFontLoaded(
                         !!(window.currentFontModel || currentFont.fontModel)
                     );
                 },
-                { timeout: 30000 }
+                undefined,
+                { timeout: 180000 }
             );
         });
 

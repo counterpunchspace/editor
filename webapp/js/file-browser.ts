@@ -4263,18 +4263,26 @@ document.addEventListener('DOMContentLoaded', () => {
                             `Plugin '${pluginId}' is not available for URL param`
                         );
                     } else {
-                        // Switch to the specified plugin
-                        await switchContext(pluginId);
-
                         if (pluginId === 'cloud') {
+                            await waitForFontEditorReady();
                             window.cloudPlugin?.setPendingSparseHydration?.(
                                 readUrlState().sparse === true
                             );
                             await openFont(
-                                `cloud://${fontPath.replace(/^\/+/, '')}`
+                                `cloud://${fontPath.replace(/^\/+/, '')}`,
+                                undefined,
+                                { sourcePluginOverride: plugin }
                             );
                             openedFromUrl = true;
+                            void switchContext(pluginId).catch((error) => {
+                                console.warn(
+                                    '[FileBrowser]',
+                                    'Cloud context switch after URL open failed:',
+                                    error
+                                );
+                            });
                         } else {
+                            await switchContext(pluginId);
                             // Navigate to the directory containing the font
                             const dirPath =
                                 fontPath.substring(
@@ -4346,15 +4354,28 @@ document.addEventListener('DOMContentLoaded', () => {
                     }
                 } catch (error: any) {
                     const errorMessage = error?.message || String(error);
-                    alert(`Error opening file from URL:\n\n${errorMessage}`);
+                    (
+                        window as Window & {
+                            __fileBrowserUrlOpenError?: string;
+                        }
+                    ).__fileBrowserUrlOpenError = errorMessage;
                     console.error(
                         '[FileBrowser]',
                         'Failed to open font from URL params:',
                         error
                     );
+                    if (!window.isTestMode?.()) {
+                        alert(
+                            `Error opening file from URL:\n\n${errorMessage}`
+                        );
+                    }
                 }
 
                 if (openedFromUrl || window.fontManager?.currentFont) {
+                    return;
+                }
+
+                if (pluginId === 'cloud' && window.isTestMode?.()) {
                     return;
                 }
 

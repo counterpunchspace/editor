@@ -8644,6 +8644,14 @@ export class OutlineEditor {
             return false;
         }
 
+        if (wasSelected) {
+            this.selectedLayerId = null;
+            this.layerData = null;
+            this.renderVerticalMetrics = null;
+            this.clearAllSelections();
+            this.updateLayerSelection();
+        }
+
         const deleteBridge = window.patchSyncEngine;
         let preparedStructuralChange = false;
         if (deleteBridge) {
@@ -8670,11 +8678,6 @@ export class OutlineEditor {
                 glyphName
             );
         } else if (wasSelected) {
-            this.selectedLayerId = null;
-            this.layerData = null;
-            this.renderVerticalMetrics = null;
-            this.clearAllSelections();
-            this.updateLayerSelection();
             this.glyphCanvas.updatePropertyPanel();
             this.glyphCanvas.render();
         }

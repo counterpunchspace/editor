@@ -155,40 +155,6 @@ async function initFontEditor() {
 
         console.log('[FontEditor]', 'FontEditor initialized successfully');
 
-        // Discover canvas plugins
-        if (window.updateLoadingStatus) {
-            window.updateLoadingStatus('Loading canvas plugins...');
-        }
-        if (window.canvasPluginManager) {
-            try {
-                await window.canvasPluginManager.discoverPlugins();
-            } catch (error) {
-                console.error(
-                    '[FontEditor]',
-                    'Failed to discover canvas plugins:',
-                    error
-                );
-                // Continue anyway - plugins are optional
-            }
-        }
-
-        // Discover glyph filter plugins
-        if (window.updateLoadingStatus) {
-            window.updateLoadingStatus('Loading glyph filter plugins...');
-        }
-        if (window.glyphOverviewFilterManager) {
-            try {
-                await window.glyphOverviewFilterManager.discoverPlugins();
-            } catch (error) {
-                console.error(
-                    '[FontEditor]',
-                    'Failed to discover glyph filter plugins:',
-                    error
-                );
-                // Continue anyway - plugins are optional
-            }
-        }
-
         // Load example fonts into /user folder
         if (window.loadExampleFonts) {
             try {
@@ -288,6 +254,29 @@ async function initFontEditor() {
             timelineSpanEnd(initSpanId);
         }
         timelineMark('python.initFontEditor.ready');
+
+        if (window.canvasPluginManager) {
+            try {
+                await window.canvasPluginManager.discoverPlugins();
+            } catch (error) {
+                console.error(
+                    '[FontEditor]',
+                    'Failed to discover canvas plugins:',
+                    error
+                );
+            }
+        }
+        if (window.glyphOverviewFilterManager) {
+            try {
+                await window.glyphOverviewFilterManager.discoverPlugins();
+            } catch (error) {
+                console.error(
+                    '[FontEditor]',
+                    'Failed to discover glyph filter plugins:',
+                    error
+                );
+            }
+        }
 
         return true;
     } catch (error) {

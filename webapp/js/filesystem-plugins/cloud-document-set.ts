@@ -254,13 +254,9 @@ export async function hydrateSparseGlyphsToFixedPoint(options: {
         if (!missing.length) {
             break;
         }
-        if (missing.length > HYDRATE_BATCH_MAX_REQUESTS) {
-            throw new Error(
-                `Sparse glyph hydration of ${missing.length} shards exceeds the ${HYDRATE_BATCH_MAX_REQUESTS} request cap`
-            );
-        }
-        fetchPasses.push(missing.slice());
-        const documentIds = missing.map(glyphDocumentId);
+        const batch = missing.slice(0, HYDRATE_BATCH_MAX_REQUESTS);
+        fetchPasses.push(batch.slice());
+        const documentIds = batch.map(glyphDocumentId);
         const fetched = await fetchGlyphs(documentIds);
         if (session.isCurrent?.() === false) {
             throw new Error('Sparse hydration session changed');
@@ -366,11 +362,11 @@ export async function hydrateCoreDepsToPublishedPair(options: {
             };
         }
     }
-    if (!lastCore?.byteLength || !lastDeps?.byteLength) {
+    if (!lastCore?.byteLength) {
         throw new Error('core/deps hydrate failed: missing published shard');
     }
     throw new Error(
-        'core/deps hydrate failed: published revision pair did not match'
+        'core/deps hydrate failed: published generation pair did not match'
     );
 }
 

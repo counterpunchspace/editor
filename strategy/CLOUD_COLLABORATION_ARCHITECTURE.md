@@ -524,15 +524,34 @@ browser disconnects.
 - **Load cancel:** abort the open. Do not delete remote shards. Drop any
   in-memory document set that was not yet installed as the current font.
 - **Seed cancel (and failed pending seed):** abort the current pack, then
-  `POST /room/:assetId/pack/discard` with shard ids that already **landed**
-  (receipts). That deletes those shards’ R2 objects. Then website
-  `POST /api/cloud/assets/:id/abort` archives the pending asset and drops
-  attestations and glyph reservations so the half-created room cannot
-  finalize.
+  `POST /api/cloud/assets/:id/abort`. Website abort is idempotent: it
+  enumerates server attestations, asks the room Worker to reset **empty**
+  seed Durable Objects (`lastLogId` and `lastCheckpointLogId` still 0) and
+  delete those exact checkpoint objects, then clears attestations and
+  reservations. Public `POST /room/:assetId/pack/discard` is gone (`410
+  discard_removed`); clients must not select R2 prefixes.
 
 Late Worker writes that race past abort are still under the pending asset;
 abort + discard is the rollback. Do not leave a pending asset with live
 shard bytes after the user cancelled Save As.
+
+## WAL, reconnect, and `connected`
+
+`connected` is not “a WebSocket opened.” After the first successful session
+ready barrier, later reconnects must finish live transport sync, subset
+catch-up, WAL replay, and HTTP flush. Failure of that barrier reports
+`error` (not `connected`). First connect still reports `connected` if
+catch-up times out so a large first open is not fail-closed.
+
+WAL keys are `(assetId, documentId, clientTransactionId)`. Mutation
+intents are not stored as empty rows. Disconnect must not zero
+`pendingSyncCount`; unsettled outbox rows keep the title-bar count.
+`tail_full` is read-only. Save As and Open are exclusive.
+
+If published core/deps hashes do not match after retries, hydrate still
+installs the last consistent live pair from one pack fetch (same request)
+so a second client can open while the owner’s journal is ahead of the
+certified snapshot. Live catch-up then reconciles.
 
 ## Who chooses glyphs; who computes closure
 
@@ -714,9 +733,16 @@ signals use `onGlyphRevisionSignal`, not `onLocalUpdate` (avoids Yjs client
 clock holes on the same core doc).
 
 Each window keeps core + deps always, plus the glyph docs it has applied.
-Bootstrap is `full-state-request/response` with a **document set**; the
-linked worker is seeded with `seedWorkerDocumentSet`. CJK-scale bootstrap
-(core only + selective glyph fetch) is later.
+Bootstrap is `full-state-request/response` with a **document set** that
+includes core, deps, every live glyph Y.Doc, and the hydrated subset. The
+linked worker is seeded with `seedWorkerDocumentSet`. Linked windows do not
+attach a cloud live session.
+
+After main reaches `connected` with `pendingSyncCount === 0` (reload
+catch-up finished), it pushes another document-set snapshot so a linked
+window that bootstrapped from a packed checkpoint is rebaselined to the
+live journal. Later `full-state-response` messages still apply. CJK-scale
+bootstrap (core only + selective glyph fetch) is later.
 
 Cloud HTTP catch-up on main is fanned out on BC. A MetadataFree glyph packet
 on a linked window is applied as `applyDocumentCatchUp`.

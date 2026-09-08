@@ -594,6 +594,9 @@ function stripLayerData(fontData: any): any {
 
             // Process remaining layers
             for (const layer of glyph.layers) {
+                if (!layer) {
+                    continue;
+                }
                 // Ensure layer has a shapes array (even if empty)
                 if (!layer.shapes) {
                     layer.shapes = [];
@@ -668,6 +671,9 @@ function validateFontData(fontData: any): void {
         let allLayersEmpty = true;
         for (let i = 0; i < glyph.layers.length; i++) {
             const layer = glyph.layers[i];
+            if (!layer) {
+                continue;
+            }
 
             if (!layer.shapes) {
                 const presentFields = Object.keys(layer).join(', ');

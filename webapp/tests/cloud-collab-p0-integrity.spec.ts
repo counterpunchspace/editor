@@ -83,7 +83,7 @@ async function prepareOwnerCloudFont(
     await attachCloudCollabCookies(ownerContext, ownerSession);
     const ownerPage = await ownerContext.newPage();
     await collectPageErrors(ownerPage);
-    await ownerPage.goto('/?test=true');
+    await ownerPage.goto('/?test=true&examples=core');
     await waitForCanvasReady(ownerPage);
     await openFileFromFilesView(ownerPage, 'Fustat.glyphs');
     await waitForOpenSessionReady(ownerPage, 'Fustat.glyphs');
@@ -133,7 +133,38 @@ async function openInviteeOnAsset(
     await collectPageErrors(inviteePage);
     await gotoEditorPage(inviteePage, editorHrefWithTestMode(editorHref!));
     await waitForCanvasReady(inviteePage);
-    await waitForFontLoaded(inviteePage);
+    try {
+        await waitForFontLoaded(inviteePage);
+    } catch (error) {
+        const dump = await inviteePage.evaluate(() => {
+            const plugin = (window as any).cloudPlugin;
+            const overlay = document.getElementById('loading-overlay');
+            return {
+                href: String(location.href),
+                path: (window as any).fontManager?.currentFont?.path ?? null,
+                overlayHidden: overlay?.classList.contains('hidden') ?? null,
+                loadingStatus:
+                    document.getElementById('loading-status')?.textContent ||
+                    null,
+                pluginMessage:
+                    document.querySelector('#plugin-message-container')
+                        ?.textContent || null,
+                hasEditorSessionCookie:
+                    document.cookie.includes('editor_session='),
+                pendingOpenAssetId: plugin?._pendingOpenAsset?.assetId ?? null,
+                urlOpenError: (window as any).__fileBrowserUrlOpenError ?? null,
+                cloudOpenError: (window as any).__cloudOpenError ?? null,
+                assetId: plugin?.activeAssetId ?? null,
+                status: plugin?.connectionStatus ?? null,
+                detail: plugin?.connectionDetail ?? null
+            };
+        });
+        throw new Error(
+            `invitee waitForFontLoaded: ${JSON.stringify(dump)}: ${
+                error instanceof Error ? error.message : String(error)
+            }`
+        );
+    }
     await waitForOpenSessionReady(inviteePage, assetId);
     await waitForBridgeReady(inviteePage);
     await installJsonCanonicalizer(inviteePage);
@@ -156,7 +187,7 @@ test.describe('Cloud P0 integrity Playwright gates', () => {
         browser,
         request
     }) => {
-        test.setTimeout(600000);
+        test.setTimeout(480000);
         const runId = `p0-${Date.now().toString(36)}`;
         const { emails, ownerContext, ownerPage, assetId } =
             await prepareOwnerCloudFont(
@@ -300,6 +331,40 @@ test.describe('Cloud P0 integrity Playwright gates', () => {
             expect(compacted.payload.validatorTokenConfigured).toBe(true);
             expect(compacted.payload.compactorTokenConfigured).toBe(true);
 
+            const packDiscardStatus = await ownerPage.evaluate(async (id) => {
+                const plugin = (window as any).cloudPlugin;
+                const tokenResponse = await plugin._fetchRoomToken(id);
+                const origin = String(tokenResponse.roomUrl || '').replace(
+                    /\/room\/.*$/,
+                    ''
+                );
+                const url = `${origin}/room/${encodeURIComponent(id)}/pack/discard`;
+                let lastError = 'no attempt';
+                for (let attempt = 0; attempt < 8; attempt += 1) {
+                    try {
+                        const response = await fetch(url, {
+                            method: 'POST',
+                            headers: {
+                                'Authorization': `Bearer ${tokenResponse.token}`,
+                                'Content-Type': 'application/json'
+                            },
+                            body: '{}'
+                        });
+                        return response.status;
+                    } catch (error) {
+                        lastError =
+                            error instanceof Error
+                                ? error.message
+                                : String(error);
+                        await new Promise((resolve) =>
+                            setTimeout(resolve, 400 * (attempt + 1))
+                        );
+                    }
+                }
+                throw new Error(`pack/discard failed: ${lastError}`);
+            }, assetId);
+            expect(packDiscardStatus).toBe(410);
+
             const walLock = await ownerPage.evaluate(async () => {
                 const failingOpen = () => {
                     const requestLike: {
@@ -396,7 +461,7 @@ test.describe('Cloud P0 integrity Playwright gates', () => {
         browser,
         request
     }) => {
-        test.setTimeout(600000);
+        test.setTimeout(480000);
         test.info().annotations.push({ type: 'retries', description: '0' });
         const runId = `p0off-${Date.now().toString(36)}`;
         const { emails, ownerContext, ownerPage, assetId } =

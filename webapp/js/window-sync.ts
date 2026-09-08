@@ -193,6 +193,8 @@ export class WindowSync {
     private _inboundFlushScheduled = false;
     private _sessionId: string;
     private _channelName: string;
+    private _cloudBootstrapReady = false;
+    private _pendingFullStateRequests = 0;
 
     static enableTimingLogging(): void {
         WindowSync._timingLoggingEnabled = true;
@@ -398,6 +400,64 @@ export class WindowSync {
         console.log(`Rebound WindowSync channel to ${nextName}`);
     }
 
+    sendFullStateSnapshot(): void {
+        const state = this._bridge.getFullState();
+        const documents: Array<{
+            documentId: string;
+            state: BinaryPayload;
+        }> = [];
+        // Never encodeDocumentSet() / listLiveGlyphDocumentIds() here.
+        // Those walk every glyph Y.Doc in memory (the whole catalog after a
+        // full hydrate) and freeze both windows on BroadcastChannel + apply.
+        // The one initial snapshot is core, deps, and the editing subset.
+        const subsetNames = collectLinkedWindowGlyphNames();
+        const documentIds = new Set<string>([
+            FONT_CORE_DOCUMENT_ID,
+            FONT_DEPS_DOCUMENT_ID,
+            ...subsetNames
+                .map((name) => this._bridge.glyphDocumentIdForName?.(name))
+                .filter((id): id is string => !!id)
+        ]);
+        for (const documentId of documentIds) {
+            const bytes = this._bridge.encodeDocumentState?.(documentId);
+            if (bytes?.byteLength) {
+                documents.push({ documentId, state: bytes });
+            }
+        }
+        this._send({
+            type: 'full-state-response',
+            state,
+            documents,
+            changeLog: this._bridge.getChangeLog().slice(-80),
+            collaborationLog: this._bridge.getCollaborationLog().slice(-80),
+            cloudRelayState:
+                window.windowRole?.isMainWindow() &&
+                window.cloudPlugin?.getRelayConnectionState
+                    ? window.cloudPlugin.getRelayConnectionState()
+                    : undefined,
+            windowId: this._bridge.windowId,
+            sessionId: this._sessionId
+        });
+    }
+
+    /**
+     * Main window: hold the one initial linked-window snapshot until the
+     * cloud session has passed its ready barrier, then answer queued requests.
+     * Later peer updates stay document-scoped.
+     */
+    notifyCloudBootstrapReady(): void {
+        this._cloudBootstrapReady = true;
+        if (!this._pendingFullStateRequests) {
+            return;
+        }
+        this._pendingFullStateRequests = 0;
+        this.sendFullStateSnapshot();
+    }
+
+    notifyCloudBootstrapPending(): void {
+        this._cloudBootstrapReady = false;
+    }
+
     /** Clean up. */
     destroy(): void {
         this._flushOutboundBroadcast();
@@ -591,50 +651,36 @@ export class WindowSync {
             case 'full-state-request':
                 if (msg.windowId === this._bridge.windowId) return;
                 this._peers.add(msg.windowId);
-                // Respond with our full state
-                const state = this._bridge.getFullState();
-                const subsetNames = collectLinkedWindowGlyphNames();
-                const documents: Array<{
-                    documentId: string;
-                    state: BinaryPayload;
-                }> = [];
-                for (const documentId of [
-                    FONT_CORE_DOCUMENT_ID,
-                    FONT_DEPS_DOCUMENT_ID,
-                    ...subsetNames
-                        .map((name) =>
-                            this._bridge.glyphDocumentIdForName?.(name)
-                        )
-                        .filter((id): id is string => !!id)
-                ]) {
-                    const bytes =
-                        this._bridge.encodeDocumentState?.(documentId);
-                    if (bytes?.byteLength) {
-                        documents.push({ documentId, state: bytes });
-                    }
+                if (
+                    window.windowRole?.isMainWindow() &&
+                    !this._cloudBootstrapReady
+                ) {
+                    this._pendingFullStateRequests += 1;
+                    break;
                 }
-                this._send({
-                    type: 'full-state-response',
-                    state,
-                    documents,
-                    changeLog: this._bridge.getChangeLog().slice(-80),
-                    collaborationLog: this._bridge
-                        .getCollaborationLog()
-                        .slice(-80),
-                    cloudRelayState:
-                        window.windowRole?.isMainWindow() &&
-                        window.cloudPlugin?.getRelayConnectionState
-                            ? window.cloudPlugin.getRelayConnectionState()
-                            : undefined,
-                    windowId: this._bridge.windowId,
-                    sessionId: this._sessionId
-                });
+                this.sendFullStateSnapshot();
                 break;
 
             case 'full-state-response':
                 if (msg.windowId === this._bridge.windowId) return;
                 this._peers.add(msg.windowId);
-                if (!this._awaitingFullState || this._hasAppliedFullState) {
+                if (this._hasAppliedFullState) {
+                    if (msg.documents?.length) {
+                        for (const document of msg.documents) {
+                            this._bridge.applyDocumentCheckpoint(
+                                document.documentId,
+                                toUint8Array(document.state)
+                            );
+                        }
+                    }
+                    if (msg.cloudRelayState) {
+                        window.cloudPlugin?.applyRelayedConnectionState?.(
+                            msg.cloudRelayState
+                        );
+                    }
+                    return;
+                }
+                if (!this._awaitingFullState) {
                     return;
                 }
                 // The peer-wait timer only covers "no window answered". Apply

@@ -88,7 +88,30 @@ export async function saveCurrentFontToCloud(
 export function editorHrefWithTestMode(href: string): string {
     const url = new URL(href, LOCAL_EDITOR_ORIGIN);
     url.searchParams.set('test', 'true');
+    url.searchParams.set('examples', 'core');
     return url.toString();
+}
+
+export async function acceptCloudInviteAndGetEditorHref(
+    page: Page,
+    inviteUrl: string
+): Promise<string> {
+    await page.goto(inviteUrl);
+    await page.locator('#inviteAcceptButton').click();
+    const editorLink = page.getByRole('link', { name: 'Open in editor' });
+    const error = page.locator('.message.error');
+    await page.waitForSelector('a.auth-button, .message.error', {
+        timeout: 30000
+    });
+    if (await error.isVisible()) {
+        throw new Error(
+            `Invite accept failed: ${((await error.textContent()) || '').trim()}`
+        );
+    }
+    await expect(editorLink).toBeVisible({ timeout: 5000 });
+    const editorHref = await editorLink.getAttribute('href');
+    expect(editorHref).toBeTruthy();
+    return editorHref!;
 }
 
 export async function gotoEditorPage(page: Page, href: string): Promise<void> {
@@ -204,6 +227,20 @@ export async function collectPageErrors(page: Page): Promise<string[]> {
             return;
         }
         errors.push(err.message);
+    });
+    page.on('console', (msg) => {
+        if (msg.type() !== 'error' && msg.type() !== 'warning') {
+            return;
+        }
+        const text = msg.text();
+        if (
+            /Download the React DevTools|\[vite\]|favicon|net::ERR_ABORTED|Failed to load resource/i.test(
+                text
+            )
+        ) {
+            return;
+        }
+        errors.push(`${msg.type()}: ${text}`);
     });
     return errors;
 }

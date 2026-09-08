@@ -2763,7 +2763,7 @@ export class GlyphCanvasRenderer {
             fontSize: number;
         }> = [];
         const duplicateNodePositionKeys = collectDuplicateNodePositionKeys(
-            currentLayerData.shapes
+            currentLayerData?.shapes
         );
         const drawnDuplicateNodeWarningKeys = new Set<string>();
 

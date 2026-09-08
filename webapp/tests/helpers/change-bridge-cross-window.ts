@@ -47,17 +47,22 @@ export async function setupEditTextMode(
     page: Page,
     textBuffer: string = 'ä'
 ): Promise<void> {
-    // Step 1: Set text buffer and wait for its glyph run.
     await page.waitForFunction(
-        () => Number((window as any).fontManager?.editingFont?.length || 0) > 0,
+        () => !!(window as any).glyphCanvas?.textRunEditor,
         undefined,
-        { timeout: 180000 }
+        { timeout: 30000 }
     );
     await page.evaluate((nextTextBuffer) => {
         const gc = (window as any).glyphCanvas;
         gc.textRunEditor.setTextBuffer(nextTextBuffer);
         gc.textRunEditor.shapeText?.(true);
     }, textBuffer);
+
+    await page.waitForFunction(
+        () => Number((window as any).fontManager?.editingFont?.length || 0) > 0,
+        undefined,
+        { timeout: 180000 }
+    );
 
     // Wait for shaping to complete
     await page.waitForFunction(
@@ -1326,6 +1331,41 @@ export async function alignEditorCanvas(
     await waitForVisibleLayerRows(page);
 }
 
+function firstJsonMismatch(
+    left: unknown,
+    right: unknown,
+    path = ''
+): string | null {
+    if (JSON.stringify(left) === JSON.stringify(right)) {
+        return null;
+    }
+    if (
+        left === null ||
+        right === null ||
+        typeof left !== 'object' ||
+        typeof right !== 'object'
+    ) {
+        return `${path || 'root'}: ${JSON.stringify(left)} vs ${JSON.stringify(right)}`;
+    }
+    const leftRecord = left as Record<string, unknown>;
+    const rightRecord = right as Record<string, unknown>;
+    const keys = new Set([
+        ...Object.keys(leftRecord),
+        ...Object.keys(rightRecord)
+    ]);
+    for (const key of keys) {
+        const nested = firstJsonMismatch(
+            leftRecord[key],
+            rightRecord[key],
+            path ? `${path}.${key}` : key
+        );
+        if (nested) {
+            return nested;
+        }
+    }
+    return path || 'root';
+}
+
 export async function waitUntilGlyphLayerDataMatches(
     sourcePage: Page,
     targetPage: Page,
@@ -1336,17 +1376,20 @@ export async function waitUntilGlyphLayerDataMatches(
     let lastSource: unknown;
     let lastTarget: unknown;
     while (Date.now() < deadline) {
-        lastSource = await extractGlyphLayerData(sourcePage, glyphNames);
-        lastTarget = await extractGlyphLayerData(targetPage, glyphNames);
+        [lastSource, lastTarget] = await Promise.all([
+            extractGlyphLayerData(sourcePage, glyphNames),
+            extractGlyphLayerData(targetPage, glyphNames)
+        ]);
         if (JSON.stringify(lastSource) === JSON.stringify(lastTarget)) {
             return;
         }
         await targetPage.waitForTimeout(250);
     }
     throw new Error(
-        `Timed out waiting for glyph layer data to match. source=${JSON.stringify(
-            lastSource
-        )} target=${JSON.stringify(lastTarget)}`
+        `Timed out waiting for glyph layer data to match (${firstJsonMismatch(
+            lastSource,
+            lastTarget
+        )})`
     );
 }
 

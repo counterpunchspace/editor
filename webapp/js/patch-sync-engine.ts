@@ -1252,7 +1252,9 @@ export class PatchSyncEngine {
                     documentId.slice('glyph:'.length)
                 );
                 if (glyphName) {
-                    this._patchGlyphFromYDoc(glyphName);
+                    this._patchGlyphFromYDoc(glyphName, {
+                        ignoreExisting: true
+                    });
                     repairedGlyphName = glyphName;
                 }
             }
@@ -1483,9 +1485,6 @@ export class PatchSyncEngine {
             }
         ];
         for (const [glyphId, doc] of this._glyphDocs) {
-            if (!this._glyphNameById.has(glyphId)) {
-                continue;
-            }
             shards.push({
                 documentId: glyphDocumentId(glyphId),
                 bytes: Y.encodeStateAsUpdate(doc)
@@ -1648,7 +1647,6 @@ export class PatchSyncEngine {
         this._isApplyingRemote = true;
         try {
             if (!this._fontJson) this._fontJson = {};
-            this._destroyGlyphDocs();
             for (const shard of shards) {
                 const doc =
                     shard.documentId === FONT_CORE_DOCUMENT_ID
@@ -5413,7 +5411,10 @@ export class PatchSyncEngine {
         for (const layerSnapshot of snapshotLayers) {
             const layerId =
                 typeof layerSnapshot?.id === 'string' ? layerSnapshot.id : '';
-            const existingLayer = layerId ? layersById.get(layerId) : undefined;
+            if (!layerId) {
+                throw new Error('malformed glyph snapshot: layer missing id');
+            }
+            const existingLayer = layersById.get(layerId);
             if (
                 existingLayer &&
                 typeof existingLayer === 'object' &&
@@ -5467,30 +5468,36 @@ export class PatchSyncEngine {
         const orderedGlyphNames = fromOrder.length
             ? fromOrder
             : [...this._glyphIdByName.keys()];
+        const reconstructed: Array<{
+            glyphName: string;
+            glyphId?: string;
+            glyphSnapshot: Unsafe;
+        }> = [];
         for (const glyphName of orderedGlyphNames) {
-            const glyphId = this._glyphIdByName.get(glyphName);
-            const glyphSnapshot = this._readNormalizedGlyphSnapshotFromYDoc(
+            const glyphSnapshot =
+                this._readNormalizedGlyphSnapshotFromYDoc(glyphName);
+            if (!glyphSnapshot) {
+                continue;
+            }
+            reconstructed.push({
                 glyphName,
+                glyphId: this._glyphIdByName.get(glyphName),
+                glyphSnapshot
+            });
+        }
+        for (const { glyphName, glyphId, glyphSnapshot } of reconstructed) {
+            const existingGlyph =
                 existingGlyphsByName.get(glyphName) ||
-                    (glyphId ? existingGlyphsById.get(glyphId) : undefined)
-            );
-            if (glyphSnapshot) {
-                const existingGlyph =
-                    existingGlyphsByName.get(glyphName) ||
-                    (glyphId ? existingGlyphsById.get(glyphId) : undefined);
-                if (
-                    existingGlyph &&
-                    typeof existingGlyph === 'object' &&
-                    !Array.isArray(existingGlyph)
-                ) {
-                    this._assignGlyphSnapshotInPlace(
-                        existingGlyph,
-                        glyphSnapshot
-                    );
-                    nextGlyphs.push(existingGlyph);
-                } else {
-                    nextGlyphs.push(glyphSnapshot);
-                }
+                (glyphId ? existingGlyphsById.get(glyphId) : undefined);
+            if (
+                existingGlyph &&
+                typeof existingGlyph === 'object' &&
+                !Array.isArray(existingGlyph)
+            ) {
+                this._assignGlyphSnapshotInPlace(existingGlyph, glyphSnapshot);
+                nextGlyphs.push(existingGlyph);
+            } else {
+                nextGlyphs.push(glyphSnapshot);
             }
         }
 
@@ -5523,7 +5530,7 @@ export class PatchSyncEngine {
 
     private _readNormalizedGlyphSnapshotFromYDoc(
         glyphName: string,
-        existingGlyphSnapshot?: unknown
+        readOptions?: { ignoreExisting?: boolean }
     ): Unsafe | null {
         const glyphMap = this._glyphMapForName(glyphName);
         if (!(glyphMap instanceof Y.Map)) {
@@ -5531,15 +5538,18 @@ export class PatchSyncEngine {
         }
 
         const glyphSnapshot = this._cloneRuntimeValue(
-            this._normalizeGlyphSnapshot(
-                fromYType(glyphMap),
-                existingGlyphSnapshot
-            )
+            this._normalizeGlyphSnapshot(fromYType(glyphMap), undefined, {
+                strictLayers: true,
+                ignoreExisting: readOptions?.ignoreExisting === true
+            })
         ) as Unsafe;
         return glyphSnapshot;
     }
 
-    private _patchGlyphFromYDoc(glyphName: string): boolean {
+    private _patchGlyphFromYDoc(
+        glyphName: string,
+        options?: { ignoreExisting?: boolean }
+    ): boolean {
         if (!this._fontJson) {
             return false;
         }
@@ -5557,7 +5567,7 @@ export class PatchSyncEngine {
         );
         const glyphSnapshot = this._readNormalizedGlyphSnapshotFromYDoc(
             glyphName,
-            glyphIndex >= 0 ? glyphs[glyphIndex] : undefined
+            { ignoreExisting: options?.ignoreExisting === true }
         );
 
         if (!glyphSnapshot) {
@@ -9346,7 +9356,8 @@ export class PatchSyncEngine {
 
     private _normalizeGlyphSnapshot(
         glyphSnapshot: unknown,
-        existingGlyphSnapshot?: unknown
+        existingGlyphSnapshot?: unknown,
+        options?: { strictLayers?: boolean; ignoreExisting?: boolean }
     ): unknown {
         if (
             !glyphSnapshot ||
@@ -9356,7 +9367,9 @@ export class PatchSyncEngine {
             return glyphSnapshot;
         }
 
+        const ignoreExisting = options?.ignoreExisting === true;
         const existingGlyphRecord =
+            !ignoreExisting &&
             existingGlyphSnapshot &&
             typeof existingGlyphSnapshot === 'object' &&
             !Array.isArray(existingGlyphSnapshot)
@@ -9369,10 +9382,12 @@ export class PatchSyncEngine {
             string,
             unknown
         >;
-        const mergedGlyphRecord = {
-            ...existingGlyphRecord,
-            ...incomingGlyphRecord
-        };
+        const mergedGlyphRecord = ignoreExisting
+            ? { ...incomingGlyphRecord }
+            : {
+                  ...existingGlyphRecord,
+                  ...incomingGlyphRecord
+              };
 
         if (
             Object.prototype.hasOwnProperty.call(incomingGlyphRecord, 'layers')
@@ -9399,12 +9414,20 @@ export class PatchSyncEngine {
                             ? String(layer.id || '')
                             : '';
                     if (!layerId) {
+                        if (options?.strictLayers) {
+                            throw new Error(
+                                'malformed glyph snapshot: layer missing id'
+                            );
+                        }
                         return null;
                     }
                     return this._normalizeLayerSnapshot(
                         layerId,
                         layer,
-                        existingLayersById.get(layerId)
+                        ignoreExisting
+                            ? undefined
+                            : existingLayersById.get(layerId),
+                        !ignoreExisting
                     );
                 })
                 .filter((layer): layer is Record<string, unknown> => !!layer);
@@ -9807,7 +9830,7 @@ export class PatchSyncEngine {
         }
 
         return toRestingLayerJson(mergedLayerRecord, {
-            existing: existingLayerRecord,
+            existing: preserveMissingKeys ? existingLayerRecord : undefined,
             mode: 'replace',
             context: 'history snapshot'
         });

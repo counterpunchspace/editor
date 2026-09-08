@@ -5,7 +5,6 @@
 import type { EncodedShard } from './cloud-document-set';
 import type {
     CloudSeedDocumentSetResult,
-    CloudSeededShardAttestation,
     CloudShardIoOptions,
     CloudShardIoProgress
 } from '../cloud-adapter';
@@ -28,11 +27,6 @@ type ShardSeeder = {
         migrationNonce?: string,
         options?: CloudShardIoOptions
     ) => Promise<CloudSeedDocumentSetResult>;
-    discardSeededShards: (
-        token: string,
-        roomUrl: string,
-        shardIds: string[]
-    ) => Promise<void>;
 };
 
 function bindSessionProgress(
@@ -59,55 +53,33 @@ export async function seedDocumentSetWithProgress(params: {
     migrationNonce?: string;
     ioOptions?: CloudShardIoOptions;
 }): Promise<CloudSeedDocumentSetResult> {
-    const landedIds: string[] = [];
     const bytesTotal = params.shards.reduce(
         (sum, shard) => sum + shard.bytes.byteLength,
         0
     );
-    try {
-        return await runWithTransferProgress({
-            kind: 'seed',
-            title: 'Saving',
-            message: 'Uploading font to cloud…',
-            total: params.shards.length,
-            bytesTotal,
-            work: (session) =>
-                params.seeder.seedDocumentSet(
-                    params.token,
-                    params.roomUrl,
-                    params.shards,
-                    params.glyphCount,
-                    params.migrationNonce,
-                    {
-                        ...params.ioOptions,
-                        signal: session.signal,
-                        onProgress: bindSessionProgress(
-                            session,
-                            'Uploading font to cloud…'
-                        ),
-                        onShardLanded: (
-                            attestation: CloudSeededShardAttestation
-                        ) => {
-                            if (attestation.shardId) {
-                                landedIds.push(attestation.shardId);
-                            }
-                        }
-                    }
-                )
-        });
-    } catch (error) {
-        if (landedIds.length) {
-            await params.seeder
-                .discardSeededShards(params.token, params.roomUrl, landedIds)
-                .catch((discardError) => {
-                    console.warn(
-                        '[transfer] Failed to delete landed seed shards:',
-                        discardError
-                    );
-                });
-        }
-        throw error;
-    }
+    return runWithTransferProgress({
+        kind: 'seed',
+        title: 'Saving',
+        message: 'Uploading font to cloud…',
+        total: params.shards.length,
+        bytesTotal,
+        work: (session) =>
+            params.seeder.seedDocumentSet(
+                params.token,
+                params.roomUrl,
+                params.shards,
+                params.glyphCount,
+                params.migrationNonce,
+                {
+                    ...params.ioOptions,
+                    signal: session.signal,
+                    onProgress: bindSessionProgress(
+                        session,
+                        'Uploading font to cloud…'
+                    )
+                }
+            )
+    });
 }
 
 export async function loadDocumentSetWithProgress<T>(params: {

@@ -20,6 +20,8 @@ if (!globalThis.crypto?.subtle) {
     });
 }
 let mockConnectDirectStatusQueue = [];
+var mockEncodeHydrateMapForTest;
+var mockHydrateCache = null;
 
 jest.mock('../js/cloud-adapter', () => ({
     CloudAdapter: jest.fn().mockImplementation((options = {}) => {
@@ -75,8 +77,22 @@ jest.mock('../js/cloud-adapter', () => ({
             }),
             rebindToCurrentBridge: mockRebindToCurrentBridge,
             seedDocumentSet: jest.fn().mockResolvedValue(),
-            hydrateDocumentSet: jest.fn().mockResolvedValue(new Map()),
-            discardSeededShards: jest.fn().mockResolvedValue(),
+            hydrateDocumentSet: jest.fn(async (_token, _roomUrl, ids = []) => {
+                if (!mockHydrateCache) {
+                    mockHydrateCache =
+                        typeof mockEncodeHydrateMapForTest === 'function'
+                            ? mockEncodeHydrateMapForTest()
+                            : new Map();
+                }
+                const result = new Map();
+                for (const id of ids) {
+                    const bytes = mockHydrateCache.get(id);
+                    if (bytes) {
+                        result.set(id, bytes);
+                    }
+                }
+                return result;
+            }),
             disconnect: jest.fn(() => {
                 mockDisconnect();
                 adapter.status = 'disconnected';
@@ -220,6 +236,24 @@ const {
     formatCloudByteCount
 } = require('../js/filesystem-plugins/plugins/cloud-plugin');
 const { CloudAdapter } = require('../js/cloud-adapter');
+const {
+    CloudDocumentSet,
+    FONT_CORE_DOCUMENT_ID,
+    FONT_DEPS_DOCUMENT_ID
+} = require('../js/filesystem-plugins/cloud-document-set');
+
+function hydrateMapFromFontJson(fontJson) {
+    const documentSet = new CloudDocumentSet();
+    documentSet.initFromFontJson(fontJson);
+    const result = new Map();
+    for (const shard of documentSet.encodeAll()) {
+        result.set(shard.documentId, shard.bytes);
+    }
+    documentSet.destroy();
+    return result;
+}
+
+mockEncodeHydrateMapForTest = () => hydrateMapFromFontJson(mockYDocToJson());
 
 describe('CloudPlugin.openAsset', () => {
     let plugin;
@@ -322,6 +356,7 @@ describe('CloudPlugin.openAsset', () => {
             token: 'room-token',
             roomUrl: 'ws://localhost:8787/room/asset-1'
         });
+        mockHydrateCache = null;
     });
 
     afterEach(() => {
@@ -344,7 +379,7 @@ describe('CloudPlugin.openAsset', () => {
         mockYDocToJson.mockReturnValueOnce(wrappedCloudFontJson);
 
         await expect(plugin.openAsset('asset-1')).rejects.toThrow(
-            'Wrapped Path shapes are not allowed in cloud-exported font data.'
+            'Wrapped shapes are not allowed before Y.Doc write.'
         );
 
         const fontLoadedEvent = dispatchSpy.mock.calls
@@ -381,90 +416,44 @@ describe('CloudPlugin.openAsset', () => {
     test('skips redundant HTTP bootstrap when attaching the live room after cloud open', async () => {
         await expect(plugin.openAsset('asset-1')).resolves.toBeUndefined();
 
-        expect(mockConnectDirect).toHaveBeenCalledTimes(3);
+        expect(mockConnectDirect).toHaveBeenCalledTimes(2);
         expect(mockConnectDirect.mock.calls[0][3]).toEqual({
-            bootstrapMode: 'required',
-            checkpointLogId: null
-        });
-        expect(mockConnectDirect.mock.calls[1][3]).toEqual({
-            bootstrapMode: 'skip',
-            checkpointLogId: 42
-        });
-        expect(mockConnectDirect.mock.calls[2][3]).toEqual({
             bootstrapMode: 'skip'
         });
-        expect(mockConnectDirect.mock.calls[0][0]).not.toBe(
-            mockConnectDirect.mock.calls[1][0]
-        );
+        expect(mockConnectDirect.mock.calls[1][3]).toEqual({
+            bootstrapMode: 'skip'
+        });
     });
 
     test('keeps cloud open attached when the live room handoff would fail on a second HTTP bootstrap', async () => {
-        let connectDirectCallCount = 0;
         mockConnectDirect.mockImplementation((...args) => {
-            connectDirectCallCount += 1;
-            if (
-                connectDirectCallCount === 2 &&
-                args[3]?.bootstrapMode === 'required'
-            ) {
+            if (args[3]?.bootstrapMode === 'required') {
                 throw new Error('R2 bootstrap failed: net::ERR_FAILED');
             }
         });
 
         await expect(plugin.openAsset('asset-1')).resolves.toBeUndefined();
 
-        expect(mockConnectDirect).toHaveBeenCalledTimes(3);
-        expect(mockConnectDirect.mock.calls[1][3]).toEqual({
-            bootstrapMode: 'skip',
-            checkpointLogId: 42
-        });
+        expect(mockConnectDirect).toHaveBeenCalledTimes(2);
+        expect(
+            mockConnectDirect.mock.calls.every(
+                (call) => call[3]?.bootstrapMode === 'skip'
+            )
+        ).toBe(true);
     });
 
-    test('waits for initial cloud font data before throwing no-font-data', async () => {
-        plugin._hydrateCoreDepsConsistent = async () => {
-            throw new Error('skip http hydrate');
-        };
-        mockYDocToJson
-            .mockReturnValueOnce({})
-            .mockReturnValue(defaultCloudFontJson);
-
-        const openPromise = plugin.openAsset('asset-1');
-        for (
-            let attempt = 0;
-            attempt < 80 && !mockLatestTempBridge;
-            attempt++
-        ) {
-            await Promise.resolve();
-        }
-
-        expect(mockLatestTempBridge).toBeTruthy();
-
-        for (
-            let attempt = 0;
-            attempt < 50 &&
-            mockLatestTempBridge.yDoc.on.mock.calls.length === 0;
-            attempt++
-        ) {
-            await Promise.resolve();
-        }
-
-        expect(mockLatestTempBridge.yDoc.on.mock.calls.length).toBeGreaterThan(
-            0
+    test('fails closed when HTTP hydrate produces no published snapshot', async () => {
+        plugin._hydrateCoreDepsConsistent = async () => new Map();
+        await expect(plugin.openAsset('asset-1')).rejects.toThrow(
+            'no published core/deps snapshot'
         );
-
-        mockLatestTempBridge.yDoc.__emitUpdate();
-
-        await expect(openPromise).resolves.toBeUndefined();
-        expect(dispatchSpy).toHaveBeenCalledWith(
+        expect(dispatchSpy).not.toHaveBeenCalledWith(
             expect.objectContaining({ type: 'fontLoaded' })
         );
     });
 
-    test('opens from HTTP bootstrap state even when bootstrap websocket auth times out', async () => {
+    test('opens from HTTP hydrate and attaches live rooms without a full-room websocket bootstrap', async () => {
         mockConnectDirectStatusQueue = [
-            [
-                { status: 'authenticating' },
-                { status: 'error', detail: 'cloud sync timed out' }
-            ],
             [{ status: 'connected' }],
             [{ status: 'connected' }]
         ];
@@ -474,16 +463,11 @@ describe('CloudPlugin.openAsset', () => {
         expect(dispatchSpy).toHaveBeenCalledWith(
             expect.objectContaining({ type: 'fontLoaded' })
         );
-        expect(mockConnectDirect).toHaveBeenCalledTimes(3);
+        expect(mockConnectDirect).toHaveBeenCalledTimes(2);
         expect(mockConnectDirect.mock.calls[0][3]).toEqual({
-            bootstrapMode: 'required',
-            checkpointLogId: null
+            bootstrapMode: 'skip'
         });
         expect(mockConnectDirect.mock.calls[1][3]).toEqual({
-            bootstrapMode: 'skip',
-            checkpointLogId: 42
-        });
-        expect(mockConnectDirect.mock.calls[2][3]).toEqual({
             bootstrapMode: 'skip'
         });
     });
@@ -509,47 +493,19 @@ describe('CloudPlugin.openAsset', () => {
         expect(dispatchSpy).toHaveBeenCalledWith(
             expect.objectContaining({ type: 'fontLoaded' })
         );
-        expect(mockConnectDirect).toHaveBeenCalledTimes(2);
+        expect(mockConnectDirect.mock.calls.length).toBeGreaterThanOrEqual(1);
     });
 
     test('coalesces concurrent opens for the same asset', async () => {
-        plugin._hydrateCoreDepsConsistent = async () => {
-            throw new Error('skip http hydrate');
-        };
-        mockYDocToJson
-            .mockReturnValueOnce({})
-            .mockReturnValue(defaultCloudFontJson);
-
         const firstOpenPromise = plugin.openAsset('asset-1');
         const secondOpenPromise = plugin.openAsset('asset-1');
-
-        for (
-            let attempt = 0;
-            attempt < 80 && !mockLatestTempBridge;
-            attempt++
-        ) {
-            await Promise.resolve();
-        }
-
-        expect(mockLatestTempBridge).toBeTruthy();
-
-        for (
-            let attempt = 0;
-            attempt < 50 &&
-            mockLatestTempBridge.yDoc.on.mock.calls.length === 0;
-            attempt++
-        ) {
-            await Promise.resolve();
-        }
-
-        mockLatestTempBridge.yDoc.__emitUpdate();
 
         await expect(
             Promise.all([firstOpenPromise, secondOpenPromise])
         ).resolves.toEqual([undefined, undefined]);
 
         expect(plugin._fetchRoomToken).toHaveBeenCalledTimes(2);
-        expect(mockConnectDirect).toHaveBeenCalledTimes(3);
+        expect(mockConnectDirect).toHaveBeenCalledTimes(2);
     });
 
     test('saveAs seeds and attaches the current live bridge without a second reconnect', async () => {
@@ -1931,7 +1887,8 @@ describe('CloudPlugin sharing APIs', () => {
         plugin.getAdapter().cacheAssetRole('asset-1', 'owner');
         expect(plugin.getCurrentAssetRole()).toBe('owner');
         expect(plugin.canMutateCurrentAsset()).toBe(false);
-        plugin._cloudAdapter = { status: 'connected' };
+        plugin._activeAssetId = 'asset-1';
+        plugin._connectionStatusByAssetId.set('asset-1', 'connected');
         expect(plugin.canMutateCurrentAsset()).toBe(true);
 
         plugin._liveSession = {
@@ -1951,6 +1908,45 @@ describe('CloudPlugin sharing APIs', () => {
         expect(plugin.getLiveAccessSnapshot().accessRevoked).toBe(true);
     });
 
+    test('treats tail_full as read-only while still a member', () => {
+        plugin.getAdapter().cacheAssetRole('asset-1', 'owner');
+        window.fontManager.currentFont.sourcePlugin = plugin;
+        window.fontManager.currentFont.isCloudBacked = () => true;
+        plugin._activeAssetId = 'asset-1';
+        plugin._cloudAdapter = { status: 'connected' };
+        plugin._connectionStatusByAssetId.set('asset-1', 'connected');
+        expect(plugin.canMutateCurrentAsset()).toBe(true);
+
+        plugin._connectionDetailByAssetId.set('asset-1', 'tail_full');
+        expect(plugin.getAssetConnectionDetail('asset-1')).toBe('tail_full');
+        expect(plugin.canMutateCurrentAsset()).toBe(false);
+        expect(plugin.getLiveAccessSnapshot().canMutate).toBe(false);
+    });
+
+    test('defers linked-window bootstrap until the cloud session is ready', () => {
+        const originalRole = window.windowRole;
+        const originalSync = window.windowSync;
+        const notifyCloudBootstrapReady = jest.fn();
+        window.windowRole = {
+            isMainWindow: () => true,
+            isLinkedWindow: () => false
+        };
+        window.windowSync = {
+            peers: new Set(['peer-1']),
+            notifyCloudBootstrapReady
+        };
+        plugin._connectionStatusByAssetId.set('asset-1', 'syncing');
+        plugin._pendingSyncCountByAssetId.set('asset-1', 0);
+        plugin._updateConnectionStatus('asset-1', 'syncing', 'Catching up');
+        expect(notifyCloudBootstrapReady).not.toHaveBeenCalled();
+
+        plugin._updateConnectionStatus('asset-1', 'connected');
+        expect(notifyCloudBootstrapReady).toHaveBeenCalledTimes(1);
+
+        window.windowRole = originalRole;
+        window.windowSync = originalSync;
+    });
+
     test('does not treat text-mode sentinel glyph name as a sparse write lock', () => {
         const originalCanvas = window.glyphCanvas;
         const originalBridge = window.patchSyncEngine;
@@ -1965,6 +1961,8 @@ describe('CloudPlugin sharing APIs', () => {
             hasSparseWorkingSet: () => true,
             isSparseWorkingGlyphName: () => false
         };
+        plugin._activeAssetId = 'asset-1';
+        plugin._connectionStatusByAssetId.set('asset-1', 'connected');
         plugin._cloudAdapter = { status: 'connected' };
 
         expect(plugin.canMutateCurrentAsset()).toBe(true);

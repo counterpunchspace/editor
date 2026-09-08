@@ -2869,18 +2869,32 @@ describe('catalog tombstones and published hydrate pair', () => {
         expect(result.attempts).toBe(2);
     });
 
-    it('rejects a missing or mismatched published core/deps pair', async () => {
+    it('rejects a missing published core shard', async () => {
+        await expect(
+            hydrateCoreDepsToPublishedPair({
+                expected: { coreRevision: 'core', depsRevision: 'deps' },
+                hash: async () => 'wrong',
+                fetchCoreDeps: async () => ({
+                    core: null,
+                    deps: null
+                }),
+                maxAttempts: 1
+            })
+        ).rejects.toThrow('missing published shard');
+    });
+
+    it('rejects a mismatched published core/deps pair instead of installing it', async () => {
         await expect(
             hydrateCoreDepsToPublishedPair({
                 expected: { coreRevision: 'core', depsRevision: 'deps' },
                 hash: async () => 'wrong',
                 fetchCoreDeps: async () => ({
                     core: new Uint8Array([1]),
-                    deps: null
+                    deps: new Uint8Array([2])
                 }),
-                maxAttempts: 1
+                maxAttempts: 2
             })
-        ).rejects.toThrow('missing published shard');
+        ).rejects.toThrow('published generation pair did not match');
     });
 
     it('stamps matching revision tokens across core, deps, and glyph shards', () => {

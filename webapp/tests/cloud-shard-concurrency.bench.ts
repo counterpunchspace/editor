@@ -469,6 +469,31 @@ test.describe('Cloud shard GET/POST concurrency bench (Fustat)', () => {
             expect(packHydrate.loaded).toBe(sequentialHydrate.loaded);
             expect(packSeed.seedMs).toBeGreaterThan(0);
             expect(packHydrate.hydrateMs).toBeGreaterThan(0);
+            expect(seedSpeedup).toBeGreaterThan(1);
+            expect(hydrateSpeedup).toBeGreaterThan(1);
+            const baselinePath = path.join(
+                __dirname,
+                'cloud-shard-concurrency.bench-baseline.json'
+            );
+            if (fs.existsSync(baselinePath)) {
+                const baseline = JSON.parse(
+                    fs.readFileSync(baselinePath, 'utf8')
+                ) as {
+                    packSeedMs?: number;
+                    packHydrateMs?: number;
+                };
+                const slack = 1.2;
+                if (typeof baseline.packSeedMs === 'number') {
+                    expect(packSeed.seedMs).toBeLessThanOrEqual(
+                        baseline.packSeedMs * slack
+                    );
+                }
+                if (typeof baseline.packHydrateMs === 'number') {
+                    expect(packHydrate.hydrateMs).toBeLessThanOrEqual(
+                        baseline.packHydrateMs * slack
+                    );
+                }
+            }
         } finally {
             await ownerContext.close();
             await cleanupCloudCollabUsers(request, [emails.owner]);

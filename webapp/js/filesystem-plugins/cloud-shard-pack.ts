@@ -143,7 +143,7 @@ export function createPackParser(): {
             if (!chunk?.byteLength) {
                 return [];
             }
-            buffer = concatBytes([buffer, chunk]);
+            buffer = Uint8Array.from(concatBytes([buffer, chunk]));
             const frames: PackFrame[] = [];
             if (!sawMagic) {
                 if (buffer.byteLength < PACK_MAGIC.byteLength) {

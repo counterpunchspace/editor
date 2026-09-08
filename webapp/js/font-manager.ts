@@ -775,6 +775,9 @@ class FontManager {
         this.cloudStatusTippy = null;
 
         window.addEventListener('cloudConnectionStatusChanged', () => {
+            if (!this.dirtyIndicator && !this.fontDisplay) {
+                return;
+            }
             this.updateFontDisplay();
             void this.updateDirtyIndicator();
         });
@@ -1643,6 +1646,10 @@ class FontManager {
     }
 
     async updateDirtyIndicator() {
+        if (!this.dirtyIndicator) {
+            return;
+        }
+
         const shouldShowIndicator =
             window.windowRole?.isMainWindow() &&
             this.shouldShowDirtyState(this.currentFont);
@@ -4609,7 +4616,7 @@ class FontManager {
         );
 
         const resolvedWidth =
-            typeof layerData.width === 'number' &&
+            typeof layerData?.width === 'number' &&
             Number.isFinite(layerData.width)
                 ? layerData.width
                 : originalLayer?.width;
@@ -4622,7 +4629,7 @@ class FontManager {
         const cleanOriginalShapes = Array.isArray(originalLayer?.shapes)
             ? originalLayer.shapes.map(cleanShapeForSaving)
             : originalLayer?.shapes;
-        const cleanShapes = Array.isArray(layerData.shapes)
+        const cleanShapes = Array.isArray(layerData?.shapes)
             ? layerData.shapes.map(cleanShapeForSaving)
             : cleanOriginalShapes;
         const storedShapes =
@@ -6616,10 +6623,17 @@ function emitOpenLifecycle(
 
 // Listen for font loaded events from file browser
 window.addEventListener('fontLoaded', async (event: Event) => {
-    // Disconnect any active cloud room before loading a new font, so edits to
-    // the incoming font don't leak into the previous font's cloud room, and
-    // remote updates from the old room don't contaminate the new font's Y.Doc.
-    window.cloudPlugin?.disconnectFromRoom?.();
+    const incomingDetail = (event as CustomEvent).detail;
+    const incomingPath = String(incomingDetail?.path || '');
+    const incomingCloudAssetId = incomingPath.startsWith('cloud://')
+        ? incomingPath.slice('cloud://'.length).replace(/^\/+/, '')
+        : '';
+    const currentCloudAssetId = window.cloudPlugin?.activeAssetId;
+    // Cloud open sets activeAssetId before dispatching fontLoaded. Tearing
+    // that session down here left URL/invitee opens with no font installed.
+    if (!incomingCloudAssetId || currentCloudAssetId !== incomingCloudAssetId) {
+        window.cloudPlugin?.disconnectFromRoom?.();
+    }
 
     if (!(await fontCompilationReady())) {
         return;

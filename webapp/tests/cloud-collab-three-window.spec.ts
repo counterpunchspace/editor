@@ -205,6 +205,7 @@ async function saveCurrentFontToCloud(
 function editorHrefWithTestMode(href: string): string {
     const url = new URL(href, LOCAL_EDITOR_ORIGIN);
     url.searchParams.set('test', 'true');
+    url.searchParams.set('examples', 'core');
     return url.toString();
 }
 
@@ -405,7 +406,7 @@ test.describe('Cloud collab three-window ChangeBridge sync', () => {
         browser,
         request
     }) => {
-        test.setTimeout(600000);
+        test.setTimeout(480000);
 
         await assertServiceReachable(
             request,
@@ -447,7 +448,7 @@ test.describe('Cloud collab three-window ChangeBridge sync', () => {
         const mainErrors = await collectPageErrors(mainPage);
 
         try {
-            await mainPage.goto('/?test=true');
+            await mainPage.goto('/?test=true&examples=core');
             await waitForCanvasReady(mainPage);
             await openFileFromFilesView(mainPage, 'Fustat.glyphs');
             await waitForOpenSessionReady(mainPage, 'Fustat.glyphs');
@@ -497,6 +498,7 @@ test.describe('Cloud collab three-window ChangeBridge sync', () => {
             await installFontModelSyncTracker(linkedPage);
             await installEditingFontCompileTracker(linkedPage);
             await waitForWindowSyncPeers(mainPage, linkedPage);
+            await waitForCloudLiveIdle(mainPage);
             const linkedErrors = await collectPageErrors(linkedPage);
 
             const inviteResult = await mainPage.evaluate(async (email) => {
@@ -507,11 +509,37 @@ test.describe('Cloud collab three-window ChangeBridge sync', () => {
 
             const inviteeWebsite = await inviteeContext.newPage();
             await inviteeWebsite.goto(inviteResult.inviteUrl);
+            await inviteeWebsite
+                .locator('#inviteAcceptButton')
+                .waitFor({ state: 'visible' });
+            const acceptResponsePromise = inviteeWebsite.waitForResponse(
+                (response) =>
+                    response.url().includes('/api/cloud/invitations/accept'),
+                { timeout: 30000 }
+            );
             await inviteeWebsite.locator('#inviteAcceptButton').click();
+            let acceptResponse;
+            try {
+                acceptResponse = await acceptResponsePromise;
+            } catch (error) {
+                const dump = await inviteeWebsite.evaluate(() => ({
+                    button: document.getElementById('inviteAcceptButton')
+                        ?.textContent,
+                    body: (document.body?.innerText || '').slice(0, 1500)
+                }));
+                throw new Error(
+                    `Invite accept request did not complete: ${JSON.stringify(dump)}: ${error instanceof Error ? error.message : String(error)}`
+                );
+            }
+            if (!acceptResponse.ok()) {
+                throw new Error(
+                    `Invite accept HTTP ${acceptResponse.status()}: ${(await acceptResponse.text()).slice(0, 500)}`
+                );
+            }
             const editorLink = inviteeWebsite.getByRole('link', {
                 name: 'Open in editor'
             });
-            await expect(editorLink).toBeVisible({ timeout: 30000 });
+            await expect(editorLink).toBeVisible({ timeout: 10000 });
             const editorHref = await editorLink.getAttribute('href');
             expect(editorHref).toBeTruthy();
             const decodedEditorHref = decodeURIComponent(editorHref!);
@@ -525,12 +553,41 @@ test.describe('Cloud collab three-window ChangeBridge sync', () => {
                 editorHrefWithTestMode(editorHref!)
             );
             await waitForCanvasReady(inviteePage);
-            await waitForFontLoaded(inviteePage);
+            try {
+                await waitForFontLoaded(inviteePage);
+            } catch (error) {
+                const dump = await inviteePage.evaluate(() => {
+                    const plugin = (window as any).cloudPlugin;
+                    return {
+                        href: String(location.href),
+                        path:
+                            (window as any).fontManager?.currentFont?.path ??
+                            null,
+                        urlOpenError:
+                            (window as any).__fileBrowserUrlOpenError ?? null,
+                        cloudOpenError:
+                            (window as any).__cloudOpenError ?? null,
+                        assetId: plugin?.activeAssetId ?? null,
+                        status: plugin?.connectionStatus ?? null,
+                        detail: plugin?.connectionDetail ?? null
+                    };
+                });
+                throw new Error(
+                    `invitee waitForFontLoaded: ${JSON.stringify(dump)}: ${
+                        error instanceof Error ? error.message : String(error)
+                    }`
+                );
+            }
             await waitForOpenSessionReady(inviteePage, assetId);
             await waitForBridgeReady(inviteePage);
             await installJsonCanonicalizer(inviteePage);
             await installFontModelSyncTracker(inviteePage);
             await installEditingFontCompileTracker(inviteePage);
+            await inviteePage.evaluate(() => {
+                const gc = (window as any).glyphCanvas;
+                gc?.textRunEditor?.setTextBuffer?.('a');
+                gc?.textRunEditor?.shapeText?.(true);
+            });
             try {
                 await inviteePage.waitForFunction(
                     () =>
@@ -540,7 +597,7 @@ test.describe('Cloud collab three-window ChangeBridge sync', () => {
                                 0
                         ) > 0,
                     undefined,
-                    { timeout: 180000 }
+                    { timeout: 30000 }
                 );
             } catch (error) {
                 const dump = await inviteePage.evaluate(() => {
@@ -1900,20 +1957,21 @@ test.describe('Cloud collab three-window ChangeBridge sync', () => {
                 glyphNames
             );
 
-            await linkedPage.reload();
-            await waitForCanvasReady(linkedPage);
-            await waitForBridgeReady(linkedPage);
-            await installJsonCanonicalizer(linkedPage);
-
             await inviteePage.reload();
             await waitForCanvasReady(inviteePage);
+            await waitForFontLoaded(inviteePage);
+            await waitForOpenSessionReady(inviteePage, assetId);
             await waitForBridgeReady(inviteePage);
             await installJsonCanonicalizer(inviteePage);
 
             await mainPage.reload();
             await waitForCanvasReady(mainPage);
+            await waitForFontLoaded(mainPage);
+            await waitForOpenSessionReady(mainPage, assetId);
             await waitForBridgeReady(mainPage);
             await installJsonCanonicalizer(mainPage);
+            await waitForCloudLiveIdle(mainPage);
+            await waitForCloudLiveIdle(inviteePage);
 
             // Reloading the owner window closes the WindowSync popup.
             linkedPage = await openLinkedEditorWindow(mainPage);
@@ -1926,6 +1984,10 @@ test.describe('Cloud collab three-window ChangeBridge sync', () => {
             await installFontModelSyncTracker(linkedPage);
             await installEditingFontCompileTracker(linkedPage);
             await waitForWindowSyncPeers(mainPage, linkedPage);
+            await Promise.all([
+                waitForCloudLiveIdle(mainPage),
+                waitForCloudLiveIdle(inviteePage)
+            ]);
             await waitUntilGlyphLayerDataMatches(
                 mainPage,
                 linkedPage,
@@ -2141,7 +2203,7 @@ test.describe('Cloud collab three-window ChangeBridge sync', () => {
         browser,
         request
     }) => {
-        test.setTimeout(600000);
+        test.setTimeout(480000);
         const runId = `viewer-${Date.now().toString(36)}`;
         const emails = makeCloudCollabEmails(runId);
         const ownerSession = await bootstrapCloudCollabSession(
@@ -2162,7 +2224,7 @@ test.describe('Cloud collab three-window ChangeBridge sync', () => {
         await installCrossWindowTrackersOnContext(viewerContext);
         const ownerPage = await ownerContext.newPage();
         try {
-            await ownerPage.goto('/?test=true');
+            await ownerPage.goto('/?test=true&examples=core');
             await waitForCanvasReady(ownerPage);
             await openFileFromFilesView(ownerPage, 'Fustat.glyphs');
             await waitForOpenSessionReady(ownerPage, 'Fustat.glyphs');
@@ -2359,7 +2421,7 @@ test.describe('Cloud collab three-window ChangeBridge sync', () => {
         browser,
         request
     }) => {
-        test.setTimeout(600000);
+        test.setTimeout(480000);
         const runId = `reload-${Date.now().toString(36)}`;
         const emails = makeCloudCollabEmails(runId);
         const ownerSession = await bootstrapCloudCollabSession(
@@ -2372,7 +2434,7 @@ test.describe('Cloud collab three-window ChangeBridge sync', () => {
         await installCrossWindowTrackersOnContext(ownerContext);
         const ownerPage = await ownerContext.newPage();
         try {
-            await ownerPage.goto('/?test=true');
+            await ownerPage.goto('/?test=true&examples=core');
             await waitForCanvasReady(ownerPage);
             await openFileFromFilesView(ownerPage, 'Fustat.glyphs');
             await waitForOpenSessionReady(ownerPage, 'Fustat.glyphs');

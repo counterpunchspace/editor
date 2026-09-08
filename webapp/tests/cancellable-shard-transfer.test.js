@@ -24,16 +24,8 @@ describe('cancellable shard transfer', () => {
                     bytesTotal: 20,
                     shardId: 'font-core'
                 });
-                await options.onShardLanded({
-                    shardId: 'font-core',
-                    checkpointObjectKey: 'k',
-                    checkpointSha256: 'a'.repeat(64),
-                    checkpointByteLength: 10,
-                    checkpointLogId: 0
-                });
                 return { coreCheckpointLogId: 0, attestations: [] };
-            }),
-            discardSeededShards: jest.fn().mockResolvedValue()
+            })
         };
         await seedDocumentSetWithProgress({
             seeder,
@@ -46,26 +38,17 @@ describe('cancellable shard transfer', () => {
             glyphCount: 1
         });
         expect(seeder.seedDocumentSet).toHaveBeenCalled();
-        expect(seeder.discardSeededShards).not.toHaveBeenCalled();
     });
 
-    test('cancel discards landed shard ids', async () => {
+    test('cancel does not locally discard shards; website abort owns rollback', async () => {
         const seeder = {
             seedDocumentSet: jest.fn(async (_t, _u, _s, _g, _n, options) => {
-                await options.onShardLanded({
-                    shardId: 'font-core',
-                    checkpointObjectKey: 'k',
-                    checkpointSha256: 'a'.repeat(64),
-                    checkpointByteLength: 3,
-                    checkpointLogId: 0
-                });
                 return new Promise((_resolve, reject) => {
                     options.signal.addEventListener('abort', () => {
                         reject(options.signal.reason);
                     });
                 });
-            }),
-            discardSeededShards: jest.fn().mockResolvedValue()
+            })
         };
         const pending = seedDocumentSetWithProgress({
             seeder,
@@ -81,10 +64,5 @@ describe('cancellable shard transfer', () => {
         document.querySelector('[data-action="cancel"]').click();
         await expect(pending).rejects.toBeInstanceOf(TransferCancelledError);
         expect(isTransferCancelled(new TransferCancelledError())).toBe(true);
-        expect(seeder.discardSeededShards).toHaveBeenCalledWith(
-            't',
-            'http://127.0.0.1:8787/room/asset-1',
-            ['font-core']
-        );
     });
 });

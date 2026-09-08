@@ -937,6 +937,7 @@ export class CloudPlugin extends FilesystemPlugin {
         promise: Promise<void>;
     } | null = null;
     private _pendingSparseHydration = false;
+    private _cloudIoInFlight: Promise<unknown> | null = null;
     private _hydrationGeneration = 0;
     private _overviewHydrateInFlight: Promise<string[]> | null = null;
     private _overviewHydrateGeneration: number | null = null;
@@ -1397,6 +1398,12 @@ export class CloudPlugin extends FilesystemPlugin {
         ) {
             return false;
         }
+        const connectionDetail = this._activeAssetId
+            ? this.getAssetConnectionDetail(this._activeAssetId)
+            : undefined;
+        if (connectionDetail === 'tail_full') {
+            return false;
+        }
         const role = this.getCurrentAssetRole();
         if (role === 'viewer') {
             return false;
@@ -1574,6 +1581,9 @@ export class CloudPlugin extends FilesystemPlugin {
                 transferActivity: this.getAssetTransferActivity(assetId),
                 ...(detail ? { detail } : {})
             });
+            if (status === 'connected') {
+                window.windowSync?.notifyCloudBootstrapReady?.();
+            }
         }
 
         window.dispatchEvent(
@@ -2158,7 +2168,7 @@ export class CloudPlugin extends FilesystemPlugin {
 
     async handleSaveAs(name: string): Promise<boolean> {
         try {
-            await this.saveAs(name);
+            await this._runExclusiveCloudIo('save', () => this.saveAs(name));
             return true;
         } catch (error) {
             if (isTransferCancelled(error)) {
@@ -2179,7 +2189,9 @@ export class CloudPlugin extends FilesystemPlugin {
         }
 
         try {
-            await this.openAsset(assetId);
+            await this._runExclusiveCloudIo('open', () =>
+                this.openAsset(assetId)
+            );
             return true;
         } catch (error) {
             if (isTransferCancelled(error)) {
@@ -3218,6 +3230,12 @@ export class CloudPlugin extends FilesystemPlugin {
 
         try {
             await openPromise;
+        } catch (error) {
+            (
+                window as Window & { __cloudOpenError?: string }
+            ).__cloudOpenError =
+                error instanceof Error ? error.message : String(error);
+            throw error;
         } finally {
             if (this._pendingOpenAsset?.promise === openPromise) {
                 this._pendingOpenAsset = null;
@@ -3252,92 +3270,6 @@ export class CloudPlugin extends FilesystemPlugin {
             await this._migrateAssetToProtocol5(assetId);
             ({ token, roomUrl } = await this._fetchRoomToken(assetId));
         }
-        const wsUrl = normalizeCloudRoomWebSocketUrl(
-            roomUrl,
-            this._websiteBaseUrl
-        );
-
-        const connectAndWaitForSync = async (
-            bridgeToConnect: PatchSyncEngine,
-            nextToken: string,
-            nextWsUrl: string,
-            options?: {
-                bootstrapMode?: 'required' | 'skip';
-                checkpointLogId?: number | null;
-                suppressSyncComplete?: boolean;
-                reportConnectionStatus?: boolean;
-                awaitConnected?: boolean;
-            }
-        ): Promise<CloudAdapter> => {
-            let resolveConnected: (() => void) | null = null;
-            let rejectConnected: ((err: Error) => void) | null = null;
-            const shouldAwaitConnected = options?.awaitConnected !== false;
-            const connectedPromise = shouldAwaitConnected
-                ? new Promise<void>((res, rej) => {
-                      resolveConnected = res;
-                      rejectConnected = rej;
-                  })
-                : null;
-
-            const adapter = new CloudAdapter({
-                assetId,
-                websiteBaseUrl: this._websiteBaseUrl,
-                documentId: FONT_CORE_DOCUMENT_ID,
-                suppressSyncComplete: options?.suppressSyncComplete,
-                onConnectionStatus: (
-                    status: CloudConnectionStatus,
-                    detail?: string
-                ) => {
-                    console.log(
-                        `[${assetId}] ${status}${detail ? ` (${detail})` : ''}`
-                    );
-                    if (options?.reportConnectionStatus !== false) {
-                        this._updateConnectionStatus(assetId, status, detail);
-                    }
-                    if (status === 'connected') {
-                        resolveConnected?.();
-                    }
-                    if (status === 'error') {
-                        rejectConnected?.(
-                            new Error(detail ?? 'cloud connection error')
-                        );
-                    }
-                },
-                onPendingSyncCountChange: (count: number) => {
-                    this._updatePendingSyncCount(assetId, count);
-                },
-                onTransferActivityChange: (activity) => {
-                    this._updateTransferActivity(assetId, activity);
-                }
-            });
-
-            try {
-                await adapter.connectDirect(
-                    bridgeToConnect,
-                    nextToken,
-                    nextWsUrl,
-                    {
-                        bootstrapMode: options?.bootstrapMode ?? 'required',
-                        checkpointLogId: options?.checkpointLogId ?? null
-                    }
-                );
-
-                if (connectedPromise) {
-                    const timeout = new Promise<never>((_, rej) =>
-                        setTimeout(
-                            () => rej(new Error('cloud sync timed out')),
-                            estimateCloudTransferTimeoutMs()
-                        )
-                    );
-                    await Promise.race([connectedPromise, timeout]);
-                }
-
-                return adapter;
-            } catch (error) {
-                adapter.disconnect();
-                throw error;
-            }
-        };
 
         const hydrator = new CloudAdapter({
             assetId,
@@ -3464,18 +3396,15 @@ export class CloudPlugin extends FilesystemPlugin {
                 }
             });
         } catch (error) {
-            if (isTransferCancelled(error) || usedSparseHydration) {
-                throw error instanceof Error ? error : new Error(String(error));
-            }
-            console.warn(
-                '[CloudPlugin] Shard hydrate failed; falling back to room bootstrap:',
-                error
-            );
+            throw error instanceof Error ? error : new Error(String(error));
         } finally {
             hydrator.disconnect();
         }
 
-        if (hydratedShards?.length && hydratedFontJson) {
+        // Fail closed: HTTP hydrate either produced shards or threw. Never
+        // fall back to an unbounded full-room WebSocket bootstrap.
+        const openedShards = (hydratedShards || []) as EncodedShard[];
+        if (openedShards.length > 0 && hydratedFontJson) {
             try {
                 validateCloudExportForFontOpen(hydratedFontJson);
             } catch (error) {
@@ -3488,7 +3417,7 @@ export class CloudPlugin extends FilesystemPlugin {
                     __pendingCloudBridgeBootstrapDocuments?: EncodedShard[];
                     __skipCloudBridgeRebindMerge?: boolean;
                 }
-            ).__pendingCloudBridgeBootstrapDocuments = hydratedShards;
+            ).__pendingCloudBridgeBootstrapDocuments = openedShards;
             (
                 window as Window & {
                     __skipCloudBridgeRebindMerge?: boolean;
@@ -3583,136 +3512,9 @@ export class CloudPlugin extends FilesystemPlugin {
             return;
         }
 
-        // Temporary bridge receives the initial CRDT state from the room.
-        const tempBridge = new PatchSyncEngine(`cloud-bootstrap-${assetId}`);
-        const bootstrapAdapter = await connectAndWaitForSync(
-            tempBridge,
-            token,
-            wsUrl,
-            {
-                bootstrapMode: 'required',
-                suppressSyncComplete: true,
-                reportConnectionStatus: false,
-                awaitConnected: false
-            }
+        throw new Error(
+            `Cloud asset ${assetId} has no published core/deps snapshot`
         );
-
-        // Extract babelfont JSON from the synced Yjs document.
-        const fontJson = await waitForCloudFontJson(tempBridge);
-        if (!fontJson) {
-            bootstrapAdapter.disconnect();
-            throw new Error(`Cloud asset ${assetId} has no font data`);
-        }
-
-        try {
-            validateCloudExportForFontOpen(fontJson);
-        } catch (error) {
-            bootstrapAdapter.disconnect();
-            throw error;
-        }
-
-        const babelfontJson = JSON.stringify(fontJson);
-        const bridgeState = tempBridge.getFullState();
-        const bootstrapChangeLog = tempBridge.getChangeLog();
-        const bootstrapCheckpointLogId = bootstrapAdapter.checkpointLogId;
-        bootstrapAdapter.disconnect();
-
-        this._activeAssetId = assetId;
-
-        (
-            window as Window & {
-                __pendingCloudBridgeBootstrapState?: Uint8Array;
-                __pendingCloudBridgeBootstrapChangeLog?: ReturnType<
-                    PatchSyncEngine['getChangeLog']
-                >;
-                __skipCloudBridgeRebindMerge?: boolean;
-            }
-        ).__pendingCloudBridgeBootstrapState = bridgeState;
-        (
-            window as Window & {
-                __pendingCloudBridgeBootstrapState?: Uint8Array;
-                __pendingCloudBridgeBootstrapChangeLog?: ReturnType<
-                    PatchSyncEngine['getChangeLog']
-                >;
-                __skipCloudBridgeRebindMerge?: boolean;
-            }
-        ).__pendingCloudBridgeBootstrapChangeLog = bootstrapChangeLog;
-        (
-            window as Window & {
-                __pendingCloudBridgeBootstrapState?: Uint8Array;
-                __pendingCloudBridgeBootstrapChangeLog?: ReturnType<
-                    PatchSyncEngine['getChangeLog']
-                >;
-                __skipCloudBridgeRebindMerge?: boolean;
-            }
-        ).__skipCloudBridgeRebindMerge = true;
-
-        const bridgeReadyPromise = new Promise<void>((resolve, reject) => {
-            const timeoutId = window.setTimeout(() => {
-                window.removeEventListener('fontModelReady', onFontModelReady);
-                reject(new Error('cloud bridge bootstrap timed out'));
-            }, 30_000);
-
-            const onFontModelReady = async () => {
-                window.clearTimeout(timeoutId);
-                window.removeEventListener('fontModelReady', onFontModelReady);
-
-                try {
-                    const liveBridge = window.patchSyncEngine;
-                    if (!liveBridge) {
-                        throw new Error(
-                            'cloud bridge bootstrap missing live bridge'
-                        );
-                    }
-                    if (window.windowRole?.isLinkedWindow()) {
-                        resolve();
-                        return;
-                    }
-                    const liveTokenResponse =
-                        await this._fetchRoomToken(assetId);
-                    await this._attachLiveSession({
-                        assetId,
-                        token: liveTokenResponse.token,
-                        roomUrl: liveTokenResponse.roomUrl,
-                        bridge: liveBridge,
-                        bootstrapMode: 'skip',
-                        checkpointLogId: bootstrapCheckpointLogId
-                    });
-                    resolve();
-                } catch (error) {
-                    reject(
-                        error instanceof Error
-                            ? error
-                            : new Error(String(error))
-                    );
-                }
-            };
-
-            window.addEventListener('fontModelReady', onFontModelReady);
-        });
-
-        // Dispatch fontLoaded — triggers the normal pipeline.
-        // After fontModelReady, the adapter's handler will rebind to the real bridge.
-        window.dispatchEvent(
-            new CustomEvent('fontLoaded', {
-                detail: {
-                    path: `cloud://${assetId}`,
-                    babelfontJson,
-                    sourcePlugin: this,
-                    fileHandle: undefined,
-                    directoryHandle: undefined
-                }
-            })
-        );
-
-        if (options?.awaitLiveBridge === false) {
-            void bridgeReadyPromise.catch((error) => {
-                this._handleBackgroundBridgeBootstrapFailure(assetId, error);
-            });
-            return;
-        }
-
-        await bridgeReadyPromise;
     }
 
     // ── Saving a font to the cloud ───────────────────────────────
@@ -4128,7 +3930,10 @@ export class CloudPlugin extends FilesystemPlugin {
         if (window.windowRole?.isLinkedWindow()) {
             return this._relayedConnectionStatus;
         }
-        return this._cloudAdapter?.status ?? 'disconnected';
+        if (this._activeAssetId) {
+            return this.getAssetConnectionStatus(this._activeAssetId);
+        }
+        return this._liveSession?.status ?? 'disconnected';
     }
 
     get activeAssetId(): string | null {
@@ -4140,20 +3945,46 @@ export class CloudPlugin extends FilesystemPlugin {
 
     // ── Private helpers ──────────────────────────────────────────
 
+    private async _runExclusiveCloudIo<T>(
+        op: 'save' | 'open',
+        work: () => Promise<T>
+    ): Promise<T> {
+        if (this._cloudIoInFlight) {
+            throw new Error(
+                `Cannot ${op} while another cloud transfer is in progress`
+            );
+        }
+        const run = work();
+        this._cloudIoInFlight = run;
+        try {
+            return await run;
+        } finally {
+            if (this._cloudIoInFlight === run) {
+                this._cloudIoInFlight = null;
+            }
+        }
+    }
+
     private _disconnectCurrent(): void {
         this._stopTrackingActiveAssetSize();
         this._stopEditingSubsetSync();
+        const pending =
+            this._liveSession?.pendingSyncCount ??
+            (this._activeAssetId
+                ? this.getAssetPendingSyncCount(this._activeAssetId)
+                : 0);
         this._liveSession?.disconnect();
         this._liveSession = null;
         this._cloudAdapter?.disconnect();
         this._cloudAdapter = null;
         if (this._activeAssetId) {
-            this._updatePendingSyncCount(this._activeAssetId, 0);
+            this._updatePendingSyncCount(this._activeAssetId, pending);
             this._updateConnectionStatus(this._activeAssetId, 'disconnected');
         }
         this._activeAssetId = null;
         this._hydrationGeneration += 1;
         this._overviewHydrateQueued = [];
+        window.windowSync?.notifyCloudBootstrapPending?.();
         if (window.windowRole?.isLinkedWindow()) {
             this._relayedAssetId = null;
             this._relayedConnectionStatus = 'disconnected';
@@ -4461,7 +4292,7 @@ export class CloudPlugin extends FilesystemPlugin {
             credentials: 'include',
             headers: getCloudRequestHeaders()
         });
-        if (!resp.ok) {
+        if (!resp?.ok) {
             return null;
         }
         const data = (await resp.json()) as {

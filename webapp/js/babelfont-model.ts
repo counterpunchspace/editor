@@ -8861,13 +8861,14 @@ export class Layer extends ArrayElementBase {
     }
 
     get shapes(): Shape[] | undefined {
-        if (!this.data.shapes) return undefined;
+        const shapes = this.data?.shapes;
+        if (!shapes) return undefined;
         if (
             !this._shapeWrappers ||
-            this._shapeWrappers.length !== this.data.shapes.length
+            this._shapeWrappers.length !== shapes.length
         ) {
-            this._shapeWrappers = this.data.shapes.map(
-                (_: Unsafe, i: number) => new Shape(this.data.shapes, i, this)
+            this._shapeWrappers = shapes.map(
+                (_: Unsafe, i: number) => new Shape(shapes, i, this)
             );
         }
         return getReadOnlyCollectionValue(
@@ -10856,7 +10857,7 @@ function glyphTreeHasSubtraction(
     visiting.add(glyphName);
     const font = glyph.parent();
     for (const layer of glyph.layers || []) {
-        if (layer.is_background) {
+        if (!layer || layer.is_background) {
             continue;
         }
         for (const shape of layer.shapes || []) {
@@ -11421,6 +11422,9 @@ export class Glyph extends ArrayElementBase {
 
         for (let i = 0; i < this.data.layers.length; i++) {
             const layer = this.data.layers[i];
+            if (!layer) {
+                continue;
+            }
 
             const layerId = layer.id || '[no-layer-id]';
             assertTaggedLayerMaster(
@@ -15490,7 +15494,7 @@ export class Font extends ModelBase {
                             rightKey = layer.rightMetricsKey || null;
                         }
                     }
-                    for (const shape of glyphData.layers[layerIndex].shapes ||
+                    for (const shape of glyphData.layers[layerIndex]?.shapes ||
                         []) {
                         if (!shape || typeof shape !== 'object') continue;
                         const reference =

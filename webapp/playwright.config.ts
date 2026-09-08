@@ -105,7 +105,7 @@ export default defineConfig({
         {
             name: 'cloud-collab',
             testMatch: '**/cloud-collab*.spec.ts',
-            timeout: 600000,
+            timeout: 480000,
             use: {
                 ...devices['Desktop Chrome'],
                 launchOptions: {

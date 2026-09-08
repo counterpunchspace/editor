@@ -2951,6 +2951,71 @@ describe('ChangeBridge', () => {
         b2.destroy();
     });
 
+    test('document-set replace does not keep packed glyph JSON over live Y.Doc', () => {
+        const { bridge: sender, font } = createTestBridge('live-owner');
+        font.findGlyph('A').layers[0].anchors[0].x = 265;
+
+        const packed = makeMinimalFont();
+        packed.glyphs[0].layers[0].anchors[0].x = 255;
+        const receiver = new ChangeBridge('linked-packed');
+        receiver.setFontJson(packed);
+        receiver.applyDocumentSetState(sender.encodeDocumentSet());
+
+        expect(packed.glyphs[0].layers[0].anchors[0].x).toBe(265);
+        sender.destroy();
+        receiver.destroy();
+    });
+
+    test('glyph checkpoint replace does not keep packed JSON over live Y.Doc', () => {
+        const { bridge: sender, font } = createTestBridge('live-owner-cp');
+        font.findGlyph('A').layers[0].anchors[0].x = 255;
+        const documentId = sender.glyphDocumentIdForName('A');
+        expect(documentId).toBeTruthy();
+        const packedBytes = sender.encodeDocumentState(documentId);
+
+        const receiverJson = makeMinimalFont();
+        receiverJson.glyphs[0].layers[0].anchors[0].x = 255;
+        const receiver = new ChangeBridge('invitee-packed');
+        receiver.setFontJson(receiverJson);
+        receiver.applyDocumentCheckpoint(documentId, packedBytes);
+
+        font.findGlyph('A').layers[0].anchors[0].x = 265;
+        receiver.applyDocumentCheckpoint(
+            documentId,
+            sender.encodeDocumentState(documentId)
+        );
+
+        expect(receiverJson.glyphs[0].layers[0].anchors[0].x).toBe(265);
+        sender.destroy();
+        receiver.destroy();
+    });
+
+    test('malformed reconstructed glyph snapshot is rejected without mutating packed JSON', () => {
+        const { bridge: sender } = createTestBridge('malformed-owner');
+        const documentId = sender.glyphDocumentIdForName('A');
+        expect(documentId).toBeTruthy();
+        const glyphMap = sender._glyphMapForName('A');
+        const badLayers = new Y.Array();
+        const badLayer = new Y.Map();
+        badLayer.set('width', 1);
+        badLayers.push([badLayer]);
+        glyphMap.set('layers', badLayers);
+
+        const packed = makeMinimalFont();
+        packed.glyphs[0].layers[0].anchors[0].x = 255;
+        const receiver = new ChangeBridge('malformed-receiver');
+        receiver.setFontJson(packed);
+        expect(() =>
+            receiver.applyDocumentCheckpoint(
+                documentId,
+                sender.encodeDocumentState(documentId)
+            )
+        ).toThrow('malformed glyph snapshot: layer missing id');
+        expect(packed.glyphs[0].layers[0].anchors[0].x).toBe(255);
+        sender.destroy();
+        receiver.destroy();
+    });
+
     test('a converged document set repairs geometry orphans', () => {
         const { bridge: sender } = createTestBridge('geometry-repair-source');
         const senderLayer = sender
@@ -5796,6 +5861,54 @@ describe('WindowSync', () => {
         sync2.destroy();
         bridge1.destroy();
         bridge2.destroy();
+        window.fontCompilation = originalFontCompilation;
+    });
+
+    test('main window defers the initial linked full-state until cloud bootstrap is ready', () => {
+        const originalRole = window.windowRole;
+        const originalFontCompilation = window.fontCompilation;
+        window.fontCompilation = undefined;
+        window.windowRole = {
+            ...(originalRole || {}),
+            isMainWindow: () => true,
+            isLinkedWindow: () => false,
+            sessionId: 'main'
+        };
+
+        const fontJson = makeMinimalFont();
+        const bridge1 = new ChangeBridge('win-main-defer');
+        bridge1.initFromJson(fontJson);
+        const bridge2 = new ChangeBridge('win-linked-defer');
+        const sync1 = new WindowSync(bridge1, 'font-channel-cloud-defer');
+        const sync2 = new WindowSync(bridge2, 'font-channel-cloud-defer');
+
+        const captured = [];
+        const eavesdropper = new BroadcastChannel('font-channel-cloud-defer');
+        eavesdropper.onmessage = (ev) => {
+            captured.push(ev.data);
+        };
+
+        sync2.requestFullState();
+        jest.advanceTimersByTime(1);
+        expect(
+            captured.some((message) => message.type === 'full-state-response')
+        ).toBe(false);
+
+        sync1.notifyCloudBootstrapReady();
+        jest.advanceTimersByTime(1);
+        expect(
+            captured.some((message) => message.type === 'full-state-response')
+        ).toBe(true);
+        expect(
+            bridge2.getYValue(['glyphs', 'A', 'layers', 'layer-1', 'width'])
+        ).toBe(600);
+
+        eavesdropper.close();
+        sync1.destroy();
+        sync2.destroy();
+        bridge1.destroy();
+        bridge2.destroy();
+        window.windowRole = originalRole;
         window.fontCompilation = originalFontCompilation;
     });
 

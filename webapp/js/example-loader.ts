@@ -46,8 +46,12 @@ async function loadExampleFonts() {
 
         const manifest = (await manifestResponse.json()) as ExampleManifest;
         const isTestMode = !!window.isTestMode?.();
+        const examplesParam = new URLSearchParams(window.location.search).get(
+            'examples'
+        );
+        const loadTestOnly = isTestMode && examplesParam !== 'core';
         const examplesToLoad = (manifest.examples || []).filter(
-            (example) => !example.testOnly || isTestMode
+            (example) => !example.testOnly || loadTestOnly
         );
         console.log(
             '[ExampleLoader]',
