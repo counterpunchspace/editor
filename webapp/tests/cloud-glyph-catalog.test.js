@@ -217,7 +217,7 @@ describe('cloud glyph catalog', () => {
         set.destroy();
     });
 
-    it('lifts a legacy format_specific catalog onto core-root maps', () => {
+    it('does not read a nested format_specific catalog', () => {
         const doc = new Y.Doc();
         const fontMap = doc.getMap('font');
         jsonToCoreFontMap(
@@ -235,12 +235,9 @@ describe('cloud glyph catalog', () => {
             },
             fontMap
         );
-        expect(fontMap.get(CORE_GLYPH_CATALOG_KEY)).toBeInstanceOf(Y.Map);
-        expect(fontMap.get(CORE_CODEPOINT_INDEX_KEY)).toBeInstanceOf(Y.Map);
+        expect(fontMap.get(CORE_GLYPH_CATALOG_KEY)).toBeUndefined();
+        expect(fontMap.get(CORE_CODEPOINT_INDEX_KEY)).toBeUndefined();
         expect(fontMap.get('format_specific')).toBeUndefined();
-        expect(
-            fromYType(fontMap.get(CORE_GLYPH_CATALOG_KEY))['id-a'].name
-        ).toBe('a');
         doc.destroy();
     });
 

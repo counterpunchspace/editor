@@ -451,30 +451,21 @@ export function buildLeanGlyphCatalog(fontJson: Record<string, unknown>): {
     return { entries, codepointIndex };
 }
 
-/** Read lean catalog/cmap from core-root maps, with a legacy format_specific fallback. */
+/** Read lean catalog/cmap from core-root maps. */
 export function catalogFromCoreJson(
     coreJson: Record<string, unknown>
 ): CloudOwnedFontData | null {
     const topCatalog = catalogEntriesFromUnknown(
         coreJson[CORE_GLYPH_CATALOG_KEY]
     );
-    if (topCatalog) {
-        return {
-            glyphCatalog: topCatalog,
-            codepointIndex: codepointIndexFromUnknown(
-                coreJson[CORE_CODEPOINT_INDEX_KEY]
-            )
-        };
-    }
-    const formatSpecific = asRecord(coreJson.format_specific);
-    const owned = asRecord(formatSpecific?.[CLOUD_PLUGIN_OWNED_KEY]);
-    const nestedCatalog = catalogEntriesFromUnknown(owned?.glyphCatalog);
-    if (!nestedCatalog) {
+    if (!topCatalog) {
         return null;
     }
     return {
-        glyphCatalog: nestedCatalog,
-        codepointIndex: codepointIndexFromUnknown(owned?.codepointIndex)
+        glyphCatalog: topCatalog,
+        codepointIndex: codepointIndexFromUnknown(
+            coreJson[CORE_CODEPOINT_INDEX_KEY]
+        )
     };
 }
 

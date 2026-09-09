@@ -81,12 +81,14 @@ import {
     collaborationMessageKey,
     createChangeLogEntriesFromCollaborationMessageEnvelope,
     createCollaborationMessageEnvelopesFromChangeLogEntries,
+    createLinkedWindowCatchUpEnvelope,
     type CollaborationMessageEnvelope
 } from './collaboration-message';
 import { isProduction } from './settings';
 import { resolveWebsiteURL } from './website-url';
 import {
     CloudDurableWal,
+    walUpdateBytes,
     type CloudWalHealth,
     type CloudWalRecord
 } from './cloud-durable-wal';
@@ -883,7 +885,10 @@ export async function catchUpCloudDocument(options: {
                     if (part.byteLength) {
                         window.windowSync?.broadcastCloudRelayUpdate?.(
                             part,
-                            null,
+                            createLinkedWindowCatchUpEnvelope(
+                                options.documentId,
+                                window.windowRole?.windowId ?? null
+                            ),
                             options.documentId
                         );
                     }
@@ -1050,7 +1055,7 @@ export type CloudAdapterAccessSnapshot = {
     lastServerError: CloudAccessServerError | null;
     accessRevoked: boolean;
     reconnectForbidden: boolean;
-    roomToken: string | null;
+    roomToken?: string | null;
     roomUrl: string | null;
     role: CloudAssetRole | null;
 };
@@ -1500,7 +1505,12 @@ export class CloudAdapter implements FileSystemAdapter {
             lastServerError: this._lastServerError,
             accessRevoked: this._accessRevoked,
             reconnectForbidden: this._reconnectForbidden,
-            roomToken: this._directConnection?.token ?? null,
+            roomToken:
+                typeof location !== 'undefined' &&
+                (location.hostname === 'localhost' ||
+                    location.hostname === '127.0.0.1')
+                    ? (this._directConnection?.token ?? null)
+                    : null,
             roomUrl: this._directConnection?.roomUrl ?? null,
             role: this.getCachedAssetRole(this._assetId)
         };
@@ -1578,6 +1588,9 @@ export class CloudAdapter implements FileSystemAdapter {
             checkpointLogId?: number | null;
         }
     ): Promise<void> {
+        if (isProduction()) {
+            throw new Error('Direct room-token connections are disabled');
+        }
         if (this._destroyed) {
             console.warn('CloudAdapter: already destroyed');
             return;
@@ -1918,7 +1931,7 @@ export class CloudAdapter implements FileSystemAdapter {
             assetId: this._assetId,
             documentId: this._documentId,
             clientTransactionId: packet.clientTransactionId,
-            updateBase64: u8ToBase64(packet.update),
+            updateBytes: packet.update,
             collaborationMessage: packet.collaborationMessage,
             createdAt: Date.now(),
             attempts: 0
@@ -1945,7 +1958,7 @@ export class CloudAdapter implements FileSystemAdapter {
                     (record) =>
                         record.assetId === this._assetId &&
                         !!record.clientTransactionId &&
-                        !!record.updateBase64 &&
+                        walUpdateBytes(record).byteLength > 0 &&
                         !!record.collaborationMessage
                 );
         } catch (error) {
@@ -1989,7 +2002,7 @@ export class CloudAdapter implements FileSystemAdapter {
 
             try {
                 bridge?.applyRemoteUpdate(
-                    base64ToU8(record.updateBase64),
+                    walUpdateBytes(record),
                     undefined,
                     [record.collaborationMessage],
                     this._documentId,
@@ -2061,21 +2074,20 @@ export class CloudAdapter implements FileSystemAdapter {
             this._outboxNeedsServerRetarget = false;
             return;
         }
-        const keep =
-            this._pendingOutboundPackets.find(
-                (packet) => packet.collaborationMessage
-            ) ?? this._pendingOutboundPackets[0];
-        this._pendingOutboundPackets = [
-            {
-                ...keep,
-                update: fresh
-            }
-        ];
+        const identified = this._pendingOutboundPackets.filter(
+            (packet) => packet.collaborationMessage
+        );
+        this._pendingOutboundPackets = (
+            identified.length ? identified : this._pendingOutboundPackets
+        ).map((packet) => ({
+            ...packet,
+            update: fresh
+        }));
         this._outboxNeedsServerRetarget = false;
         pushCollabIntegrityEvent('retarget-outbox', {
             documentId: this._documentId,
             bytes: fresh.length,
-            packets: 1
+            packets: this._pendingOutboundPackets.length
         });
     }
 
@@ -2105,11 +2117,11 @@ export class CloudAdapter implements FileSystemAdapter {
             ) {
                 continue;
             }
-            if (!record.updateBase64 || !record.collaborationMessage) {
+            if (!record.collaborationMessage) {
                 continue;
             }
             this._pendingOutboundPackets.push({
-                update: base64ToU8(record.updateBase64),
+                update: walUpdateBytes(record),
                 collaborationMessage: record.collaborationMessage,
                 clientTransactionId
             });
@@ -4269,10 +4281,13 @@ export class CloudAdapter implements FileSystemAdapter {
             if (!didApply) {
                 return false;
             }
-            if (window.windowRole?.isMainWindow()) {
+            if (
+                window.windowRole?.isMainWindow() &&
+                remoteCollaborationMessages?.[0]
+            ) {
                 window.windowSync?.broadcastCloudRelayUpdate?.(
                     update,
-                    remoteCollaborationMessages?.[0] ?? null,
+                    remoteCollaborationMessages[0],
                     this._documentId
                 );
             }

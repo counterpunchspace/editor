@@ -804,24 +804,13 @@ export function jsonToCoreFontMap(
           : Array.isArray(json.glyphOrder)
             ? (json.glyphOrder as unknown[]).map(String)
             : [];
-    let migratedCatalog: unknown;
-    let migratedCmap: unknown;
     for (const [key, value] of Object.entries(json)) {
         if (key === 'glyphs' || key === 'fontDeps') {
             continue;
         }
         if (key === 'format_specific' && isPlainObject(value)) {
             const cloned = { ...value };
-            const cloudOwned = cloned['com.counterpunch.cloud'];
-            if (isPlainObject(cloudOwned)) {
-                const rest = { ...cloudOwned };
-                delete rest.fontDeps;
-                if (rest.glyphCatalog && json.glyphCatalog === undefined) {
-                    migratedCatalog = rest.glyphCatalog;
-                    migratedCmap = rest.codepointIndex;
-                }
-                delete cloned['com.counterpunch.cloud'];
-            }
+            delete cloned['com.counterpunch.cloud'];
             if (Object.keys(cloned).length) {
                 fontMap.set(key, toYType(cloned));
             }
@@ -852,14 +841,6 @@ export function jsonToCoreFontMap(
             continue;
         }
         fontMap.set(key, toYType(value));
-    }
-    if (migratedCatalog !== undefined && !fontMap.has('glyphCatalog')) {
-        fontMap.set('glyphCatalog', toYType(migratedCatalog));
-        if (isPlainObject(migratedCmap)) {
-            const cmap = new Y.Map<unknown>();
-            writeKernGroupsMap(cmap, migratedCmap as Record<string, unknown>);
-            fontMap.set('codepointIndex', cmap);
-        }
     }
     const glyphOrder = new Y.Array<unknown>();
     glyphOrder.push(glyphNames);

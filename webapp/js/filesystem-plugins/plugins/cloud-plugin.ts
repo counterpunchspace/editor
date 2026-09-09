@@ -73,7 +73,6 @@ import {
     type EncodedShard
 } from '../cloud-document-set';
 import {
-    documentSetFromWholeFontUpdate,
     ensureMigrationRevisionTokens,
     hashShardBytes,
     revisionCoverageFromDocumentSet
@@ -1439,7 +1438,7 @@ export class CloudPlugin extends FilesystemPlugin {
         lastClose: { code: number; reason: string } | null;
         lastServerError: { message: string; code?: string } | null;
         openSocketCount: number;
-        roomToken: string | null;
+        roomToken?: string | null;
         roomUrl: string | null;
         adapters: Array<{
             documentId: string;
@@ -3897,6 +3896,11 @@ export class CloudPlugin extends FilesystemPlugin {
         token: string,
         roomUrl: string
     ): Promise<void> {
+        const hostname =
+            typeof location !== 'undefined' ? location.hostname : '';
+        if (hostname !== 'localhost' && hostname !== '127.0.0.1') {
+            throw new Error('Direct room-token connections are disabled');
+        }
         const bridge = window.patchSyncEngine;
         this._disconnectCurrent();
         this._activeAssetId = assetId;
@@ -4406,17 +4410,6 @@ export class CloudPlugin extends FilesystemPlugin {
                     }
                 }
             } else {
-                const legacyUrl = `${roomUrl.replace(/\/$/, '')}/state`;
-                const legacy = await fetch(legacyUrl, {
-                    headers: { Authorization: `Bearer ${token}` }
-                });
-                if (legacy.ok) {
-                    documentSet = documentSetFromWholeFontUpdate(
-                        new Uint8Array(await legacy.arrayBuffer())
-                    );
-                }
-            }
-            if (!documentSet) {
                 throw new Error(
                     'schema migration found no checkpoint to reseed'
                 );

@@ -144,6 +144,33 @@ export function createCollaborationMessageEnvelope(
     };
 }
 
+export function createLinkedWindowCatchUpEnvelope(
+    documentId: string,
+    windowId: string | null
+): CollaborationMessageEnvelope {
+    return createCollaborationMessageEnvelope({
+        transactionId: `catch-up:${documentId}`,
+        localSequence: 0,
+        roomSequence: null,
+        baseRevision: null,
+        changes: [],
+        metadata: {
+            editType: 'font',
+            changedGlyphNames: [],
+            changedLayerIds: [],
+            workerReplayTargets: [],
+            historyItemId: `catch-up:${documentId}`,
+            historyAction: 'change',
+            undoScope: 'font'
+        },
+        source: 'window-sync.catch-up',
+        label: null,
+        summary: 'Linked-window document catch-up',
+        windowId,
+        timestamp: Date.now()
+    });
+}
+
 export function isCollaborationMessageEnvelope(
     value: unknown
 ): value is CollaborationMessageEnvelope {

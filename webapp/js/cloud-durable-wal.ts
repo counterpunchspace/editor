@@ -7,16 +7,33 @@ export type CloudWalRecord = {
     assetId: string;
     documentId: string;
     clientTransactionId: string;
-    updateBase64: string;
+    updateBytes?: Uint8Array;
+    updateBase64?: string;
     collaborationMessage: CollaborationMessageEnvelope;
     createdAt: number;
     attempts: number;
     lastError?: string;
 };
 
+export function walUpdateBytes(record: CloudWalRecord): Uint8Array {
+    if (record.updateBytes instanceof Uint8Array) {
+        return record.updateBytes;
+    }
+    const encoded = record.updateBase64;
+    if (!encoded) {
+        return new Uint8Array();
+    }
+    const binary = atob(encoded);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i += 1) {
+        bytes[i] = binary.charCodeAt(i);
+    }
+    return bytes;
+}
+
 export type CloudWalHealth = 'initializing' | 'ready' | 'unavailable';
 
-function recordKey(
+export function recordKey(
     record: Pick<
         CloudWalRecord,
         'assetId' | 'documentId' | 'clientTransactionId'
@@ -82,17 +99,23 @@ export class CloudDurableWal {
                                 >
                             )
                                 .filter((record) => record.assetId === assetId)
-                                .map(({ key: _key, attempts, ...record }) => ({
-                                    attempts: Number(attempts ?? 0),
-                                    ...record
-                                }))
+                                .map(({ key: _key, attempts, ...record }) => {
+                                    const updateBytes = walUpdateBytes(
+                                        record as CloudWalRecord
+                                    );
+                                    return {
+                                        ...(record as CloudWalRecord),
+                                        attempts: Number(attempts ?? 0),
+                                        updateBytes
+                                    };
+                                })
                         );
                 }
             );
             db.close();
             this._records.clear();
             for (const record of records) {
-                this._records.set(record.clientTransactionId, record);
+                this._records.set(recordKey(record), record);
             }
             this._loadedAssetId = assetId;
             this._health = 'ready';
@@ -113,8 +136,16 @@ export class CloudDurableWal {
                 const tx = db.transaction(STORE, 'readwrite');
                 const store = tx.objectStore(STORE);
                 const key = recordKey(record);
+                const updateBytes = walUpdateBytes(record);
                 store.put({
-                    ...record,
+                    assetId: record.assetId,
+                    documentId: record.documentId,
+                    clientTransactionId: record.clientTransactionId,
+                    collaborationMessage: record.collaborationMessage,
+                    createdAt: record.createdAt,
+                    attempts: record.attempts,
+                    lastError: record.lastError,
+                    updateBytes: updateBytes.buffer,
                     key
                 });
                 const verify = store.get(key);
@@ -132,7 +163,10 @@ export class CloudDurableWal {
                 tx.onerror = () => reject(tx.error);
                 tx.onabort = () => reject(tx.error);
             }).finally(() => db.close());
-            this._records.set(record.clientTransactionId, record);
+            this._records.set(recordKey(record), {
+                ...record,
+                updateBytes: walUpdateBytes(record)
+            });
             this._loadedAssetId = record.assetId;
             this._health = 'ready';
         } catch (error) {
@@ -180,7 +214,7 @@ export class CloudDurableWal {
     }
 
     async acknowledge(record: CloudWalRecord): Promise<void> {
-        this._records.delete(record.clientTransactionId);
+        this._records.delete(recordKey(record));
         const db = await openDatabase();
         await new Promise<void>((resolve, reject) => {
             const tx = db.transaction(STORE, 'readwrite');
@@ -196,7 +230,9 @@ export class CloudDurableWal {
         clientTransactionIds: string[]
     ): Promise<void> {
         for (const clientTransactionId of clientTransactionIds) {
-            this._records.delete(clientTransactionId);
+            this._records.delete(
+                recordKey({ assetId, documentId, clientTransactionId })
+            );
         }
         if (!clientTransactionIds.length) {
             return;

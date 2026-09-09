@@ -405,7 +405,7 @@ describe('CloudLiveSession', () => {
         expect(session.hasLiveDocument('glyph:bbb')).toBe(false);
     });
 
-    test('persistOutgoingUpdate does not WAL catalog glyphs outside the live subset', async () => {
+    test('persistOutgoingUpdate WALs catalog glyphs outside the live subset', async () => {
         const originalIndexedDb = global.indexedDB;
         global.indexedDB = createIndexedDbMock();
         const envelope = (transactionId) => ({
@@ -455,7 +455,7 @@ describe('CloudLiveSession', () => {
                     'glyph:bbb'
                 )
             ).toBe(true);
-            expect(session.pendingSyncCount).toBe(1);
+            expect(session.pendingSyncCount).toBe(2);
         } finally {
             global.indexedDB = originalIndexedDb;
         }
@@ -538,6 +538,41 @@ describe('CloudLiveSession', () => {
         await session.flushPendingHttpPublishes();
         expect(global.fetch).toHaveBeenCalledTimes(2);
     }, 15000);
+
+    test('waitForGlyphAndDepsDurability reports non-durable while offline', async () => {
+        const originalOnLine = Object.getOwnPropertyDescriptor(
+            navigator,
+            'onLine'
+        );
+        Object.defineProperty(navigator, 'onLine', {
+            configurable: true,
+            get: () => false
+        });
+        try {
+            const session = new CloudLiveSession({
+                assetId: 'asset-1',
+                websiteBaseUrl: 'https://editor.example',
+                token: 'token',
+                roomUrl: 'wss://rooms.example/room/asset-1',
+                bridge: {},
+                bootstrapMode: 'skip'
+            });
+            await session.syncLiveDocumentIds([]);
+            await expect(
+                session.waitForGlyphAndDepsDurability()
+            ).resolves.toEqual({
+                durable: false,
+                reason: 'offline',
+                pendingCount: 0
+            });
+        } finally {
+            if (originalOnLine) {
+                Object.defineProperty(navigator, 'onLine', originalOnLine);
+            } else {
+                delete navigator.onLine;
+            }
+        }
+    });
 
     test('waitForGlyphAndDepsDurability waits for font-deps ACK', async () => {
         const session = new CloudLiveSession({

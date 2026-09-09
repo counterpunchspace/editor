@@ -180,6 +180,26 @@ describe('CloudDurableWal', () => {
         expect(wal.health).toBe('unavailable');
     });
 
+    test('keeps records with the same transaction id on different documents', async () => {
+        global.indexedDB = createIndexedDbMock();
+        const wal = new CloudDurableWal();
+        await wal.load('asset-1');
+        await wal.append(sampleRecord('shared-txn'));
+        await wal.append({
+            ...sampleRecord('shared-txn'),
+            documentId: 'glyph:aaa',
+            updateBase64: 'Yg=='
+        });
+        expect(wal.pendingCount).toBe(2);
+        expect(wal.recordsFor('font-core')).toHaveLength(1);
+        expect(wal.recordsFor('glyph:aaa')).toHaveLength(1);
+        await wal.acknowledgeMany('asset-1', 'font-core', ['shared-txn']);
+        expect(wal.pendingCount).toBe(1);
+        expect(wal.recordsFor('glyph:aaa')[0].clientTransactionId).toBe(
+            'shared-txn'
+        );
+    });
+
     test('1k append throughput stays interactive', async () => {
         global.indexedDB = createIndexedDbMock();
         const wal = new CloudDurableWal();

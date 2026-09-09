@@ -20,6 +20,7 @@ import {
 } from './cloud-adapter';
 import {
     CloudDurableWal,
+    walUpdateBytes,
     type CloudWalHealth,
     type CloudWalRecord
 } from './cloud-durable-wal';
@@ -301,7 +302,7 @@ export class CloudLiveSession {
         reconnectForbidden: boolean;
         lastClose: CloudAdapterAccessSnapshot['lastClose'];
         lastServerError: CloudAdapterAccessSnapshot['lastServerError'];
-        roomToken: string | null;
+        roomToken?: string | null;
         roomUrl: string | null;
         openSocketCount: number;
     } {
@@ -348,10 +349,8 @@ export class CloudLiveSession {
             walHealth: this._wal.health,
             walRecords: this._wal.recordsFor().map((record) => ({
                 documentId: record.documentId,
-                hasUpdate: Boolean(record.updateBase64),
-                updateBytes: record.updateBase64
-                    ? atob(record.updateBase64).length
-                    : 0,
+                hasUpdate: walUpdateBytes(record).byteLength > 0,
+                updateBytes: walUpdateBytes(record).byteLength,
                 source: record.collaborationMessage?.source ?? null,
                 createdAt: record.createdAt
             })),
@@ -512,7 +511,7 @@ export class CloudLiveSession {
     }
 
     async replayPendingOfflinePublishes(): Promise<void> {
-        await this._replayPendingHttpWal({ includeLiveAdapters: false });
+        await this._replayPendingHttpWal({ includeLiveAdapters: true });
         await this.flushPendingHttpPublishes();
     }
 
@@ -536,42 +535,23 @@ export class CloudLiveSession {
                 bytes: update?.length ?? 0,
                 hasCollaborationMessage: Boolean(collaborationMessage)
             });
-            return true;
-        }
-        const resolvedId = documentId || FONT_CORE_DOCUMENT_ID;
-        if (
-            resolvedId.startsWith('glyph:') &&
-            !this._desiredDocumentIds.has(resolvedId)
-        ) {
-            pushCollabIntegrityEvent('persist-outgoing-skip', {
-                documentId: resolvedId,
-                bytes: update.length,
-                hasCollaborationMessage: true,
-                reason: 'not-live-subset'
-            });
-            await this._pruneNonLiveGlyphWal();
-            return true;
+            return false;
         }
         await this._ensureWalLoaded();
         if (this._wal.health !== 'ready') {
             return false;
         }
-        await this._pruneNonLiveGlyphWal();
         const clientTransactionId =
             collaborationMessageKey(collaborationMessage);
         if (!clientTransactionId) {
-            return true;
-        }
-        let binary = '';
-        for (let i = 0; i < update.length; i++) {
-            binary += String.fromCharCode(update[i]);
+            return false;
         }
         try {
             await this._wal.append({
                 assetId: this._options.assetId,
                 documentId: documentId || FONT_CORE_DOCUMENT_ID,
                 clientTransactionId,
-                updateBase64: btoa(binary),
+                updateBytes: update,
                 collaborationMessage,
                 createdAt: Date.now(),
                 attempts: 0
@@ -609,9 +589,17 @@ export class CloudLiveSession {
         }
     }
 
-    async waitForGlyphAndDepsDurability(): Promise<void> {
+    async waitForGlyphAndDepsDurability(): Promise<{
+        durable: boolean;
+        reason?: string;
+        pendingCount: number;
+    }> {
         if (typeof navigator !== 'undefined' && navigator.onLine === false) {
-            return;
+            return {
+                durable: false,
+                reason: 'offline',
+                pendingCount: this.pendingSyncCount
+            };
         }
         await this.flushPendingHttpPublishes();
         for (const [documentId, adapter] of this._adapters) {
@@ -622,6 +610,11 @@ export class CloudLiveSession {
                 await adapter.waitUntilDurable();
             }
         }
+        return {
+            durable: this.pendingSyncCount === 0,
+            reason: this.pendingSyncCount === 0 ? undefined : 'pending-ack',
+            pendingCount: this.pendingSyncCount
+        };
     }
 
     setKeepRequestedGlyphSockets(keep: boolean): void {
@@ -662,12 +655,10 @@ export class CloudLiveSession {
             ) &&
             [...desired].every((documentId) => this._adapters.has(documentId));
         if (membershipUnchanged) {
-            await this._pruneNonLiveGlyphWal();
             return;
         }
         const infrastructureAlreadyLive = this._hasLiveCoreAndDeps();
         this._desiredDocumentIds = desired;
-        await this._pruneNonLiveGlyphWal();
         for (const [documentId, adapter] of [...this._adapters]) {
             if (!desired.has(documentId)) {
                 adapter.disconnect();
@@ -807,10 +798,6 @@ export class CloudLiveSession {
                 | Awaited<ReturnType<CloudDurableWal['recordsFor']>>[number]
                 | null;
             if (collaborationMessage && clientTransactionId) {
-                let binary = '';
-                for (let i = 0; i < update.length; i++) {
-                    binary += String.fromCharCode(update[i]);
-                }
                 const existing = this._wal
                     .recordsFor(documentId)
                     .find(
@@ -823,7 +810,7 @@ export class CloudLiveSession {
                         assetId: this._options.assetId,
                         documentId,
                         clientTransactionId,
-                        updateBase64: btoa(binary),
+                        updateBytes: update,
                         collaborationMessage,
                         createdAt: Date.now(),
                         attempts: 0
@@ -1093,7 +1080,7 @@ export class CloudLiveSession {
                 this._options.readyBarrierTimeoutMs ?? 30_000
             );
             await this._catchUpLiveSubsetAndDeps();
-            await this._replayPendingHttpWal({ includeLiveAdapters: false });
+            await this._replayPendingHttpWal({ includeLiveAdapters: true });
             await this.flushPendingHttpPublishes();
             const needsRebaseline = this.coreAdapter?.needsVisibleRebaseline;
             this._reportedConnected = true;
@@ -1122,27 +1109,6 @@ export class CloudLiveSession {
         }
     }
 
-    private async _pruneNonLiveGlyphWal(): Promise<void> {
-        await this._ensureWalLoaded();
-        if (this._wal.health !== 'ready') {
-            return;
-        }
-        let pruned = false;
-        for (const record of this._wal.recordsFor()) {
-            if (!record.documentId.startsWith('glyph:')) {
-                continue;
-            }
-            if (this._desiredDocumentIds.has(record.documentId)) {
-                continue;
-            }
-            await this._wal.acknowledge(record);
-            pruned = true;
-        }
-        if (pruned) {
-            this._emitPendingSyncCount();
-        }
-    }
-
     private async _replayPendingHttpWal(options?: {
         includeLiveAdapters?: boolean;
     }): Promise<void> {
@@ -1150,12 +1116,12 @@ export class CloudLiveSession {
         if (this._wal.health !== 'ready') {
             return;
         }
-        const includeLiveAdapters = options?.includeLiveAdapters === true;
+        const includeLiveAdapters = options?.includeLiveAdapters !== false;
         pushCollabIntegrityEvent('replay-http-wal', {
             includeLiveAdapters,
             records: this._wal.recordsFor().map((record) => ({
                 documentId: record.documentId,
-                hasUpdate: Boolean(record.updateBase64)
+                hasUpdate: walUpdateBytes(record).byteLength > 0
             }))
         });
         for (const record of this._wal.recordsFor()) {
@@ -1165,24 +1131,10 @@ export class CloudLiveSession {
             if (!includeLiveAdapters && this._adapters.has(record.documentId)) {
                 continue;
             }
-            if (!this._desiredDocumentIds.has(record.documentId)) {
-                await this._wal.acknowledge(record);
-                this._emitPendingSyncCount();
+            if (!record.collaborationMessage) {
                 continue;
             }
-            if (!record.updateBase64 || !record.collaborationMessage) {
-                continue;
-            }
-            let binary = '';
-            try {
-                binary = atob(record.updateBase64);
-            } catch {
-                continue;
-            }
-            const update = new Uint8Array(binary.length);
-            for (let i = 0; i < binary.length; i += 1) {
-                update[i] = binary.charCodeAt(i);
-            }
+            const update = walUpdateBytes(record);
             if (!update.length) {
                 continue;
             }

@@ -168,10 +168,6 @@ class AuthManager {
                         cookie.startsWith('session=')
                 );
             console.log('[Auth] Checking auth status...');
-            console.log(
-                '[Auth] Session token:',
-                sessionToken ? sessionToken.substring(0, 20) + '...' : 'NONE'
-            );
             console.log('[Auth] Website URL:', this.websiteURL);
 
             const headers: Record<string, string> = {};
@@ -207,7 +203,6 @@ class AuthManager {
                         }
                       : null;
                 this.credits = data.credits;
-                console.log('[Auth] User authenticated:', this.user.email);
                 console.log('[Auth] Subscription:', this.subscription);
                 console.log('[Auth] Credits:', this.credits);
                 this.onAuthStateChanged(true, this.user, this.subscription);

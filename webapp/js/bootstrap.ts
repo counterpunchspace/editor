@@ -586,12 +586,17 @@ async function bootstrapLocalCloudSession(
 //   window.cloudDebug.bootstrapLocalSession('dev@counterpunch.test')
 //   window.cloudDebug.connectToRoom('my-asset-id')
 //   window.cloudDebug.connectWithToken('my-asset-id', token, 'ws://localhost:8787/room/my-asset-id')
-window.cloudDebug = {
-    bootstrapLocalSession: (email?: string) =>
-        bootstrapLocalCloudSession(email),
-    connectToRoom: (assetId: string) => _cloudPlugin.connectToRoom(assetId),
-    connectWithToken: (assetId: string, token: string, roomUrl: string) =>
-        _cloudPlugin.connectToRoomWithToken(assetId, token, roomUrl),
-    disconnectFromRoom: () => _cloudPlugin.disconnectFromRoom(),
-    getStatus: () => _cloudPlugin.connectionStatus
-};
+if (
+    typeof location !== 'undefined' &&
+    (location.hostname === 'localhost' || location.hostname === '127.0.0.1')
+) {
+    window.cloudDebug = {
+        bootstrapLocalSession: (email?: string) =>
+            bootstrapLocalCloudSession(email),
+        connectToRoom: (assetId: string) => _cloudPlugin.connectToRoom(assetId),
+        connectWithToken: (assetId: string, token: string, roomUrl: string) =>
+            _cloudPlugin.connectToRoomWithToken(assetId, token, roomUrl),
+        disconnectFromRoom: () => _cloudPlugin.disconnectFromRoom(),
+        getStatus: () => _cloudPlugin.connectionStatus
+    };
+}

@@ -525,10 +525,6 @@ test.describe('Cloud P0 integrity Playwright gates', () => {
                 null,
                 { timeout: 90000 }
             );
-            await inviteePage.evaluate(async () => {
-                const plugin = (window as any).cloudPlugin;
-                await plugin?.replayPendingOfflinePublishes?.();
-            });
             await dumpCollabIntegrity(inviteePage, 'invitee-after-reconnect');
             await dumpCollabIntegrity(ownerPage, 'owner-after-reconnect');
             await alignEditorCanvas(inviteePage, 'a', { wght: 200 });

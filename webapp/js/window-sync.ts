@@ -6,14 +6,14 @@
  * the full Y.Doc state; existing windows respond.
  */
 
-import { MetadataFreeRemoteUpdateError } from './patch-sync-engine';
-import { refreshEditorAfterGlyphDocumentCatchUp } from './cloud-adapter';
 import type { PatchSyncEngine } from './patch-sync-engine';
 import type { ChangeLogEntry } from './change-log';
 import { Logger } from './logger';
 import type { CollaborationLogItem } from './patch-sync-engine';
 import {
     createCollaborationMessageEnvelopeFromChangeLogEntries,
+    createLinkedWindowCatchUpEnvelope,
+    isCollaborationMessageEnvelope,
     type CollaborationMessageEnvelope
 } from './collaboration-message';
 import {
@@ -343,19 +343,26 @@ export class WindowSync {
     }
 
     broadcastDocumentCatchUp(documentId: string, update: Uint8Array): void {
-        this.broadcastCloudRelayUpdate(update, null, documentId);
+        this.broadcastCloudRelayUpdate(
+            update,
+            createLinkedWindowCatchUpEnvelope(
+                documentId,
+                this._bridge.windowId
+            ),
+            documentId
+        );
     }
 
     broadcastCloudRelayUpdate(
         update: Uint8Array,
-        collaborationMessage?: CollaborationMessageEnvelope | null,
+        collaborationMessage: CollaborationMessageEnvelope,
         documentId?: string
     ): void {
         this._sendYjsUpdate([
             {
                 update,
                 documentId: documentId || 'font-core',
-                ...(collaborationMessage ? { collaborationMessage } : undefined)
+                collaborationMessage
             }
         ]);
     }
@@ -493,10 +500,13 @@ export class WindowSync {
         collaborationMessage?: CollaborationMessageEnvelope | null,
         documentId?: string
     ): void {
+        if (!isCollaborationMessageEnvelope(collaborationMessage)) {
+            return;
+        }
         this._pendingOutboundPackets.push({
             update,
             documentId: documentId || 'font-core',
-            ...(collaborationMessage ? { collaborationMessage } : undefined)
+            collaborationMessage
         });
         if (this._outboundFlushScheduled) {
             return;
@@ -578,13 +588,16 @@ export class WindowSync {
                 if (packet.collaborationMessage) {
                     collaborationMessageCount += 1;
                 }
+                if (
+                    !isCollaborationMessageEnvelope(packet.collaborationMessage)
+                ) {
+                    continue;
+                }
                 try {
                     this._bridge.applyRemoteUpdate(
                         update,
                         undefined,
-                        packet.collaborationMessage
-                            ? [packet.collaborationMessage]
-                            : undefined,
+                        [packet.collaborationMessage],
                         packet.documentId
                     );
                     if (window.windowRole?.isMainWindow()) {
@@ -595,20 +608,6 @@ export class WindowSync {
                         );
                     }
                 } catch (error) {
-                    if (
-                        error instanceof MetadataFreeRemoteUpdateError &&
-                        packet.documentId &&
-                        packet.documentId !== 'font-core'
-                    ) {
-                        this._bridge.applyDocumentCatchUp?.(
-                            packet.documentId,
-                            update
-                        );
-                        refreshEditorAfterGlyphDocumentCatchUp(
-                            packet.documentId
-                        );
-                        continue;
-                    }
                     console.warn(
                         'WindowSync: failed to apply inbound Yjs update:',
                         error
