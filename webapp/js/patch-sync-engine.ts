@@ -6764,7 +6764,16 @@ export class PatchSyncEngine {
             )
         ];
         const persisted =
-            await window.cloudPlugin?.persistCloudMutationIntent?.(documentIds);
+            await window.cloudPlugin?.persistCloudMutationIntent?.(
+                documentIds,
+                new TextEncoder().encode(
+                    JSON.stringify({
+                        documentIds,
+                        operationCount: operations.length,
+                        paths: operations.map((operation) => operation.path)
+                    })
+                )
+            );
         this._lastCloudCommitDebug = {
             documentIds,
             operationCount: operations.length,
@@ -7825,8 +7834,13 @@ export class PatchSyncEngine {
         const plugin = window.cloudPlugin;
         if (typeof plugin?.waitForCloudGlyphDurability === 'function') {
             void Promise.resolve(plugin.waitForCloudGlyphDurability()).then(
-                publish,
-                publish
+                (result) => {
+                    if (result && result.durable === false) {
+                        return;
+                    }
+                    publish();
+                },
+                () => undefined
             );
             return;
         }

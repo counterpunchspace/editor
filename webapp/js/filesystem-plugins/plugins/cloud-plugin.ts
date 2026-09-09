@@ -820,6 +820,7 @@ export interface CloudShareState {
 export class CloudPlugin extends FilesystemPlugin {
     private _cloudAdapter: CloudAdapter | null = null;
     private _liveSession: CloudLiveSession | null = null;
+    private _attachingSession: CloudLiveSession | null = null;
     private _editingSubsetListener: (() => void) | null = null;
     private _isSyncingCatalog = false;
     private _activeAssetId: string | null = null;
@@ -1413,19 +1414,32 @@ export class CloudPlugin extends FilesystemPlugin {
         );
     }
 
-    async persistCloudMutationIntent(documentIds: string[]): Promise<boolean> {
+    async persistCloudMutationIntent(
+        documentIds: string[],
+        intentBytes?: Uint8Array | null
+    ): Promise<boolean> {
         if (!this._liveSession) {
             return true;
         }
-        return this._liveSession.persistMutationIntents(documentIds);
+        return this._liveSession.persistMutationIntents(
+            documentIds,
+            intentBytes
+        );
     }
 
     async replayPendingOfflinePublishes(): Promise<void> {
         await this._liveSession?.replayPendingOfflinePublishes();
     }
 
-    async waitForCloudGlyphDurability(): Promise<void> {
-        await this._liveSession?.waitForGlyphAndDepsDurability();
+    async waitForCloudGlyphDurability(): Promise<{
+        durable: boolean;
+        reason?: string;
+        pendingCount?: number;
+    }> {
+        if (!this._liveSession) {
+            return { durable: true, pendingCount: 0 };
+        }
+        return this._liveSession.waitForGlyphAndDepsDurability();
     }
 
     getLiveAccessSnapshot(): {
@@ -3497,7 +3511,8 @@ export class CloudPlugin extends FilesystemPlugin {
                             token: liveTokenResponse.token,
                             roomUrl: liveTokenResponse.roomUrl,
                             bridge: liveBridge,
-                            bootstrapMode: 'skip'
+                            bootstrapMode: 'skip',
+                            generationId: liveTokenResponse.generationId
                         });
                         resolve();
                     } catch (error) {
@@ -3876,14 +3891,16 @@ export class CloudPlugin extends FilesystemPlugin {
             return;
         }
 
-        const { token, roomUrl } = await this._fetchRoomToken(assetId);
+        const { token, roomUrl, generationId } =
+            await this._fetchRoomToken(assetId);
         console.log(`Connecting to room: ${assetId}`);
         await this._attachLiveSession({
             assetId,
             token,
             roomUrl,
             bridge,
-            bootstrapMode: 'required'
+            bootstrapMode: 'required',
+            generationId
         });
     }
 
@@ -3977,6 +3994,8 @@ export class CloudPlugin extends FilesystemPlugin {
             (this._activeAssetId
                 ? this.getAssetPendingSyncCount(this._activeAssetId)
                 : 0);
+        this._attachingSession?.disconnect();
+        this._attachingSession = null;
         this._liveSession?.disconnect();
         this._liveSession = null;
         this._cloudAdapter?.disconnect();
@@ -4006,6 +4025,7 @@ export class CloudPlugin extends FilesystemPlugin {
         checkpointLogId?: number | null;
         connectedTimeoutMs?: number;
         reportConnectionStatus?: boolean;
+        generationId?: string;
     }): Promise<void> {
         const session = new CloudLiveSession({
             assetId: options.assetId,
@@ -4014,6 +4034,7 @@ export class CloudPlugin extends FilesystemPlugin {
             roomUrl: options.roomUrl,
             bridge: options.bridge,
             bootstrapMode: options.bootstrapMode ?? 'skip',
+            generationId: options.generationId,
             ...(options.checkpointLogId !== undefined
                 ? { checkpointLogId: options.checkpointLogId }
                 : {}),
@@ -4038,10 +4059,14 @@ export class CloudPlugin extends FilesystemPlugin {
             },
             refreshCredentials: async () => {
                 const next = await this._fetchRoomToken(options.assetId);
+                await session.applyConfirmedGeneration(
+                    next.generationId || null
+                );
                 return { token: next.token, roomUrl: next.roomUrl };
             },
             keepRequestedGlyphSockets: this.getCurrentAssetRole() === 'viewer'
         });
+        this._attachingSession = session;
         const glyphDocumentIds = liveGlyphDocumentIdsFromSubset(
             options.bridge,
             activeEditorGlyphNames()
@@ -4050,9 +4075,18 @@ export class CloudPlugin extends FilesystemPlugin {
             await session.syncLiveDocumentIds(glyphDocumentIds);
         } catch (error) {
             session.disconnect();
+            if (this._attachingSession === session) {
+                this._attachingSession = null;
+            }
             throw error;
         }
+        if (this._attachingSession !== session) {
+            session.disconnect();
+            return;
+        }
+        this._attachingSession = null;
         this._liveSession = session;
+        await session.applyConfirmedGeneration(options.generationId || null);
         this._cloudAdapter = session.coreAdapter;
         this._startTrackingActiveAssetSize(options.assetId, options.bridge);
         this._startEditingSubsetSync(options.bridge);
@@ -4481,6 +4515,7 @@ export class CloudPlugin extends FilesystemPlugin {
         token: string;
         roomUrl: string;
         needsMigration?: boolean;
+        generationId?: string;
     }> {
         const url = `${this._websiteBaseUrl}/api/cloud/assets/${encodeURIComponent(assetId)}/room-token`;
         const resp = await fetch(url, {
@@ -4497,6 +4532,7 @@ export class CloudPlugin extends FilesystemPlugin {
             roomUrl?: string;
             code?: string;
             needsMigration?: boolean;
+            generationId?: string;
         } = {};
         try {
             data = body ? JSON.parse(body) : {};
@@ -4525,7 +4561,8 @@ export class CloudPlugin extends FilesystemPlugin {
         return {
             token: data.token,
             roomUrl: data.roomUrl,
-            needsMigration: data.needsMigration === true
+            needsMigration: data.needsMigration === true,
+            generationId: data.generationId
         };
     }
 

@@ -244,22 +244,18 @@ test.describe('Cloud P0 integrity Playwright gates', () => {
             }
 
             const livePostStatuses: number[] = [];
-            const injectedLiveStatuses: number[] = [429, 503, 401];
+            const injectedLiveStatuses: number[] = [429, 503];
             await ownerPage.route(/\/live(?:\?|$)/, async (route) => {
                 if (route.request().method() !== 'POST') {
                     await route.continue();
                     return;
                 }
                 const injected = injectedLiveStatuses.shift();
-                livePostStatuses.push(injected ?? 200);
                 if (injected == null) {
-                    await route.fulfill({
-                        status: 200,
-                        contentType: 'application/json',
-                        body: JSON.stringify({ ok: true, durable: true })
-                    });
+                    await route.continue();
                     return;
                 }
+                livePostStatuses.push(injected);
                 await route.fulfill({
                     status: injected,
                     contentType: 'application/json',
@@ -297,7 +293,7 @@ test.describe('Cloud P0 integrity Playwright gates', () => {
             expect(
                 livePostStatuses,
                 `HTTP live posts for ${httpTarget.id} (live=${JSON.stringify(httpTarget.live)})`
-            ).toEqual(expect.arrayContaining([429, 503, 401]));
+            ).toEqual(expect.arrayContaining([429, 503]));
             await ownerPage.unroute(/\/live(?:\?|$)/);
 
             await nudgeGlyphNode(

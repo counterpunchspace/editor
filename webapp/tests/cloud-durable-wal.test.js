@@ -1,4 +1,7 @@
-const { CloudDurableWal } = require('../js/cloud-durable-wal.ts');
+const {
+    CloudDurableWal,
+    walUpdateBytes
+} = require('../js/cloud-durable-wal.ts');
 
 function createIndexedDbMock(options = {}) {
     const records = new Map();
@@ -83,6 +86,7 @@ function createIndexedDbMock(options = {}) {
         close: jest.fn()
     };
     return {
+        records,
         open: jest.fn(() => {
             const request = {
                 result: db,
@@ -210,5 +214,58 @@ describe('CloudDurableWal', () => {
         }
         expect(Date.now() - started).toBeLessThan(5000);
         expect(wal.pendingCount).toBe(1000);
+    });
+
+    test('reloads copied update bytes from a fresh WAL instance', async () => {
+        global.indexedDB = createIndexedDbMock();
+        const writer = new CloudDurableWal();
+        await writer.load('asset-1');
+        const updateBytes = new Uint8Array([9, 8, 7, 6]);
+        await writer.append({
+            ...sampleRecord('reload-txn'),
+            updateBytes,
+            updateBase64: undefined
+        });
+        const reader = new CloudDurableWal();
+        const loaded = await reader.load('asset-1');
+        expect(Array.from(walUpdateBytes(loaded[0]))).toEqual([9, 8, 7, 6]);
+    });
+
+    test('decodes legacy ArrayBuffer records after reload', async () => {
+        const mock = createIndexedDbMock();
+        global.indexedDB = mock;
+        const writer = new CloudDurableWal();
+        await writer.load('asset-1');
+        const bytes = new Uint8Array([1, 2, 3, 4]);
+        await writer.append({
+            ...sampleRecord('legacy-txn'),
+            updateBytes: bytes,
+            updateBase64: undefined
+        });
+        const stored = mock.records.get('asset-1:font-core:legacy-txn');
+        stored.updateBytes = bytes.buffer;
+        const reader = new CloudDurableWal();
+        const loaded = await reader.load('asset-1');
+        expect(Array.from(walUpdateBytes(loaded[0]))).toEqual([1, 2, 3, 4]);
+    });
+
+    test('discards WAL rows from a previous generation after confirmed rollback', async () => {
+        global.indexedDB = createIndexedDbMock();
+        const wal = new CloudDurableWal();
+        await wal.load('asset-1');
+        await wal.append({
+            ...sampleRecord('old-gen'),
+            generationId: 'gen-1'
+        });
+        await wal.append({
+            ...sampleRecord('new-gen'),
+            generationId: 'gen-2'
+        });
+        const removed = await wal.discardOtherGenerations('asset-1', 'gen-2');
+        expect(removed).toBe(1);
+        expect(wal.pendingCount).toBe(1);
+        expect(wal.recordsFor('font-core')[0].clientTransactionId).toBe(
+            'new-gen'
+        );
     });
 });

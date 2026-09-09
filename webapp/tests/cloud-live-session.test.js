@@ -474,7 +474,7 @@ describe('CloudLiveSession', () => {
         global.fetch = jest.fn(async () => ({
             ok: true,
             status: 200,
-            json: async () => ({ ok: true })
+            json: async () => ({ ok: true, durable: true })
         }));
         session.sendForwardedUpdate(new Uint8Array([9]), null, 'glyph:ccc');
         await session.flushPendingHttpPublishes();
@@ -681,7 +681,7 @@ describe('CloudLiveSession', () => {
             return {
                 ok: true,
                 status: 200,
-                json: async () => ({ ok: true })
+                json: async () => ({ ok: true, durable: true })
             };
         });
         session.sendForwardedUpdate(new Uint8Array([1]), null, 'glyph:1');

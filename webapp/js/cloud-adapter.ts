@@ -983,7 +983,7 @@ export async function publishCloudDocumentUpdate(options: {
         ok?: boolean;
         durable?: boolean;
     } | null;
-    return payload?.ok === true || payload?.durable === true;
+    return payload?.ok === true && payload?.durable === true;
 }
 
 /**
@@ -1694,6 +1694,17 @@ export class CloudAdapter implements FileSystemAdapter {
      * Returns true when a new bridge was adopted.
      */
     rebindToCurrentBridge(): boolean {
+        const adapterAssetId = this._options?.assetId;
+        const currentAssetId =
+            window.cloudPlugin?.getCurrentAssetIdForSharing?.() ??
+            window.cloudPlugin?._activeAssetId;
+        if (
+            adapterAssetId &&
+            currentAssetId &&
+            adapterAssetId !== currentAssetId
+        ) {
+            return false;
+        }
         const newBridge = window.patchSyncEngine ?? null;
         if (!newBridge || newBridge === this._bridge) {
             return false;

@@ -95,6 +95,7 @@ jobs:
               uses: actions/checkout@v4
               with:
                   repository: ${{ vars.WEBSITE_REPOSITORY || format('{0}/website', github.repository_owner) }}
+                  ref: ${{ vars.WEBSITE_SHA != '' && vars.WEBSITE_SHA || 'main' }}
                   path: _cloud_e2e/website
                   token: ${{ secrets.CLOUD_E2E_PAT || github.token }}
 
@@ -102,6 +103,7 @@ jobs:
               uses: actions/checkout@v4
               with:
                   repository: ${{ vars.COLLAB_REPOSITORY || format('{0}/collab', github.repository_owner) }}
+                  ref: ${{ vars.COLLAB_SHA != '' && vars.COLLAB_SHA || 'main' }}
                   path: _cloud_e2e/collab
                   token: ${{ secrets.CLOUD_E2E_PAT || github.token }}
 
@@ -112,6 +114,9 @@ jobs:
 
             - name: Install editor webapp dependencies
               run: npm install --prefix webapp
+
+            - name: Build editor production bundle
+              run: npm run build --prefix webapp
 
             - name: Install Playwright Chromium
               run: npx --prefix webapp playwright install chromium

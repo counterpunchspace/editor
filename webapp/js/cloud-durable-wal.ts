@@ -13,11 +13,33 @@ export type CloudWalRecord = {
     createdAt: number;
     attempts: number;
     lastError?: string;
+    generationId?: string;
 };
 
+export function copyUpdateBytes(bytes: Uint8Array): Uint8Array {
+    return bytes.slice();
+}
+
 export function walUpdateBytes(record: CloudWalRecord): Uint8Array {
-    if (record.updateBytes instanceof Uint8Array) {
-        return record.updateBytes;
+    const raw = record.updateBytes as unknown;
+    if (raw instanceof Uint8Array) {
+        return copyUpdateBytes(raw);
+    }
+    if (raw instanceof ArrayBuffer) {
+        return new Uint8Array(raw.slice(0));
+    }
+    if (
+        raw &&
+        typeof raw === 'object' &&
+        (raw as { buffer?: unknown }).buffer instanceof ArrayBuffer
+    ) {
+        const view = raw as ArrayBufferView;
+        return new Uint8Array(
+            view.buffer.slice(
+                view.byteOffset,
+                view.byteOffset + view.byteLength
+            )
+        );
     }
     const encoded = record.updateBase64;
     if (!encoded) {
@@ -145,7 +167,8 @@ export class CloudDurableWal {
                     createdAt: record.createdAt,
                     attempts: record.attempts,
                     lastError: record.lastError,
-                    updateBytes: updateBytes.buffer,
+                    generationId: record.generationId,
+                    updateBytes: copyUpdateBytes(updateBytes),
                     key
                 });
                 const verify = store.get(key);
@@ -249,5 +272,25 @@ export class CloudDurableWal {
             tx.oncomplete = () => resolve();
             tx.onerror = () => reject(tx.error);
         }).finally(() => db.close());
+    }
+
+    async discardOtherGenerations(
+        assetId: string,
+        currentGenerationId: string
+    ): Promise<number> {
+        const current = String(currentGenerationId || '');
+        if (!current) {
+            return 0;
+        }
+        const stale = [...this._records.values()].filter(
+            (record) =>
+                record.assetId === assetId &&
+                record.generationId &&
+                record.generationId !== current
+        );
+        for (const record of stale) {
+            await this.acknowledge(record);
+        }
+        return stale.length;
     }
 }

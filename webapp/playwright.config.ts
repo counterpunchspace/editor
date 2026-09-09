@@ -53,8 +53,13 @@ export default defineConfig({
         // Force non-interactive execution for automation and CI.
         headless: true,
 
-        // Base URL for navigation
-        baseURL: process.env.CI ? 'http://localhost:9000' : LOCAL_APP_URL,
+        // Cloud collab e2e uses the HTTPS webpack stack on 8000, not serve:ci.
+        baseURL:
+            process.env.CLOUD_COLLAB_E2E === '1'
+                ? process.env.CLOUD_E2E_EDITOR_URL || 'https://localhost:8000'
+                : process.env.CI
+                  ? 'http://localhost:9000'
+                  : LOCAL_APP_URL,
 
         // Collect trace when retrying the failed test
         trace: 'on-first-retry',
@@ -81,7 +86,10 @@ export default defineConfig({
     projects: [
         {
             name: 'chromium',
-            testIgnore: ['**/cloud-collab*.spec.ts'],
+            testIgnore: [
+                '**/cloud-collab*.spec.ts',
+                '**/cloud-wal-idb.spec.ts'
+            ],
             use: {
                 ...devices['Desktop Chrome'],
                 // Enable SharedArrayBuffer (required for your WASM/Pyodide)
@@ -104,7 +112,7 @@ export default defineConfig({
         },
         {
             name: 'cloud-collab',
-            testMatch: '**/cloud-collab*.spec.ts',
+            testMatch: ['**/cloud-collab*.spec.ts', '**/cloud-wal-idb.spec.ts'],
             timeout: 480000,
             use: {
                 ...devices['Desktop Chrome'],
@@ -134,19 +142,24 @@ export default defineConfig({
         // }
     ],
 
-    // Run your local dev server before starting the tests
-    webServer: {
-        command: process.env.CI ? 'npm run serve:ci' : 'npm run serve',
-        url: process.env.CI ? 'http://localhost:9000' : LOCAL_APP_URL,
-        reuseExistingServer: !process.env.CI,
-        gracefulShutdown: {
-            signal: 'SIGTERM',
-            timeout: 5000
-        },
-        timeout: 120000, // 2 minutes to start dev server
-        ignoreHTTPSErrors: true, // Self-signed cert for dev server
-        env: {
-            PLAYWRIGHT_TEST: 'true' // Disable webpack HMR/overlay during tests
-        }
-    }
+    // Cloud collab e2e starts the editor via ensure-cloud-collab-stack.
+    webServer:
+        process.env.CLOUD_COLLAB_E2E === '1'
+            ? undefined
+            : {
+                  command: process.env.CI
+                      ? 'npm run serve:ci'
+                      : 'npm run serve',
+                  url: process.env.CI ? 'http://localhost:9000' : LOCAL_APP_URL,
+                  reuseExistingServer: !process.env.CI,
+                  gracefulShutdown: {
+                      signal: 'SIGTERM',
+                      timeout: 5000
+                  },
+                  timeout: 120000,
+                  ignoreHTTPSErrors: true,
+                  env: {
+                      PLAYWRIGHT_TEST: 'true'
+                  }
+              }
 });

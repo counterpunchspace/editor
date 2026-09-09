@@ -3998,6 +3998,25 @@ describe('publishCloudDocumentUpdate', () => {
         ).rejects.toThrow('Live glyph publish failed (403)');
     });
 
+    test('does not treat ok without durable as a durable publish', async () => {
+        global.fetch = jest.fn(async () => ({
+            ok: true,
+            status: 200,
+            json: async () => ({ ok: true, durable: false })
+        }));
+        await expect(
+            publishCloudDocumentUpdate({
+                token: 'room-token',
+                roomUrl: 'wss://rooms.example.com/room/asset-123',
+                websiteBaseUrl: 'https://editor.counterpunch.space',
+                assetId: 'asset-123',
+                documentId: 'glyph:abc-def',
+                update: new Uint8Array([1, 2, 3]),
+                seq: 1
+            })
+        ).resolves.toBe(false);
+    });
+
     test.each([401, 429, 503])(
         'throws on %s so callers can refresh, back off, or fail closed',
         async (status) => {

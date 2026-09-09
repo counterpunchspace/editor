@@ -31,6 +31,7 @@ import {
 import type { PatchSyncEngine } from './patch-sync-engine';
 import {
     collaborationMessageKey,
+    createLinkedWindowCatchUpEnvelope,
     type CollaborationMessageEnvelope
 } from './collaboration-message';
 import { Logger } from './logger';
@@ -56,6 +57,7 @@ export type CloudLiveSessionOptions = {
     onTransferActivityChange?: (activity: CloudTransferActivity) => void;
     refreshCredentials?: () => Promise<{ token: string; roomUrl: string }>;
     keepRequestedGlyphSockets?: boolean;
+    generationId?: string | null;
 };
 
 export type GlyphCatchUpTarget = {
@@ -554,7 +556,8 @@ export class CloudLiveSession {
                 updateBytes: update,
                 collaborationMessage,
                 createdAt: Date.now(),
-                attempts: 0
+                attempts: 0,
+                generationId: this._options.generationId || undefined
             });
             this._emitPendingSyncCount();
             pushCollabIntegrityEvent('persist-outgoing', {
@@ -562,6 +565,16 @@ export class CloudLiveSession {
                 bytes: update.length,
                 clientTransactionId
             });
+            await this._wal
+                .acknowledge({
+                    assetId: this._options.assetId,
+                    documentId: documentId || FONT_CORE_DOCUMENT_ID,
+                    clientTransactionId: `preapply:${documentId || FONT_CORE_DOCUMENT_ID}`,
+                    collaborationMessage,
+                    createdAt: 0,
+                    attempts: 0
+                })
+                .catch(() => undefined);
             return true;
         } catch (error) {
             console.warn(
@@ -572,21 +585,58 @@ export class CloudLiveSession {
         }
     }
 
-    async persistMutationIntents(_documentIds: string[]): Promise<boolean> {
+    async persistMutationIntents(
+        documentIds: string[],
+        intentBytes?: Uint8Array | null
+    ): Promise<boolean> {
         await this._ensureWalLoaded();
         if (this._wal.health !== 'ready') {
             return false;
         }
+        const payload =
+            intentBytes && intentBytes.length
+                ? intentBytes
+                : new TextEncoder().encode(JSON.stringify(documentIds || []));
+        const ids = (documentIds || []).filter(Boolean);
+        if (!ids.length) {
+            return true;
+        }
         try {
-            await this._wal.verifyWritable();
+            for (const documentId of ids) {
+                const clientTransactionId = `preapply:${documentId}`;
+                await this._wal.append({
+                    assetId: this._options.assetId,
+                    documentId,
+                    clientTransactionId,
+                    updateBytes: payload,
+                    collaborationMessage: createLinkedWindowCatchUpEnvelope(
+                        documentId,
+                        null
+                    ),
+                    createdAt: Date.now(),
+                    attempts: 0,
+                    generationId: this._options.generationId || undefined
+                });
+            }
+            this._emitPendingSyncCount();
             return true;
         } catch (error) {
             console.warn(
-                'CloudLiveSession: write-ahead intent persist failed:',
+                'CloudLiveSession: mutation intent persist failed:',
                 error
             );
             return false;
         }
+    }
+
+    async applyConfirmedGeneration(generationId: string | null): Promise<void> {
+        await this._ensureWalLoaded();
+        const next = String(generationId || '');
+        if (!next || this._wal.health !== 'ready') {
+            return;
+        }
+        await this._wal.discardOtherGenerations(this._options.assetId, next);
+        this._options.generationId = next;
     }
 
     async waitForGlyphAndDepsDurability(): Promise<{
@@ -836,7 +886,14 @@ export class CloudLiveSession {
                         clientId: `http:${assetId}`,
                         clientTransactionId
                     });
-                    if (durable && walRecord) {
+                    if (!durable) {
+                        const error = new Error(
+                            `Live glyph publish was not durable for ${documentId}`
+                        ) as Error & { status?: number };
+                        error.status = 503;
+                        throw error;
+                    }
+                    if (walRecord) {
                         await this._wal.acknowledge(walRecord);
                         this._emitPendingSyncCount();
                     }
@@ -850,7 +907,30 @@ export class CloudLiveSession {
                         }
                     }
                     if (attempt === 4) {
-                        throw error;
+                        if (walRecord) {
+                            walRecord.attempts =
+                                Number(walRecord.attempts || 0) + 1;
+                            walRecord.lastError = String(
+                                (error as Error)?.message || error
+                            );
+                            try {
+                                await this._wal.append(walRecord);
+                            } catch {
+                                /* keep in-memory record */
+                            }
+                            const delay = Math.min(
+                                60_000,
+                                1_000 * 2 ** Math.min(walRecord.attempts, 8)
+                            );
+                            setTimeout(() => {
+                                void this._enqueueDependentPublish(
+                                    documentId,
+                                    update,
+                                    collaborationMessage
+                                );
+                            }, delay);
+                        }
+                        return;
                     }
                     await new Promise((resolve) => {
                         setTimeout(resolve, 50 * 2 ** attempt);

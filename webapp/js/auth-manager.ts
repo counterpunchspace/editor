@@ -512,12 +512,12 @@ class AuthManager {
      * Logout - clears session only on the editor domain
      */
     async logout() {
-        // Clear editor session cookie only
         this.clearLocalSessionToken();
         this.user = null;
         this.subscription = null;
         this.credits = null;
         this.localCloudBootstrapPromise = null;
+        window.cloudPlugin?.disconnectFromRoom?.();
         this.onAuthStateChanged(false, null, null);
     }
 }
