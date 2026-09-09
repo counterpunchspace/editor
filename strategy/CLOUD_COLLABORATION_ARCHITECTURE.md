@@ -9,6 +9,8 @@ Y.Doc. Outlines are not dual-written into core.
 Supersedes one-room whole-font Y.Doc, R2-via-WebSocket bootstrap, and drafts
 that kept full dependency edges in always-resident `font-core`. One DO per
 whole font still hits isolate memory (~128 MB); rooms stay per-shard.
+How many people can sit in one font is still **32** on `font-core`, not
+32 × glyph count (see Live scaling limitations).
 
 The Memory-efficient collab plan
 (`.cursor/plans/memory-efficient_collab_92167e9b.plan.md`) is the work order
@@ -83,6 +85,8 @@ Use these as stress cases when sizing catalog/deps budgets and hydrate UX:
 | DO identity | One DO room per shard; never one DO for the whole font |
 | Bulk transfer | HTTP streams to/from R2 (packs = multi-shard responses) |
 | Live transfer | WebSocket to a small set of shard DOs |
+| Live session size | 32 authenticated peers on `font-core` (glyph DOs do not multiply this) |
+| Isolate RAM | 128 MB Worker cap; live rooms use shard/packet/tail gates, not a 128 MB working set |
 | DO memory | Zero-hydration target: auth, ordered durable tail, fan-out, metadata only; no long-lived `Y.Doc` |
 | Compaction | External to the room DO; Worker-class for shards, fat host if over recoverability; never in-room encode |
 | Discovery | Lean identity catalog in core (incl. cmap) + separate deps index |
@@ -724,6 +728,44 @@ When a remote edit commits:
 Do not catch up from a stale R2 baseline. Switching the active glyph:
 subscribe the new shard (catch up first if needed); drop the previous socket.
 
+## Live scaling limitations
+
+Per-shard sockets remove a whole-font connection pool. They do **not** mean
+live collab is unbounded except for isolate RAM.
+
+**Session size is `font-core`.** Every editor keeps a WebSocket on `font-core`
+(and usually `font-deps`). `MAX_AUTHENTICATED_PEERS` (**32**) is measured
+FontRoomDO admission (slow-peer `1013`), not Cloudflare’s hibernation ceiling.
+Glyph DOs can each take 32 as well, but the 33rd collaborator fails on core.
+Glyph count does not multiply how many people can sit in one font.
+
+**Isolate 128 MB is already converted into smaller gates.** Live DOs do not
+keep a `Y.Doc`. Peak is sockets + SQLite tail + one in-flight packet
+(≤256 KiB). Product admission is **5 MiB/shard**, **256 KiB/packet**, dirty
+hard **~257 KiB** then `tail_full`. A busy glyph does not grow toward 128 MB;
+it refuses or waits on compact. Compaction and validation run in **other**
+isolates with the same envelope.
+
+| Limit | What it actually bounds |
+| --- | --- |
+| 32 authenticated peers | People in the font (`font-core`); not 32 × glyph count |
+| 8 unauthenticated sockets | Pre-auth on that same DO |
+| 5 MiB shard / 256 KiB packet / `tail_full` | Size of one shard and one edit (isolate last-OK × 0.7) |
+| Hot glyph journal | Writers on one `glyph:<id>` (one SQLite, one validator hop) |
+| Browser working set | core + deps + live subset; not 65k outlines |
+| HTTP catch-up / packs | Glyphs without a sticky socket; pack batching and origin concurrency, not the 32-peer cap |
+| `accessEpoch` fan-out | Invite/revoke to hub + known shards; scales with shard count, not typing |
+| Storage | One SQLite + R2 checkpoint per shard (N DOs to bill and wake) |
+
+Local `workerd` does not enforce production’s ~six HTTP/1.1 connections per
+origin. Huge parallel per-shard HTTP hydrate can look fine locally and starve
+production. Packs are the bulk path so hydrate is not thousands of simultaneous
+shard fetches.
+
+Full-font compile stays off this path (session VM). Do not subscribe a builder
+to every glyph DO.
+
+
 ## Linked windows (same browser)
 
 Main window is the only cloud WebSocket client; it relays to linked windows
@@ -908,7 +950,7 @@ republish. Prefer immutable glyph ids and tombstones.
 | Component | May scale with | Must not scale with |
 | --- | --- | --- |
 | Glyph DO | peers, tail, in-flight buffers | other glyphs, full font, compaction peak |
-| Core DO | peers, tail, lean catalog churn | glyph outlines, compaction peak |
+| Core DO | **session** peers (32), tail, lean catalog churn | glyph outlines, compaction peak |
 | Worker-class compactor | one shard’s baseline + dirty tail (+ ~2–4× GC peak) | whole font; any shard over recoverable cap |
 | Fat-process compactor / builder VM | oversized shard or full glyph set + fontc peak | DO / Worker isolate limits |
 | Worker hydrate | concurrent stream buffers / page size | sum of all pack bytes held at once |
@@ -1138,7 +1180,7 @@ benchmark only.
 | Export / stream page | 512 KB / 64 rows | one in-flight `/live` page |
 | SQLite spool | 524 288 B | two max packets |
 | Dirty soft / hard | 256 KiB or 64 rows / 262 893 B | alarm vs `tail_full` (compact still runs) |
-| Authenticated peers | 32 | FontRoomDO; slow peer closed |
+| Authenticated peers | 32 | FontRoomDO per shard; **session cap is font-core**; slow peer closed |
 | Unauthenticated sockets | 8 | pre-auth |
 | Metadata / attachment | 64 KB / 8 192 B | live extras / hibernation |
 | Client `{gc:false}` warning | 80k structs or 3 932 160 B | Preferences; unsent kept; `truncateUndoHistory()` explicit |

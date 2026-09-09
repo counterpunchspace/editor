@@ -87,6 +87,7 @@ import {
     shouldAutoSparseHydrate,
     shouldExactEncodeAssetSize,
     type ShardSizeGate,
+    type ShardSizeReport,
     type CollabSubmitDecision,
     type CollabSubmitRequest
 } from '../cloud-shard-limits';
@@ -255,6 +256,85 @@ export function formatCloudByteCount(bytes: number): string {
         return `${(bytes / 1024).toFixed(1)} KiB`;
     }
     return `${Math.round(bytes)} B`;
+}
+
+export function describeCloudStoredPiece(
+    documentId: string,
+    glyphName?: string | null
+): string {
+    if (documentId === FONT_CORE_DOCUMENT_ID) {
+        return 'The shared font (core)';
+    }
+    if (documentId === FONT_DEPS_DOCUMENT_ID) {
+        return 'Shared dependencies';
+    }
+    if (documentId.startsWith('glyph:')) {
+        const name =
+            typeof glyphName === 'string' && glyphName.trim()
+                ? glyphName.trim()
+                : null;
+        return name ? `The glyph “${name}”` : 'A glyph';
+    }
+    return 'Part of this font';
+}
+
+function worstCloudPieceSizeReport(
+    gate: ShardSizeGate
+): ShardSizeReport | null {
+    const pickLargest = (reports: ShardSizeReport[]): ShardSizeReport | null =>
+        [...reports].sort((a, b) => b.byteLength - a.byteLength)[0] ?? null;
+    return pickLargest(gate.blocking) ?? pickLargest(gate.warnings);
+}
+
+function cloudPieceSizeWarningState(
+    report: ShardSizeReport,
+    options: {
+        kind: 'status' | 'save';
+        glyphName?: string | null;
+    }
+): CloudSaveSizeWarningState {
+    const piece = describeCloudStoredPiece(
+        report.documentId,
+        options.glyphName
+    );
+    const size = formatCloudByteCount(report.byteLength);
+    const cap = formatCloudByteCount(MAX_SHARD_BYTES);
+    if (report.status === 'blocked') {
+        const prefix =
+            options.kind === 'save' ? 'Cloud save blocked' : 'Cloud status';
+        return {
+            visible: true,
+            title: `${prefix}: ${piece} exceeds the 5\u202fMiB limit (${size} of ${cap}). Save As and edits for that piece are refused.`,
+            label: 'Too large',
+            icon: 'cloud_alert',
+            tone: 'error',
+            canSave: false
+        };
+    }
+    const prefix =
+        options.kind === 'save' ? 'Cloud save warning' : 'Cloud status';
+    return {
+        visible: true,
+        title: `${prefix}: ${piece} is near the 5\u202fMiB limit (${size} of ${cap}). Save As or an edit that would go over is refused.`,
+        label: 'Near limit',
+        icon: 'warning',
+        tone: 'warning',
+        canSave: true
+    };
+}
+
+function glyphNameForCloudDocument(
+    fontJson: Record<string, unknown> | null | undefined,
+    documentId: string
+): string | null {
+    if (!documentId.startsWith('glyph:') || !fontJson) {
+        return null;
+    }
+    const glyphId = documentId.slice('glyph:'.length);
+    const match = listGlyphRecords(fontJson).find(
+        (glyph) => glyph.id === glyphId || glyph.name === glyphId
+    );
+    return typeof match?.name === 'string' ? match.name : null;
 }
 
 export type CloudLiveShardStats = {
@@ -943,18 +1023,64 @@ export class CloudPlugin extends FilesystemPlugin {
     getAssetSizeWarningState(
         assetId: string
     ): CloudAssetSizeWarningState | null {
+        const piece = this._getAssetPieceSizeWarningState(assetId);
         const policy = this._getCloudAssetSizePolicy();
         const rawByteLength = this._assetEstimatedBytesByAssetId.get(assetId);
-        if (
-            !policy ||
-            typeof rawByteLength !== 'number' ||
-            !Number.isFinite(rawByteLength)
-        ) {
+        const total =
+            policy &&
+            typeof rawByteLength === 'number' &&
+            Number.isFinite(rawByteLength)
+                ? this._getAssetSizeWarningStateForByteLength(
+                      rawByteLength,
+                      policy
+                  )
+                : null;
+        if (piece?.tone === 'error') {
+            return piece;
+        }
+        if (total?.tone === 'error') {
+            return total;
+        }
+        return piece ?? total;
+    }
+
+    private _getAssetPieceSizeWarningState(
+        assetId: string
+    ): CloudAssetSizeWarningState | null {
+        const stats = this.getAssetLiveShardStats(assetId);
+        const shards: Array<{ documentId: string; byteLength: number }> = [
+            {
+                documentId: FONT_CORE_DOCUMENT_ID,
+                byteLength: stats.fontCoreBytes
+            },
+            {
+                documentId: FONT_DEPS_DOCUMENT_ID,
+                byteLength: stats.fontDepsBytes
+            }
+        ];
+        if (stats.largestGlyphBytes > 0) {
+            shards.push({
+                documentId: 'glyph:live',
+                byteLength: stats.largestGlyphBytes
+            });
+        }
+        if (!shards.some((shard) => shard.byteLength > 0)) {
             return null;
         }
-        const byteLength = rawByteLength;
-
-        return this._getAssetSizeWarningStateForByteLength(byteLength, policy);
+        const worst = worstCloudPieceSizeReport(evaluateShardSizes(shards));
+        if (!worst) {
+            return null;
+        }
+        const { canSave: _canSave, ...state } = cloudPieceSizeWarningState(
+            worst,
+            {
+                kind: 'status',
+                glyphName: worst.documentId.startsWith('glyph:')
+                    ? stats.largestGlyphName
+                    : null
+            }
+        );
+        return state;
     }
 
     getAssetLiveShardStats(assetId: string): CloudLiveShardStats {
@@ -1007,33 +1133,49 @@ export class CloudPlugin extends FilesystemPlugin {
         const estimated = seed.bridge.getEstimatedLiveEncodedBytes?.() ?? 0;
         const byteLength = estimated > 0 ? estimated : seed.byteLength;
         const policy = await this._ensureCloudSizePolicy();
-        if (!policy) {
-            return null;
+        const pieceGate = evaluateShardSizes(
+            seed.shards.map((shard) => ({
+                documentId: shard.documentId,
+                byteLength: shard.bytes.byteLength
+            }))
+        );
+        const worstPiece = worstCloudPieceSizeReport(pieceGate);
+        const piece = worstPiece
+            ? cloudPieceSizeWarningState(worstPiece, {
+                  kind: 'save',
+                  glyphName: glyphNameForCloudDocument(
+                      seed.fontJson,
+                      worstPiece.documentId
+                  )
+              })
+            : null;
+        const total =
+            policy && byteLength > policy.maxCloudAssetBytes
+                ? {
+                      visible: true,
+                      title: `Cloud save blocked: Font exceeds the current cloud size limit (${formatCloudByteCount(byteLength)} of ${formatCloudByteCount(policy.maxCloudAssetBytes)}). A larger compaction tier is required before saving to cloud.`,
+                      label: 'Too large',
+                      icon: 'sync_problem',
+                      tone: 'error' as const,
+                      canSave: false
+                  }
+                : policy && byteLength >= policy.warningCloudAssetBytes
+                  ? {
+                        visible: true,
+                        title: `Cloud save warning: Font is near the current cloud size limit (${formatCloudByteCount(byteLength)} of ${formatCloudByteCount(policy.maxCloudAssetBytes)}). Saving may still work now, but cloud editing can stop working if the font grows further.`,
+                        label: 'Near limit',
+                        icon: 'warning',
+                        tone: 'warning' as const,
+                        canSave: true
+                    }
+                  : null;
+        if (piece?.tone === 'error') {
+            return piece;
         }
-
-        if (byteLength > policy.maxCloudAssetBytes) {
-            return {
-                visible: true,
-                title: `Cloud save blocked: Font exceeds the current cloud size limit (${formatCloudByteCount(byteLength)} of ${formatCloudByteCount(policy.maxCloudAssetBytes)}). A larger compaction tier is required before saving to cloud.`,
-                label: 'Too large',
-                icon: 'sync_problem',
-                tone: 'error',
-                canSave: false
-            };
+        if (total?.tone === 'error') {
+            return total;
         }
-
-        if (byteLength >= policy.warningCloudAssetBytes) {
-            return {
-                visible: true,
-                title: `Cloud save warning: Font is near the current cloud size limit (${formatCloudByteCount(byteLength)} of ${formatCloudByteCount(policy.maxCloudAssetBytes)}). Saving may still work now, but cloud editing can stop working if the font grows further.`,
-                label: 'Near limit',
-                icon: 'warning',
-                tone: 'warning',
-                canSave: true
-            };
-        }
-
-        return null;
+        return piece ?? total;
     }
 
     private _getAssetSizeWarningStateForByteLength(
@@ -1613,17 +1755,47 @@ export class CloudPlugin extends FilesystemPlugin {
         return this._getCloudAssetSizePolicy();
     }
 
-    private _warnBeforeNearLimitCloudSave(byteLength: number): void {
-        const policy = this._getCloudAssetSizePolicy();
-        if (!policy || byteLength < policy.warningCloudAssetBytes) {
+    private _warnBeforeNearLimitCloudSave(seed: {
+        byteLength: number;
+        shards?: EncodedShard[];
+        fontJson?: Record<string, unknown>;
+    }): void {
+        const pieceGate = evaluateShardSizes(
+            (seed.shards ?? []).map((shard) => ({
+                documentId: shard.documentId,
+                byteLength: shard.bytes.byteLength
+            }))
+        );
+        const worstPiece = worstCloudPieceSizeReport(pieceGate);
+        if (worstPiece?.status === 'warning') {
+            const state = cloudPieceSizeWarningState(worstPiece, {
+                kind: 'save',
+                glyphName: glyphNameForCloudDocument(
+                    seed.fontJson,
+                    worstPiece.documentId
+                )
+            });
+            const proceed = window.confirm(
+                `${state.title} Continue saving to cloud?`
+            );
+            if (!proceed) {
+                throw new Error(
+                    'Cloud save cancelled near the current size limit'
+                );
+            }
             return;
         }
-        if (byteLength > policy.maxCloudAssetBytes) {
+
+        const policy = this._getCloudAssetSizePolicy();
+        if (!policy || seed.byteLength < policy.warningCloudAssetBytes) {
+            return;
+        }
+        if (seed.byteLength > policy.maxCloudAssetBytes) {
             return;
         }
 
         const proceed = window.confirm(
-            `This font is near the current cloud size limit (${formatCloudByteCount(byteLength)} of ${formatCloudByteCount(policy.maxCloudAssetBytes)}). Cloud editing may stop working if it grows further. Continue saving to cloud?`
+            `This font is near the current cloud size limit (${formatCloudByteCount(seed.byteLength)} of ${formatCloudByteCount(policy.maxCloudAssetBytes)}). Cloud editing may stop working if it grows further. Continue saving to cloud?`
         );
         if (!proceed) {
             throw new Error('Cloud save cancelled near the current size limit');
@@ -3431,7 +3603,7 @@ export class CloudPlugin extends FilesystemPlugin {
                 `Cloud save blocked: font is ${formatCloudByteCount(seed.byteLength)} but the current cloud tier only supports up to ${formatCloudByteCount(sizePolicy.maxCloudAssetBytes)}.`
             );
         }
-        this._warnBeforeNearLimitCloudSave(seed.byteLength);
+        this._warnBeforeNearLimitCloudSave(seed);
 
         const resp = await fetch(`${this._websiteBaseUrl}/api/cloud/assets`, {
             method: 'POST',

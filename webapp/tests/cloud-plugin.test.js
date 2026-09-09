@@ -234,6 +234,7 @@ const {
     CloudPlugin,
     formatCloudStatusTooltipHtml,
     formatCloudByteCount,
+    describeCloudStoredPiece,
     captureCloudSaveSeedState,
     recaptureCloudSaveSeedIfBridgeChanged
 } = require('../js/filesystem-plugins/plugins/cloud-plugin');
@@ -847,6 +848,89 @@ describe('CloudPlugin.openAsset', () => {
         expect(syncJsonFromModel).not.toHaveBeenCalled();
         expect(getFontJsonSnapshot).toHaveBeenCalled();
         expect(encodeDocumentSet).toHaveBeenCalledTimes(2);
+    });
+
+    test('title-bar warns when any stored piece approaches 5 MiB', () => {
+        const warningBytes = Math.floor(5 * 1024 * 1024 * 0.75);
+        plugin._activeAssetId = 'asset-near';
+        plugin._eligibility = {
+            cloudHostingEnabled: true,
+            maxFontsOwned: null,
+            snapshotRetentionDays: null,
+            fontsOwnedCount: 0,
+            maxCloudAssetBytes: 20 * 1024 * 1024,
+            warningCloudAssetBytes: 15 * 1024 * 1024
+        };
+        window.patchSyncEngine = {
+            getLiveShardSizeSnapshot: () => ({
+                fontCoreBytes: 100,
+                fontDepsBytes: 100,
+                largestGlyphBytes: warningBytes,
+                largestGlyphName: 'a'
+            })
+        };
+
+        const state = plugin.getAssetSizeWarningState('asset-near');
+        expect(state).toEqual(
+            expect.objectContaining({
+                visible: true,
+                label: 'Near limit',
+                tone: 'warning'
+            })
+        );
+        expect(state.title).toMatch(/The glyph “a” is near the 5/);
+        expect(state.title).toMatch(/5\.0 MiB/);
+        expect(state.title).not.toMatch(/shard/i);
+        expect(describeCloudStoredPiece('glyph:live', 'a')).toBe(
+            'The glyph “a”'
+        );
+    });
+
+    test('save-as warns when any stored piece approaches 5 MiB', async () => {
+        const warningBytes = Math.floor(5 * 1024 * 1024 * 0.75);
+        plugin._eligibility = {
+            cloudHostingEnabled: true,
+            maxFontsOwned: null,
+            snapshotRetentionDays: null,
+            fontsOwnedCount: 0,
+            maxCloudAssetBytes: 20 * 1024 * 1024,
+            warningCloudAssetBytes: 15 * 1024 * 1024
+        };
+        window.patchSyncEngine = {
+            encodeDocumentSet: jest.fn(() => [
+                { documentId: 'font-core', bytes: new Uint8Array(2) },
+                { documentId: 'font-deps', bytes: new Uint8Array(2) },
+                {
+                    documentId: 'glyph:uuid-a',
+                    bytes: new Uint8Array(warningBytes)
+                }
+            ]),
+            getFontJsonSnapshot: jest.fn(() => ({
+                ...defaultCloudFontJson,
+                glyphs: [
+                    {
+                        ...defaultCloudFontJson.glyphs[0],
+                        id: 'uuid-a',
+                        name: 'a'
+                    }
+                ]
+            }))
+        };
+        window.glyphCanvas = { initialFontLoaded: false };
+        window.fontManager = {
+            currentFont: {
+                babelfontJson: JSON.stringify({ glyphs: [] }),
+                babelfontData: { glyphs: [] },
+                syncJsonFromModel: jest.fn()
+            },
+            editingFont: null
+        };
+
+        const state = await plugin.getCurrentSaveAsWarningState();
+        expect(state.canSave).toBe(true);
+        expect(state.tone).toBe('warning');
+        expect(state.title).toMatch(/The glyph “a” is near the 5/);
+        expect(state.title).not.toMatch(/shard/i);
     });
 
     test('prepareToSeed fails closed when glyph quota is exhausted', async () => {

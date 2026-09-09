@@ -2,7 +2,7 @@
 
 A stable file workflow answers three questions: what did I open, where am I saving, and what state is the current source in.
 
-Counterpunch converts opened sources into the Babelfont model for editing. After you open a file, the toolbar Save control writes back to the current Memory or Disk location. `Cmd/Ctrl+S` saves. `Cmd/Ctrl+Shift+S` is Save As.
+Counterpunch converts opened sources into the Babelfont model for editing. After you open a file, the toolbar Save control writes back to the current Memory, Disk, or Cloud location. `Cmd/Ctrl+S` saves. `Cmd/Ctrl+Shift+S` is Save As. Save As can target Memory, Disk, or **Cloud Storage** (signed in). A cloud font is hosted so others can edit it with you; it is not a `.glyphs` file on disk. See [Cloud fonts](05-cloud-fonts.md).
 
 **Open** (editable sources): `.babelfont`, `.glyphs`, `.glyphspackage`, `.ufo`, `.designspace` (the Designspace file plus its referenced UFOs), `.vfj`, and `.sfd`.
 

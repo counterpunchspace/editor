@@ -1565,7 +1565,7 @@
         >
             <div class="info-popup" style="max-width: 600px">
                 <div class="info-popup-header">
-                    <h3>Privacy Policy</h3>
+                    <h3>Font Editor Privacy Policy</h3>
                     <button
                         class="info-popup-close"
                         id="privacy-policy-modal-close-btn"
@@ -1577,27 +1577,31 @@
                     class="info-popup-content"
                     id="privacy-policy-modal-content"
                 >
-                    <h4>Data Controller</h4>
                     <p>
-                        Counterpunch operates the editor at
-                        <strong>editor.counterpunch.space</strong> and the
-                        website at <strong>counterpunch.space</strong>. This
-                        Privacy Policy applies specifically to the editor
-                        application.
+                        This policy is for the
+                        <strong>Counterpunch Font Editor</strong>
+                        (editor.counterpunch.space), including Help in this app.
+                        It does not cover the marketing website, login, or
+                        account pages. Those are in the
+                        <a
+                            href="https://counterpunch.space/privacy"
+                            target="_blank"
+                            rel="noopener"
+                            >website privacy policy</a
+                        >.
                     </p>
 
                     <h4>What Data We Collect</h4>
                     <p>
-                        <strong>Account Information.</strong> When you create an
-                        account, we collect your email address. This is stored
-                        in our database on Cloudflare D1.
-                    </p>
-                    <p>
-                        <strong>Subscription Data.</strong> If you subscribe to
-                        a paid plan, we store Stripe customer and subscription
-                        identifiers, billing period, country code, and credit
-                        balance. No full payment details are stored on our
-                        servers &mdash; they are handled entirely by Stripe.
+                        <strong>Sign-in.</strong> The editor uses the same
+                        account as the website. Email, login links, plan, and
+                        billing are described in the
+                        <a
+                            href="https://counterpunch.space/privacy"
+                            target="_blank"
+                            rel="noopener"
+                            >website privacy policy</a
+                        >. This app only needs that session to know who you are.
                     </p>
                     <p>
                         <strong>AI Assistant Prompts.</strong> When you use the
@@ -1629,6 +1633,24 @@
                         error reports will be optional and you will be prompted
                         to confirm before sending.
                     </p>
+                    <p>
+                        <strong>Local fonts.</strong> Disk and Memory fonts stay
+                        on this computer. They are not uploaded unless you Save
+                        As to Cloud, accept a cloud invite, or an error report
+                        includes a font as declared above.
+                    </p>
+                    <p>
+                        <strong>Cloud fonts.</strong> If you Save As to Cloud or
+                        open an invited font, we store the live font (shared
+                        font data, how glyphs depend on each other, and each
+                        glyph’s outlines) so invited people can edit with you.
+                        That is not end-to-end encryption. Unsent edits can stay
+                        in this browser until they sync. Viewers, revoked
+                        access, a failed local log, and required updates can
+                        leave the font read-only. Deleting the cloud font from
+                        the editor stops live access and removes the stored font
+                        as part of that process.
+                    </p>
 
                     <h4>Cookies and Local Storage</h4>
                     <p>
@@ -1642,23 +1664,18 @@
                         <strong>Local Storage.</strong> The editor uses your
                         browser&rsquo;s local storage and session storage to
                         persist preferences (theme, view layout, script editor
-                        content, text buffer, plugin state, filter settings).
-                        This data never leaves your browser.
-                    </p>
-                    <p>
-                        <strong>Font assets.</strong> You grant the editor
-                        permission to read and write font files to and from your
-                        hard disk. The font assets are never uploaded to our
-                        servers, with the exception of error reports as declared
-                        above.
+                        content, text buffer, plugin state, filter settings)
+                        and, for cloud fonts, unsent edits. Preferences stay in
+                        this browser. Unsent cloud edits leave only when they
+                        sync.
                     </p>
 
                     <h4>How We Use Your Data</h4>
                     <p>
-                        We use your data solely to operate the editor: process
-                        AI assistant requests, manage subscriptions, and
-                        diagnose technical issues. We do not sell, share, or use
-                        your data for advertising or profiling.
+                        We use your data to operate the editor: live cloud
+                        editing, AI assistant requests, and diagnosing technical
+                        issues. We do not sell, share, or use your data for
+                        advertising or profiling.
                     </p>
 
                     <h4>Third-Party Services</h4>
@@ -1675,10 +1692,10 @@
                         Stripe&rsquo;s privacy policy.
                     </p>
                     <p>
-                        <strong>Cloudflare.</strong> The application is hosted
-                        on Cloudflare Pages and Workers. Cloudflare may process
-                        IP addresses and request metadata as part of its
-                        infrastructure services.
+                        <strong>Cloudflare.</strong> The editor and cloud fonts
+                        are hosted on Cloudflare (Pages, Workers, Durable
+                        Objects, R2). Cloudflare may process IP addresses and
+                        request metadata as part of its infrastructure.
                     </p>
                     <p>
                         <strong>DeepSeek.</strong> The AI assistant is powered
@@ -1689,8 +1706,9 @@
 
                     <h4>Data Retention</h4>
                     <p>
-                        Account data is retained until you delete your account.
-                        AI billing metadata is retained for financial
+                        Cloud fonts are kept while the font exists. Account data
+                        is retained as described in the website policy. AI
+                        billing metadata is retained for financial
                         record-keeping. Error reports are periodically purged.
                     </p>
 
@@ -1710,7 +1728,7 @@
                     </p>
 
                     <p style="margin-top: 16px; font-size: 11px; opacity: 0.6">
-                        Last updated: July 2026
+                        Last updated: September 2026
                     </p>
                 </div>
             </div>

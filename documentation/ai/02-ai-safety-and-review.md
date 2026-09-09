@@ -8,4 +8,6 @@ While Assistant is focused, `Cmd/Ctrl+Z` undoes assistant-produced font edits on
 
 Ask for one change at a time. If the result is wrong, undo, then tighten the prompt. You can still ask it to explain the intended change before it writes code.
 
+The assistant sends your prompt and a compact editor-state summary to the AI service, not a complete font file. Cloud fonts are stored separately when you Save As to Cloud or accept an invite. See [Cloud fonts](../files/05-cloud-fonts.md) and Help → Privacy Policy in the editor.
+
 Related: [AI assistant](01-ai-assistant-overview.md), [Script editor](../python/02-script-editor-workflow.md).

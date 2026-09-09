@@ -17,3 +17,7 @@ Usually a syntax error, an unexpected property, or calling `Glyph()` / `Layer()`
 ## AI assistant is unavailable
 
 You may be signed out, missing the Advanced plan or trial, or out of usage. Confirm login, check subscription in account management, and read any usage warning. See [Subscription and usage](../ai/03-subscription-trial-and-usage.md).
+
+## Cloud font is read-only or will not sync
+
+Viewers, revoked invites, this browser being unable to store unsent edits, the server still catching up, and a required update all leave a cloud font read-only. Check the title-bar connection reason. Sign in again if the session expired. Update the editor if it asks for a reload. Pending edits live in this browser until they sync; another device will not have them. See [Cloud fonts](../files/05-cloud-fonts.md).

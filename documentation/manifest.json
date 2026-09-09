@@ -67,6 +67,12 @@
                     "title": "Editing in multiple windows",
                     "kind": "page",
                     "path": "files/04-editing-in-multiple-windows.md"
+                },
+                {
+                    "id": "files/cloud-fonts",
+                    "title": "Cloud fonts",
+                    "kind": "page",
+                    "path": "files/05-cloud-fonts.md"
                 }
             ]
         },

@@ -8,10 +8,13 @@ Type design mixes geometric, typographic, and technical terms. These are the mea
 - **Axis** — a variable dimension such as weight or width.
 - **Background layer** — a paired reference drawing behind a foreground layer. Paths only; it does not interpolate or own metrics.
 - **Base glyph** — a glyph’s ordinary layers, used when no feature variation is selected.
+- **Cloud font** — a font hosted in Files → Cloud Storage. Local files are not uploaded unless you Save As to Cloud or open an invite. See [Cloud fonts](../files/05-cloud-fonts.md).
 - **Codepoint** — a Unicode scalar assigned to a glyph (`glyph.codepoints`).
 - **Compatibility** — whether a glyph’s main layers share the same outline structure (paths, components, anchors) so they can interpolate (`glyph.isCompatible`).
 - **Component** — a reference to another glyph’s outline, placed with an optional transformation.
 - **Contour** — a connected outline path that is part of a glyph. The object model calls this a **path**.
+- **Core** — in a cloud font, the shared part: names, features, kerning, and the glyph list. See [Cloud fonts](../files/05-cloud-fonts.md).
+- **Dependencies** — in a cloud font, the record of how glyphs use each other (for example components). See [Cloud fonts](../files/05-cloud-fonts.md).
 - **Designspace** — axis coordinates as stored on layers and masters. Feature-variation min/max use this space, not slider userspace.
 - **Disk** — the Files context whose root is the **project folder**.
 - **Feature variation** — an alternate layer family that is active only inside an axis range. The editor list is labeled **Variations**.
@@ -43,6 +46,8 @@ Type design mixes geometric, typographic, and technical terms. These are the mea
 - **Undo surface** — the focused `Cmd/Ctrl+Z` stack (Canvas, Overview, Font Info, Features, or Automation). History lists edits; it does not change which surface undo uses.
 - **UPM** — units per em: the font’s design grid (`font.upm`).
 - **Userspace** — axis values as shown on the editor sliders, which may differ from stored designspace coordinates. End-user apps expose the userspace coordinates, not designspace, unless they are identical.
+- **Pending sync** — cloud edits this browser still has to send. They are not on another device until they sync.
 - **W/Width** — advance **width** of the current layer (`layer.width`).
+- **Write-ahead log** — this browser’s store of unsent cloud edits. If it cannot be written, the cloud font stays read-only.
 
 Spacing is in [Sidebearing arithmetics](../editor/04-sidebearing-arithmetics.md). Pair kerning is in [Text-mode kerning](../editor/06-text-mode-kerning.md). Axes are in [Axes and masters](../editor/03-axes-masters.md). Folders are in [Project and settings folders](../getting-started/04-project-and-settings-folders.md). Scripting starts in [Python in Counterpunch](../python/01-python-in-counterpunch.md).

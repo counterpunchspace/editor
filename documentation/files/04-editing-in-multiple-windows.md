@@ -29,4 +29,7 @@ Theme, the welcome/tour flags, Python script buffers, and snapping stay global.
 
 Linked windows depend on the Main window’s session. Keep Main open while you work in linked windows. Closing the main window will also close all linked windows.
 
+When the font is a **cloud font**, only Main stays connected to the cloud. Linked windows share that session. Unsent edits still belong to Main. See [Cloud fonts](05-cloud-fonts.md).
+
+
 Undo scopes are explained in [Undo and history](../reference/undo-and-history-scopes.md).
