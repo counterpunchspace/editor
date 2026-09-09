@@ -189,6 +189,8 @@ Users will see an orange notification on the Preferences gear within about 10 mi
 
 If a window stays on an old cut after a deploy, see `developer-docs/APP_UPDATE_RECOVERY.md`. Reloading is not enough.
 
+Production cloud collaboration is a three-repo cut, not an editor tag by itself. See `developer-docs/COMPOSED_RELEASE.md`.
+
 If glyph switching stops updating outlines and the glyph stack shows `(none)` while Preferences still shows the expected version, see `developer-docs/STUCK_EDITING_RECOVERY.md`. That is a stuck browser session, not a stuck published cut.
 
 ## Related Developer Docs
@@ -199,3 +201,4 @@ If glyph switching stops updating outlines and the glyph stack shows `(none)` wh
 - `developer-docs/JS_EVENTS.md` documents emitted JavaScript events
 - `developer-docs/APP_UPDATE_RECOVERY.md` is the stuck-client update recovery procedure
 - `developer-docs/STUCK_EDITING_RECOVERY.md` is the stuck-editing-session recovery procedure
+- `developer-docs/COMPOSED_RELEASE.md` is the collab/website/editor production-promote recommendation
