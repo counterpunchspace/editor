@@ -1308,7 +1308,12 @@ export class PatchSyncEngine {
         if (!update?.length) {
             return false;
         }
-        this.applyDocumentCheckpoint(documentId, update);
+        this.beginDeferredAfterSync();
+        try {
+            this.applyDocumentCheckpoint(documentId, update);
+        } finally {
+            this.endDeferredAfterSync();
+        }
         if (documentId !== FONT_DEPS_DOCUMENT_ID) {
             // Live WS catch-up is often a delta vs the HTTP-hydrated SV.
             // Worker replace seeds an empty Yrs doc, so it must receive a

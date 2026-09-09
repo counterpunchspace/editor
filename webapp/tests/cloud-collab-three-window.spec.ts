@@ -302,21 +302,48 @@ async function waitForCloudLiveIdle(
     page: Page,
     timeoutMs = 20000
 ): Promise<void> {
-    await page.waitForFunction(
-        () => {
+    try {
+        await page.waitForFunction(
+            () => {
+                const plugin = (window as any).cloudPlugin;
+                const assetId = plugin?.activeAssetId;
+                if (!plugin || !assetId) {
+                    return false;
+                }
+                return (
+                    plugin.connectionStatus === 'connected' &&
+                    plugin.getAssetPendingSyncCount(assetId) === 0
+                );
+            },
+            null,
+            { timeout: timeoutMs }
+        );
+    } catch (error) {
+        const snapshot = await page.evaluate(() => {
             const plugin = (window as any).cloudPlugin;
             const assetId = plugin?.activeAssetId;
-            if (!plugin || !assetId) {
-                return false;
-            }
-            return (
-                plugin.connectionStatus === 'connected' &&
-                plugin.getAssetPendingSyncCount(assetId) === 0
-            );
-        },
-        null,
-        { timeout: timeoutMs }
-    );
+            const session = plugin?._liveSession;
+            return {
+                assetId,
+                connectionStatus: plugin?.connectionStatus,
+                connectionDetail: plugin?.getAssetConnectionDetail?.(assetId),
+                pendingSyncCount: plugin?.getAssetPendingSyncCount?.(assetId),
+                sessionStatus: session?.status,
+                walPending: session?.pendingSyncCount,
+                liveDocumentIds: session?.liveDocumentIds?.(),
+                walRecords: session?._wal
+                    ?.recordsFor?.()
+                    ?.map(
+                        (record: { documentId?: string }) => record.documentId
+                    )
+            };
+        });
+        throw new Error(
+            `waitForCloudLiveIdle timed out: ${JSON.stringify(snapshot)}\n${
+                error instanceof Error ? error.message : String(error)
+            }`
+        );
+    }
 }
 
 async function glyphNodeX(page: Page, glyphName = 'a'): Promise<number> {

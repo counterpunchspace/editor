@@ -274,6 +274,9 @@ export function localCloudEnv() {
         LOCAL_DEV: 'true',
         LOCAL_CLOUD_DEV_ENABLED: 'true',
         AUTH_TOKEN_ALLOW_INSECURE_LOCAL_FALLBACK: 'true',
+        AUTH_TOKEN_SECRET:
+            process.env.AUTH_TOKEN_SECRET ||
+            'counterpunch-local-dev-auth-token-secret',
         EDITOR_ALLOWED_ORIGINS: 'https://localhost:8000,http://localhost:9000',
         WEBSITE_ALLOWED_ORIGINS:
             'https://localhost:8000,http://localhost:9000,https://localhost:8788',
@@ -377,6 +380,8 @@ export async function ensureCloudCollabStack() {
                 '--binding',
                 'AUTH_TOKEN_ALLOW_INSECURE_LOCAL_FALLBACK=true',
                 '--binding',
+                'AUTH_TOKEN_SECRET=counterpunch-local-dev-auth-token-secret',
+                '--binding',
                 'EDITOR_ALLOWED_ORIGINS=https://localhost:8000,http://localhost:9000',
                 '--binding',
                 'WEBSITE_ALLOWED_ORIGINS=https://localhost:8000,http://localhost:9000,https://localhost:8788',
@@ -429,7 +434,9 @@ export async function ensureCloudCollabStack() {
                 '--var',
                 'WEBSITE_CONTROL_URL:https://localhost:8788',
                 '--var',
-                'EDITOR_ALLOWED_ORIGINS:https://localhost:8000,http://localhost:9000'
+                'EDITOR_ALLOWED_ORIGINS:https://localhost:8000,http://localhost:9000',
+                '--var',
+                'AUTH_TOKEN_SECRET:counterpunch-local-dev-auth-token-secret'
             ],
             {
                 cwd: collabRoot,

@@ -4264,9 +4264,14 @@ document.addEventListener('DOMContentLoaded', () => {
                         );
                     } else {
                         if (pluginId === 'cloud') {
-                            await waitForFontEditorReady();
+                            // Cloud open hydrates over HTTP before the Python
+                            // editor is required. Waiting for fontEditorReady
+                            // here deadlocks URL/linked-window opens that also
+                            // wait for a font to become current.
                             window.cloudPlugin?.setPendingSparseHydration?.(
-                                readUrlState().sparse === true
+                                readUrlState().sparse === true ||
+                                    window.windowRole?.isLinkedWindow?.() ===
+                                        true
                             );
                             await openFont(
                                 `cloud://${fontPath.replace(/^\/+/, '')}`,

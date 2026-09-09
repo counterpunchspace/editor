@@ -2598,14 +2598,20 @@ export class CloudPlugin extends FilesystemPlugin {
         if (!glyphIds.length) {
             return;
         }
-        this._enqueueGlyphCatchUp(glyphIds);
-        const fontJson = this._currentFontJson();
         const bridge = this._activeAssetSizeBridge;
+        const subsetIds = bridge
+            ? this._editingSubsetGlyphIdsForCatchUp(bridge)
+            : [];
+        const catchUpIds = glyphIds.filter((glyphId) =>
+            subsetIds.includes(glyphId)
+        );
+        this._enqueueGlyphCatchUp(catchUpIds);
+        const fontJson = this._currentFontJson();
         if (!fontJson || !bridge) {
             return;
         }
         const loadedNames = listGlyphRecords(fontJson)
-            .filter((glyph) => glyphIds.includes(String(glyph.id || '')))
+            .filter((glyph) => catchUpIds.includes(String(glyph.id || '')))
             .map((glyph) => String(glyph.name || ''))
             .filter(Boolean);
         if (loadedNames.length) {
@@ -2619,27 +2625,27 @@ export class CloudPlugin extends FilesystemPlugin {
             return;
         }
         const subsetIds = this._editingSubsetGlyphIdsForCatchUp(bridge);
-        const staleIds = this._staleGlyphIdsForCatchUp(bridge);
+        const staleIds = this._staleGlyphIdsForCatchUp(bridge).filter(
+            (glyphId) => subsetIds.includes(glyphId)
+        );
         this._enqueueGlyphCatchUp([...new Set([...subsetIds, ...staleIds])]);
     }
 
     /**
-     * HTTP catch-up is for glyphs the live WebSocket subset does not cover.
-     * After R2 hydrate the in-memory glyph docs can lag the live core
-     * revision map; those mismatches are the edits since last attestation,
-     * not the whole catalog. Cap remains in `_enqueueGlyphCatchUp`.
+     * HTTP catch-up is for the live editing glyphs, not overview residency
+     * or the compile snapshot. Sparse working-set IDs and
+     * deriveSubsetGlyphsFromText(compile text) close layout/components
+     * across most of a Fustat catalog and fan GET /live after reconnect.
      */
     private _editingSubsetGlyphIdsForCatchUp(
         bridge: PatchSyncEngine
     ): string[] {
-        if (bridge.hasSparseWorkingSet?.()) {
-            return bridge.listSparseWorkingGlyphIds?.() ?? [];
-        }
-        const names =
-            window.fontManager?.getConstrainedEditingSubsetGlyphs?.() ?? [
-                ...(window.fontManager?.getEditingSubsetSnapshot?.() ?? []),
-                ...(window.fontManager?.getLiveVisibleGlyphNames?.() ?? [])
-            ];
+        const fontManager = window.fontManager;
+        const names = [
+            ...activeEditorGlyphNames(fontManager),
+            ...((window as any).glyphCanvas?.textRunEditor?.glyphNameBuffer ||
+                [])
+        ];
         return liveGlyphDocumentIdsFromSubset(bridge, names)
             .filter((documentId) => documentId.startsWith('glyph:'))
             .map((documentId) => documentId.slice('glyph:'.length));
@@ -2671,9 +2677,9 @@ export class CloudPlugin extends FilesystemPlugin {
         const tokens = bridge.listGlyphRevisionTokens?.() ?? [];
         const subsetIds = this._editingSubsetGlyphIdsForCatchUp(bridge);
         const requestedIds = glyphIds?.length
-            ? glyphIds.length > 64
+            ? subsetIds.length
                 ? glyphIds.filter((glyphId) => subsetIds.includes(glyphId))
-                : glyphIds
+                : []
             : subsetIds;
         if (!requestedIds.length) {
             return;
@@ -3857,7 +3863,8 @@ export class CloudPlugin extends FilesystemPlugin {
             refreshCredentials: async () => {
                 const next = await this._fetchRoomToken(options.assetId);
                 return { token: next.token, roomUrl: next.roomUrl };
-            }
+            },
+            keepRequestedGlyphSockets: this.getCurrentAssetRole() === 'viewer'
         });
         const glyphDocumentIds = liveGlyphDocumentIdsFromSubset(
             options.bridge,
@@ -3879,9 +3886,32 @@ export class CloudPlugin extends FilesystemPlugin {
             if (text) {
                 await this.ensureSparseHydration({ text });
             }
-        } else {
-            this._catchUpFromCoreRevisionMap();
         }
+        // Do not HTTP-catch-up the core revision map on attach. After save or
+        // R2 hydrate the in-memory glyph docs are already the published
+        // snapshots; a dirty revision map would fan GET /live across the
+        // catalog. Later remote core commits still enqueue via
+        // `_coreHydratedListener`.
+    }
+
+    private _liveGlyphNamesForSync(): string[] {
+        // Viewers and editors both follow the current glyph plus the shaped
+        // text run. getLiveVisibleGlyphNames also includes the compile subset
+        // snapshot, which opens a Fustat catalog of empty glyph Durable Objects
+        // and races GET /state on the glyph the e2e actually probes.
+        const names = [
+            ...activeEditorGlyphNames(),
+            ...((window as any).glyphCanvas?.textRunEditor?.glyphNameBuffer ||
+                [])
+        ];
+        return [
+            ...new Set(
+                names.filter(
+                    (name) =>
+                        typeof name === 'string' && name && name !== 'undefined'
+                )
+            )
+        ];
     }
 
     private _startEditingSubsetSync(bridge: PatchSyncEngine): void {
@@ -3890,9 +3920,12 @@ export class CloudPlugin extends FilesystemPlugin {
             if (!this._liveSession) {
                 return;
             }
+            this._liveSession.setKeepRequestedGlyphSockets(
+                this.getCurrentAssetRole() === 'viewer'
+            );
             const glyphDocumentIds = liveGlyphDocumentIdsFromSubset(
                 bridge,
-                activeEditorGlyphNames()
+                this._liveGlyphNamesForSync()
             );
             void this._liveSession
                 .syncLiveDocumentIds(glyphDocumentIds)

@@ -111,3 +111,110 @@ describe('AuthManager.checkAuthStatus', () => {
         );
     });
 });
+
+describe('AuthManager local cloud session', () => {
+    let originalAuthManager;
+    let originalFetch;
+
+    beforeEach(() => {
+        jest.resetModules();
+        document.cookie = 'editor_session=; Max-Age=0; Path=/';
+        document.cookie = 'session=; Max-Age=0; Path=/';
+        originalAuthManager = window.authManager;
+        originalFetch = global.fetch;
+        const { resolveWebsiteURL } = require('../js/website-url');
+        resolveWebsiteURL.mockReturnValue('https://localhost:8788');
+        global.fetch = jest.fn().mockResolvedValue({
+            ok: true,
+            status: 200,
+            json: async () => ({
+                user: { email: 'e2e-owner@counterpunch.test' },
+                subscription: null,
+                credits: null
+            })
+        });
+        require('../js/auth-manager');
+    });
+
+    afterEach(() => {
+        const { resolveWebsiteURL } = require('../js/website-url');
+        resolveWebsiteURL.mockReturnValue('https://counterpunch.space');
+        document.cookie = 'editor_session=; Max-Age=0; Path=/';
+        document.cookie = 'session=; Max-Age=0; Path=/';
+        window.authManager = originalAuthManager;
+        global.fetch = originalFetch;
+        jest.restoreAllMocks();
+    });
+
+    it('does not mint local-dev over an existing editor_session cookie', async () => {
+        document.cookie = 'editor_session=e2e-owner-token; Path=/';
+        const authManager = window.authManager;
+
+        await authManager.bootstrapLocalCloudSession(
+            'local-dev@counterpunch.test'
+        );
+
+        expect(global.fetch).not.toHaveBeenCalledWith(
+            'https://localhost:8788/api/dev/local-cloud-session',
+            expect.anything()
+        );
+        expect(authManager.getSessionToken()).toBe('e2e-owner-token');
+    });
+
+    it('retries /api/auth/me after a local website network drop', async () => {
+        jest.resetModules();
+        document.cookie = 'editor_session=e2e-owner-token; Path=/';
+        const { resolveWebsiteURL } = require('../js/website-url');
+        resolveWebsiteURL.mockReturnValue('https://localhost:8788');
+        global.fetch = jest
+            .fn()
+            .mockRejectedValueOnce(new TypeError('Network connection lost'))
+            .mockResolvedValue({
+                ok: true,
+                status: 200,
+                json: async () => ({
+                    user: { email: 'e2e-owner@counterpunch.test' },
+                    subscription: null,
+                    credits: null
+                })
+            });
+        require('../js/auth-manager');
+        const authManager = window.authManager;
+
+        const user = await authManager.checkAuthStatus();
+
+        expect(user?.email).toBe('e2e-owner@counterpunch.test');
+        expect(global.fetch.mock.calls.length).toBeGreaterThanOrEqual(2);
+        expect(String(global.fetch.mock.calls[0][0])).toContain('/api/auth/me');
+    });
+
+    it('does not mint local-dev when ensureCloudSession already has a cookie', async () => {
+        jest.resetModules();
+        document.cookie = 'editor_session=e2e-owner-token; Path=/';
+        const { resolveWebsiteURL } = require('../js/website-url');
+        resolveWebsiteURL.mockReturnValue('https://localhost:8788');
+        global.fetch = jest.fn().mockResolvedValue({
+            ok: true,
+            status: 200,
+            json: async () => ({
+                user: { email: 'e2e-owner@counterpunch.test' },
+                subscription: null,
+                credits: null
+            })
+        });
+        require('../js/auth-manager');
+        const authManager = window.authManager;
+
+        const user = await authManager.ensureCloudSession({
+            localEmail: 'local-dev@counterpunch.test'
+        });
+
+        expect(user?.email).toBe('e2e-owner@counterpunch.test');
+        expect(
+            global.fetch.mock.calls.some((call) =>
+                String(call[0]).includes('/api/dev/local-cloud-session')
+            )
+        ).toBe(false);
+        expect(authManager.getSessionToken()).toBe('e2e-owner-token');
+    });
+});

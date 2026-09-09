@@ -732,12 +732,15 @@ export async function catchUpCloudDocument(options: {
     maxAttempts?: number;
     wait?: (attempt: number) => Promise<void>;
 }): Promise<boolean> {
-    const liveUrl = normalizeCloudShardLiveHttpUrl(
-        options.roomUrl,
-        options.websiteBaseUrl,
-        options.assetId,
-        options.documentId
+    const liveUrl = new URL(
+        normalizeCloudShardLiveHttpUrl(
+            options.roomUrl,
+            options.websiteBaseUrl,
+            options.assetId,
+            options.documentId
+        )
     );
+    liveUrl.searchParams.set('afterLogId', '0');
     const maxAttempts = Math.max(
         1,
         options.maxAttempts ?? CLOUD_GLYPH_CATCH_UP_MAX_ATTEMPTS
@@ -750,8 +753,18 @@ export async function catchUpCloudDocument(options: {
             await wait(attempt - 1);
         }
         const expectedRevision = resolvedCatchUpRevision(options);
+        if (
+            expectedRevision &&
+            typeof options.bridge.glyphHasCatchUpRevision === 'function' &&
+            options.bridge.glyphHasCatchUpRevision(
+                options.documentId,
+                expectedRevision
+            )
+        ) {
+            return true;
+        }
         try {
-            const response = await fetch(liveUrl, {
+            const response = await fetch(liveUrl.toString(), {
                 method: 'GET',
                 headers: {
                     Authorization: `Bearer ${options.token}`,
@@ -2602,8 +2615,13 @@ export class CloudAdapter implements FileSystemAdapter {
     }
 
     private _isTransientPackHydrateError(error: unknown): boolean {
+        if (error instanceof Error && error.name === 'AbortError') {
+            return true;
+        }
         const message = error instanceof Error ? error.message : String(error);
-        return /shard pack hydrate failed: 5\d\d/.test(message);
+        return /503|Failed to fetch|ERR_ABORTED|ERR_FAILED|NETWORK_CHANGED|unavailable|do_timeout|incomplete|aborted|shard pack hydrate failed: 5\d\d/i.test(
+            message
+        );
     }
 
     private async _seedPack(
@@ -3035,29 +3053,17 @@ export class CloudAdapter implements FileSystemAdapter {
                         cursor
                     );
                 } catch (error) {
-                    if (this._isTransientPackHydrateError(error)) {
-                        try {
-                            batchResult = await this._hydratePack(
-                                token,
-                                roomUrl,
-                                batch,
-                                options,
-                                cursor
-                            );
-                        } catch (retryError) {
-                            error = retryError;
-                        }
+                    throwIfAborted(options?.signal);
+                    if (options?.transport === 'pack') {
+                        throw error;
                     }
                     if (
-                        !batchResult &&
-                        (options?.transport === 'pack' ||
-                            !this._isPackUnsupportedError(error))
+                        !this._isPackUnsupportedError(error) &&
+                        !this._isTransientPackHydrateError(error)
                     ) {
                         throw error;
                     }
-                    if (!batchResult) {
-                        usePack = false;
-                    }
+                    usePack = false;
                 }
             }
             if (!batchResult) {
@@ -3077,6 +3083,45 @@ export class CloudAdapter implements FileSystemAdapter {
     }
 
     private async _hydratePack(
+        token: string,
+        roomUrl: string,
+        documentIds: string[],
+        options: CloudShardIoOptions | undefined,
+        cursor: CloudShardIoProgress
+    ): Promise<Map<string, Uint8Array>> {
+        let lastError: unknown = null;
+        for (let attempt = 0; attempt < 4; attempt += 1) {
+            try {
+                return await this._hydratePackOnce(
+                    token,
+                    roomUrl,
+                    documentIds,
+                    options,
+                    cursor
+                );
+            } catch (error) {
+                lastError = error;
+                const packTimedOut =
+                    error instanceof Error && error.name === 'AbortError';
+                if (
+                    options?.signal?.aborted ||
+                    packTimedOut ||
+                    !this._isTransientPackHydrateError(error) ||
+                    attempt === 3
+                ) {
+                    throw error;
+                }
+                await new Promise((resolve) =>
+                    setTimeout(resolve, 100 * 2 ** attempt)
+                );
+            }
+        }
+        throw lastError instanceof Error
+            ? lastError
+            : new Error(String(lastError));
+    }
+
+    private async _hydratePackOnce(
         token: string,
         roomUrl: string,
         documentIds: string[],
@@ -3820,11 +3865,10 @@ export class CloudAdapter implements FileSystemAdapter {
                 } else if (
                     detail === 'Write access requires owner or editor role'
                 ) {
-                    this._setStatus('error', detail);
-                    this._ws?.close(
-                        CLIENT_RECONNECT_CLOSE_CODE,
-                        'server-access-change'
-                    );
+                    // Read-only members still have a valid live session; the
+                    // room rejected a mutation. Keep the socket so catch-up
+                    // and owner edits continue to flow.
+                    break;
                 } else if (detail === CLOUD_ASSET_DELETED_MESSAGE) {
                     this._setStatus('error', detail);
                 } else {

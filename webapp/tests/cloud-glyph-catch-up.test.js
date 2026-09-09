@@ -773,4 +773,37 @@ describe('glyph catch-up for edits outside the receiver subset', () => {
             window.windowSync = previousSync;
         }
     });
+
+    test('catch-up reads the journal from log id 0', async () => {
+        const writer = createEngine('writer');
+        const receiver = hydrateReceiverFromWriter(writer.bridge);
+        window.changeBridge = writer.bridge;
+        writer.font.findGlyph('B').layers[0].width = 777;
+        const liveTail = writer.bridge.encodeDocumentState(
+            glyphDocumentId('id-b')
+        );
+        const expectedRevision = revisionFor(writer.bridge, 'id-b');
+        const originalFetch = global.fetch;
+        global.fetch = jest.fn(async (input) => {
+            expect(String(input)).toContain('afterLogId=0');
+            expect(String(input)).toContain('/live');
+            return framedLiveResponse(liveTail);
+        });
+        try {
+            await catchUpCloudDocument({
+                bridge: receiver,
+                token: 'token',
+                roomUrl: 'wss://rooms.example/room/asset-1',
+                websiteBaseUrl: 'https://editor.example',
+                assetId: 'asset-1',
+                documentId: glyphDocumentId('id-b'),
+                expectedRevision,
+                maxAttempts: 2,
+                wait: async () => {}
+            });
+            expect(glyphWidth(receiver, 'B')).toBe(777);
+        } finally {
+            global.fetch = originalFetch;
+        }
+    });
 });

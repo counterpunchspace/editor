@@ -54,6 +54,7 @@ export type CloudLiveSessionOptions = {
     onPendingSyncCountChange?: (count: number) => void;
     onTransferActivityChange?: (activity: CloudTransferActivity) => void;
     refreshCredentials?: () => Promise<{ token: string; roomUrl: string }>;
+    keepRequestedGlyphSockets?: boolean;
 };
 
 export type GlyphCatchUpTarget = {
@@ -77,8 +78,30 @@ export function activeEditorGlyphNames(
                   }
               ).fontManager
             : null);
-    const name = manager?.getActiveEditorGlyphName?.() ?? null;
-    return name ? [name] : [];
+    const active = manager?.getActiveEditorGlyphName?.() ?? null;
+    if (active) {
+        return [active];
+    }
+    const canvas =
+        typeof window !== 'undefined'
+            ? (
+                  window as Window & {
+                      glyphCanvas?: {
+                          getCurrentGlyphName?: () => string | null;
+                          textRunEditor?: { glyphNameBuffer?: string[] };
+                      };
+                  }
+              ).glyphCanvas
+            : undefined;
+    const current = canvas?.getCurrentGlyphName?.() ?? null;
+    if (current && current !== 'undefined') {
+        return [current];
+    }
+    const buffer = canvas?.textRunEditor?.glyphNameBuffer || [];
+    const fromBuffer = buffer.find(
+        (name) => typeof name === 'string' && name && name !== 'undefined'
+    );
+    return fromBuffer ? [fromBuffer] : [];
 }
 
 export function liveGlyphDocumentIdsFromSubset(
@@ -110,6 +133,27 @@ export function stickyLiveGlyphDocumentIds(documentIds: string[]): string[] {
             )
         )
     ];
+    return glyphIds.length ? [glyphIds[glyphIds.length - 1]] : [];
+}
+
+export function requestedLiveGlyphDocumentIds(
+    documentIds: string[],
+    keepAllRequested: boolean
+): string[] {
+    const glyphIds = [
+        ...new Set(
+            documentIds.filter(
+                (id) =>
+                    !!id &&
+                    id !== FONT_CORE_DOCUMENT_ID &&
+                    id !== FONT_DEPS_DOCUMENT_ID &&
+                    id.startsWith('glyph:')
+            )
+        )
+    ];
+    if (keepAllRequested) {
+        return glyphIds;
+    }
     return glyphIds.length ? [glyphIds[glyphIds.length - 1]] : [];
 }
 
@@ -153,11 +197,14 @@ export class CloudLiveSession {
     private _walLoad: Promise<void> | null = null;
     private _token: string;
     private _roomUrl: string;
+    private _keepRequestedGlyphSockets: boolean;
 
     constructor(options: CloudLiveSessionOptions) {
         this._options = options;
         this._token = options.token;
         this._roomUrl = options.roomUrl;
+        this._keepRequestedGlyphSockets =
+            options.keepRequestedGlyphSockets === true;
         this._bindDependentPublishHook();
         void this._ensureWalLoaded();
     }
@@ -350,9 +397,11 @@ export class CloudLiveSession {
         }
         this._httpReceivingCount += 1;
         this._emitTransferActivity();
+        this._options.bridge.beginDeferredAfterSync?.();
         try {
-            const { assetId, websiteBaseUrl, token, roomUrl, bridge } =
-                this._options;
+            const { assetId, websiteBaseUrl, bridge } = this._options;
+            const token = this._token;
+            const roomUrl = this._roomUrl;
             const succeeded: string[] = [];
             const failures: Error[] = [];
             await runWithConcurrency(
@@ -412,6 +461,7 @@ export class CloudLiveSession {
             }
             return succeeded;
         } finally {
+            this._options.bridge.endDeferredAfterSync?.();
             this._httpReceivingCount = Math.max(
                 0,
                 this._httpReceivingCount - 1
@@ -488,10 +538,25 @@ export class CloudLiveSession {
             });
             return true;
         }
+        const resolvedId = documentId || FONT_CORE_DOCUMENT_ID;
+        if (
+            resolvedId.startsWith('glyph:') &&
+            !this._desiredDocumentIds.has(resolvedId)
+        ) {
+            pushCollabIntegrityEvent('persist-outgoing-skip', {
+                documentId: resolvedId,
+                bytes: update.length,
+                hasCollaborationMessage: true,
+                reason: 'not-live-subset'
+            });
+            await this._pruneNonLiveGlyphWal();
+            return true;
+        }
         await this._ensureWalLoaded();
         if (this._wal.health !== 'ready') {
             return false;
         }
+        await this._pruneNonLiveGlyphWal();
         const clientTransactionId =
             collaborationMessageKey(collaborationMessage);
         if (!clientTransactionId) {
@@ -559,6 +624,10 @@ export class CloudLiveSession {
         }
     }
 
+    setKeepRequestedGlyphSockets(keep: boolean): void {
+        this._keepRequestedGlyphSockets = keep === true;
+    }
+
     async syncLiveDocumentIds(documentIds: string[]): Promise<void> {
         const run = this._syncLiveChain.then(() =>
             this._applyLiveDocumentIds(documentIds)
@@ -581,7 +650,10 @@ export class CloudLiveSession {
         const desired = new Set<string>([
             FONT_CORE_DOCUMENT_ID,
             FONT_DEPS_DOCUMENT_ID,
-            ...stickyLiveGlyphDocumentIds(documentIds)
+            ...requestedLiveGlyphDocumentIds(
+                documentIds,
+                this._keepRequestedGlyphSockets
+            )
         ]);
         const membershipUnchanged =
             desired.size === this._desiredDocumentIds.size &&
@@ -590,10 +662,12 @@ export class CloudLiveSession {
             ) &&
             [...desired].every((documentId) => this._adapters.has(documentId));
         if (membershipUnchanged) {
+            await this._pruneNonLiveGlyphWal();
             return;
         }
         const infrastructureAlreadyLive = this._hasLiveCoreAndDeps();
         this._desiredDocumentIds = desired;
+        await this._pruneNonLiveGlyphWal();
         for (const [documentId, adapter] of [...this._adapters]) {
             if (!desired.has(documentId)) {
                 adapter.disconnect();
@@ -650,6 +724,19 @@ export class CloudLiveSession {
             }
             if (!documentId.startsWith('glyph:')) {
                 return;
+            }
+            const changedNames =
+                collaborationMessage?.metadata?.changedGlyphNames || [];
+            if (changedNames.length) {
+                const allowed = new Set(
+                    changedNames.flatMap((name) => {
+                        const id = bridge.glyphDocumentIdForName?.(name);
+                        return id ? [id] : [];
+                    })
+                );
+                if (allowed.size > 0 && !allowed.has(documentId)) {
+                    return;
+                }
             }
             void this._enqueueDependentPublish(
                 documentId,
@@ -946,7 +1033,9 @@ export class CloudLiveSession {
         detail?: string
     ): void {
         if (status === 'connected') {
-            this._options.onConnectionStatus?.('syncing', 'Catching up');
+            if (!this._readyOnce) {
+                this._options.onConnectionStatus?.('syncing', 'Catching up');
+            }
             // First open connects core before deps/glyphs exist in
             // `_adapters`. That path awaits the barrier after membership
             // is complete. Reconnect reuses the live adapter set.
@@ -961,7 +1050,15 @@ export class CloudLiveSession {
             }
             return;
         }
-        if (status === 'connecting' || status === 'syncing') {
+        if (
+            status === 'connecting' ||
+            status === 'syncing' ||
+            status === 'authenticating' ||
+            status === 'disconnected'
+        ) {
+            if (this._readyOnce) {
+                return;
+            }
             this._reportedConnected = false;
         }
         this._options.onConnectionStatus?.(status, detail);
@@ -987,7 +1084,10 @@ export class CloudLiveSession {
     }
 
     private async _completeSessionReadyBarrier(): Promise<void> {
-        this._options.onConnectionStatus?.('syncing', 'Catching up');
+        const stayConnected = this._readyOnce;
+        if (!stayConnected) {
+            this._options.onConnectionStatus?.('syncing', 'Catching up');
+        }
         try {
             await this._waitForLiveTransportSynced(
                 this._options.readyBarrierTimeoutMs ?? 30_000
@@ -996,14 +1096,23 @@ export class CloudLiveSession {
             await this._replayPendingHttpWal({ includeLiveAdapters: false });
             await this.flushPendingHttpPublishes();
             const needsRebaseline = this.coreAdapter?.needsVisibleRebaseline;
+            this._reportedConnected = true;
+            this._readyOnce = true;
+            if (!stayConnected) {
+                this._options.onConnectionStatus?.('connected');
+            }
             if (needsRebaseline) {
-                this._options.onConnectionStatus?.(
-                    'syncing',
-                    'Rebuilding visible state after reconnect'
-                );
-                await runCloudVisibleReconnectRebaseline();
-                this.coreAdapter?.clearVisibleRebaselineNeeded?.();
-                this._clearNonCoreRebaselineFlags();
+                try {
+                    await runCloudVisibleReconnectRebaseline();
+                } catch (error) {
+                    console.warn(
+                        'CloudLiveSession: visible reconnect rebaseline failed:',
+                        error
+                    );
+                } finally {
+                    this.coreAdapter?.clearVisibleRebaselineNeeded?.();
+                    this._clearNonCoreRebaselineFlags();
+                }
             }
         } catch (error) {
             const detail =
@@ -1011,9 +1120,27 @@ export class CloudLiveSession {
             this._options.onConnectionStatus?.('error', detail);
             throw error;
         }
-        this._reportedConnected = true;
-        this._readyOnce = true;
-        this._options.onConnectionStatus?.('connected');
+    }
+
+    private async _pruneNonLiveGlyphWal(): Promise<void> {
+        await this._ensureWalLoaded();
+        if (this._wal.health !== 'ready') {
+            return;
+        }
+        let pruned = false;
+        for (const record of this._wal.recordsFor()) {
+            if (!record.documentId.startsWith('glyph:')) {
+                continue;
+            }
+            if (this._desiredDocumentIds.has(record.documentId)) {
+                continue;
+            }
+            await this._wal.acknowledge(record);
+            pruned = true;
+        }
+        if (pruned) {
+            this._emitPendingSyncCount();
+        }
     }
 
     private async _replayPendingHttpWal(options?: {
@@ -1036,6 +1163,11 @@ export class CloudLiveSession {
                 continue;
             }
             if (!includeLiveAdapters && this._adapters.has(record.documentId)) {
+                continue;
+            }
+            if (!this._desiredDocumentIds.has(record.documentId)) {
+                await this._wal.acknowledge(record);
+                this._emitPendingSyncCount();
                 continue;
             }
             if (!record.updateBase64 || !record.collaborationMessage) {
@@ -1067,18 +1199,22 @@ export class CloudLiveSession {
     ): Promise<void> {
         const deadline = Date.now() + timeoutMs;
         while (Date.now() < deadline) {
-            const pending = [...this._desiredDocumentIds].filter(
-                (documentId) => {
-                    const adapter = this._adapters.get(documentId);
-                    if (!adapter) {
-                        return true;
-                    }
-                    if (typeof adapter.isTransportSynced === 'function') {
-                        return !adapter.isTransportSynced();
-                    }
-                    return adapter.status !== 'connected';
+            const pending = [
+                FONT_CORE_DOCUMENT_ID,
+                FONT_DEPS_DOCUMENT_ID
+            ].filter((documentId) => {
+                if (!this._desiredDocumentIds.has(documentId)) {
+                    return false;
                 }
-            );
+                const adapter = this._adapters.get(documentId);
+                if (!adapter) {
+                    return true;
+                }
+                if (typeof adapter.isTransportSynced === 'function') {
+                    return !adapter.isTransportSynced();
+                }
+                return adapter.status !== 'connected';
+            });
             if (!pending.length) {
                 return;
             }
@@ -1097,10 +1233,27 @@ export class CloudLiveSession {
     }
 
     private async _catchUpLiveSubsetAndDeps(): Promise<void> {
-        const liveGlyphs = [...this._desiredDocumentIds].filter(
+        const buffer =
+            typeof window !== 'undefined'
+                ? (
+                      window as Window & {
+                          glyphCanvas?: {
+                              textRunEditor?: { glyphNameBuffer?: string[] };
+                          };
+                      }
+                  ).glyphCanvas?.textRunEditor?.glyphNameBuffer || []
+                : [];
+        const fromNames = liveGlyphDocumentIdsFromSubset(this._options.bridge, [
+            ...activeEditorGlyphNames(),
+            ...buffer
+        ]);
+        const liveGlyphs = [
+            ...new Set([...this._desiredDocumentIds, ...fromNames])
+        ].filter(
             (documentId) =>
                 documentId !== FONT_CORE_DOCUMENT_ID &&
-                documentId !== FONT_DEPS_DOCUMENT_ID
+                documentId !== FONT_DEPS_DOCUMENT_ID &&
+                documentId.startsWith('glyph:')
         );
         const tokens = this._options.bridge.listGlyphRevisionTokens?.() ?? [];
         const glyphTargets = liveGlyphs.map((documentId) => {
@@ -1120,8 +1273,8 @@ export class CloudLiveSession {
             }
             await catchUpCloudDocument({
                 bridge: this._options.bridge,
-                token: this._options.token,
-                roomUrl: this._options.roomUrl,
+                token: this._token,
+                roomUrl: this._roomUrl,
                 websiteBaseUrl: this._options.websiteBaseUrl,
                 assetId: this._options.assetId,
                 documentId: FONT_DEPS_DOCUMENT_ID

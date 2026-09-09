@@ -2395,26 +2395,34 @@ describe('cloud save seed capture', () => {
 });
 
 describe('CloudPlugin glyph catch-up from core revision map', () => {
-    test('HTTP-catches glyphs whose docs lag the live core, even outside the editing subset', async () => {
+    test('HTTP-catches stale glyphs in the editing subset, not the whole catalog', async () => {
         const plugin = new CloudPlugin();
         const catchUpDocuments = jest.fn().mockResolvedValue(['glyph:stale-a']);
         plugin._liveSession = { catchUpDocuments };
         plugin._activeAssetSizeBridge = {
             hasSparseWorkingSet: () => false,
             listSparseWorkingGlyphIds: () => [],
+            glyphDocumentIdForName: (name) =>
+                name === 'A' ? 'glyph:stale-a' : null,
             listGlyphRevisionTokens: () => [
                 { glyphId: 'stale-a', revision: 'rev-2' },
+                { glyphId: 'stale-z', revision: 'rev-9' },
                 { glyphId: 'fresh-b', revision: 'rev-1' }
             ],
             glyphHasCatchUpRevision: (documentId, revision) =>
                 documentId === 'glyph:fresh-b' && revision === 'rev-1'
         };
         const originalFontManager = window.fontManager;
+        const originalCanvas = window.glyphCanvas;
         window.fontManager = {
-            getConstrainedEditingSubsetGlyphs: () => [],
-            getEditingSubsetSnapshot: () => [],
-            getLiveVisibleGlyphNames: () => []
+            getActiveEditorGlyphName: () => 'A',
+            getConstrainedEditingSubsetGlyphs: () => ['A', 'Z'],
+            getEditingSubsetSnapshot: () => ['A', 'Z'],
+            getLiveVisibleGlyphNames: () => ['A', 'Z'],
+            deriveSubsetGlyphsFromText: () => ['A', 'Z'],
+            resolveEditingTextForCompile: () => 'Hamburgevons'
         };
+        window.glyphCanvas = { textRunEditor: { glyphNameBuffer: [] } };
 
         try {
             plugin._catchUpFromCoreRevisionMap();
@@ -2430,6 +2438,7 @@ describe('CloudPlugin glyph catch-up from core revision map', () => {
             );
         } finally {
             window.fontManager = originalFontManager;
+            window.glyphCanvas = originalCanvas;
         }
     });
 });

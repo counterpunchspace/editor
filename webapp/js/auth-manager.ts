@@ -237,16 +237,20 @@ class AuthManager {
     async fetchAuthMeWithLocalRetry(
         headers: Record<string, string>
     ): Promise<Response> {
-        const isLocalWebsite = this.websiteURL === 'http://localhost:8788';
+        const isLocalWebsite = this.isLocalWebsiteURL();
         const maxAttempts = isLocalWebsite ? 4 : 1;
         const localWebsiteCandidates = isLocalWebsite
             ? [
+                  this.websiteURL,
+                  'https://localhost:8788',
+                  'https://127.0.0.1:8788',
                   'http://localhost:8788',
                   'http://127.0.0.1:8788',
                   'http://[::1]:8788'
-              ]
+              ].filter((url, index, all) => all.indexOf(url) === index)
             : [this.websiteURL];
         let lastResponse: Response | null = null;
+        let lastError: unknown = null;
 
         for (let attempt = 1; attempt <= maxAttempts; attempt++) {
             for (const candidateWebsiteURL of localWebsiteCandidates) {
@@ -255,39 +259,54 @@ class AuthManager {
                     authMeUrl.searchParams.set('_ts', String(Date.now()));
                 }
 
-                const response = await fetch(authMeUrl.toString(), {
-                    credentials: 'include',
-                    cache: 'no-store',
-                    headers
-                });
+                try {
+                    const response = await fetch(authMeUrl.toString(), {
+                        credentials: 'include',
+                        cache: 'no-store',
+                        headers
+                    });
+                    lastError = null;
+                    lastResponse = response;
 
-                lastResponse = response;
-
-                // Prefer the first candidate that returns anything other than 404.
-                if (response.status !== 404) {
-                    if (this.websiteURL !== candidateWebsiteURL) {
-                        console.log(
-                            '[Auth] Switched local website endpoint candidate:',
-                            candidateWebsiteURL
-                        );
-                        this.websiteURL = candidateWebsiteURL;
+                    // Prefer the first candidate that returns anything other than 404.
+                    if (response.status !== 404) {
+                        if (this.websiteURL !== candidateWebsiteURL) {
+                            console.log(
+                                '[Auth] Switched local website endpoint candidate:',
+                                candidateWebsiteURL
+                            );
+                            this.websiteURL = candidateWebsiteURL;
+                        }
+                        return response;
                     }
-                    return response;
+                } catch (error) {
+                    lastError = error;
+                    console.warn(
+                        '[Auth] /api/auth/me network error:',
+                        candidateWebsiteURL,
+                        error instanceof Error ? error.message : String(error)
+                    );
                 }
             }
 
             if (!(isLocalWebsite && attempt < maxAttempts)) {
+                if (!lastResponse && lastError) {
+                    throw lastError;
+                }
                 return lastResponse as Response;
             }
 
             console.warn(
-                '[Auth] /api/auth/me returned 404 on all local loopback candidates, retrying...',
+                '[Auth] /api/auth/me failed on all local loopback candidates, retrying...',
                 `attempt ${attempt}/${maxAttempts}`
             );
 
             await new Promise((resolve) => setTimeout(resolve, 250));
         }
 
+        if (!lastResponse && lastError) {
+            throw lastError;
+        }
         return lastResponse as Response;
     }
 
@@ -295,6 +314,10 @@ class AuthManager {
         email = 'local-dev@counterpunch.test'
     ): Promise<AuthUser | null> {
         if (!this.isLocalWebsiteURL()) {
+            return this.checkAuthStatus();
+        }
+
+        if (this.sessionToken || this.getSessionToken()) {
             return this.checkAuthStatus();
         }
 
@@ -339,6 +362,22 @@ class AuthManager {
         const currentUser = await this.checkAuthStatus();
         if (currentUser) {
             return currentUser;
+        }
+
+        const hasExistingSession = Boolean(
+            this.sessionToken || this.getSessionToken()
+        );
+        if (hasExistingSession && this.isLocalWebsiteURL()) {
+            for (let attempt = 1; attempt <= 3; attempt++) {
+                await new Promise((resolve) =>
+                    setTimeout(resolve, 150 * attempt)
+                );
+                const retried = await this.checkAuthStatus();
+                if (retried) {
+                    return retried;
+                }
+            }
+            return null;
         }
 
         if (this.isLocalWebsiteURL()) {

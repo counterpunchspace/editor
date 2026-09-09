@@ -3361,7 +3361,7 @@ describe('CloudAdapter durability failures', () => {
         }
     });
 
-    it('forces a reconnect when the room revokes write access', () => {
+    it('keeps the live socket when the room rejects a read-only write', () => {
         const statuses = [];
         const adapter = new CloudAdapter({
             assetId: 'asset-123',
@@ -3374,6 +3374,7 @@ describe('CloudAdapter durability failures', () => {
             readyState: 1,
             close
         };
+        adapter._status = 'connected';
 
         adapter._handleMessage(
             JSON.stringify({
@@ -3382,11 +3383,16 @@ describe('CloudAdapter durability failures', () => {
             })
         );
 
-        expect(statuses).toContainEqual({
+        expect(adapter.getAccessSnapshot().lastServerError).toEqual(
+            expect.objectContaining({
+                message: 'Write access requires owner or editor role'
+            })
+        );
+        expect(statuses).not.toContainEqual({
             status: 'error',
             detail: 'Write access requires owner or editor role'
         });
-        expect(close).toHaveBeenCalledWith(4000, 'server-access-change');
+        expect(close).not.toHaveBeenCalled();
     });
 
     it('surfaces asset deletion from the room close reason without reconnecting', async () => {
@@ -5150,5 +5156,68 @@ describe('HTTP seed (POST /state for new rooms)', () => {
         adapter._handleBinaryFanout(body);
         expect(applied).toEqual([[9, 8, 7]]);
         expect(adapter._pendingSyncPageMeta).toBeNull();
+    });
+
+    it('falls back to per-shard hydrate after a transient pack fetch failure', async () => {
+        const originalFetch = global.fetch;
+        const adapter = new CloudAdapter({
+            assetId: 'asset-pack',
+            websiteBaseUrl: 'https://editor.example'
+        });
+        global.fetch = jest.fn(async (input, init) => {
+            const url = String(input);
+            if (init?.method === 'POST' || String(url).includes('/pack')) {
+                throw new Error('Failed to fetch');
+            }
+            return {
+                ok: true,
+                status: 200,
+                arrayBuffer: async () => new Uint8Array([7, 8, 9]).buffer
+            };
+        });
+        try {
+            const result = await adapter.hydrateDocumentSet(
+                'token',
+                'wss://rooms.example/room/asset-pack',
+                ['glyph:id-a']
+            );
+            expect([...result.get('glyph:id-a')]).toEqual([7, 8, 9]);
+        } finally {
+            global.fetch = originalFetch;
+        }
+    });
+
+    it('falls back to per-shard hydrate after a pack fetch abort without retrying the hang', async () => {
+        const originalFetch = global.fetch;
+        const adapter = new CloudAdapter({
+            assetId: 'asset-pack-abort',
+            websiteBaseUrl: 'https://editor.example'
+        });
+        let packPosts = 0;
+        global.fetch = jest.fn(async (input, init) => {
+            const url = String(input);
+            if (init?.method === 'POST' || String(url).includes('/pack')) {
+                packPosts += 1;
+                const abort = new Error('The operation was aborted');
+                abort.name = 'AbortError';
+                throw abort;
+            }
+            return {
+                ok: true,
+                status: 200,
+                arrayBuffer: async () => new Uint8Array([7, 8, 9]).buffer
+            };
+        });
+        try {
+            const result = await adapter.hydrateDocumentSet(
+                'token',
+                'wss://rooms.example/room/asset-pack-abort',
+                ['glyph:id-a']
+            );
+            expect(packPosts).toBe(1);
+            expect([...result.get('glyph:id-a')]).toEqual([7, 8, 9]);
+        } finally {
+            global.fetch = originalFetch;
+        }
     });
 });

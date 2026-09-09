@@ -77,6 +77,110 @@ const {
 } = require('../js/cloud-live-session.ts');
 const { CloudAdapter } = require('../js/cloud-adapter.ts');
 
+function createIndexedDbMock() {
+    const records = new Map();
+    const store = {
+        put: jest.fn((value) => {
+            records.set(value.key, value);
+        }),
+        get: jest.fn((key) => {
+            const request = {
+                result: records.get(key),
+                onerror: null
+            };
+            Object.defineProperty(request, 'onsuccess', {
+                configurable: true,
+                set(fn) {
+                    this._onsuccess = fn;
+                    if (typeof fn === 'function') {
+                        fn();
+                    }
+                },
+                get() {
+                    return this._onsuccess;
+                }
+            });
+            return request;
+        }),
+        delete: jest.fn((key) => {
+            records.delete(key);
+        }),
+        getAll: jest.fn(() => {
+            const request = {
+                result: Array.from(records.values()),
+                onerror: null
+            };
+            Object.defineProperty(request, 'onsuccess', {
+                configurable: true,
+                set(fn) {
+                    this._onsuccess = fn;
+                    if (typeof fn === 'function') {
+                        fn();
+                    }
+                },
+                get() {
+                    return this._onsuccess;
+                }
+            });
+            return request;
+        })
+    };
+    const db = {
+        objectStoreNames: { contains: () => true },
+        createObjectStore: jest.fn(() => store),
+        transaction: jest.fn(() => {
+            const transaction = {
+                objectStore: () => store,
+                onerror: null,
+                onabort: null,
+                error: null
+            };
+            Object.defineProperty(transaction, 'oncomplete', {
+                configurable: true,
+                set(fn) {
+                    this._oncomplete = fn;
+                    if (typeof fn === 'function') {
+                        fn();
+                    }
+                },
+                get() {
+                    return this._oncomplete;
+                }
+            });
+            return transaction;
+        }),
+        close: jest.fn()
+    };
+    return {
+        open: jest.fn(() => {
+            const request = {
+                result: db,
+                onerror: null
+            };
+            Object.defineProperty(request, 'onsuccess', {
+                configurable: true,
+                set(fn) {
+                    this._onsuccess = fn;
+                    if (typeof fn === 'function') {
+                        fn();
+                    }
+                },
+                get() {
+                    return this._onsuccess;
+                }
+            });
+            Object.defineProperty(request, 'onupgradeneeded', {
+                configurable: true,
+                set() {},
+                get() {
+                    return null;
+                }
+            });
+            return request;
+        })
+    };
+}
+
 describe('CloudLiveSession', () => {
     const originalFetch = global.fetch;
 
@@ -136,14 +240,18 @@ describe('CloudLiveSession', () => {
         );
     });
 
-    test('activeEditorGlyphNames reads the active outline glyph only', () => {
+    test('activeEditorGlyphNames falls back to the canvas glyph when outline is inactive', () => {
         expect(activeEditorGlyphNames(null)).toEqual([]);
         expect(
             activeEditorGlyphNames({ getActiveEditorGlyphName: () => 'B' })
         ).toEqual(['B']);
         window.fontManager = { getActiveEditorGlyphName: () => 'A' };
         expect(activeEditorGlyphNames()).toEqual(['A']);
+        window.fontManager = { getActiveEditorGlyphName: () => null };
+        window.glyphCanvas = { getCurrentGlyphName: () => 'a' };
+        expect(activeEditorGlyphNames()).toEqual(['a']);
         delete window.fontManager;
+        delete window.glyphCanvas;
     });
 
     test('connects font-core, font-deps, and only the active glyph room', async () => {
@@ -193,6 +301,24 @@ describe('CloudLiveSession', () => {
             (adapter) => adapter.documentId === 'glyph:aaa'
         );
         expect(glyphAdapter.sendForwardedUpdate).toHaveBeenCalledTimes(1);
+        session.disconnect();
+    });
+
+    test('keepRequestedGlyphSockets opens every requested glyph room', async () => {
+        const session = new CloudLiveSession({
+            assetId: 'asset-1',
+            websiteBaseUrl: 'https://editor.example',
+            token: 'token',
+            roomUrl: 'wss://rooms.example/room/asset-1',
+            bridge: {},
+            bootstrapMode: 'skip',
+            keepRequestedGlyphSockets: true
+        });
+        await session.syncLiveDocumentIds(['glyph:aaa', 'glyph:bbb']);
+        expect(session.liveDocumentIds().sort()).toEqual(
+            ['font-core', 'font-deps', 'glyph:aaa', 'glyph:bbb'].sort()
+        );
+        session.disconnect();
     });
 
     test('attaching or detaching the active glyph room does not recatch-up or mark the session syncing', async () => {
@@ -245,7 +371,9 @@ describe('CloudLiveSession', () => {
             roomUrl: 'wss://rooms.example/room/asset-1',
             bridge: {
                 onLocalUpdate: (cb) => listeners.add(cb),
-                offLocalUpdate: (cb) => listeners.delete(cb)
+                offLocalUpdate: (cb) => listeners.delete(cb),
+                glyphDocumentIdForName: (name) =>
+                    name === 'B' ? 'glyph:bbb' : null
             },
             bootstrapMode: 'skip'
         });
@@ -275,6 +403,62 @@ describe('CloudLiveSession', () => {
         expect(posted[0].body.seq).toBe(1);
         expect(mockConnectDirect).toHaveBeenCalledTimes(connectCount);
         expect(session.hasLiveDocument('glyph:bbb')).toBe(false);
+    });
+
+    test('persistOutgoingUpdate does not WAL catalog glyphs outside the live subset', async () => {
+        const originalIndexedDb = global.indexedDB;
+        global.indexedDB = createIndexedDbMock();
+        const envelope = (transactionId) => ({
+            schemaVersion: 1,
+            transactionId,
+            localSequence: 1,
+            roomSequence: null,
+            baseRevision: null,
+            changes: [],
+            metadata: {
+                editType: 'glyph',
+                changedGlyphNames: ['A'],
+                changedLayerIds: [],
+                workerReplayTargets: [],
+                historyItemId: transactionId,
+                historyAction: 'change',
+                undoScope: 'glyph'
+            },
+            source: 'test',
+            label: null,
+            summary: '',
+            windowId: 'w1',
+            timestamp: 1
+        });
+        try {
+            const session = new CloudLiveSession({
+                assetId: 'asset-wal',
+                websiteBaseUrl: 'https://editor.example',
+                token: 'token',
+                roomUrl: 'wss://rooms.example/room/asset-wal',
+                bridge: {},
+                bootstrapMode: 'skip'
+            });
+            await session.syncLiveDocumentIds(['glyph:aaa']);
+            expect(
+                await session.persistOutgoingUpdate(
+                    new Uint8Array([1, 2]),
+                    envelope('live-aaa'),
+                    'glyph:aaa'
+                )
+            ).toBe(true);
+            expect(session.pendingSyncCount).toBe(1);
+            expect(
+                await session.persistOutgoingUpdate(
+                    new Uint8Array([3, 4]),
+                    envelope('catalog-bbb'),
+                    'glyph:bbb'
+                )
+            ).toBe(true);
+            expect(session.pendingSyncCount).toBe(1);
+        } finally {
+            global.indexedDB = originalIndexedDb;
+        }
     });
 
     test('sendForwardedUpdate POSTs when the glyph has no sticky socket', async () => {
@@ -660,6 +844,51 @@ describe('CloudLiveSession', () => {
         expect(applyDocumentCatchUp.mock.calls[0][0]).toBe('glyph:aaa');
     });
 
+    test('HTTP catch-up uses refreshed credentials instead of the original token', async () => {
+        const applyDocumentCatchUp = jest.fn().mockReturnValue(true);
+        const session = new CloudLiveSession({
+            assetId: 'asset-1',
+            websiteBaseUrl: 'https://editor.example',
+            token: 'stale-token',
+            roomUrl: 'wss://rooms.example/room/asset-1',
+            bridge: { applyDocumentCatchUp },
+            bootstrapMode: 'skip',
+            refreshCredentials: async () => ({
+                token: 'fresh-token',
+                roomUrl: 'wss://rooms.example/room/asset-1'
+            })
+        });
+        await session.syncLiveDocumentIds(['glyph:aaa']);
+        const coreOptions = CloudAdapter.mock.calls
+            .map(([options]) => options)
+            .find((options) => options.documentId === 'font-core');
+        await coreOptions.refreshCredentials();
+        const authHeaders = [];
+        global.fetch = jest.fn(async (url, opts) => {
+            authHeaders.push(opts?.headers?.Authorization);
+            return {
+                ok: true,
+                status: 200,
+                headers: new Headers({
+                    'content-type': 'application/json'
+                }),
+                json: async () => ({
+                    update: Buffer.from([9, 9]).toString('base64')
+                })
+            };
+        });
+        await session.catchUpDocuments(['glyph:aaa'], {
+            includeLiveDocuments: true
+        });
+        expect(authHeaders.length).toBeGreaterThan(0);
+        expect(
+            authHeaders.every((header) => header === 'Bearer fresh-token')
+        ).toBe(true);
+        expect(
+            authHeaders.some((header) => header === 'Bearer stale-token')
+        ).toBe(false);
+    });
+
     test('matchCoreRevision false does not require a core revision token', async () => {
         const applyDocumentCatchUp = jest.fn().mockReturnValue(true);
         const session = new CloudLiveSession({
@@ -779,6 +1008,134 @@ describe('CloudLiveSession', () => {
         );
         expect(session.getAccessSnapshot().accessRevoked).toBe(true);
         expect(session.getAccessSnapshot().reconnectForbidden).toBe(true);
+        session.disconnect();
+    });
+
+    test('ready barrier does not wait for the sticky glyph socket', async () => {
+        const statuses = [];
+        global.fetch = jest.fn(async () => ({
+            ok: true,
+            status: 200,
+            headers: new Headers({
+                'content-type': 'application/json'
+            }),
+            json: async () => ({
+                update: Buffer.from([9, 9]).toString('base64')
+            }),
+            arrayBuffer: async () => new Uint8Array([9, 9]).buffer
+        }));
+        const session = new CloudLiveSession({
+            assetId: 'asset-1',
+            websiteBaseUrl: 'https://editor.example',
+            token: 'token',
+            roomUrl: 'wss://rooms.example/room/asset-1',
+            readyBarrierTimeoutMs: 40,
+            bridge: {},
+            bootstrapMode: 'skip',
+            onConnectionStatus: (status) => {
+                statuses.push(status);
+            }
+        });
+        await session.syncLiveDocumentIds(['glyph:aaa']);
+        jest.useFakeTimers();
+        try {
+            const glyphAdapter = CloudAdapter.mock.results
+                .map((result) => result.value)
+                .find((adapter) => adapter.documentId === 'glyph:aaa');
+            expect(glyphAdapter).toBeTruthy();
+            glyphAdapter.isTransportSynced.mockReturnValue(false);
+            const coreOptions = CloudAdapter.mock.calls.find(
+                (call) =>
+                    !call[0].documentId || call[0].documentId === 'font-core'
+            )[0];
+            coreOptions.onConnectionStatus('connected');
+            await jest.advanceTimersByTimeAsync(80);
+            await Promise.resolve();
+            expect(statuses).toContain('connected');
+            expect(statuses).not.toContain('error');
+        } finally {
+            session.disconnect();
+            jest.useRealTimers();
+        }
+    });
+
+    test('reconnect reports connected before visible rebaseline finishes', async () => {
+        const statuses = [];
+        let releaseCompile;
+        const compileGate = new Promise((resolve) => {
+            releaseCompile = resolve;
+        });
+        const originalFontManager = window.fontManager;
+        window.fontManager = {
+            recompileEditingFont: jest.fn(async () => {
+                await compileGate;
+                return false;
+            })
+        };
+        const session = new CloudLiveSession({
+            assetId: 'asset-1',
+            websiteBaseUrl: 'https://editor.example',
+            token: 'token',
+            roomUrl: 'wss://rooms.example/room/asset-1',
+            bridge: {},
+            bootstrapMode: 'skip',
+            onConnectionStatus: (status) => {
+                statuses.push(status);
+            }
+        });
+        try {
+            await session.syncLiveDocumentIds([]);
+            expect(statuses).toContain('connected');
+            session.coreAdapter.needsVisibleRebaseline = true;
+            const coreOptions = CloudAdapter.mock.calls.find(
+                (call) =>
+                    !call[0].documentId || call[0].documentId === 'font-core'
+            )[0];
+            const before = statuses.length;
+            coreOptions.onConnectionStatus('connected');
+            const deadline = Date.now() + 1000;
+            while (
+                !window.fontManager.recompileEditingFont.mock.calls.length &&
+                Date.now() < deadline
+            ) {
+                await new Promise((resolve) => {
+                    setTimeout(resolve, 10);
+                });
+            }
+            expect(statuses.slice(before)).not.toContain('syncing');
+            expect(statuses.at(-1)).toBe('connected');
+            expect(window.fontManager.recompileEditingFont).toHaveBeenCalled();
+            releaseCompile();
+        } finally {
+            session.disconnect();
+            window.fontManager = originalFontManager;
+        }
+    });
+
+    test('reconnect auth handshake does not flip the plugin off connected', async () => {
+        const statuses = [];
+        const session = new CloudLiveSession({
+            assetId: 'asset-1',
+            websiteBaseUrl: 'https://editor.example',
+            token: 'token',
+            roomUrl: 'wss://rooms.example/room/asset-1',
+            bridge: {},
+            bootstrapMode: 'skip',
+            onConnectionStatus: (status) => {
+                statuses.push(status);
+            }
+        });
+        await session.syncLiveDocumentIds([]);
+        expect(statuses.at(-1)).toBe('connected');
+        const afterReady = statuses.length;
+        const coreOptions = CloudAdapter.mock.calls.find(
+            (call) => !call[0].documentId || call[0].documentId === 'font-core'
+        )[0];
+        coreOptions.onConnectionStatus('disconnected');
+        coreOptions.onConnectionStatus('connecting');
+        coreOptions.onConnectionStatus('authenticating');
+        expect(statuses.at(-1)).toBe('connected');
+        expect(statuses.slice(afterReady)).toEqual([]);
         session.disconnect();
     });
 });
