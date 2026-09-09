@@ -2,22 +2,76 @@ import type { CollaborationMessageEnvelope } from './collaboration-message';
 
 const DB_NAME = 'counterpunch-cloud-outbox';
 const STORE = 'pending-transactions';
+const DB_VERSION = 2;
+
+export type CloudWalState = 'prepared' | 'applied' | 'sent' | 'acknowledged';
+
+export type CloudWalReceipt = {
+    generationId: string;
+    clientTransactionId: string;
+    digest: string;
+    byteLength: number;
+};
+
+export type CloudWalRevisionObligation = {
+    kind: 'glyph-revision-publication';
+    glyphIds: string[];
+    published?: boolean;
+};
+
+export type CloudWalDocumentUpdate = {
+    documentId: string;
+    baseStateVectorBase64?: string;
+    updateBase64?: string;
+};
 
 export type CloudWalRecord = {
+    schemaVersion?: 1 | 2;
+    transactionId?: string;
     assetId: string;
     documentId: string;
     clientTransactionId: string;
+    generationId?: string;
+    operations?: unknown[];
+    documentUpdates?: CloudWalDocumentUpdate[];
+    collaborationMessage: CollaborationMessageEnvelope;
+    collaborationMetadata?: CollaborationMessageEnvelope['metadata'];
+    revisionObligations?: CloudWalRevisionObligation[];
+    state?: CloudWalState;
+    attempts: number;
+    receipts?: CloudWalReceipt[];
     updateBytes?: Uint8Array;
     updateBase64?: string;
-    collaborationMessage: CollaborationMessageEnvelope;
     createdAt: number;
-    attempts: number;
     lastError?: string;
-    generationId?: string;
+    quarantined?: boolean;
 };
 
 export function copyUpdateBytes(bytes: Uint8Array): Uint8Array {
     return bytes.slice();
+}
+
+export function bytesToBase64(bytes: Uint8Array): string {
+    if (!bytes?.byteLength) {
+        return '';
+    }
+    let binary = '';
+    for (let i = 0; i < bytes.length; i += 1) {
+        binary += String.fromCharCode(bytes[i]);
+    }
+    return btoa(binary);
+}
+
+export function base64ToBytes(encoded: string | undefined): Uint8Array {
+    if (!encoded) {
+        return new Uint8Array();
+    }
+    const binary = atob(encoded);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i += 1) {
+        bytes[i] = binary.charCodeAt(i);
+    }
+    return bytes;
 }
 
 export function walUpdateBytes(record: CloudWalRecord): Uint8Array {
@@ -42,15 +96,21 @@ export function walUpdateBytes(record: CloudWalRecord): Uint8Array {
         );
     }
     const encoded = record.updateBase64;
-    if (!encoded) {
-        return new Uint8Array();
+    if (encoded) {
+        return base64ToBytes(encoded);
     }
-    const binary = atob(encoded);
-    const bytes = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i += 1) {
-        bytes[i] = binary.charCodeAt(i);
+    const primary = record.documentUpdates?.find(
+        (entry) => entry.documentId === record.documentId && entry.updateBase64
+    );
+    if (primary?.updateBase64) {
+        return base64ToBytes(primary.updateBase64);
     }
-    return bytes;
+    const first = record.documentUpdates?.find((entry) => entry.updateBase64);
+    return base64ToBytes(first?.updateBase64);
+}
+
+export function serializeWalOperations(operations: unknown[]): unknown[] {
+    return JSON.parse(JSON.stringify(operations ?? []));
 }
 
 export type CloudWalHealth = 'initializing' | 'ready' | 'unavailable';
@@ -64,13 +124,88 @@ export function recordKey(
     return `${record.assetId}:${record.documentId}:${record.clientTransactionId}`;
 }
 
+function normalizeLoadedRecord(record: CloudWalRecord): CloudWalRecord {
+    const updateBytes = walUpdateBytes(record);
+    const schemaVersion = record.schemaVersion === 2 ? 2 : 1;
+    return {
+        ...record,
+        schemaVersion,
+        transactionId: record.transactionId || record.clientTransactionId,
+        operations: Array.isArray(record.operations) ? record.operations : [],
+        documentUpdates: Array.isArray(record.documentUpdates)
+            ? record.documentUpdates
+            : [],
+        collaborationMetadata:
+            record.collaborationMetadata ||
+            record.collaborationMessage?.metadata,
+        revisionObligations: Array.isArray(record.revisionObligations)
+            ? record.revisionObligations
+            : [],
+        receipts: Array.isArray(record.receipts) ? record.receipts : [],
+        state:
+            record.state ||
+            (updateBytes.byteLength > 0 ? 'applied' : 'prepared'),
+        attempts: Number(record.attempts ?? 0),
+        updateBytes,
+        quarantined: record.quarantined === true
+    };
+}
+
+function persistableRecord(record: CloudWalRecord): CloudWalRecord & {
+    key: string;
+} {
+    const key = recordKey(record);
+    const updateBytes = walUpdateBytes(record);
+    const documentUpdates: CloudWalDocumentUpdate[] = (
+        record.documentUpdates || []
+    ).map((entry) => ({
+        documentId: entry.documentId,
+        baseStateVectorBase64: entry.baseStateVectorBase64,
+        updateBase64: entry.updateBase64
+    }));
+    if (
+        updateBytes.byteLength > 0 &&
+        !documentUpdates.some((entry) => entry.documentId === record.documentId)
+    ) {
+        documentUpdates.push({
+            documentId: record.documentId,
+            baseStateVectorBase64: undefined,
+            updateBase64: bytesToBase64(updateBytes)
+        });
+    }
+    return {
+        schemaVersion: 2,
+        transactionId: record.transactionId || record.clientTransactionId,
+        assetId: record.assetId,
+        documentId: record.documentId,
+        clientTransactionId: record.clientTransactionId,
+        generationId: record.generationId,
+        operations: serializeWalOperations(record.operations || []),
+        documentUpdates,
+        collaborationMessage: record.collaborationMessage,
+        collaborationMetadata:
+            record.collaborationMetadata ||
+            record.collaborationMessage?.metadata,
+        revisionObligations: record.revisionObligations || [],
+        state: record.state || 'prepared',
+        attempts: Number(record.attempts ?? 0),
+        receipts: record.receipts || [],
+        createdAt: record.createdAt,
+        lastError: record.lastError,
+        quarantined: record.quarantined === true,
+        updateBytes: copyUpdateBytes(updateBytes),
+        updateBase64: bytesToBase64(updateBytes),
+        key
+    };
+}
+
 function openDatabase(): Promise<IDBDatabase> {
     return new Promise((resolve, reject) => {
         if (typeof indexedDB === 'undefined') {
             reject(new Error('IndexedDB is unavailable'));
             return;
         }
-        const request = indexedDB.open(DB_NAME, 1);
+        const request = indexedDB.open(DB_NAME, DB_VERSION);
         request.onupgradeneeded = () => {
             if (!request.result.objectStoreNames.contains(STORE)) {
                 request.result.createObjectStore(STORE, { keyPath: 'key' });
@@ -92,12 +227,40 @@ export class CloudDurableWal {
     }
 
     get pendingCount(): number {
-        return this._records.size;
+        return [...this._records.values()].filter(
+            (record) =>
+                record.state !== 'acknowledged' && record.quarantined !== true
+        ).length;
     }
 
     recordsFor(documentId?: string): CloudWalRecord[] {
         return [...this._records.values()].filter(
-            (record) => !documentId || record.documentId === documentId
+            (record) =>
+                record.quarantined !== true &&
+                (!documentId ||
+                    record.documentId === documentId ||
+                    record.documentUpdates?.some(
+                        (entry) => entry.documentId === documentId
+                    ))
+        );
+    }
+
+    replayableRecords(generationId?: string | null): CloudWalRecord[] {
+        const current = String(generationId || '');
+        return this.recordsFor().filter((record) => {
+            if (record.quarantined) {
+                return false;
+            }
+            if (!current || !record.generationId) {
+                return true;
+            }
+            return record.generationId === current;
+        });
+    }
+
+    quarantinedRecords(): CloudWalRecord[] {
+        return [...this._records.values()].filter(
+            (record) => record.quarantined === true
         );
     }
 
@@ -121,16 +284,11 @@ export class CloudDurableWal {
                                 >
                             )
                                 .filter((record) => record.assetId === assetId)
-                                .map(({ key: _key, attempts, ...record }) => {
-                                    const updateBytes = walUpdateBytes(
+                                .map(({ key: _key, ...record }) =>
+                                    normalizeLoadedRecord(
                                         record as CloudWalRecord
-                                    );
-                                    return {
-                                        ...(record as CloudWalRecord),
-                                        attempts: Number(attempts ?? 0),
-                                        updateBytes
-                                    };
-                                })
+                                    )
+                                )
                         );
                 }
             );
@@ -157,21 +315,9 @@ export class CloudDurableWal {
             await new Promise<void>((resolve, reject) => {
                 const tx = db.transaction(STORE, 'readwrite');
                 const store = tx.objectStore(STORE);
-                const key = recordKey(record);
-                const updateBytes = walUpdateBytes(record);
-                store.put({
-                    assetId: record.assetId,
-                    documentId: record.documentId,
-                    clientTransactionId: record.clientTransactionId,
-                    collaborationMessage: record.collaborationMessage,
-                    createdAt: record.createdAt,
-                    attempts: record.attempts,
-                    lastError: record.lastError,
-                    generationId: record.generationId,
-                    updateBytes: copyUpdateBytes(updateBytes),
-                    key
-                });
-                const verify = store.get(key);
+                const stored = persistableRecord(record);
+                store.put(stored);
+                const verify = store.get(stored.key);
                 verify.onerror = () => reject(verify.error);
                 verify.onsuccess = () => {
                     if (!verify.result) {
@@ -186,10 +332,13 @@ export class CloudDurableWal {
                 tx.onerror = () => reject(tx.error);
                 tx.onabort = () => reject(tx.error);
             }).finally(() => db.close());
-            this._records.set(recordKey(record), {
-                ...record,
-                updateBytes: walUpdateBytes(record)
-            });
+            this._records.set(
+                recordKey(record),
+                normalizeLoadedRecord({
+                    ...record,
+                    ...persistableRecord(record)
+                })
+            );
             this._loadedAssetId = record.assetId;
             this._health = 'ready';
         } catch (error) {
@@ -203,9 +352,13 @@ export class CloudDurableWal {
             throw new Error('Cloud write-ahead storage is unavailable');
         }
         const probe: CloudWalRecord = {
+            schemaVersion: 2,
+            transactionId: `probe:${Date.now()}`,
             assetId: this._loadedAssetId || 'probe',
             documentId: 'wal-probe',
             clientTransactionId: `probe:${Date.now()}`,
+            operations: [],
+            documentUpdates: [],
             updateBase64: '',
             collaborationMessage: {
                 schemaVersion: 1,
@@ -229,6 +382,7 @@ export class CloudDurableWal {
                 windowId: null,
                 timestamp: Date.now()
             },
+            state: 'prepared',
             createdAt: Date.now(),
             attempts: 0
         };
@@ -274,13 +428,13 @@ export class CloudDurableWal {
         }).finally(() => db.close());
     }
 
-    async discardOtherGenerations(
+    async quarantineOtherGenerations(
         assetId: string,
         currentGenerationId: string
-    ): Promise<number> {
+    ): Promise<CloudWalRecord[]> {
         const current = String(currentGenerationId || '');
         if (!current) {
-            return 0;
+            return [];
         }
         const stale = [...this._records.values()].filter(
             (record) =>
@@ -289,8 +443,29 @@ export class CloudDurableWal {
                 record.generationId !== current
         );
         for (const record of stale) {
+            await this.append({
+                ...record,
+                quarantined: true
+            });
+        }
+        return stale.map((record) => ({ ...record, quarantined: true }));
+    }
+
+    async discardOtherGenerations(
+        assetId: string,
+        currentGenerationId: string
+    ): Promise<number> {
+        const quarantined = await this.quarantineOtherGenerations(
+            assetId,
+            currentGenerationId
+        );
+        for (const record of quarantined) {
             await this.acknowledge(record);
         }
-        return stale.length;
+        return quarantined.length;
+    }
+
+    exportQuarantined(): CloudWalRecord[] {
+        return this.quarantinedRecords().map((record) => ({ ...record }));
     }
 }

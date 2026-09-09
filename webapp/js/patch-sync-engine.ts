@@ -74,6 +74,7 @@ import {
 } from './change-log';
 import { Logger } from './logger';
 import { pushCollabIntegrityEvent } from './cloud-collab-integrity-debug';
+import { bytesToBase64 } from './cloud-durable-wal';
 import {
     collaborationMessageKey,
     createChangeLogEntriesFromCollaborationMessageEnvelope,
@@ -112,7 +113,6 @@ import {
     GLYPH_REVISIONS_KEY,
     GLYPH_SYNC_MAP_KEY,
     GLYPH_SYNC_REVISION_KEY,
-    areGlyphRevisionOnlyEntries,
     glyphDocumentId,
     glyphIdFromDocumentId,
     type EncodedShard
@@ -578,8 +578,8 @@ export class PatchSyncEngine {
     private _txStartTimeMs: number | null = null;
     /** Next transaction ID counter */
     private _nextTxId = 1;
-    /** When set, cloud WAL intent already persisted; Yjs apply may proceed. */
-    private _cloudWalApplyReady = false;
+    /** Transaction-scoped tokens that already persisted a cloud WAL prepared row. */
+    private _cloudWalApplyTokens = new Set<string>();
     /** Serializes cloud WAL-before-apply commits so callers can await them. */
     private _cloudWalCommitChain: Promise<void> = Promise.resolve();
     /** Serializes persist-then-deliver of local cloud emits after apply. */
@@ -1258,7 +1258,6 @@ export class PatchSyncEngine {
                     repairedGlyphName = glyphName;
                 }
             }
-            this._repairGeometryOrphansAfterConvergedState(documentId);
             this._emitAfterSync();
         } finally {
             this._isApplyingRemote = false;
@@ -1669,7 +1668,6 @@ export class PatchSyncEngine {
             this._rebuildGlyphNameIndexFromDocs();
             this._rehydrateEntireFontJsonFromYDoc();
             this._canonicalizeFullStateRawFontJson();
-            this._repairGeometryOrphansAfterConvergedState();
             this._setupFontUndoManager();
             this._onAfterSync?.();
             this._onRemoteChange?.([]);
@@ -1963,10 +1961,7 @@ export class PatchSyncEngine {
             for (const cb of this._localUpdateListeners) {
                 cb(update, collaborationMessage, emissionEntries, documentId);
             }
-            if (
-                emissionEntries.length > 0 &&
-                !areGlyphRevisionOnlyEntries(emissionEntries)
-            ) {
+            if (emissionEntries.length > 0) {
                 this._yjsWorkerCallback?.(update, emissionEntries, documentId);
             }
             for (const cb of this._committedChangeListeners) {
@@ -4990,16 +4985,11 @@ export class PatchSyncEngine {
             }
             this._reconcileGlyphDocsAfterRemoteEntries(effectiveRemoteEntries);
             this._syncRemoteJsonFromYDoc(effectiveRemoteEntries);
-            if (
-                effectiveRemoteEntries.length > 0 &&
-                !areGlyphRevisionOnlyEntries(effectiveRemoteEntries)
-            ) {
-                this._yjsWorkerCallback?.(
-                    update,
-                    effectiveRemoteEntries,
-                    resolvedDocumentId
-                );
-            }
+            this._yjsWorkerCallback?.(
+                update,
+                effectiveRemoteEntries,
+                resolvedDocumentId
+            );
             this._onAfterSync?.();
             this._onDirty?.();
             if (
@@ -5479,8 +5469,12 @@ export class PatchSyncEngine {
             glyphSnapshot: Unsafe;
         }> = [];
         for (const glyphName of orderedGlyphNames) {
-            const glyphSnapshot =
-                this._readNormalizedGlyphSnapshotFromYDoc(glyphName);
+            const glyphSnapshot = this._readNormalizedGlyphSnapshotFromYDoc(
+                glyphName,
+                {
+                    ignoreExisting: true
+                }
+            );
             if (!glyphSnapshot) {
                 continue;
             }
@@ -5572,7 +5566,7 @@ export class PatchSyncEngine {
         );
         const glyphSnapshot = this._readNormalizedGlyphSnapshotFromYDoc(
             glyphName,
-            { ignoreExisting: options?.ignoreExisting === true }
+            { ignoreExisting: true }
         );
 
         if (!glyphSnapshot) {
@@ -5744,7 +5738,6 @@ export class PatchSyncEngine {
             Y.applyUpdate(this.yDoc, state, SYSTEM_REMOTE_ORIGIN);
             this._rehydrateEntireFontJsonFromYDoc();
             this._canonicalizeFullStateRawFontJson();
-            this._repairGeometryOrphansAfterConvergedState();
             // First hydrate needs an UndoManager. Later rebaselines must not
             // silently wipe gc:false history; call truncateUndoHistory().
             if (!this._fontUndoManager) {
@@ -6291,7 +6284,8 @@ export class PatchSyncEngine {
             this._normalizeLayerSnapshot(
                 scopeHint.layerId,
                 fromYType(layerMap),
-                layers[layerIdx]
+                layers[layerIdx],
+                false
             )
         ) as Unsafe;
 
@@ -6732,14 +6726,21 @@ export class PatchSyncEngine {
         );
     }
 
-    private _shouldPersistCloudWalBeforeApply(): boolean {
-        if (this._cloudWalApplyReady) {
+    private _shouldPersistCloudWalBeforeApply(
+        cloudWalApplyToken?: string | null
+    ): boolean {
+        if (
+            cloudWalApplyToken &&
+            this._cloudWalApplyTokens.has(cloudWalApplyToken)
+        ) {
             return false;
         }
         if (window.fontManager?.currentFont?.isCloudBacked?.() !== true) {
             return false;
         }
         return (
+            typeof window.cloudPlugin?.persistPreparedCloudTransaction ===
+                'function' ||
             typeof window.cloudPlugin?.persistCloudMutationIntent === 'function'
         );
     }
@@ -6763,34 +6764,106 @@ export class PatchSyncEngine {
                 )
             )
         ];
-        const persisted =
-            await window.cloudPlugin?.persistCloudMutationIntent?.(
+        const walToken =
+            typeof crypto !== 'undefined' &&
+            typeof crypto.randomUUID === 'function'
+                ? crypto.randomUUID()
+                : `wal:${Date.now()}:${Math.random().toString(16).slice(2)}`;
+        const documentUpdates = documentIds.map((documentId) => {
+            const doc = this._docForId(documentId);
+            return {
+                documentId,
+                baseStateVectorBase64: doc
+                    ? bytesToBase64(Y.encodeStateVector(doc))
+                    : ''
+            };
+        });
+        const glyphIds = this._glyphIdsTouchedByOperations(operations);
+        const envelope = createCollaborationMessageEnvelopeFromChangeLogEntries(
+            [],
+            {
+                localSequence: this._nextCollaborationMessageSequence,
+                source: 'change-bridge',
+                windowId: this.windowId
+            }
+        ) || {
+            schemaVersion: 1 as const,
+            transactionId: walToken,
+            localSequence: this._nextCollaborationMessageSequence,
+            roomSequence: null,
+            baseRevision: null,
+            changes: [],
+            metadata: {
+                editType: 'font' as const,
+                changedGlyphNames: [],
+                changedLayerIds: [],
+                workerReplayTargets: [],
+                historyItemId: historyItemId || walToken,
+                historyAction: 'change' as const,
+                undoScope: 'font' as const
+            },
+            source: 'change-bridge',
+            label,
+            summary: historySummary || '',
+            windowId: this.windowId,
+            timestamp: Date.now()
+        };
+        envelope.transactionId = walToken;
+        const persistedPrepared =
+            (await window.cloudPlugin?.persistPreparedCloudTransaction?.({
+                transactionId: walToken,
+                documentId: documentIds[0] || FONT_CORE_DOCUMENT_ID,
+                operations: operations.map((operation) => ({
+                    op: operation.op,
+                    path: operation.path,
+                    oldValue: operation.oldValue,
+                    newValue: operation.newValue,
+                    applyPath: operation.applyPath,
+                    applyNewValue: operation.applyNewValue,
+                    applyOldValue: operation.applyOldValue,
+                    applyMode: operation.applyMode
+                })),
+                documentUpdates,
+                collaborationMessage: envelope,
+                revisionObligations: glyphIds.length
+                    ? [
+                          {
+                              kind: 'glyph-revision-publication' as const,
+                              glyphIds,
+                              published: false
+                          }
+                      ]
+                    : [],
+                state: 'prepared'
+            })) ??
+            (await window.cloudPlugin?.persistCloudMutationIntent?.(
                 documentIds,
                 new TextEncoder().encode(
                     JSON.stringify({
                         documentIds,
                         operationCount: operations.length,
-                        paths: operations.map((operation) => operation.path)
+                        paths: operations.map((operation) => operation.path),
+                        operations
                     })
                 )
-            );
+            ));
         this._lastCloudCommitDebug = {
             documentIds,
             operationCount: operations.length,
-            persisted
+            persisted: persistedPrepared
         };
         pushCollabIntegrityEvent('wal-before-apply', {
             documentIds,
             operationCount: operations.length,
-            persisted
+            persisted: persistedPrepared
         });
-        if (persisted === false) {
+        if (persistedPrepared === false) {
             console.warn(
                 'PatchSyncEngine: cloud write-ahead persist failed; local apply skipped'
             );
             return;
         }
-        this._cloudWalApplyReady = true;
+        this._cloudWalApplyTokens.add(walToken);
         try {
             this._commitOperations(
                 operations,
@@ -6800,7 +6873,8 @@ export class PatchSyncEngine {
                 historyTarget,
                 promptGroupId,
                 historySummary,
-                skipTransactionFinalizer
+                skipTransactionFinalizer,
+                walToken
             );
             await this._cloudEmitPersistChain;
             this._lastCloudCommitDebug = {
@@ -6808,7 +6882,7 @@ export class PatchSyncEngine {
                 applied: true
             };
         } finally {
-            this._cloudWalApplyReady = false;
+            this._cloudWalApplyTokens.delete(walToken);
         }
     }
 
@@ -6877,7 +6951,8 @@ export class PatchSyncEngine {
         historyTarget?: TransactionHistoryTarget | null,
         promptGroupId?: string | null,
         historySummary?: string | null,
-        skipTransactionFinalizer = false
+        skipTransactionFinalizer = false,
+        cloudWalApplyToken: string | null = null
     ): TransactionCommitResult | null {
         const normalizedOperations = operations.filter(
             (operation) => operation.path.length > 0
@@ -6924,7 +6999,7 @@ export class PatchSyncEngine {
             return null;
         }
 
-        if (this._shouldPersistCloudWalBeforeApply()) {
+        if (this._shouldPersistCloudWalBeforeApply(cloudWalApplyToken)) {
             const pending = this._commitOperationsAfterCloudWal(
                 effectiveOperations,
                 label,
@@ -7100,7 +7175,6 @@ export class PatchSyncEngine {
                         for (const operation of geometryOps) {
                             this._applyBufferedOperation(operation);
                         }
-                        this._repairGeometryOrphansForOperations(geometryOps);
                     },
                     this._originForDocument(documentId, scopeInfo.origin)
                 );
@@ -9714,23 +9788,10 @@ export class PatchSyncEngine {
             return null;
         };
 
-        const normalizedMaster =
-            normalizeMasterValue(layerRecord.master) ??
-            normalizeMasterValue(existingLayerRecord.master);
+        const normalizedMaster = normalizeMasterValue(layerRecord.master);
 
         if (normalizedMaster) {
             layerRecord.master = normalizedMaster;
-            return;
-        }
-
-        if (
-            layerRecord.is_background !== true &&
-            this._getKnownMasterIds().has(layerId)
-        ) {
-            layerRecord.master = {
-                type: 'DefaultForMaster',
-                master: layerId
-            };
         }
     }
 

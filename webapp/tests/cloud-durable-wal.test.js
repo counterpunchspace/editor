@@ -268,4 +268,76 @@ describe('CloudDurableWal', () => {
             'new-gen'
         );
     });
+
+    test('loads v1 records after the IndexedDB version 2 upgrade', async () => {
+        const mock = createIndexedDbMock();
+        global.indexedDB = mock;
+        mock.records.set('asset-1:font-core:legacy-v1', {
+            key: 'asset-1:font-core:legacy-v1',
+            assetId: 'asset-1',
+            documentId: 'font-core',
+            clientTransactionId: 'legacy-v1',
+            updateBase64: 'YQ==',
+            collaborationMessage: sampleRecord().collaborationMessage,
+            createdAt: 1,
+            attempts: 2
+        });
+        const wal = new CloudDurableWal();
+        const loaded = await wal.load('asset-1');
+        expect(loaded).toHaveLength(1);
+        expect(loaded[0].clientTransactionId).toBe('legacy-v1');
+        expect(loaded[0].schemaVersion).toBe(1);
+        expect(loaded[0].state).toBe('applied');
+        expect(wal.pendingCount).toBe(1);
+    });
+
+    test('survives crash between prepared, applied, sent, and acknowledged', async () => {
+        global.indexedDB = createIndexedDbMock();
+        const writer = new CloudDurableWal();
+        await writer.load('asset-1');
+        const prepared = {
+            ...sampleRecord('crash-txn'),
+            schemaVersion: 2,
+            transactionId: 'crash-txn',
+            operations: [
+                { op: 'set', path: ['glyphs', 'A', 'width'], newValue: 600 }
+            ],
+            documentUpdates: [
+                {
+                    documentId: 'font-core',
+                    baseStateVectorBase64: ''
+                }
+            ],
+            state: 'prepared',
+            revisionObligations: [
+                {
+                    kind: 'glyph-revision-publication',
+                    glyphIds: ['aaa'],
+                    published: false
+                }
+            ]
+        };
+        await writer.append(prepared);
+        const afterPrepare = new CloudDurableWal();
+        expect((await afterPrepare.load('asset-1'))[0].state).toBe('prepared');
+
+        await afterPrepare.append({
+            ...(await afterPrepare.load('asset-1'))[0],
+            state: 'applied',
+            updateBytes: new Uint8Array([1, 2, 3])
+        });
+        const afterApply = new CloudDurableWal();
+        expect((await afterApply.load('asset-1'))[0].state).toBe('applied');
+
+        await afterApply.append({
+            ...(await afterApply.load('asset-1'))[0],
+            state: 'sent'
+        });
+        const afterSend = new CloudDurableWal();
+        expect((await afterSend.load('asset-1'))[0].state).toBe('sent');
+
+        await afterSend.acknowledge((await afterSend.load('asset-1'))[0]);
+        const afterAck = new CloudDurableWal();
+        expect(await afterAck.load('asset-1')).toEqual([]);
+    });
 });

@@ -20,7 +20,9 @@ export const RESTING_LAYER_RUNTIME_KEYS = [
     '_interpolationLocation',
     '_verticalMetrics',
     'isInterpolated',
-    'layerData'
+    'layerData',
+    '_geometryCoherent',
+    '_geometryPreviewStale'
 ] as const;
 
 export const RESTING_LAYER_IDENTITY_KEYS = ['id', 'width', 'master'] as const;

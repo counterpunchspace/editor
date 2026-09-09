@@ -7,6 +7,7 @@ jest.mock('../js/logger', () => ({
 }));
 
 const mockConnectDirect = jest.fn().mockResolvedValue();
+const mockConnectWithCredentials = jest.fn().mockResolvedValue();
 const mockDisconnect = jest.fn();
 
 jest.mock('../js/cloud-adapter', () => {
@@ -24,6 +25,12 @@ jest.mock('../js/cloud-adapter', () => {
                 ),
                 clearVisibleRebaselineNeeded: jest.fn(() => {
                     adapter.needsVisibleRebaseline = false;
+                }),
+                connectWithCredentials: jest.fn(async (...args) => {
+                    mockConnectWithCredentials(...args, options);
+                    mockConnectDirect(...args, options);
+                    adapter.status = 'connected';
+                    options.onConnectionStatus?.('connected');
                 }),
                 connectDirect: jest.fn(async (...args) => {
                     mockConnectDirect(...args, options);
@@ -186,6 +193,7 @@ describe('CloudLiveSession', () => {
 
     beforeEach(() => {
         mockConnectDirect.mockClear();
+        mockConnectWithCredentials.mockClear();
         mockDisconnect.mockClear();
         CloudAdapter.mockClear();
         global.fetch = jest.fn(async () => ({
@@ -200,6 +208,26 @@ describe('CloudLiveSession', () => {
 
     afterEach(() => {
         global.fetch = originalFetch;
+    });
+
+    test('production-mode live session attachment uses connectWithCredentials', async () => {
+        const session = new CloudLiveSession({
+            assetId: 'asset-1',
+            websiteBaseUrl: 'https://editor.example',
+            token: 'token',
+            roomUrl: 'wss://rooms.example/room/asset-1',
+            bridge: {},
+            bootstrapMode: 'skip'
+        });
+        await expect(session.syncLiveDocumentIds([])).resolves.toBeUndefined();
+        expect(mockConnectWithCredentials).toHaveBeenCalled();
+        const constructed = CloudAdapter.mock.results.map(
+            (result) => result.value
+        );
+        for (const adapter of constructed) {
+            expect(adapter.connectDirect).not.toHaveBeenCalled();
+            expect(adapter.connectWithCredentials).toHaveBeenCalled();
+        }
     });
 
     test('liveGlyphDocumentIdsFromSubset maps names through the live bridge', () => {

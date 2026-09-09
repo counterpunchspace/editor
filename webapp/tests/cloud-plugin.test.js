@@ -56,6 +56,9 @@ jest.mock('../js/cloud-adapter', () => ({
                     adapter.status = 'connected';
                 }
             }),
+            connectWithCredentials: jest.fn(async (...args) =>
+                adapter.connectDirect(...args)
+            ),
             connect: jest.fn(async (...args) => {
                 mockConnect(...args);
                 const queuedStatuses = mockConnectDirectStatusQueue.length

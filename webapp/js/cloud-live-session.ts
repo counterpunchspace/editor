@@ -20,9 +20,12 @@ import {
 } from './cloud-adapter';
 import {
     CloudDurableWal,
+    serializeWalOperations,
     walUpdateBytes,
     type CloudWalHealth,
-    type CloudWalRecord
+    type CloudWalRecord,
+    type CloudWalRevisionObligation,
+    type CloudWalState
 } from './cloud-durable-wal';
 import {
     FONT_CORE_DOCUMENT_ID,
@@ -201,6 +204,9 @@ export class CloudLiveSession {
     private _token: string;
     private _roomUrl: string;
     private _keepRequestedGlyphSockets: boolean;
+    private _lifetimeAbort = new AbortController();
+    private readonly _timers = new Set<ReturnType<typeof setTimeout>>();
+    private _disconnected = false;
 
     constructor(options: CloudLiveSessionOptions) {
         this._options = options;
@@ -210,6 +216,23 @@ export class CloudLiveSession {
             options.keepRequestedGlyphSockets === true;
         this._bindDependentPublishHook();
         void this._ensureWalLoaded();
+    }
+
+    private _scheduleTimer(callback: () => void, delayMs: number): void {
+        if (this._disconnected) {
+            return;
+        }
+        const timer = setTimeout(() => {
+            this._timers.delete(timer);
+            if (!this._disconnected) {
+                callback();
+            }
+        }, delayMs);
+        this._timers.add(timer);
+    }
+
+    private get _abortSignal(): AbortSignal {
+        return this._lifetimeAbort.signal;
     }
 
     get walHealth(): CloudWalHealth {
@@ -494,6 +517,13 @@ export class CloudLiveSession {
     }
 
     disconnect(): void {
+        this._disconnected = true;
+        this._lifetimeAbort.abort();
+        this._lifetimeAbort = new AbortController();
+        for (const timer of this._timers) {
+            clearTimeout(timer);
+        }
+        this._timers.clear();
         this._localUpdateUnsubscribe?.();
         this._localUpdateUnsubscribe = null;
         for (const adapter of this._adapters.values()) {
@@ -512,6 +542,10 @@ export class CloudLiveSession {
         this._lastEmittedTransferActivity = 'idle';
     }
 
+    destroy(): void {
+        this.disconnect();
+    }
+
     async replayPendingOfflinePublishes(): Promise<void> {
         await this._replayPendingHttpWal({ includeLiveAdapters: true });
         await this.flushPendingHttpPublishes();
@@ -526,11 +560,62 @@ export class CloudLiveSession {
         }
     }
 
+    async persistPreparedTransaction(record: {
+        transactionId: string;
+        documentId?: string;
+        operations: unknown[];
+        documentUpdates?: CloudWalRecord['documentUpdates'];
+        collaborationMessage: CollaborationMessageEnvelope;
+        revisionObligations?: CloudWalRevisionObligation[];
+        generationId?: string | null;
+        state?: CloudWalState;
+    }): Promise<boolean> {
+        if (this._disconnected) {
+            return false;
+        }
+        await this._ensureWalLoaded();
+        if (this._wal.health !== 'ready') {
+            return false;
+        }
+        try {
+            await this._wal.append({
+                schemaVersion: 2,
+                transactionId: record.transactionId,
+                assetId: this._options.assetId,
+                documentId: record.documentId || FONT_CORE_DOCUMENT_ID,
+                clientTransactionId: record.transactionId,
+                operations: serializeWalOperations(record.operations),
+                documentUpdates: record.documentUpdates || [],
+                collaborationMessage: record.collaborationMessage,
+                collaborationMetadata: record.collaborationMessage.metadata,
+                revisionObligations: record.revisionObligations || [],
+                state: record.state || 'prepared',
+                createdAt: Date.now(),
+                attempts: 0,
+                generationId:
+                    record.generationId ||
+                    this._options.generationId ||
+                    undefined
+            });
+            this._emitPendingSyncCount();
+            return true;
+        } catch (error) {
+            console.warn(
+                'CloudLiveSession: prepared transaction persist failed:',
+                error
+            );
+            return false;
+        }
+    }
+
     async persistOutgoingUpdate(
         update: Uint8Array,
         collaborationMessage?: CollaborationMessageEnvelope | null,
         documentId?: string
     ): Promise<boolean> {
+        if (this._disconnected) {
+            return false;
+        }
         if (!collaborationMessage || !update?.length) {
             pushCollabIntegrityEvent('persist-outgoing-skip', {
                 documentId: documentId || FONT_CORE_DOCUMENT_ID,
@@ -543,21 +628,56 @@ export class CloudLiveSession {
         if (this._wal.health !== 'ready') {
             return false;
         }
-        const clientTransactionId =
-            collaborationMessageKey(collaborationMessage);
-        if (!clientTransactionId) {
+        const messageKey = collaborationMessageKey(collaborationMessage);
+        if (!messageKey) {
             return false;
         }
         try {
+            const resolvedDocumentId = documentId || FONT_CORE_DOCUMENT_ID;
+            const candidates = this._wal.recordsFor(resolvedDocumentId);
+            const existing =
+                candidates.find(
+                    (record) => record.clientTransactionId === messageKey
+                ) ||
+                candidates.find(
+                    (record) =>
+                        record.state === 'prepared' ||
+                        record.state === 'applied'
+                );
+            const clientTransactionId =
+                existing?.clientTransactionId || messageKey;
+            const previousUpdates = existing?.documentUpdates || [];
+            const documentUpdates = [
+                ...previousUpdates.filter(
+                    (entry) => entry.documentId !== resolvedDocumentId
+                ),
+                {
+                    documentId: resolvedDocumentId,
+                    baseStateVectorBase64: previousUpdates.find(
+                        (entry) => entry.documentId === resolvedDocumentId
+                    )?.baseStateVectorBase64
+                }
+            ];
             await this._wal.append({
+                schemaVersion: 2,
+                transactionId: existing?.transactionId || clientTransactionId,
                 assetId: this._options.assetId,
-                documentId: documentId || FONT_CORE_DOCUMENT_ID,
+                documentId: existing?.documentId || resolvedDocumentId,
                 clientTransactionId,
+                operations: existing?.operations || [],
+                documentUpdates,
                 updateBytes: update,
                 collaborationMessage,
-                createdAt: Date.now(),
-                attempts: 0,
-                generationId: this._options.generationId || undefined
+                collaborationMetadata: collaborationMessage.metadata,
+                revisionObligations: existing?.revisionObligations || [],
+                state: 'applied',
+                createdAt: existing?.createdAt || Date.now(),
+                attempts: existing?.attempts || 0,
+                receipts: existing?.receipts || [],
+                generationId:
+                    existing?.generationId ||
+                    this._options.generationId ||
+                    undefined
             });
             this._emitPendingSyncCount();
             pushCollabIntegrityEvent('persist-outgoing', {
@@ -565,16 +685,6 @@ export class CloudLiveSession {
                 bytes: update.length,
                 clientTransactionId
             });
-            await this._wal
-                .acknowledge({
-                    assetId: this._options.assetId,
-                    documentId: documentId || FONT_CORE_DOCUMENT_ID,
-                    clientTransactionId: `preapply:${documentId || FONT_CORE_DOCUMENT_ID}`,
-                    collaborationMessage,
-                    createdAt: 0,
-                    attempts: 0
-                })
-                .catch(() => undefined);
             return true;
         } catch (error) {
             console.warn(
@@ -589,44 +699,31 @@ export class CloudLiveSession {
         documentIds: string[],
         intentBytes?: Uint8Array | null
     ): Promise<boolean> {
-        await this._ensureWalLoaded();
-        if (this._wal.health !== 'ready') {
-            return false;
-        }
-        const payload =
-            intentBytes && intentBytes.length
-                ? intentBytes
-                : new TextEncoder().encode(JSON.stringify(documentIds || []));
         const ids = (documentIds || []).filter(Boolean);
         if (!ids.length) {
             return true;
         }
-        try {
-            for (const documentId of ids) {
-                const clientTransactionId = `preapply:${documentId}`;
-                await this._wal.append({
-                    assetId: this._options.assetId,
-                    documentId,
-                    clientTransactionId,
-                    updateBytes: payload,
-                    collaborationMessage: createLinkedWindowCatchUpEnvelope(
-                        documentId,
-                        null
-                    ),
-                    createdAt: Date.now(),
-                    attempts: 0,
-                    generationId: this._options.generationId || undefined
-                });
+        let operations: unknown[] = [{ documentIds: ids }];
+        if (intentBytes && intentBytes.length) {
+            try {
+                operations = JSON.parse(new TextDecoder().decode(intentBytes));
+                if (!Array.isArray(operations)) {
+                    operations = [operations];
+                }
+            } catch {
+                operations = [{ documentIds: ids }];
             }
-            this._emitPendingSyncCount();
-            return true;
-        } catch (error) {
-            console.warn(
-                'CloudLiveSession: mutation intent persist failed:',
-                error
-            );
-            return false;
         }
+        return this.persistPreparedTransaction({
+            transactionId: `prepared:${ids[0]}:${Date.now()}`,
+            documentId: ids[0],
+            operations,
+            collaborationMessage: createLinkedWindowCatchUpEnvelope(
+                ids[0],
+                null
+            ),
+            state: 'prepared'
+        });
     }
 
     async applyConfirmedGeneration(generationId: string | null): Promise<void> {
@@ -635,7 +732,7 @@ export class CloudLiveSession {
         if (!next || this._wal.health !== 'ready') {
             return;
         }
-        await this._wal.discardOtherGenerations(this._options.assetId, next);
+        await this._wal.quarantineOtherGenerations(this._options.assetId, next);
         this._options.generationId = next;
     }
 
@@ -795,7 +892,15 @@ export class CloudLiveSession {
         if (!this._walLoad) {
             this._walLoad = this._wal
                 .load(this._options.assetId)
-                .then(() => undefined)
+                .then(async () => {
+                    const generationId = this._options.generationId;
+                    if (generationId) {
+                        await this._wal.quarantineOtherGenerations(
+                            this._options.assetId,
+                            generationId
+                        );
+                    }
+                })
                 .catch((error) => {
                     console.warn(
                         'CloudLiveSession: write-ahead log is unavailable:',
@@ -807,6 +912,9 @@ export class CloudLiveSession {
     }
 
     private async _refreshCredentialsOnce(): Promise<boolean> {
+        if (this._disconnected) {
+            return false;
+        }
         if (!this._options.refreshCredentials) {
             return false;
         }
@@ -840,6 +948,9 @@ export class CloudLiveSession {
         this._emitTransferActivity();
         const seq = ++this._httpPublishSeq;
         this._httpPublishQueue.push(async () => {
+            if (this._disconnected) {
+                return;
+            }
             await this._ensureWalLoaded();
             const clientTransactionId = collaborationMessage
                 ? collaborationMessageKey(collaborationMessage)
@@ -873,6 +984,9 @@ export class CloudLiveSession {
             const { assetId, websiteBaseUrl } = this._options;
             let refreshed = false;
             for (let attempt = 0; attempt < 5; attempt += 1) {
+                if (this._disconnected) {
+                    return;
+                }
                 try {
                     const durable = await publishCloudDocumentUpdate({
                         token: this._token,
@@ -884,7 +998,8 @@ export class CloudLiveSession {
                         collaborationMessage,
                         seq,
                         clientId: `http:${assetId}`,
-                        clientTransactionId
+                        clientTransactionId,
+                        signal: this._abortSignal
                     });
                     if (!durable) {
                         const error = new Error(
@@ -922,7 +1037,7 @@ export class CloudLiveSession {
                                 60_000,
                                 1_000 * 2 ** Math.min(walRecord.attempts, 8)
                             );
-                            setTimeout(() => {
+                            this._scheduleTimer(() => {
                                 void this._enqueueDependentPublish(
                                     documentId,
                                     update,
@@ -932,9 +1047,13 @@ export class CloudLiveSession {
                         }
                         return;
                     }
-                    await new Promise((resolve) => {
-                        setTimeout(resolve, 50 * 2 ** attempt);
-                    });
+                    await new Promise<void>((resolve, reject) => {
+                        if (this._disconnected) {
+                            reject(new Error('session disconnected'));
+                            return;
+                        }
+                        this._scheduleTimer(() => resolve(), 50 * 2 ** attempt);
+                    }).catch(() => undefined);
                 }
             }
         });
@@ -1061,7 +1180,7 @@ export class CloudLiveSession {
             connectOptions.checkpointLogId = checkpointLogId;
         }
         try {
-            await adapter.connectDirect(
+            await adapter.connectWithCredentials(
                 bridge,
                 this._token,
                 wsUrl,
@@ -1069,7 +1188,7 @@ export class CloudLiveSession {
             );
             if (connectedPromise) {
                 const timeout = new Promise<never>((_, rej) =>
-                    setTimeout(
+                    this._scheduleTimer(
                         () => rej(new Error('cloud sync timed out')),
                         connectedTimeoutMs ?? 30_000
                     )
@@ -1197,14 +1316,24 @@ export class CloudLiveSession {
             return;
         }
         const includeLiveAdapters = options?.includeLiveAdapters !== false;
+        const generationId = this._options.generationId || null;
+        if (generationId) {
+            await this._wal.quarantineOtherGenerations(
+                this._options.assetId,
+                generationId
+            );
+        }
+        const records = this._wal.replayableRecords(generationId);
         pushCollabIntegrityEvent('replay-http-wal', {
             includeLiveAdapters,
-            records: this._wal.recordsFor().map((record) => ({
+            generationId,
+            records: records.map((record) => ({
                 documentId: record.documentId,
-                hasUpdate: walUpdateBytes(record).byteLength > 0
+                hasUpdate: walUpdateBytes(record).byteLength > 0,
+                state: record.state
             }))
         });
-        for (const record of this._wal.recordsFor()) {
+        for (const record of records) {
             if (!record.documentId.startsWith('glyph:')) {
                 continue;
             }
@@ -1254,8 +1383,8 @@ export class CloudLiveSession {
             if (remaining <= 0) {
                 break;
             }
-            await new Promise((resolve) => {
-                window.setTimeout(resolve, Math.min(50, remaining));
+            await new Promise<void>((resolve) => {
+                this._scheduleTimer(() => resolve(), Math.min(50, remaining));
             });
         }
         console.warn(

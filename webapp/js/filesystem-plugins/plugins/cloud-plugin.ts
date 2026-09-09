@@ -823,6 +823,12 @@ export class CloudPlugin extends FilesystemPlugin {
     private _attachingSession: CloudLiveSession | null = null;
     private _editingSubsetListener: (() => void) | null = null;
     private _isSyncingCatalog = false;
+    private _pendingCatalogProjection: {
+        catalogDirty: boolean;
+        deletedGlyphIds: string[];
+        catalogGlyphs: string[];
+        depsGlyphs: Set<string>;
+    } | null = null;
     private _activeAssetId: string | null = null;
     private _relayedAssetId: string | null = null;
     private _relayedConnectionStatus: CloudConnectionStatus = 'disconnected';
@@ -1397,6 +1403,26 @@ export class CloudPlugin extends FilesystemPlugin {
             return false;
         }
         return true;
+    }
+
+    async persistPreparedCloudTransaction(record: {
+        transactionId: string;
+        documentId?: string;
+        operations: unknown[];
+        documentUpdates?: unknown;
+        collaborationMessage: CollaborationMessageEnvelope;
+        revisionObligations?: unknown;
+        generationId?: string | null;
+        state?: string;
+    }): Promise<boolean> {
+        if (!this._liveSession) {
+            return true;
+        }
+        return this._liveSession.persistPreparedTransaction(
+            record as Parameters<
+                CloudLiveSession['persistPreparedTransaction']
+            >[0]
+        );
     }
 
     async persistOutgoingCloudUpdate(
@@ -2730,41 +2756,94 @@ export class CloudPlugin extends FilesystemPlugin {
         if (!catalogDirty && depsGlyphs.size === 0) {
             return;
         }
+        const catalogGlyphs = [
+            ...new Set(
+                entries
+                    .map(pathFromCommittedEntry)
+                    .filter(
+                        (path) =>
+                            catalogNeedsUpdate(path) &&
+                            path[0] === 'glyphs' &&
+                            path[1]
+                    )
+                    .map((path) => String(path[1]))
+            )
+        ];
+        this._enqueueCatalogProjection({
+            catalogDirty,
+            deletedGlyphIds,
+            catalogGlyphs,
+            depsGlyphs
+        });
+    };
+
+    private _enqueueCatalogProjection(update: {
+        catalogDirty: boolean;
+        deletedGlyphIds: string[];
+        catalogGlyphs: string[];
+        depsGlyphs: Set<string>;
+    }): void {
+        if (this._pendingCatalogProjection) {
+            const pending = this._pendingCatalogProjection;
+            pending.catalogDirty = pending.catalogDirty || update.catalogDirty;
+            pending.deletedGlyphIds = [
+                ...new Set([
+                    ...pending.deletedGlyphIds,
+                    ...update.deletedGlyphIds
+                ])
+            ];
+            pending.catalogGlyphs = [
+                ...new Set([...pending.catalogGlyphs, ...update.catalogGlyphs])
+            ];
+            for (const glyph of update.depsGlyphs) {
+                pending.depsGlyphs.add(glyph);
+            }
+        } else {
+            this._pendingCatalogProjection = {
+                catalogDirty: update.catalogDirty,
+                deletedGlyphIds: [...update.deletedGlyphIds],
+                catalogGlyphs: [...update.catalogGlyphs],
+                depsGlyphs: new Set(update.depsGlyphs)
+            };
+        }
         if (this._isSyncingCatalog) {
             return;
         }
-        this._isSyncingCatalog = true;
-        try {
-            if (catalogDirty) {
-                const catalogGlyphs = [
-                    ...new Set(
-                        entries
-                            .map(pathFromCommittedEntry)
-                            .filter(
-                                (path) =>
-                                    catalogNeedsUpdate(path) &&
-                                    path[0] === 'glyphs' &&
-                                    path[1]
-                            )
-                            .map((path) => String(path[1]))
-                    )
-                ];
-                const owned =
-                    deletedGlyphIds.length || catalogGlyphs.length !== 1
-                        ? applyCloudOwnedData(fontJson, { deletedGlyphIds })
-                        : patchCloudOwnedGlyph(fontJson, catalogGlyphs[0]);
-                window.patchSyncEngine?.syncCloudOwnedProjection?.(owned);
+        this._flushCatalogProjection();
+    }
+
+    private _flushCatalogProjection(): void {
+        const fontJson = this._currentFontJson();
+        while (this._pendingCatalogProjection && fontJson) {
+            const pending = this._pendingCatalogProjection;
+            this._pendingCatalogProjection = null;
+            this._isSyncingCatalog = true;
+            try {
+                if (pending.catalogDirty) {
+                    const owned =
+                        pending.deletedGlyphIds.length ||
+                        pending.catalogGlyphs.length !== 1
+                            ? applyCloudOwnedData(fontJson, {
+                                  deletedGlyphIds: pending.deletedGlyphIds
+                              })
+                            : patchCloudOwnedGlyph(
+                                  fontJson,
+                                  pending.catalogGlyphs[0]
+                              );
+                    window.patchSyncEngine?.syncCloudOwnedProjection?.(owned);
+                }
+                if (pending.depsGlyphs.size > 0) {
+                    window.patchSyncEngine?.syncFontDepsFromFontJson?.(
+                        fontJson,
+                        [...pending.depsGlyphs]
+                    );
+                }
+                void this._refreshAssetLimitsAfterCatalogChange();
+            } finally {
+                this._isSyncingCatalog = false;
             }
-            if (depsGlyphs.size > 0) {
-                window.patchSyncEngine?.syncFontDepsFromFontJson?.(fontJson, [
-                    ...depsGlyphs
-                ]);
-            }
-            void this._refreshAssetLimitsAfterCatalogChange();
-        } finally {
-            this._isSyncingCatalog = false;
         }
-    };
+    }
 
     private _syncGlyphCatchUpFromCommittedChange: CommittedChangeListener = (
         entries,
@@ -3994,9 +4073,9 @@ export class CloudPlugin extends FilesystemPlugin {
             (this._activeAssetId
                 ? this.getAssetPendingSyncCount(this._activeAssetId)
                 : 0);
-        this._attachingSession?.disconnect();
+        this._attachingSession?.destroy?.();
         this._attachingSession = null;
-        this._liveSession?.disconnect();
+        this._liveSession?.destroy?.();
         this._liveSession = null;
         this._cloudAdapter?.disconnect();
         this._cloudAdapter = null;

@@ -230,6 +230,43 @@ describe('CloudAdapter room worker defaults', () => {
         }
     });
 
+    it('keeps connectDirect disabled in production while connectWithCredentials works', async () => {
+        const originalIsDevelopment = window.isDevelopment;
+        window.isDevelopment = jest.fn(() => false);
+        const adapter = new CloudAdapter({
+            assetId: 'asset-123',
+            websiteBaseUrl: 'https://counterpunch.space'
+        });
+        adapter._openWebSocket = jest.fn().mockResolvedValue(undefined);
+        adapter._bootstrapFromR2 = jest.fn().mockResolvedValue(undefined);
+        const bridge = {
+            onLocalUpdate: jest.fn(),
+            offLocalUpdate: jest.fn()
+        };
+        try {
+            await expect(
+                adapter.connectDirect(
+                    bridge,
+                    'room-token',
+                    'wss://rooms.example.com/room/asset-123',
+                    { bootstrapMode: 'skip' }
+                )
+            ).rejects.toThrow('Direct room-token connections are disabled');
+            await expect(
+                adapter.connectWithCredentials(
+                    bridge,
+                    'room-token',
+                    'wss://rooms.example.com/room/asset-123',
+                    { bootstrapMode: 'skip' }
+                )
+            ).resolves.toBeUndefined();
+            expect(adapter._openWebSocket).toHaveBeenCalled();
+        } finally {
+            adapter.disconnect();
+            window.isDevelopment = originalIsDevelopment;
+        }
+    });
+
     it('exposes cloud roles in scanDirectory results', async () => {
         const originalFetch = global.fetch;
         const adapter = new CloudAdapter({
@@ -1274,7 +1311,6 @@ describe('CloudAdapter outbound updates', () => {
         expect(sentFrames[0].update).toBe(
             Buffer.from(localUpdate).toString('base64')
         );
-        expect(global.indexedDB.open).toHaveBeenCalled();
         expect(sentFrames).toHaveLength(1);
         global.indexedDB = originalIndexedDb;
     });

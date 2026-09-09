@@ -598,7 +598,8 @@ export class WindowSync {
                         update,
                         undefined,
                         [packet.collaborationMessage],
-                        packet.documentId
+                        packet.documentId,
+                        { captureInUndo: false }
                     );
                     if (window.windowRole?.isMainWindow()) {
                         window.cloudPlugin?.relayPeerWindowUpdateToCloud?.(

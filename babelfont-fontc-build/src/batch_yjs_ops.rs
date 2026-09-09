@@ -191,12 +191,64 @@ fn glyph_root_maps(
     Ok((glyph_map, layers_map))
 }
 
+fn merge_json_map(
+    txn: &mut yrs::TransactionMut,
+    map: &yrs::MapRef,
+    object: &JsonMap<String, JsonValue>,
+) -> Result<(), JsValue> {
+    for (key, value) in object {
+        merge_json_map_entry(txn, map, key, value)?;
+    }
+    Ok(())
+}
+
+fn merge_json_map_entry(
+    txn: &mut yrs::TransactionMut,
+    map: &yrs::MapRef,
+    key: &str,
+    value: &JsonValue,
+) -> Result<(), JsValue> {
+    match value {
+        JsonValue::Object(object) => {
+            if let Some(yrs::types::Value::YMap(existing)) = map.get(txn, key) {
+                merge_json_map(txn, &existing, object)?;
+            } else {
+                set_json_map_entry(txn, map, key, value)?;
+            }
+        }
+        JsonValue::Array(items) => {
+            map.remove(txn, key);
+            let child: yrs::ArrayRef = map.insert(txn, key, ArrayPrelim::from(Vec::<Any>::new()));
+            fill_json_array(txn, &child, items)?;
+        }
+        JsonValue::String(text) => {
+            map.insert(txn, key, text.clone());
+        }
+        JsonValue::Number(number) => {
+            map.insert(txn, key, json_number_to_any(number));
+        }
+        JsonValue::Bool(flag) => {
+            map.insert(txn, key, *flag);
+        }
+        JsonValue::Null => {
+            map.insert(txn, key, Any::Null);
+        }
+    }
+    Ok(())
+}
+
 fn upsert_layer_on_glyph_root(
     txn: &mut yrs::TransactionMut,
     layer_id: &str,
     layer_json: &JsonValue,
 ) -> Result<(), JsValue> {
     let (glyph_map, layers_map) = glyph_root_maps(txn)?;
+    if let Some(yrs::types::Value::YMap(layer_map)) = layers_map.get(txn, layer_id) {
+        if let JsonValue::Object(object) = layer_json {
+            merge_json_map(txn, &layer_map, object)?;
+            return Ok(());
+        }
+    }
     set_json_map_entry(txn, &layers_map, layer_id, layer_json)?;
     ensure_layer_order_contains(txn, &glyph_map, layer_id)
 }
@@ -432,6 +484,12 @@ fn upsert_layer_json(
     layer_json: &JsonValue,
 ) -> Result<(), JsValue> {
     let (glyph_map, layers_map) = glyph_maps_for_layer_edit(txn, font_map, glyph_name)?;
+    if let Some(yrs::types::Value::YMap(layer_map)) = layers_map.get(txn, layer_id) {
+        if let JsonValue::Object(object) = layer_json {
+            merge_json_map(txn, &layer_map, object)?;
+            return ensure_layer_order_contains(txn, &glyph_map, layer_id);
+        }
+    }
     set_json_map_entry(txn, &layers_map, layer_id, layer_json)?;
     ensure_layer_order_contains(txn, &glyph_map, layer_id)
 }

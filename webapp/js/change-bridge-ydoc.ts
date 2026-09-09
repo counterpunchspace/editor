@@ -24,6 +24,7 @@ import {
     LAYER_NODE_POSITIONS_KEY,
     LAYER_SHAPE_DATA_KEY,
     readLayerGeometry,
+    layerGeometryPreviewIsStale,
     writeLayerGeometry,
     writeNodePosition
 } from './layer-geometry-ydoc';
@@ -1062,6 +1063,13 @@ function fromYLayerMap(layerMap: Y.Map<unknown>): Record<string, unknown> {
             : null;
         if (normalizedShapes) {
             obj.shapes = normalizedShapes;
+            if (layerGeometryPreviewIsStale(normalizedShapes)) {
+                obj._geometryCoherent = false;
+                obj._geometryPreviewStale = true;
+            } else {
+                obj._geometryCoherent = true;
+                obj._geometryPreviewStale = false;
+            }
         } else {
             const shapes = layerMap.get('shapes');
             if (shapes instanceof Y.Array) {
@@ -1069,8 +1077,8 @@ function fromYLayerMap(layerMap: Y.Map<unknown>): Record<string, unknown> {
             }
         }
     } catch {
-        // Keep last reconstructed shapes out of this snapshot rather than
-        // publishing a malformed outline into the compiler cache.
+        obj._geometryCoherent = false;
+        obj._geometryPreviewStale = true;
     }
 
     // anchorsById + anchorOrder → anchors array

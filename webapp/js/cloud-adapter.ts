@@ -929,6 +929,7 @@ export async function publishCloudDocumentUpdate(options: {
     clientId?: string;
     seq: number;
     clientTransactionId?: string | null;
+    signal?: AbortSignal;
 }): Promise<boolean> {
     if (
         !options.documentId ||
@@ -963,7 +964,8 @@ export async function publishCloudDocumentUpdate(options: {
             'Accept': 'application/json',
             'Content-Type': 'application/json'
         },
-        body: JSON.stringify(body)
+        body: JSON.stringify(body),
+        signal: options.signal
     });
     if (response.status === 401 || response.status === 403) {
         const error = new Error(
@@ -1329,7 +1331,6 @@ export class CloudAdapter implements FileSystemAdapter {
     private _durableOutboxEntries = new Map<string, CloudWalRecord>();
     private _durableWaiters: Array<() => void> = [];
     private _wal: CloudDurableWal;
-    private _outboundPersistChain: Promise<void> = Promise.resolve();
     private _pendingSyncCompleteTransactionIds: string[] = [];
     private _pendingSyncCompleteOutboundPackets =
         new Set<CloudOutboundUpdatePacket>();
@@ -1576,10 +1577,11 @@ export class CloudAdapter implements FileSystemAdapter {
     }
 
     /**
-     * Dev-only: Connect using a pre-built token and room URL, bypassing the
-     * website auth endpoint. Used for Phase 0 testing via `window.cloudDebug`.
+     * Production and live-session path: connect with a room token and URL.
+     * The localhost debug entry (`connectDirect`) must not use this in
+     * production; live session attachment does.
      */
-    async connectDirect(
+    async connectWithCredentials(
         bridge: PatchSyncEngine,
         token: string,
         roomUrl: string,
@@ -1588,9 +1590,6 @@ export class CloudAdapter implements FileSystemAdapter {
             checkpointLogId?: number | null;
         }
     ): Promise<void> {
-        if (isProduction()) {
-            throw new Error('Direct room-token connections are disabled');
-        }
         if (this._destroyed) {
             console.warn('CloudAdapter: already destroyed');
             return;
@@ -1627,6 +1626,25 @@ export class CloudAdapter implements FileSystemAdapter {
         }
 
         await this._openWebSocket(token, roomUrl);
+    }
+
+    /**
+     * Dev-only: Connect using a pre-built token and room URL, bypassing the
+     * website auth endpoint. Used for Phase 0 testing via `window.cloudDebug`.
+     */
+    async connectDirect(
+        bridge: PatchSyncEngine,
+        token: string,
+        roomUrl: string,
+        options?: {
+            bootstrapMode?: 'required' | 'skip';
+            checkpointLogId?: number | null;
+        }
+    ): Promise<void> {
+        if (isProduction()) {
+            throw new Error('Direct room-token connections are disabled');
+        }
+        return this.connectWithCredentials(bridge, token, roomUrl, options);
     }
 
     disconnect(): void {
@@ -1894,30 +1912,19 @@ export class CloudAdapter implements FileSystemAdapter {
         });
         if (collaborationMessage) {
             this._enqueuePendingDurabilityMessages([collaborationMessage]);
-            this._outboundPersistChain = this._outboundPersistChain
-                .then(() => this._persistDurableOutboxPacket(packet))
-                .then(() => {
-                    this._noteTransferActivity('sending');
-                    this._outboundFlushScheduled = true;
-                    this._flushPendingOutboundUpdates();
-                })
-                .catch((error) => {
-                    console.warn(
-                        'CloudAdapter: durable WAL persist failed; update was not sent:',
-                        error
-                    );
-                    this._pendingOutboundPackets =
-                        this._pendingOutboundPackets.filter(
-                            (queued) => queued !== packet
-                        );
-                    if (packet.clientTransactionId) {
-                        this._durableOutboxEntries.delete(
-                            packet.clientTransactionId
-                        );
-                    }
-                    this._emitPendingSyncCountChange();
+            if (packet.clientTransactionId) {
+                this._durableOutboxEntries.set(packet.clientTransactionId, {
+                    assetId: this._assetId,
+                    documentId: this._documentId,
+                    clientTransactionId: packet.clientTransactionId,
+                    updateBytes: packet.update,
+                    collaborationMessage,
+                    createdAt: Date.now(),
+                    attempts: 0,
+                    state: 'sent'
                 });
-            return;
+                this._emitPendingSyncCountChange();
+            }
         }
         this._noteTransferActivity('sending');
         if (this._outboundFlushScheduled) {
@@ -1925,36 +1932,6 @@ export class CloudAdapter implements FileSystemAdapter {
         }
         this._outboundFlushScheduled = true;
         queueMicrotask(() => this._flushPendingOutboundUpdates());
-    }
-
-    private async _persistDurableOutboxPacket(
-        packet: CloudOutboundUpdatePacket
-    ): Promise<void> {
-        if (!packet.collaborationMessage || !packet.clientTransactionId) {
-            return;
-        }
-
-        if (this._durableOutboxEntries.has(packet.clientTransactionId)) {
-            return;
-        }
-
-        const record: CloudWalRecord = {
-            assetId: this._assetId,
-            documentId: this._documentId,
-            clientTransactionId: packet.clientTransactionId,
-            updateBytes: packet.update,
-            collaborationMessage: packet.collaborationMessage,
-            createdAt: Date.now(),
-            attempts: 0
-        };
-        await this._wal.append(record);
-        this._durableOutboxEntries.set(packet.clientTransactionId, record);
-        this._emitPendingSyncCountChange();
-        pushCollabIntegrityEvent('wal-outbox-append', {
-            documentId: this._documentId,
-            bytes: packet.update.length,
-            clientTransactionId: packet.clientTransactionId
-        });
     }
 
     private async _restorePersistentOutboxIntoBridge(): Promise<void> {
@@ -5212,21 +5189,28 @@ export class CloudAdapter implements FileSystemAdapter {
         if (!token || !roomUrl) {
             return;
         }
-        if (
-            !this._canSkipBootstrapOnReconnect ||
-            this._outboxNeedsServerRetarget
-        ) {
-            try {
-                await this._bootstrapFromR2(token, roomUrl);
-            } catch (error) {
-                console.log(
-                    `CloudAdapter: reconnect R2 bootstrap skipped (${
-                        error instanceof Error ? error.message : String(error)
-                    })`
-                );
+        const bridge = this._bridge;
+        if (!bridge) {
+            return;
+        }
+        const skipBootstrap =
+            this._canSkipBootstrapOnReconnect &&
+            !this._outboxNeedsServerRetarget;
+        try {
+            await this.connectWithCredentials(bridge, token, roomUrl, {
+                bootstrapMode: skipBootstrap ? 'skip' : 'required',
+                checkpointLogId: this._checkpointLogId
+            });
+        } catch (error) {
+            console.log(
+                `CloudAdapter: reconnect via credentials skipped (${
+                    error instanceof Error ? error.message : String(error)
+                })`
+            );
+            if (!this._destroyed && !this._accessRevoked) {
+                await this._openWebSocket(token, roomUrl);
             }
         }
-        await this._openWebSocket(token, roomUrl);
     }
 
     private _scheduleReconnect(): void {

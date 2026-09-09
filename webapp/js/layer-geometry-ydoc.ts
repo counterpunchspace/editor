@@ -417,12 +417,15 @@ function writeLayerGeometryInTransaction(
         shapeDataMap.set(key, toYType(value));
     }
 
-    // Do not delete positions here. A just-removed node can be retained by a
-    // concurrently winning topology; it is an ignored orphan until the
-    // explicit, idempotent repair pass runs after convergence.
+    // Do not delete positions here. Geometry GC runs only during an explicit
+    // generation rebase (`repairLayerGeometryOrphans`), never on ordinary
+    // commits or converged snapshot refreshes.
 }
 
 export function repairLayerGeometryOrphans(layerMap: Y.Map<unknown>): void {
+    // Geometry GC only runs during an explicit generation rebase
+    // (topology.g increment), never on ordinary commits or converged
+    // snapshot refreshes.
     if (!yMapHas(layerMap, LAYER_GEOMETRY_TOPOLOGY_KEY)) {
         return;
     }
@@ -455,27 +458,56 @@ export function repairLayerGeometryOrphans(layerMap: Y.Map<unknown>): void {
     }
 }
 
+const lastGoodGeometryPreview = new WeakMap<Y.Map<unknown>, Unsafe[]>();
+
 export function readLayerGeometry(layerMap: Y.Map<unknown>): Unsafe[] | null {
     const rawTopology = yMapGet(layerMap, LAYER_GEOMETRY_TOPOLOGY_KEY);
     if (rawTopology === undefined) {
         return null;
     }
-    const topology = decodeGeometryTopology(rawTopology);
-    const positionsRaw = yMapGet(layerMap, LAYER_NODE_POSITIONS_KEY);
-    const shapeDataRaw = yMapGet(layerMap, LAYER_SHAPE_DATA_KEY);
-    const positions: Record<string, unknown> = {};
-    if (isYMap(positionsRaw)) {
-        yMapForEach(positionsRaw, (value, key) => {
-            positions[key] = value;
-        });
+    try {
+        const topology = decodeGeometryTopology(rawTopology);
+        const positionsRaw = yMapGet(layerMap, LAYER_NODE_POSITIONS_KEY);
+        const shapeDataRaw = yMapGet(layerMap, LAYER_SHAPE_DATA_KEY);
+        const positions: Record<string, unknown> = {};
+        if (isYMap(positionsRaw)) {
+            yMapForEach(positionsRaw, (value, key) => {
+                positions[key] = value;
+            });
+        }
+        const shapeData: Record<string, unknown> = {};
+        if (isYMap(shapeDataRaw)) {
+            yMapForEach(shapeDataRaw, (value, key) => {
+                shapeData[key] = yValueToJson(value);
+            });
+        }
+        const shapes = reconstructShapesFromGeometry(
+            topology,
+            positions,
+            shapeData
+        );
+        lastGoodGeometryPreview.set(layerMap, shapes);
+        return shapes;
+    } catch (error) {
+        const lastGood = lastGoodGeometryPreview.get(layerMap);
+        if (lastGood) {
+            const stale = lastGood.map((shape) => ({ ...shape }));
+            (
+                stale as Unsafe[] & { _geometryPreviewStale?: boolean }
+            )._geometryPreviewStale = true;
+            return stale;
+        }
+        throw error;
     }
-    const shapeData: Record<string, unknown> = {};
-    if (isYMap(shapeDataRaw)) {
-        yMapForEach(shapeDataRaw, (value, key) => {
-            shapeData[key] = yValueToJson(value);
-        });
-    }
-    return reconstructShapesFromGeometry(topology, positions, shapeData);
+}
+
+export function layerGeometryPreviewIsStale(shapes: unknown): boolean {
+    return (
+        !!shapes &&
+        typeof shapes === 'object' &&
+        (shapes as { _geometryPreviewStale?: boolean })
+            ._geometryPreviewStale === true
+    );
 }
 
 export function writeNodePosition(
