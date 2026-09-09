@@ -417,7 +417,15 @@ describe('CloudLiveSession', () => {
             return {
                 ok: true,
                 status: 200,
-                json: async () => ({ ok: true, durable: true })
+                json: async () => {
+                    const body = JSON.parse(opts.body);
+                    return {
+                        ok: true,
+                        durable: true,
+                        seq: body.seq,
+                        clientTransactionId: body.clientTransactionId
+                    };
+                }
             };
         });
         for (const listener of listeners) {
@@ -502,7 +510,15 @@ describe('CloudLiveSession', () => {
         global.fetch = jest.fn(async () => ({
             ok: true,
             status: 200,
-            json: async () => ({ ok: true, durable: true })
+            json: async () => {
+                const body = JSON.parse(opts.body);
+                return {
+                    ok: true,
+                    durable: true,
+                    seq: body.seq,
+                    clientTransactionId: body.clientTransactionId
+                };
+            }
         }));
         session.sendForwardedUpdate(new Uint8Array([9]), null, 'glyph:ccc');
         await session.flushPendingHttpPublishes();
@@ -532,7 +548,15 @@ describe('CloudLiveSession', () => {
             return {
                 ok: true,
                 status: 200,
-                json: async () => ({ ok: true, durable: true })
+                json: async () => {
+                    const body = JSON.parse(opts.body);
+                    return {
+                        ok: true,
+                        durable: true,
+                        seq: body.seq,
+                        clientTransactionId: body.clientTransactionId
+                    };
+                }
             };
         });
         session.sendForwardedUpdate(new Uint8Array([9]), null, 'glyph:ccc');
@@ -559,7 +583,15 @@ describe('CloudLiveSession', () => {
             return {
                 ok: true,
                 status: 200,
-                json: async () => ({ ok: true, durable: true })
+                json: async () => {
+                    const body = JSON.parse(opts.body);
+                    return {
+                        ok: true,
+                        durable: true,
+                        seq: body.seq,
+                        clientTransactionId: body.clientTransactionId
+                    };
+                }
             };
         });
         session.sendForwardedUpdate(new Uint8Array([9]), null, 'glyph:ccc');
@@ -648,7 +680,16 @@ describe('CloudLiveSession', () => {
                             resolveFetch({
                                 ok: true,
                                 status: 200,
-                                json: async () => ({ ok: true, durable: true })
+                                json: async () => {
+                                    const body = JSON.parse(opts.body);
+                                    return {
+                                        ok: true,
+                                        durable: true,
+                                        seq: body.seq,
+                                        clientTransactionId:
+                                            body.clientTransactionId
+                                    };
+                                }
                             });
                         resolve();
                     })
@@ -709,7 +750,15 @@ describe('CloudLiveSession', () => {
             return {
                 ok: true,
                 status: 200,
-                json: async () => ({ ok: true, durable: true })
+                json: async () => {
+                    const body = JSON.parse(opts.body);
+                    return {
+                        ok: true,
+                        durable: true,
+                        seq: body.seq,
+                        clientTransactionId: body.clientTransactionId
+                    };
+                }
             };
         });
         session.sendForwardedUpdate(new Uint8Array([1]), null, 'glyph:1');

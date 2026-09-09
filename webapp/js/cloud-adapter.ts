@@ -92,7 +92,41 @@ import {
     type CloudWalHealth,
     type CloudWalRecord
 } from './cloud-durable-wal';
+import {
+    allocateClientTransactionId,
+    isExactDurableAck
+} from './cloud-durability-contract';
+import {
+    acceptChunk,
+    createChunkAccumulator,
+    type CloudChunkAccumulator
+} from './cloud-chunk-accumulator';
 import { pushCollabIntegrityEvent } from './cloud-collab-integrity-debug';
+import { ackIsDurable } from './cloud-adapter-outbox';
+import { createReconnectBootstrapState } from './cloud-adapter-reconnect';
+import {
+    withCloudAccessToken,
+    normalizeCloudRoomWebSocketUrl,
+    normalizeCloudRoomHttpUrl,
+    normalizeCloudShardHttpUrl,
+    normalizeCloudShardPackUrl,
+    normalizeCloudShardPackDiscardUrl,
+    normalizeCloudShardLiveHttpUrl,
+    normalizeCloudShardStatusHttpUrl,
+    normalizeCloudShardWebSocketUrl
+} from './cloud-adapter-bootstrap';
+
+export {
+    withCloudAccessToken,
+    normalizeCloudRoomWebSocketUrl,
+    normalizeCloudRoomHttpUrl,
+    normalizeCloudShardHttpUrl,
+    normalizeCloudShardPackUrl,
+    normalizeCloudShardPackDiscardUrl,
+    normalizeCloudShardLiveHttpUrl,
+    normalizeCloudShardStatusHttpUrl,
+    normalizeCloudShardWebSocketUrl
+};
 
 const console = new Logger('CloudAdapter');
 
@@ -247,150 +281,6 @@ function abortSignalWithTimeout(
         return AbortSignal.any([signal, timeout]);
     }
     return timeout;
-}
-
-export function withCloudAccessToken(wsUrl: string, token: string): string {
-    if (!token) {
-        return wsUrl;
-    }
-    const url = new URL(wsUrl);
-    url.searchParams.set('access_token', token);
-    return url.toString();
-}
-
-export function normalizeCloudRoomWebSocketUrl(
-    roomUrl: string,
-    websiteBaseUrl: string
-): string {
-    const trimmedRoomUrl = roomUrl.trim();
-    if (!trimmedRoomUrl) {
-        throw new Error('room-token response returned an empty roomUrl');
-    }
-
-    let normalizedUrl: URL;
-
-    try {
-        if (/^wss?:\/\//i.test(trimmedRoomUrl)) {
-            normalizedUrl = new URL(trimmedRoomUrl);
-        } else if (/^https?:\/\//i.test(trimmedRoomUrl)) {
-            normalizedUrl = new URL(trimmedRoomUrl);
-        } else if (trimmedRoomUrl.startsWith('/')) {
-            normalizedUrl = new URL(trimmedRoomUrl, websiteBaseUrl);
-        } else {
-            normalizedUrl = new URL(`https://${trimmedRoomUrl}`);
-        }
-    } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        throw new Error(`Invalid room URL "${roomUrl}": ${message}`);
-    }
-
-    if (normalizedUrl.protocol === 'http:') {
-        normalizedUrl.protocol = 'ws:';
-    } else if (normalizedUrl.protocol === 'https:') {
-        normalizedUrl.protocol = 'wss:';
-    }
-
-    if (!/^wss?:$/i.test(normalizedUrl.protocol)) {
-        throw new Error(
-            `Invalid room URL protocol for "${roomUrl}": ${normalizedUrl.protocol}`
-        );
-    }
-
-    return normalizedUrl.toString();
-}
-
-/**
- * Convert a room URL to its HTTP form for the /state endpoint.
- * Reverses normalizeCloudRoomWebSocketUrl — ws: → http:, wss: → https:.
- */
-export function normalizeCloudRoomHttpUrl(
-    roomUrl: string,
-    websiteBaseUrl: string
-): string {
-    const wsUrl = normalizeCloudRoomWebSocketUrl(roomUrl, websiteBaseUrl);
-    const url = new URL(wsUrl);
-    if (url.protocol === 'ws:') {
-        url.protocol = 'http:';
-    } else if (url.protocol === 'wss:') {
-        url.protocol = 'https:';
-    }
-    url.pathname = url.pathname.replace(/\/$/, '') + '/state';
-    return url.toString();
-}
-
-export function normalizeCloudShardHttpUrl(
-    roomUrl: string,
-    websiteBaseUrl: string,
-    assetId: string,
-    documentId: string
-): string {
-    const httpUrl = normalizeCloudRoomHttpUrl(roomUrl, websiteBaseUrl);
-    const url = new URL(httpUrl);
-    const shardPath = documentId.replace(/:/g, '/');
-    url.pathname = `/room/${encodeURIComponent(assetId)}/shards/${shardPath}/state`;
-    return url.toString();
-}
-
-export function normalizeCloudShardPackUrl(
-    roomUrl: string,
-    websiteBaseUrl: string,
-    assetId: string
-): string {
-    const httpUrl = normalizeCloudRoomHttpUrl(roomUrl, websiteBaseUrl);
-    const url = new URL(httpUrl);
-    url.pathname = `/room/${encodeURIComponent(assetId)}/pack`;
-    return url.toString();
-}
-
-export function normalizeCloudShardPackDiscardUrl(
-    roomUrl: string,
-    websiteBaseUrl: string,
-    assetId: string
-): string {
-    const url = new URL(
-        normalizeCloudShardPackUrl(roomUrl, websiteBaseUrl, assetId)
-    );
-    url.pathname = `/room/${encodeURIComponent(assetId)}/pack/discard`;
-    return url.toString();
-}
-
-export function normalizeCloudShardLiveHttpUrl(
-    roomUrl: string,
-    websiteBaseUrl: string,
-    assetId: string,
-    documentId: string
-): string {
-    const url = new URL(
-        normalizeCloudShardHttpUrl(roomUrl, websiteBaseUrl, assetId, documentId)
-    );
-    url.pathname = url.pathname.replace(/\/state$/, '/live');
-    return url.toString();
-}
-
-export function normalizeCloudShardStatusHttpUrl(
-    roomUrl: string,
-    websiteBaseUrl: string,
-    assetId: string,
-    documentId: string
-): string {
-    const url = new URL(
-        normalizeCloudShardHttpUrl(roomUrl, websiteBaseUrl, assetId, documentId)
-    );
-    url.pathname = url.pathname.replace(/\/state$/, '/status');
-    return url.toString();
-}
-
-export function normalizeCloudShardWebSocketUrl(
-    roomUrl: string,
-    websiteBaseUrl: string,
-    assetId: string,
-    documentId: string
-): string {
-    const wsUrl = normalizeCloudRoomWebSocketUrl(roomUrl, websiteBaseUrl);
-    const url = new URL(wsUrl);
-    const shardPath = documentId.replace(/:/g, '/');
-    url.pathname = `/room/${encodeURIComponent(assetId)}/shards/${shardPath}`;
-    return url.toString();
 }
 
 async function parseRequiredJsonResponse<T>(
@@ -945,15 +835,15 @@ export async function publishCloudDocumentUpdate(options: {
         options.assetId,
         options.documentId
     );
+    const clientTransactionId =
+        options.clientTransactionId || allocateClientTransactionId('http');
     const body: Record<string, unknown> = {
         type: 'update',
         update: u8ToBase64(options.update),
         seq: options.seq,
-        clientId: options.clientId || `http:${options.assetId}`
+        clientId: options.clientId || `http:${options.assetId}`,
+        clientTransactionId
     };
-    if (options.clientTransactionId) {
-        body.clientTransactionId = options.clientTransactionId;
-    }
     if (options.collaborationMessage) {
         body.collaborationMessages = [options.collaborationMessage];
     }
@@ -981,11 +871,22 @@ export async function publishCloudDocumentUpdate(options: {
         error.status = response.status;
         throw error;
     }
-    const payload = (await response.json().catch(() => null)) as {
-        ok?: boolean;
-        durable?: boolean;
-    } | null;
-    return payload?.ok === true && payload?.durable === true;
+    const payload = (await response.json().catch(() => null)) as Record<
+        string,
+        unknown
+    > | null;
+    return isExactDurableAck(
+        payload
+            ? {
+                  type: 'ack',
+                  ...payload
+              }
+            : null,
+        {
+            clientTransactionId,
+            seq: options.seq
+        }
+    );
 }
 
 /**
@@ -1068,12 +969,6 @@ type CloudLiveUpdateMessage = {
     logId?: number;
 };
 
-type CloudChunkAccumulator = {
-    chunks: (Uint8Array | undefined)[];
-    received: number;
-    total: number;
-};
-
 type CloudOutboundUpdatePacket = {
     update: Uint8Array;
     collaborationMessage?: CollaborationMessageEnvelope;
@@ -1150,12 +1045,12 @@ export async function runCloudVisibleReconnectRebaseline(): Promise<CloudVisible
 
 function getCloudClientTransactionId(
     collaborationMessage?: CollaborationMessageEnvelope | null
-): string | null {
-    if (!collaborationMessage) {
-        return null;
-    }
-
-    return collaborationMessageKey(collaborationMessage);
+): string {
+    return (
+        (collaborationMessage &&
+            collaborationMessageKey(collaborationMessage)) ||
+        allocateClientTransactionId('live')
+    );
 }
 
 function dedupeCollaborationMessages(
@@ -1805,15 +1700,14 @@ export class CloudAdapter implements FileSystemAdapter {
     }
 
     private _resetBootstrapStateForReconnect(): void {
-        this._hasSynced = false;
+        const reconnect = createReconnectBootstrapState();
+        this._hasSynced = reconnect.hasSynced;
         this._incomingResponseChunks = null;
-        this._initialServerStateApplied = false;
-        this._initialSyncDurable = false;
-        this._lastInboundMessageAt = 0;
+        this._initialServerStateApplied = reconnect.initialServerStateApplied;
+        this._initialSyncDurable = reconnect.initialSyncDurable;
+        this._lastInboundMessageAt = reconnect.lastInboundMessageAt;
         this._resetWorkerBridgeSyncState();
-        // Hold every reconnect flush until we have the post-compact server
-        // vector — including font-deps repairs emitted during R2 bootstrap.
-        this._outboxNeedsServerRetarget = true;
+        this._outboxNeedsServerRetarget = reconnect.outboxNeedsServerRetarget;
     }
 
     private _resetWorkerBridgeSyncState(): void {
@@ -1892,12 +1786,13 @@ export class CloudAdapter implements FileSystemAdapter {
             return;
         }
 
-        const clientTransactionId =
-            getCloudClientTransactionId(collaborationMessage);
+        const clientTransactionId = collaborationMessage
+            ? getCloudClientTransactionId(collaborationMessage)
+            : null;
         const packet: CloudOutboundUpdatePacket = {
             update,
             ...(collaborationMessage ? { collaborationMessage } : undefined),
-            ...(clientTransactionId ? { clientTransactionId } : undefined)
+            clientTransactionId
         };
 
         this._pendingOutboundPackets.push(packet);
@@ -2196,7 +2091,25 @@ export class CloudAdapter implements FileSystemAdapter {
         if (!clientTransactionIds.length) {
             return;
         }
+        void this._commitDurableTransactionDrop(clientTransactionIds);
+    }
 
+    private async _commitDurableTransactionDrop(
+        clientTransactionIds: string[]
+    ): Promise<void> {
+        try {
+            await this._wal.acknowledgeMany(
+                this._assetId,
+                this._documentId,
+                clientTransactionIds
+            );
+        } catch (error) {
+            console.warn(
+                'CloudAdapter: failed to prune cloud outbox entries:',
+                error
+            );
+            return;
+        }
         const durableTransactionIds = new Set(clientTransactionIds);
         this._pendingOutboundPackets = this._pendingOutboundPackets.filter(
             (packet) =>
@@ -2213,18 +2126,6 @@ export class CloudAdapter implements FileSystemAdapter {
         }
         this._flushDurableWaiters();
         this._emitPendingSyncCountChange();
-        void this._wal
-            .acknowledgeMany(
-                this._assetId,
-                this._documentId,
-                clientTransactionIds
-            )
-            .catch((error) => {
-                console.warn(
-                    'CloudAdapter: failed to prune cloud outbox entries:',
-                    error
-                );
-            });
     }
 
     private _dropSyncCompleteCoveredOutboundPackets(): void {
@@ -3645,11 +3546,13 @@ export class CloudAdapter implements FileSystemAdapter {
                                 : null,
                         serverStateVector: serverSV
                     };
-                    this._incomingResponseChunks = {
-                        chunks: new Array(msg.totalChunks as number),
-                        received: 0,
-                        total: msg.totalChunks as number
-                    };
+                    this._incomingResponseChunks = this._createChunkAccumulator(
+                        msg.totalChunks
+                    );
+                    if (!this._incomingResponseChunks) {
+                        this._incomingResponseChunks = null;
+                        break;
+                    }
                     if (!this._pendingSyncPageMeta.hasMore) {
                         this._finishInitialSyncAfterPages(serverSV);
                     }
@@ -3694,11 +3597,21 @@ export class CloudAdapter implements FileSystemAdapter {
                     this._noteTransferActivity('receiving');
                     this._armInitialSyncTimeout();
                     const state = this._incomingResponseChunks;
-                    state.chunks[msg.chunkIndex as number] = base64ToU8(
-                        msg.update as string
-                    );
-                    state.received++;
-                    if (state.received === state.total) {
+                    const bytes = base64ToU8(msg.update as string);
+                    if (
+                        !this._acceptChunk(
+                            state,
+                            msg.chunkIndex as number,
+                            bytes
+                        )
+                    ) {
+                        this._incomingResponseChunks = null;
+                        break;
+                    }
+                    if (
+                        state.received === state.total &&
+                        state.chunks.every((chunk) => chunk)
+                    ) {
                         const combined = this._mergeChunks(
                             state.chunks as Uint8Array[]
                         );
@@ -3770,7 +3683,9 @@ export class CloudAdapter implements FileSystemAdapter {
 
             case 'ack':
                 if (msg.seq === -1 && msg.phase === 'sync-complete') {
-                    if (msg.durable === false) {
+                    const pendingSyncIds =
+                        this._pendingSyncCompleteTransactionIds;
+                    if (!this._ackIsDurable(msg, pendingSyncIds, -1)) {
                         const detail = 'Initial cloud sync was not durable';
                         console.warn(`CloudAdapter: ${detail}`);
                         this._setStatus('error', detail);
@@ -3782,10 +3697,8 @@ export class CloudAdapter implements FileSystemAdapter {
                     }
 
                     this._initialSyncDurable = true;
-                    if (this._pendingSyncCompleteTransactionIds.length > 0) {
-                        this._dropDurableTransactions(
-                            this._pendingSyncCompleteTransactionIds
-                        );
+                    if (pendingSyncIds.length > 0) {
+                        this._dropDurableTransactions(pendingSyncIds);
                         if (this._pendingSyncCompleteBroadcastEntryCount > 0) {
                             this._bridge?.advanceBroadcastLogCursor(
                                 this._pendingSyncCompleteBroadcastEntryCount
@@ -3798,15 +3711,19 @@ export class CloudAdapter implements FileSystemAdapter {
                     return;
                 }
 
-                if (msg.durable === false) {
-                    const detail = `Cloud update seq ${String(msg.seq ?? '?')} was not durable`;
-                    console.warn(`CloudAdapter: ${detail}`);
-                    this._setStatus('error', detail);
-                    this._ws?.close(
-                        CLIENT_RECONNECT_CLOSE_CODE,
-                        'undurable-update'
-                    );
-                } else if (typeof msg.seq === 'number') {
+                if (typeof msg.seq === 'number') {
+                    const pendingIds =
+                        this._outboundPendingTransactionIds.get(msg.seq) ?? [];
+                    if (!this._ackIsDurable(msg, pendingIds, msg.seq)) {
+                        const detail = `Cloud update seq ${String(msg.seq ?? '?')} was not durable`;
+                        console.warn(`CloudAdapter: ${detail}`);
+                        this._setStatus('error', detail);
+                        this._ws?.close(
+                            CLIENT_RECONNECT_CLOSE_CODE,
+                            'undurable-update'
+                        );
+                        return;
+                    }
                     this._recordDurableAck(msg.seq);
                 }
                 break;
@@ -4387,6 +4304,10 @@ export class CloudAdapter implements FileSystemAdapter {
                         pendingCollaborationMessages.length
                             ? pendingCollaborationMessages
                             : undefined;
+                    if (this._pendingSyncCompleteTransactionIds[0]) {
+                        frame.clientTransactionId =
+                            this._pendingSyncCompleteTransactionIds[0];
+                    }
                 }
                 this._ws.send(JSON.stringify(frame));
             }
@@ -4410,6 +4331,28 @@ export class CloudAdapter implements FileSystemAdapter {
         return result;
     }
 
+    private _ackIsDurable(
+        msg: Record<string, unknown>,
+        pendingIds: string[],
+        seq: number
+    ): boolean {
+        return ackIsDurable(msg, pendingIds, seq);
+    }
+
+    private _createChunkAccumulator(
+        totalChunks: unknown
+    ): CloudChunkAccumulator | null {
+        return createChunkAccumulator(totalChunks);
+    }
+
+    private _acceptChunk(
+        state: CloudChunkAccumulator,
+        chunkIndex: unknown,
+        bytes: Uint8Array
+    ): boolean {
+        return acceptChunk(state, chunkIndex, bytes);
+    }
+
     private _accumulateIncomingLiveUpdateChunk(
         msg: Record<string, unknown>
     ): void {
@@ -4431,19 +4374,18 @@ export class CloudAdapter implements FileSystemAdapter {
 
         let state = this._incomingLiveUpdateChunks.get(chunkKey);
         if (!state) {
-            state = {
-                chunks: new Array(msg.totalChunks as number),
-                received: 0,
-                total: msg.totalChunks as number
-            };
+            state = this._createChunkAccumulator(msg.totalChunks);
+            if (!state) {
+                return;
+            }
             this._incomingLiveUpdateChunks.set(chunkKey, state);
         }
 
         const chunkIndex = msg.chunkIndex as number;
-        if (!state.chunks[chunkIndex]) {
-            state.received++;
+        const bytes = base64ToU8(msg.update);
+        if (!this._acceptChunk(state, chunkIndex, bytes)) {
+            return;
         }
-        state.chunks[chunkIndex] = base64ToU8(msg.update);
     }
 
     private _consumeIncomingLiveUpdate(
@@ -4473,18 +4415,17 @@ export class CloudAdapter implements FileSystemAdapter {
 
         let state = this._incomingLiveUpdateChunks.get(chunkKey);
         if (!state) {
-            state = {
-                chunks: new Array(msg.totalChunks as number),
-                received: 0,
-                total: msg.totalChunks as number
-            };
+            state = this._createChunkAccumulator(msg.totalChunks);
+            if (!state) {
+                return null;
+            }
         }
 
         const chunkIndex = msg.chunkIndex as number;
-        if (!state.chunks[chunkIndex]) {
-            state.received++;
+        const bytes = base64ToU8(msg.update);
+        if (!this._acceptChunk(state, chunkIndex, bytes)) {
+            return null;
         }
-        state.chunks[chunkIndex] = base64ToU8(msg.update);
 
         if (
             state.received !== state.total ||

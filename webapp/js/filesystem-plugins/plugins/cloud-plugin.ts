@@ -4437,7 +4437,10 @@ export class CloudPlugin extends FilesystemPlugin {
             headers: getCloudRequestHeaders()
         });
         if (!resp?.ok) {
-            return null;
+            if (resp.status === 404) {
+                return null;
+            }
+            throw new Error(`manifest fetch failed: ${resp.status}`);
         }
         const data = (await resp.json()) as {
             current?: { coreRevision?: string; depsRevision?: string } | null;

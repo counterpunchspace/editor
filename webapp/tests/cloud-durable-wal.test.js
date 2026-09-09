@@ -121,7 +121,7 @@ function sampleRecord(clientTransactionId = 'txn-1') {
         assetId: 'asset-1',
         documentId: 'font-core',
         clientTransactionId,
-        updateBase64: 'YQ==',
+        updateBytes: new Uint8Array([97]),
         collaborationMessage: {
             schemaVersion: 1,
             transactionId: clientTransactionId,
@@ -192,7 +192,7 @@ describe('CloudDurableWal', () => {
         await wal.append({
             ...sampleRecord('shared-txn'),
             documentId: 'glyph:aaa',
-            updateBase64: 'Yg=='
+            updateBytes: new Uint8Array([98])
         });
         expect(wal.pendingCount).toBe(2);
         expect(wal.recordsFor('font-core')).toHaveLength(1);
@@ -269,7 +269,29 @@ describe('CloudDurableWal', () => {
         );
     });
 
-    test('loads v1 records after the IndexedDB version 2 upgrade', async () => {
+    test('quarantines generation-less WAL rows during rollback', async () => {
+        global.indexedDB = createIndexedDbMock();
+        const wal = new CloudDurableWal();
+        await wal.load('asset-1');
+        await wal.append({
+            ...sampleRecord('legacy-row'),
+            generationId: undefined,
+            updateBytes: new Uint8Array([9, 8, 7])
+        });
+        await wal.append({
+            ...sampleRecord('current-row'),
+            generationId: 'gen-2',
+            updateBytes: new Uint8Array([1, 2, 3])
+        });
+        const removed = await wal.discardOtherGenerations('asset-1', 'gen-2');
+        expect(removed).toBe(1);
+        expect(wal.replayableRecords('gen-2')).toHaveLength(1);
+        expect(wal.replayableRecords('gen-2')[0].clientTransactionId).toBe(
+            'current-row'
+        );
+    });
+
+    test('quarantines v1 Base64 WAL rows instead of replaying them', async () => {
         const mock = createIndexedDbMock();
         global.indexedDB = mock;
         mock.records.set('asset-1:font-core:legacy-v1', {
@@ -277,6 +299,7 @@ describe('CloudDurableWal', () => {
             assetId: 'asset-1',
             documentId: 'font-core',
             clientTransactionId: 'legacy-v1',
+            schemaVersion: 1,
             updateBase64: 'YQ==',
             collaborationMessage: sampleRecord().collaborationMessage,
             createdAt: 1,
@@ -284,11 +307,8 @@ describe('CloudDurableWal', () => {
         });
         const wal = new CloudDurableWal();
         const loaded = await wal.load('asset-1');
-        expect(loaded).toHaveLength(1);
-        expect(loaded[0].clientTransactionId).toBe('legacy-v1');
-        expect(loaded[0].schemaVersion).toBe(1);
-        expect(loaded[0].state).toBe('applied');
-        expect(wal.pendingCount).toBe(1);
+        expect(loaded).toHaveLength(0);
+        expect(wal.pendingCount).toBe(0);
     });
 
     test('survives crash between prepared, applied, sent, and acknowledged', async () => {
@@ -299,6 +319,7 @@ describe('CloudDurableWal', () => {
             ...sampleRecord('crash-txn'),
             schemaVersion: 2,
             transactionId: 'crash-txn',
+            updateBytes: new Uint8Array(),
             operations: [
                 { op: 'set', path: ['glyphs', 'A', 'width'], newValue: 600 }
             ],
@@ -318,11 +339,12 @@ describe('CloudDurableWal', () => {
             ]
         };
         await writer.append(prepared);
+        expect(writer.recordsFor('font-core')).toHaveLength(0);
         const afterPrepare = new CloudDurableWal();
-        expect((await afterPrepare.load('asset-1'))[0].state).toBe('prepared');
+        expect(await afterPrepare.load('asset-1')).toEqual([]);
 
-        await afterPrepare.append({
-            ...(await afterPrepare.load('asset-1'))[0],
+        await writer.append({
+            ...prepared,
             state: 'applied',
             updateBytes: new Uint8Array([1, 2, 3])
         });

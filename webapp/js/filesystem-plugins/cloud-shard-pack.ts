@@ -1,6 +1,6 @@
 /**
- * Browser-side shard pack codec. Keep in sync with
- * collab/collab/packages/protocol/src/pack.js
+ * Browser-side shard pack codec. GENERATED/kept in sync with
+ * collab/packages/protocol/src/pack.js via `npm test -w @counterpunch/collab-protocol`.
  */
 
 export const PACK_MAGIC = new Uint8Array([0x43, 0x50, 0x4b, 0x31]);
@@ -8,6 +8,7 @@ export const PACK_CONTENT_TYPE = 'application/vnd.counterpunch.shard-pack';
 export const PACK_DIGEST_BYTES = 32;
 export const PACK_MAX_SHARD_ID_BYTES = 256;
 export const PACK_MAX_SHARDS = 32;
+export const PACK_MAX_BYTES = 48 * 1024 * 1024;
 export const PACK_FRAME_TYPE = {
     SHARD: 1,
     RECEIPT: 2,
@@ -167,6 +168,14 @@ export function createPackParser(): {
                 const flags = view.getUint8(1);
                 const idLen = view.getUint16(2, false);
                 const payloadLen = view.getUint32(4, false);
+                if (idLen > PACK_MAX_SHARD_ID_BYTES) {
+                    throw new Error('pack shard id too long');
+                }
+                if (payloadLen > 5242880 && type === PACK_FRAME_TYPE.SHARD) {
+                    throw new Error(
+                        'pack shard payload exceeds MAX_SHARD_BYTES'
+                    );
+                }
                 const frameLen = 8 + idLen + PACK_DIGEST_BYTES + payloadLen;
                 if (buffer.byteLength < frameLen) {
                     break;

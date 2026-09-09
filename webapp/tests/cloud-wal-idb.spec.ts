@@ -13,7 +13,9 @@ async function openWalOrigin(
     await page.goto('https://wal.test/integrity');
 }
 
-test('IndexedDB WAL v1 keys survive a version 2 upgrade', async ({ page }) => {
+test('IndexedDB WAL v1 Base64 rows are not replayed after the current upgrade', async ({
+    page
+}) => {
     await openWalOrigin(page);
     const result = await page.evaluate(async () => {
         const dbName = 'counterpunch-cloud-outbox-e2e';
@@ -53,7 +55,7 @@ test('IndexedDB WAL v1 keys survive a version 2 upgrade', async ({ page }) => {
             bytes: number[];
             state: string;
         }>((resolve, reject) => {
-            const open = indexedDB.open(dbName, 2);
+            const open = indexedDB.open(dbName, 3);
             open.onupgradeneeded = () => {
                 if (!open.result.objectStoreNames.contains(storeName)) {
                     open.result.createObjectStore(storeName, {
@@ -102,7 +104,7 @@ test('WAL crash checkpoints persist prepared/applied/sent before prune', async (
         });
         const putState = (state: string) =>
             new Promise<void>((resolve, reject) => {
-                const open = indexedDB.open(dbName, 2);
+                const open = indexedDB.open(dbName, 3);
                 open.onupgradeneeded = () => {
                     if (!open.result.objectStoreNames.contains(storeName)) {
                         open.result.createObjectStore(storeName, {
@@ -134,7 +136,7 @@ test('WAL crash checkpoints persist prepared/applied/sent before prune', async (
             });
         const readState = () =>
             new Promise<string>((resolve, reject) => {
-                const open = indexedDB.open(dbName, 2);
+                const open = indexedDB.open(dbName, 3);
                 open.onerror = () => reject(open.error);
                 open.onsuccess = () => {
                     const db = open.result;
@@ -156,7 +158,7 @@ test('WAL crash checkpoints persist prepared/applied/sent before prune', async (
             observed.push(await readState());
         }
         await new Promise<void>((resolve, reject) => {
-            const open = indexedDB.open(dbName, 2);
+            const open = indexedDB.open(dbName, 3);
             open.onerror = () => reject(open.error);
             open.onsuccess = () => {
                 const db = open.result;

@@ -39,6 +39,7 @@ import {
 } from './collaboration-message';
 import { Logger } from './logger';
 import { pushCollabIntegrityEvent } from './cloud-collab-integrity-debug';
+import { allocateClientTransactionId } from './cloud-durability-contract';
 
 const console = new Logger('CloudLiveSession');
 
@@ -616,34 +617,22 @@ export class CloudLiveSession {
         if (this._disconnected) {
             return false;
         }
-        if (!collaborationMessage || !update?.length) {
-            pushCollabIntegrityEvent('persist-outgoing-skip', {
-                documentId: documentId || FONT_CORE_DOCUMENT_ID,
-                bytes: update?.length ?? 0,
-                hasCollaborationMessage: Boolean(collaborationMessage)
-            });
+        if (!update?.length) {
             return false;
         }
         await this._ensureWalLoaded();
         if (this._wal.health !== 'ready') {
             return false;
         }
-        const messageKey = collaborationMessageKey(collaborationMessage);
-        if (!messageKey) {
-            return false;
-        }
+        const messageKey = collaborationMessage
+            ? collaborationMessageKey(collaborationMessage)
+            : allocateClientTransactionId('live');
         try {
             const resolvedDocumentId = documentId || FONT_CORE_DOCUMENT_ID;
             const candidates = this._wal.recordsFor(resolvedDocumentId);
-            const existing =
-                candidates.find(
-                    (record) => record.clientTransactionId === messageKey
-                ) ||
-                candidates.find(
-                    (record) =>
-                        record.state === 'prepared' ||
-                        record.state === 'applied'
-                );
+            const existing = candidates.find(
+                (record) => record.clientTransactionId === messageKey
+            );
             const clientTransactionId =
                 existing?.clientTransactionId || messageKey;
             const previousUpdates = existing?.documentUpdates || [];
@@ -667,7 +656,8 @@ export class CloudLiveSession {
                 operations: existing?.operations || [],
                 documentUpdates,
                 updateBytes: update,
-                collaborationMessage,
+                collaborationMessage:
+                    collaborationMessage || existing?.collaborationMessage,
                 collaborationMetadata: collaborationMessage.metadata,
                 revisionObligations: existing?.revisionObligations || [],
                 state: 'applied',
@@ -939,48 +929,54 @@ export class CloudLiveSession {
     private async _enqueueDependentPublish(
         documentId: string,
         update: Uint8Array,
-        collaborationMessage?: CollaborationMessageEnvelope | null
+        collaborationMessage?: CollaborationMessageEnvelope | null,
+        retry?: { seq: number; clientTransactionId: string }
     ): Promise<void> {
         if (!update?.length) {
             return;
         }
+        await this._ensureWalLoaded();
+        const clientTransactionId =
+            retry?.clientTransactionId ||
+            (collaborationMessage
+                ? collaborationMessageKey(collaborationMessage)
+                : allocateClientTransactionId('http'));
+        const seq = retry?.seq ?? ++this._httpPublishSeq;
+        let walRecord =
+            this._wal
+                .recordsFor(documentId)
+                .find(
+                    (record) =>
+                        record.clientTransactionId === clientTransactionId
+                ) || null;
+        if (!walRecord && this._wal.health === 'ready') {
+            walRecord = {
+                assetId: this._options.assetId,
+                documentId,
+                clientTransactionId,
+                updateBytes: update,
+                collaborationMessage: collaborationMessage || undefined,
+                createdAt: Date.now(),
+                attempts: 0,
+                generationId: this._options.generationId || undefined,
+                state: 'applied'
+            };
+            try {
+                await this._wal.append(walRecord);
+                this._emitPendingSyncCount();
+            } catch (error) {
+                console.warn(
+                    'CloudLiveSession: HTTP WAL persist failed before send:',
+                    error
+                );
+            }
+        }
+        if (this._disconnected) {
+            return;
+        }
         this._httpPublishingCount += 1;
         this._emitTransferActivity();
-        const seq = ++this._httpPublishSeq;
         this._httpPublishQueue.push(async () => {
-            if (this._disconnected) {
-                return;
-            }
-            await this._ensureWalLoaded();
-            const clientTransactionId = collaborationMessage
-                ? collaborationMessageKey(collaborationMessage)
-                : null;
-            let walRecord = null as
-                | Awaited<ReturnType<CloudDurableWal['recordsFor']>>[number]
-                | null;
-            if (collaborationMessage && clientTransactionId) {
-                const existing = this._wal
-                    .recordsFor(documentId)
-                    .find(
-                        (record) =>
-                            record.clientTransactionId === clientTransactionId
-                    );
-                walRecord =
-                    existing ??
-                    ({
-                        assetId: this._options.assetId,
-                        documentId,
-                        clientTransactionId,
-                        updateBytes: update,
-                        collaborationMessage,
-                        createdAt: Date.now(),
-                        attempts: 0
-                    } as CloudWalRecord);
-                if (!existing) {
-                    await this._wal.append(walRecord);
-                    this._emitPendingSyncCount();
-                }
-            }
             const { assetId, websiteBaseUrl } = this._options;
             let refreshed = false;
             for (let attempt = 0; attempt < 5; attempt += 1) {
@@ -1033,18 +1029,24 @@ export class CloudLiveSession {
                             } catch {
                                 /* keep in-memory record */
                             }
-                            const delay = Math.min(
-                                60_000,
-                                1_000 * 2 ** Math.min(walRecord.attempts, 8)
-                            );
-                            this._scheduleTimer(() => {
-                                void this._enqueueDependentPublish(
-                                    documentId,
-                                    update,
-                                    collaborationMessage
-                                );
-                            }, delay);
                         }
+                        const delay = Math.min(
+                            60_000,
+                            1_000 *
+                                2 **
+                                    Math.min(
+                                        Number(walRecord?.attempts || attempt),
+                                        8
+                                    )
+                        );
+                        this._scheduleTimer(() => {
+                            void this._enqueueDependentPublish(
+                                documentId,
+                                update,
+                                collaborationMessage,
+                                { seq, clientTransactionId }
+                            );
+                        }, delay);
                         return;
                     }
                     await new Promise<void>((resolve, reject) => {
@@ -1290,14 +1292,17 @@ export class CloudLiveSession {
             if (needsRebaseline) {
                 try {
                     await runCloudVisibleReconnectRebaseline();
+                    this.coreAdapter?.clearVisibleRebaselineNeeded?.();
+                    this._clearNonCoreRebaselineFlags();
                 } catch (error) {
                     console.warn(
                         'CloudLiveSession: visible reconnect rebaseline failed:',
                         error
                     );
-                } finally {
-                    this.coreAdapter?.clearVisibleRebaselineNeeded?.();
-                    this._clearNonCoreRebaselineFlags();
+                    this._options.onConnectionStatus?.(
+                        'syncing',
+                        'Visible cloud rebaseline failed'
+                    );
                 }
             }
         } catch (error) {

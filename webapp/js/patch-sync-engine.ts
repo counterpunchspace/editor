@@ -1973,39 +1973,40 @@ export class PatchSyncEngine {
             typeof plugin?.persistOutgoingCloudUpdate === 'function' &&
             collaborationMessage
         ) {
-            const pending = Promise.resolve(
-                plugin.persistOutgoingCloudUpdate(
-                    update,
-                    collaborationMessage,
-                    documentId
+            this._cloudEmitPersistChain = this._cloudEmitPersistChain
+                .then(() =>
+                    Promise.resolve(
+                        plugin.persistOutgoingCloudUpdate(
+                            update,
+                            collaborationMessage,
+                            documentId
+                        )
+                    )
                 )
-            ).then(
-                (ok) => {
-                    pushCollabIntegrityEvent('emit-persist', {
-                        documentId,
-                        bytes: update.length,
-                        ok: ok !== false
-                    });
-                    if (ok !== false) {
-                        deliver();
+                .then(
+                    (ok) => {
+                        pushCollabIntegrityEvent('emit-persist', {
+                            documentId,
+                            bytes: update.length,
+                            ok: ok !== false
+                        });
+                        if (ok !== false) {
+                            deliver();
+                        }
+                    },
+                    (error) => {
+                        pushCollabIntegrityEvent('emit-persist', {
+                            documentId,
+                            bytes: update.length,
+                            ok: false,
+                            error: String(error)
+                        });
                     }
-                },
-                (error) => {
-                    pushCollabIntegrityEvent('emit-persist', {
-                        documentId,
-                        bytes: update.length,
-                        ok: false,
-                        error: String(error)
-                    });
-                }
-            );
-            this._cloudEmitPersistChain = Promise.all([
-                this._cloudEmitPersistChain,
-                pending
-            ]).then(
-                () => undefined,
-                () => undefined
-            );
+                )
+                .then(
+                    () => undefined,
+                    () => undefined
+                );
             return;
         }
         deliver();
@@ -7000,28 +7001,28 @@ export class PatchSyncEngine {
         }
 
         if (this._shouldPersistCloudWalBeforeApply(cloudWalApplyToken)) {
-            const pending = this._commitOperationsAfterCloudWal(
-                effectiveOperations,
-                label,
-                transactionId,
-                historyItemId,
-                historyTarget,
-                promptGroupId,
-                historySummary,
-                skipTransactionFinalizer
-            );
-            this._cloudWalCommitChain = Promise.all([
-                this._cloudWalCommitChain,
-                pending
-            ]).then(
-                () => undefined,
-                (error) => {
-                    console.warn(
-                        'PatchSyncEngine: cloud WAL commit failed:',
-                        error
-                    );
-                }
-            );
+            this._cloudWalCommitChain = this._cloudWalCommitChain
+                .then(() =>
+                    this._commitOperationsAfterCloudWal(
+                        effectiveOperations,
+                        label,
+                        transactionId,
+                        historyItemId,
+                        historyTarget,
+                        promptGroupId,
+                        historySummary,
+                        skipTransactionFinalizer
+                    )
+                )
+                .then(
+                    () => undefined,
+                    (error) => {
+                        console.warn(
+                            'PatchSyncEngine: cloud WAL commit failed:',
+                            error
+                        );
+                    }
+                );
             return null;
         }
 

@@ -33,7 +33,11 @@ const TEST_REQUIRED_CAPABILITIES = {
     certifiedGeneration: 1,
     packetEnvelope: 1,
     glyphTombstones: 1,
-    glyphQuotaReservation: 1
+    glyphQuotaReservation: 1,
+    writeReceipts: 1,
+    dualDigests: 1,
+    writeReceipts: 1,
+    dualDigests: 1
 };
 
 function createIndexedDbMock(seedRecords = []) {
@@ -1468,7 +1472,7 @@ describe('CloudAdapter outbound updates', () => {
         adapter._ws = { readyState: 1, send };
         adapter._durableOutboxEntries.set('tx-offline', {
             clientTransactionId: 'tx-offline',
-            updateBase64: 'AQID'
+            updateBytes: new Uint8Array([1, 2, 3])
         });
         adapter._pendingOutboundPackets = [packet];
         adapter._outboundFlushScheduled = true;
@@ -1490,7 +1494,7 @@ describe('CloudAdapter outbound updates', () => {
             assetId: 'asset-123',
             documentId: 'font-core',
             clientTransactionId: 'tx-zombie',
-            updateBase64: Buffer.from([9, 8, 7]).toString('base64'),
+            updateBytes: new Uint8Array([9, 8, 7]),
             collaborationMessage,
             createdAt: 1,
             attempts: 1
@@ -1513,7 +1517,7 @@ describe('CloudAdapter outbound updates', () => {
         expect(adapter._pendingOutboundPackets).toHaveLength(1);
     });
 
-    it('retains queued outbound commits through auth and drops them after sync-complete durability', () => {
+    it('retains queued outbound commits through auth and drops them after sync-complete durability', async () => {
         const adapter = new CloudAdapter({ assetId: 'asset-123' });
         const sentFrames = [];
         const localUpdate = new Uint8Array([1, 2, 3, 4]);
@@ -1579,11 +1583,12 @@ describe('CloudAdapter outbound updates', () => {
         adapter._durableOutboxEntries.set(clientTransactionId, {
             assetId: 'asset-123',
             clientTransactionId,
-            updateBase64: Buffer.from(localUpdate).toString('base64'),
+            updateBytes: localUpdate,
             collaborationMessage,
             createdAt: 1
         });
 
+        global.indexedDB = createIndexedDbMock();
         try {
             adapter._handleMessage(
                 JSON.stringify({
@@ -1595,7 +1600,9 @@ describe('CloudAdapter outbound updates', () => {
                         certifiedGeneration: 1,
                         packetEnvelope: 1,
                         glyphTombstones: 1,
-                        glyphQuotaReservation: 1
+                        glyphQuotaReservation: 1,
+                        writeReceipts: 1,
+                        dualDigests: 1
                     },
                     seedRequired: true
                 })
@@ -1646,13 +1653,14 @@ describe('CloudAdapter outbound updates', () => {
                     type: 'ack',
                     seq: -1,
                     durable: true,
-                    phase: 'sync-complete'
+                    phase: 'sync-complete',
+                    clientTransactionId
                 })
             );
-
             expect(adapter._pendingOutboundPackets).toEqual([
                 metadataLessLatePacket
             ]);
+            await flushCloudIo(adapter);
             expect(adapter.pendingSyncCount).toBe(0);
             expect(
                 adapter._bridge.advanceBroadcastLogCursor
@@ -1712,10 +1720,76 @@ describe('CloudAdapter outbound updates', () => {
         localUpdateHandler(localUpdate, collaborationMessage);
         await flushCloudIo(adapter);
 
-        adapter._handleMessage(JSON.stringify({ type: 'ack', seq: 1 }));
+        adapter._handleMessage(
+            JSON.stringify({
+                type: 'ack',
+                seq: 1,
+                durable: true,
+                clientTransactionId:
+                    collaborationMessageKey(collaborationMessage)
+            })
+        );
+        await flushCloudIo(adapter);
 
         expect(advanceBroadcastLogCursor).toHaveBeenCalledWith(1);
         expect(adapter._pendingDurabilityMessages).toEqual([]);
+    });
+
+    it('retains the WAL when an incremental ACK is missing durable identity', async () => {
+        const adapter = new CloudAdapter({ assetId: 'asset-123' });
+        const localUpdate = new Uint8Array([1, 2, 3, 4]);
+        let localUpdateHandler = null;
+        const changeLogEntries = [
+            createLogEntry({
+                timestamp: 1,
+                windowId: 'client-1',
+                windowRoleLabel: 'main',
+                transactionLabel: 'Drag',
+                transactionId: 1,
+                op: 'set',
+                undoScope: 'layer',
+                path: 'glyphs.A:layers.L0:width',
+                oldValue: 600,
+                newValue: 700,
+                workerReplayTargets: []
+            })
+        ];
+        const collaborationMessage =
+            createCollaborationMessageEnvelopeFromChangeLogEntries(
+                changeLogEntries,
+                {
+                    localSequence: 1,
+                    source: 'cloud-adapter.test',
+                    windowId: 'client-1'
+                }
+            );
+
+        adapter._bridge = {
+            onLocalUpdate: (handler) => {
+                localUpdateHandler = handler;
+            },
+            offLocalUpdate: jest.fn(),
+            advanceBroadcastLogCursor: jest.fn(),
+            getFullState: jest.fn()
+        };
+        adapter._ws = {
+            readyState: 1,
+            close: jest.fn(),
+            send: jest.fn()
+        };
+        adapter._clientId = 'client-1';
+        adapter._hasSynced = true;
+
+        global.indexedDB = createIndexedDbMock();
+        adapter._registerOutboundHook();
+        localUpdateHandler(localUpdate, collaborationMessage);
+        await flushCloudIo(adapter);
+
+        adapter._handleMessage(JSON.stringify({ type: 'ack', seq: 1 }));
+        await flushCloudIo(adapter);
+
+        expect(adapter._ws.close).toHaveBeenCalled();
+        expect(adapter.pendingSyncCount).toBeGreaterThan(0);
     });
 
     it('resolves waitUntilDurable only after the live ACK drops the outbox', async () => {
@@ -1775,7 +1849,16 @@ describe('CloudAdapter outbound updates', () => {
         await Promise.resolve();
         expect(durable).toBe(false);
 
-        adapter._handleMessage(JSON.stringify({ type: 'ack', seq: 1 }));
+        adapter._handleMessage(
+            JSON.stringify({
+                type: 'ack',
+                seq: 1,
+                durable: true,
+                clientTransactionId:
+                    collaborationMessageKey(collaborationMessage)
+            })
+        );
+        await flushCloudIo(adapter);
         await wait;
         expect(durable).toBe(true);
         expect(adapter.pendingSyncCount).toBe(0);
@@ -1849,7 +1932,8 @@ describe('CloudAdapter outbound updates', () => {
         adapter._bridge = bridge;
         adapter._ws = {
             readyState: 1,
-            send: (payload) => sentFrames.push(JSON.parse(payload))
+            send: (payload) => sentFrames.push(JSON.parse(payload)),
+            close: jest.fn()
         };
         adapter._clientId = 'client-1';
 
@@ -1891,9 +1975,12 @@ describe('CloudAdapter outbound updates', () => {
                 type: 'ack',
                 seq: -1,
                 durable: true,
-                phase: 'sync-complete'
+                phase: 'sync-complete',
+                clientTransactionId:
+                    collaborationMessageKey(collaborationMessage)
             })
         );
+        await flushCloudIo(adapter);
 
         expect(adapter._pendingDurabilityMessages).toEqual([]);
         expect(adapter.pendingSyncCount).toBe(0);
@@ -1971,6 +2058,7 @@ describe('CloudAdapter outbound updates', () => {
                 collaborationMessageHistory: [collaborationMessage]
             })
         );
+        await flushCloudIo(adapter);
 
         expect(adapter.pendingSyncCount).toBe(0);
         expect(adapter._pendingDurabilityMessages).toEqual([]);
@@ -2010,7 +2098,8 @@ describe('CloudAdapter outbound updates', () => {
                 documentId: 'font-core',
                 clientTransactionId:
                     collaborationMessageKey(collaborationMessage),
-                updateBase64: Buffer.from(durableUpdate).toString('base64'),
+                updateBytes: durableUpdate,
+                schemaVersion: 2,
                 collaborationMessage,
                 createdAt: 123
             }
@@ -2269,7 +2358,7 @@ describe('CloudAdapter outbound updates', () => {
         adapter._lastReconnectReason = 'browser-online';
         adapter._durableOutboxEntries.set('tx-offline', {
             clientTransactionId: 'tx-offline',
-            updateBase64: Buffer.from([1, 2, 3]).toString('base64')
+            updateBytes: new Uint8Array([1, 2, 3])
         });
         adapter._pendingOutboundPackets = [
             {
@@ -2744,7 +2833,9 @@ describe('CloudAdapter durability failures', () => {
                         certifiedGeneration: 1,
                         packetEnvelope: 1,
                         glyphTombstones: 1,
-                        glyphQuotaReservation: 1
+                        glyphQuotaReservation: 1,
+                        writeReceipts: 1,
+                        dualDigests: 1
                     },
                     seedRequired: false
                 })
@@ -3376,7 +3467,9 @@ describe('CloudAdapter durability failures', () => {
                         certifiedGeneration: 1,
                         packetEnvelope: 1,
                         glyphTombstones: 1,
-                        glyphQuotaReservation: 1
+                        glyphQuotaReservation: 1,
+                        writeReceipts: 1,
+                        dualDigests: 1
                     }
                 })
             );
@@ -3955,7 +4048,15 @@ describe('publishCloudDocumentUpdate', () => {
             return {
                 ok: true,
                 status: 200,
-                json: async () => ({ ok: true, durable: true, seq: 9 })
+                json: async () => {
+                    const body = JSON.parse(opts.body);
+                    return {
+                        ok: true,
+                        durable: true,
+                        seq: body.seq,
+                        clientTransactionId: body.clientTransactionId
+                    };
+                }
             };
         });
         const published = await publishCloudDocumentUpdate({
@@ -4256,7 +4357,9 @@ describe('R2 bootstrap (GET /state before WebSocket)', () => {
                         certifiedGeneration: 1,
                         packetEnvelope: 1,
                         glyphTombstones: 1,
-                        glyphQuotaReservation: 1
+                        glyphQuotaReservation: 1,
+                        writeReceipts: 1,
+                        dualDigests: 1
                     }
                 })
             );
@@ -4318,7 +4421,9 @@ describe('R2 bootstrap (GET /state before WebSocket)', () => {
                     certifiedGeneration: 1,
                     packetEnvelope: 1,
                     glyphTombstones: 1,
-                    glyphQuotaReservation: 1
+                    glyphQuotaReservation: 1,
+                    writeReceipts: 1,
+                    dualDigests: 1
                 }
             })
         );
@@ -4563,7 +4668,9 @@ describe('HTTP seed (POST /state for new rooms)', () => {
                         certifiedGeneration: 1,
                         packetEnvelope: 1,
                         glyphTombstones: 1,
-                        glyphQuotaReservation: 1
+                        glyphQuotaReservation: 1,
+                        writeReceipts: 1,
+                        dualDigests: 1
                     },
                     seedRequired: true
                 })
@@ -4685,7 +4792,9 @@ describe('HTTP seed (POST /state for new rooms)', () => {
                     certifiedGeneration: 1,
                     packetEnvelope: 1,
                     glyphTombstones: 1,
-                    glyphQuotaReservation: 1
+                    glyphQuotaReservation: 1,
+                    writeReceipts: 1,
+                    dualDigests: 1
                 },
                 seedRequired: true
             })
@@ -4714,7 +4823,9 @@ describe('HTTP seed (POST /state for new rooms)', () => {
                     certifiedGeneration: 1,
                     packetEnvelope: 1,
                     glyphTombstones: 1,
-                    glyphQuotaReservation: 1
+                    glyphQuotaReservation: 1,
+                    writeReceipts: 1,
+                    dualDigests: 1
                 }
             })
         );
@@ -4820,7 +4931,9 @@ describe('HTTP seed (POST /state for new rooms)', () => {
                     certifiedGeneration: 1,
                     packetEnvelope: 1,
                     glyphTombstones: 1,
-                    glyphQuotaReservation: 1
+                    glyphQuotaReservation: 1,
+                    writeReceipts: 1,
+                    dualDigests: 1
                 },
                 seedRequired: true
             })
@@ -4962,7 +5075,9 @@ describe('HTTP seed (POST /state for new rooms)', () => {
                         certifiedGeneration: 1,
                         packetEnvelope: 1,
                         glyphTombstones: 1,
-                        glyphQuotaReservation: 1
+                        glyphQuotaReservation: 1,
+                        writeReceipts: 1,
+                        dualDigests: 1
                     },
                     seedRequired: true
                 })
@@ -5105,7 +5220,9 @@ describe('HTTP seed (POST /state for new rooms)', () => {
                     certifiedGeneration: 1,
                     packetEnvelope: 1,
                     glyphTombstones: 1,
-                    glyphQuotaReservation: 1
+                    glyphQuotaReservation: 1,
+                    writeReceipts: 1,
+                    dualDigests: 1
                 },
                 seedRequired: true
             })

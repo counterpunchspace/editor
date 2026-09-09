@@ -2,7 +2,7 @@ import type { CollaborationMessageEnvelope } from './collaboration-message';
 
 const DB_NAME = 'counterpunch-cloud-outbox';
 const STORE = 'pending-transactions';
-const DB_VERSION = 2;
+const DB_VERSION = 3;
 
 export type CloudWalState = 'prepared' | 'applied' | 'sent' | 'acknowledged';
 
@@ -34,7 +34,7 @@ export type CloudWalRecord = {
     generationId?: string;
     operations?: unknown[];
     documentUpdates?: CloudWalDocumentUpdate[];
-    collaborationMessage: CollaborationMessageEnvelope;
+    collaborationMessage?: CollaborationMessageEnvelope | null;
     collaborationMetadata?: CollaborationMessageEnvelope['metadata'];
     revisionObligations?: CloudWalRevisionObligation[];
     state?: CloudWalState;
@@ -95,18 +95,7 @@ export function walUpdateBytes(record: CloudWalRecord): Uint8Array {
             )
         );
     }
-    const encoded = record.updateBase64;
-    if (encoded) {
-        return base64ToBytes(encoded);
-    }
-    const primary = record.documentUpdates?.find(
-        (entry) => entry.documentId === record.documentId && entry.updateBase64
-    );
-    if (primary?.updateBase64) {
-        return base64ToBytes(primary.updateBase64);
-    }
-    const first = record.documentUpdates?.find((entry) => entry.updateBase64);
-    return base64ToBytes(first?.updateBase64);
+    return new Uint8Array();
 }
 
 export function serializeWalOperations(operations: unknown[]): unknown[] {
@@ -127,6 +116,10 @@ export function recordKey(
 function normalizeLoadedRecord(record: CloudWalRecord): CloudWalRecord {
     const updateBytes = walUpdateBytes(record);
     const schemaVersion = record.schemaVersion === 2 ? 2 : 1;
+    const quarantined =
+        record.quarantined === true ||
+        schemaVersion !== 2 ||
+        updateBytes.byteLength === 0;
     return {
         ...record,
         schemaVersion,
@@ -147,7 +140,7 @@ function normalizeLoadedRecord(record: CloudWalRecord): CloudWalRecord {
             (updateBytes.byteLength > 0 ? 'applied' : 'prepared'),
         attempts: Number(record.attempts ?? 0),
         updateBytes,
-        quarantined: record.quarantined === true
+        quarantined
     };
 }
 
@@ -229,7 +222,9 @@ export class CloudDurableWal {
     get pendingCount(): number {
         return [...this._records.values()].filter(
             (record) =>
-                record.state !== 'acknowledged' && record.quarantined !== true
+                record.state !== 'acknowledged' &&
+                record.quarantined !== true &&
+                walUpdateBytes(record).byteLength > 0
         ).length;
     }
 
@@ -251,7 +246,10 @@ export class CloudDurableWal {
             if (record.quarantined) {
                 return false;
             }
-            if (!current || !record.generationId) {
+            if (walUpdateBytes(record).byteLength === 0) {
+                return false;
+            }
+            if (!current) {
                 return true;
             }
             return record.generationId === current;
@@ -293,13 +291,27 @@ export class CloudDurableWal {
                 }
             );
             db.close();
+            const recovered: CloudWalRecord[] = [];
             this._records.clear();
             for (const record of records) {
+                if (walUpdateBytes(record).byteLength === 0) {
+                    continue;
+                }
                 this._records.set(recordKey(record), record);
+                recovered.push(record);
             }
             this._loadedAssetId = assetId;
             this._health = 'ready';
-            return records;
+            for (const record of records) {
+                if (walUpdateBytes(record).byteLength === 0) {
+                    try {
+                        await this.acknowledge(record);
+                    } catch {
+                        /* prepared-only rows are not recoverable */
+                    }
+                }
+            }
+            return recovered;
         } catch (error) {
             this._health = 'unavailable';
             throw error;
@@ -391,7 +403,6 @@ export class CloudDurableWal {
     }
 
     async acknowledge(record: CloudWalRecord): Promise<void> {
-        this._records.delete(recordKey(record));
         const db = await openDatabase();
         await new Promise<void>((resolve, reject) => {
             const tx = db.transaction(STORE, 'readwrite');
@@ -399,6 +410,7 @@ export class CloudDurableWal {
             tx.oncomplete = () => resolve();
             tx.onerror = () => reject(tx.error);
         }).finally(() => db.close());
+        this._records.delete(recordKey(record));
     }
 
     async acknowledgeMany(
@@ -406,11 +418,6 @@ export class CloudDurableWal {
         documentId: string,
         clientTransactionIds: string[]
     ): Promise<void> {
-        for (const clientTransactionId of clientTransactionIds) {
-            this._records.delete(
-                recordKey({ assetId, documentId, clientTransactionId })
-            );
-        }
         if (!clientTransactionIds.length) {
             return;
         }
@@ -426,6 +433,11 @@ export class CloudDurableWal {
             tx.oncomplete = () => resolve();
             tx.onerror = () => reject(tx.error);
         }).finally(() => db.close());
+        for (const clientTransactionId of clientTransactionIds) {
+            this._records.delete(
+                recordKey({ assetId, documentId, clientTransactionId })
+            );
+        }
     }
 
     async quarantineOtherGenerations(
@@ -438,9 +450,7 @@ export class CloudDurableWal {
         }
         const stale = [...this._records.values()].filter(
             (record) =>
-                record.assetId === assetId &&
-                record.generationId &&
-                record.generationId !== current
+                record.assetId === assetId && record.generationId !== current
         );
         for (const record of stale) {
             await this.append({
