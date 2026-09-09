@@ -2537,7 +2537,7 @@ export class CloudAdapter implements FileSystemAdapter {
                 maxBytes: options?.maxBytes
             });
         }
-        let usePack = options?.transport !== 'per-shard';
+        const usePack = options?.transport !== 'per-shard';
         const rows: Array<{
             coreCheckpointLogId: number | null;
             attestation: CloudSeededShardAttestation | null;
@@ -2556,28 +2556,18 @@ export class CloudAdapter implements FileSystemAdapter {
         for (const batch of batches) {
             throwIfAborted(options?.signal);
             if (usePack) {
-                try {
-                    rows.push(
-                        ...(await this._seedPack(
-                            token,
-                            roomUrl,
-                            batch,
-                            glyphCount,
-                            migrationNonce,
-                            options,
-                            cursor
-                        ))
-                    );
-                    continue;
-                } catch (error) {
-                    if (
-                        options?.transport === 'pack' ||
-                        !this._isPackUnsupportedError(error)
-                    ) {
-                        throw error;
-                    }
-                    usePack = false;
-                }
+                rows.push(
+                    ...(await this._seedPack(
+                        token,
+                        roomUrl,
+                        batch,
+                        glyphCount,
+                        migrationNonce,
+                        options,
+                        cursor
+                    ))
+                );
+                continue;
             }
             rows.push(
                 ...(await mapPool(
@@ -2607,11 +2597,6 @@ export class CloudAdapter implements FileSystemAdapter {
             }
         }
         return { coreCheckpointLogId, attestations };
-    }
-
-    private _isPackUnsupportedError(error: unknown): boolean {
-        const message = error instanceof Error ? error.message : String(error);
-        return /pack (unsupported|not found)/i.test(message);
     }
 
     private _isTransientPackHydrateError(error: unknown): boolean {
@@ -3032,7 +3017,7 @@ export class CloudAdapter implements FileSystemAdapter {
             });
         }
         const result = new Map<string, Uint8Array>();
-        let usePack = options?.transport !== 'per-shard';
+        const usePack = options?.transport !== 'per-shard';
         const cursor = shardIoTotals(options, documentIds.length, 0);
         await emitShardIoProgress(options, {
             completed: cursor.completed,
@@ -3042,39 +3027,21 @@ export class CloudAdapter implements FileSystemAdapter {
         });
         for (const batch of batches) {
             throwIfAborted(options?.signal);
-            let batchResult: Map<string, Uint8Array> | null = null;
-            if (usePack) {
-                try {
-                    batchResult = await this._hydratePack(
-                        token,
-                        roomUrl,
-                        batch,
-                        options,
-                        cursor
-                    );
-                } catch (error) {
-                    throwIfAborted(options?.signal);
-                    if (options?.transport === 'pack') {
-                        throw error;
-                    }
-                    if (
-                        !this._isPackUnsupportedError(error) &&
-                        !this._isTransientPackHydrateError(error)
-                    ) {
-                        throw error;
-                    }
-                    usePack = false;
-                }
-            }
-            if (!batchResult) {
-                batchResult = await this._hydratePerShard(
-                    token,
-                    roomUrl,
-                    batch,
-                    options,
-                    cursor
-                );
-            }
+            const batchResult = usePack
+                ? await this._hydratePack(
+                      token,
+                      roomUrl,
+                      batch,
+                      options,
+                      cursor
+                  )
+                : await this._hydratePerShard(
+                      token,
+                      roomUrl,
+                      batch,
+                      options,
+                      cursor
+                  );
             for (const [documentId, bytes] of batchResult) {
                 result.set(documentId, bytes);
             }

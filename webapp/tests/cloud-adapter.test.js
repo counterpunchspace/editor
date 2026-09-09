@@ -5158,64 +5158,129 @@ describe('HTTP seed (POST /state for new rooms)', () => {
         expect(adapter._pendingSyncPageMeta).toBeNull();
     });
 
-    it('falls back to per-shard hydrate after a transient pack fetch failure', async () => {
+    it('fails hydrate when pack fetch fails instead of falling back to per-shard', async () => {
         const originalFetch = global.fetch;
         const adapter = new CloudAdapter({
-            assetId: 'asset-pack',
+            assetId: 'asset-pack-hydrate-fail',
             websiteBaseUrl: 'https://editor.example'
         });
+        let packPosts = 0;
+        let shardGets = 0;
         global.fetch = jest.fn(async (input, init) => {
             const url = String(input);
-            if (init?.method === 'POST' || String(url).includes('/pack')) {
+            if (url.includes('/asset-pack-hydrate-fail/pack')) {
+                packPosts += 1;
                 throw new Error('Failed to fetch');
             }
-            return {
-                ok: true,
-                status: 200,
-                arrayBuffer: async () => new Uint8Array([7, 8, 9]).buffer
-            };
+            if (
+                url.includes('/asset-pack-hydrate-fail/') &&
+                url.includes('/state')
+            ) {
+                shardGets += 1;
+            }
+            return originalFetch(input, init);
         });
         try {
-            const result = await adapter.hydrateDocumentSet(
-                'token',
-                'wss://rooms.example/room/asset-pack',
-                ['glyph:id-a']
-            );
-            expect([...result.get('glyph:id-a')]).toEqual([7, 8, 9]);
+            await expect(
+                adapter.hydrateDocumentSet(
+                    'token',
+                    'wss://rooms.example/room/asset-pack-hydrate-fail',
+                    ['glyph:id-a']
+                )
+            ).rejects.toThrow('Failed to fetch');
+            expect(packPosts).toBe(4);
+            expect(shardGets).toBe(0);
         } finally {
             global.fetch = originalFetch;
         }
     });
 
-    it('falls back to per-shard hydrate after a pack fetch abort without retrying the hang', async () => {
+    it('fails hydrate on pack abort without retrying the hang or falling back to per-shard', async () => {
         const originalFetch = global.fetch;
         const adapter = new CloudAdapter({
-            assetId: 'asset-pack-abort',
+            assetId: 'asset-pack-hydrate-abort',
             websiteBaseUrl: 'https://editor.example'
         });
         let packPosts = 0;
+        let shardGets = 0;
         global.fetch = jest.fn(async (input, init) => {
             const url = String(input);
-            if (init?.method === 'POST' || String(url).includes('/pack')) {
+            if (url.includes('/asset-pack-hydrate-abort/pack')) {
                 packPosts += 1;
                 const abort = new Error('The operation was aborted');
                 abort.name = 'AbortError';
                 throw abort;
             }
-            return {
-                ok: true,
-                status: 200,
-                arrayBuffer: async () => new Uint8Array([7, 8, 9]).buffer
-            };
+            if (
+                url.includes('/asset-pack-hydrate-abort/') &&
+                url.includes('/state')
+            ) {
+                shardGets += 1;
+            }
+            return originalFetch(input, init);
         });
         try {
-            const result = await adapter.hydrateDocumentSet(
-                'token',
-                'wss://rooms.example/room/asset-pack-abort',
-                ['glyph:id-a']
-            );
+            await expect(
+                adapter.hydrateDocumentSet(
+                    'token',
+                    'wss://rooms.example/room/asset-pack-hydrate-abort',
+                    ['glyph:id-a']
+                )
+            ).rejects.toMatchObject({ name: 'AbortError' });
             expect(packPosts).toBe(1);
-            expect([...result.get('glyph:id-a')]).toEqual([7, 8, 9]);
+            expect(shardGets).toBe(0);
+        } finally {
+            global.fetch = originalFetch;
+        }
+    });
+
+    it('fails seed when pack is unsupported instead of falling back to per-shard', async () => {
+        const originalFetch = global.fetch;
+        const adapter = new CloudAdapter({
+            assetId: 'asset-pack-seed',
+            websiteBaseUrl: 'https://editor.example'
+        });
+        let packPosts = 0;
+        let shardPosts = 0;
+        global.fetch = jest.fn(async (input, init) => {
+            const url = String(input);
+            if (
+                init?.method === 'POST' &&
+                url.includes('/asset-pack-seed/pack')
+            ) {
+                packPosts += 1;
+                return {
+                    ok: false,
+                    status: 404,
+                    headers: new Headers(),
+                    text: async () => 'not found'
+                };
+            }
+            if (
+                init?.method === 'POST' &&
+                url.includes('/asset-pack-seed/') &&
+                url.includes('/state')
+            ) {
+                shardPosts += 1;
+            }
+            return originalFetch(input, init);
+        });
+        try {
+            await expect(
+                adapter.seedDocumentSet(
+                    'token',
+                    'wss://rooms.example/room/asset-pack-seed',
+                    [
+                        {
+                            documentId: 'glyph:id-a',
+                            bytes: new Uint8Array([1, 2, 3])
+                        }
+                    ],
+                    1
+                )
+            ).rejects.toThrow('pack unsupported');
+            expect(packPosts).toBe(1);
+            expect(shardPosts).toBe(0);
         } finally {
             global.fetch = originalFetch;
         }
