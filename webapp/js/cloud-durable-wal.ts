@@ -199,14 +199,30 @@ function openDatabase(): Promise<IDBDatabase> {
             return;
         }
         const request = indexedDB.open(DB_NAME, DB_VERSION);
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        let settled = false;
+        const settle = (fn: () => void) => {
+            if (settled) {
+                return;
+            }
+            settled = true;
+            if (timer) {
+                clearTimeout(timer);
+            }
+            fn();
+        };
+        timer = setTimeout(() => {
+            settle(() => reject(new Error('IndexedDB open timed out')));
+        }, 1500);
         request.onupgradeneeded = () => {
             if (!request.result.objectStoreNames.contains(STORE)) {
                 request.result.createObjectStore(STORE, { keyPath: 'key' });
             }
         };
-        request.onsuccess = () => resolve(request.result);
-        request.onerror = () => reject(request.error);
-        request.onblocked = () => reject(new Error('IndexedDB is blocked'));
+        request.onsuccess = () => settle(() => resolve(request.result));
+        request.onerror = () => settle(() => reject(request.error));
+        request.onblocked = () =>
+            settle(() => reject(new Error('IndexedDB is blocked')));
     });
 }
 

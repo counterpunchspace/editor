@@ -308,6 +308,33 @@ function collectLayerTargetsForAffectedGlyphNames(
     return normalizeWorkerReplayTargets(targets);
 }
 
+function resolveLayerArrayIndex(
+    items: unknown[],
+    segment: string | number
+): number | null {
+    if (
+        typeof segment === 'number' ||
+        (typeof segment === 'string' && /^\d+$/.test(segment))
+    ) {
+        const numericIndex = Number(segment);
+        if (!Number.isInteger(numericIndex) || numericIndex < 0) {
+            return null;
+        }
+        return numericIndex;
+    }
+    if (typeof segment !== 'string' || !segment.length) {
+        return null;
+    }
+    const found = items.findIndex(
+        (item) =>
+            !!item &&
+            typeof item === 'object' &&
+            !Array.isArray(item) &&
+            String((item as Record<string, unknown>).id) === segment
+    );
+    return found >= 0 ? found : null;
+}
+
 function applyDirectLayerOperationToSnapshot(
     snapshot: Record<string, unknown>,
     operation: TransactionBufferedOperation,
@@ -387,19 +414,25 @@ function applyDirectLayerOperationToSnapshot(
             const nextSegment = path[index + 1];
 
             if (Array.isArray(cursor)) {
-                const numericIndex = Number(segment);
-                if (!Number.isInteger(numericIndex) || numericIndex < 0) {
+                const arrayIndex = resolveLayerArrayIndex(cursor, segment);
+                if (arrayIndex === null) {
                     return;
                 }
+                const isNumericSegment =
+                    typeof segment === 'number' ||
+                    (typeof segment === 'string' && /^\d+$/.test(segment));
                 if (
-                    cursor[numericIndex] === undefined ||
-                    cursor[numericIndex] === null ||
-                    typeof cursor[numericIndex] !== 'object'
+                    cursor[arrayIndex] === undefined ||
+                    cursor[arrayIndex] === null ||
+                    typeof cursor[arrayIndex] !== 'object'
                 ) {
-                    cursor[numericIndex] =
+                    if (!isNumericSegment) {
+                        return;
+                    }
+                    cursor[arrayIndex] =
                         typeof nextSegment === 'number' ? [] : {};
                 }
-                cursor = cursor[numericIndex] as
+                cursor = cursor[arrayIndex] as
                     Record<string, unknown> | unknown[];
                 continue;
             }
@@ -420,15 +453,15 @@ function applyDirectLayerOperationToSnapshot(
 
         const terminalSegment = path[path.length - 1];
         if (Array.isArray(cursor)) {
-            const numericIndex = Number(terminalSegment);
-            if (!Number.isInteger(numericIndex) || numericIndex < 0) {
+            const arrayIndex = resolveLayerArrayIndex(cursor, terminalSegment);
+            if (arrayIndex === null) {
                 return;
             }
             if (op === 'remove') {
-                cursor.splice(numericIndex, 1);
+                cursor.splice(arrayIndex, 1);
                 return;
             }
-            cursor[numericIndex] = cloneBridgeValue(value);
+            cursor[arrayIndex] = cloneBridgeValue(value);
             return;
         }
 
@@ -530,8 +563,13 @@ function buildCascadeLayerOperations(
         );
         const delta: Record<string, unknown> = { id: layerId };
         let hasChanges = false;
+        const isRuntimeGeometryFlag = (key: string) =>
+            key === '_geometryCoherent' || key === '_geometryPreviewStale';
 
         for (const [key, value] of Object.entries(layerJson)) {
+            if (isRuntimeGeometryFlag(key)) {
+                continue;
+            }
             if (
                 JSON.stringify(value) ===
                 JSON.stringify(baseLayerSnapshot?.[key])
@@ -544,7 +582,11 @@ function buildCascadeLayerOperations(
         }
 
         for (const key of Object.keys(baseLayerSnapshot || {})) {
-            if (key === 'id' || key in (layerJson as Record<string, unknown>)) {
+            if (
+                key === 'id' ||
+                isRuntimeGeometryFlag(key) ||
+                key in (layerJson as Record<string, unknown>)
+            ) {
                 continue;
             }
 

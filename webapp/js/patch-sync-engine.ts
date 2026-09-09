@@ -27,7 +27,8 @@ import {
     diffYArray,
     applyIndexedMapArray as applyIndexedMapArrayToYMap,
     ensureGlyphLayersMap,
-    replaceYMapContents
+    replaceYMapContents,
+    YMAP_INFRASTRUCTURE_KEYS
 } from './change-bridge-ydoc';
 import {
     repairLayerGeometryOrphans,
@@ -1295,6 +1296,7 @@ export class PatchSyncEngine {
                 ]);
             }
         }
+        this._repairGeometryOrphansAfterConvergedState(documentId);
     }
 
     applyDocumentCatchUp(
@@ -1674,6 +1676,7 @@ export class PatchSyncEngine {
         } finally {
             this._isApplyingRemote = false;
         }
+        this._repairGeometryOrphansAfterConvergedState();
     }
 
     private _ensureGlyphDocFromShard(shard: EncodedShard): Y.Doc {
@@ -1971,7 +1974,8 @@ export class PatchSyncEngine {
         const plugin = window.cloudPlugin;
         if (
             typeof plugin?.persistOutgoingCloudUpdate === 'function' &&
-            collaborationMessage
+            collaborationMessage &&
+            window.fontManager?.currentFont?.isCloudBacked?.() === true
         ) {
             this._cloudEmitPersistChain = this._cloudEmitPersistChain
                 .then(() =>
@@ -2189,7 +2193,9 @@ export class PatchSyncEngine {
         this._fontJson = fontJson;
         this._isSyncing = true;
         stampImmutableGlyphIds(fontJson);
-        applyCloudOwnedData(fontJson);
+        if (catalogFromCoreJson(fontJson)) {
+            applyCloudOwnedData(fontJson);
+        }
         this._destroyGlyphDocs();
         this._suppressAutomaticLocalUpdateEmission = true;
         try {
@@ -2558,14 +2564,13 @@ export class PatchSyncEngine {
 
     applySyntheticChangeSet(
         label: string,
-        operations: SyntheticChangeOperation[]
+        operations: SyntheticChangeOperation[],
+        options?: { ignoreRecordingSuppression?: boolean }
     ): void {
-        if (
-            !operations.length ||
-            !this._fontJson ||
-            this._suppressRecording ||
-            this._isSyncing
-        ) {
+        if (!operations.length || !this._fontJson || this._isSyncing) {
+            return;
+        }
+        if (this._suppressRecording && !options?.ignoreRecordingSuppression) {
             return;
         }
         assertCloudAssetMutable();
@@ -2606,7 +2611,9 @@ export class PatchSyncEngine {
                               : 'default'
                 };
             }),
-            label
+            label,
+            false,
+            options?.ignoreRecordingSuppression === true
         );
     }
 
@@ -3001,12 +3008,14 @@ export class PatchSyncEngine {
             if (!layerJson) {
                 continue;
             }
+            const yLayerForHistory = layersMap.get(layerId);
             const storageLayerJson = this._prepareLayerSnapshotForHistory(
                 layerId,
                 layerJson,
-                layersMap.get(layerId)
-                    ? fromYType(layersMap.get(layerId) as Y.Map<unknown>)
-                    : null
+                yLayerForHistory instanceof Y.Map
+                    ? fromYType(yLayerForHistory)
+                    : null,
+                yLayerForHistory instanceof Y.Map ? yLayerForHistory : null
             );
             operations.push(
                 ...this._buildLayerSyncOperations(
@@ -3104,7 +3113,8 @@ export class PatchSyncEngine {
             const storageLayerJson = this._prepareLayerSnapshotForHistory(
                 layerId,
                 layerJson,
-                yLayerJson
+                yLayerJson,
+                yLayerMap instanceof Y.Map ? yLayerMap : null
             );
             if (authoritativeOptionalLayerFields !== undefined) {
                 if (
@@ -4395,7 +4405,8 @@ export class PatchSyncEngine {
         const storageLayerJson = this._prepareLayerSnapshotForHistory(
             layerId,
             layerJson,
-            existingYLayer instanceof Y.Map ? fromYType(existingYLayer) : null
+            existingYLayer instanceof Y.Map ? fromYType(existingYLayer) : null,
+            existingYLayer instanceof Y.Map ? existingYLayer : null
         );
         const operations = this._buildLayerSyncOperations(
             glyphName,
@@ -4415,7 +4426,7 @@ export class PatchSyncEngine {
             }
         );
         if (!operations.length) {
-            return false;
+            return true;
         }
 
         this._queueOrCommitOperations(operations, label);
@@ -5248,7 +5259,9 @@ export class PatchSyncEngine {
      * Rehydrate every top-level font key and glyph snapshot from the current
      * Y.Doc after an explicit full-state bootstrap or rebaseline.
      */
-    private _rehydrateEntireFontJsonFromYDoc(): void {
+    private _rehydrateEntireFontJsonFromYDoc(options?: {
+        mergeExistingGlyphs?: boolean;
+    }): void {
         if (!this._fontJson) {
             return;
         }
@@ -5259,7 +5272,7 @@ export class PatchSyncEngine {
             nextTopLevelKeys.add(key);
         });
 
-        this._syncAllGlyphsFromYDoc();
+        this._syncAllGlyphsFromYDoc(options?.mergeExistingGlyphs === true);
 
         for (const key of nextTopLevelKeys) {
             if (key === 'glyphs' || key === 'glyphOrder') {
@@ -5431,7 +5444,7 @@ export class PatchSyncEngine {
         });
     }
 
-    private _syncAllGlyphsFromYDoc(): void {
+    private _syncAllGlyphsFromYDoc(mergeExistingGlyphs = false): void {
         if (!this._fontJson) {
             return;
         }
@@ -5470,10 +5483,20 @@ export class PatchSyncEngine {
             glyphSnapshot: Unsafe;
         }> = [];
         for (const glyphName of orderedGlyphNames) {
+            const existingGlyph =
+                existingGlyphsByName.get(glyphName) ||
+                (this._glyphIdByName.get(glyphName)
+                    ? existingGlyphsById.get(
+                          String(this._glyphIdByName.get(glyphName))
+                      )
+                    : undefined);
             const glyphSnapshot = this._readNormalizedGlyphSnapshotFromYDoc(
                 glyphName,
                 {
-                    ignoreExisting: true
+                    ignoreExisting: !mergeExistingGlyphs,
+                    existingGlyph: mergeExistingGlyphs
+                        ? existingGlyph
+                        : undefined
                 }
             );
             if (!glyphSnapshot) {
@@ -5530,7 +5553,7 @@ export class PatchSyncEngine {
 
     private _readNormalizedGlyphSnapshotFromYDoc(
         glyphName: string,
-        readOptions?: { ignoreExisting?: boolean }
+        readOptions?: { ignoreExisting?: boolean; existingGlyph?: unknown }
     ): Unsafe | null {
         const glyphMap = this._glyphMapForName(glyphName);
         if (!(glyphMap instanceof Y.Map)) {
@@ -5538,10 +5561,14 @@ export class PatchSyncEngine {
         }
 
         const glyphSnapshot = this._cloneRuntimeValue(
-            this._normalizeGlyphSnapshot(fromYType(glyphMap), undefined, {
-                strictLayers: true,
-                ignoreExisting: readOptions?.ignoreExisting === true
-            })
+            this._normalizeGlyphSnapshot(
+                fromYType(glyphMap),
+                readOptions?.existingGlyph,
+                {
+                    strictLayers: true,
+                    ignoreExisting: readOptions?.ignoreExisting === true
+                }
+            )
         ) as Unsafe;
         return glyphSnapshot;
     }
@@ -5737,7 +5764,9 @@ export class PatchSyncEngine {
         try {
             if (!this._fontJson) this._fontJson = {};
             Y.applyUpdate(this.yDoc, state, SYSTEM_REMOTE_ORIGIN);
-            this._rehydrateEntireFontJsonFromYDoc();
+            this._rehydrateEntireFontJsonFromYDoc({
+                mergeExistingGlyphs: true
+            });
             this._canonicalizeFullStateRawFontJson();
             // First hydrate needs an UndoManager. Later rebaselines must not
             // silently wipe gc:false history; call truncateUndoHistory().
@@ -6285,8 +6314,7 @@ export class PatchSyncEngine {
             this._normalizeLayerSnapshot(
                 scopeHint.layerId,
                 fromYType(layerMap),
-                layers[layerIdx],
-                false
+                layers[layerIdx]
             )
         ) as Unsafe;
 
@@ -6695,7 +6723,8 @@ export class PatchSyncEngine {
     private _queueOrCommitOperations(
         operations: TransactionBufferedOperation[],
         label?: string | null,
-        skipTransactionFinalizer = false
+        skipTransactionFinalizer = false,
+        commitImmediately = false
     ): TransactionCommitResult | null {
         const normalizedOperations = operations
             .filter((operation) => operation.path.length > 0)
@@ -6704,7 +6733,7 @@ export class PatchSyncEngine {
             return null;
         }
 
-        if (this._txDepth > 0) {
+        if (this._txDepth > 0 && !commitImmediately) {
             // Clone values before buffering — the model may mutate while the
             // transaction is still open.
             this._txBufferedOperations.push(
@@ -6715,14 +6744,15 @@ export class PatchSyncEngine {
             return null;
         }
 
+        const inOpenTransaction = this._txDepth > 0;
         return this._commitOperations(
             normalizedOperations,
-            label ?? null,
-            null,
-            null,
-            undefined,
-            undefined,
-            undefined,
+            label ?? this._txLabel ?? null,
+            inOpenTransaction ? this._txId : null,
+            inOpenTransaction ? this._txHistoryItemId : null,
+            inOpenTransaction ? this._txHistoryTarget : undefined,
+            inOpenTransaction ? this._txPromptGroupId : undefined,
+            inOpenTransaction ? this._txHistorySummary : undefined,
             skipTransactionFinalizer
         );
     }
@@ -6989,11 +7019,18 @@ export class PatchSyncEngine {
         // always material changes, so skip the no-op reduction. Default-mode
         // property changes (e.g. feature code edits) may be no-ops and still
         // need the reduction to filter them out.
-        const effectiveOperations =
+        const skipNoOpReduction =
             finalizedOperations.length === 1 &&
             (finalizedOperations[0].applyMode === 'font-snapshot' ||
                 finalizedOperations[0].applyMode === 'layer-snapshot' ||
-                finalizedOperations[0].applyMode === 'glyph-snapshot')
+                finalizedOperations[0].applyMode === 'glyph-snapshot');
+        const hasPythonSyntheticOps = finalizedOperations.some(
+            (operation) =>
+                operation.editSource === 'python' ||
+                operation.editSource === 'assistant'
+        );
+        const effectiveOperations =
+            skipNoOpReduction || hasPythonSyntheticOps
                 ? finalizedOperations
                 : this._reduceToNetChangingOperations(finalizedOperations);
         if (!effectiveOperations.length) {
@@ -8783,6 +8820,9 @@ export class PatchSyncEngine {
             if (key === 'id' || key in layerJson) {
                 continue;
             }
+            if (key === 'shapes' || key === 'anchors' || key === 'guides') {
+                continue;
+            }
             delta[key] = null;
             hasChanges = true;
         }
@@ -8809,11 +8849,29 @@ export class PatchSyncEngine {
     private _prepareLayerSnapshotForHistory(
         layerId: string,
         layerJson: unknown,
-        existingLayerJson: unknown
+        existingLayerJson: unknown,
+        existingLayerMap?: Y.Map<unknown> | null
     ): Record<string, unknown> {
+        let prepared = this._prepareStorageValue(layerJson) as Record<
+            string,
+            unknown
+        >;
+        if (
+            existingLayerMap instanceof Y.Map &&
+            !Object.prototype.hasOwnProperty.call(prepared, 'shapes')
+        ) {
+            try {
+                const yShapes = readLayerGeometry(existingLayerMap);
+                if (yShapes && yShapes.length > 0) {
+                    prepared = { ...prepared, shapes: yShapes };
+                }
+            } catch {
+                // Keep the prepared snapshot if packed geometry cannot be read.
+            }
+        }
         return this._normalizeLayerSnapshot(
             layerId,
-            this._prepareStorageValue(layerJson),
+            prepared,
             existingLayerJson
         ) as Record<string, unknown>;
     }
@@ -8847,9 +8905,16 @@ export class PatchSyncEngine {
                           return withoutId;
                       })()
                     : { ...record };
+            const comparableRecord =
+                isPathOrComponent && 'nodes' in storageRecord
+                    ? (normalizeValueForYDocWrite(storageRecord) as Record<
+                          string,
+                          unknown
+                      >)
+                    : storageRecord;
 
             return Object.fromEntries(
-                Object.entries(storageRecord).map(([key, item]) => [
+                Object.entries(comparableRecord).map(([key, item]) => [
                     key,
                     stripEditorIds(item, key === 'shapes', key === 'nodes')
                 ])
@@ -9169,6 +9234,8 @@ export class PatchSyncEngine {
             if (
                 nextKeys.has(key) ||
                 indexedStorageKeysToKeep.has(key) ||
+                YMAP_INFRASTRUCTURE_KEYS.has(key) ||
+                key === 'shapes' ||
                 (RESTING_LAYER_IDENTITY_KEYS as readonly string[]).includes(key)
             ) {
                 return;
@@ -9793,6 +9860,18 @@ export class PatchSyncEngine {
 
         if (normalizedMaster) {
             layerRecord.master = normalizedMaster;
+        } else {
+            const existingMaster = normalizeMasterValue(
+                existingLayerRecord.master
+            );
+            if (existingMaster) {
+                layerRecord.master = existingMaster;
+            } else if (this._getKnownMasterIds().has(layerId)) {
+                layerRecord.master = {
+                    type: 'DefaultForMaster',
+                    master: layerId
+                };
+            }
         }
     }
 
@@ -9904,6 +9983,20 @@ export class PatchSyncEngine {
             if (value === undefined) {
                 delete mergedLayerRecord[key];
             }
+        }
+
+        const incomingHasShapes = Object.prototype.hasOwnProperty.call(
+            incomingLayerRecord,
+            'shapes'
+        );
+        const existingShapes = existingLayerRecord.shapes;
+        if (
+            preserveMissingKeys &&
+            !incomingHasShapes &&
+            Array.isArray(existingShapes) &&
+            existingShapes.length > 0
+        ) {
+            mergedLayerRecord.shapes = existingShapes;
         }
 
         if (mergedLayerRecord.isInterpolated === false) {
@@ -10050,6 +10143,10 @@ export class PatchSyncEngine {
                 // For indexed-map keys, delete the *ById+*Order keys
                 // so downstream readers see the data as absent (not
                 // empty), preserving merge semantics.
+                if (key === 'shapes') {
+                    writeLayerGeometry(layerMap, [], toYType);
+                    continue;
+                }
                 if (INDEXED_MAP_KEYS[key]) {
                     const mapping = INDEXED_MAP_KEYS[key]!;
                     layerMap.delete(mapping.byId);

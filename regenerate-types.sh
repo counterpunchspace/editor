@@ -157,6 +157,15 @@ perl -i -pe '
     }
     $in_decomposed = 0 if $in_decomposed && /^    \}/;
 ' "$OUTPUT_FILE"
+# Glyph cloud identity is editor-owned; babelfont-rs typeshare does not emit it.
+perl -i -pe '
+    $in_glyph = 1 if /^    export interface Glyph \{/;
+    if ($in_glyph && /format_specific\?: Record<string, any>;/ && !$added_glyph_id) {
+        $_ .= "        /** Immutable cloud/CRDT glyph id */\n        id?: string;\n";
+        $added_glyph_id = 1;
+    }
+    $in_glyph = 0 if $in_glyph && /^    \}/;
+' "$OUTPUT_FILE"
 # Format with prettier
 echo "🎨 Formatting with prettier..."
 cd "$WEBAPP_DIR"

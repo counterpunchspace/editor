@@ -7,6 +7,7 @@ import type { GlyphCanvas } from './glyph-canvas';
 import type { UserspaceLocation } from './locations';
 import { enableSync, initStateSync, disableSync } from './state-sync';
 import { textLayoutControls } from './glyph-canvas/text-layout-controls';
+import { userTextBufferHasBeenWritten } from './glyph-canvas/text-buffer-session';
 
 const console = new Logger('StateRestore');
 let startupStateReady = false;
@@ -153,10 +154,14 @@ export async function restoreStateFromUrl(
             }
         }
 
-        // 3. Restore text buffer
-        if (urlState.text) {
+        // 3. Restore text buffer. Once the user (or a test) has written the
+        // live buffer, a late URL restore must not apply a stale `text=`.
+        if (urlState.text && !userTextBufferHasBeenWritten()) {
             window.stateManager.editor_text_buffer = urlState.text;
-        } else if (urlState.sparse === true) {
+        } else if (
+            urlState.sparse === true &&
+            !userTextBufferHasBeenWritten()
+        ) {
             window.stateManager.editor_text_buffer = '';
         }
 
@@ -281,8 +286,10 @@ async function applyStateToManagers(glyphCanvas: GlyphCanvas): Promise<void> {
         textLayoutControls.render();
     }
     if (textBuffer && glyphCanvas.textRunEditor) {
-        console.log('Applying text:', textBuffer);
-        glyphCanvas.textRunEditor.setTextBuffer(textBuffer);
+        if (!userTextBufferHasBeenWritten()) {
+            console.log('Applying text:', textBuffer);
+            glyphCanvas.textRunEditor.setTextBuffer(textBuffer);
+        }
     }
 
     // 4-5. Apply cursor + mode. URL `cursor` is a caret offset in text

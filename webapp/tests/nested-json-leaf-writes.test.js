@@ -982,17 +982,8 @@ describe('section 1 sparse Yjs packets', () => {
         const doc = new Y.Doc();
         const layer = doc.getMap('layer');
         writeLayerGeometry(layer, shapes);
-        const fatDoc = cloneDoc(doc);
         const sparse = captureIncremental(doc, () => {
             writeNodePosition(layer, 'n0', 100, 200);
-        });
-        const fat = captureIncremental(fatDoc, () => {
-            const moved = nodes.map((node, index) =>
-                index === 0 ? { ...node, x: 100, y: 200 } : node
-            );
-            writeLayerGeometry(fatDoc.getMap('layer'), [
-                { id: 'path-1', closed: true, nodes: moved }
-            ]);
         });
         // Coordinate-only writeLayerGeometry now skips unchanged topology, so
         // compare against an explicit topology rewrite (node type change).
@@ -1006,7 +997,7 @@ describe('section 1 sparse Yjs packets', () => {
             ]);
         });
         expectSparseYjsPacket(sparse, topology, 200);
-        expect(sparse.byteLength).toBeLessThanOrEqual(fat.byteLength);
+        expect(sparse.byteLength).toBeLessThan(topology.byteLength);
     });
 
     test('gc:false undo retains packed coordinate history below topology history', () => {

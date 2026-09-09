@@ -777,7 +777,7 @@ export async function catchUpCloudDocument(options: {
                             part,
                             createLinkedWindowCatchUpEnvelope(
                                 options.documentId,
-                                window.windowRole?.windowId ?? null
+                                window.windowRole?.instanceId ?? null
                             ),
                             options.documentId
                         );
@@ -1607,10 +1607,10 @@ export class CloudAdapter implements FileSystemAdapter {
      * Returns true when a new bridge was adopted.
      */
     rebindToCurrentBridge(): boolean {
-        const adapterAssetId = this._options?.assetId;
+        const adapterAssetId = this._assetId;
         const currentAssetId =
             window.cloudPlugin?.getCurrentAssetIdForSharing?.() ??
-            window.cloudPlugin?._activeAssetId;
+            window.cloudPlugin?.activeAssetId;
         if (
             adapterAssetId &&
             currentAssetId &&
@@ -1792,7 +1792,7 @@ export class CloudAdapter implements FileSystemAdapter {
         const packet: CloudOutboundUpdatePacket = {
             update,
             ...(collaborationMessage ? { collaborationMessage } : undefined),
-            clientTransactionId
+            ...(clientTransactionId ? { clientTransactionId } : undefined)
         };
 
         this._pendingOutboundPackets.push(packet);
@@ -1861,7 +1861,11 @@ export class CloudAdapter implements FileSystemAdapter {
         }
 
         this._enqueuePendingDurabilityMessages(
-            records.map((record) => record.collaborationMessage)
+            records
+                .map((record) => record.collaborationMessage)
+                .filter((message): message is CollaborationMessageEnvelope =>
+                    Boolean(message)
+                )
         );
         this._requeueUnackedOutboxPackets();
 
@@ -1887,7 +1891,9 @@ export class CloudAdapter implements FileSystemAdapter {
                 bridge?.applyRemoteUpdate(
                     walUpdateBytes(record),
                     undefined,
-                    [record.collaborationMessage],
+                    record.collaborationMessage
+                        ? [record.collaborationMessage]
+                        : [],
                     this._documentId,
                     { captureInUndo: false }
                 );
@@ -4374,10 +4380,11 @@ export class CloudAdapter implements FileSystemAdapter {
 
         let state = this._incomingLiveUpdateChunks.get(chunkKey);
         if (!state) {
-            state = this._createChunkAccumulator(msg.totalChunks);
-            if (!state) {
+            const created = this._createChunkAccumulator(msg.totalChunks);
+            if (!created) {
                 return;
             }
+            state = created;
             this._incomingLiveUpdateChunks.set(chunkKey, state);
         }
 
@@ -4415,10 +4422,12 @@ export class CloudAdapter implements FileSystemAdapter {
 
         let state = this._incomingLiveUpdateChunks.get(chunkKey);
         if (!state) {
-            state = this._createChunkAccumulator(msg.totalChunks);
-            if (!state) {
+            const created = this._createChunkAccumulator(msg.totalChunks);
+            if (!created) {
                 return null;
             }
+            state = created;
+            this._incomingLiveUpdateChunks.set(chunkKey, state);
         }
 
         const chunkIndex = msg.chunkIndex as number;

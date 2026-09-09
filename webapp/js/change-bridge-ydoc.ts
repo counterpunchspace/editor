@@ -24,7 +24,6 @@ import {
     LAYER_NODE_POSITIONS_KEY,
     LAYER_SHAPE_DATA_KEY,
     readLayerGeometry,
-    layerGeometryPreviewIsStale,
     writeLayerGeometry,
     writeNodePosition
 } from './layer-geometry-ydoc';
@@ -241,7 +240,7 @@ export function normalizeValueForYDocWrite(value: unknown): unknown {
         }
         return {
             ...record,
-            closed: record.closed === undefined ? false : record.closed
+            closed: record.closed === undefined ? true : record.closed
         };
     }
 
@@ -377,7 +376,13 @@ function restingLayerContextFromYMap(
             existing.shapes = readLayerGeometry(layerMap);
         }
     } catch {
-        // Corrupt node storage must not block a later delta; identity is enough.
+        try {
+            if (geometryHasNormalizedStorage(layerMap)) {
+                existing.shapes = readLayerGeometry(layerMap);
+            }
+        } catch {
+            // Identity-only fallback remains if both encodings are unreadable.
+        }
     }
     return existing;
 }
@@ -471,6 +476,10 @@ export function applyLayerDelta(
             if (
                 (RESTING_LAYER_IDENTITY_KEYS as readonly string[]).includes(key)
             ) {
+                continue;
+            }
+            if (key === 'shapes') {
+                writeLayerGeometry(layerMap, [], toYType);
                 continue;
             }
             layerMap.delete(key);
@@ -570,7 +579,7 @@ export function applyIndexedMapArray(
     }
 }
 
-const YMAP_INFRASTRUCTURE_KEYS = new Set([
+export const YMAP_INFRASTRUCTURE_KEYS = new Set([
     'kind',
     'anchorsById',
     'anchorOrder',
@@ -1057,28 +1066,34 @@ function fromYLayerMap(layerMap: Y.Map<unknown>): Record<string, unknown> {
         }
     });
 
+    const readShapesArray = (): unknown[] | undefined => {
+        const shapes = layerMap.get('shapes');
+        if (shapes instanceof Y.Array) {
+            return fromYType(shapes) as unknown[];
+        }
+        return undefined;
+    };
     try {
         const normalizedShapes = geometryHasNormalizedStorage(layerMap)
             ? readLayerGeometry(layerMap)
             : null;
-        if (normalizedShapes) {
+        if (normalizedShapes && normalizedShapes.length > 0) {
             obj.shapes = normalizedShapes;
-            if (layerGeometryPreviewIsStale(normalizedShapes)) {
-                obj._geometryCoherent = false;
-                obj._geometryPreviewStale = true;
-            } else {
-                obj._geometryCoherent = true;
-                obj._geometryPreviewStale = false;
-            }
         } else {
-            const shapes = layerMap.get('shapes');
-            if (shapes instanceof Y.Array) {
-                obj.shapes = fromYType(shapes);
+            const shapes = readShapesArray();
+            if (shapes && shapes.length > 0) {
+                obj.shapes = shapes;
+            } else if (normalizedShapes) {
+                obj.shapes = normalizedShapes;
+            } else if (shapes) {
+                obj.shapes = shapes;
             }
         }
     } catch {
-        obj._geometryCoherent = false;
-        obj._geometryPreviewStale = true;
+        const shapes = readShapesArray();
+        if (shapes) {
+            obj.shapes = shapes;
+        }
     }
 
     // anchorsById + anchorOrder → anchors array

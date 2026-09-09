@@ -130,7 +130,8 @@ describe('Python post-execution synthetic commit alignment', () => {
                     newValue: 610,
                     editSource: 'python'
                 })
-            ])
+            ]),
+            { ignoreRecordingSuppression: true }
         );
         expect(bridge.endTransaction).toHaveBeenCalledTimes(1);
     });
@@ -322,7 +323,8 @@ describe('Python post-execution synthetic commit alignment', () => {
                         ['zero', zero]
                     ]
                 })
-            ]
+            ],
+            { ignoreRecordingSuppression: true }
         );
         expect(executionOrder).toEqual(['commit', 'fontModelSync']);
     });
@@ -366,7 +368,8 @@ describe('Python post-execution synthetic commit alignment', () => {
                     oldValue: ['a', 'b'],
                     newValue: ['b', 'a']
                 })
-            ]
+            ],
+            { ignoreRecordingSuppression: true }
         );
     });
 
@@ -421,7 +424,8 @@ describe('Python post-execution synthetic commit alignment', () => {
                 expect.objectContaining({
                     editSource: 'assistant'
                 })
-            ])
+            ]),
+            { ignoreRecordingSuppression: true }
         );
         expect(bridge.endTransaction).toHaveBeenCalledTimes(1);
     });
@@ -814,7 +818,7 @@ describe('Python post-execution synthetic commit alignment', () => {
         finalSnapshot.glyphs[0].note = 'after';
         finalSnapshot.glyphs[0].layers[0].width = 600;
         finalSnapshot.glyphs[0].layers[0].shapes = [
-            { id: 'shape-1', type: 'path', nodes: [], closed: false }
+            { id: 'shape-1', type: 'path', nodes: [], closed: true }
         ];
         const receiverFinalSnapshot = JSON.parse(JSON.stringify(finalSnapshot));
         receiverFinalSnapshot.glyphs[0].layers[0].shapes[0].nodes = [];

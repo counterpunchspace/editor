@@ -3427,11 +3427,10 @@ describe('Babelfont Object Model', () => {
                 ([, prop]) => prop
             );
 
-            expect(recordedProps).toEqual(
-                expect.arrayContaining(['shapes', 'width'])
-            );
+            expect(recordedProps).toEqual(expect.arrayContaining(['width']));
             expect(recordedProps).not.toContain('x');
             expect(recordedProps).not.toContain('y');
+            expect(recordedProps).not.toContain('shapes');
         });
 
         test('exposes imported glyph and layer metrics keys', () => {

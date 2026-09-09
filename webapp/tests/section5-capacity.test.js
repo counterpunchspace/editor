@@ -38,8 +38,15 @@ describe('section 5 production toYType capacity samples', () => {
             doc.getMap('font')
         );
         const encoded = Y.encodeStateAsUpdate(doc);
-        expect(encoded.byteLength).toBeGreaterThan(1000);
-        expect(countStructs(doc)).toBeGreaterThan(674);
+        expect(encoded.byteLength).toBeGreaterThan(100);
+        expect(doc.getMap('font').has('glyphOrder')).toBe(true);
+        const formatSpecific = doc.getMap('font').get('format_specific');
+        expect(
+            formatSpecific instanceof Y.Map
+                ? formatSpecific.has('com.counterpunch.cloud')
+                : formatSpecific
+        ).toBeFalsy();
+        expect(countStructs(doc)).toBeLessThan(50);
         doc.destroy();
     });
 

@@ -30,9 +30,9 @@
         },
         {
             "id": "cached-editing-compile-callers",
-            "description": "Cached editing compilation is requested only through FontManager's policy-aware editing compile owner.",
+            "description": "Cached editing compilation is requested only through FontManager's queued policy-aware compile owner (compileEditingFont → compileEditingFontUnqueued).",
             "query": "MATCH (caller)-[:CodeRelation {type:'CALLS'}]->(sink:Method {name:'compileEditingFromJsonCached'}) WHERE sink.filePath = 'webapp/js/font-compilation.ts' AND NOT caller.filePath STARTS WITH 'webapp/tests/' RETURN caller.name AS caller_name, caller.filePath AS caller_path",
-            "allowedCallers": ["webapp/js/font-manager.ts::compileEditingFont"]
+            "allowedCallers": ["webapp/js/font-manager.ts::compileEditingFontUnqueued"]
         },
         {
             "id": "full-binary-compile-callers",
@@ -71,6 +71,7 @@
             "allowedSites": [
                 "webapp/js/cloud-adapter.ts::CloudAdapter._scheduleWorkerBridgeSyncAfterServerState::seedYdoc",
                 "webapp/js/cloud-adapter.ts::CloudAdapter._reseedEditingWorkerFromBridgeAfterCheckpoint::seedYdoc",
+                "webapp/js/font-compilation.ts::FontCompilation.seedWorkerDocumentSet::seedYdoc",
                 "webapp/js/font-compilation.ts::FontCompilation.seedWorkerYDocFromState::seedYdoc",
                 "webapp/js/font-manager.ts::FontManager.reloadCurrentFontFromSource::storeFontJson",
                 "webapp/js/window-sync.ts::WindowSync._handleMessage::seedYdoc"

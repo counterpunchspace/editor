@@ -151,11 +151,15 @@ describe('FontManager sparse hydration', () => {
             },
             resolveEditingTextForCompile() {
                 return 'ä';
+            },
+            getLiveVisibleGlyphNames() {
+                return [];
             }
         });
         expect(plugin.ensureSparseHydration).toHaveBeenCalledWith({
             text: 'ä',
-            glyphNames: []
+            glyphNames: [],
+            purpose: 'compile'
         });
     });
 });

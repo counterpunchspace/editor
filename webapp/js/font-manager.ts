@@ -1934,7 +1934,9 @@ class FontManager {
             };
         }
 
-        glyphCanvas.textRunEditor.textBuffer = state.textBuffer || '';
+        // Font compile/reload captures are often older than live typing
+        // (constructor default "Hamburgevons" vs setTextBuffer). Never
+        // replace the live buffer from that snapshot.
         glyphCanvas.textRunEditor.shapeText();
 
         const maxCursorPosition = glyphCanvas.textRunEditor.textBuffer.length;
@@ -2671,6 +2673,15 @@ class FontManager {
             }
             if (!constrainedSet.has(name)) {
                 return true;
+            }
+        }
+        const compiledNameMap =
+            window.glyphCanvas?.textRunEditor?.editingFontNameToGid;
+        if (compiledNameMap instanceof Map && compiledNameMap.size > 0) {
+            for (const name of constrained) {
+                if (name && name !== '.notdef' && !compiledNameMap.has(name)) {
+                    return true;
+                }
             }
         }
         return false;
@@ -4941,7 +4952,18 @@ class FontManager {
                 continue;
             }
             const layerJson = fromYType(layerValue);
-            const violation = describeRestingLayerViolation(layerJson);
+            if (
+                !layerJson ||
+                typeof layerJson !== 'object' ||
+                Array.isArray(layerJson)
+            ) {
+                continue;
+            }
+            const violation = describeRestingLayerViolation(
+                omitRestingLayerRuntimeKeys(
+                    layerJson as Record<string, unknown>
+                )
+            );
             if (violation) {
                 console.error(
                     `[FontManager] Resting-layer preflight failed for ${target.glyphName}/${target.layerId}: ${violation}`

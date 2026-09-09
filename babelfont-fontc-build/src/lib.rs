@@ -726,6 +726,119 @@ fn merge_sparse_layer_json(
     }
 }
 
+fn parse_packed_node_position(packed: &str) -> Option<(f64, f64)> {
+    let mut parts = packed.split(' ');
+    let x = parts
+        .next()
+        .and_then(|part| part.parse::<f64>().ok())
+        .filter(|value| value.is_finite())?;
+    let y = parts
+        .next()
+        .and_then(|part| part.parse::<f64>().ok())
+        .filter(|value| value.is_finite())?;
+    if parts.next().is_some() {
+        return None;
+    }
+    Some((x, y))
+}
+
+fn apply_node_positions_by_id_to_layer_shapes(
+    layer_json: &mut serde_json::Value,
+    positions: &serde_json::Map<String, serde_json::Value>,
+) -> Result<(), String> {
+    let Some(shapes) = layer_json
+        .get_mut("shapes")
+        .and_then(|value| value.as_array_mut())
+    else {
+        return Ok(());
+    };
+    for shape in shapes {
+        let Some(nodes) = shape
+            .get_mut("nodes")
+            .and_then(|value| value.as_array_mut())
+        else {
+            continue;
+        };
+        for node in nodes {
+            let Some(id) = node
+                .get("id")
+                .and_then(|value| value.as_str())
+                .map(str::to_string)
+            else {
+                continue;
+            };
+            let Some(packed) = positions.get(&id).and_then(|value| value.as_str()) else {
+                continue;
+            };
+            let (x, y) = parse_packed_node_position(packed)
+                .ok_or_else(|| format!("Invalid packed position for {id}"))?;
+            let Some(obj) = node.as_object_mut() else {
+                continue;
+            };
+            obj.insert("x".to_string(), serde_json::json!(x));
+            obj.insert("y".to_string(), serde_json::json!(y));
+        }
+    }
+    Ok(())
+}
+
+fn apply_packed_node_positions_to_layer_json(
+    layer_json: &mut serde_json::Value,
+) -> Result<(), String> {
+    let Some(positions) = layer_json
+        .get("nodePositionsById")
+        .and_then(|value| value.as_object())
+        .cloned()
+    else {
+        return Ok(());
+    };
+    if !positions.is_empty() {
+        apply_node_positions_by_id_to_layer_shapes(layer_json, &positions)?;
+    }
+    if let Some(obj) = layer_json.as_object_mut() {
+        obj.remove("nodePositionsById");
+        obj.remove("geometryTopology");
+        obj.remove("shapeDataById");
+    }
+    Ok(())
+}
+
+/// Fill omitted layer fields from a cached snapshot. Missing `shapes` keeps
+/// cached outlines; an explicit `shapes` array (including empty) wins.
+fn materialize_sparse_ydoc_layer_json(
+    incoming: serde_json::Value,
+    cached: Option<&serde_json::Value>,
+) -> serde_json::Value {
+    if incoming.get("geometryError").is_some() {
+        return incoming;
+    }
+    let mut materialized = match cached {
+        Some(existing) => merge_sparse_layer_json(existing, incoming),
+        None => incoming,
+    };
+    let _ = apply_packed_node_positions_to_layer_json(&mut materialized);
+    materialized
+}
+
+fn materialize_ydoc_layer_json_for_native_cache(
+    glyph_name: &str,
+    layer_id: &str,
+    incoming: &serde_json::Value,
+) -> Result<serde_json::Value, String> {
+    let cached = {
+        let guard = CANONICAL_JSON_CACHE.lock().unwrap();
+        guard.as_ref().and_then(|canonical| {
+            cached_layer_json_from_font_json(canonical, glyph_name, layer_id, None)
+        })
+    };
+    let mut materialized = match cached.as_ref() {
+        Some(existing) => merge_sparse_layer_json(existing, incoming.clone()),
+        None => incoming.clone(),
+    };
+    apply_packed_node_positions_to_layer_json(&mut materialized)?;
+    Ok(materialized)
+}
+
 fn layer_field_from_json<T>(
     glyph_name: &str,
     layer_id: &str,
@@ -4241,24 +4354,36 @@ pub fn apply_yjs_update(update: &[u8], update_metadata_json: &str) -> Result<Str
                 .iter()
                 .flat_map(|rename| [rename.old_name.clone(), rename.new_name.clone()])
                 .collect();
-            let changed_layer_snapshots: Vec<(LayerTarget, Option<serde_json::Value>)> =
-                layer_targets
-                    .iter()
-                    // Component/metrics edits are recorded under the pre-rename glyph
-                    // name before identity remove/add. Those stale targets are covered
-                    // by the renamed glyph snapshot and must not hard-fail the rename.
-                    .filter(|target| !renamed_glyph_names.contains(&target.glyph_name))
-                    .map(|target| {
-                        (
-                            target.clone(),
-                            ydoc_get_layer_json_with_txn(
-                                &target.glyph_name,
-                                &target.layer_id,
-                                &txn,
-                            ),
+            let mut changed_layer_snapshots: Vec<(LayerTarget, Option<serde_json::Value>)> =
+                Vec::new();
+            for target in layer_targets
+                .iter()
+                // Component/metrics edits are recorded under the pre-rename glyph
+                // name before identity remove/add. Those stale targets are covered
+                // by the renamed glyph snapshot and must not hard-fail the rename.
+                .filter(|target| !renamed_glyph_names.contains(&target.glyph_name))
+            {
+                let raw = ydoc_get_layer_json_with_txn(
+                    &target.glyph_name,
+                    &target.layer_id,
+                    &txn,
+                );
+                let layer_json = match raw {
+                    Some(json) if layer_json_failed_geometry_reconstruction(&json) => {
+                        Some(json)
+                    }
+                    Some(json) => Some(
+                        materialize_ydoc_layer_json_for_native_cache(
+                            &target.glyph_name,
+                            &target.layer_id,
+                            &json,
                         )
-                    })
-                    .collect();
+                        .map_err(|error| JsValue::from_str(&error))?,
+                    ),
+                    None => None,
+                };
+                changed_layer_snapshots.push((target.clone(), layer_json));
+            }
             let renamed_glyph_snapshots: HashMap<String, serde_json::Value> = glyph_renames
                 .iter()
                 .filter_map(|rename| {
@@ -5144,6 +5269,9 @@ pub fn dump_layer_state_json(layer_targets_json: &str) -> Result<String, JsValue
                 });
                 let ydoc_layer = ydoc_txn.as_ref().and_then(|txn| {
                     ydoc_get_layer_json_with_txn(&target.glyph_name, &target.layer_id, txn)
+                })
+                .map(|incoming| {
+                    materialize_sparse_ydoc_layer_json(incoming, canonical_layer.as_ref())
                 });
                 let font_cache_layer = font_cache
                     .and_then(|font| {
@@ -7361,6 +7489,69 @@ mod tests {
         assert_eq!(shapes.len(), 1);
         assert_eq!(shapes[0]["nodes"][0]["x"], json!(10.0));
         assert!(!layer.contains_key("geometryTopology"));
+    }
+
+    #[test]
+    fn sparse_packed_positions_merge_keeps_cached_width_and_shapes() {
+        let existing = json!({
+            "id": "L0",
+            "width": 500.0,
+            "shapes": [{
+                "id": "p1",
+                "closed": true,
+                "nodes": [{
+                    "id": "n1",
+                    "x": 0.0,
+                    "y": 0.0,
+                    "nodetype": "Line"
+                }]
+            }]
+        });
+        let incoming = json!({
+            "id": "L0",
+            "nodePositionsById": { "n1": "10 20" }
+        });
+        let mut merged = merge_sparse_layer_json(&existing, incoming);
+        apply_packed_node_positions_to_layer_json(&mut merged).unwrap();
+        assert_eq!(merged["width"], json!(500.0));
+        assert_eq!(merged["shapes"][0]["nodes"][0]["x"], json!(10.0));
+        assert_eq!(merged["shapes"][0]["nodes"][0]["y"], json!(20.0));
+        assert!(merged.get("nodePositionsById").is_none());
+        assert!(merged.get("shapes").is_some());
+    }
+
+    #[test]
+    fn sparse_identity_ydoc_layer_keeps_cached_outlines() {
+        let existing = json!({
+            "id": "L0",
+            "width": 520.0,
+            "master": { "type": "DefaultForMaster", "master": "M0" },
+            "guides": [],
+            "shapes": [{
+                "id": "p1",
+                "closed": true,
+                "nodes": [{
+                    "id": "n1",
+                    "x": 90.0,
+                    "y": 0.0,
+                    "nodetype": "Line"
+                }]
+            }]
+        });
+        let incoming = json!({
+            "anchors": [],
+            "id": "L0"
+        });
+        let materialized = materialize_sparse_ydoc_layer_json(incoming, Some(&existing));
+        assert_eq!(materialized["width"], json!(520.0));
+        assert_eq!(materialized["shapes"][0]["nodes"][0]["x"], json!(90.0));
+        assert_eq!(materialized["anchors"], json!([]));
+
+        let cleared = materialize_sparse_ydoc_layer_json(
+            json!({ "id": "L0", "shapes": [] }),
+            Some(&existing),
+        );
+        assert_eq!(cleared["shapes"], json!([]));
     }
 
     #[test]

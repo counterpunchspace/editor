@@ -95,7 +95,18 @@ function afterPythonExecution() {
 // Make functions globally available
 window.pythonExecutionHistoryContext = null;
 window.beforePythonExecution = beforePythonExecution;
-window.afterPythonExecution = afterPythonExecution;
+{
+    const existingAfter = window.afterPythonExecution;
+    window.afterPythonExecution =
+        async function afterPythonExecutionChained(outcome?: {
+            succeeded: boolean;
+        }) {
+            afterPythonExecution();
+            if (typeof existingAfter === 'function') {
+                await existingAfter(outcome);
+            }
+        };
+}
 
 // Expose flag control for font loading operations
 window.setFontLoadingState = function (loading: boolean) {

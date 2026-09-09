@@ -171,15 +171,15 @@ async function runWithConcurrency<T>(
 ): Promise<void> {
     const executing = new Set<Promise<void>>();
     for (const item of items) {
+        while (executing.size >= limit) {
+            await Promise.race(executing);
+        }
         const task = Promise.resolve()
             .then(() => worker(item))
             .finally(() => {
                 executing.delete(task);
             });
         executing.add(task);
-        if (executing.size >= limit) {
-            await Promise.race(executing);
-        }
     }
     await Promise.all(executing);
 }
@@ -197,6 +197,7 @@ export class CloudLiveSession {
     private _httpPublishQueue: Array<() => Promise<void>> = [];
     private _httpPublishActive = 0;
     private readonly _httpPublishInFlight = new Set<Promise<void>>();
+    private readonly _httpEnqueueInFlight = new Set<Promise<void>>();
     private _localUpdateUnsubscribe: (() => void) | null = null;
     private _lastEmittedTransferActivity: CloudTransferActivity = 'idle';
     private _syncLiveChain: Promise<void> = Promise.resolve();
@@ -507,10 +508,12 @@ export class CloudLiveSession {
             return;
         }
         if (resolvedId.startsWith('glyph:')) {
-            void this._enqueueDependentPublish(
-                resolvedId,
-                update,
-                collaborationMessage
+            this._trackDependentPublish(
+                this._enqueueDependentPublish(
+                    resolvedId,
+                    update,
+                    collaborationMessage
+                )
             );
             return;
         }
@@ -540,6 +543,7 @@ export class CloudLiveSession {
         this._httpPublishQueue = [];
         this._httpPublishActive = 0;
         this._httpPublishInFlight.clear();
+        this._httpEnqueueInFlight.clear();
         this._lastEmittedTransferActivity = 'idle';
     }
 
@@ -554,11 +558,22 @@ export class CloudLiveSession {
 
     async flushPendingHttpPublishes(): Promise<void> {
         while (
+            this._httpEnqueueInFlight.size ||
             this._httpPublishQueue.length ||
             this._httpPublishInFlight.size
         ) {
-            await Promise.all([...this._httpPublishInFlight]);
+            await Promise.all([
+                ...this._httpEnqueueInFlight,
+                ...this._httpPublishInFlight
+            ]);
         }
+    }
+
+    private _trackDependentPublish(pending: Promise<void>): void {
+        this._httpEnqueueInFlight.add(pending);
+        void pending.finally(() => {
+            this._httpEnqueueInFlight.delete(pending);
+        });
     }
 
     async persistPreparedTransaction(record: {
@@ -658,7 +673,9 @@ export class CloudLiveSession {
                 updateBytes: update,
                 collaborationMessage:
                     collaborationMessage || existing?.collaborationMessage,
-                collaborationMetadata: collaborationMessage.metadata,
+                collaborationMetadata:
+                    collaborationMessage?.metadata ??
+                    existing?.collaborationMessage?.metadata,
                 revisionObligations: existing?.revisionObligations || [],
                 state: 'applied',
                 createdAt: existing?.createdAt || Date.now(),
@@ -866,10 +883,12 @@ export class CloudLiveSession {
                     return;
                 }
             }
-            void this._enqueueDependentPublish(
-                documentId,
-                update,
-                collaborationMessage
+            this._trackDependentPublish(
+                this._enqueueDependentPublish(
+                    documentId,
+                    update,
+                    collaborationMessage
+                )
             );
         };
         bridge.onLocalUpdate(handler);

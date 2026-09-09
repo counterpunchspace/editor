@@ -4278,6 +4278,136 @@ describe('buildCascadingRecompositionOperations', () => {
         ]);
     });
 
+    test('does not replace source anchors when a stable-id leaf edit already matches stored JSON', () => {
+        const fontJson = makeBridgeFont();
+        const bridge = new ChangeBridge('cascade-test');
+        bridge.initFromJson(fontJson);
+
+        const storedAnchor = fontJson.glyphs[0].layers[0].anchors[0];
+        const anchorId = storedAnchor.id;
+        expect(typeof anchorId).toBe('string');
+        storedAnchor.y = 719;
+
+        window.fontManager = {
+            currentFont: {
+                fontModel: {
+                    findGlyph: jest.fn(() => null),
+                    rebuildAutomaticCompositesForGlyphs: jest.fn(
+                        () => new Set()
+                    ),
+                    recomputeMetricsKeys: jest.fn(() => new Set())
+                }
+            }
+        };
+
+        const operations = buildCascadingRecompositionOperations(bridge, [
+            {
+                op: 'set',
+                path: [
+                    'glyphs',
+                    'A',
+                    'layers',
+                    'layer-1',
+                    'anchors',
+                    anchorId,
+                    'y'
+                ],
+                oldValue: 700,
+                newValue: 719
+            }
+        ]);
+
+        expect(
+            operations.filter(
+                (operation) =>
+                    Array.isArray(operation.path) &&
+                    operation.path[1] === 'A' &&
+                    Object.prototype.hasOwnProperty.call(
+                        operation.newValue || {},
+                        'anchors'
+                    )
+            )
+        ).toEqual([]);
+        const sourceLayerOp = operations.find(
+            (operation) =>
+                Array.isArray(operation.path) && operation.path[1] === 'A'
+        );
+        if (sourceLayerOp) {
+            expect(sourceLayerOp.oldValue.anchors).toEqual(
+                expect.arrayContaining([
+                    expect.objectContaining({ name: 'top', y: 719 })
+                ])
+            );
+        }
+    });
+
+    test('stable-id source-layer anchor removal still records an explicit empty-array clear', () => {
+        const fontJson = makeBridgeFont();
+        fontJson.glyphs[0].layers[0].anchors.push({
+            name: 'bottom',
+            x: 100,
+            y: 0
+        });
+        const bridge = new ChangeBridge('cascade-test');
+        bridge.initFromJson(fontJson);
+        const topId = fontJson.glyphs[0].layers[0].anchors[0].id;
+        expect(typeof topId).toBe('string');
+        fontJson.glyphs[0].layers[0].anchors = [];
+
+        const sourceLayer = {
+            id: 'layer-1',
+            getMatchingLayerOnGlyph: jest.fn(() => null)
+        };
+        window.fontManager = {
+            currentFont: {
+                fontModel: {
+                    findGlyph: jest.fn((glyphName) => {
+                        if (glyphName === 'A') {
+                            return {
+                                findLayerById: jest.fn((layerId) =>
+                                    layerId === 'layer-1' ? sourceLayer : null
+                                )
+                            };
+                        }
+                        return null;
+                    }),
+                    rebuildAutomaticCompositesForGlyphs: jest.fn(
+                        () => new Set()
+                    ),
+                    recomputeMetricsKeys: jest.fn(() => new Set(['A']))
+                }
+            }
+        };
+
+        const operations = buildCascadingRecompositionOperations(bridge, [
+            {
+                op: 'remove',
+                path: ['glyphs', 'A', 'layers', 'layer-1', 'anchors', topId],
+                oldValue: { id: topId, name: 'top', x: 100, y: 700 },
+                newValue: undefined
+            }
+        ]);
+
+        expect(operations).toEqual([
+            expect.objectContaining({
+                path: ['glyphs', 'A', 'layers', 'layer-1'],
+                oldValue: expect.objectContaining({
+                    anchors: [
+                        expect.objectContaining({
+                            name: 'bottom',
+                            x: 100,
+                            y: 0
+                        })
+                    ]
+                }),
+                newValue: expect.objectContaining({
+                    id: 'layer-1',
+                    anchors: []
+                })
+            })
+        ]);
+    });
+
     test('ignores node-only edits that do not touch width or anchors', () => {
         const fontJson = makeBridgeFont();
         const bridge = new ChangeBridge('cascade-test');

@@ -9,6 +9,11 @@
 import { Logger } from './logger';
 import type { WorkerReplayTarget } from './change-log';
 import {
+    deriveGlyphNameFromPath,
+    deriveLayerIdFromPath,
+    normalizeWorkerReplayTargets
+} from './change-log';
+import {
     createNamedChangePairFromJsonPatchPair,
     createSyntheticChangeOperationsFromNamedChangePairs,
     type JsonPatchOperation,
@@ -41,6 +46,7 @@ type PythonExecutionCommitContext = {
 
 type PythonExecutionCommitFont = {
     babelfontJson?: string | null;
+    babelfontData?: unknown;
     syncJsonFromModel: () => void;
 };
 
@@ -48,7 +54,8 @@ type PythonExecutionCommitBridge = {
     setRecordingSuppressed?: (suppressed: boolean) => void;
     applySyntheticChangeSet: (
         label: string,
-        operations: SyntheticChangeOperation[]
+        operations: SyntheticChangeOperation[],
+        options?: { ignoreRecordingSuppression?: boolean }
     ) => void;
     endTransaction: () => { changeLogEntries: unknown[] } | null;
 };
@@ -104,8 +111,8 @@ function createNamedPatchPairsFromJsonSnapshots(
         afterSnapshot
     );
 
-    return jsonPatchPairs.map((patchPair) =>
-        createNamedChangePairFromJsonPatchPair(
+    return jsonPatchPairs.map((patchPair) => {
+        const namedPair = createNamedChangePairFromJsonPatchPair(
             patchPair.forward,
             patchPair.inverse,
             {
@@ -127,8 +134,21 @@ function createNamedPatchPairsFromJsonSnapshots(
                         : patchPair.forward.value,
                 workerReplayTargets
             }
-        )
-    );
+        );
+        const inferredGlyph = deriveGlyphNameFromPath(namedPair.forward.path);
+        const inferredLayer = deriveLayerIdFromPath(namedPair.forward.path);
+        const inferredTargets = normalizeWorkerReplayTargets(
+            workerReplayTargets.length > 0
+                ? workerReplayTargets
+                : inferredGlyph && inferredLayer
+                  ? [{ glyphName: inferredGlyph, layerId: inferredLayer }]
+                  : []
+        );
+        return {
+            ...namedPair,
+            workerReplayTargets: inferredTargets
+        };
+    });
 }
 
 function createCanonicalSerializedFontSnapshot(
@@ -201,7 +221,8 @@ export function commitPythonExecutionSyntheticChanges(
                 directOperations.map((operation) => ({
                     ...operation,
                     editSource
-                }))
+                })),
+                { ignoreRecordingSuppression: true }
             );
             didApplyOperations = true;
         }
@@ -234,30 +255,10 @@ function setupHooks() {
         return;
     }
 
-    console.log(
-        '[PythonPostExec]',
-        'setupHooks called, checking for autoCompileManager:',
-        !!window.autoCompileManager
-    );
-
-    if (!window.autoCompileManager) {
-        console.log('[PythonPostExec]', 'Waiting for autoCompileManager...');
-        setTimeout(setupHooks, 500);
-        return;
-    }
-
-    console.log(
-        '[PythonPostExec]',
-        '✅ autoCompileManager found, installing afterPythonExecution hook...'
-    );
-
-    // Save any existing hook so we can call it too (chaining)
+    // Save any existing hook so we can call it too (chaining). Do not wait
+    // for autoCompileManager: the committed-change funnel owns compile, and
+    // delaying this wrap lets python-ui-sync stay as the only after-hook.
     const existingHook = window.afterPythonExecution;
-    console.log(
-        '[PythonPostExec]',
-        '   Existing hook:',
-        typeof existingHook === 'function' ? 'found' : 'none'
-    );
 
     /**
      * Hook that runs after every Python code execution

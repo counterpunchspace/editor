@@ -458,14 +458,24 @@ export function catalogFromCoreJson(
     const topCatalog = catalogEntriesFromUnknown(
         coreJson[CORE_GLYPH_CATALOG_KEY]
     );
-    if (!topCatalog) {
+    const topIndex = codepointIndexFromUnknown(
+        coreJson[CORE_CODEPOINT_INDEX_KEY]
+    );
+    if (topCatalog) {
+        return {
+            glyphCatalog: topCatalog,
+            codepointIndex: topIndex
+        };
+    }
+    const formatSpecific = asRecord(coreJson.format_specific);
+    const nestedOwned = asRecord(formatSpecific?.[CLOUD_PLUGIN_OWNED_KEY]);
+    const nestedCatalog = catalogEntriesFromUnknown(nestedOwned?.glyphCatalog);
+    if (!nestedCatalog) {
         return null;
     }
     return {
-        glyphCatalog: topCatalog,
-        codepointIndex: codepointIndexFromUnknown(
-            coreJson[CORE_CODEPOINT_INDEX_KEY]
-        )
+        glyphCatalog: nestedCatalog,
+        codepointIndex: codepointIndexFromUnknown(nestedOwned?.codepointIndex)
     };
 }
 

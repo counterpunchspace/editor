@@ -3258,6 +3258,42 @@ export function buildInterpolationRustBatchOperations(
 }
 
 /**
+ * Apply a worker-authored Yjs update. Trailing history/document args are
+ * omitted when there are no per-document packets so callers keep the
+ * three-argument contract used for core-only batches.
+ */
+export function applyWorkerGeneratedYjsUpdate(
+    bridge: {
+        applyLocalGeneratedYjsUpdate: (
+            update: Uint8Array,
+            operations: TransactionBufferedOperation[],
+            label: string | null,
+            historyTarget?: TransactionHistoryTarget | null,
+            documentUpdates?: Array<{
+                documentId: string;
+                update: Uint8Array;
+            }>
+        ) => unknown;
+    },
+    update: Uint8Array,
+    operations: TransactionBufferedOperation[],
+    label: string | null,
+    documentUpdates?: Array<{ documentId: string; update: Uint8Array }>
+): unknown {
+    assertModelMutationAllowed();
+    if (documentUpdates?.length) {
+        return bridge.applyLocalGeneratedYjsUpdate(
+            update,
+            operations,
+            label,
+            null,
+            documentUpdates
+        );
+    }
+    return bridge.applyLocalGeneratedYjsUpdate(update, operations, label);
+}
+
+/**
  * DecomposedAffine transformation utilities
  * Based on babelfont-ts implementation
  */
@@ -12503,6 +12539,7 @@ export class Master extends ArrayElementBase {
     set kerning_rtl(value: Record<string, number>) {
         assertModelMutationAllowed();
         withBridgeTransaction('Set RTL kerning', () => {
+            assertModelMutationAllowed();
             const old = this.data.kerning_rtl;
             this.data.kerning_rtl = value;
             const font = this.parent();
@@ -12570,7 +12607,11 @@ export class Master extends ArrayElementBase {
                       update: Uint8Array,
                       operations: TransactionBufferedOperation[],
                       label: string | null,
-                      historyTarget?: TransactionHistoryTarget | null
+                      historyTarget?: TransactionHistoryTarget | null,
+                      documentUpdates?: Array<{
+                          documentId: string;
+                          update: Uint8Array;
+                      }>
                   ) => unknown;
               })
             | null;
@@ -12589,12 +12630,12 @@ export class Master extends ArrayElementBase {
                 return;
             }
 
-            bridge.applyLocalGeneratedYjsUpdate(
+            applyWorkerGeneratedYjsUpdate(
+                bridge,
                 batchResult.update,
                 buildInterpolationRustBatchOperations(batchResult.metadata),
                 'Reinterpolate layer batch sync',
-                null,
-                batchResult.updates
+                batchResult.updates?.length ? batchResult.updates : undefined
             );
         } finally {
             endStartupInteractionLock();
@@ -12804,39 +12845,24 @@ function syncKerningRtlToFormatSpecific(
     masterId: string,
     flatRtl: Record<string, number>
 ): void {
-    let liveFormatSpecific = font.format_specific;
-    if (!liveFormatSpecific) {
-        ensureModelFormatSpecific(font);
-        liveFormatSpecific = font.format_specific;
-    }
-    if (!liveFormatSpecific) {
-        return;
-    }
+    const previousRoot =
+        (getModelFormatSpecific(font)?.[KEY_KERNING_RTL] as
+            Record<string, Unsafe> | undefined) || {};
+    const nextRoot: Record<string, Unsafe> = { ...previousRoot };
 
     if (Object.keys(flatRtl).length === 0) {
-        const existingRtl = liveFormatSpecific[KEY_KERNING_RTL] as
-            Record<string, unknown> | undefined;
-        if (existingRtl && typeof existingRtl === 'object') {
-            delete existingRtl[masterId];
-            if (Object.keys(existingRtl).length === 0) {
-                delete liveFormatSpecific[KEY_KERNING_RTL];
-            }
-        }
+        delete nextRoot[masterId];
+        setFormatSpecificKey(
+            font,
+            KEY_KERNING_RTL,
+            Object.keys(nextRoot).length === 0 ? undefined : nextRoot
+        );
         return;
     }
 
     const nested = flatKerningRtlToNested(flatRtl, masterId);
-    if (
-        !liveFormatSpecific[KEY_KERNING_RTL] ||
-        typeof liveFormatSpecific[KEY_KERNING_RTL] !== 'object'
-    ) {
-        liveFormatSpecific[KEY_KERNING_RTL] = {};
-    }
-    const rtlRoot = liveFormatSpecific[KEY_KERNING_RTL] as Record<
-        string,
-        unknown
-    >;
-    rtlRoot[masterId] = nested[masterId] || {};
+    nextRoot[masterId] = (nested[masterId] || {}) as Unsafe;
+    setFormatSpecificKey(font, KEY_KERNING_RTL, nextRoot);
 }
 
 function remapFlatKerningPairKeys(
@@ -15032,7 +15058,11 @@ export class Font extends ModelBase {
                       update: Uint8Array,
                       operations: TransactionBufferedOperation[],
                       label: string | null,
-                      historyTarget?: TransactionHistoryTarget | null
+                      historyTarget?: TransactionHistoryTarget | null,
+                      documentUpdates?: Array<{
+                          documentId: string;
+                          update: Uint8Array;
+                      }>
                   ) => unknown;
               })
             | null;
@@ -15105,11 +15135,12 @@ export class Font extends ModelBase {
                     }
                 }
 
-                bridge.applyLocalGeneratedYjsUpdate(
+                applyWorkerGeneratedYjsUpdate(
+                    bridge,
                     finalUpdate,
                     buildInterpolationRustBatchOperations(metadata),
                     'Add master',
-                    ...(documentUpdates?.length ? [null, documentUpdates] : [])
+                    documentUpdates?.length ? documentUpdates : undefined
                 );
             } finally {
                 endStartupInteractionLock();
@@ -15207,7 +15238,11 @@ export class Font extends ModelBase {
                       update: Uint8Array,
                       operations: TransactionBufferedOperation[],
                       label: string | null,
-                      historyTarget?: TransactionHistoryTarget | null
+                      historyTarget?: TransactionHistoryTarget | null,
+                      documentUpdates?: Array<{
+                          documentId: string;
+                          update: Uint8Array;
+                      }>
                   ) => unknown;
               })
             | null;
@@ -15229,12 +15264,14 @@ export class Font extends ModelBase {
                 ) {
                     return false;
                 }
-                bridge.applyLocalGeneratedYjsUpdate(
+                applyWorkerGeneratedYjsUpdate(
+                    bridge,
                     batchResult.update,
                     buildInterpolationRustBatchOperations(batchResult.metadata),
                     'Remove master',
-                    null,
-                    batchResult.updates
+                    batchResult.updates?.length
+                        ? batchResult.updates
+                        : undefined
                 );
             } finally {
                 endStartupInteractionLock();

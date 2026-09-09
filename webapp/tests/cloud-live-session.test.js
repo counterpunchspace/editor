@@ -84,6 +84,20 @@ const {
 } = require('../js/cloud-live-session.ts');
 const { CloudAdapter } = require('../js/cloud-adapter.ts');
 
+function durableLiveAck(init) {
+    const body = JSON.parse(init.body);
+    return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+            ok: true,
+            durable: true,
+            seq: body.seq,
+            clientTransactionId: body.clientTransactionId
+        })
+    };
+}
+
 function createIndexedDbMock() {
     const records = new Map();
     const store = {
@@ -507,19 +521,7 @@ describe('CloudLiveSession', () => {
             bootstrapMode: 'skip'
         });
         await session.syncLiveDocumentIds(['glyph:aaa']);
-        global.fetch = jest.fn(async () => ({
-            ok: true,
-            status: 200,
-            json: async () => {
-                const body = JSON.parse(opts.body);
-                return {
-                    ok: true,
-                    durable: true,
-                    seq: body.seq,
-                    clientTransactionId: body.clientTransactionId
-                };
-            }
-        }));
+        global.fetch = jest.fn(async (_url, opts) => durableLiveAck(opts));
         session.sendForwardedUpdate(new Uint8Array([9]), null, 'glyph:ccc');
         await session.flushPendingHttpPublishes();
         expect(global.fetch).toHaveBeenCalledTimes(1);
@@ -540,24 +542,12 @@ describe('CloudLiveSession', () => {
         });
         await session.syncLiveDocumentIds(['glyph:aaa']);
         let attempts = 0;
-        global.fetch = jest.fn(async () => {
+        global.fetch = jest.fn(async (_url, opts) => {
             attempts += 1;
             if (attempts === 1) {
                 return { ok: false, status: 503, json: async () => ({}) };
             }
-            return {
-                ok: true,
-                status: 200,
-                json: async () => {
-                    const body = JSON.parse(opts.body);
-                    return {
-                        ok: true,
-                        durable: true,
-                        seq: body.seq,
-                        clientTransactionId: body.clientTransactionId
-                    };
-                }
-            };
+            return durableLiveAck(opts);
         });
         session.sendForwardedUpdate(new Uint8Array([9]), null, 'glyph:ccc');
         await session.flushPendingHttpPublishes();
@@ -575,24 +565,12 @@ describe('CloudLiveSession', () => {
         });
         await session.syncLiveDocumentIds(['glyph:aaa']);
         let attempts = 0;
-        global.fetch = jest.fn(async () => {
+        global.fetch = jest.fn(async (_url, opts) => {
             attempts += 1;
             if (attempts === 1) {
                 return { ok: false, status: 429, json: async () => ({}) };
             }
-            return {
-                ok: true,
-                status: 200,
-                json: async () => {
-                    const body = JSON.parse(opts.body);
-                    return {
-                        ok: true,
-                        durable: true,
-                        seq: body.seq,
-                        clientTransactionId: body.clientTransactionId
-                    };
-                }
-            };
+            return durableLiveAck(opts);
         });
         session.sendForwardedUpdate(new Uint8Array([9]), null, 'glyph:ccc');
         await session.flushPendingHttpPublishes();
@@ -674,23 +652,9 @@ describe('CloudLiveSession', () => {
         let releaseFetch;
         const fetchStarted = new Promise((resolve) => {
             global.fetch = jest.fn(
-                () =>
+                (_url, opts) =>
                     new Promise((resolveFetch) => {
-                        releaseFetch = () =>
-                            resolveFetch({
-                                ok: true,
-                                status: 200,
-                                json: async () => {
-                                    const body = JSON.parse(opts.body);
-                                    return {
-                                        ok: true,
-                                        durable: true,
-                                        seq: body.seq,
-                                        clientTransactionId:
-                                            body.clientTransactionId
-                                    };
-                                }
-                            });
+                        releaseFetch = () => resolveFetch(durableLiveAck(opts));
                         resolve();
                     })
             );
@@ -740,26 +704,14 @@ describe('CloudLiveSession', () => {
         await session.syncLiveDocumentIds([]);
         let inflight = 0;
         let maxInflight = 0;
-        global.fetch = jest.fn(async () => {
+        global.fetch = jest.fn(async (_url, opts) => {
             inflight += 1;
             maxInflight = Math.max(maxInflight, inflight);
             await new Promise((resolve) => {
                 setTimeout(resolve, 40);
             });
             inflight -= 1;
-            return {
-                ok: true,
-                status: 200,
-                json: async () => {
-                    const body = JSON.parse(opts.body);
-                    return {
-                        ok: true,
-                        durable: true,
-                        seq: body.seq,
-                        clientTransactionId: body.clientTransactionId
-                    };
-                }
-            };
+            return durableLiveAck(opts);
         });
         session.sendForwardedUpdate(new Uint8Array([1]), null, 'glyph:1');
         session.sendForwardedUpdate(new Uint8Array([1]), null, 'glyph:2');

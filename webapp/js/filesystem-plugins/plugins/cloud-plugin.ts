@@ -4106,6 +4106,7 @@ export class CloudPlugin extends FilesystemPlugin {
         reportConnectionStatus?: boolean;
         generationId?: string;
     }): Promise<void> {
+        window.windowSync?.notifyCloudBootstrapPending?.();
         const session = new CloudLiveSession({
             assetId: options.assetId,
             websiteBaseUrl: this._websiteBaseUrl,
@@ -4436,7 +4437,10 @@ export class CloudPlugin extends FilesystemPlugin {
             credentials: 'include',
             headers: getCloudRequestHeaders()
         });
-        if (!resp?.ok) {
+        if (!resp) {
+            return null;
+        }
+        if (!resp.ok) {
             if (resp.status === 404) {
                 return null;
             }

@@ -174,15 +174,40 @@ test.describe('Python Fustat node history', () => {
                     throw new Error('Missing updated Fustat path shape');
                 }
                 const afterY = updatedPathShape.nodes[0].y;
+                const currentFont = win.fontManager?.currentFont;
+                let serializedNodeY = null;
+                try {
+                    const parsed = currentFont?.babelfontJson
+                        ? JSON.parse(currentFont.babelfontJson)
+                        : null;
+                    const glyph = parsed?.glyphs?.find(
+                        (candidate: any) => candidate.name === 'o'
+                    );
+                    const layer = glyph?.layers?.find(
+                        (candidate: any) => candidate.id === layerId
+                    );
+                    serializedNodeY = layer?.shapes?.[0]?.nodes?.[0]?.y ?? null;
+                } catch {
+                    serializedNodeY = 'parse-error';
+                }
 
-                return { beforeY, afterY, layerId, packets };
+                return {
+                    beforeY,
+                    afterY,
+                    layerId,
+                    packets,
+                    txDepth: bridge._txDepth ?? bridge.txDepth ?? null,
+                    recordingSuppressed: bridge._suppressRecording ?? null,
+                    serializedNodeY,
+                    hasHistoryContext: !!win.pythonExecutionHistoryContext
+                };
             } finally {
                 bridge.offLocalUpdate(listener);
             }
         });
 
         expect(result.afterY).toBe(result.beforeY + 100);
-        expect(result.packets).toHaveLength(1);
+        expect(result.packets, JSON.stringify(result)).toHaveLength(1);
         expect(result.packets[0]).toEqual([
             {
                 op: 'set',

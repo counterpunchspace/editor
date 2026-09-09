@@ -17,7 +17,7 @@ function cloneValue(value) {
 function getLayerNodes(layerJson) {
     const shape = layerJson?.shapes?.[0];
     const nodes = shape?.nodes || shape?.Path?.nodes || [];
-    return nodes.map(({ smooth, ...node }) =>
+    return nodes.map(({ smooth, id, ...node }) =>
         smooth === false ? node : { ...node, smooth }
     );
 }

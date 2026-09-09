@@ -18,6 +18,7 @@ import {
     Glyph,
     Path,
     DecomposedAffineTransform,
+    applyWorkerGeneratedYjsUpdate,
     buildInterpolationRustBatchOperations,
     withSuppressedModelRecording,
     withSuppressedMetricsKeyRecompute,
@@ -8728,12 +8729,14 @@ export class OutlineEditor {
                     layerId
                 );
             if (batchResult.update.length || batchResult.updates?.length) {
-                bridge.applyLocalGeneratedYjsUpdate(
+                applyWorkerGeneratedYjsUpdate(
+                    bridge,
                     batchResult.update,
                     buildInterpolationRustBatchOperations(batchResult.metadata),
                     'Reinterpolate layer sync',
-                    null,
-                    batchResult.updates
+                    batchResult.updates?.length
+                        ? batchResult.updates
+                        : undefined
                 );
             }
 
@@ -8962,12 +8965,12 @@ export class OutlineEditor {
                 return;
             }
 
-            bridge.applyLocalGeneratedYjsUpdate(
+            applyWorkerGeneratedYjsUpdate(
+                bridge,
                 batchResult.update,
                 buildInterpolationRustBatchOperations(batchResult.metadata),
                 'Reinterpolate layer batch sync',
-                null,
-                batchResult.updates
+                batchResult.updates?.length ? batchResult.updates : undefined
             );
 
             await this.refreshAfterStructuralLayerEdit(

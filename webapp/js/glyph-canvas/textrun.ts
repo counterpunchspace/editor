@@ -27,6 +27,10 @@ import {
 import bidiFactory from 'bidi-js';
 
 import {
+    markUserTextBufferWritten,
+    userTextBufferHasBeenWritten
+} from './text-buffer-session';
+import {
     applyLineLayoutToGlyphs,
     computeEmLineHeightUnit,
     computeUsedLineHeight,
@@ -44,6 +48,8 @@ import {
     type TextAlign
 } from './text-run-layout';
 import { textLayoutControls } from './text-layout-controls';
+
+export { userTextBufferHasBeenWritten };
 
 let console: Logger = new Logger('TextRun');
 
@@ -101,6 +107,7 @@ export class TextRunEditor {
     explicitGlyphOutlineCache: Map<string, ExplicitGlyphOutlineData>;
     explicitGlyphOutlinePending: Set<string>;
     explicitGlyphOutlineGeneration: number;
+    textBufferWriteGeneration: number;
     displayTextBuffer: string;
     displayIndexToRawStart: number[];
     displayIndexToRawEnd: number[];
@@ -155,6 +162,7 @@ export class TextRunEditor {
         this.explicitGlyphOutlineCache = new Map();
         this.explicitGlyphOutlinePending = new Set();
         this.explicitGlyphOutlineGeneration = 0;
+        this.textBufferWriteGeneration = 0;
         this.displayTextBuffer = this.textBuffer;
         this.displayIndexToRawStart = [];
         this.displayIndexToRawEnd = [];
@@ -469,6 +477,8 @@ export class TextRunEditor {
 
     setTextBuffer(text: string) {
         this.textBuffer = normalizeTextNewlines(text || '');
+        this.textBufferWriteGeneration += 1;
+        markUserTextBufferWritten();
         this.syncTextBufferToStateManager();
 
         // Save to localStorage
@@ -495,6 +505,8 @@ export class TextRunEditor {
 
     setTextBufferForNavigation(text: string) {
         this.textBuffer = text || '';
+        this.textBufferWriteGeneration += 1;
+        markUserTextBufferWritten();
         this.syncTextBufferToStateManager();
 
         // Shape immediately for visual update but do not persist to font/localStorage
@@ -2147,6 +2159,17 @@ export class TextRunEditor {
         return this.shapingHbFont || this.hbFont;
     }
 
+    private ensureShapingFontFromCompiledEditingFont(): void {
+        if (this.getActiveShapingFont()) {
+            return;
+        }
+        const compiled = window.fontManager?.editingFont;
+        if (!compiled || compiled.length === 0) {
+            return;
+        }
+        this.swapFontBlob(compiled);
+    }
+
     private getActiveShapingFontBlob(): Uint8Array | null {
         return this.shapingFontBlob || this.fontBlob;
     }
@@ -2170,9 +2193,21 @@ export class TextRunEditor {
             return; // Python not ready yet
         }
 
+        if (
+            this.textBufferWriteGeneration > 0 ||
+            userTextBufferHasBeenWritten()
+        ) {
+            console.log(
+                '[TextRun]',
+                'ℹ️ Skipping font display string; the text buffer was already written'
+            );
+            return;
+        }
+
         try {
             const appId = window.APP_SETTINGS?.APP_ID;
             const key = `${appId}.display_string`;
+            const generationAtStart = this.textBufferWriteGeneration;
 
             console.log(
                 '[TextRun]',
@@ -2183,6 +2218,25 @@ export class TextRunEditor {
             const result = window.fontManager?.getFormatSpecific(key);
             // If we got a display string from the font, use it (prioritize over localStorage)
             if (result !== null && result !== undefined && result !== '') {
+                if (
+                    generationAtStart !== this.textBufferWriteGeneration ||
+                    userTextBufferHasBeenWritten()
+                ) {
+                    console.log(
+                        '[TextRun]',
+                        'ℹ️ Skipping font display string; the text buffer was already written'
+                    );
+                    return;
+                }
+                if (this.textBuffer && this.textBuffer !== result) {
+                    console.log(
+                        '[TextRun]',
+                        'ℹ️ Skipping font display string; live buffer already differs',
+                        this.textBuffer,
+                        result
+                    );
+                    return;
+                }
                 console.log(
                     '[TextRun]',
                     '✅ Loaded display string from font:',
@@ -2289,6 +2343,8 @@ export class TextRunEditor {
             return;
         }
 
+        this.ensureShapingFontFromCompiledEditingFont();
+
         try {
             const previousExplicitGlyphTokens = [...this.explicitGlyphTokens];
             this.buildDisplayTextMapping();
@@ -2319,6 +2375,23 @@ export class TextRunEditor {
                 // Explicit /.glyph tokens can still layout and paint from the
                 // source model + getGlyphOutlines without a compiled binary.
                 this.shapeExplicitGlyphTokensWithoutBinaryFont();
+            }
+
+            if (this.textBuffer && this.shapedGlyphs.length === 0) {
+                const compiled = window.fontManager?.editingFont;
+                if (compiled && compiled.length > 0) {
+                    this.swapFontBlob(compiled);
+                    const retryFont = this.getActiveShapingFont();
+                    if (retryFont) {
+                        const retryLocation =
+                            variationLocation ??
+                            this.axesManager.variationSettings;
+                        if (Object.keys(retryLocation).length > 0) {
+                            retryFont.setVariations(retryLocation);
+                        }
+                        this.shapeLines(retryFont);
+                    }
+                }
             }
 
             // Seed intrinsic widths from unkerned advances, then fold model

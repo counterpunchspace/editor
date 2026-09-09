@@ -5881,6 +5881,7 @@ describe('WindowSync', () => {
         const bridge2 = new ChangeBridge('win-linked-defer');
         const sync1 = new WindowSync(bridge1, 'font-channel-cloud-defer');
         const sync2 = new WindowSync(bridge2, 'font-channel-cloud-defer');
+        sync1.notifyCloudBootstrapPending();
 
         const captured = [];
         const eavesdropper = new BroadcastChannel('font-channel-cloud-defer');
@@ -10880,6 +10881,83 @@ describe('ChangeBridge _syncJsonFromYDoc scope-aware undo regression', () => {
             type: 'DefaultForMaster',
             master: 'master-regular'
         });
+    });
+
+    test('sparse layer snapshot without shapes leaves existing outlines in Y.Doc and stored JSON', () => {
+        const fontJson = makeMinimalFont();
+        const bridge = new ChangeBridge('test-sparse-anchor-keeps-shapes');
+        bridge.initFromJson(fontJson);
+        window.changeBridge = bridge;
+
+        bridge._applyBufferedOperation({
+            op: 'set',
+            path: ['glyphs', 'A', 'layers', 'layer-1'],
+            oldValue: { anchors: fontJson.glyphs[0].layers[0].anchors },
+            newValue: { anchors: [{ name: 'top', x: 111, y: 222 }] },
+            applyMode: 'layer-snapshot'
+        });
+        bridge._syncJsonFromYDoc({ glyphName: 'A', layerId: 'layer-1' });
+
+        const yLayer = normalizeYDocValue(
+            bridge.getYValue(['glyphs', 'A', 'layers', 'layer-1'])
+        );
+        expect(yLayer.shapes[0].nodes[0].x).toBe(100);
+        expect(fontJson.glyphs[0].layers[0].shapes[0].nodes[0].x).toBe(100);
+        expect(fontJson.glyphs[0].layers[0].anchors[0]).toEqual(
+            expect.objectContaining({ name: 'top', x: 111, y: 222 })
+        );
+    });
+
+    test('explicit empty shapes array clears stored and Y.Doc outlines', () => {
+        const fontJson = makeMinimalFont();
+        const bridge = new ChangeBridge('test-explicit-empty-shapes-clears');
+        bridge.initFromJson(fontJson);
+        window.changeBridge = bridge;
+
+        bridge._applyBufferedOperation({
+            op: 'set',
+            path: ['glyphs', 'A', 'layers', 'layer-1'],
+            oldValue: { shapes: fontJson.glyphs[0].layers[0].shapes },
+            newValue: {
+                id: 'layer-1',
+                width: 600,
+                master: {
+                    type: 'DefaultForMaster',
+                    master: 'master-regular'
+                },
+                shapes: []
+            },
+            applyMode: 'layer-snapshot'
+        });
+        bridge._syncJsonFromYDoc({ glyphName: 'A', layerId: 'layer-1' });
+
+        const yLayer = normalizeYDocValue(
+            bridge.getYValue(['glyphs', 'A', 'layers', 'layer-1'])
+        );
+        expect(yLayer.shapes).toEqual([]);
+        expect(fontJson.glyphs[0].layers[0].shapes).toEqual([]);
+    });
+
+    test('null shapes tombstone clears packed Y.Doc geometry', () => {
+        const fontJson = makeMinimalFont();
+        const bridge = new ChangeBridge('test-null-shapes-tombstone');
+        bridge.initFromJson(fontJson);
+        window.changeBridge = bridge;
+
+        bridge._applyBufferedOperation({
+            op: 'set',
+            path: ['glyphs', 'A', 'layers', 'layer-1'],
+            oldValue: { shapes: fontJson.glyphs[0].layers[0].shapes },
+            newValue: { shapes: null },
+            applyMode: 'layer-snapshot'
+        });
+        bridge._syncJsonFromYDoc({ glyphName: 'A', layerId: 'layer-1' });
+
+        const yLayer = normalizeYDocValue(
+            bridge.getYValue(['glyphs', 'A', 'layers', 'layer-1'])
+        );
+        expect(yLayer.shapes || []).toEqual([]);
+        expect(fontJson.glyphs[0].layers[0].shapes || []).toEqual([]);
     });
 
     test('full-state bootstrap merges partial Y.Doc layer data with the existing glyph snapshot', () => {

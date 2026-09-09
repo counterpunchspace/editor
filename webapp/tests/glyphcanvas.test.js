@@ -16744,14 +16744,15 @@ describe('Text-mode kerning property panel', () => {
             const formatSpecificChange = recordChange.mock.calls.find(
                 ([path, property]) =>
                     Array.isArray(path) &&
-                    path.length === 0 &&
-                    property === 'format_specific'
+                    path.length === 1 &&
+                    path[0] === 'format_specific' &&
+                    property === 'com.schriftgestalt.Glyphs.kerningRTL'
             );
             expect(formatSpecificChange).toBeDefined();
             expect(
-                formatSpecificChange[3]['com.schriftgestalt.Glyphs.kerningRTL'][
-                    'master-1'
-                ]['@MMK_R_AFirst']['@MMK_L_VSecond']
+                formatSpecificChange[3]['master-1']['@MMK_R_AFirst'][
+                    '@MMK_L_VSecond'
+                ]
             ).toBe(-55);
             expect(recordChange).toHaveBeenCalledWith(
                 ['masters', 0],

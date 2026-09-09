@@ -65,19 +65,46 @@ export async function setupEditTextMode(
     );
 
     // Wait for shaping to complete
-    await page.waitForFunction(
-        (targetBuf: string) => {
+    try {
+        await page.waitForFunction(
+            (targetBuf: string) => {
+                const tr = (window as any).glyphCanvas?.textRunEditor;
+                if (!tr) return false;
+                return (
+                    Array.isArray(tr.shapedGlyphs) &&
+                    tr.shapedGlyphs.length > 0 &&
+                    tr.textBuffer === targetBuf
+                );
+            },
+            textBuffer,
+            { timeout: 20000 }
+        );
+    } catch (error) {
+        const diagnostics = await page.evaluate((targetBuf: string) => {
             const tr = (window as any).glyphCanvas?.textRunEditor;
-            if (!tr) return false;
-            return (
-                Array.isArray(tr.shapedGlyphs) &&
-                tr.shapedGlyphs.length > 0 &&
-                tr.textBuffer === targetBuf
-            );
-        },
-        textBuffer,
-        { timeout: 20000 }
-    );
+            const map = tr?.editingFontNameToGid;
+            return {
+                textBuffer: tr?.textBuffer ?? null,
+                displayTextBuffer: tr?.displayTextBuffer ?? null,
+                targetBuf,
+                shapedCount: Array.isArray(tr?.shapedGlyphs)
+                    ? tr.shapedGlyphs.length
+                    : null,
+                hasHb: !!tr?.hb,
+                hasHbFont: !!tr?.hbFont,
+                editingFontBytes: Number(
+                    (window as any).fontManager?.editingFont?.length || 0
+                ),
+                gidHasTarget: map instanceof Map ? map.has(targetBuf) : null,
+                gidSize: map instanceof Map ? map.size : null
+            };
+        }, textBuffer);
+        throw new Error(
+            `${(error as Error).message}\nShaping diagnostics: ${JSON.stringify(
+                diagnostics
+            )}`
+        );
+    }
 
     // Select only after the new run has replaced the prior font's glyphs.
     await page.evaluate(async () => {

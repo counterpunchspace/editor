@@ -17,6 +17,8 @@
     ],
     "include": ["files", "dependencies", "unlisted"],
     "ignoreIssues": {
-        "tests/python-package-lazy-loader.test.js": ["unlisted"]
+        "tests/python-package-lazy-loader.test.js": ["unlisted"],
+        "tests/cancellable-shard-transfer.test.js": ["unlisted"],
+        "tests/transfer-progress.test.js": ["unlisted"]
     }
 }

@@ -8,6 +8,7 @@ import {
 import { AxesManager } from './glyph-canvas/variations';
 import { FeaturesManager } from './glyph-canvas/features';
 import { TextRunEditor } from './glyph-canvas/textrun';
+import { userTextBufferHasBeenWritten } from './glyph-canvas/text-buffer-session';
 import { lineBaselineY } from './glyph-canvas/text-run-layout';
 import { textLayoutControls } from './glyph-canvas/text-layout-controls';
 import {
@@ -4532,7 +4533,11 @@ class GlyphCanvas {
             // which would cause a Rust panic. The text buffer and glyph name
             // buffer are ephemeral shaping artifacts and must be invalidated
             // when the font is replaced.
-            this.textRunEditor.textBuffer = '';
+            // Keep a user/test-written buffer across font replacement so a
+            // later display_string load cannot restore the previous sample.
+            if (!userTextBufferHasBeenWritten()) {
+                this.textRunEditor.textBuffer = '';
+            }
             this.textRunEditor.glyphNameBuffer = [];
             this.textRunEditor.shapedGlyphs = [];
             this.textRunEditor.explicitGlyphTokens = [];
@@ -11464,7 +11469,11 @@ class GlyphCanvas {
         this.textChangeDebounceTimer = setTimeout(() => {
             if (fontManager && fontManager.currentFont) {
                 const textBuffer = this.textRunEditor!.textBuffer;
-                if (!fontManager.needsEditingCompileForText(textBuffer)) {
+                if (
+                    !fontManager.needsEditingCompileForText(textBuffer) &&
+                    Array.isArray(this.textRunEditor!.shapedGlyphs) &&
+                    this.textRunEditor!.shapedGlyphs.length > 0
+                ) {
                     return;
                 }
 

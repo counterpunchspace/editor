@@ -8,6 +8,7 @@
 
 import type { PatchSyncEngine } from './patch-sync-engine';
 import type { ChangeLogEntry } from './change-log';
+import { deriveGlyphNameFromPath } from './change-log';
 import { Logger } from './logger';
 import type { CollaborationLogItem } from './patch-sync-engine';
 import {
@@ -62,7 +63,10 @@ function componentReferencesFromGlyph(glyph: unknown): string[] {
 
 export function collectLinkedWindowGlyphNames(): string[] {
     if (window.fontManager?.isHydrationSparse?.()) {
-        return window.fontManager.getHydratedGlyphNames?.() ?? [];
+        const hydrated = window.fontManager.getHydratedGlyphNames?.() ?? [];
+        if (hydrated.length) {
+            return hydrated;
+        }
     }
     const names = new Set<string>([
         ...(window.fontManager?.getEditingSubsetSnapshot?.() ?? []),
@@ -95,11 +99,7 @@ export function collectLinkedWindowGlyphNames(): string[] {
             break;
         }
     }
-    const collected = [...names];
-    return (
-        window.fontManager?.constrainSubsetToHydratedGlyphs?.(collected) ??
-        collected
-    );
+    return [...names];
 }
 
 const console = new Logger('WindowSync');
@@ -193,7 +193,7 @@ export class WindowSync {
     private _inboundFlushScheduled = false;
     private _sessionId: string;
     private _channelName: string;
-    private _cloudBootstrapReady = false;
+    private _cloudBootstrapReady = true;
     private _pendingFullStateRequests = 0;
 
     static enableTimingLogging(): void {
@@ -413,18 +413,30 @@ export class WindowSync {
             documentId: string;
             state: BinaryPayload;
         }> = [];
-        // Never encodeDocumentSet() / listLiveGlyphDocumentIds() here.
-        // Those walk every glyph Y.Doc in memory (the whole catalog after a
-        // full hydrate) and freeze both windows on BroadcastChannel + apply.
-        // The one initial snapshot is core, deps, and the editing subset.
-        const subsetNames = collectLinkedWindowGlyphNames();
+        // Never encodeDocumentSet() / listLiveGlyphDocumentIds() for a full
+        // catalog hydrate — that freezes both windows on BroadcastChannel.
+        // The snapshot is core, deps, the editing subset, recent changelog
+        // glyphs, and every live glyph shard only when the live set is small.
+        const subsetNames = new Set(collectLinkedWindowGlyphNames());
+        for (const entry of this._bridge.getChangeLog()) {
+            const name = deriveGlyphNameFromPath(String(entry.path || ''));
+            if (name) {
+                subsetNames.add(name);
+            }
+        }
         const documentIds = new Set<string>([
             FONT_CORE_DOCUMENT_ID,
             FONT_DEPS_DOCUMENT_ID,
-            ...subsetNames
+            ...[...subsetNames]
                 .map((name) => this._bridge.glyphDocumentIdForName?.(name))
                 .filter((id): id is string => !!id)
         ]);
+        const liveIds = this._bridge.listLiveGlyphDocumentIds?.() ?? [];
+        if (liveIds.length > 0 && liveIds.length <= 64) {
+            for (const id of liveIds) {
+                documentIds.add(id);
+            }
+        }
         for (const documentId of documentIds) {
             const bytes = this._bridge.encodeDocumentState?.(documentId);
             if (bytes?.byteLength) {
@@ -500,14 +512,14 @@ export class WindowSync {
         collaborationMessage?: CollaborationMessageEnvelope | null,
         documentId?: string
     ): void {
-        if (!isCollaborationMessageEnvelope(collaborationMessage)) {
-            return;
-        }
-        this._pendingOutboundPackets.push({
+        const packet: YjsUpdatePacket = {
             update,
-            documentId: documentId || 'font-core',
-            collaborationMessage
-        });
+            documentId: documentId || 'font-core'
+        };
+        if (isCollaborationMessageEnvelope(collaborationMessage)) {
+            packet.collaborationMessage = collaborationMessage;
+        }
+        this._pendingOutboundPackets.push(packet);
         if (this._outboundFlushScheduled) {
             return;
         }
@@ -588,18 +600,17 @@ export class WindowSync {
                 if (packet.collaborationMessage) {
                     collaborationMessageCount += 1;
                 }
-                if (
-                    !isCollaborationMessageEnvelope(packet.collaborationMessage)
-                ) {
-                    continue;
-                }
+                const collaborationMessages = isCollaborationMessageEnvelope(
+                    packet.collaborationMessage
+                )
+                    ? [packet.collaborationMessage]
+                    : undefined;
                 try {
                     this._bridge.applyRemoteUpdate(
                         update,
                         undefined,
-                        [packet.collaborationMessage],
-                        packet.documentId,
-                        { captureInUndo: false }
+                        collaborationMessages,
+                        packet.documentId
                     );
                     if (window.windowRole?.isMainWindow()) {
                         window.cloudPlugin?.relayPeerWindowUpdateToCloud?.(
@@ -665,14 +676,6 @@ export class WindowSync {
                 if (msg.windowId === this._bridge.windowId) return;
                 this._peers.add(msg.windowId);
                 if (this._hasAppliedFullState) {
-                    if (msg.documents?.length) {
-                        for (const document of msg.documents) {
-                            this._bridge.applyDocumentCheckpoint(
-                                document.documentId,
-                                toUint8Array(document.state)
-                            );
-                        }
-                    }
                     if (msg.cloudRelayState) {
                         window.cloudPlugin?.applyRelayedConnectionState?.(
                             msg.cloudRelayState
