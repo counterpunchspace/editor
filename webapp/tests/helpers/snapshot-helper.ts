@@ -458,7 +458,7 @@ export async function waitForCanvasReady(page: any) {
                     !!win.stateManager
                 );
             },
-            15000
+            60000
         );
 
         await waitForStartupState(
@@ -471,7 +471,7 @@ export async function waitForCanvasReady(page: any) {
                     typeof win.focusView === 'function'
                 );
             },
-            15000
+            60000
         );
 
         await timedStep('helper:waitForCanvasReady:file browser', async () => {

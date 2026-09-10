@@ -215,6 +215,7 @@ export async function stopCloudCollabPorts() {
     await stopTrackedStacks();
     await stopListenersOnPort(8787);
     await stopListenersOnPort(8788);
+    await stopListenersOnPort(8786);
 }
 
 function ownedPidFileLive(persistRoot) {
@@ -228,28 +229,52 @@ function ownedPidFileLive(persistRoot) {
         if (!spawned.length) {
             return false;
         }
+        if (
+            state.serviceTokens?.authorize !== 'e2e-p0-authorize' ||
+            state.serviceTokens?.attest !== 'e2e-p0-attest' ||
+            state.websiteControlUrl !== 'http://127.0.0.1:8786'
+        ) {
+            return false;
+        }
         return spawned.every((item) => pidAlive(item?.pid));
     } catch {
         return false;
     }
 }
 
-async function stackIdentityMatches() {
+async function describeStackIdentity() {
     const roomHealth = await probeJsonHealth('http://127.0.0.1:8787/health');
     if (
         !roomHealth?.ok ||
         roomHealth.service !== 'room' ||
         roomHealth.protocol !== 'p5'
     ) {
-        return false;
+        return {
+            ok: false,
+            reason: `room health mismatch: ${JSON.stringify(roomHealth)}`
+        };
     }
     const capabilities = roomHealth.capabilities || {};
     for (const [name, version] of Object.entries(REQUIRED_ROOM_CAPABILITIES)) {
         if (Number(capabilities[name]) !== Number(version)) {
-            return false;
+            return {
+                ok: false,
+                reason: `room capability ${name} is ${capabilities[name]}, expected ${version}`
+            };
         }
     }
-    return probeHttpOk('https://localhost:8788/');
+    const websiteOk = await probeHttpOk('https://localhost:8788/');
+    if (!websiteOk) {
+        return {
+            ok: false,
+            reason: 'website https://localhost:8788/ did not return HTTP 2xx'
+        };
+    }
+    return { ok: true, reason: null };
+}
+
+async function stackIdentityMatches() {
+    return (await describeStackIdentity()).ok;
 }
 
 function spawnLogged(command, args, options) {
@@ -283,8 +308,10 @@ export function localCloudEnv() {
         MAGIC_LINK_SECRET:
             process.env.MAGIC_LINK_SECRET || 'e2e-cloud-collab-magic',
         ROOM_WORKER_URL: 'http://localhost:8787',
-        WEBSITE_CONTROL_URL: 'https://localhost:8788',
+        WEBSITE_CONTROL_URL: 'http://127.0.0.1:8786',
         CLOUD_ROOM_LIMITS_SERVICE_TOKEN: 'e2e-p0-limits',
+        CLOUD_AUTHORIZE_SERVICE_TOKEN: 'e2e-p0-authorize',
+        CLOUD_ATTEST_SERVICE_TOKEN: 'e2e-p0-attest',
         VALIDATOR_SHARED_TOKEN: 'e2e-p0-validator',
         COMPACTOR_SHARED_TOKEN: 'e2e-p0-compactor'
     };
@@ -311,19 +338,34 @@ export async function ensureCloudCollabStack() {
 
     const websiteUp = await isPortOpen(8788);
     const roomUp = await isPortOpen(8787);
+    const proxyUp = await isPortOpen(8786);
     const canReuse =
         websiteUp &&
         roomUp &&
+        proxyUp &&
         ownedPidFileLive(persistRoot) &&
         (await stackIdentityMatches());
-    if ((websiteUp || roomUp) && !canReuse) {
+    if ((websiteUp || roomUp || proxyUp) && !canReuse) {
         await stopCloudCollabPorts();
+        if (
+            (await isPortOpen(8788)) ||
+            (await isPortOpen(8787)) ||
+            (await isPortOpen(8786))
+        ) {
+            throw new Error(
+                'failed to stop previous cloud collab stack on 8786/8787/8788 before respawn'
+            );
+        }
     }
 
     const spawned = [];
     const children = [];
     const websiteStillUp = canReuse && (await isPortOpen(8788));
     const roomStillUp = canReuse && (await isPortOpen(8787));
+    const proxyStillUp = canReuse && (await isPortOpen(8786));
+    const collabPersist = path.join(persistRoot, 'collab');
+    fs.mkdirSync(collabPersist, { recursive: true });
+
 
     if (!websiteStillUp) {
         const certScript = path.join(
@@ -349,7 +391,7 @@ export async function ensureCloudCollabStack() {
             });
         }
 
-        const websitePersist = path.join(persistRoot, 'website');
+        const websitePersist = collabPersist;
         const websiteWrangler = path.join(
             websiteRoot,
             'node_modules',
@@ -359,6 +401,19 @@ export async function ensureCloudCollabStack() {
         if (!fs.existsSync(websiteWrangler)) {
             throw new Error(`wrangler not found at ${websiteWrangler}`);
         }
+        const websiteE2eEnv = path.join(persistRoot, 'website.e2e.env');
+        fs.writeFileSync(
+            websiteE2eEnv,
+            [
+                'LOCAL_CLOUD_DEV_ENABLED=true',
+                'AUTH_TOKEN_ALLOW_INSECURE_LOCAL_FALLBACK=true',
+                'AUTH_TOKEN_SECRET=counterpunch-local-dev-auth-token-secret',
+                'ROOM_WORKER_URL=http://localhost:8787',
+                'CLOUD_ROOM_LIMITS_SERVICE_TOKEN=e2e-p0-limits',
+                'CLOUD_AUTHORIZE_SERVICE_TOKEN=e2e-p0-authorize',
+                'CLOUD_ATTEST_SERVICE_TOKEN=e2e-p0-attest'
+            ].join('\n') + '\n'
+        );
         const child = spawnLogged(
             websiteWrangler,
             [
@@ -390,7 +445,13 @@ export async function ensureCloudCollabStack() {
                 '--binding',
                 'MAGIC_LINK_SECRET=e2e-cloud-collab-magic',
                 '--binding',
-                'CLOUD_ROOM_LIMITS_SERVICE_TOKEN=e2e-p0-limits'
+                'CLOUD_ROOM_LIMITS_SERVICE_TOKEN=e2e-p0-limits',
+                '--binding',
+                'CLOUD_AUTHORIZE_SERVICE_TOKEN=e2e-p0-authorize',
+                '--binding',
+                'CLOUD_ATTEST_SERVICE_TOKEN=e2e-p0-attest',
+                '--env-file',
+                websiteE2eEnv
             ],
             {
                 cwd: websiteRoot,
@@ -402,8 +463,39 @@ export async function ensureCloudCollabStack() {
         children.push(child);
     }
 
+    if (!websiteStillUp) {
+        await waitForPort(8788, 'website');
+    } else {
+        console.log(
+            '[ensure-cloud-collab-stack] reusing healthy website worker on port 8788'
+        );
+    }
+
+    if (!proxyStillUp) {
+        const proxyLog = path.join(persistRoot, 'website-control-proxy.log');
+        const child = spawnLogged(
+            process.execPath,
+            [path.join(webappRoot, 'scripts', 'website-control-proxy.mjs')],
+            {
+                cwd: webappRoot,
+                env: {
+                    ...localCloudEnv(),
+                    PROXY_PORT: '8786',
+                    WEBSITE_PORT: '8788'
+                },
+                logPath: proxyLog
+            }
+        );
+        spawned.push({ name: 'website-control-proxy', pid: child.pid });
+        children.push(child);
+        await waitForPort(8786, 'website control proxy');
+    } else {
+        console.log(
+            '[ensure-cloud-collab-stack] reusing website control proxy on port 8786'
+        );
+    }
+
     if (!roomStillUp) {
-        const collabPersist = path.join(persistRoot, 'collab');
         const collabWrangler = path.join(
             collabRoot,
             'node_modules',
@@ -413,6 +505,34 @@ export async function ensureCloudCollabStack() {
         if (!fs.existsSync(collabWrangler)) {
             throw new Error(`wrangler not found at ${collabWrangler}`);
         }
+        const collabE2eEnv = path.join(persistRoot, 'collab.e2e.env');
+        const collabRoomDevVars = path.join(
+            collabRoot,
+            'workers',
+            'room',
+            '.dev.vars'
+        );
+        const collabE2eEnvContents =
+            [
+                'VALIDATOR_SHARED_TOKEN=e2e-p0-validator',
+                'COMPACTOR_SHARED_TOKEN=e2e-p0-compactor',
+                'CLOUD_ROOM_LIMITS_SERVICE_TOKEN=e2e-p0-limits',
+                'WEBSITE_CONTROL_URL=http://127.0.0.1:8786',
+                'CLOUD_AUTHORIZE_SERVICE_TOKEN=e2e-p0-authorize',
+                'CLOUD_ATTEST_SERVICE_TOKEN=e2e-p0-attest',
+                'AUTH_TOKEN_SECRET=counterpunch-local-dev-auth-token-secret',
+                'AUTH_TOKEN_ALLOW_INSECURE_LOCAL_FALLBACK=true'
+            ].join('\n') + '\n';
+        fs.writeFileSync(collabE2eEnv, collabE2eEnvContents);
+        fs.writeFileSync(collabRoomDevVars, collabE2eEnvContents);
+        fs.writeFileSync(
+            path.join(collabRoot, 'workers', 'validator', '.dev.vars'),
+            collabE2eEnvContents
+        );
+        fs.writeFileSync(
+            path.join(collabRoot, 'workers', 'compactor', '.dev.vars'),
+            collabE2eEnvContents
+        );
         const child = spawnLogged(
             collabWrangler,
             [
@@ -432,11 +552,17 @@ export async function ensureCloudCollabStack() {
                 '--var',
                 'CLOUD_ROOM_LIMITS_SERVICE_TOKEN:e2e-p0-limits',
                 '--var',
-                'WEBSITE_CONTROL_URL:https://localhost:8788',
+                'WEBSITE_CONTROL_URL:http://127.0.0.1:8786',
+                '--var',
+                'CLOUD_AUTHORIZE_SERVICE_TOKEN:e2e-p0-authorize',
+                '--var',
+                'CLOUD_ATTEST_SERVICE_TOKEN:e2e-p0-attest',
                 '--var',
                 'EDITOR_ALLOWED_ORIGINS:https://localhost:8000,http://localhost:9000',
                 '--var',
-                'AUTH_TOKEN_SECRET:counterpunch-local-dev-auth-token-secret'
+                'AUTH_TOKEN_SECRET:counterpunch-local-dev-auth-token-secret',
+                '--env-file',
+                collabE2eEnv
             ],
             {
                 cwd: collabRoot,
@@ -449,12 +575,6 @@ export async function ensureCloudCollabStack() {
     } else {
         console.log(
             '[ensure-cloud-collab-stack] reusing healthy collab worker on port 8787'
-        );
-    }
-
-    if (websiteStillUp) {
-        console.log(
-            '[ensure-cloud-collab-stack] reusing healthy website worker on port 8788'
         );
     }
 
@@ -481,16 +601,18 @@ export async function ensureCloudCollabStack() {
                 reusedWebsite: websiteStillUp,
                 reusedRoom: roomStillUp,
                 websiteRoot,
-                collabRoot
+                collabRoot,
+                serviceTokens: {
+                    authorize: 'e2e-p0-authorize',
+                    attest: 'e2e-p0-attest'
+                },
+                websiteControlUrl: 'http://127.0.0.1:8786'
             },
             null,
             2
         )
     );
 
-    if (!websiteStillUp) {
-        await waitForPort(8788, 'website');
-    }
     if (!roomStillUp) {
         await waitForPort(8787, 'collab room');
     }
@@ -502,8 +624,9 @@ export async function ensureCloudCollabStack() {
         await new Promise((resolve) => setTimeout(resolve, 500));
     }
     if (!(await stackIdentityMatches())) {
+        const identity = await describeStackIdentity();
         throw new Error(
-            'Cloud collab stack started but health/protocol identity did not match'
+            `Cloud collab stack started but health/protocol identity did not match (${identity.reason})`
         );
     }
     for (const child of children) {

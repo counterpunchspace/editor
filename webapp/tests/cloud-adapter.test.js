@@ -27,7 +27,7 @@ const {
     collaborationMessageKey
 } = require('../js/collaboration-message.ts');
 
-const TEST_YDOC_SCHEMA_VERSION = 5;
+const TEST_YDOC_SCHEMA_VERSION = 6;
 const TEST_REQUIRED_CAPABILITIES = {
     durableWal: 1,
     certifiedGeneration: 1,

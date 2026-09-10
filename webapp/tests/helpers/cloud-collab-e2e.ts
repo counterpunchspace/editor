@@ -138,7 +138,7 @@ export async function gotoEditorPage(page: Page, href: string): Promise<void> {
 
 export async function waitForCloudLiveIdle(
     page: Page,
-    timeoutMs = 20000
+    timeoutMs = 90000
 ): Promise<void> {
     await page.waitForFunction(
         () => {

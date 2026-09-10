@@ -119,8 +119,35 @@ export function encodePackEndFrame(count = 0): Uint8Array {
     });
 }
 
+export function encodePackErrorFrame(error?: {
+    shardId?: string;
+    error?: string;
+    [key: string]: unknown;
+}): Uint8Array {
+    return encodePackFrame({
+        type: PACK_FRAME_TYPE.ERROR,
+        shardId: typeof error?.shardId === 'string' ? error.shardId : '',
+        payload: encodeUtf8(JSON.stringify(error || { error: 'pack error' }))
+    });
+}
+
 export function encodePackBody(frames: Uint8Array[]): Uint8Array {
-    return concatBytes([PACK_MAGIC, ...frames]);
+    const hasEnd = frames.some((frame) => {
+        if (!(frame instanceof Uint8Array) || frame.byteLength < 1) {
+            return false;
+        }
+        return frame[0] === PACK_FRAME_TYPE.END;
+    });
+    const shardCount = frames.filter((frame) => {
+        if (!(frame instanceof Uint8Array) || frame.byteLength < 1) {
+            return false;
+        }
+        return frame[0] === PACK_FRAME_TYPE.SHARD;
+    }).length;
+    const encoded = hasEnd
+        ? frames
+        : [...frames, encodePackEndFrame(shardCount)];
+    return concatBytes([PACK_MAGIC, ...encoded]);
 }
 
 export function createPackParser(): {
@@ -129,6 +156,8 @@ export function createPackParser(): {
 } {
     let buffer = new Uint8Array(0);
     let sawMagic = false;
+    let sawEnd = false;
+    let sawError = false;
 
     function take(n: number): Uint8Array | null {
         if (buffer.byteLength < n) {
@@ -215,6 +244,12 @@ export function createPackParser(): {
                               ).getUint32(0, false)
                             : 0
                 });
+                if (type === PACK_FRAME_TYPE.END) {
+                    sawEnd = true;
+                }
+                if (type === PACK_FRAME_TYPE.ERROR) {
+                    sawError = true;
+                }
             }
             return frames;
         },
@@ -224,6 +259,9 @@ export function createPackParser(): {
             }
             if (!sawMagic) {
                 throw new Error('empty shard pack');
+            }
+            if (!sawEnd && !sawError) {
+                throw new Error('shard pack missing END');
             }
         }
     };

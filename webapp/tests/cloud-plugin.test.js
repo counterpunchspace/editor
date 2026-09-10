@@ -2152,7 +2152,10 @@ describe('CloudPlugin sharing APIs', () => {
         expect(global.fetch).toHaveBeenNthCalledWith(
             2,
             'http://localhost:8788/api/cloud/assets/asset-1/ownership-transfer',
-            expect.objectContaining({ method: 'DELETE' })
+            expect.objectContaining({
+                method: 'DELETE',
+                body: '{}'
+            })
         );
     });
 
@@ -2181,7 +2184,10 @@ describe('CloudPlugin sharing APIs', () => {
         expect(global.fetch).toHaveBeenNthCalledWith(
             2,
             'http://localhost:8788/api/cloud/assets/asset-1/members/user-2',
-            expect.objectContaining({ method: 'DELETE' })
+            expect.objectContaining({
+                method: 'DELETE',
+                body: '{}'
+            })
         );
     });
 

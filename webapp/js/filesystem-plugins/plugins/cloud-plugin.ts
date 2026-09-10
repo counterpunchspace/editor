@@ -3199,7 +3199,10 @@ export class CloudPlugin extends FilesystemPlugin {
             {
                 method: 'DELETE',
                 credentials: 'include',
-                headers: getCloudRequestHeaders()
+                headers: getCloudRequestHeaders({
+                    'Content-Type': 'application/json'
+                }),
+                body: '{}'
             }
         );
 
@@ -3289,7 +3292,10 @@ export class CloudPlugin extends FilesystemPlugin {
             {
                 method: 'DELETE',
                 credentials: 'include',
-                headers: getCloudRequestHeaders()
+                headers: getCloudRequestHeaders({
+                    'Content-Type': 'application/json'
+                }),
+                body: '{}'
             }
         );
 

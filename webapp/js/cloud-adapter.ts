@@ -76,6 +76,7 @@ import {
     type PackFrame
 } from './filesystem-plugins/cloud-shard-pack';
 import { missingRequiredCloudCapabilities } from './filesystem-plugins/cloud-collab-capabilities';
+import { COLLAB_PROTOCOL_VERSION as YDOC_SCHEMA_VERSION } from './generated/collab-protocol-constants';
 import { throwIfAborted, yieldToUi } from './yield-to-ui';
 import {
     collaborationMessageKey,
@@ -135,7 +136,6 @@ const DEFAULT_PRODUCTION_ROOM_WORKER_URL =
     'https://room.fonteditor.workers.dev';
 const DEFAULT_LOCAL_ROOM_WORKER_URL = 'ws://localhost:8787';
 const CLOUD_ASSET_DELETED_MESSAGE = 'Cloud asset was deleted';
-const YDOC_SCHEMA_VERSION = 5;
 export const CLOUD_GLYPH_CATCH_UP_MAX_ATTEMPTS = 8;
 export const CLOUD_GLYPH_CATCH_UP_RETRY_MS = 50;
 export const CLOUD_GLYPH_CATCH_UP_CONCURRENCY = 4;
@@ -474,6 +474,17 @@ async function sha256Hex(bytes: Uint8Array): Promise<string> {
 
 function isPackUnsupportedStatus(status: number): boolean {
     return status === 404 || status === 405;
+}
+
+async function formatPackHttpError(
+    response: Response,
+    prefix = 'shard pack seed failed'
+): Promise<string> {
+    const detail = (await response.text().catch(() => '')).trim();
+    const clipped = detail.slice(0, 500);
+    return clipped
+        ? `${prefix}: ${response.status} ${clipped}`
+        : `${prefix}: ${response.status}`;
 }
 
 function decodeLiveUpdatePayload(payload: Uint8Array): {
@@ -2606,9 +2617,7 @@ export class CloudAdapter implements FileSystemAdapter {
                     throw new Error('pack unsupported');
                 }
                 if (!response.ok) {
-                    throw new Error(
-                        `shard pack seed failed: ${response.status}`
-                    );
+                    throw new Error(await formatPackHttpError(response));
                 }
                 if (!response.body) {
                     throw new Error(

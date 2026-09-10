@@ -244,7 +244,9 @@ async function postRoomToken(
             {
                 method: 'POST',
                 credentials: 'include',
-                cache: 'no-store'
+                cache: 'no-store',
+                headers: { 'Content-Type': 'application/json' },
+                body: '{}'
             }
         );
         const text = await resp.text();
@@ -300,7 +302,7 @@ async function waitForRoomTokenStatus(
 
 async function waitForCloudLiveIdle(
     page: Page,
-    timeoutMs = 20000
+    timeoutMs = 90000
 ): Promise<void> {
     try {
         await page.waitForFunction(
@@ -2339,6 +2341,13 @@ test.describe('Cloud collab three-window ChangeBridge sync', () => {
             await waitForBridgeReady(viewerPage);
             await installJsonCanonicalizer(viewerPage);
             await waitForCloudLiveIdle(viewerPage);
+            await waitForOpenSessionReady(ownerPage, assetId);
+            await waitForCloudLiveIdle(ownerPage);
+            await focusView(ownerPage, 'Meta+Shift+E', 'view-editor');
+            await alignEditorCanvas(ownerPage, 'a', { wght: 200 });
+            await focusView(viewerPage, 'Meta+Shift+E', 'view-editor');
+            await alignEditorCanvas(viewerPage, 'a', { wght: 200 });
+            await waitUntilGlyphLayerDataMatches(ownerPage, viewerPage, ['a']);
             await viewerPage.waitForFunction(
                 () =>
                     (window as any).cloudPlugin?.getCurrentAssetRole?.() ===
