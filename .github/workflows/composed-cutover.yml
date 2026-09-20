@@ -240,6 +240,15 @@ jobs:
                   COLLAB_ROOT: ${{ steps.collab.outputs.root }}
                   CLOUD_COLLAB_E2E: "1"
 
+            - name: Dump cloud-collab stack logs
+              if: failure()
+              run: |
+                  echo "==== cloud-collab stack logs ===="
+                  find webapp/.cloud-collab-e2e-wrangler -name '*.log' 2>/dev/null | while read -r f; do
+                    echo "----- $f -----"
+                    tail -n 120 "$f" || true
+                  done
+
     deploy:
         needs: [freeze, e2e]
         runs-on: ubuntu-latest
