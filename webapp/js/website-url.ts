@@ -8,11 +8,8 @@ export function resolveWebsiteURL(hostname?: string): string {
         return 'https://localhost:8788';
     }
 
-    if (
-        effectiveHostname === 'editor.counterpunch.space' ||
-        effectiveHostname === 'preview.editor.counterpunch.space'
-    ) {
-        return 'https://counterpunch.space';
+    if (effectiveHostname === 'preview.editor.counterpunch.space') {
+        return 'https://preview.counterpunch.space';
     }
 
     return 'https://counterpunch.space';

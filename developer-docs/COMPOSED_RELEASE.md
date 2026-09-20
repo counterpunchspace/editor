@@ -1,27 +1,23 @@
 # Composed collab/website/editor releases
 
-The editor is one of three independently deployed collaboration pieces (collab workers, website control plane, this editor). A green editor CI run does **not** prove that combination is safe. Protocol, schema, cloud WAL, and recovery changes can pass here and still fail against a different website or room worker.
+Cloud collaboration is three repos. A green editor CI run does not prove a website or room worker is safe with that editor.
 
-The known-good trio lives in the website repo as `PINNED_REVISIONS.json`. Ordinary green `webapp` tests do not require a pin bump. Bump those hashes only when declaring a new **production** collab/website/editor set. The website copy of this note is `docs/composed-release.md`.
+The known-good trio is the matching git **tag** on all three repos plus `trio.json` attached to the editor GitHub release (and the `trio-preview` / `trio-production` workflow artifact). There is no pin file in git.
 
-## What this repo does today
+## How to cut a release
 
-- `./release.sh` tags this repo and GitHub Actions deploys that tag to Cloudflare Pages. That path does not require matching collab/website SHAs.
-- Preview cuts (`./previewrelease.sh`) are the same: editor-only.
-- The `cloud-collab-e2e` CI job checkouts website and collab from `WEBSITE_SHA` / `COLLAB_SHA` repo variables, or `main` if those are empty. It does not read `PINNED_REVISIONS.json`.
-- Collab still deploys every green `main` push. Website CI pins one hardcoded collab SHA and does not pin this editor.
+Preview: from editor `main`, `./previewrelease.sh` (or Actions → Preview Release). That waits for green editor CI, freezes editor/website/collab SHAs, runs `cloud-collab` e2e, then deploys **validator → compactor → room → websitepreview → editorpreview**, tags all three repos with the preview version, and publishes the prerelease.
 
-There is no promote job that checks out one exact trio, runs composed certification, and then deploys those three revisions in cutover order.
+Production: `./release.sh vX.Y.Z` still tags editor and runs Release. That job certifies the editor, then the same composed cutover deploys **production** `validator` / `compactor` / `room` / `website` / `editor` and tags website + collab with `vX.Y.Z`.
 
-## Recommendation
+Do not `git push` website or collab `main` to ship Cloudflare. Those repos only run tests on `main`. Emergency production deploys exist as `workflow_dispatch` with confirm text `deploy-production`.
 
-Do this before opening cloud collaboration beyond an internal cohort. Keep it lightweight; do not build a certification platform.
+## Editor Actions secrets
 
-1. Keep CI, preview, and `./previewrelease.sh` independent so day-to-day editor work stays cheap.
-2. Stop treating an editor tag deploy as a production collaboration release by itself.
-3. Add one **manually triggered promote** workflow (owned by any of the three repos) with collab, website, and editor SHA inputs.
-4. Check out those exact revisions, run composed tests including `npm run test:cloud-collab` and the integrity gates in the collab alpha cutover docs, and fail closed.
-5. If green, deploy in documented order (website control plane, validator, compactor, room, **then** this editor) and write an immutable artifact that records the trio.
-6. Add cryptographic attestations later only if independent deploys keep bypassing the gate.
+- `CLOUD_E2E_PAT` — contents **read + write** on private `website` and `collab` (checkout, tags). Read-only is not enough.
+- `CLOUDFLARE_API_TOKEN` — Workers **and** Pages on both preview and production (`room`, `room-preview`, `website`, `websitepreview`, `editor`, `editorpreview`, validator/compactor).
+- `CLOUDFLARE_ACCOUNT_ID`
 
-This slows production hotfixes and requires coordinated SHAs. That cost is worth it for alpha cutover. It is not needed for local `npm run serve` or an internal-only prototype.
+Worker JWT and `CLOUD_*` / shared tokens stay in the Cloudflare dashboard. Cutover does not re-upload them from GitHub.
+
+Optional repo variables: `WEBSITE_REPOSITORY`, `COLLAB_REPOSITORY`, `WEBSITE_SHA`, `COLLAB_SHA` (freeze those refs instead of `main`).

@@ -1,0 +1,388 @@
+name: Composed cutover
+
+on:
+    workflow_call:
+        inputs:
+            target:
+                description: preview or production
+                required: true
+                type: string
+            editor_sha:
+                required: true
+                type: string
+            website_ref:
+                required: false
+                type: string
+                default: main
+            collab_ref:
+                required: false
+                type: string
+                default: main
+            release_tag:
+                required: false
+                type: string
+                default: ""
+            editor_version:
+                required: false
+                type: string
+                default: ""
+        outputs:
+            editor_sha:
+                description: Frozen editor SHA
+                value: ${{ jobs.freeze.outputs.editor_sha }}
+            website_sha:
+                description: Frozen website SHA
+                value: ${{ jobs.freeze.outputs.website_sha }}
+            collab_sha:
+                description: Frozen collab SHA
+                value: ${{ jobs.freeze.outputs.collab_sha }}
+    workflow_dispatch:
+        inputs:
+            target:
+                description: Cloudflare stack to deploy
+                type: choice
+                options:
+                    - preview
+                    - production
+                default: preview
+            website_ref:
+                description: Website ref or SHA
+                type: string
+                default: main
+            collab_ref:
+                description: Collab ref or SHA
+                type: string
+                default: main
+            release_tag:
+                description: Optional matching git tag for all three repos
+                type: string
+                required: false
+            editor_version:
+                description: Editor VERSION string (defaults to release_tag or SHA)
+                type: string
+                required: false
+
+concurrency:
+    group: composed-cutover-${{ inputs.target }}
+    cancel-in-progress: false
+
+permissions:
+    actions: read
+    contents: write
+    deployments: write
+
+jobs:
+    freeze:
+        runs-on: ubuntu-latest
+        outputs:
+            editor_sha: ${{ steps.shas.outputs.editor_sha }}
+            website_sha: ${{ steps.shas.outputs.website_sha }}
+            collab_sha: ${{ steps.shas.outputs.collab_sha }}
+            collab_root: ${{ steps.collab.outputs.root }}
+            editor_version: ${{ steps.shas.outputs.editor_version }}
+        steps:
+            - name: Checkout editor
+              uses: actions/checkout@v4
+              with:
+                  ref: ${{ inputs.editor_sha || github.sha }}
+                  fetch-depth: 0
+
+            - name: Checkout website
+              uses: actions/checkout@v4
+              with:
+                  repository: ${{ vars.WEBSITE_REPOSITORY || format('{0}/website', github.repository_owner) }}
+                  ref: ${{ inputs.website_ref || 'main' }}
+                  path: _cutover/website
+                  token: ${{ secrets.CLOUD_E2E_PAT }}
+                  fetch-depth: 0
+
+            - name: Checkout collab
+              uses: actions/checkout@v4
+              with:
+                  repository: ${{ vars.COLLAB_REPOSITORY || format('{0}/collab', github.repository_owner) }}
+                  ref: ${{ inputs.collab_ref || 'main' }}
+                  path: _cutover/collab
+                  token: ${{ secrets.CLOUD_E2E_PAT }}
+                  fetch-depth: 0
+
+            - name: Resolve collab root
+              id: collab
+              run: |
+                  if [ -f _cutover/collab/workers/room/wrangler.toml ]; then
+                    echo "root=${GITHUB_WORKSPACE}/_cutover/collab" >> "$GITHUB_OUTPUT"
+                  elif [ -f _cutover/collab/collab/workers/room/wrangler.toml ]; then
+                    echo "root=${GITHUB_WORKSPACE}/_cutover/collab/collab" >> "$GITHUB_OUTPUT"
+                  else
+                    echo "Could not find collab workers/room/wrangler.toml"
+                    find _cutover/collab -name wrangler.toml | head
+                    exit 1
+                  fi
+
+            - name: Record trio
+              id: shas
+              run: |
+                  EDITOR_SHA=$(git rev-parse HEAD)
+                  WEBSITE_SHA=$(git -C _cutover/website rev-parse HEAD)
+                  COLLAB_SHA=$(git -C _cutover/collab rev-parse HEAD)
+                  VERSION="${{ inputs.editor_version }}"
+                  TAG="${{ inputs.release_tag }}"
+                  if [ -z "$VERSION" ]; then
+                    VERSION="${TAG:-$EDITOR_SHA}"
+                  fi
+                  echo "editor_sha=$EDITOR_SHA" >> "$GITHUB_OUTPUT"
+                  echo "website_sha=$WEBSITE_SHA" >> "$GITHUB_OUTPUT"
+                  echo "collab_sha=$COLLAB_SHA" >> "$GITHUB_OUTPUT"
+                  echo "editor_version=$VERSION" >> "$GITHUB_OUTPUT"
+                  mkdir -p artifacts
+                  jq -n \
+                    --arg env "${{ inputs.target }}" \
+                    --arg tag "${{ inputs.release_tag }}" \
+                    --arg editor "$EDITOR_SHA" \
+                    --arg website "$WEBSITE_SHA" \
+                    --arg collab "$COLLAB_SHA" \
+                    '{environment:$env,tag:$tag,editor:$editor,website:$website,collab:$collab}' \
+                    > artifacts/trio.json
+                  cat artifacts/trio.json
+
+            - name: Upload trio.json
+              uses: actions/upload-artifact@v4
+              with:
+                  name: trio-${{ inputs.target }}
+                  path: artifacts/trio.json
+
+    e2e:
+        needs: freeze
+        runs-on: macos-latest
+        timeout-minutes: 90
+        steps:
+            - name: Checkout editor
+              uses: actions/checkout@v4
+              with:
+                  ref: ${{ needs.freeze.outputs.editor_sha }}
+
+            - name: Checkout website
+              uses: actions/checkout@v4
+              with:
+                  repository: ${{ vars.WEBSITE_REPOSITORY || format('{0}/website', github.repository_owner) }}
+                  ref: ${{ needs.freeze.outputs.website_sha }}
+                  path: _cloud_e2e/website
+                  token: ${{ secrets.CLOUD_E2E_PAT }}
+
+            - name: Checkout collab
+              uses: actions/checkout@v4
+              with:
+                  repository: ${{ vars.COLLAB_REPOSITORY || format('{0}/collab', github.repository_owner) }}
+                  ref: ${{ needs.freeze.outputs.collab_sha }}
+                  path: _cloud_e2e/collab
+                  token: ${{ secrets.CLOUD_E2E_PAT }}
+
+            - name: Set up Node.js
+              uses: actions/setup-node@v4
+              with:
+                  node-version: "24"
+
+            - name: Install editor webapp dependencies
+              run: npm install --prefix webapp
+
+            - name: Build editor production bundle
+              run: npm run build --prefix webapp
+              env:
+                  EDITOR_VERSION: ${{ needs.freeze.outputs.editor_version }}
+                  BUILD_HASH_FULL: ${{ needs.freeze.outputs.editor_sha }}
+                  BUILD_HASH_SHORT: ${{ needs.freeze.outputs.editor_sha }}
+
+            - name: Install Playwright Chromium
+              run: npx --prefix webapp playwright install chromium
+
+            - name: Install website dependencies
+              run: npm ci
+              working-directory: _cloud_e2e/website
+
+            - name: Build website static bundle
+              run: npm run rebuild
+              working-directory: _cloud_e2e/website
+
+            - name: Write ephemeral website local vars
+              working-directory: _cloud_e2e/website
+              run: |
+                  printf '%s\n' \
+                    'LOCAL_DEV=true' \
+                    'LOCAL_CLOUD_DEV_ENABLED=true' \
+                    'AUTH_TOKEN_ALLOW_INSECURE_LOCAL_FALLBACK=true' \
+                    'EDITOR_ALLOWED_ORIGINS=https://localhost:8000,http://localhost:9000' \
+                    'WEBSITE_ALLOWED_ORIGINS=https://localhost:8000,http://localhost:9000,https://localhost:8788' \
+                    'MAGIC_LINK_SECRET=e2e-cloud-collab-magic' \
+                    'ROOM_WORKER_URL=http://localhost:8787' \
+                    > .dev.vars
+
+            - name: Resolve collab root
+              id: collab
+              run: |
+                  if [ -f _cloud_e2e/collab/workers/room/wrangler.toml ]; then
+                    echo "root=${GITHUB_WORKSPACE}/_cloud_e2e/collab" >> "$GITHUB_OUTPUT"
+                  elif [ -f _cloud_e2e/collab/collab/workers/room/wrangler.toml ]; then
+                    echo "root=${GITHUB_WORKSPACE}/_cloud_e2e/collab/collab" >> "$GITHUB_OUTPUT"
+                  else
+                    echo "Could not find collab workers/room/wrangler.toml"
+                    exit 1
+                  fi
+
+            - name: Install collab dependencies
+              run: npm ci
+              working-directory: ${{ steps.collab.outputs.root }}
+
+            - name: Run cloud-collab Playwright
+              run: npm run test:cloud-collab --prefix webapp
+              env:
+                  WEBSITE_ROOT: ${{ github.workspace }}/_cloud_e2e/website
+                  COLLAB_ROOT: ${{ steps.collab.outputs.root }}
+                  CLOUD_COLLAB_E2E: "1"
+
+    deploy:
+        needs: [freeze, e2e]
+        runs-on: ubuntu-latest
+        steps:
+            - name: Checkout editor
+              uses: actions/checkout@v4
+              with:
+                  ref: ${{ needs.freeze.outputs.editor_sha }}
+                  fetch-depth: 0
+
+            - name: Checkout website
+              uses: actions/checkout@v4
+              with:
+                  repository: ${{ vars.WEBSITE_REPOSITORY || format('{0}/website', github.repository_owner) }}
+                  ref: ${{ needs.freeze.outputs.website_sha }}
+                  path: _cutover/website
+                  token: ${{ secrets.CLOUD_E2E_PAT }}
+                  fetch-depth: 0
+
+            - name: Checkout collab
+              uses: actions/checkout@v4
+              with:
+                  repository: ${{ vars.COLLAB_REPOSITORY || format('{0}/collab', github.repository_owner) }}
+                  ref: ${{ needs.freeze.outputs.collab_sha }}
+                  path: _cutover/collab
+                  token: ${{ secrets.CLOUD_E2E_PAT }}
+                  fetch-depth: 0
+
+            - name: Resolve collab root
+              id: collab
+              run: |
+                  if [ -f _cutover/collab/workers/room/wrangler.toml ]; then
+                    echo "root=${GITHUB_WORKSPACE}/_cutover/collab" >> "$GITHUB_OUTPUT"
+                  elif [ -f _cutover/collab/collab/workers/room/wrangler.toml ]; then
+                    echo "root=${GITHUB_WORKSPACE}/_cutover/collab/collab" >> "$GITHUB_OUTPUT"
+                  else
+                    exit 1
+                  fi
+
+            - name: Set up Node.js
+              uses: actions/setup-node@v4
+              with:
+                  node-version: "24"
+
+            - name: Install collab dependencies
+              run: npm ci
+              working-directory: ${{ steps.collab.outputs.root }}
+
+            - name: Deploy validator
+              uses: cloudflare/wrangler-action@v3
+              env:
+                  COMMIT_SHA: ${{ needs.freeze.outputs.collab_sha }}
+              with:
+                  apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+                  accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+                  workingDirectory: ${{ steps.collab.outputs.root }}/workers/validator
+                  command: ${{ inputs.target == 'preview' && 'deploy --env preview' || 'deploy' }}
+                  vars: COMMIT_SHA
+
+            - name: Deploy compactor
+              uses: cloudflare/wrangler-action@v3
+              env:
+                  COMMIT_SHA: ${{ needs.freeze.outputs.collab_sha }}
+              with:
+                  apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+                  accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+                  workingDirectory: ${{ steps.collab.outputs.root }}/workers/compactor
+                  command: ${{ inputs.target == 'preview' && 'deploy --env preview' || 'deploy' }}
+                  vars: COMMIT_SHA
+
+            - name: Deploy room
+              uses: cloudflare/wrangler-action@v3
+              env:
+                  COMMIT_SHA: ${{ needs.freeze.outputs.collab_sha }}
+              with:
+                  apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+                  accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+                  workingDirectory: ${{ steps.collab.outputs.root }}/workers/room
+                  command: ${{ inputs.target == 'preview' && 'deploy --env preview' || 'deploy' }}
+                  vars: COMMIT_SHA
+
+            - name: Install website dependencies
+              run: npm ci
+              working-directory: _cutover/website
+
+            - name: Build website
+              run: npm run build
+              working-directory: _cutover/website
+
+            - name: Deploy website Pages
+              uses: cloudflare/pages-action@v1
+              with:
+                  apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+                  accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+                  projectName: ${{ inputs.target == 'preview' && 'websitepreview' || 'website' }}
+                  directory: _cutover/website/dist
+                  gitHubToken: ${{ secrets.GITHUB_TOKEN }}
+
+            - name: Inject editor version
+              run: |
+                  TAG="${{ needs.freeze.outputs.editor_version }}"
+                  sed -i.bak "s/const VERSION = '[^']*'/const VERSION = '${TAG}'/" webapp/coi-serviceworker.js
+                  sed -i.bak "s/const DISPLAY_VERSION = '[^']*'/const DISPLAY_VERSION = '${TAG}'/" webapp/coi-serviceworker.js
+                  rm webapp/coi-serviceworker.js.bak
+
+            - name: Install editor webapp dependencies
+              run: npm install --prefix webapp
+
+            - name: Build editor
+              run: npm run build --prefix webapp
+              env:
+                  EDITOR_VERSION: ${{ needs.freeze.outputs.editor_version }}
+                  BUILD_HASH_FULL: ${{ needs.freeze.outputs.editor_sha }}
+                  BUILD_HASH_SHORT: ${{ needs.freeze.outputs.editor_sha }}
+
+            - name: Deploy editor Pages
+              uses: cloudflare/pages-action@v1
+              with:
+                  apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+                  accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+                  projectName: ${{ inputs.target == 'preview' && 'editorpreview' || 'editor' }}
+                  directory: ./webapp/build
+                  gitHubToken: ${{ secrets.GITHUB_TOKEN }}
+                  branch: main
+
+            - name: Tag matching trio
+              if: ${{ inputs.release_tag != '' }}
+              env:
+                  TAG: ${{ inputs.release_tag }}
+                  SIBLING_TOKEN: ${{ secrets.CLOUD_E2E_PAT }}
+              run: |
+                  set -euo pipefail
+                  if git ls-remote --exit-code --tags origin "refs/tags/${TAG}" >/dev/null 2>&1; then
+                    echo "Editor tag $TAG already exists"
+                  else
+                    git tag "$TAG"
+                    git push origin "$TAG"
+                  fi
+                  origin_with_token() {
+                    local repo="$1"
+                    echo "https://x-access-token:${SIBLING_TOKEN}@github.com/${{ github.repository_owner }}/${repo}.git"
+                  }
+                  git -C _cutover/website tag "$TAG"
+                  git -C _cutover/website remote set-url origin "$(origin_with_token website)"
+                  git -C _cutover/website push origin "$TAG"
+                  git -C _cutover/collab tag "$TAG"
+                  git -C _cutover/collab remote set-url origin "$(origin_with_token collab)"
+                  git -C _cutover/collab push origin "$TAG"

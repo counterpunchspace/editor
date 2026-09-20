@@ -43,9 +43,9 @@ echo "Starting Preview Release workflow on main..."
 gh workflow run preview-release.yml --ref main
 
 echo ""
-echo "✅ Preview release workflow started."
-echo "   It waits for a green CI run on this commit, then builds the preview"
-echo "   version, creates the GitHub prerelease, and deploys."
+echo "Preview release workflow started."
+echo "It waits for green editor CI, runs cloud-collab e2e, then deploys"
+echo "validator, compactor, room-preview, websitepreview, and editorpreview."
 echo ""
 echo "Watch progress: gh run watch --workflow=preview-release.yml"
 echo "Or: https://github.com/counterpunchspace/editor/actions/workflows/preview-release.yml"

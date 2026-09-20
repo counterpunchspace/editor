@@ -6,9 +6,9 @@ describe('resolveWebsiteURL', () => {
         expect(resolveWebsiteURL('127.0.0.1')).toBe('https://localhost:8788');
     });
 
-    it('maps the preview editor host to the production website', () => {
+    it('maps the preview editor host to the preview website', () => {
         expect(resolveWebsiteURL('preview.editor.counterpunch.space')).toBe(
-            'https://counterpunch.space'
+            'https://preview.counterpunch.space'
         );
     });
 

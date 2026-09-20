@@ -13,8 +13,12 @@ permissions:
     deployments: write
 
 jobs:
-    preview-release:
+    prepare:
         runs-on: ubuntu-latest
+        outputs:
+            TAG: ${{ steps.version.outputs.TAG }}
+            COMMIT_SHA: ${{ steps.version.outputs.COMMIT_SHA }}
+            COMMIT_SHORT: ${{ steps.version.outputs.COMMIT_SHORT }}
         steps:
             - name: Checkout
               uses: actions/checkout@v4
@@ -32,50 +36,65 @@ jobs:
                   GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
               run: bash scripts/resolve-preview-release.sh
 
-            - name: Inject preview versions
-              run: |
-                  TAG="${{ steps.version.outputs.TAG }}"
-                  sed -i.bak "s/const VERSION = '[^']*'/const VERSION = '${TAG}'/" webapp/coi-serviceworker.js
-                  sed -i.bak "s/const DISPLAY_VERSION = '[^']*'/const DISPLAY_VERSION = '${TAG}'/" webapp/coi-serviceworker.js
-                  rm webapp/coi-serviceworker.js.bak
-
-            - name: Setup Node.js
-              uses: actions/setup-node@v4
+            - name: Upload release notes
+              uses: actions/upload-artifact@v4
               with:
-                  node-version: "24"
+                  name: preview-release-notes
+                  path: release-notes.md
 
-            - name: Install webapp dependencies
-              run: npm install --prefix webapp
+    cutover:
+        needs: prepare
+        uses: ./.github/workflows/composed-cutover.yml
+        with:
+            target: preview
+            editor_sha: ${{ needs.prepare.outputs.COMMIT_SHA }}
+            website_ref: ${{ vars.WEBSITE_SHA != '' && vars.WEBSITE_SHA || 'main' }}
+            collab_ref: ${{ vars.COLLAB_SHA != '' && vars.COLLAB_SHA || 'main' }}
+            release_tag: ${{ needs.prepare.outputs.TAG }}
+            editor_version: ${{ needs.prepare.outputs.TAG }}
+        secrets: inherit
 
-            - name: Build webapp with webpack
-              run: npm run build --prefix webapp
-              env:
-                  EDITOR_VERSION: ${{ steps.version.outputs.TAG }}
-                  BUILD_HASH_FULL: ${{ steps.version.outputs.COMMIT_SHA }}
-                  BUILD_HASH_SHORT: ${{ steps.version.outputs.COMMIT_SHORT }}
+    github-prerelease:
+        needs: [prepare, cutover]
+        runs-on: ubuntu-latest
+        steps:
+            - name: Checkout
+              uses: actions/checkout@v4
+              with:
+                  fetch-depth: 0
+                  ref: ${{ needs.prepare.outputs.COMMIT_SHA }}
+
+            - name: Download release notes
+              uses: actions/download-artifact@v4
+              with:
+                  name: preview-release-notes
+
+            - name: Download trio.json
+              uses: actions/download-artifact@v4
+              with:
+                  name: trio-preview
 
             - name: Publish GitHub prerelease
               env:
                   GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
               run: |
-                  gh release create "${{ steps.version.outputs.TAG }}" \
-                      --target "${{ steps.version.outputs.COMMIT_SHA }}" \
-                      --title "${{ steps.version.outputs.TAG }}" \
-                      --notes-file release-notes.md \
-                      --prerelease
-
-            - name: Deploy preview to Cloudflare Pages
-              uses: cloudflare/pages-action@v1
-              with:
-                  apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-                  accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-                  projectName: editorpreview
-                  directory: ./webapp/build
-                  gitHubToken: ${{ secrets.GITHUB_TOKEN }}
-                  branch: main
+                  NOTES=$(mktemp)
+                  cat release-notes.md > "$NOTES"
+                  if [ -f trio.json ]; then
+                    printf '\n\n## Deployed trio\n\n```json\n' >> "$NOTES"
+                    cat trio.json >> "$NOTES"
+                    printf '\n```\n' >> "$NOTES"
+                  fi
+                  gh release create "${{ needs.prepare.outputs.TAG }}" \
+                      --target "${{ needs.prepare.outputs.COMMIT_SHA }}" \
+                      --title "${{ needs.prepare.outputs.TAG }}" \
+                      --notes-file "$NOTES" \
+                      --prerelease \
+                      trio.json
 
             - name: Deployment summary
               run: |
-                  echo "✅ Preview ${{ steps.version.outputs.TAG }} deployed successfully!"
-                  echo "📦 GitHub prerelease ${{ steps.version.outputs.TAG }}"
-                  echo "🚀 Deployed to https://preview.editor.counterpunch.space"
+                  echo "Preview ${{ needs.prepare.outputs.TAG }} cut over."
+                  echo "https://preview.editor.counterpunch.space"
+                  echo "https://preview.counterpunch.space"
+                  echo "https://preview.rooms.counterpunch.space"

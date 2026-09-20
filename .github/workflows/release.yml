@@ -11,10 +11,13 @@ permissions:
     deployments: write
 
 jobs:
-    release:
+    certify:
         if: ${{ !contains(github.ref, '-preview') && !contains(github.ref, '-pre.') }}
         runs-on: macos-latest
-        needs: []
+        outputs:
+            VERSION: ${{ steps.version.outputs.VERSION }}
+            COMMIT_SHA: ${{ steps.commit.outputs.COMMIT_SHA }}
+            COMMIT_SHORT: ${{ steps.commit.outputs.COMMIT_SHORT }}
         steps:
             - name: Checkout
               uses: actions/checkout@v4
@@ -99,27 +102,63 @@ jobs:
             - name: Check code formatting with Prettier
               run: cd webapp && npx prettier -c .
 
-            - name: Create GitHub Release
-              uses: softprops/action-gh-release@v1
+            - name: Upload release notes
+              uses: actions/upload-artifact@v4
               with:
-                  body: ${{ steps.changelog.outputs.RELEASE_NOTES }}
-                  draft: false
-                  prerelease: false
-              env:
-                  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+                  name: production-release-notes
+                  path: release-notes.md
 
-            - name: Deploy to Cloudflare Pages
-              uses: cloudflare/pages-action@v1
+    cutover:
+        needs: certify
+        uses: ./.github/workflows/composed-cutover.yml
+        with:
+            target: production
+            editor_sha: ${{ needs.certify.outputs.COMMIT_SHA }}
+            website_ref: ${{ vars.WEBSITE_SHA != '' && vars.WEBSITE_SHA || 'main' }}
+            collab_ref: ${{ vars.COLLAB_SHA != '' && vars.COLLAB_SHA || 'main' }}
+            release_tag: ${{ needs.certify.outputs.VERSION }}
+            editor_version: ${{ needs.certify.outputs.VERSION }}
+        secrets: inherit
+
+    github-release:
+        needs: [certify, cutover]
+        runs-on: ubuntu-latest
+        steps:
+            - name: Checkout
+              uses: actions/checkout@v4
               with:
-                  apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-                  accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-                  projectName: editor
-                  directory: ./webapp/build
-                  gitHubToken: ${{ secrets.GITHUB_TOKEN }}
-                  branch: main
+                  fetch-depth: 0
+                  ref: ${{ needs.certify.outputs.COMMIT_SHA }}
+
+            - name: Download release notes
+              uses: actions/download-artifact@v4
+              with:
+                  name: production-release-notes
+
+            - name: Download trio.json
+              uses: actions/download-artifact@v4
+              with:
+                  name: trio-production
+                  path: .
+
+            - name: Create GitHub Release
+              env:
+                  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+              run: |
+                  NOTES=$(mktemp)
+                  cat release-notes.md > "$NOTES"
+                  if [ -f trio.json ]; then
+                    printf '\n\n## Deployed trio\n\n```json\n' >> "$NOTES"
+                    cat trio.json >> "$NOTES"
+                    printf '\n```\n' >> "$NOTES"
+                  fi
+                  gh release create "${{ needs.certify.outputs.VERSION }}" \
+                      --target "${{ needs.certify.outputs.COMMIT_SHA }}" \
+                      --title "${{ needs.certify.outputs.VERSION }}" \
+                      --notes-file "$NOTES" \
+                      trio.json
 
             - name: Deployment summary
               run: |
-                  echo "✅ Release ${{ steps.version.outputs.VERSION }} deployed successfully!"
-                  echo "📦 GitHub Release created"
-                  echo "🚀 Deployed to Cloudflare Pages"
+                  echo "Production ${{ needs.certify.outputs.VERSION }} cut over."
+                  echo "https://editor.counterpunch.space"
