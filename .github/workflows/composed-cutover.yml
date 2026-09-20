@@ -244,10 +244,16 @@ jobs:
               if: failure()
               run: |
                   echo "==== cloud-collab stack logs ===="
-                  find webapp/.cloud-collab-e2e-wrangler -name '*.log' 2>/dev/null | while read -r f; do
-                    echo "----- $f -----"
-                    tail -n 120 "$f" || true
-                  done
+                  logs=$(find webapp/.cloud-collab-e2e-wrangler -name '*.log' 2>/dev/null || true)
+                  if [ -z "$logs" ]; then
+                    echo "No wrangler logs. Stack likely died before spawn (certs or wrangler missing)."
+                    ls -la _cloud_e2e/website/.local-certs 2>/dev/null || echo "No website .local-certs directory"
+                  else
+                    echo "$logs" | while read -r f; do
+                      echo "----- $f -----"
+                      tail -n 120 "$f" || true
+                    done
+                  fi
 
     deploy:
         needs: [freeze, e2e]
