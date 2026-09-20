@@ -201,6 +201,8 @@ jobs:
             - name: Build website static bundle
               run: npm run rebuild
               working-directory: _cloud_e2e/website
+              env:
+                  EDITOR_ROOT: ${{ github.workspace }}
 
             - name: Write ephemeral website local vars
               working-directory: _cloud_e2e/website
