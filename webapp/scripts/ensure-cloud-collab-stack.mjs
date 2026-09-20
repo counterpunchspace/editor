@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { execSync, spawn } from 'node:child_process';
+import { execFileSync, execSync, spawn } from 'node:child_process';
 
 const webappRoot = path.resolve(
     path.dirname(fileURLToPath(import.meta.url)),
@@ -69,12 +69,51 @@ export function isPortOpen(port, host = '127.0.0.1') {
 export async function waitForPort(port, label, timeoutMs = 120000) {
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
-        if (await isPortOpen(port)) {
+        if (
+            (await isPortOpen(port, '127.0.0.1')) ||
+            (await isPortOpen(port, '::1'))
+        ) {
             return;
         }
         await new Promise((resolve) => setTimeout(resolve, 500));
     }
     throw new Error(`Timed out waiting for ${label} on port ${port}`);
+}
+
+function isLoopbackPortOpen(port) {
+    return Promise.all([
+        isPortOpen(port, '127.0.0.1'),
+        isPortOpen(port, '::1')
+    ]).then((results) => results.some(Boolean));
+}
+
+function mintLocalhostCerts(certDir) {
+    fs.mkdirSync(certDir, { recursive: true });
+    const certPath = path.join(certDir, 'localhost.pem');
+    const keyPath = path.join(certDir, 'localhost-key.pem');
+    if (fs.existsSync(certPath) && fs.existsSync(keyPath)) {
+        return;
+    }
+    execFileSync(
+        'openssl',
+        [
+            'req',
+            '-x509',
+            '-newkey',
+            'rsa:2048',
+            '-sha256',
+            '-nodes',
+            '-days',
+            '1',
+            '-keyout',
+            keyPath,
+            '-out',
+            certPath,
+            '-subj',
+            '/CN=localhost'
+        ],
+        { stdio: 'inherit' }
+    );
 }
 
 const REQUIRED_ROOM_CAPABILITIES = {
@@ -336,9 +375,10 @@ export async function ensureCloudCollabStack() {
         );
     }
 
-    const websiteUp = await isPortOpen(8788);
-    const roomUp = await isPortOpen(8787);
-    const proxyUp = await isPortOpen(8786);
+    const websiteUp = await isLoopbackPortOpen(8788);
+    const roomUp = await isLoopbackPortOpen(8787);
+    const proxyUp = await isLoopbackPortOpen(8786);
+    const editorUp = await isLoopbackPortOpen(8000);
     const canReuse =
         websiteUp &&
         roomUp &&
@@ -348,9 +388,9 @@ export async function ensureCloudCollabStack() {
     if ((websiteUp || roomUp || proxyUp) && !canReuse) {
         await stopCloudCollabPorts();
         if (
-            (await isPortOpen(8788)) ||
-            (await isPortOpen(8787)) ||
-            (await isPortOpen(8786))
+            (await isLoopbackPortOpen(8788)) ||
+            (await isLoopbackPortOpen(8787)) ||
+            (await isLoopbackPortOpen(8786))
         ) {
             throw new Error(
                 'failed to stop previous cloud collab stack on 8786/8787/8788 before respawn'
@@ -360,11 +400,39 @@ export async function ensureCloudCollabStack() {
 
     const spawned = [];
     const children = [];
-    const websiteStillUp = canReuse && (await isPortOpen(8788));
-    const roomStillUp = canReuse && (await isPortOpen(8787));
-    const proxyStillUp = canReuse && (await isPortOpen(8786));
+    const websiteStillUp = canReuse && (await isLoopbackPortOpen(8788));
+    const roomStillUp = canReuse && (await isLoopbackPortOpen(8787));
+    const proxyStillUp = canReuse && (await isLoopbackPortOpen(8786));
+    const editorStillUp = editorUp && (await isLoopbackPortOpen(8000));
     const collabPersist = path.join(persistRoot, 'collab');
     fs.mkdirSync(collabPersist, { recursive: true });
+
+    if (!editorStillUp) {
+        mintLocalhostCerts(path.join(webappRoot, '.local-certs'));
+        const webpackBin = path.join(
+            webappRoot,
+            'node_modules',
+            '.bin',
+            'webpack'
+        );
+        if (!fs.existsSync(webpackBin)) {
+            throw new Error(`webpack not found at ${webpackBin}`);
+        }
+        const child = spawnLogged(
+            webpackBin,
+            ['serve', '--host', '::', '--allowed-hosts', 'all'],
+            {
+                cwd: webappRoot,
+                env: {
+                    ...localCloudEnv(),
+                    PLAYWRIGHT_TEST: 'true'
+                },
+                logPath: path.join(persistRoot, 'editor.log')
+            }
+        );
+        spawned.push({ name: 'editor', pid: child.pid });
+        children.push(child);
+    }
 
 
     if (!websiteStillUp) {
@@ -600,6 +668,7 @@ export async function ensureCloudCollabStack() {
                 spawned,
                 reusedWebsite: websiteStillUp,
                 reusedRoom: roomStillUp,
+                reusedEditor: editorStillUp,
                 websiteRoot,
                 collabRoot,
                 serviceTokens: {
@@ -613,6 +682,25 @@ export async function ensureCloudCollabStack() {
         )
     );
 
+    if (!editorStillUp) {
+        await waitForPort(8000, 'editor');
+    } else {
+        console.log(
+            '[ensure-cloud-collab-stack] reusing editor on port 8000'
+        );
+    }
+    const editorDeadline = Date.now() + 120000;
+    while (Date.now() < editorDeadline) {
+        if (await probeHttpOk('https://localhost:8000/?test=true')) {
+            break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+    if (!(await probeHttpOk('https://localhost:8000/?test=true'))) {
+        throw new Error(
+            'editor https://localhost:8000/?test=true did not return HTTP 2xx'
+        );
+    }
     if (!roomStillUp) {
         await waitForPort(8787, 'collab room');
     }
