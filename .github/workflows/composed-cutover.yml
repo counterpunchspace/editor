@@ -359,12 +359,11 @@ jobs:
               working-directory: _cutover/website
 
             - name: Deploy website Pages
-              uses: cloudflare/pages-action@v1
+              uses: cloudflare/wrangler-action@v3
               with:
                   apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
                   accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-                  projectName: ${{ inputs.target == 'preview' && 'websitepreview' || 'website' }}
-                  directory: _cutover/website/dist
+                  command: ${{ inputs.target == 'preview' && 'pages deploy _cutover/website/dist --project-name=websitepreview' || 'pages deploy _cutover/website/dist --project-name=website' }}
                   gitHubToken: ${{ secrets.GITHUB_TOKEN }}
 
             - name: Inject editor version
@@ -385,14 +384,12 @@ jobs:
                   BUILD_HASH_SHORT: ${{ needs.freeze.outputs.editor_sha }}
 
             - name: Deploy editor Pages
-              uses: cloudflare/pages-action@v1
+              uses: cloudflare/wrangler-action@v3
               with:
                   apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
                   accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-                  projectName: ${{ inputs.target == 'preview' && 'editorpreview' || 'editor' }}
-                  directory: ./webapp/build
+                  command: ${{ inputs.target == 'preview' && 'pages deploy ./webapp/build --project-name=editorpreview --branch main' || 'pages deploy ./webapp/build --project-name=editor --branch main' }}
                   gitHubToken: ${{ secrets.GITHUB_TOKEN }}
-                  branch: main
 
             - name: Tag matching trio
               if: ${{ inputs.release_tag != '' }}
