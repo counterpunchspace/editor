@@ -70,7 +70,9 @@ Composed cutover deploys Pages with `cloudflare/wrangler-action` (`pages deploy 
 ## Editor Actions secrets
 
 - `CLOUD_E2E_PAT` — GitHub PAT with contents **read + write** on private `website` and `collab` (checkout + sibling tags). Read-only is not enough.
-- `CLOUDFLARE_API_TOKEN` — one token Wrangler uses for Workers **and** Pages on both preview and production (`room`, `room-preview`, Pages projects, validator/compactor).
+- `CLOUDFLARE_API_TOKEN` — one token Wrangler uses for Workers **and** Pages on both preview and production. It must include:
+  - Account: Workers Scripts Edit, Workers R2 Storage Edit, Cloudflare Pages Edit
+  - Zone `counterpunch.space`: Workers Routes Edit (needed to attach `preview.rooms.counterpunch.space` / production room hostname). Account-only Workers Scripts is enough for `*.workers.dev` (validator/compactor) and fails on zone Worker routes with `No access to the specified resource`. DNS Edit is not required for that routes call.
 - `CLOUDFLARE_ACCOUNT_ID`
 
 This is not the same as `CLOUD_E2E_PAT`. The PAT never talks to Cloudflare.
