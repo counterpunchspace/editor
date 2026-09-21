@@ -434,7 +434,6 @@ export async function ensureCloudCollabStack() {
         children.push(child);
     }
 
-
     if (!websiteStillUp) {
         const certScript = path.join(
             websiteRoot,
@@ -685,9 +684,7 @@ export async function ensureCloudCollabStack() {
     if (!editorStillUp) {
         await waitForPort(8000, 'editor');
     } else {
-        console.log(
-            '[ensure-cloud-collab-stack] reusing editor on port 8000'
-        );
+        console.log('[ensure-cloud-collab-stack] reusing editor on port 8000');
     }
     const editorDeadline = Date.now() + 120000;
     while (Date.now() < editorDeadline) {

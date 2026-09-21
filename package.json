@@ -17,7 +17,7 @@
         "prepare": "husky"
     },
     "lint-staged": {
-        "webapp/**/*.{js,ts,jsx,tsx,json,css,md,html,yml,yaml}": "webapp/node_modules/.bin/prettier --write"
+        "webapp/**/*.{js,mjs,cjs,ts,jsx,tsx,json,css,md,html,yml,yaml}": "webapp/node_modules/.bin/prettier --write"
     },
     "dependencies": {
         "typescript": "^5.0.0"

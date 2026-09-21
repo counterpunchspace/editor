@@ -170,10 +170,7 @@ try {
     );
     // Yrs cannot roll back the applied packet, so a rejected rename drops the
     // worker Y.Doc. The unpublished candidate cache must not compile.
-    assert.throws(
-        () => wasm.compile_cached_font({}),
-        /No font loaded/
-    );
+    assert.throws(() => wasm.compile_cached_font({}), /No font loaded/);
 
     const { doc, glyphs, featureList } = createFontDocument();
     wasm.init_ydoc_from_state(Y.encodeStateAsUpdate(doc));
