@@ -1,7 +1,9 @@
 #!/bin/bash
 
 # Push main and start the preview-release workflow.
-# The GitHub tag and prerelease are created only after that workflow succeeds.
+# That workflow waits for green editor CI on HEAD, then composed-cutover
+# (preview workers + websitepreview + editorpreview), tags the trio, and
+# attaches trio.json to the GitHub prerelease. See developer-docs/COMPOSED_RELEASE.md.
 # Usage: ./previewrelease.sh
 
 set -e

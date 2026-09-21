@@ -175,15 +175,15 @@ The script:
 - Extracts release notes from the Unreleased section in `CHANGELOG.md`
 - Commits the version change
 - Creates and pushes a git tag
-- Triggers GitHub Actions to create a release and deploy to Cloudflare Pages
+- Triggers GitHub Actions **Release**, which certifies the editor then composed-cutover deploys production Cloudflare (workers + website + editor) and tags website + collab. See `developer-docs/COMPOSED_RELEASE.md`.
 
-Cut a preview release (GitHub prerelease + deploy to preview.editor.counterpunch.space) with:
+Cut a preview release (GitHub prerelease + matching trio deploy) with:
 
 ```bash
 ./previewrelease.sh
 ```
 
-That script starts the Preview Release workflow. The workflow waits for a green CI run on that commit, then builds with tag `v0.0.N-pre.DATE` (monotonic N across days; DATE is the UTC day of the cut) as the GitHub prerelease title and app version. Notes are the Unreleased changelog diff since the previous preview. It does not rewrite `CHANGELOG.md` or re-run the test suite.
+You do not need to wait for CI first. The workflow waits for a green `ci.yml` push run on that SHA, freezes editor/website/collab SHAs, runs cloud-collab e2e, then deploys preview hosts and tags all three repos (`v0.0.N-pre.DATE`). Notes are the Unreleased changelog diff since the previous preview. It does not rewrite `CHANGELOG.md`.
 
 Users will see an orange notification on the Preferences gear within about 10 minutes. Preferences shows the current version, Check for updates, and an Update control with a changelog link when a new build is ready.
 
@@ -201,4 +201,4 @@ If glyph switching stops updating outlines and the glyph stack shows `(none)` wh
 - `developer-docs/JS_EVENTS.md` documents emitted JavaScript events
 - `developer-docs/APP_UPDATE_RECOVERY.md` is the stuck-client update recovery procedure
 - `developer-docs/STUCK_EDITING_RECOVERY.md` is the stuck-editing-session recovery procedure
-- `developer-docs/COMPOSED_RELEASE.md` is the collab/website/editor production-promote recommendation
+- `developer-docs/COMPOSED_RELEASE.md` is the collab/website/editor preview and production cutover (matching tags + `trio.json`)

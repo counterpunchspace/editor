@@ -1095,12 +1095,14 @@ collab/
   workers/validator/          Yjs ingress validation isolate
 ```
 
-Push to `main` deploys callee-first (not atomic): validator, then
-compactor, then room. Stop on the first Wrangler failure. Local `npm run
+Editor **Preview Release** / **Release** deploy callee-first (not atomic):
+validator, then compactor, then room, then website Pages, then editor Pages.
+Collab `main` only runs tests. Stop on the first Wrangler failure. Local `npm run
 dev` is Wrangler multi-config; room is HTTP on 8787. After the first
 production deploy of `compactor`, disable the Deploy workflow on
 `yanone/cf-compactor` so two CIs cannot overwrite it. Existing `fonts-room`
-Durable Object SQLite does not move automatically.
+Durable Object SQLite does not move automatically. Matching trio: git tag +
+`trio.json` (editor `developer-docs/COMPOSED_RELEASE.md`).
 
 ### Capacity (checked-in Node + Worker benches)
 

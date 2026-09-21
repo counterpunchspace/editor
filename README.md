@@ -10,7 +10,9 @@ See [Feature Overview](#feature-overview) for details.
 Try the editor live:
 
 - Latest official release: https://editor.counterpunch.space (rarely updated, see [releases](https://github.com/counterpunchspace/editor/releases))
-- Latest preview: https://preview.editor.counterpunch.space (updates when a preview release is cut)
+- Latest preview: https://preview.editor.counterpunch.space (cut with `./previewrelease.sh`; matching website/room at https://preview.counterpunch.space and https://preview.rooms.counterpunch.space)
+
+Shipping Cloudflare is a three-repo composed cutover (matching git tag + `trio.json`), not an editor Pages deploy alone. See [Composed releases](developer-docs/COMPOSED_RELEASE.md).
 
 ## Source File I/O
 
