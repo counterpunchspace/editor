@@ -383,7 +383,10 @@ jobs:
               with:
                   apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
                   accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-                  command: ${{ inputs.target == 'preview' && 'pages deploy _cutover/website/dist --project-name=websitepreview' || 'pages deploy _cutover/website/dist --project-name=website' }}
+                  # wrangler 3 only bundles ./functions from the working directory.
+                  # Deploying dist from the editor root leaves the previous Functions bundle in place.
+                  workingDirectory: _cutover/website
+                  command: ${{ inputs.target == 'preview' && 'pages deploy dist --project-name=websitepreview --commit-dirty=true' || 'pages deploy dist --project-name=website --commit-dirty=true' }}
                   gitHubToken: ${{ secrets.GITHUB_TOKEN }}
 
             - name: Real-email signup gate
