@@ -36,12 +36,13 @@ Or Actions → **Preview Release**. You do not need to wait for CI locally. The 
 1. Checks out the `main` SHA it was dispatched on.
 2. Waits for a successful editor `ci.yml` **push** run on **that SHA** (up to 90 minutes). If that run fails or is cancelled, it refuses to publish.
 3. Freezes editor / website / collab SHAs (`main`, or `WEBSITE_SHA` / `COLLAB_SHA` if those repo variables are set).
-4. Runs cloud-collab Playwright e2e on the frozen trio.
-5. Deploys **validator → compactor → room → website Pages**, then a **real-email signup gate** against the live website origin, then **editor Pages**.
-6. Tags all three repos with the preview version (`v0.0.N-pre.DATE`, monotonic N; DATE is the UTC day of the cut).
-7. Publishes the GitHub prerelease with Unreleased changelog notes plus `trio.json`.
+4. Waits for a successful website and collab `deploy.yml` **push** run on those frozen SHAs (up to 90 minutes each). A failed or missing sibling run refuses to publish.
+5. Runs cloud-collab Playwright e2e on the frozen trio.
+6. Deploys **validator → compactor → room → website Pages**, then a **real-email signup gate** against the live website origin, then **editor Pages**.
+7. Tags all three repos with the preview version (`v0.0.N-pre.DATE`, monotonic N; DATE is the UTC day of the cut).
+8. Publishes the GitHub prerelease with Unreleased changelog notes plus `trio.json`.
 
-It does not rewrite `CHANGELOG.md`. Push website and collab `main` first if those SHAs should be in this cutover; editor does not wait for sibling CI.
+It does not rewrite `CHANGELOG.md`. Push website and collab `main` first if those SHAs should be in this cutover. Production uses the same sibling CI wait inside composed cutover.
 
 ## How to cut production
 
@@ -69,7 +70,7 @@ Composed cutover deploys Pages with `cloudflare/wrangler-action` (`pages deploy 
 
 ## Editor Actions secrets
 
-- `CLOUD_E2E_PAT` — GitHub PAT with contents **read + write** on private `website` and `collab` (checkout + sibling tags). Read-only is not enough.
+- `CLOUD_E2E_PAT` — GitHub PAT with contents **read + write** on private `website` and `collab` (checkout + sibling tags), and **Actions: Read** on those repos so cutover can require a green push run on the frozen SHAs. Contents read-only is not enough.
 - `CLOUDFLARE_API_TOKEN` — one token Wrangler uses for Workers **and** Pages on both preview and production. It must include:
   - Account: Workers Scripts Edit, Workers R2 Storage Edit, Cloudflare Pages Edit, **D1 Edit** (signup gate deletes the plus-address user from `context_users`)
   - Zone `counterpunch.space`: Workers Routes Edit (needed to attach `preview.rooms.counterpunch.space` / production room hostname). Account-only Workers Scripts is enough for `*.workers.dev` (validator/compactor) and fails on zone Worker routes with `No access to the specified resource`. DNS Edit is not required for that routes call.

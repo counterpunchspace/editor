@@ -1,9 +1,10 @@
 #!/bin/bash
 
-# Wait until ci.yml has a successful push run for HEAD.
-# Fails if that run failed, was cancelled, or does not finish in time.
+# Wait until a workflow has a successful push run for a commit.
+# No args: this editor repo, ci.yml, HEAD (Preview Release, before cutover).
+# Args: <owner/repo> <sha> <workflow-file>
 
-set -e
+set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
@@ -12,21 +13,40 @@ if ! command -v gh >/dev/null 2>&1; then
     exit 1
 fi
 
-COMMIT_SHA=$(git rev-parse HEAD)
+REPO="${1:-}"
+COMMIT_SHA="${2:-}"
+WORKFLOW="${3:-ci.yml}"
+
+if [ -z "$COMMIT_SHA" ]; then
+    COMMIT_SHA=$(git rev-parse HEAD)
+fi
+
+LABEL="${REPO:-editor}"
 DEADLINE=$((SECONDS + 5400))
 
-echo "Waiting for a green CI push run on $COMMIT_SHA"
+echo "Waiting for a green $WORKFLOW push run on $LABEL $COMMIT_SHA"
 
 latest_push_run() {
-    gh run list --workflow=ci.yml --commit="$COMMIT_SHA" --limit 20 \
-        --json databaseId,status,conclusion,event \
-        --jq '[.[] | select(.event=="push")] | sort_by(.databaseId) | last // empty'
+    local -a args
+    args=(run list --workflow="$WORKFLOW" --commit="$COMMIT_SHA" --limit 20 --json databaseId,status,conclusion,event)
+    if [ -n "$REPO" ]; then
+        args+=(--repo "$REPO")
+    fi
+    gh "${args[@]}" --jq '[.[] | select(.event=="push")] | sort_by(.databaseId) | last // empty'
+}
+
+watch_run() {
+    if [ -n "$REPO" ]; then
+        gh run watch "$1" --repo "$REPO" --exit-status
+    else
+        gh run watch "$1" --exit-status
+    fi
 }
 
 while [ "$SECONDS" -lt "$DEADLINE" ]; do
     run_json=$(latest_push_run)
     if [ -z "$run_json" ] || [ "$run_json" = "null" ]; then
-        echo "No CI push run yet; retrying in 20s..."
+        echo "No CI push run yet for $LABEL; retrying in 20s..."
         sleep 20
         continue
     fi
@@ -35,27 +55,27 @@ while [ "$SECONDS" -lt "$DEADLINE" ]; do
     status=$(printf '%s\n' "$run_json" | jq -r '.status')
     conclusion=$(printf '%s\n' "$run_json" | jq -r '.conclusion // empty')
 
-    echo "CI run $run_id status=$status conclusion=${conclusion:-<none>}"
+    echo "$LABEL CI run $run_id status=$status conclusion=${conclusion:-<none>}"
 
     if [ "$status" = "completed" ]; then
         if [ "$conclusion" = "success" ]; then
-            echo "CI is green for $COMMIT_SHA"
+            echo "CI is green for $LABEL $COMMIT_SHA"
             exit 0
         fi
-        echo "Error: CI run $run_id concluded $conclusion; refusing to publish"
+        echo "Error: $LABEL CI run $run_id concluded $conclusion; refusing to publish"
         exit 1
     fi
 
-    echo "CI still running; watching run $run_id..."
-    gh run watch "$run_id" --exit-status
-    watch_status=$?
+    echo "$LABEL CI still running; watching run $run_id..."
+    watch_status=0
+    watch_run "$run_id" || watch_status=$?
     if [ "$watch_status" -eq 0 ]; then
-        echo "CI is green for $COMMIT_SHA"
+        echo "CI is green for $LABEL $COMMIT_SHA"
         exit 0
     fi
-    echo "Error: CI run $run_id did not succeed; refusing to publish"
+    echo "Error: $LABEL CI run $run_id did not succeed; refusing to publish"
     exit 1
 done
 
-echo "Error: timed out waiting for a green CI push run on $COMMIT_SHA"
+echo "Error: timed out waiting for a green $WORKFLOW push run on $LABEL $COMMIT_SHA"
 exit 1

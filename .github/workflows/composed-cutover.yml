@@ -150,8 +150,28 @@ jobs:
                   name: trio-${{ inputs.target }}
                   path: artifacts/trio.json
 
-    e2e:
+    sibling-ci:
         needs: freeze
+        runs-on: ubuntu-latest
+        timeout-minutes: 90
+        steps:
+            - name: Checkout editor
+              uses: actions/checkout@v4
+              with:
+                  ref: ${{ needs.freeze.outputs.editor_sha }}
+
+            - name: Wait for website CI
+              env:
+                  GH_TOKEN: ${{ secrets.CLOUD_E2E_PAT }}
+              run: bash scripts/wait-for-green-ci.sh "${{ vars.WEBSITE_REPOSITORY || format('{0}/website', github.repository_owner) }}" "${{ needs.freeze.outputs.website_sha }}" deploy.yml
+
+            - name: Wait for collab CI
+              env:
+                  GH_TOKEN: ${{ secrets.CLOUD_E2E_PAT }}
+              run: bash scripts/wait-for-green-ci.sh "${{ vars.COLLAB_REPOSITORY || format('{0}/collab', github.repository_owner) }}" "${{ needs.freeze.outputs.collab_sha }}" deploy.yml
+
+    e2e:
+        needs: [freeze, sibling-ci]
         runs-on: macos-latest
         timeout-minutes: 90
         steps:
