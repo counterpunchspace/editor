@@ -379,15 +379,29 @@ jobs:
               working-directory: _cutover/website
 
             - name: Deploy website Pages
-              uses: cloudflare/wrangler-action@v3
-              with:
-                  apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-                  accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-                  # wrangler 3 only bundles ./functions from the working directory.
-                  # Deploying dist from the editor root leaves the previous Functions bundle in place.
-                  workingDirectory: _cutover/website
-                  command: ${{ inputs.target == 'preview' && 'pages deploy dist --project-name=websitepreview --commit-dirty=true' || 'pages deploy dist --project-name=website --commit-dirty=true' }}
-                  gitHubToken: ${{ secrets.GITHUB_TOKEN }}
+              working-directory: _cutover/website
+              env:
+                  CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+                  CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+              run: |
+                  set -euo pipefail
+                  project=website
+                  if [ "${{ inputs.target }}" = "preview" ]; then
+                    project=websitepreview
+                  fi
+                  # wrangler pages deploy uploads bindings from wrangler.toml.
+                  # That file has no secrets, so each deploy drops dashboard
+                  # secrets such as RESEND_API_KEY. Hide it and keep the
+                  # project bindings already stored on the Pages project.
+                  mv wrangler.toml wrangler.toml.cutover-bak
+                  restore_config() {
+                    if [ -f wrangler.toml.cutover-bak ]; then
+                      mv wrangler.toml.cutover-bak wrangler.toml
+                    fi
+                  }
+                  trap restore_config EXIT
+                  npx wrangler pages deploy dist --project-name="$project" --commit-dirty=true
+                  npx wrangler pages secret list --project-name="$project" || true
 
             - name: Real-email signup gate
               working-directory: _cutover/website
