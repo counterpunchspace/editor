@@ -70,8 +70,14 @@ BroadcastChannel. Chrome stays per window (`windowUi.*`).
 Edits that are not on a peer’s WebSocket subset still arrive: core publishes
 `glyphRevisions`, then every instance HTTP-catches-up the glyph live vector
 until `sync.revision` matches, and main relays that to linked windows.
-Catch-up is a checkpoint, not history replay. Linked bootstrap seeds the
-Rust worker with the full document set (`seedWorkerDocumentSet`).
+Catch-up is a checkpoint, not history replay. A linked window bootstraps
+from the main window’s resident document set (core, deps, and every glyph
+shard main currently holds), sent in batches, and seeds the Rust worker
+with that set (`seedWorkerDocumentSet`) only after the last batch. The
+catalog in core is the full glyph count. Unhydrated glyphs stay catalog
+tiles until someone hydrates them. That fetch runs on the main window,
+which then relays the new shards and the working/resident set to every
+linked window.
 
 ### Sparse cloud hydration (working vs hidden)
 

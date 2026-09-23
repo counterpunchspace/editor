@@ -8,7 +8,6 @@
 
 import type { PatchSyncEngine } from './patch-sync-engine';
 import type { ChangeLogEntry } from './change-log';
-import { deriveGlyphNameFromPath } from './change-log';
 import { Logger } from './logger';
 import type { CollaborationLogItem } from './patch-sync-engine';
 import {
@@ -22,6 +21,15 @@ import {
     FONT_DEPS_DOCUMENT_ID
 } from './filesystem-plugins/cloud-document-set';
 
+/** True when this URL should take the main window's resident font, not reopen the source. */
+export function isLinkedPeerSnapshotSearch(search: string): boolean {
+    try {
+        return new URLSearchParams(search).has('sync');
+    } catch {
+        return false;
+    }
+}
+
 /** BroadcastChannel name for a font. Cloud URIs collapse to the asset id. */
 export function windowSyncChannelName(fontPath: string): string {
     let path = String(fontPath || 'unsaved').trim();
@@ -30,77 +38,22 @@ export function windowSyncChannelName(fontPath: string): string {
     return `counterpunch-font:${path || 'unsaved'}`;
 }
 
-const LINKED_WINDOW_SEED_GLYPHS = [
-    'a',
-    'adieresis',
-    'aacute',
-    'A',
-    '.notdef',
-    'dieresiscomb',
-    'acutecomb',
-    'gravecomb',
-    'H'
-];
+/** Glyph shards per BroadcastChannel message while seeding a linked window. */
+const LINKED_WINDOW_GLYPH_BATCH = 32;
+const FULL_STATE_TRANSFER_TIMEOUT_MS = 60000;
 
-function componentReferencesFromGlyph(glyph: unknown): string[] {
-    const names: string[] = [];
-    const layers = (
-        glyph as {
-            layers?: Array<{ shapes?: unknown[] }>;
-        }
-    )?.layers;
-    for (const layer of layers || []) {
-        for (const shape of layer.shapes || []) {
-            const reference = (shape as { data?: { reference?: unknown } })
-                ?.data?.reference;
-            if (typeof reference === 'string') {
-                names.push(reference);
-            }
-        }
-    }
-    return names;
-}
+export type SparseResidencyRelay = {
+    sparse: boolean;
+    workingGlyphIds: string[];
+    residentGlyphIds: string[];
+    previewOnly: boolean;
+};
 
-export function collectLinkedWindowGlyphNames(): string[] {
-    if (window.fontManager?.isHydrationSparse?.()) {
-        const hydrated = window.fontManager.getHydratedGlyphNames?.() ?? [];
-        if (hydrated.length) {
-            return hydrated;
-        }
-    }
-    const names = new Set<string>([
-        ...(window.fontManager?.getEditingSubsetSnapshot?.() ?? []),
-        ...(window.fontManager?.getLiveVisibleGlyphNames?.() ?? []),
-        ...LINKED_WINDOW_SEED_GLYPHS
-    ]);
-    const text = String(window.stateManager?.editor_text_buffer || '');
-    for (const name of window.fontManager?.deriveSubsetGlyphsFromText?.(text) ??
-        []) {
-        names.add(name);
-    }
-    const model = window.currentFontModel;
-    const queue = [...names];
-    while (queue.length) {
-        const current = queue.pop();
-        if (!current) {
-            continue;
-        }
-        const glyph = model?.findGlyph?.(current);
-        if (!glyph) {
-            continue;
-        }
-        for (const reference of componentReferencesFromGlyph(glyph)) {
-            if (!names.has(reference)) {
-                names.add(reference);
-                queue.push(reference);
-            }
-        }
-        if (names.size > 80) {
-            break;
-        }
-    }
-    return [...names];
-}
+export type LinkedWindowHydrationRequest = {
+    text?: string;
+    glyphNames?: string[];
+    purpose?: 'ui' | 'compile';
+};
 
 const console = new Logger('WindowSync');
 
@@ -135,13 +88,66 @@ interface FullStateRequestMsg {
     sessionId: string;
 }
 
-interface FullStateResponseMsg {
-    type: 'full-state-response';
-    state: BinaryPayload;
-    documents?: Array<{ documentId: string; state: BinaryPayload }>;
+type SnapshotDocument = { documentId: string; state: BinaryPayload };
+
+interface FullStateBeginMsg {
+    type: 'full-state-begin';
+    documents: SnapshotDocument[];
     changeLog: ChangeLogEntry[];
     collaborationLog: CollaborationLogItem[];
     cloudRelayState?: CloudConnectionRelayState;
+    residency: SparseResidencyRelay;
+    transferId: string;
+    windowId: string;
+    sessionId: string;
+}
+
+interface FullStateGlyphsMsg {
+    type: 'full-state-glyphs';
+    documents: SnapshotDocument[];
+    transferId: string;
+    windowId: string;
+    sessionId: string;
+}
+
+interface FullStateEndMsg {
+    type: 'full-state-end';
+    transferId: string;
+    glyphCount: number;
+    windowId: string;
+    sessionId: string;
+}
+
+interface FullStateAbortMsg {
+    type: 'full-state-abort';
+    transferId: string;
+    error: string;
+    windowId: string;
+    sessionId: string;
+}
+
+interface HydrationRequestMsg {
+    type: 'hydration-request';
+    requestId: string;
+    text?: string;
+    glyphNames?: string[];
+    purpose?: 'ui' | 'compile';
+    windowId: string;
+    sessionId: string;
+}
+
+interface HydrationResultMsg {
+    type: 'hydration-result';
+    requestId: string;
+    glyphNames: string[];
+    error?: string;
+    windowId: string;
+    sessionId: string;
+}
+
+interface SparseResidencyMsg {
+    type: 'sparse-residency';
+    residency: SparseResidencyRelay;
     windowId: string;
     sessionId: string;
 }
@@ -168,7 +174,13 @@ interface CloudConnectionStatusMsg {
 type SyncMessage =
     | YjsUpdateMsg
     | FullStateRequestMsg
-    | FullStateResponseMsg
+    | FullStateBeginMsg
+    | FullStateGlyphsMsg
+    | FullStateEndMsg
+    | FullStateAbortMsg
+    | HydrationRequestMsg
+    | HydrationResultMsg
+    | SparseResidencyMsg
     | WindowClosingMsg
     | MainWindowClosingMsg
     | CloudConnectionStatusMsg;
@@ -195,6 +207,27 @@ export class WindowSync {
     private _channelName: string;
     private _cloudBootstrapReady = true;
     private _pendingFullStateRequests = 0;
+    private _inboundTransferId: string | null = null;
+    private _inboundResidency: SparseResidencyRelay | null = null;
+    private _inboundGlyphCount = 0;
+    private _inboundSeedDocuments: Array<{
+        documentId: string;
+        bytes: Uint8Array;
+    }> = [];
+    private _residentSnapshotConsumer:
+        ((fontData: Record<string, unknown>) => void) | null = null;
+    private _pendingResidency: SparseResidencyRelay | null = null;
+    private _snapshotSendChain: Promise<void> = Promise.resolve();
+    private _snapshotIdle = true;
+    private _hydrationServeChain: Promise<void> = Promise.resolve();
+    private _hydrationRequests = new Map<
+        string,
+        {
+            resolve: (names: string[]) => void;
+            reject: (error: unknown) => void;
+            timer: ReturnType<typeof setTimeout>;
+        }
+    >();
 
     static enableTimingLogging(): void {
         WindowSync._timingLoggingEnabled = true;
@@ -249,7 +282,7 @@ export class WindowSync {
      *
      * Pre-registers a pending worker-document sync promise with
      * FontCompilation so that any editing compile that fires before the
-     * full-state-response arrives waits for the linked-window bootstrap
+     * resident snapshot arrives waits for the linked-window bootstrap
      * instead of failing with "requires a ready worker Yjs document".
      * (Compilation edit policy rule 24: cached editing compiles MUST wait
      * for the tracked worker-document sync whenever the gate is closed.)
@@ -279,13 +312,7 @@ export class WindowSync {
             // so compiles don't hang forever. workerCacheDocumentReady is
             // already false, so the compile will fail after
             // awaitWorkerDocumentSync rejects.
-            this._fullStateBootstrapTimeout = setTimeout(() => {
-                this._resolveFullStateBootstrap(
-                    new Error(
-                        'Linked-window full-state-response timed out — no peer window responded within 60s'
-                    )
-                );
-            }, 60000);
+            this._armFullStateTimeout();
         }
 
         this._send({
@@ -293,6 +320,13 @@ export class WindowSync {
             windowId: this._bridge.windowId,
             sessionId: this._sessionId
         });
+    }
+
+    /** Called once the resident snapshot has been materialized into font JSON. */
+    setResidentSnapshotConsumer(
+        consumer: (fontData: Record<string, unknown>) => void
+    ): void {
+        this._residentSnapshotConsumer = consumer;
     }
 
     /** Announce that this window is closing. */
@@ -326,12 +360,21 @@ export class WindowSync {
         }
 
         if (
-            this._pendingYjsMessages.length > 0 &&
+            (this._pendingYjsMessages.length > 0 || this._pendingResidency) &&
             !this._inboundFlushScheduled
         ) {
             this._inboundFlushScheduled = true;
             queueMicrotask(() => this._flushPendingYjsUpdates());
         }
+    }
+
+    private _failFullStateTransfer(error: Error): void {
+        this._inboundTransferId = null;
+        this._awaitingFullState = false;
+        this._inboundGlyphCount = 0;
+        this._inboundSeedDocuments = [];
+        this._inboundResidency = null;
+        this._resolveFullStateBootstrap(error);
     }
 
     announceMainWindowClosing(): void {
@@ -407,46 +450,116 @@ export class WindowSync {
         console.log(`Rebound WindowSync channel to ${nextName}`);
     }
 
-    sendFullStateSnapshot(): void {
-        const state = this._bridge.getFullState();
-        const documents: Array<{
-            documentId: string;
-            state: BinaryPayload;
-        }> = [];
-        // Never encodeDocumentSet() / listLiveGlyphDocumentIds() for a full
-        // catalog hydrate — that freezes both windows on BroadcastChannel.
-        // The snapshot is core, deps, the editing subset, recent changelog
-        // glyphs, and every live glyph shard only when the live set is small.
-        const subsetNames = new Set(collectLinkedWindowGlyphNames());
-        for (const entry of this._bridge.getChangeLog()) {
-            const name = deriveGlyphNameFromPath(String(entry.path || ''));
-            if (name) {
-                subsetNames.add(name);
+    /**
+     * Ask the main window to hydrate glyphs. Linked windows do not open
+     * their own cloud sockets; the result arrives after the relayed shards.
+     */
+    requestHydration(input: LinkedWindowHydrationRequest): Promise<string[]> {
+        const requestId = `${this._bridge.windowId}:${Date.now()}:${Math.random().toString(36).slice(2)}`;
+        return new Promise((resolve, reject) => {
+            const timer = setTimeout(() => {
+                this._hydrationRequests.delete(requestId);
+                reject(
+                    new Error(
+                        'Linked-window hydration request timed out — main window did not finish'
+                    )
+                );
+            }, FULL_STATE_TRANSFER_TIMEOUT_MS);
+            this._hydrationRequests.set(requestId, { resolve, reject, timer });
+            this._send({
+                type: 'hydration-request',
+                requestId,
+                text: input.text,
+                glyphNames: input.glyphNames,
+                purpose: input.purpose,
+                windowId: this._bridge.windowId,
+                sessionId: this._sessionId
+            });
+        });
+    }
+
+    broadcastSparseResidency(residency: SparseResidencyRelay): void {
+        this._send({
+            type: 'sparse-residency',
+            residency,
+            windowId: this._bridge.windowId,
+            sessionId: this._sessionId
+        });
+    }
+
+    /**
+     * Send core, deps, and every glyph shard currently resident on this
+     * window. Glyph shards are batched so encoding them does not freeze
+     * the sender. The linked worker seeds only after the terminal batch.
+     */
+    sendFullStateSnapshot(): Promise<void> {
+        const startNow = this._snapshotIdle;
+        this._snapshotIdle = false;
+        const emit = startNow
+            ? this._emitFullStateSnapshot()
+            : this._snapshotSendChain.then(() => this._emitFullStateSnapshot());
+        const settled = emit.then(
+            () => undefined,
+            () => undefined
+        );
+        this._snapshotSendChain = settled;
+        void settled.then(() => {
+            if (this._snapshotSendChain === settled) {
+                this._snapshotIdle = true;
             }
+        });
+        return emit;
+    }
+
+    private _armFullStateTimeout(): void {
+        if (this._fullStateBootstrapTimeout) {
+            clearTimeout(this._fullStateBootstrapTimeout);
         }
-        const documentIds = new Set<string>([
-            FONT_CORE_DOCUMENT_ID,
-            FONT_DEPS_DOCUMENT_ID,
-            ...[...subsetNames]
-                .map((name) => this._bridge.glyphDocumentIdForName?.(name))
-                .filter((id): id is string => !!id)
-        ]);
+        this._fullStateBootstrapTimeout = setTimeout(() => {
+            this._inboundTransferId = null;
+            this._awaitingFullState = false;
+            this._resolveFullStateBootstrap(
+                new Error(
+                    'Linked-window full-state transfer timed out — no peer window finished the resident snapshot within 60s'
+                )
+            );
+        }, FULL_STATE_TRANSFER_TIMEOUT_MS);
+    }
+
+    private _readSparseResidency(): SparseResidencyRelay {
         const liveIds = this._bridge.listLiveGlyphDocumentIds?.() ?? [];
-        if (liveIds.length > 0 && liveIds.length <= 64) {
-            for (const id of liveIds) {
-                documentIds.add(id);
-            }
-        }
+        return {
+            sparse: this._bridge.hasSparseWorkingSet?.() === true,
+            workingGlyphIds: this._bridge.listSparseWorkingGlyphIds?.() ?? [],
+            residentGlyphIds: liveIds.map((documentId) =>
+                documentId.startsWith('glyph:')
+                    ? documentId.slice('glyph:'.length)
+                    : documentId
+            ),
+            previewOnly: window.cloudPlugin?.isSparsePreviewOnly?.() === true
+        };
+    }
+
+    private _encodeDocuments(documentIds: string[]): SnapshotDocument[] {
+        const documents: SnapshotDocument[] = [];
         for (const documentId of documentIds) {
             const bytes = this._bridge.encodeDocumentState?.(documentId);
             if (bytes?.byteLength) {
                 documents.push({ documentId, state: bytes });
             }
         }
-        this._send({
-            type: 'full-state-response',
-            state,
-            documents,
+        return documents;
+    }
+
+    private async _emitFullStateSnapshot(): Promise<void> {
+        const transferId = `${this._bridge.windowId}:${Date.now()}:${Math.random().toString(36).slice(2)}`;
+        const residency = this._readSparseResidency();
+        const postedBegin = this._send({
+            type: 'full-state-begin',
+            documents: this._encodeDocuments([
+                FONT_CORE_DOCUMENT_ID,
+                FONT_DEPS_DOCUMENT_ID
+            ]),
             changeLog: this._bridge.getChangeLog().slice(-80),
             collaborationLog: this._bridge.getCollaborationLog().slice(-80),
             cloudRelayState:
@@ -454,9 +567,269 @@ export class WindowSync {
                 window.cloudPlugin?.getRelayConnectionState
                     ? window.cloudPlugin.getRelayConnectionState()
                     : undefined,
+            residency,
+            transferId,
             windowId: this._bridge.windowId,
             sessionId: this._sessionId
         });
+        if (!postedBegin) {
+            this._abortFullStateSnapshot(
+                transferId,
+                'Linked-window snapshot failed to send font-core'
+            );
+            return;
+        }
+        const liveIds = this._bridge.listLiveGlyphDocumentIds?.() ?? [];
+        let postedGlyphCount = 0;
+        for (
+            let index = 0;
+            index < liveIds.length;
+            index += LINKED_WINDOW_GLYPH_BATCH
+        ) {
+            if (index > 0) {
+                await new Promise((resolve) => setTimeout(resolve, 0));
+            }
+            const documents = this._encodeDocuments(
+                liveIds.slice(index, index + LINKED_WINDOW_GLYPH_BATCH)
+            );
+            if (!documents.length) {
+                continue;
+            }
+            const posted = this._send({
+                type: 'full-state-glyphs',
+                documents,
+                transferId,
+                windowId: this._bridge.windowId,
+                sessionId: this._sessionId
+            });
+            if (!posted) {
+                this._abortFullStateSnapshot(
+                    transferId,
+                    'Linked-window snapshot failed to send glyph shards'
+                );
+                return;
+            }
+            postedGlyphCount += documents.length;
+        }
+        const postedEnd = this._send({
+            type: 'full-state-end',
+            transferId,
+            glyphCount: postedGlyphCount,
+            windowId: this._bridge.windowId,
+            sessionId: this._sessionId
+        });
+        if (!postedEnd) {
+            this._abortFullStateSnapshot(
+                transferId,
+                'Linked-window snapshot failed to finish'
+            );
+        }
+    }
+
+    private _abortFullStateSnapshot(transferId: string, error: string): void {
+        this._send({
+            type: 'full-state-abort',
+            transferId,
+            error,
+            windowId: this._bridge.windowId,
+            sessionId: this._sessionId
+        });
+    }
+
+    private _rememberSnapshotDocuments(documents: SnapshotDocument[]): void {
+        for (const document of documents) {
+            const bytes = toUint8Array(document.state);
+            this._inboundSeedDocuments.push({
+                documentId: document.documentId,
+                bytes: bytes.slice()
+            });
+            if (document.documentId.startsWith('glyph:')) {
+                this._inboundGlyphCount += 1;
+            }
+        }
+    }
+
+    private _applySnapshotDocuments(documents: SnapshotDocument[]): void {
+        if (!documents.length) {
+            return;
+        }
+        const shards = documents.map((document) => ({
+            documentId: document.documentId,
+            bytes: toUint8Array(document.state)
+        }));
+        if (typeof this._bridge.applySnapshotBytes === 'function') {
+            this._bridge.applySnapshotBytes(shards);
+            return;
+        }
+        this._bridge.applyDocumentSetState(shards);
+    }
+
+    private _applySparseResidency(
+        residency: SparseResidencyRelay,
+        options: { unload: boolean }
+    ): void {
+        this._bridge.setSparseResidency?.(
+            residency.sparse,
+            residency.workingGlyphIds
+        );
+        window.cloudPlugin?.applyRelayedSparseResidency?.(residency);
+        if (!options.unload) {
+            return;
+        }
+        this._bridge.unloadCleanGlyphDocuments?.(residency.residentGlyphIds, {
+            ignorePeers: true
+        });
+    }
+
+    private _acceptInboundTransfer(transferId: string): boolean {
+        if (this._hasAppliedFullState || !this._awaitingFullState) {
+            return false;
+        }
+        if (this._inboundTransferId && this._inboundTransferId !== transferId) {
+            return false;
+        }
+        this._inboundTransferId = transferId;
+        this._armFullStateTimeout();
+        return true;
+    }
+
+    private _serveHydrationRequest(msg: HydrationRequestMsg): void {
+        const serve = this._hydrationServeChain.then(async () => {
+            try {
+                const names =
+                    (await window.cloudPlugin?.ensureSparseHydration?.({
+                        text: msg.text,
+                        glyphNames: msg.glyphNames,
+                        purpose: msg.purpose
+                    })) ?? [];
+                this._send({
+                    type: 'hydration-result',
+                    requestId: msg.requestId,
+                    glyphNames: names,
+                    windowId: this._bridge.windowId,
+                    sessionId: this._sessionId
+                });
+            } catch (error) {
+                this._send({
+                    type: 'hydration-result',
+                    requestId: msg.requestId,
+                    glyphNames: [],
+                    error:
+                        error instanceof Error ? error.message : String(error),
+                    windowId: this._bridge.windowId,
+                    sessionId: this._sessionId
+                });
+            }
+        });
+        this._hydrationServeChain = serve.then(
+            () => undefined,
+            () => undefined
+        );
+    }
+
+    private _settleHydrationRequest(msg: HydrationResultMsg): void {
+        const pending = this._hydrationRequests.get(msg.requestId);
+        if (!pending) {
+            return;
+        }
+        clearTimeout(pending.timer);
+        this._hydrationRequests.delete(msg.requestId);
+        if (msg.error) {
+            pending.reject(new Error(msg.error));
+            return;
+        }
+        pending.resolve(msg.glyphNames);
+    }
+
+    /**
+     * Seed the linked Rust worker from the bridge after every resident
+     * shard in this transfer has been applied. The bootstrap promise stays
+     * open until that seed finishes.
+     */
+    private _seedLinkedWorker(): void {
+        const fontCompilation = window.fontCompilation;
+        if (!fontCompilation) {
+            this._resolveFullStateBootstrap(null);
+            return;
+        }
+        const fontManager = window.fontManager as
+            | (typeof window.fontManager & {
+                  buildWorkerSeedYjsState?: () => Uint8Array | null;
+                  buildWorkerSeedDocumentSet?: () => Array<{
+                      documentId: string;
+                      bytes: Uint8Array;
+                  }> | null;
+              })
+            | undefined;
+
+        void (async () => {
+            const initialized = fontCompilation.isInitialized
+                ? true
+                : await fontCompilation.initialize();
+            if (!initialized) {
+                throw new Error(
+                    'Font compilation worker not initialized for linked-window bootstrap'
+                );
+            }
+
+            const transferred = this._inboundSeedDocuments;
+            this._inboundSeedDocuments = [];
+            if (!transferred.length && !fontManager?.currentFont) {
+                throw new Error(
+                    'No font loaded for linked-window worker bootstrap'
+                );
+            }
+
+            const documentSet = transferred.length
+                ? transferred
+                : fontManager?.buildWorkerSeedDocumentSet?.();
+            const seedState = transferred.length
+                ? null
+                : fontManager?.buildWorkerSeedYjsState?.();
+            if (!documentSet?.length && !seedState?.length) {
+                throw new Error(
+                    'Failed to build worker seed Yjs state for linked-window bootstrap'
+                );
+            }
+
+            fontManager?.recordFullFontCrossing?.();
+            if (documentSet?.length) {
+                if (
+                    typeof fontCompilation.seedWorkerDocumentSet === 'function'
+                ) {
+                    await fontCompilation.seedWorkerDocumentSet(documentSet);
+                } else {
+                    await fontCompilation.sendMessage({
+                        type: 'seedYdoc',
+                        documents: documentSet.map(
+                            (document: {
+                                documentId: string;
+                                bytes: Uint8Array;
+                            }) => ({
+                                documentId: document.documentId,
+                                state: document.bytes
+                            })
+                        )
+                    });
+                }
+            } else {
+                await fontCompilation.sendMessage({
+                    type: 'seedYdoc',
+                    state: seedState
+                });
+            }
+        })()
+            .then(() => {
+                this._resolveFullStateBootstrap(null);
+            })
+            .catch((error: unknown) => {
+                console.warn(
+                    'Failed to bootstrap worker state from linked-window snapshot',
+                    error
+                );
+                window.fontCompilation?.setWorkerCacheDocumentReady?.(false);
+                this._resolveFullStateBootstrap(error);
+            });
     }
 
     /**
@@ -499,11 +872,16 @@ export class WindowSync {
 
     // ── Internal ─────────────────────────────────────────────────
 
-    private _send(msg: SyncMessage): void {
+    private _send(msg: SyncMessage): boolean {
+        if (!this._channel) {
+            return false;
+        }
         try {
-            this._channel?.postMessage(msg);
+            this._channel.postMessage(msg);
+            return true;
         } catch (error) {
             console.warn('WindowSync: failed to postMessage', error);
+            return false;
         }
     }
 
@@ -586,6 +964,11 @@ export class WindowSync {
         }
         const messages = this._pendingYjsMessages;
         this._pendingYjsMessages = [];
+        if (this._pendingResidency) {
+            const residency = this._pendingResidency;
+            this._pendingResidency = null;
+            this._applySparseResidency(residency, { unload: true });
+        }
         if (!messages.length) {
             return;
         }
@@ -606,18 +989,29 @@ export class WindowSync {
                     ? [packet.collaborationMessage]
                     : undefined;
                 try {
-                    this._bridge.applyRemoteUpdate(
-                        update,
-                        undefined,
-                        collaborationMessages,
-                        packet.documentId
-                    );
-                    if (window.windowRole?.isMainWindow()) {
-                        window.cloudPlugin?.relayPeerWindowUpdateToCloud?.(
+                    if (
+                        packet.collaborationMessage?.source ===
+                        'window-sync.catch-up'
+                    ) {
+                        this._bridge.applyDocumentCatchUp(
+                            packet.documentId || FONT_CORE_DOCUMENT_ID,
                             update,
-                            packet.collaborationMessage ?? null,
+                            collaborationMessages
+                        );
+                    } else {
+                        this._bridge.applyRemoteUpdate(
+                            update,
+                            undefined,
+                            collaborationMessages,
                             packet.documentId
                         );
+                        if (window.windowRole?.isMainWindow()) {
+                            window.cloudPlugin?.relayPeerWindowUpdateToCloud?.(
+                                update,
+                                packet.collaborationMessage ?? null,
+                                packet.documentId
+                            );
+                        }
                     }
                 } catch (error) {
                     console.warn(
@@ -672,7 +1066,7 @@ export class WindowSync {
                 this.sendFullStateSnapshot();
                 break;
 
-            case 'full-state-response':
+            case 'full-state-begin':
                 if (msg.windowId === this._bridge.windowId) return;
                 this._peers.add(msg.windowId);
                 if (this._hasAppliedFullState) {
@@ -683,130 +1077,116 @@ export class WindowSync {
                     }
                     return;
                 }
-                if (!this._awaitingFullState) {
+                if (!this._acceptInboundTransfer(msg.transferId)) {
                     return;
                 }
-                // The peer-wait timer only covers "no window answered". Apply
-                // + seedYdoc for a large document set can take longer; clear
-                // it on arrival so compiles stay blocked on the real seed.
-                if (this._fullStateBootstrapTimeout) {
-                    clearTimeout(this._fullStateBootstrapTimeout);
-                    this._fullStateBootstrapTimeout = null;
-                }
-                this._hasAppliedFullState = true;
-                this._awaitingFullState = false;
                 this._bridge.importChangeLog(msg.changeLog);
                 this._bridge.importCollaborationMessages(
                     msg.collaborationLog ?? []
                 );
-                if (msg.documents?.length) {
-                    this._bridge.applyDocumentSetState(
-                        msg.documents.map((document) => ({
-                            documentId: document.documentId,
-                            bytes: toUint8Array(document.state)
-                        }))
-                    );
-                } else {
-                    this._bridge.applyFullState(toUint8Array(msg.state));
-                }
-                const fontCompilation = window.fontCompilation;
-                if (fontCompilation) {
-                    const fontManager = window.fontManager as
-                        | (typeof window.fontManager & {
-                              syncBabelfontJsonFromCurrentModel?: () => boolean;
-                              buildWorkerSeedYjsState?: () => Uint8Array | null;
-                              buildWorkerSeedDocumentSet?: () => Array<{
-                                  documentId: string;
-                                  bytes: Uint8Array;
-                              }> | null;
-                          })
-                        | undefined;
-
-                    void (async () => {
-                        const initialized = fontCompilation.isInitialized
-                            ? true
-                            : await fontCompilation.initialize();
-                        if (!initialized) {
-                            throw new Error(
-                                'Font compilation worker not initialized for linked-window bootstrap'
-                            );
-                        }
-
-                        if (!fontManager?.currentFont) {
-                            throw new Error(
-                                'No font loaded for linked-window worker bootstrap'
-                            );
-                        }
-
-                        // Build a worker seed state (array-format nodes).
-                        // Rust now accepts array nodes natively via the updated serde.
-                        // YJS_ONLY (N2): Binary Yjs full-state-response —
-                        // no JSON crossing. The bridge.getFullState() call at line ~343
-                        // produces binary Yjs state.
-                        const documentSet =
-                            fontManager.buildWorkerSeedDocumentSet?.();
-                        const seedState =
-                            fontManager.buildWorkerSeedYjsState?.();
-                        if (!documentSet?.length && !seedState?.length) {
-                            throw new Error(
-                                'Failed to build worker seed Yjs state for linked-window bootstrap'
-                            );
-                        }
-
-                        fontManager.recordFullFontCrossing?.();
-                        if (documentSet?.length) {
-                            if (
-                                typeof fontCompilation.seedWorkerDocumentSet ===
-                                'function'
-                            ) {
-                                await fontCompilation.seedWorkerDocumentSet(
-                                    documentSet
-                                );
-                            } else {
-                                await fontCompilation.sendMessage({
-                                    type: 'seedYdoc',
-                                    documents: documentSet.map(
-                                        (document: {
-                                            documentId: string;
-                                            bytes: Uint8Array;
-                                        }) => ({
-                                            documentId: document.documentId,
-                                            state: document.bytes
-                                        })
-                                    )
-                                });
-                            }
-                        } else {
-                            await fontCompilation.sendMessage({
-                                type: 'seedYdoc',
-                                state: seedState
-                            });
-                        }
-                    })()
-                        .then(() => {
-                            this._resolveFullStateBootstrap(null);
-                        })
-                        .catch((error: unknown) => {
-                            console.warn(
-                                'Failed to bootstrap worker state from full-state response',
-                                error
-                            );
-                            window.fontCompilation?.setWorkerCacheDocumentReady?.(
-                                false
-                            );
-                            this._resolveFullStateBootstrap(error);
-                        });
-                } else {
-                    // fontCompilation not available — resolve the bootstrap
-                    // so compiles don't hang; they'll fail with their own
-                    // initialization error instead.
-                    this._resolveFullStateBootstrap(null);
-                }
+                this._inboundResidency = msg.residency;
+                this._inboundGlyphCount = 0;
+                this._inboundSeedDocuments = [];
+                this._rememberSnapshotDocuments(msg.documents);
+                this._applySnapshotDocuments(msg.documents);
+                this._applySparseResidency(msg.residency, { unload: false });
                 if (msg.cloudRelayState) {
                     window.cloudPlugin?.applyRelayedConnectionState?.(
                         msg.cloudRelayState
                     );
                 }
+                break;
+
+            case 'full-state-glyphs':
+                if (msg.windowId === this._bridge.windowId) return;
+                if (!this._acceptInboundTransfer(msg.transferId)) {
+                    return;
+                }
+                this._rememberSnapshotDocuments(msg.documents);
+                this._applySnapshotDocuments(msg.documents);
+                break;
+
+            case 'full-state-end':
+                if (msg.windowId === this._bridge.windowId) return;
+                if (this._inboundTransferId !== msg.transferId) {
+                    return;
+                }
+                if (this._hasAppliedFullState || !this._awaitingFullState) {
+                    return;
+                }
+                if (msg.glyphCount !== this._inboundGlyphCount) {
+                    this._failFullStateTransfer(
+                        new Error(
+                            'Linked-window snapshot glyph count did not match'
+                        )
+                    );
+                    return;
+                }
+                this._hasAppliedFullState = true;
+                this._awaitingFullState = false;
+                this._inboundTransferId = null;
+                if (this._fullStateBootstrapTimeout) {
+                    clearTimeout(this._fullStateBootstrapTimeout);
+                    this._fullStateBootstrapTimeout = null;
+                }
+                if (this._inboundResidency) {
+                    this._applySparseResidency(this._inboundResidency, {
+                        unload: true
+                    });
+                    this._inboundResidency = null;
+                }
+                try {
+                    const fontData = this._bridge.materializeSnapshotFont?.();
+                    if (fontData) {
+                        this._residentSnapshotConsumer?.(fontData);
+                    }
+                } catch (error) {
+                    this._failFullStateTransfer(
+                        error instanceof Error
+                            ? error
+                            : new Error(String(error))
+                    );
+                    return;
+                }
+                this._seedLinkedWorker();
+                break;
+
+            case 'full-state-abort':
+                if (msg.windowId === this._bridge.windowId) return;
+                if (
+                    this._inboundTransferId &&
+                    this._inboundTransferId !== msg.transferId
+                ) {
+                    return;
+                }
+                this._failFullStateTransfer(new Error(msg.error));
+                break;
+
+            case 'hydration-request':
+                if (msg.windowId === this._bridge.windowId) return;
+                this._peers.add(msg.windowId);
+                if (!window.windowRole?.isMainWindow()) {
+                    return;
+                }
+                this._serveHydrationRequest(msg);
+                break;
+
+            case 'hydration-result':
+                if (msg.windowId === this._bridge.windowId) return;
+                this._settleHydrationRequest(msg);
+                break;
+
+            case 'sparse-residency':
+                if (msg.windowId === this._bridge.windowId) return;
+                this._peers.add(msg.windowId);
+                if (
+                    this._awaitingFullState ||
+                    this._fullStateBootstrapResolve
+                ) {
+                    this._pendingResidency = msg.residency;
+                    break;
+                }
+                this._applySparseResidency(msg.residency, { unload: true });
                 break;
 
             case 'window-closing':

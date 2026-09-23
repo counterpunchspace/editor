@@ -93,7 +93,7 @@ Use these as stress cases when sizing catalog/deps budgets and hydrate UX:
 | Deps encoding | `edges: Y.Map<sourceUUID, Y.Map<targetUUID, kind>>` + `sourceRevision`; invert reverse in memory |
 | Closure (compile) | `close_layout(seeds)` then forward deps; no reverse set |
 | Closure (UI sparse hydrate) | Live `font-deps` first; FEA alts of **seeds only**; reverse\* component/`both` from seeds+alts; forward\* **strict component** into working; metrics/`both` stems **hidden**; never GSUB-close the reverse set; one plan, one glyph fetch |
-| Linked windows | Main window is sole cloud hub; BC is multi-doc; per-window residency |
+| Linked windows | Main window is sole cloud hub; BC is multi-doc; linked windows share main’s resident shards |
 | Small vs large | Same machinery; default hydrate policy is `all` vs working-set |
 | Full-font compile | Session-scoped Fly Machine (8–16 GB); core dirty + HTTP glyph catch-up (not v1) |
 | Quotas | Website is source of truth; **asset owner** subscription; plugin **and** collab enforce |
@@ -774,20 +774,21 @@ over `BroadcastChannel` (`WindowSync`). Packets are document-scoped
 signals use `onGlyphRevisionSignal`, not `onLocalUpdate` (avoids Yjs client
 clock holes on the same core doc).
 
-Each window keeps core + deps always, plus the glyph docs it has applied.
-Bootstrap is `full-state-request/response` with a **document set** that
-includes core, deps, every live glyph Y.Doc, and the hydrated subset. The
-linked worker is seeded with `seedWorkerDocumentSet`. Linked windows do not
-attach a cloud live session.
+Each window keeps core + deps always, plus the same glyph docs main has
+resident. Bootstrap is `full-state-request` answered by `full-state-begin`,
+batched `full-state-glyphs`, and `full-state-end`. That set is core, deps,
+and every live glyph Y.Doc on main — the full font when main is fully
+loaded, the hydrated working∪hidden set when main is sparse. Core still
+carries the catalog, so the overview count matches main. The linked worker
+is seeded with `seedWorkerDocumentSet` only after `full-state-end`. Linked
+windows do not attach a cloud live session and do not HTTP-fetch their own
+glyph closure on open.
 
-After main reaches `connected` with `pendingSyncCount === 0` (reload
-catch-up finished), it pushes another document-set snapshot so a linked
-window that bootstrapped from a packed checkpoint is rebaselined to the
-live journal. Later `full-state-response` messages still apply. CJK-scale
-bootstrap (core only + selective glyph fetch) is later.
-
-Cloud HTTP catch-up on main is fanned out on BC. A MetadataFree glyph packet
-on a linked window is applied as `applyDocumentCatchUp`.
+A linked window asks main to hydrate (`hydration-request`). Main performs
+the HTTP fetch and relays new shards plus `sparse-residency` (working ids,
+resident ids, preview-only). Cloud HTTP catch-up on main is fanned out on
+BC. A MetadataFree glyph packet (`window-sync.catch-up`) on a linked window
+is applied as `applyDocumentCatchUp`.
 
 | Path | Linked windows |
 | --- | --- |

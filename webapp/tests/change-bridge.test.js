@@ -360,6 +360,56 @@ function flushTimers() {
     jest.runAllTimers();
 }
 
+function deliverLinkedWindowSnapshot(sync, bridge, windowId) {
+    const documents = bridge.encodeDocumentSet().map((shard) => ({
+        documentId: shard.documentId,
+        state: shard.bytes
+    }));
+    const structural = documents.filter(
+        (document) =>
+            document.documentId === 'font-core' ||
+            document.documentId === 'font-deps'
+    );
+    const glyphs = documents.filter((document) =>
+        document.documentId.startsWith('glyph:')
+    );
+    const transferId = `test-${windowId}`;
+    const sessionId = sync._sessionId;
+    sync._handleMessage({
+        type: 'full-state-begin',
+        documents: structural,
+        changeLog: bridge.getChangeLog(),
+        collaborationLog: bridge.getCollaborationLog(),
+        residency: {
+            sparse: false,
+            workingGlyphIds: [],
+            residentGlyphIds: glyphs.map((document) =>
+                document.documentId.slice('glyph:'.length)
+            ),
+            previewOnly: false
+        },
+        transferId,
+        windowId,
+        sessionId
+    });
+    if (glyphs.length) {
+        sync._handleMessage({
+            type: 'full-state-glyphs',
+            documents: glyphs,
+            transferId,
+            windowId,
+            sessionId
+        });
+    }
+    sync._handleMessage({
+        type: 'full-state-end',
+        glyphCount: glyphs.length,
+        transferId,
+        windowId,
+        sessionId
+    });
+}
+
 const GENERIC_ACCESSOR_TEST_EXCLUSIONS = new Set([
     'data',
     'lsb',
@@ -5984,7 +6034,7 @@ describe('WindowSync', () => {
             999
         );
 
-        // Bridge2 starts empty — will be bootstrapped via full-state-response
+        // Bridge2 starts empty — will be bootstrapped via the resident snapshot.
         const bridge2 = new ChangeBridge('win-2');
 
         const sync1 = new WindowSync(bridge1, 'font-channel');
@@ -6042,13 +6092,13 @@ describe('WindowSync', () => {
         sync2.requestFullState();
         jest.advanceTimersByTime(1);
         expect(
-            captured.some((message) => message.type === 'full-state-response')
+            captured.some((message) => message.type === 'full-state-end')
         ).toBe(false);
 
         sync1.notifyCloudBootstrapReady();
         jest.advanceTimersByTime(1);
         expect(
-            captured.some((message) => message.type === 'full-state-response')
+            captured.some((message) => message.type === 'full-state-end')
         ).toBe(true);
         expect(
             bridge2.getYValue(['glyphs', 'A', 'layers', 'layer-1', 'width'])
@@ -6166,18 +6216,7 @@ describe('WindowSync', () => {
         expect(trackWorkerDocumentSync).toHaveBeenCalledTimes(1);
         expect(earlyCompileSettled).toBe(false);
 
-        sync2._handleMessage({
-            type: 'full-state-response',
-            state: bridge1.getFullState(),
-            documents: bridge1.encodeDocumentSet().map((shard) => ({
-                documentId: shard.documentId,
-                state: shard.bytes
-            })),
-            changeLog: bridge1.getChangeLog(),
-            collaborationLog: bridge1.getCollaborationLog(),
-            windowId: 'win-1',
-            sessionId: sync2._sessionId
-        });
+        deliverLinkedWindowSnapshot(sync2, bridge1, 'win-1');
         await Promise.resolve();
         await Promise.resolve();
 
@@ -6189,18 +6228,19 @@ describe('WindowSync', () => {
         });
 
         expect(initialize).toHaveBeenCalledTimes(1);
-        expect(buildWorkerSeedYjsState).toHaveBeenCalledTimes(1);
+        expect(buildWorkerSeedYjsState).not.toHaveBeenCalled();
         expect(recordFullFontCrossing).toHaveBeenCalledTimes(1);
-        // syncBabelfontJsonFromCurrentModel is no longer called — the worker's
-        // seedYdoc handler (init_ydoc_from_state) populates all caches from
-        // binary Yjs state alone, eliminating the storeFontJson step.
-        // storeFontJson is no longer sent during linked-window bootstrap.
         expect(sendMessage).toHaveBeenCalledTimes(1);
         expect(sendMessage).toHaveBeenNthCalledWith(
             1,
             expect.objectContaining({
                 type: 'seedYdoc',
-                state: expect.any(Uint8Array)
+                documents: expect.arrayContaining([
+                    expect.objectContaining({
+                        documentId: expect.any(String),
+                        state: expect.any(Uint8Array)
+                    })
+                ])
             })
         );
 
@@ -6256,18 +6296,7 @@ describe('WindowSync', () => {
         );
 
         sync2.requestFullState();
-        sync2._handleMessage({
-            type: 'full-state-response',
-            state: bridge1.getFullState(),
-            documents: bridge1.encodeDocumentSet().map((shard) => ({
-                documentId: shard.documentId,
-                state: shard.bytes
-            })),
-            changeLog: bridge1.getChangeLog(),
-            collaborationLog: bridge1.getCollaborationLog(),
-            windowId: 'win-1',
-            sessionId: sync2._sessionId
-        });
+        deliverLinkedWindowSnapshot(sync2, bridge1, 'win-1');
         await Promise.resolve();
         await Promise.resolve();
 
@@ -6412,18 +6441,7 @@ describe('WindowSync', () => {
         expect(setWorkerCacheDocumentReady).toHaveBeenCalledWith(false);
         expect(trackWorkerDocumentSync).toHaveBeenCalledTimes(1);
 
-        sync2._handleMessage({
-            type: 'full-state-response',
-            state: bridge1.getFullState(),
-            documents: bridge1.encodeDocumentSet().map((shard) => ({
-                documentId: shard.documentId,
-                state: shard.bytes
-            })),
-            changeLog: bridge1.getChangeLog(),
-            collaborationLog: bridge1.getCollaborationLog(),
-            windowId: 'win-1',
-            sessionId: sync2._sessionId
-        });
+        deliverLinkedWindowSnapshot(sync2, bridge1, 'win-1');
         await Promise.resolve();
         await Promise.resolve();
 

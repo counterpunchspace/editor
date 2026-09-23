@@ -439,6 +439,33 @@ class OpenedFont {
         this.compileRequestVersion = 0;
     }
 
+    /** Install a font object already built from a linked-window snapshot. */
+    static fromResidentData(
+        fontData: Record<string, unknown>,
+        fontModel: Font,
+        path: string,
+        sourcePlugin: FilesystemPlugin,
+        fileHandle?: FileSystemFileHandle,
+        directoryHandle?: FileSystemDirectoryHandle
+    ): OpenedFont {
+        const opened = Object.create(OpenedFont.prototype) as OpenedFont;
+        opened.babelfontData = fontData;
+        opened.fontModel = fontModel;
+        opened.babelfontJson = '';
+        opened.sourcePlugin = sourcePlugin;
+        opened.fileHandle = fileHandle;
+        opened.directoryHandle = directoryHandle;
+        opened.path = path;
+        opened.name =
+            (fontData as { names?: { family_name?: { dflt?: string } } })?.names
+                ?.family_name?.dflt || 'Untitled Font';
+        opened.needsRecompile = false;
+        opened.hasUnsavedChanges = false;
+        opened.changeVersion = 0;
+        opened.compileRequestVersion = 0;
+        return opened;
+    }
+
     private normalizeComponentTransformForRust(
         transform: unknown
     ): Babelfont.DecomposedAffine {
@@ -2143,6 +2170,54 @@ class FontManager {
                 detail: {
                     path,
                     babelfontData: newFont.babelfontData
+                }
+            })
+        );
+    }
+
+    /**
+     * Install a resident snapshot without parsing source JSON again.
+     * babelfontJson stays empty until a later compile or save rebuilds it.
+     */
+    adoptResidentFont(
+        fontData: Record<string, unknown>,
+        path: string,
+        sourcePlugin: FilesystemPlugin,
+        fileHandle?: FileSystemFileHandle,
+        directoryHandle?: FileSystemDirectoryHandle
+    ) {
+        this.resetStateForNewFont();
+        assertBabelfontLayerWidths(fontData, 'adoptResidentFont');
+        const fontModel = Font.fromData(fontData as never);
+        const newFont = OpenedFont.fromResidentData(
+            fontData,
+            fontModel,
+            path,
+            sourcePlugin,
+            fileHandle,
+            directoryHandle
+        );
+        const newid = `font-${Date.now()}`;
+        this.openedFonts.set(newid, newFont);
+        this.currentFontId = newid;
+        window.currentFontModel = newFont.fontModel;
+        this.editingFont = null;
+        this.glyphOrderCache = null;
+        this.closureCache = null;
+        this.editingSubsetSnapshotGlyphs = [];
+        this.editingSubsetSnapshotKey = '';
+        this.coveredSparseHydrationKey = null;
+        this.pendingBabelfontJsonSyncAfterDrag = true;
+        if (window.glyphCanvas) {
+            window.glyphCanvas.initialFontLoaded = false;
+        }
+        this.updateWindowTitle();
+        window.dispatchEvent(
+            new CustomEvent('fontModelReady', {
+                detail: {
+                    path,
+                    babelfontData: newFont.babelfontData,
+                    linkedSnapshot: true
                 }
             })
         );
@@ -6806,14 +6881,28 @@ window.addEventListener('fontLoaded', async (event: Event) => {
 
         window.autoCompileManager?.setStartupBlocked?.(true);
 
-        // Load font into font manager
-        await fontManager!.loadFont(
-            detail.babelfontJson,
-            detail.path,
-            detail.sourcePlugin,
-            detail.fileHandle,
-            detail.directoryHandle
-        );
+        // Load font into font manager. A linked snapshot already built the
+        // object from the main window's resident shards.
+        const residentFontData = (
+            detail as { residentFontData?: Record<string, unknown> }
+        ).residentFontData;
+        if (residentFontData) {
+            fontManager!.adoptResidentFont(
+                residentFontData,
+                detail.path,
+                detail.sourcePlugin,
+                detail.fileHandle,
+                detail.directoryHandle
+            );
+        } else {
+            await fontManager!.loadFont(
+                detail.babelfontJson,
+                detail.path,
+                detail.sourcePlugin,
+                detail.fileHandle,
+                detail.directoryHandle
+            );
+        }
 
         emitOpenLifecycle(openSessionId, 'loadFontComplete', {
             openedAt

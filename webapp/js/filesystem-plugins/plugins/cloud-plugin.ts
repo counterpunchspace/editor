@@ -2245,6 +2245,11 @@ export class CloudPlugin extends FilesystemPlugin {
         return this._sparsePreviewOnly;
     }
 
+    /** Linked windows mirror the main window's preview-only flag. */
+    applyRelayedSparseResidency(residency: { previewOnly: boolean }): void {
+        this._sparsePreviewOnly = residency.previewOnly === true;
+    }
+
     async hydrateOverviewGlyphs(seedNames: string[]): Promise<string[]> {
         return this.ensureSparseHydration({ glyphNames: seedNames });
     }
@@ -2254,6 +2259,15 @@ export class CloudPlugin extends FilesystemPlugin {
         glyphNames?: string[];
         purpose?: 'ui' | 'compile';
     }): Promise<string[]> {
+        if (window.windowRole?.isLinkedWindow?.()) {
+            const sync = window.windowSync;
+            if (!sync?.requestHydration) {
+                throw new Error(
+                    'Linked window cannot hydrate glyphs without the main window'
+                );
+            }
+            return sync.requestHydration(input);
+        }
         const generation = this._hydrationGeneration;
         if (
             this._overviewHydrateInFlight &&
@@ -2474,6 +2488,17 @@ export class CloudPlugin extends FilesystemPlugin {
             }
             if (isCurrent()) {
                 this._sparsePreviewOnly = result.previewOnly === true;
+                const liveIds = bridge.listLiveGlyphDocumentIds?.() ?? [];
+                window.windowSync?.broadcastSparseResidency?.({
+                    sparse: bridge.hasSparseWorkingSet?.() === true,
+                    workingGlyphIds: bridge.listSparseWorkingGlyphIds?.() ?? [],
+                    residentGlyphIds: liveIds.map((documentId) =>
+                        documentId.startsWith('glyph:')
+                            ? documentId.slice('glyph:'.length)
+                            : documentId
+                    ),
+                    previewOnly: this._sparsePreviewOnly
+                });
             }
             const changedNames = [...new Set(loadedNames)];
             if (!changedNames.length) {
@@ -3335,14 +3360,14 @@ export class CloudPlugin extends FilesystemPlugin {
 
         beginLoadingCursor();
         const urlSparse = readUrlState().sparse === true;
-        const linkedOrSync =
+        const deferGlyphHydration =
             window.windowRole?.isLinkedWindow?.() === true ||
             (typeof location !== 'undefined' &&
                 new URLSearchParams(location.search).has('sync'));
         const openPromise = this._openAssetInternal(assetId, {
             awaitLiveBridge: true,
-            sparseHydration:
-                this._pendingSparseHydration || urlSparse || linkedOrSync
+            sparseHydration: this._pendingSparseHydration || urlSparse,
+            deferGlyphHydration
         });
         this._pendingSparseHydration = false;
         this._pendingOpenAsset = {
@@ -3371,6 +3396,7 @@ export class CloudPlugin extends FilesystemPlugin {
         options?: {
             awaitLiveBridge?: boolean;
             sparseHydration?: boolean;
+            deferGlyphHydration?: boolean;
         }
     ): Promise<void> {
         const user = await this._ensureCloudUser({
@@ -3449,7 +3475,11 @@ export class CloudPlugin extends FilesystemPlugin {
                                 progressTotal: session.total
                             })
                         );
-                    if (!useSparse) {
+                    if (options?.deferGlyphHydration) {
+                        // Linked windows take glyph residency from the main
+                        // window snapshot. Core still carries the catalog.
+                        usedSparseHydration = false;
+                    } else if (!useSparse) {
                         session.update({
                             total: 2 + catalogIds.length,
                             message: 'Loading font…'

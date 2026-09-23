@@ -1211,6 +1211,15 @@ export class PatchSyncEngine {
         this.beginSparseWorkingSet(glyphIds);
     }
 
+    /** Install or clear the sparse working set relayed from the main window. */
+    setSparseResidency(active: boolean, workingGlyphIds: string[] = []): void {
+        if (!active) {
+            this._clearSparseWorkingSet();
+            return;
+        }
+        this.beginSparseWorkingSet(workingGlyphIds);
+    }
+
     private _clearSparseWorkingSet(): void {
         this._sparseSession = false;
         this._sparseWorkingGlyphIds.clear();
@@ -1594,14 +1603,21 @@ export class PatchSyncEngine {
         }
     }
 
-    unloadCleanGlyphDocuments(keepIds: Iterable<string>): string[] {
+    unloadCleanGlyphDocuments(
+        keepIds: Iterable<string>,
+        options?: { ignorePeers?: boolean }
+    ): string[] {
         const keep = new Set([...keepIds].filter(Boolean));
         const linkedPeers = (
             window as Window & {
                 windowSync?: { peers?: { size?: number } };
             }
         ).windowSync?.peers;
-        if (linkedPeers && Number(linkedPeers.size) > 0) {
+        if (
+            !options?.ignorePeers &&
+            linkedPeers &&
+            Number(linkedPeers.size) > 0
+        ) {
             return [];
         }
         const liveName =
@@ -1649,6 +1665,10 @@ export class PatchSyncEngine {
             this._lastEncodedShardBytes.delete(documentId);
             unloaded.push(glyphId);
         }
+        if (unloaded.length) {
+            this._syncAllGlyphsFromYDoc();
+            this._emitAfterSync();
+        }
         return unloaded;
     }
 
@@ -1680,6 +1700,54 @@ export class PatchSyncEngine {
             this._isApplyingRemote = false;
         }
         this._repairGeometryOrphansAfterConvergedState();
+    }
+
+    /**
+     * Install snapshot shard bytes without rebuilding the font model.
+     * Linked-window batches use this so a full resident set does not
+     * rehydrate once per batch.
+     */
+    applySnapshotBytes(shards: EncodedShard[]): void {
+        if (!shards.length) {
+            return;
+        }
+        this._isApplyingRemote = true;
+        try {
+            if (!this._fontJson) {
+                this._fontJson = {};
+            }
+            for (const shard of shards) {
+                const doc =
+                    shard.documentId === FONT_CORE_DOCUMENT_ID
+                        ? this.yDoc
+                        : shard.documentId === FONT_DEPS_DOCUMENT_ID
+                          ? this.depsDoc
+                          : this._ensureGlyphDocFromShard(shard);
+                Y.applyUpdate(doc, shard.bytes, SYSTEM_REMOTE_ORIGIN);
+                this._noteBroadcastStateVector(shard.documentId);
+                this._lastEncodedShardBytes.set(
+                    shard.documentId,
+                    shard.bytes.byteLength
+                );
+            }
+        } finally {
+            this._isApplyingRemote = false;
+        }
+    }
+
+    /**
+     * Build the font JSON once after every resident snapshot shard is in.
+     */
+    materializeSnapshotFont(): Record<string, Unsafe> {
+        if (!this._fontJson) {
+            this._fontJson = {};
+        }
+        this._rebuildGlyphNameIndexFromDocs();
+        this._rehydrateEntireFontJsonFromYDoc();
+        this._canonicalizeFullStateRawFontJson();
+        this._setupFontUndoManager();
+        this._emitAfterSync();
+        return this._fontJson;
     }
 
     private _ensureGlyphDocFromShard(shard: EncodedShard): Y.Doc {

@@ -34,6 +34,7 @@ import {
 } from './perf-timeline';
 import { beginLoadingCursor, endLoadingCursor } from './loading-cursor';
 import { reloadLinkedEditorWindows } from './window-buttons';
+import { isLinkedPeerSnapshotSearch } from './window-sync';
 import { readUrlState, updateUrlState } from './url-state';
 import { TOUR_FUSTAT_PATH, TOUR_SAMPLE_TEXT } from './tour-slides';
 import { shouldHandleOpenPathBeforeEditorReady } from './open-font-readiness';
@@ -4215,6 +4216,23 @@ document.addEventListener('DOMContentLoaded', () => {
         };
 
         try {
+            if (
+                isLinkedPeerSnapshotSearch(window.location.search) &&
+                pluginId &&
+                fontPath
+            ) {
+                const plugin = pluginRegistry.get(pluginId);
+                window.dispatchEvent(
+                    new CustomEvent('linkedWindowPeerOpen', {
+                        detail: {
+                            path: fontPath,
+                            sourcePlugin: plugin ?? null
+                        }
+                    })
+                );
+                return;
+            }
+
             if (
                 pluginId === 'memory' &&
                 fontPath &&

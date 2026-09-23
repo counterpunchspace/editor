@@ -514,7 +514,7 @@ describe('CloudPlugin.openAsset', () => {
         expect(mockConnectDirect).toHaveBeenCalledTimes(2);
     });
 
-    test('linked windows request sparse hydration on open', async () => {
+    test('linked windows defer glyph hydration to the main window', async () => {
         window.windowRole = {
             isMainWindow: () => false,
             isLinkedWindow: () => true
@@ -529,9 +529,38 @@ describe('CloudPlugin.openAsset', () => {
             'asset-1',
             expect.objectContaining({
                 awaitLiveBridge: true,
-                sparseHydration: true
+                sparseHydration: false,
+                deferGlyphHydration: true
             })
         );
+    });
+
+    test('linked windows delegate sparse hydration and do not fetch room tokens', async () => {
+        const originalSync = window.windowSync;
+        window.windowRole = {
+            isMainWindow: () => false,
+            isLinkedWindow: () => true
+        };
+        const requestHydration = jest.fn(async () => ['a']);
+        window.windowSync = { requestHydration };
+        const fetchToken = jest.spyOn(plugin, '_fetchRoomToken');
+
+        try {
+            await expect(
+                plugin.ensureSparseHydration({
+                    glyphNames: ['a'],
+                    purpose: 'ui'
+                })
+            ).resolves.toEqual(['a']);
+            expect(requestHydration).toHaveBeenCalledWith({
+                glyphNames: ['a'],
+                purpose: 'ui'
+            });
+            expect(fetchToken).not.toHaveBeenCalled();
+        } finally {
+            window.windowSync = originalSync;
+            fetchToken.mockRestore();
+        }
     });
 
     test('main windows do not force sparse hydration from window role', async () => {

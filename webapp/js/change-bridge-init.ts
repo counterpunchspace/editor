@@ -6,8 +6,9 @@
  *  2. A WindowSync for cross-window collaboration
  *  3. Undo/redo dirty marking + babelfontJson resync callbacks
  *
- * If the URL contains `sync=true`, the bridge skips `initFromJson()` and
- * instead requests a full-state transfer from an existing peer window.
+ * If the URL contains `sync=true`, the bridge is created from the file path
+ * before any source convert, skips `initFromJson()`, and requests the main
+ * window's resident snapshot. The font is adopted once that snapshot ends.
  */
 
 import {
@@ -17,6 +18,7 @@ import {
 import { fromYType } from './change-bridge-ydoc';
 import { Font } from './babelfont-model';
 import { WindowSync, windowSyncChannelName } from './window-sync';
+import type { FilesystemPlugin } from './filesystem-plugins';
 import { fontCompilation, fullFontCompilation } from './font-compilation';
 import { timelineSpanEnd, timelineSpanStart } from './perf-timeline';
 import { Logger } from './logger';
@@ -2760,6 +2762,12 @@ function isSyncWindow(): boolean {
     }
 }
 
+let linkedPeerBootstrapActive = false;
+let linkedPeerOpenDetail: {
+    path: string;
+    sourcePlugin: FilesystemPlugin | null;
+} | null = null;
+
 /**
  * Tear down any existing PatchSyncEngine / WindowSync before loading a new font.
  */
@@ -2778,7 +2786,18 @@ function destroyExisting(): void {
 function initializeBridge(detail: {
     path: string;
     babelfontData: Record<string, unknown>;
+    linkedSnapshot?: boolean;
 }): void {
+    if (
+        detail?.linkedSnapshot &&
+        linkedPeerBootstrapActive &&
+        window.patchSyncEngine &&
+        window.windowSync
+    ) {
+        linkedPeerBootstrapActive = false;
+        return;
+    }
+
     if (!detail?.babelfontData) {
         return;
     }
@@ -3082,6 +3101,23 @@ function initializeBridge(detail: {
 
     const sync = new WindowSync(bridge, channelName);
     window.windowSync = sync;
+    if (linkedPeerBootstrapActive && linkedPeerOpenDetail) {
+        const openDetail = linkedPeerOpenDetail;
+        sync.setResidentSnapshotConsumer((fontData) => {
+            window.dispatchEvent(
+                new CustomEvent('fontLoaded', {
+                    detail: {
+                        path: openDetail.path,
+                        sourcePlugin: openDetail.sourcePlugin,
+                        residentFontData: fontData,
+                        babelfontJson: '',
+                        fileHandle: undefined,
+                        directoryHandle: undefined
+                    }
+                })
+            );
+        });
+    }
     sync.onMainWindowClosing(() => {
         if (window.windowRole?.isLinkedWindow()) {
             window.close();
@@ -3107,9 +3143,29 @@ window.addEventListener('fontModelReady', (event: Event) => {
     const detail = (event as CustomEvent).detail as {
         path: string;
         babelfontData: Record<string, unknown>;
+        linkedSnapshot?: boolean;
     };
 
     initializeBridge(detail);
+});
+
+window.addEventListener('linkedWindowPeerOpen', (event: Event) => {
+    const detail = (event as CustomEvent).detail as {
+        path?: string;
+        sourcePlugin?: FilesystemPlugin | null;
+    };
+    if (!detail?.path || window.patchSyncEngine) {
+        return;
+    }
+    linkedPeerOpenDetail = {
+        path: detail.path,
+        sourcePlugin: detail.sourcePlugin ?? null
+    };
+    linkedPeerBootstrapActive = true;
+    initializeBridge({
+        path: detail.path,
+        babelfontData: {}
+    });
 });
 
 // Fallback bootstrap: if a font is already loaded before this module
