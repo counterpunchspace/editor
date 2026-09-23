@@ -82,10 +82,26 @@ export function assertCompileStamp(
             'Compile stamp requires compileEditType before the Yjs transaction (null means full)'
         );
     }
+    if (
+        editTypeIsPresent(compileEditType) &&
+        !KNOWN_STAMPS.has(compileEditType)
+    ) {
+        throw new Error(
+            `Unknown compileEditType "${compileEditType}" before the Yjs transaction`
+        );
+    }
     return {
         compileChangeSource,
-        compileEditType: normalizeCompileEditStamp(compileEditType)
+        compileEditType: editTypeIsPresent(compileEditType)
+            ? (compileEditType as CompileEditStamp)
+            : null
     };
+}
+
+function editTypeIsPresent(
+    editType: string | null | undefined
+): editType is string {
+    return editType != null && editType !== '';
 }
 
 export type StampedCompileContext = {
@@ -93,6 +109,8 @@ export type StampedCompileContext = {
     changeSource: string;
     /** True when the packet had no compileChangeSource and compiled full. */
     unstamped: boolean;
+    /** True when the packet named an edit type this build does not know. */
+    unknownStamp: boolean;
 };
 
 /**
@@ -110,16 +128,23 @@ export function readCommittedCompileStamp(
         if (!entry.compileChangeSource) {
             continue;
         }
+        const rawEditType = entry.compileEditType;
+        const unknownStamp =
+            editTypeIsPresent(rawEditType) && !KNOWN_STAMPS.has(rawEditType);
         return {
             changeSource: entry.compileChangeSource,
-            editType: normalizeCompileEditStamp(entry.compileEditType),
-            unstamped: false
+            editType: unknownStamp
+                ? null
+                : normalizeCompileEditStamp(rawEditType),
+            unstamped: false,
+            unknownStamp
         };
     }
     return {
         changeSource: fallbackChangeSource,
         editType: null,
-        unstamped: true
+        unstamped: true,
+        unknownStamp: false
     };
 }
 
@@ -133,6 +158,7 @@ export function compilationPlan(input: {
     const editType = input.editType;
     const live = input.dataFreshnessMode === 'live-drag-worker-preview';
     const remote = changeSource.startsWith('remote-');
+    const liveOrLegacyRemote = live || remote;
 
     if (editType === 'guide') {
         return {
@@ -167,33 +193,29 @@ export function compilationPlan(input: {
         };
     }
 
-    const fastPath =
-        live ||
-        remote ||
-        changeSource === 'master-reinterpolate-batch' ||
-        changeSource.startsWith('mouse-drag') ||
-        changeSource.startsWith('keyboard');
-
-    if (fastPath && (editType === 'outline' || editType === 'sidebearing')) {
+    if (
+        liveOrLegacyRemote &&
+        (editType === 'outline' || editType === 'sidebearing')
+    ) {
         return {
             skipCompile: false,
             compilationMode: 'outline-only',
             optionOverrides: OUTLINE_LIVE_OVERRIDES,
-            armDeferredFull: !live && !remote
+            armDeferredFull: false
         };
     }
 
-    if (fastPath && editType === 'anchor') {
+    if (liveOrLegacyRemote && editType === 'anchor') {
         return {
             skipCompile: false,
             compilationMode: 'anchor-only',
             optionOverrides: VARC_OFF,
-            armDeferredFull: !live && !remote
+            armDeferredFull: false
         };
     }
 
     if (
-        (live || remote || changeSource.startsWith('keyboard')) &&
+        (liveOrLegacyRemote || changeSource.startsWith('keyboard')) &&
         (editType === 'kerning-value' || editType === 'kerning-groups')
     ) {
         return {

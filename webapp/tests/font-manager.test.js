@@ -1677,7 +1677,11 @@ describe('FontManager editing subset inclusion', () => {
     });
 
     test('mouse-drag outline compiles keep the outline-only fast path even when dragging getter is false at compile time', async () => {
-        setRequestCompileContext('mouse-drag-outline', 'outline');
+        setRequestCompileContext(
+            'mouse-drag-outline',
+            'outline',
+            'live-drag-worker-preview'
+        );
         window.glyphCanvas.outlineEditor.draggingSomething = false;
 
         await fontManager.compileEditingFont('a', [], ['a']);
@@ -1868,7 +1872,11 @@ describe('FontManager editing subset inclusion', () => {
     });
 
     test('keyboard-sidebearing live compiles use sidebearing outline-only flags', async () => {
-        setRequestCompileContext('keyboard-sidebearing', 'sidebearing');
+        setRequestCompileContext(
+            'keyboard-sidebearing',
+            'sidebearing',
+            'live-drag-worker-preview'
+        );
 
         await fontManager.compileEditingFont('a', [], ['a']);
 
@@ -1883,7 +1891,7 @@ describe('FontManager editing subset inclusion', () => {
         });
     });
 
-    test('master reinterpolation batch compiles stay on the outline-only incremental fast path', async () => {
+    test('committed master reinterpolation compiles full', async () => {
         setRequestCompileContext('master-reinterpolate-batch', 'outline');
 
         await fontManager.compileEditingFont('a', [], ['a']);
@@ -1893,13 +1901,11 @@ describe('FontManager editing subset inclusion', () => {
         ).not.toHaveBeenCalled();
         expect(compileEditingSpy).toHaveBeenCalledTimes(1);
         expect(compileEditingSpy.mock.calls[0][3]).toMatchObject({
-            compileSource: 'master-reinterpolate-batch',
-            optionOverrides: {
-                skip_features: true,
-                skip_kerning: true,
-                produce_varc_table: false
-            }
+            compileSource: 'master-reinterpolate-batch'
         });
+        expect(
+            compileEditingSpy.mock.calls[0][3].optionOverrides
+        ).toBeUndefined();
     });
 
     test('recompileEditingFont ignores stale ambient context without a request snapshot', async () => {
@@ -1919,7 +1925,11 @@ describe('FontManager editing subset inclusion', () => {
     });
 
     test('mouse-drag anchor compiles keep kerning enabled in anchor-only mode', async () => {
-        setRequestCompileContext('mouse-drag-anchor', 'anchor');
+        setRequestCompileContext(
+            'mouse-drag-anchor',
+            'anchor',
+            'live-drag-worker-preview'
+        );
         window.glyphCanvas.outlineEditor.draggingSomething = false;
 
         await fontManager.compileEditingFont('a', [], ['a']);
@@ -1940,24 +1950,18 @@ describe('FontManager editing subset inclusion', () => {
         ).not.toHaveProperty('skip_features');
     });
 
-    test('keyboard-anchor compiles keep kerning enabled in anchor-only mode', async () => {
+    test('committed keyboard-anchor compiles full', async () => {
         setRequestCompileContext('keyboard-anchor', 'anchor');
 
         await fontManager.compileEditingFont('a', [], ['a']);
 
         expect(compileEditingSpy).toHaveBeenCalledTimes(1);
         expect(compileEditingSpy.mock.calls[0][3]).toMatchObject({
-            compileSource: 'keyboard-anchor',
-            optionOverrides: {
-                produce_varc_table: false
-            }
+            compileSource: 'keyboard-anchor'
         });
         expect(
             compileEditingSpy.mock.calls[0][3].optionOverrides
-        ).not.toHaveProperty('skip_kerning');
-        expect(
-            compileEditingSpy.mock.calls[0][3].optionOverrides
-        ).not.toHaveProperty('skip_features');
+        ).toBeUndefined();
     });
 
     test('sparse compile hydrates from live text via ensureSparseHydration', async () => {

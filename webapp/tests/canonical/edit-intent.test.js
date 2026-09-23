@@ -19,7 +19,8 @@ describe('EditIntent stamps', () => {
         expect(stamp).toEqual({
             changeSource: 'change-bridge-local',
             editType: null,
-            unstamped: true
+            unstamped: true,
+            unknownStamp: false
         });
     });
 
@@ -49,6 +50,24 @@ describe('EditIntent stamps', () => {
             compileChangeSource: 'keyboard-outline',
             compileEditType: null
         });
+        expect(() => assertCompileStamp('keyboard-outline', 'outlne')).toThrow(
+            /Unknown compileEditType/
+        );
+    });
+
+    test('an unknown stamp on a packet compiles full', () => {
+        const stamp = readCommittedCompileStamp(
+            [
+                {
+                    compileChangeSource: 'keyboard-outline',
+                    compileEditType: 'outlne'
+                }
+            ],
+            'change-bridge-local'
+        );
+        expect(stamp.unknownStamp).toBe(true);
+        expect(stamp.editType).toBeNull();
+        expect(stamp.unstamped).toBe(false);
     });
 
     test('live sidebearing stays sidebearing and uses outline-only flags', () => {
@@ -86,6 +105,17 @@ describe('EditIntent stamps', () => {
                 dataFreshnessMode: 'authoritative-worker-yjs'
             }).skipCompile
         ).toBe(true);
+    });
+
+    test('a committed local outline stamp is full', () => {
+        const plan = compilationPlan({
+            changeSource: 'keyboard-outline',
+            editType: 'outline',
+            dataFreshnessMode: 'authoritative-worker-yjs'
+        });
+        expect(plan.compilationMode).toBe('full');
+        expect(plan.optionOverrides).toBeUndefined();
+        expect(plan.armDeferredFull).toBe(false);
     });
 
     test('kerning-only does not skip outlines', () => {

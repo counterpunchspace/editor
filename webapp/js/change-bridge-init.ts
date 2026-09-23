@@ -896,7 +896,11 @@ function packetMixesKerningAndGlyphEdits(entries: ChangeLogEntry[]): boolean {
     let hasGlyphOrLayerChange = false;
     for (const entry of entries) {
         const path = entry.path ?? '';
-        if (kerningHintFromPath(path)) {
+        if (
+            entry.compileEditType === 'kerning-value' ||
+            entry.compileEditType === 'kerning-groups' ||
+            kerningHintFromPath(path)
+        ) {
             hasKerningChange = true;
         }
         if (pathTouchesGlyphOrLayer(path)) {
@@ -1011,7 +1015,16 @@ function readStampForOrigin(
             { origin, paths: entries.map((entry) => entry.path).slice(0, 4) }
         );
     }
-    return { editType: stamp.editType, changeSource: stamp.changeSource };
+    if (stamp.unknownStamp) {
+        console.warn(
+            'Committed packet has an unknown compileEditType; compiling full',
+            { origin, changeSource: stamp.changeSource }
+        );
+    }
+    const editType = packetMixesKerningAndGlyphEdits(entries)
+        ? null
+        : stamp.editType;
+    return { editType, changeSource: stamp.changeSource };
 }
 
 function inferLocalCompileContextFromHistoryItem(
@@ -2038,29 +2051,6 @@ function applyLocalUndoRedoVisualSync(
     };
 }
 
-function inferHistoryItemKerningEditType(
-    historyItem: HistoryStackItem | null
-): CommittedCompileEditType {
-    if (!historyItem) {
-        return null;
-    }
-    const entries = historyItem.entries ?? [];
-    if (entries.some((entry) => entry.compileChangeSource)) {
-        const stamp = readStampForOrigin(entries, 'local');
-        return stamp.editType === 'kerning-value' ||
-            stamp.editType === 'kerning-groups'
-            ? stamp.editType
-            : null;
-    }
-    for (const path of historyItem.touchedPaths ?? []) {
-        const editType = kerningHintFromPath(path);
-        if (editType) {
-            return editType;
-        }
-    }
-    return null;
-}
-
 function resolveLocalCommittedCompileContext(
     entries: ChangeLogEntry[]
 ): LocalCommittedCompileContext {
@@ -2068,30 +2058,28 @@ function resolveLocalCommittedCompileContext(
 }
 
 async function awaitCommittedEditingCompileReady(
-    isUndoRedoPacket: boolean,
+    _isUndoRedoPacket: boolean,
     awaitWorkerSync: () => Promise<void>
 ): Promise<boolean> {
     if (
         !fontCompilation?.isInitialized ||
-        typeof fontCompilation.hasWorkerCacheDocument !== 'function' ||
-        fontCompilation.hasWorkerCacheDocument()
+        typeof fontCompilation.hasWorkerCacheDocument !== 'function'
     ) {
         return true;
     }
 
+    // An existing worker document is the previous packet. This compile waits
+    // for the forward that belongs to the packet being committed.
     await awaitCommittedWorkerCacheSettled(awaitWorkerSync);
     return fontCompilation.hasWorkerCacheDocument();
 }
 
 function committedPacketLocksKerningPair(entries: ChangeLogEntry[]): boolean {
-    return entries.some((entry) => {
-        const editType =
+    return entries.some(
+        (entry) =>
             entry.compileEditType === 'kerning-value' ||
             entry.compileEditType === 'kerning-groups'
-                ? entry.compileEditType
-                : kerningHintFromPath(entry.path ?? '');
-        return editType === 'kerning-value' || editType === 'kerning-groups';
-    });
+    );
 }
 
 function flattenCommittedSemanticEntries(
@@ -2888,12 +2876,15 @@ function initializeBridge(detail: {
         }
     });
 
+    let latestWorkerForward: Promise<void> = Promise.resolve();
+
     // Route committed local and remote Yjs packets through one serialized
     // post-commit reaction funnel. Local edits enter immediately after the
     // authoritative Yjs packet is emitted; remote edits enter after apply.
     // YJS_ONLY: This funnel processes Yjs binary updates, not full
     // JSON. Entries carry workerReplayTargets for incremental layer cache updates.
     bridge.onCommittedChange((entries, context) => {
+        const workerForward = latestWorkerForward;
         const localCompileContext =
             context.origin === 'local'
                 ? resolveLocalCommittedCompileContext(entries)
@@ -2907,6 +2898,10 @@ function initializeBridge(detail: {
         }
         void enqueueCommittedChangeRefresh(() =>
             handleCommittedChangeRefresh(entries, context.origin, {
+                awaitWorkerSync: async () => {
+                    await workerForward;
+                    await fontCompilation.awaitWorkerDocumentSync();
+                },
                 ...(localCompileContext ? { localCompileContext } : {}),
                 ...(localUndoRedoContext ? { localUndoRedoContext } : {})
             })
@@ -3015,20 +3010,23 @@ function initializeBridge(detail: {
             layerTargets.length > 0 ||
             glyphRenames.length > 0;
         if (!hasWorkerCacheMetadata) {
+            latestWorkerForward = Promise.resolve();
             return;
         }
 
-        void window.fontManager?.forwardWorkerYjsUpdate?.(
-            update,
-            changedGlyphs,
-            {
-                invalidateLayoutClosure,
-                nonGlyphChangeHints,
-                ...(glyphRenames.length ? { glyphRenames } : undefined),
-                ...(layerTargets.length ? { layerTargets } : undefined),
-                documentId
-            }
-        );
+        const forwarded =
+            window.fontManager?.forwardWorkerYjsUpdate?.(
+                update,
+                changedGlyphs,
+                {
+                    invalidateLayoutClosure,
+                    nonGlyphChangeHints,
+                    ...(glyphRenames.length ? { glyphRenames } : undefined),
+                    ...(layerTargets.length ? { layerTargets } : undefined),
+                    documentId
+                }
+            ) ?? Promise.resolve(false);
+        latestWorkerForward = forwarded.then(() => undefined);
 
         if (fullFontCompilation.hasWorkerCacheDocument()) {
             void fullFontCompilation

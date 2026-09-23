@@ -5240,6 +5240,229 @@ describe('committed undo/redo compile requests', () => {
         expect(window.fontManager.currentFont.compileRequestVersion).toBe(11);
     });
 
+    test('committed compile waits for this packet worker forward', async () => {
+        let releaseForward;
+        const workerForward = new Promise((resolve) => {
+            releaseForward = resolve;
+        });
+        const requestRecompileWithoutDataChange = jest.fn(function () {
+            this.compileRequestVersion += 1;
+        });
+        const activeFontCompilation =
+            require('../js/font-compilation').fontCompilation;
+        const wasInitialized = activeFontCompilation.isInitialized;
+        const hasWorkerCacheDocument = jest
+            .spyOn(activeFontCompilation, 'hasWorkerCacheDocument')
+            .mockReturnValue(true);
+        activeFontCompilation.isInitialized = true;
+        window.autoCompileManager = { checkAndSchedule: jest.fn() };
+        window.fontManager = {
+            lastChangeSource: null,
+            lastEditType: null,
+            editingFont: new Uint8Array([1]),
+            setEditingCompileContext() {},
+            clearEditingCompileContext() {},
+            currentFont: {
+                changeVersion: 2,
+                compileRequestVersion: 4,
+                requestRecompileWithoutDataChange
+            }
+        };
+
+        try {
+            const pending = handleCommittedChangeRefresh(
+                [
+                    {
+                        compileChangeSource: 'keyboard-kerning-value',
+                        compileEditType: 'kerning-value',
+                        path: 'masters.regular.kerning'
+                    }
+                ],
+                'local',
+                { awaitWorkerSync: () => workerForward }
+            );
+            await Promise.resolve();
+            expect(requestRecompileWithoutDataChange).not.toHaveBeenCalled();
+            releaseForward();
+            await pending;
+            expect(requestRecompileWithoutDataChange).toHaveBeenCalledWith({
+                compileContext: expect.objectContaining({
+                    changeSource: 'keyboard-kerning-value',
+                    editType: 'kerning-value'
+                })
+            });
+        } finally {
+            hasWorkerCacheDocument.mockRestore();
+            activeFontCompilation.isInitialized = wasInitialized;
+        }
+    });
+
+    test.each([
+        [
+            'keyboard-outline',
+            'outline',
+            'glyphs.a.layers.layer-1.shapes.0.nodes.0.x'
+        ],
+        ['keyboard-anchor', 'anchor', 'glyphs.a.layers.layer-1.anchors.0.y'],
+        ['keyboard-sidebearing', 'sidebearing', 'glyphs.a.layers.layer-1.width']
+    ])(
+        'committed %s compile waits for this packet worker forward',
+        async (changeSource, editType, path) => {
+            let releaseForward;
+            const workerForward = new Promise((resolve) => {
+                releaseForward = resolve;
+            });
+            const requestRecompileWithoutDataChange = jest.fn(function () {
+                this.compileRequestVersion += 1;
+            });
+            const activeFontCompilation =
+                require('../js/font-compilation').fontCompilation;
+            const wasInitialized = activeFontCompilation.isInitialized;
+            const hasWorkerCacheDocument = jest
+                .spyOn(activeFontCompilation, 'hasWorkerCacheDocument')
+                .mockReturnValue(true);
+            activeFontCompilation.isInitialized = true;
+            window.autoCompileManager = { checkAndSchedule: jest.fn() };
+            window.fontManager = {
+                lastChangeSource: null,
+                lastEditType: null,
+                editingFont: new Uint8Array([1]),
+                setEditingCompileContext() {},
+                clearEditingCompileContext() {},
+                currentFont: {
+                    changeVersion: 2,
+                    compileRequestVersion: 4,
+                    requestRecompileWithoutDataChange
+                }
+            };
+
+            try {
+                const pending = handleCommittedChangeRefresh(
+                    [
+                        {
+                            compileChangeSource: changeSource,
+                            compileEditType: editType,
+                            path
+                        }
+                    ],
+                    'local',
+                    { awaitWorkerSync: () => workerForward }
+                );
+                await Promise.resolve();
+                expect(
+                    requestRecompileWithoutDataChange
+                ).not.toHaveBeenCalled();
+                releaseForward();
+                await pending;
+                expect(requestRecompileWithoutDataChange).toHaveBeenCalled();
+            } finally {
+                hasWorkerCacheDocument.mockRestore();
+                activeFontCompilation.isInitialized = wasInitialized;
+            }
+        }
+    );
+
+    test('a kerning path without a kerning stamp compiles full', async () => {
+        const requestRecompileWithoutDataChange = jest.fn(function () {
+            this.compileRequestVersion += 1;
+        });
+        const activeFontCompilation =
+            require('../js/font-compilation').fontCompilation;
+        const wasInitialized = activeFontCompilation.isInitialized;
+        const hasWorkerCacheDocument = jest
+            .spyOn(activeFontCompilation, 'hasWorkerCacheDocument')
+            .mockReturnValue(true);
+        activeFontCompilation.isInitialized = true;
+        window.autoCompileManager = { checkAndSchedule: jest.fn() };
+        window.fontManager = {
+            lastChangeSource: null,
+            lastEditType: null,
+            editingFont: new Uint8Array([1]),
+            setEditingCompileContext() {},
+            clearEditingCompileContext() {},
+            currentFont: {
+                changeVersion: 2,
+                compileRequestVersion: 4,
+                requestRecompileWithoutDataChange
+            }
+        };
+
+        try {
+            await handleCommittedChangeRefresh(
+                [
+                    {
+                        compileChangeSource: 'keyboard-outline',
+                        compileEditType: null,
+                        path: 'masters.regular.kerning'
+                    }
+                ],
+                'local',
+                { awaitWorkerSync: async () => {} }
+            );
+            expect(requestRecompileWithoutDataChange).toHaveBeenCalledWith({
+                compileContext: expect.objectContaining({
+                    editType: null
+                })
+            });
+        } finally {
+            hasWorkerCacheDocument.mockRestore();
+            activeFontCompilation.isInitialized = wasInitialized;
+        }
+    });
+
+    test('kerning plus glyph writes compile full', async () => {
+        const requestRecompileWithoutDataChange = jest.fn(function () {
+            this.compileRequestVersion += 1;
+        });
+        const activeFontCompilation =
+            require('../js/font-compilation').fontCompilation;
+        const wasInitialized = activeFontCompilation.isInitialized;
+        const hasWorkerCacheDocument = jest
+            .spyOn(activeFontCompilation, 'hasWorkerCacheDocument')
+            .mockReturnValue(true);
+        activeFontCompilation.isInitialized = true;
+        window.autoCompileManager = { checkAndSchedule: jest.fn() };
+        window.fontManager = {
+            lastChangeSource: null,
+            lastEditType: null,
+            editingFont: new Uint8Array([1]),
+            setEditingCompileContext() {},
+            clearEditingCompileContext() {},
+            currentFont: {
+                changeVersion: 2,
+                compileRequestVersion: 4,
+                requestRecompileWithoutDataChange
+            }
+        };
+
+        try {
+            await handleCommittedChangeRefresh(
+                [
+                    {
+                        compileChangeSource: 'keyboard-kerning-value',
+                        compileEditType: 'kerning-value',
+                        path: 'masters.regular.kerning'
+                    },
+                    {
+                        compileChangeSource: 'keyboard-kerning-value',
+                        compileEditType: 'kerning-value',
+                        path: 'glyphs.fi:layers.layer-1'
+                    }
+                ],
+                'local',
+                { awaitWorkerSync: async () => {} }
+            );
+            expect(requestRecompileWithoutDataChange).toHaveBeenCalledWith({
+                compileContext: expect.objectContaining({
+                    editType: null
+                })
+            });
+        } finally {
+            hasWorkerCacheDocument.mockRestore();
+            activeFontCompilation.isInitialized = wasInitialized;
+        }
+    });
+
     test('undo compiles from the already-forwarded worker update without replay repair', async () => {
         const refreshWorkerCacheForReplayTargets = jest
             .fn()

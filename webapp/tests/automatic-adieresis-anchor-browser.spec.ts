@@ -166,6 +166,26 @@ function makeAutomaticAdieresisFont(): string {
                     }
                 ],
                 exported: true
+            },
+            {
+                name: 'aalig',
+                category: 'Ligature',
+                codepoints: [],
+                layers: [
+                    {
+                        width: 1200,
+                        id: 'M0',
+                        master: { type: 'DefaultForMaster', master: 'M0' },
+                        shapes: [
+                            component('a', [0, 0]),
+                            component('a', [600, 0])
+                        ],
+                        anchors: [],
+                        guides: [],
+                        format_specific: {}
+                    }
+                ],
+                exported: true
             }
         ],
         date: new Date().toISOString(),
@@ -922,6 +942,44 @@ async function dragTopAnchorThroughUi(page: Page, screenDeltaY: number) {
     expect(dragPoint, JSON.stringify({ anchorPoint, attempts })).toBeTruthy();
     await page.mouse.move(dragPoint!.x, dragPoint!.y + screenDeltaY, {
         steps: 10
+    });
+    await page.evaluate(async () => {
+        const win = window as any;
+        const readTranslation = () => {
+            const layer = win.currentFontModel
+                ?.findGlyph?.('adieresis')
+                ?.layers?.[0]?.toJSON?.();
+            const shape = layer?.shapes?.find(
+                (candidate: { reference?: string }) =>
+                    candidate?.reference === 'dieresiscomb'
+            );
+            const translation = shape?.transform?.translation;
+            return Array.isArray(translation)
+                ? [Number(translation[0]), Number(translation[1])]
+                : null;
+        };
+        const deadline = Date.now() + 8000;
+        let previewEvent: { compilationMode?: string } | null = null;
+        while (Date.now() < deadline) {
+            const events = win.__automaticAdieresisCompileEvents || [];
+            previewEvent =
+                [...events]
+                    .reverse()
+                    .find(
+                        (event: { compilationMode?: string }) =>
+                            event?.compilationMode === 'anchor-only'
+                    ) ?? null;
+            if (previewEvent && readTranslation()) {
+                break;
+            }
+            await new Promise((resolve) => setTimeout(resolve, 50));
+        }
+        const rawFont = win.fontManager?.editingFont;
+        win.__liveAdieresisPreview = {
+            translation: readTranslation(),
+            sawPreviewCompile: Boolean(previewEvent),
+            fontBytes: rawFont && previewEvent ? new Uint8Array(rawFont) : null
+        };
     });
     await page.mouse.up();
     await page.evaluate(async () => {
@@ -1857,11 +1915,73 @@ test.describe('automatic adieresis anchor browser commit', () => {
             afterCompiledAdieresis,
             'dragging a.top and waiting for the committed editing compile'
         );
+        const livePreview = await page.evaluate(() => {
+            const preview = (window as any).__liveAdieresisPreview;
+            if (!preview) {
+                return null;
+            }
+            return {
+                translation: preview.translation,
+                sawPreviewCompile: preview.sawPreviewCompile,
+                hasFontBytes: Boolean(preview.fontBytes?.byteLength)
+            };
+        });
+        expect(
+            livePreview?.sawPreviewCompile,
+            JSON.stringify(livePreview)
+        ).toBe(true);
+        expect(livePreview?.translation).toEqual(expectedTranslation);
+        const liveCompiledAdieresis = await page.evaluate(async () => {
+            const preview = (window as any).__liveAdieresisPreview;
+            return (window as any).__sampleAutomaticAdieresisFontBytes(
+                preview.fontBytes,
+                'ä'
+            );
+        });
+        expectVisualSampleChanged(
+            beforeCompiledAdieresis,
+            liveCompiledAdieresis,
+            'live anchor preview before mouseup'
+        );
+        expect(liveCompiledAdieresis.minX).toBe(afterCompiledAdieresis.minX);
+        expect(liveCompiledAdieresis.maxX).toBe(afterCompiledAdieresis.maxX);
+        expect(liveCompiledAdieresis.minY).toBe(afterCompiledAdieresis.minY);
+        expect(liveCompiledAdieresis.maxY).toBe(afterCompiledAdieresis.maxY);
+        expect(liveCompiledAdieresis.pixelCount).toBe(
+            afterCompiledAdieresis.pixelCount
+        );
         const afterRenderedAdieresisBounds =
             await getRenderedAdieresisBounds(page);
         expectRenderedBoundsChanged(
             beforeRenderedAdieresisBounds,
             afterRenderedAdieresisBounds
+        );
+
+        const undoBefore = await getEditingFontCompileTracker(page);
+        await page.evaluate(async () => {
+            await (
+                window as {
+                    runBridgeUndoRedo?: (
+                        action: string,
+                        glyphName: string,
+                        refreshRoot: string,
+                        layerId: string
+                    ) => Promise<void>;
+                }
+            ).runBridgeUndoRedo?.('undo', 'a', 'a', 'M0');
+        });
+        await waitForEditingFontCompileEvent(page, undoBefore.count);
+        const undoTracker = await getEditingFontCompileTracker(page);
+        const undoEvent = undoTracker.events[undoTracker.events.length - 1];
+        expect(undoEvent?.compilationMode).toBe('full');
+        const undoneState = await getAdieresisCommitState(page);
+        expect(undoneState.bridgeTranslation).toEqual([150, 720]);
+        const undoneCompiledAdieresis = await getEditingFontVisualSample(
+            page,
+            'ä'
+        );
+        expect(undoneCompiledAdieresis.pixelHash).toBe(
+            beforeCompiledAdieresis.pixelHash
         );
     });
 
@@ -2026,5 +2146,95 @@ test.describe('automatic adieresis anchor browser commit', () => {
             beforeRenderedAdieresisBounds,
             afterRenderedAdieresisBounds
         );
+    });
+
+    test('kerning commit shaping matches the model, including an automatic ligature', async ({
+        page
+    }) => {
+        test.slow();
+        test.setTimeout(180000);
+
+        await openAutomaticAdieresisEditScenario(page);
+        await installEditingFontCompileTracker(page);
+        await page.evaluate(async () => {
+            const glyphCanvas = (window as any).glyphCanvas;
+            glyphCanvas.textRunEditor.setTextBuffer('aa');
+            await glyphCanvas.textRunEditor.shapeText?.(true);
+        });
+
+        const before = await page.evaluate(() => {
+            const win = window as any;
+            const shaped = win.glyphCanvas.textRunEditor.shapedGlyphs || [];
+            const ligature = win.currentFontModel
+                ?.findGlyph?.('aalig')
+                ?.layers?.[0]?.toJSON?.();
+            const second = ligature?.shapes?.[1]?.transform?.translation;
+            return {
+                firstAx: Number(shaped[0]?.ax ?? 0),
+                secondX: Number(shaped[1]?.x ?? 0),
+                ligatureX: Array.isArray(second) ? Number(second[0]) : null
+            };
+        });
+
+        const compileBefore = await getEditingFontCompileTracker(page);
+        await page.evaluate(() => {
+            const win = window as any;
+            const master = win.currentFontModel.masters[0];
+            win.glyphCanvas.writeTextModeKerningPairValue(
+                master,
+                'a',
+                'a',
+                180,
+                false
+            );
+        });
+        await waitForEditingFontCompileEvent(page, compileBefore.count);
+        const tracker = await getEditingFontCompileTracker(page);
+        const committed = tracker.events[tracker.events.length - 1];
+        expect(committed?.compilationMode).toBe('full');
+
+        const after = await page.evaluate(async () => {
+            const win = window as any;
+            const master = win.currentFontModel.masters[0];
+            const shaped = win.glyphCanvas.textRunEditor.shapedGlyphs || [];
+            const ligature = win.currentFontModel
+                ?.findGlyph?.('aalig')
+                ?.layers?.[0]?.toJSON?.();
+            const second = ligature?.shapes?.[1]?.transform?.translation;
+            const worker = await win.fontCompilation?.sendMessage?.({
+                type: 'dumpLayerState',
+                layerTargets: [{ glyphName: 'aalig', layerId: 'M0' }]
+            });
+            const dump = worker?.dumpJson ? JSON.parse(worker.dumpJson) : null;
+            const workerLayer = dump?.targets?.find(
+                (target: { glyphName?: string }) =>
+                    target?.glyphName === 'aalig'
+            )?.ydocLayer;
+            const workerTranslation =
+                workerLayer?.shapes?.[1]?.transform?.translation;
+            return {
+                kerning: master.kerning?.['a:a'] ?? master.kerning?.['a']?.a,
+                pending: win.glyphCanvas.pendingTextModeKerningPreview,
+                firstAx: Number(shaped[0]?.ax ?? 0),
+                secondX: Number(shaped[1]?.x ?? 0),
+                ligatureX: Array.isArray(second) ? Number(second[0]) : null,
+                workerLigatureX: Array.isArray(workerTranslation)
+                    ? Number(workerTranslation[0])
+                    : null
+            };
+        });
+
+        expect(after.pending).toBeNull();
+        expect(after.kerning).toBe(180);
+        const advanceDelta = after.firstAx - before.firstAx;
+        const positionDelta = after.secondX - before.secondX;
+        expect(
+            Math.abs(advanceDelta - 180) < 0.5 ||
+                Math.abs(positionDelta - 180) < 0.5
+        ).toBe(true);
+        expect(after.ligatureX).not.toBe(before.ligatureX);
+        if (after.workerLigatureX !== null) {
+            expect(after.workerLigatureX).toBe(after.ligatureX);
+        }
     });
 });

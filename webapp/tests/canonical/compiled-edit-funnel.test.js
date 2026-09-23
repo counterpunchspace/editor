@@ -325,21 +325,20 @@ describe('CompiledEditFunnel', () => {
             jest.useFakeTimers();
         });
 
-        test('arms deferred full compile for outline edits', async () => {
+        test('committed outline does not arm a deferred full compile', async () => {
             await process('keyboard-outline', 'outline');
 
             jest.advanceTimersByTime(500);
 
-            // After 500ms, a deferred full compile should be requested
             expect(
                 window.fontManager.currentFont.requestRecompileWithoutDataChange
-            ).toHaveBeenCalledTimes(2);
+            ).toHaveBeenCalledTimes(1);
         });
 
         test('does not serialize the model before a deferred full compile', async () => {
             window.fontManager.pendingBabelfontJsonSyncAfterDrag = true;
 
-            await process('keyboard-outline', 'outline');
+            await process('keyboard-kerning-value', 'kerning-value');
             jest.advanceTimersByTime(500);
 
             expect(
@@ -381,7 +380,7 @@ describe('CompiledEditFunnel', () => {
         });
 
         test('re-arms when drag is active', async () => {
-            await process('keyboard-outline', 'outline');
+            await process('keyboard-kerning-value', 'kerning-value');
             const callCountBefore =
                 window.fontManager.currentFont.requestRecompileWithoutDataChange
                     .mock.calls.length;
@@ -432,7 +431,7 @@ describe('CompiledEditFunnel', () => {
         test('skips deferred full compile when last mode was already full', async () => {
             window.fontManager.lastCompilationMode = 'full';
 
-            await process('keyboard-outline', 'outline');
+            await process('keyboard-kerning-value', 'kerning-value');
             const callCountBefore =
                 window.fontManager.currentFont.requestRecompileWithoutDataChange
                     .mock.calls.length;
@@ -446,14 +445,14 @@ describe('CompiledEditFunnel', () => {
         });
 
         test('timer is cancelled and re-armed on subsequent edits', async () => {
-            await process('keyboard-outline', 'outline');
+            await process('keyboard-kerning-value', 'kerning-value');
             const callCountBefore =
                 window.fontManager.currentFont.requestRecompileWithoutDataChange
                     .mock.calls.length;
 
             // Second edit re-arms the timer
             jest.advanceTimersByTime(400);
-            await process('keyboard-outline', 'outline');
+            await process('keyboard-kerning-value', 'kerning-value');
 
             // Timer shouldn't fire at 500ms from first edit (re-armed)
             jest.advanceTimersByTime(100);
@@ -476,7 +475,7 @@ describe('CompiledEditFunnel', () => {
             window.fontManager.lastFullCompiledDataVersion = 100;
             window.fontManager.currentFont.changeVersion = 100;
 
-            await process('keyboard-outline', 'outline');
+            await process('keyboard-kerning-value', 'kerning-value');
 
             expect(
                 window.fontManager.currentFont.requestRecompileWithoutDataChange
