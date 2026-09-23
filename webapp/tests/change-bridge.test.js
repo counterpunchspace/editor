@@ -2761,21 +2761,28 @@ describe('ChangeBridge', () => {
         const bridge = new ChangeBridge('test-1');
         bridge.initFromJson(fontJson);
 
-        bridge.beginTransaction('Python script');
-        bridge.applySyntheticChangeSet('Python script', [
-            {
-                op: 'set',
-                path: ['glyphs', 'A', 'layers', 'layer-1', 'width'],
-                oldValue: 600,
-                newValue: 700
-            },
-            {
-                op: 'set',
-                path: ['glyphs', 'A', 'layers', 'layer-1b', 'width'],
-                oldValue: 620,
-                newValue: 730
-            }
-        ]);
+        bridge.beginTransaction('Python script', null, {
+            compileChangeSource: 'test-sync',
+            compileEditType: null
+        });
+        bridge.applySyntheticChangeSet(
+            'Python script',
+            [
+                {
+                    op: 'set',
+                    path: ['glyphs', 'A', 'layers', 'layer-1', 'width'],
+                    oldValue: 600,
+                    newValue: 700
+                },
+                {
+                    op: 'set',
+                    path: ['glyphs', 'A', 'layers', 'layer-1b', 'width'],
+                    oldValue: 620,
+                    newValue: 730
+                }
+            ],
+            { compileChangeSource: 'test-sync', compileEditType: null }
+        );
         bridge.endTransaction();
 
         const layer1Items = buildHistoryStackItems(bridge.getChangeLog(), {
@@ -2826,21 +2833,28 @@ describe('ChangeBridge', () => {
         listener.mockClear();
 
         try {
-            bridge.beginTransaction('Batch sidebearing edit');
-            bridge.applySyntheticChangeSet('Batch sidebearing edit', [
-                {
-                    op: 'set',
-                    path: ['glyphs', 'A', 'layers', 'layer-1', 'width'],
-                    oldValue: 600,
-                    newValue: 650
-                },
-                {
-                    op: 'set',
-                    path: ['glyphs', 'A', 'layers', 'layer-1', 'name'],
-                    oldValue: 'Regular',
-                    newValue: 'Regular Updated'
-                }
-            ]);
+            bridge.beginTransaction('Batch sidebearing edit', null, {
+                compileChangeSource: 'test-sync',
+                compileEditType: null
+            });
+            bridge.applySyntheticChangeSet(
+                'Batch sidebearing edit',
+                [
+                    {
+                        op: 'set',
+                        path: ['glyphs', 'A', 'layers', 'layer-1', 'width'],
+                        oldValue: 600,
+                        newValue: 650
+                    },
+                    {
+                        op: 'set',
+                        path: ['glyphs', 'A', 'layers', 'layer-1', 'name'],
+                        oldValue: 'Regular',
+                        newValue: 'Regular Updated'
+                    }
+                ],
+                { compileChangeSource: 'test-sync', compileEditType: null }
+            );
             bridge.endTransaction();
         } finally {
             unsubscribe();
@@ -2878,15 +2892,22 @@ describe('ChangeBridge', () => {
             localUpdates.push(envelope);
         });
 
-        bridge.beginTransaction('Python script');
-        bridge.applySyntheticChangeSet('Python script', [
-            {
-                op: 'set',
-                path: ['glyphs', 'A', 'layers', 'layer-1', 'width'],
-                oldValue: 600,
-                newValue: 700
-            }
-        ]);
+        bridge.beginTransaction('Python script', null, {
+            compileChangeSource: 'test-sync',
+            compileEditType: null
+        });
+        bridge.applySyntheticChangeSet(
+            'Python script',
+            [
+                {
+                    op: 'set',
+                    path: ['glyphs', 'A', 'layers', 'layer-1', 'width'],
+                    oldValue: 600,
+                    newValue: 700
+                }
+            ],
+            { compileChangeSource: 'test-sync', compileEditType: null }
+        );
         const commitResult = bridge.endTransaction();
 
         expect(finalizer).toHaveBeenCalledTimes(1);
@@ -3210,7 +3231,14 @@ describe('Transactions', () => {
                     layerJson: layer
                 }
             ],
-            'Delete contour'
+            'Delete contour',
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            'test-sync',
+            null
         );
 
         expect(bridge.getChangeLog()).toEqual(
@@ -3263,7 +3291,14 @@ describe('Transactions', () => {
                     layerJson: layer
                 }
             ],
-            'Replace contour'
+            'Replace contour',
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            'test-sync',
+            null
         );
 
         expect(bridge.getChangeLog()).toEqual(
@@ -3306,7 +3341,14 @@ describe('Transactions', () => {
                     }
                 }
             ],
-            'Drag anchor'
+            'Drag anchor',
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            'test-sync',
+            null
         );
 
         const nextLayer = bridge.getFontJsonSnapshot().glyphs[0].layers[0];
@@ -3354,7 +3396,14 @@ describe('Transactions', () => {
                     layerJson: layer
                 }
             ],
-            'Delete point'
+            'Delete point',
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            'test-sync',
+            null
         );
 
         expect(bridge.getChangeLog()).toEqual(
@@ -3391,7 +3440,14 @@ describe('Transactions', () => {
                     layerJson: layer
                 }
             ],
-            'Seed extension array'
+            'Seed extension array',
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            'test-sync',
+            null
         );
         const logStart = bridge.getChangeLog().length;
 
@@ -3404,7 +3460,14 @@ describe('Transactions', () => {
                     layerJson: layer
                 }
             ],
-            'Delete extension item'
+            'Delete extension item',
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            'test-sync',
+            null
         );
 
         expect(bridge.getChangeLog().slice(logStart)).toEqual(
@@ -3937,7 +4000,14 @@ describe('Transactions', () => {
                     authoritativeOptionalLayerFields: []
                 }
             ],
-            'Set width'
+            'Set width',
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            'test-sync',
+            null
         );
 
         const log = bridge.getChangeLog();
@@ -3992,7 +4062,14 @@ describe('Transactions', () => {
                     ]
                 }
             ],
-            'Clear layer optional fields'
+            'Clear layer optional fields',
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            'test-sync',
+            null
         );
 
         expect(
@@ -4038,7 +4115,10 @@ describe('Transactions', () => {
 
     test('batch changes share transactionId and label', () => {
         const { bridge } = createTestBridge('test-1');
-        bridge.beginTransaction('Drag node');
+        bridge.beginTransaction('Drag node', null, {
+            compileChangeSource: 'test-sync',
+            compileEditType: null
+        });
         bridge.recordChange(
             ['glyphs', 'A', 'layers', 'layer-1', 'shapes', 0, 'nodes', 0],
             'x',
@@ -4066,7 +4146,10 @@ describe('Transactions', () => {
         const nowSpy = jest.spyOn(performance, 'now');
 
         nowSpy.mockReturnValueOnce(1000);
-        bridge.beginTransaction('Drag node');
+        bridge.beginTransaction('Drag node', null, {
+            compileChangeSource: 'test-sync',
+            compileEditType: null
+        });
         bridge.recordChange(
             ['glyphs', 'A', 'layers', 'layer-1', 'shapes', 0, 'nodes', 0],
             'x',
@@ -4092,7 +4175,10 @@ describe('Transactions', () => {
         const { bridge, font } = createTestBridge('test-noop-drag');
         const node = font.glyphs[0].layers[0].shapes[0].asPath().nodes[0];
 
-        bridge.beginTransaction('Drag point');
+        bridge.beginTransaction('Drag point', null, {
+            compileChangeSource: 'test-sync',
+            compileEditType: null
+        });
         node.x = 120;
         node.y = 15;
         node.x = 100;
@@ -4112,7 +4198,10 @@ describe('Transactions', () => {
     test('buffered layer transaction undoes as one layer history item', () => {
         const { bridge } = createTestBridge('test-1');
 
-        bridge.beginTransaction('Drag node');
+        bridge.beginTransaction('Drag node', null, {
+            compileChangeSource: 'test-sync',
+            compileEditType: null
+        });
         bridge.recordChange(
             ['glyphs', 'A', 'layers', 'layer-1', 'shapes', 0, 'nodes', 0],
             'x',
@@ -4154,7 +4243,10 @@ describe('Transactions', () => {
     test('runWithoutRecording skips transient operations inside a transaction', () => {
         const { bridge } = createTestBridge('test-1');
 
-        bridge.beginTransaction('Drag node');
+        bridge.beginTransaction('Drag node', null, {
+            compileChangeSource: 'test-sync',
+            compileEditType: null
+        });
         bridge.runWithoutRecording(() => {
             bridge.recordChange(
                 ['glyphs', 'A', 'layers', 'layer-1'],
@@ -4201,7 +4293,10 @@ describe('Transactions', () => {
         const bridge = new ChangeBridge('test-1');
         bridge.initFromJson(fontJson);
 
-        bridge.beginTransaction('Set sidebearings');
+        bridge.beginTransaction('Set sidebearings', null, {
+            compileChangeSource: 'test-sync',
+            compileEditType: null
+        });
         bridge.recordChange(
             ['glyphs', 'A', 'layers', 'layer-1'],
             'width',
@@ -4243,7 +4338,10 @@ describe('Transactions', () => {
     test('layer-scoped undo resolves multi-glyph items that originated on the active layer', () => {
         const { bridge } = createTestBridge('test-1');
 
-        bridge.beginTransaction('Set sidebearing with dependents');
+        bridge.beginTransaction('Set sidebearing with dependents', null, {
+            compileChangeSource: 'test-sync',
+            compileEditType: null
+        });
         bridge.recordChange(
             ['glyphs', 'A', 'layers', 'layer-1'],
             'width',
@@ -4293,8 +4391,14 @@ describe('Transactions', () => {
 
     test('nested transactions share outermost label', () => {
         const { bridge } = createTestBridge('test-1');
-        bridge.beginTransaction('Outer');
-        bridge.beginTransaction('Inner');
+        bridge.beginTransaction('Outer', null, {
+            compileChangeSource: 'test-sync',
+            compileEditType: null
+        });
+        bridge.beginTransaction('Inner', null, {
+            compileChangeSource: 'test-sync',
+            compileEditType: null
+        });
         bridge.recordChange([], 'upm', 1000, 2000);
         bridge.endTransaction();
         bridge.endTransaction();
@@ -4309,7 +4413,10 @@ describe('Transactions', () => {
         const onDirty = jest.fn();
 
         bridge.onDirty(onDirty);
-        bridge.beginTransaction('Set sidebearings');
+        bridge.beginTransaction('Set sidebearings', null, {
+            compileChangeSource: 'test-sync',
+            compileEditType: null
+        });
         bridge.recordChange(
             ['glyphs', 'A', 'layers', 'layer-1'],
             'width',
@@ -4333,9 +4440,15 @@ describe('Transactions', () => {
     test('inTransaction flag tracks depth', () => {
         const { bridge } = createTestBridge('test-1');
         expect(bridge.inTransaction).toBe(false);
-        bridge.beginTransaction('tx');
+        bridge.beginTransaction('tx', null, {
+            compileChangeSource: 'test-sync',
+            compileEditType: null
+        });
         expect(bridge.inTransaction).toBe(true);
-        bridge.beginTransaction('nested');
+        bridge.beginTransaction('nested', null, {
+            compileChangeSource: 'test-sync',
+            compileEditType: null
+        });
         expect(bridge.inTransaction).toBe(true);
         bridge.endTransaction();
         expect(bridge.inTransaction).toBe(true);
@@ -4526,7 +4639,14 @@ describe('Model setter change recording', () => {
                     layerJson: background
                 }
             ],
-            'Draw path'
+            'Draw path',
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            'test-sync',
+            null
         );
 
         expect(
@@ -4686,7 +4806,14 @@ describe('Model setter change recording', () => {
                     layerJson: background
                 }
             ],
-            'Draw path'
+            'Draw path',
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            'test-sync',
+            null
         );
 
         receiverBridge.applyDocumentSetState(bridge.encodeDocumentSet());
@@ -5050,7 +5177,10 @@ describe('Model mutable getter change recording', () => {
     test('mixed non-outline transaction keeps only net-changing edits', () => {
         const { bridge, font } = createTestBridge('mixed-noop-transaction');
 
-        bridge.beginTransaction('Mixed non-outline edit');
+        bridge.beginTransaction('Mixed non-outline edit', null, {
+            compileChangeSource: 'test-sync',
+            compileEditType: null
+        });
         try {
             font.note = '';
             font.features.prefixes.global.code = 'lookupflag 0;';
@@ -5167,11 +5297,15 @@ describe('Model mutable getter change recording', () => {
             }
         ]);
 
-        bridge.beginTransaction('Reorder features', {
-            type: 'feature',
-            key: 'feature:liga:1',
-            label: 'liga'
-        });
+        bridge.beginTransaction(
+            'Reorder features',
+            {
+                type: 'feature',
+                key: 'feature:liga:1',
+                label: 'liga'
+            },
+            { compileChangeSource: 'test-sync', compileEditType: null }
+        );
         try {
             const movedFeature = font.features.features.splice(0, 1)[0];
             font.features.features.splice(1, 0, movedFeature);
@@ -5640,24 +5774,32 @@ describe('WindowSync', () => {
             localUpdates.push({ update, changeLogEntries });
         });
 
-        bridge.applySyntheticChangeSet('Python script', [
-            {
-                op: 'set',
-                path: ['glyphs', 'A', 'layers', 'layer-1', 'width'],
-                oldValue: 600,
-                newValue: 700,
-                visualAnchorSide: 'left',
-                workerReplayTargets: [{ glyphName: 'A', layerId: 'layer-1' }]
-            },
-            {
-                op: 'set',
-                path: ['glyphs', 'B', 'layers', 'layer-2', 'width'],
-                oldValue: 600,
-                newValue: 710,
-                visualAnchorSide: 'right',
-                workerReplayTargets: [{ glyphName: 'B', layerId: 'layer-2' }]
-            }
-        ]);
+        bridge.applySyntheticChangeSet(
+            'Python script',
+            [
+                {
+                    op: 'set',
+                    path: ['glyphs', 'A', 'layers', 'layer-1', 'width'],
+                    oldValue: 600,
+                    newValue: 700,
+                    visualAnchorSide: 'left',
+                    workerReplayTargets: [
+                        { glyphName: 'A', layerId: 'layer-1' }
+                    ]
+                },
+                {
+                    op: 'set',
+                    path: ['glyphs', 'B', 'layers', 'layer-2', 'width'],
+                    oldValue: 600,
+                    newValue: 710,
+                    visualAnchorSide: 'right',
+                    workerReplayTargets: [
+                        { glyphName: 'B', layerId: 'layer-2' }
+                    ]
+                }
+            ],
+            { compileChangeSource: 'test-sync', compileEditType: null }
+        );
 
         const forwardEntries = localUpdates.flatMap(
             (packet) => packet.changeLogEntries
@@ -5703,25 +5845,33 @@ describe('WindowSync', () => {
             localUpdates.push({ update, changeLogEntries });
         });
 
-        bridge.applySyntheticChangeSet('First packet', [
-            {
-                op: 'set',
-                path: ['glyphs', 'A', 'layers', 'layer-1', 'width'],
-                oldValue: 600,
-                newValue: 700
-            }
-        ]);
+        bridge.applySyntheticChangeSet(
+            'First packet',
+            [
+                {
+                    op: 'set',
+                    path: ['glyphs', 'A', 'layers', 'layer-1', 'width'],
+                    oldValue: 600,
+                    newValue: 700
+                }
+            ],
+            { compileChangeSource: 'test-sync', compileEditType: null }
+        );
 
         bridge._lastLocalUpdateLogIndex = 0;
 
-        bridge.applySyntheticChangeSet('Second packet', [
-            {
-                op: 'set',
-                path: ['glyphs', 'B', 'layers', 'layer-2', 'width'],
-                oldValue: 650,
-                newValue: 720
-            }
-        ]);
+        bridge.applySyntheticChangeSet(
+            'Second packet',
+            [
+                {
+                    op: 'set',
+                    path: ['glyphs', 'B', 'layers', 'layer-2', 'width'],
+                    oldValue: 650,
+                    newValue: 720
+                }
+            ],
+            { compileChangeSource: 'test-sync', compileEditType: null }
+        );
 
         expect(localUpdates).toHaveLength(2);
         expect(localUpdates[1].update).toBeInstanceOf(Uint8Array);
@@ -6129,7 +6279,18 @@ describe('WindowSync', () => {
         });
 
         fontJson1.glyphs[0].layers[0].width = 700;
-        bridge1.syncGlyphFromJson('A', 'Drag 1');
+        bridge1.syncGlyphFromJson(
+            'A',
+            'Drag 1',
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            'test-sync',
+            null
+        );
 
         sync2._handleMessage({
             type: 'yjs-update',
@@ -7112,7 +7273,18 @@ describe('syncGlyphFromJson', () => {
 
         // Mutate babelfontData directly (simulating outline-editor drag)
         fontJson.glyphs[0].layers[0].width = 700;
-        bridge.syncGlyphFromJson('A', 'Drag');
+        bridge.syncGlyphFromJson(
+            'A',
+            'Drag',
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            'test-sync',
+            null
+        );
 
         expect(updates.length).toBe(1);
         // Y.Doc should reflect the new width
@@ -7128,12 +7300,34 @@ describe('syncGlyphFromJson', () => {
 
         // First drag
         fontJson.glyphs[0].layers[0].width = 700;
-        bridge.syncGlyphFromJson('A', 'Drag');
+        bridge.syncGlyphFromJson(
+            'A',
+            'Drag',
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            'test-sync',
+            null
+        );
         expect(updates.length).toBe(1);
 
         // Second drag
         fontJson.glyphs[0].layers[0].width = 800;
-        bridge.syncGlyphFromJson('A', 'Drag');
+        bridge.syncGlyphFromJson(
+            'A',
+            'Drag',
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            'test-sync',
+            null
+        );
         expect(updates.length).toBe(2);
 
         expect(
@@ -7150,7 +7344,18 @@ describe('syncGlyphFromJson', () => {
         });
 
         fontJson.glyphs[0].layers[0].width = 700;
-        bridge.syncGlyphFromJson('A', 'Drag');
+        bridge.syncGlyphFromJson(
+            'A',
+            'Drag',
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            'test-sync',
+            null
+        );
 
         expect(workerUpdates).toHaveLength(1);
         expect(workerUpdates[0].update).toBeInstanceOf(Uint8Array);
@@ -7182,7 +7387,18 @@ describe('syncGlyphFromJson', () => {
         });
 
         fontJson.glyphs[0].layers[0].width = 700;
-        bridge.syncGlyphFromJson('A', 'Drag', undefined, undefined, 'layer-1');
+        bridge.syncGlyphFromJson(
+            'A',
+            'Drag',
+            undefined,
+            undefined,
+            'layer-1',
+            undefined,
+            undefined,
+            undefined,
+            'test-sync',
+            null
+        );
 
         workerUpdates.length = 0;
         committedChanges.length = 0;
@@ -7231,7 +7447,18 @@ describe('syncGlyphFromJson', () => {
         });
 
         fontJson.glyphs[0].layers[0].width = 700;
-        bridge.syncGlyphFromJson('A', 'Drag', undefined, undefined, 'layer-1');
+        bridge.syncGlyphFromJson(
+            'A',
+            'Drag',
+            undefined,
+            undefined,
+            'layer-1',
+            undefined,
+            undefined,
+            undefined,
+            'test-sync',
+            null
+        );
         bridge.undo('A', 'layer-1');
 
         workerUpdates.length = 0;
@@ -7413,18 +7640,22 @@ describe('syncGlyphFromJson', () => {
                 workerUpdates.push({ update, changeLogEntries });
             });
 
-            bridge.applySyntheticChangeSet(transactionLabel, [
-                {
-                    op: 'set',
-                    path,
-                    oldValue,
-                    newValue,
-                    visualAnchorSide: expectedVisualAnchorSide,
-                    workerReplayTargets: [
-                        { glyphName: 'A', layerId: 'layer-1' }
-                    ]
-                }
-            ]);
+            bridge.applySyntheticChangeSet(
+                transactionLabel,
+                [
+                    {
+                        op: 'set',
+                        path,
+                        oldValue,
+                        newValue,
+                        visualAnchorSide: expectedVisualAnchorSide,
+                        workerReplayTargets: [
+                            { glyphName: 'A', layerId: 'layer-1' }
+                        ]
+                    }
+                ],
+                { compileChangeSource: 'test-sync', compileEditType: null }
+            );
 
             const forwardEntries = workerUpdates.at(-1).changeLogEntries;
 
@@ -7476,38 +7707,42 @@ describe('syncGlyphFromJson', () => {
             workerUpdates.push({ update, changeLogEntries });
         });
 
-        bridge.applySyntheticChangeSet('Arrow key', [
-            {
-                op: 'set',
-                path: ['glyphs', 'A', 'layers', 'layer-1'],
-                oldValue: {
-                    id: 'layer-1',
-                    width: 600,
-                    shapes: [],
-                    anchors: [],
-                    guides: []
-                },
-                newValue: {
-                    id: 'layer-1',
-                    width: 640,
-                    shapes: [
-                        {
-                            closed: false,
-                            nodes: [
-                                { x: 0, y: 0, nodetype: 'Line' },
-                                { x: 10, y: 10, nodetype: 'Line' }
-                            ]
-                        }
-                    ],
-                    anchors: [],
-                    guides: []
-                },
-                workerReplayTargets: [
-                    { glyphName: 'A', layerId: 'layer-1' },
-                    { glyphName: 'B', layerId: 'layer-2' }
-                ]
-            }
-        ]);
+        bridge.applySyntheticChangeSet(
+            'Arrow key',
+            [
+                {
+                    op: 'set',
+                    path: ['glyphs', 'A', 'layers', 'layer-1'],
+                    oldValue: {
+                        id: 'layer-1',
+                        width: 600,
+                        shapes: [],
+                        anchors: [],
+                        guides: []
+                    },
+                    newValue: {
+                        id: 'layer-1',
+                        width: 640,
+                        shapes: [
+                            {
+                                closed: false,
+                                nodes: [
+                                    { x: 0, y: 0, nodetype: 'Line' },
+                                    { x: 10, y: 10, nodetype: 'Line' }
+                                ]
+                            }
+                        ],
+                        anchors: [],
+                        guides: []
+                    },
+                    workerReplayTargets: [
+                        { glyphName: 'A', layerId: 'layer-1' },
+                        { glyphName: 'B', layerId: 'layer-2' }
+                    ]
+                }
+            ],
+            { compileChangeSource: 'test-sync', compileEditType: null }
+        );
 
         const forwardEntry = workerUpdates.at(-1).changeLogEntries[0];
         workerUpdates.length = 0;
@@ -7560,57 +7795,61 @@ describe('syncGlyphFromJson', () => {
             workerUpdates.push({ update, changeLogEntries });
         });
 
-        bridge.applySyntheticChangeSet('Drag point', [
-            {
-                op: 'set',
-                path: ['glyphs', 'A', 'layers', 'layer-1'],
-                oldValue: {
-                    id: 'layer-1',
-                    width: 600,
-                    shapes: [],
-                    anchors: [],
-                    guides: []
+        bridge.applySyntheticChangeSet(
+            'Drag point',
+            [
+                {
+                    op: 'set',
+                    path: ['glyphs', 'A', 'layers', 'layer-1'],
+                    oldValue: {
+                        id: 'layer-1',
+                        width: 600,
+                        shapes: [],
+                        anchors: [],
+                        guides: []
+                    },
+                    newValue: {
+                        id: 'layer-1',
+                        width: 600,
+                        shapes: [
+                            {
+                                closed: false,
+                                nodes: [{ x: 20, y: 0, nodetype: 'Line' }]
+                            }
+                        ],
+                        anchors: [],
+                        guides: []
+                    },
+                    workerReplayTargets: [
+                        { glyphName: 'A', layerId: 'layer-1' },
+                        { glyphName: 'Adieresis', layerId: 'layer-2' }
+                    ]
                 },
-                newValue: {
-                    id: 'layer-1',
-                    width: 600,
-                    shapes: [
-                        {
-                            closed: false,
-                            nodes: [{ x: 20, y: 0, nodetype: 'Line' }]
-                        }
-                    ],
-                    anchors: [],
-                    guides: []
-                },
-                workerReplayTargets: [
-                    { glyphName: 'A', layerId: 'layer-1' },
-                    { glyphName: 'Adieresis', layerId: 'layer-2' }
-                ]
-            },
-            {
-                op: 'set',
-                path: ['glyphs', 'Adieresis', 'layers', 'layer-2'],
-                oldValue: {
-                    id: 'layer-2',
-                    width: 600,
-                    shapes: [],
-                    anchors: [],
-                    guides: []
-                },
-                newValue: {
-                    id: 'layer-2',
-                    width: 620,
-                    shapes: [],
-                    anchors: [],
-                    guides: []
-                },
-                workerReplayTargets: [
-                    { glyphName: 'A', layerId: 'layer-1' },
-                    { glyphName: 'Adieresis', layerId: 'layer-2' }
-                ]
-            }
-        ]);
+                {
+                    op: 'set',
+                    path: ['glyphs', 'Adieresis', 'layers', 'layer-2'],
+                    oldValue: {
+                        id: 'layer-2',
+                        width: 600,
+                        shapes: [],
+                        anchors: [],
+                        guides: []
+                    },
+                    newValue: {
+                        id: 'layer-2',
+                        width: 620,
+                        shapes: [],
+                        anchors: [],
+                        guides: []
+                    },
+                    workerReplayTargets: [
+                        { glyphName: 'A', layerId: 'layer-1' },
+                        { glyphName: 'Adieresis', layerId: 'layer-2' }
+                    ]
+                }
+            ],
+            { compileChangeSource: 'test-sync', compileEditType: null }
+        );
 
         workerUpdates.length = 0;
 
@@ -7642,35 +7881,41 @@ describe('syncGlyphFromJson', () => {
             workerUpdates.push({ update, changeLogEntries });
         });
 
-        bridge.applySyntheticChangeSet('Arrow key', [
-            {
-                op: 'set',
-                path: ['glyphs', 'A', 'layers', 'layer-1'],
-                oldValue: {
-                    id: 'layer-1',
-                    width: 600,
-                    shapes: [],
-                    anchors: [],
-                    guides: []
-                },
-                newValue: {
-                    id: 'layer-1',
-                    width: 610,
-                    shapes: [
-                        {
-                            closed: false,
-                            nodes: [
-                                { x: 0, y: 0, nodetype: 'Line' },
-                                { x: 5, y: 5, nodetype: 'Line' }
-                            ]
-                        }
-                    ],
-                    anchors: [],
-                    guides: []
-                },
-                workerReplayTargets: [{ glyphName: 'A', layerId: 'layer-1' }]
-            }
-        ]);
+        bridge.applySyntheticChangeSet(
+            'Arrow key',
+            [
+                {
+                    op: 'set',
+                    path: ['glyphs', 'A', 'layers', 'layer-1'],
+                    oldValue: {
+                        id: 'layer-1',
+                        width: 600,
+                        shapes: [],
+                        anchors: [],
+                        guides: []
+                    },
+                    newValue: {
+                        id: 'layer-1',
+                        width: 610,
+                        shapes: [
+                            {
+                                closed: false,
+                                nodes: [
+                                    { x: 0, y: 0, nodetype: 'Line' },
+                                    { x: 5, y: 5, nodetype: 'Line' }
+                                ]
+                            }
+                        ],
+                        anchors: [],
+                        guides: []
+                    },
+                    workerReplayTargets: [
+                        { glyphName: 'A', layerId: 'layer-1' }
+                    ]
+                }
+            ],
+            { compileChangeSource: 'test-sync', compileEditType: null }
+        );
 
         workerUpdates.length = 0;
         const layerUndoManager = bridge.getLayerUndoManager('A', 'layer-1');
@@ -7693,35 +7938,41 @@ describe('syncGlyphFromJson', () => {
             workerUpdates.push({ update, changeLogEntries });
         });
 
-        bridge.applySyntheticChangeSet('Arrow key', [
-            {
-                op: 'set',
-                path: ['glyphs', 'A', 'layers', 'layer-1'],
-                oldValue: {
-                    id: 'layer-1',
-                    width: 600,
-                    shapes: [],
-                    anchors: [],
-                    guides: []
-                },
-                newValue: {
-                    id: 'layer-1',
-                    width: 610,
-                    shapes: [
-                        {
-                            closed: false,
-                            nodes: [
-                                { x: 0, y: 0, nodetype: 'Line' },
-                                { x: 5, y: 5, nodetype: 'Line' }
-                            ]
-                        }
-                    ],
-                    anchors: [],
-                    guides: []
-                },
-                workerReplayTargets: [{ glyphName: 'A', layerId: 'layer-1' }]
-            }
-        ]);
+        bridge.applySyntheticChangeSet(
+            'Arrow key',
+            [
+                {
+                    op: 'set',
+                    path: ['glyphs', 'A', 'layers', 'layer-1'],
+                    oldValue: {
+                        id: 'layer-1',
+                        width: 600,
+                        shapes: [],
+                        anchors: [],
+                        guides: []
+                    },
+                    newValue: {
+                        id: 'layer-1',
+                        width: 610,
+                        shapes: [
+                            {
+                                closed: false,
+                                nodes: [
+                                    { x: 0, y: 0, nodetype: 'Line' },
+                                    { x: 5, y: 5, nodetype: 'Line' }
+                                ]
+                            }
+                        ],
+                        anchors: [],
+                        guides: []
+                    },
+                    workerReplayTargets: [
+                        { glyphName: 'A', layerId: 'layer-1' }
+                    ]
+                }
+            ],
+            { compileChangeSource: 'test-sync', compileEditType: null }
+        );
 
         expect(bridge.undo('A', 'layer-1')).not.toBeNull();
         workerUpdates.length = 0;
@@ -7746,16 +7997,22 @@ describe('syncGlyphFromJson', () => {
             workerUpdates.push({ update, changeLogEntries });
         });
 
-        bridge.applySyntheticChangeSet('Set RSB', [
-            {
-                op: 'set',
-                path: ['glyphs', 'A', 'layers', 'layer-1', 'width'],
-                oldValue: 600,
-                newValue: 640,
-                visualAnchorSide: 'left',
-                workerReplayTargets: [{ glyphName: 'A', layerId: 'layer-1' }]
-            }
-        ]);
+        bridge.applySyntheticChangeSet(
+            'Set RSB',
+            [
+                {
+                    op: 'set',
+                    path: ['glyphs', 'A', 'layers', 'layer-1', 'width'],
+                    oldValue: 600,
+                    newValue: 640,
+                    visualAnchorSide: 'left',
+                    workerReplayTargets: [
+                        { glyphName: 'A', layerId: 'layer-1' }
+                    ]
+                }
+            ],
+            { compileChangeSource: 'test-sync', compileEditType: null }
+        );
 
         const forwardEntry = workerUpdates.at(-1).changeLogEntries[0];
         workerUpdates.length = 0;
@@ -7803,7 +8060,18 @@ describe('syncGlyphFromJson', () => {
         });
 
         senderFontJson.glyphs[0].layers[0].width = 710;
-        senderBridge.syncGlyphFromJson('A', 'Remote drag');
+        senderBridge.syncGlyphFromJson(
+            'A',
+            'Remote drag',
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            'test-sync',
+            null
+        );
 
         receiverBridge.applyRemoteUpdate(lastUpdate, lastEntries);
 
@@ -7868,7 +8136,18 @@ describe('syncGlyphFromJson', () => {
         });
 
         senderFontJson.glyphs[0].layers[0].width = 735;
-        senderBridge.syncGlyphFromJson('A', 'Remote width drag');
+        senderBridge.syncGlyphFromJson(
+            'A',
+            'Remote width drag',
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            'test-sync',
+            null
+        );
 
         localWindowBridge.applyRemoteUpdate(lastUpdate, lastEntries);
         cloudBridge.applyRemoteUpdate(
@@ -7928,7 +8207,18 @@ describe('syncGlyphFromJson', () => {
         receiverBridge.setYjsWorkerCallback(workerCallback);
 
         senderFontJson.glyphs[0].layers[0].width = 710;
-        senderBridge.syncGlyphFromJson('A', 'Remote drag');
+        senderBridge.syncGlyphFromJson(
+            'A',
+            'Remote drag',
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            'test-sync',
+            null
+        );
 
         expect(() => receiverBridge.applyRemoteUpdate(lastUpdate)).toThrow(
             'Refusing metadata-free non-noop remote Yjs update'
@@ -7983,7 +8273,10 @@ describe('syncGlyphFromJson', () => {
 
         const oldGuides = cloneValue(senderFontJson.glyphs[0].layers[0].guides);
         delete senderFontJson.glyphs[0].layers[0].guides;
-        senderBridge.beginTransaction('Remove guides');
+        senderBridge.beginTransaction('Remove guides', null, {
+            compileChangeSource: 'test-sync',
+            compileEditType: null
+        });
         senderBridge.recordRemove(
             ['glyphs', 'A', 'layers', 'layer-1', 'guides'],
             oldGuides
@@ -8005,7 +8298,18 @@ describe('syncGlyphFromJson', () => {
         const { bridge, fontJson } = createTestBridge('test-1');
 
         fontJson.glyphs[0].layers[0].width = 700;
-        bridge.syncGlyphFromJson('A', 'Drag');
+        bridge.syncGlyphFromJson(
+            'A',
+            'Drag',
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            'test-sync',
+            null
+        );
 
         expect(bridge.canUndo('A')).toBe(true);
         bridge.undo('A');
@@ -8018,7 +8322,18 @@ describe('syncGlyphFromJson', () => {
         const { bridge, fontJson } = createTestBridge('test-1');
 
         fontJson.glyphs[0].layers[0].width = 700;
-        bridge.syncGlyphFromJson('A', 'Drag', undefined, undefined, 'layer-1');
+        bridge.syncGlyphFromJson(
+            'A',
+            'Drag',
+            undefined,
+            undefined,
+            'layer-1',
+            undefined,
+            undefined,
+            undefined,
+            'test-sync',
+            null
+        );
 
         expect(bridge.canUndo('A', 'layer-1')).toBe(true);
         expect(bridge.undo('A', 'layer-1')).toEqual(
@@ -8052,7 +8367,18 @@ describe('syncGlyphFromJson', () => {
 
         editedLayer.shapes[0].nodes[0].x += 43;
         editedLayer.anchors[0].x += 17;
-        bridge.syncGlyphFromJson('A', 'Glyph snapshot edit');
+        bridge.syncGlyphFromJson(
+            'A',
+            'Glyph snapshot edit',
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            'test-sync',
+            null
+        );
 
         bridge.undo('A');
         let layerMap = bridge.getYValue(layerPath);
@@ -8271,7 +8597,12 @@ describe('syncGlyphFromJson', () => {
             'Drag anchor',
             `anchor 'top': (${originalBottomX}, 750)`,
             `(${originalBottomX - 37}, 750)`,
-            'layer.regular.v1'
+            'layer.regular.v1',
+            undefined,
+            undefined,
+            undefined,
+            'test-sync',
+            null
         );
 
         expect(
@@ -8341,7 +8672,18 @@ describe('syncGlyphFromJson', () => {
             ]
         };
 
-        bridge.syncGlyphFromJson('A', 'Drag', undefined, undefined, 'layer-1');
+        bridge.syncGlyphFromJson(
+            'A',
+            'Drag',
+            undefined,
+            undefined,
+            'layer-1',
+            undefined,
+            undefined,
+            undefined,
+            'test-sync',
+            null
+        );
 
         expect(
             bridge.getYValue(['glyphs', 'A', 'layers', 'layer-1', 'width'])
@@ -8409,7 +8751,18 @@ describe('syncGlyphFromJson', () => {
             ]
         };
 
-        bridge.syncGlyphFromJson('A', 'Add point');
+        bridge.syncGlyphFromJson(
+            'A',
+            'Add point',
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            'test-sync',
+            null
+        );
 
         expect(
             bridge.getYValue(['glyphs', 'A', 'layers', 'layer-1', 'width'])
@@ -8436,7 +8789,10 @@ describe('syncGlyphFromJson', () => {
         const originalLayer = glyph.findLayerById('layer-1');
         const originalSnapshot = cloneValue(originalLayer.toJSON());
 
-        bridge.beginTransaction('Reinterpolate layer');
+        bridge.beginTransaction('Reinterpolate layer', null, {
+            compileChangeSource: 'test-sync',
+            compileEditType: null
+        });
         glyph.removeLayerById('layer-1');
 
         const recreatedLayer = glyph.addLayer(
@@ -8481,7 +8837,12 @@ describe('syncGlyphFromJson', () => {
             'Reinterpolate layer sync',
             undefined,
             undefined,
-            'layer-1'
+            'layer-1',
+            undefined,
+            undefined,
+            undefined,
+            'test-sync',
+            null
         );
         bridge.endTransaction();
 
@@ -8531,7 +8892,18 @@ describe('syncGlyphFromJson', () => {
             width: 710
         });
 
-        bridge.syncGlyphFromJson('A', 'Drag');
+        bridge.syncGlyphFromJson(
+            'A',
+            'Drag',
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            'test-sync',
+            null
+        );
 
         const historyItems = buildHistoryStackItems(bridge.getChangeLog(), {
             glyphName: 'A',
@@ -8606,7 +8978,18 @@ describe('syncGlyphFromJson', () => {
             layer1.paths[0]._addPoint(0, 0.5);
             layer2.paths[0]._addPoint(0, 0.5);
         });
-        bridge.syncGlyphFromJson('A', 'Add point');
+        bridge.syncGlyphFromJson(
+            'A',
+            'Add point',
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            'test-sync',
+            null
+        );
 
         const historyItems = buildHistoryStackItems(bridge.getChangeLog(), {
             glyphName: 'A',
@@ -8703,7 +9086,18 @@ describe('syncGlyphFromJson', () => {
             expect(result).not.toBeNull();
             layer2.paths[0]._slideSmoothOnCurveAtT(3, result.t);
         });
-        bridge.syncGlyphFromJson('A', 'Move point along curve');
+        bridge.syncGlyphFromJson(
+            'A',
+            'Move point along curve',
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            'test-sync',
+            null
+        );
 
         const historyItems = buildHistoryStackItems(bridge.getChangeLog(), {
             glyphName: 'A',
@@ -8743,10 +9137,32 @@ describe('syncGlyphFromJson', () => {
         const { bridge, fontJson } = createTestBridge('test-1');
 
         fontJson.glyphs[0].layers[0].width = 700;
-        bridge.syncGlyphFromJson('A', 'Drag 1');
+        bridge.syncGlyphFromJson(
+            'A',
+            'Drag 1',
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            'test-sync',
+            null
+        );
 
         fontJson.glyphs[0].layers[0].width = 800;
-        bridge.syncGlyphFromJson('A', 'Drag 2');
+        bridge.syncGlyphFromJson(
+            'A',
+            'Drag 2',
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            'test-sync',
+            null
+        );
 
         // stopCapturing() is called after each syncGlyphFromJson, so each sync
         // becomes its own undo step regardless of the 500ms captureTimeout.
@@ -8768,15 +9184,22 @@ describe('syncGlyphFromJson', () => {
     test('synthetic layer edit and later outline sync remain separate undo steps', () => {
         const { bridge, fontJson } = createTestBridge('test-1');
 
-        bridge.beginTransaction('Python script');
-        bridge.applySyntheticChangeSet('Python script', [
-            {
-                op: 'set',
-                path: ['glyphs', 'A', 'layers', 'layer-1', 'width'],
-                oldValue: 600,
-                newValue: 650
-            }
-        ]);
+        bridge.beginTransaction('Python script', null, {
+            compileChangeSource: 'test-sync',
+            compileEditType: null
+        });
+        bridge.applySyntheticChangeSet(
+            'Python script',
+            [
+                {
+                    op: 'set',
+                    path: ['glyphs', 'A', 'layers', 'layer-1', 'width'],
+                    oldValue: 600,
+                    newValue: 650
+                }
+            ],
+            { compileChangeSource: 'test-sync', compileEditType: null }
+        );
         bridge.endTransaction();
 
         fontJson.glyphs[0].layers[0].width = 700;
@@ -8785,7 +9208,12 @@ describe('syncGlyphFromJson', () => {
             'Drag 1',
             undefined,
             undefined,
-            'layer-1'
+            'layer-1',
+            undefined,
+            undefined,
+            undefined,
+            'test-sync',
+            null
         );
 
         expect(bridge.canUndo('A', 'layer-1')).toBe(true);
@@ -8822,18 +9250,30 @@ describe('syncGlyphFromJson', () => {
             'Drag 1',
             undefined,
             undefined,
-            'layer-1'
+            'layer-1',
+            undefined,
+            undefined,
+            undefined,
+            'test-sync',
+            null
         );
 
-        bridge.beginTransaction('Python script');
-        bridge.applySyntheticChangeSet('Python script', [
-            {
-                op: 'set',
-                path: ['format_specific', 'a'],
-                oldValue: undefined,
-                newValue: 'b'
-            }
-        ]);
+        bridge.beginTransaction('Python script', null, {
+            compileChangeSource: 'test-sync',
+            compileEditType: null
+        });
+        bridge.applySyntheticChangeSet(
+            'Python script',
+            [
+                {
+                    op: 'set',
+                    path: ['format_specific', 'a'],
+                    oldValue: undefined,
+                    newValue: 'b'
+                }
+            ],
+            { compileChangeSource: 'test-sync', compileEditType: null }
+        );
         bridge.endTransaction();
 
         expect(bridge.canUndo()).toBe(true);
@@ -8885,7 +9325,18 @@ describe('syncGlyphFromJson', () => {
             format_specific: {},
             shapes: []
         });
-        bridge.syncGlyphFromJson('A', 'Add temp layer');
+        bridge.syncGlyphFromJson(
+            'A',
+            'Add temp layer',
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            'test-sync',
+            null
+        );
 
         expect(
             bridge.getYValue(['glyphs', 'A', 'layers', 'layer-temp'])
@@ -8895,7 +9346,18 @@ describe('syncGlyphFromJson', () => {
         fontJson.glyphs[0].layers = fontJson.glyphs[0].layers.filter(
             (layer) => layer.id !== 'layer-temp'
         );
-        bridge.syncGlyphFromJson('A', 'Remove temp layer');
+        bridge.syncGlyphFromJson(
+            'A',
+            'Remove temp layer',
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            'test-sync',
+            null
+        );
 
         expect(
             bridge.getYValue(['glyphs', 'A', 'layers', 'layer-temp'])
@@ -8919,7 +9381,18 @@ describe('syncGlyphFromJson', () => {
 
         // First drag
         font1.glyphs[0].layers[0].width = 700;
-        bridge1.syncGlyphFromJson('A', 'Drag');
+        bridge1.syncGlyphFromJson(
+            'A',
+            'Drag',
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            'test-sync',
+            null
+        );
         flushTimers();
 
         expect(remoteEntries.length).toBeGreaterThanOrEqual(1);
@@ -8929,7 +9402,18 @@ describe('syncGlyphFromJson', () => {
 
         // Second drag
         font1.glyphs[0].layers[0].width = 800;
-        bridge1.syncGlyphFromJson('A', 'Drag');
+        bridge1.syncGlyphFromJson(
+            'A',
+            'Drag',
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            'test-sync',
+            null
+        );
         flushTimers();
 
         expect(remoteEntries.length).toBeGreaterThanOrEqual(2);
@@ -8947,7 +9431,18 @@ describe('syncGlyphFromJson', () => {
         const { bridge, fontJson } = createTestBridge('test-1');
 
         fontJson.glyphs[0].layers[0].width = 700;
-        bridge.syncGlyphFromJson('A', 'Drag');
+        bridge.syncGlyphFromJson(
+            'A',
+            'Drag',
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            'test-sync',
+            null
+        );
 
         const log = bridge.getChangeLog();
         const entry = log[log.length - 1];
@@ -8973,7 +9468,18 @@ describe('syncGlyphFromJson', () => {
 
         // Make an edit
         font1.glyphs[0].layers[0].width = 700;
-        bridge1.syncGlyphFromJson('A', 'Drag');
+        bridge1.syncGlyphFromJson(
+            'A',
+            'Drag',
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            'test-sync',
+            null
+        );
         flushTimers();
 
         // Remote bridge should have the change log entry
@@ -9008,7 +9514,18 @@ describe('syncGlyphFromJson', () => {
 
         // Make an edit then undo
         font1.glyphs[0].layers[0].width = 700;
-        bridge1.syncGlyphFromJson('A', 'Drag');
+        bridge1.syncGlyphFromJson(
+            'A',
+            'Drag',
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            'test-sync',
+            null
+        );
         flushTimers();
 
         expect(
@@ -9033,7 +9550,18 @@ describe('syncGlyphFromJson', () => {
         const { bridge, fontJson } = createTestBridge('test-1');
 
         fontJson.glyphs[0].layers[0].width = 700;
-        bridge.syncGlyphFromJson('A', 'Drag');
+        bridge.syncGlyphFromJson(
+            'A',
+            'Drag',
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            'test-sync',
+            null
+        );
 
         const logBefore = bridge.getChangeLog().length;
         bridge.undo('A');
@@ -9071,7 +9599,12 @@ describe('syncGlyphFromJson', () => {
             'Add path',
             undefined,
             undefined,
-            'layer-1'
+            'layer-1',
+            undefined,
+            undefined,
+            undefined,
+            'test-sync',
+            null
         );
         dispatchSpy.mockClear();
 
@@ -9121,7 +9654,18 @@ describe('syncGlyphFromJson', () => {
 
         // Primary makes edits
         font1.glyphs[0].layers[0].width = 700;
-        bridge1.syncGlyphFromJson('A', 'Drag 1');
+        bridge1.syncGlyphFromJson(
+            'A',
+            'Drag 1',
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            'test-sync',
+            null
+        );
         flushTimers();
 
         expect(remoteUpdates.length).toBeGreaterThanOrEqual(1);
@@ -9131,7 +9675,18 @@ describe('syncGlyphFromJson', () => {
 
         // Second edit
         font1.glyphs[0].layers[0].width = 800;
-        bridge1.syncGlyphFromJson('A', 'Drag 2');
+        bridge1.syncGlyphFromJson(
+            'A',
+            'Drag 2',
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            'test-sync',
+            null
+        );
         flushTimers();
 
         expect(remoteUpdates.length).toBeGreaterThanOrEqual(2);
@@ -9172,7 +9727,12 @@ describe('syncGlyphFromJson', () => {
             'Add path',
             undefined,
             undefined,
-            'layer-1'
+            'layer-1',
+            undefined,
+            undefined,
+            undefined,
+            'test-sync',
+            null
         );
         flushTimers();
 
@@ -9219,7 +9779,12 @@ describe('syncGlyphFromJson', () => {
             'Drag anchor',
             undefined,
             undefined,
-            'layer-1'
+            'layer-1',
+            undefined,
+            undefined,
+            undefined,
+            'test-sync',
+            null
         );
         flushTimers();
 
@@ -9267,7 +9832,12 @@ describe('syncGlyphFromJson', () => {
             'Drag anchor',
             undefined,
             undefined,
-            'master-extrathin'
+            'master-extrathin',
+            undefined,
+            undefined,
+            undefined,
+            'test-sync',
+            null
         );
 
         receiverBridge.applyRemoteUpdate(
@@ -9315,7 +9885,12 @@ describe('syncGlyphFromJson', () => {
                 'Drag point',
                 undefined,
                 undefined,
-                'layer-1'
+                'layer-1',
+                undefined,
+                undefined,
+                undefined,
+                'test-sync',
+                null
             );
 
             applyCapturedPackets(receiverBridge, packets);
@@ -9391,7 +9966,12 @@ describe('syncGlyphFromJson', () => {
             'Drag point',
             undefined,
             undefined,
-            'layer-1'
+            'layer-1',
+            undefined,
+            undefined,
+            undefined,
+            'test-sync',
+            null
         );
         receiverBridge.applyRemoteUpdate(
             lastUpdate,
@@ -9451,7 +10031,12 @@ describe('syncGlyphFromJson', () => {
                 'Drag point',
                 undefined,
                 undefined,
-                'layer-1'
+                'layer-1',
+                undefined,
+                undefined,
+                undefined,
+                'test-sync',
+                null
             );
             receiverBridge.applyRemoteUpdate(
                 lastUpdate,
@@ -9537,7 +10122,12 @@ describe('syncGlyphFromJson', () => {
             'Drag point',
             undefined,
             undefined,
-            'layer-1'
+            'layer-1',
+            undefined,
+            undefined,
+            undefined,
+            'test-sync',
+            null
         );
 
         receiverBridge.applyRemoteUpdate(
@@ -9591,7 +10181,12 @@ describe('syncGlyphFromJson', () => {
             'Delete contour',
             undefined,
             undefined,
-            'layer-1'
+            'layer-1',
+            undefined,
+            undefined,
+            undefined,
+            'test-sync',
+            null
         );
         flushTimers();
         expect(
@@ -9638,16 +10233,23 @@ describe('syncGlyphFromJson', () => {
         const newCode = `${oldCode}\n# remote-feature-code`;
         senderFontJson.features.features[0][1].code = newCode;
 
-        senderBridge.beginTransaction('Edit feature code');
+        senderBridge.beginTransaction('Edit feature code', null, {
+            compileChangeSource: 'test-sync',
+            compileEditType: null
+        });
         try {
-            senderBridge.applySyntheticChangeSet('Edit feature code', [
-                {
-                    op: 'set',
-                    path: ['features', 'features', 0, 1, 'code'],
-                    oldValue: oldCode,
-                    newValue: newCode
-                }
-            ]);
+            senderBridge.applySyntheticChangeSet(
+                'Edit feature code',
+                [
+                    {
+                        op: 'set',
+                        path: ['features', 'features', 0, 1, 'code'],
+                        oldValue: oldCode,
+                        newValue: newCode
+                    }
+                ],
+                { compileChangeSource: 'test-sync', compileEditType: null }
+            );
         } finally {
             senderBridge.endTransaction();
         }
@@ -9683,7 +10285,10 @@ describe('syncGlyphFromJson', () => {
         const deletedLayer = cloneValue(senderFontJson.glyphs[0].layers[1]);
         senderFontJson.glyphs[0].layers.splice(1, 1);
 
-        senderBridge.beginTransaction('Delete layer');
+        senderBridge.beginTransaction('Delete layer', null, {
+            compileChangeSource: 'test-sync',
+            compileEditType: null
+        });
         try {
             senderBridge.recordRemove(
                 ['glyphs', 'A', 'layers', deletedLayer.id],
@@ -9741,7 +10346,12 @@ describe('syncGlyphFromJson', () => {
             'Create interpolated layer sync',
             undefined,
             undefined,
-            'associated-layer-create'
+            'associated-layer-create',
+            undefined,
+            undefined,
+            undefined,
+            'test-sync',
+            null
         );
 
         receiverBridge.applyRemoteUpdate(
@@ -9802,7 +10412,12 @@ describe('syncGlyphFromJson', () => {
             'Create interpolated layer sync',
             undefined,
             undefined,
-            addedLayer.id
+            addedLayer.id,
+            undefined,
+            undefined,
+            undefined,
+            'test-sync',
+            null
         );
 
         receiverBridge.applyRemoteUpdate(
@@ -9821,7 +10436,10 @@ describe('syncGlyphFromJson', () => {
                 (layer) => layer.id !== addedLayer.id
             );
 
-        senderBridge.beginTransaction('Delete layer');
+        senderBridge.beginTransaction('Delete layer', null, {
+            compileChangeSource: 'test-sync',
+            compileEditType: null
+        });
         try {
             senderBridge.recordRemove(
                 ['glyphs', 'A', 'layers', addedLayer.id],
@@ -9881,7 +10499,18 @@ describe('syncGlyphFromJson', () => {
         });
 
         senderFontJson.glyphs[0].layers.splice(1, 1);
-        senderBridge.syncGlyphFromJson('A', 'Delete layer sync');
+        senderBridge.syncGlyphFromJson(
+            'A',
+            'Delete layer sync',
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            'test-sync',
+            null
+        );
 
         receiverBridge.applyRemoteUpdate(
             lastUpdate,
@@ -9920,7 +10549,18 @@ describe('syncGlyphFromJson', () => {
         });
 
         senderFontJson.glyphs[0].layers.splice(1, 1);
-        senderBridge.syncGlyphFromJson('A', 'Delete layer sync');
+        senderBridge.syncGlyphFromJson(
+            'A',
+            'Delete layer sync',
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            'test-sync',
+            null
+        );
 
         expect(lastCollaborationMessage).toBeTruthy();
         expect(
@@ -9971,7 +10611,12 @@ describe('syncGlyphFromJson', () => {
             'Remote width drag',
             undefined,
             undefined,
-            layerId
+            layerId,
+            undefined,
+            undefined,
+            undefined,
+            'test-sync',
+            null
         );
 
         expect(lastCollaborationMessage.changes[0].replayNewValue).toBe(741);
@@ -10005,7 +10650,10 @@ describe('syncGlyphFromJson', () => {
             (glyph) => glyph.name !== 'B'
         );
 
-        senderBridge.beginTransaction('Delete glyph');
+        senderBridge.beginTransaction('Delete glyph', null, {
+            compileChangeSource: 'test-sync',
+            compileEditType: null
+        });
         try {
             senderBridge.recordRemove(['glyphs', 'B'], { name: 'B' });
         } finally {
@@ -10038,7 +10686,12 @@ describe('syncGlyphFromJson', () => {
             'Drag point',
             undefined,
             undefined,
-            'layer-1'
+            'layer-1',
+            undefined,
+            undefined,
+            undefined,
+            'test-sync',
+            null
         );
 
         const logItem = bridge.getCollaborationLog().at(-1);
@@ -10086,7 +10739,18 @@ describe('syncGlyphFromJson', () => {
             ]
         };
 
-        bridge1.syncGlyphFromJson('A', 'Add point');
+        bridge1.syncGlyphFromJson(
+            'A',
+            'Add point',
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            'test-sync',
+            null
+        );
         flushTimers();
 
         expect(
@@ -10127,14 +10791,22 @@ describe('syncGlyphFromJson', () => {
         const sync2 = new WindowSync(receiverBridge, 'test-undo-master-sync');
 
         // Simulate a mouse drag transaction with multiple buffered operations
-        senderBridge.beginTransaction('Drag anchor');
+        senderBridge.beginTransaction('Drag anchor', null, {
+            compileChangeSource: 'test-sync',
+            compileEditType: null
+        });
         senderFontJson.glyphs[0].layers[0].anchors[0].x = 100;
         senderBridge.syncGlyphFromJson(
             'A',
             'Drag anchor',
             undefined,
             undefined,
-            'master-extrathin'
+            'master-extrathin',
+            undefined,
+            undefined,
+            undefined,
+            'test-sync',
+            null
         );
         senderFontJson.glyphs[0].layers[0].anchors[0].x = 110;
         senderBridge.syncGlyphFromJson(
@@ -10142,7 +10814,12 @@ describe('syncGlyphFromJson', () => {
             'Drag anchor',
             undefined,
             undefined,
-            'master-extrathin'
+            'master-extrathin',
+            undefined,
+            undefined,
+            undefined,
+            'test-sync',
+            null
         );
         senderFontJson.glyphs[0].layers[0].anchors[0].x = 123;
         senderBridge.syncGlyphFromJson(
@@ -10150,7 +10827,12 @@ describe('syncGlyphFromJson', () => {
             'Drag anchor',
             undefined,
             undefined,
-            'master-extrathin'
+            'master-extrathin',
+            undefined,
+            undefined,
+            undefined,
+            'test-sync',
+            null
         );
         senderBridge.endTransaction();
         flushTimers();
@@ -10200,7 +10882,10 @@ describe('syncGlyphFromJson', () => {
         const oldGuides = cloneValue(senderFontJson.glyphs[0].layers[0].guides);
         delete senderFontJson.glyphs[0].layers[0].guides;
 
-        senderBridge.beginTransaction('Delete layer guides');
+        senderBridge.beginTransaction('Delete layer guides', null, {
+            compileChangeSource: 'test-sync',
+            compileEditType: null
+        });
         senderBridge.recordRemove(
             ['glyphs', 'A', 'layers', 'layer-1', 'guides'],
             oldGuides
@@ -10254,7 +10939,10 @@ describe('syncGlyphFromJson', () => {
         const oldGuides = cloneValue(senderFontJson.glyphs[0].layers[0].guides);
         delete senderFontJson.glyphs[0].layers[0].guides;
 
-        senderBridge.beginTransaction('Delete layer guides');
+        senderBridge.beginTransaction('Delete layer guides', null, {
+            compileChangeSource: 'test-sync',
+            compileEditType: null
+        });
         senderBridge.recordRemove(
             [
                 'glyphs',
@@ -10516,7 +11204,12 @@ describe('syncGlyphFromJson', () => {
             'Drag anchor',
             undefined,
             undefined,
-            'layer-1'
+            'layer-1',
+            undefined,
+            undefined,
+            undefined,
+            'test-sync',
+            null
         );
 
         const changeEntries = bridge
@@ -10541,7 +11234,10 @@ describe('syncGlyphFromJson', () => {
         const originalSnapshot = cloneValue(originalLayer.toJSON());
         const originalWidthB = fontJson.glyphs[1].layers[0].width;
 
-        bridge.beginTransaction('Reinterpolate dependent layers');
+        bridge.beginTransaction('Reinterpolate dependent layers', null, {
+            compileChangeSource: 'test-sync',
+            compileEditType: null
+        });
         glyph.removeLayerById('layer-1');
 
         const recreatedLayer = glyph.addLayer(
@@ -10709,7 +11405,12 @@ describe('syncGlyphFromJson', () => {
             'Drag point 1',
             undefined,
             undefined,
-            'layer-1'
+            'layer-1',
+            undefined,
+            undefined,
+            undefined,
+            'test-sync',
+            null
         );
 
         fontJson.glyphs[0].layers[0].shapes[0].nodes[1].x =
@@ -10719,7 +11420,12 @@ describe('syncGlyphFromJson', () => {
             'Drag point 2',
             undefined,
             undefined,
-            'layer-1'
+            'layer-1',
+            undefined,
+            undefined,
+            undefined,
+            'test-sync',
+            null
         );
 
         fontJson.glyphs[0].layers[0].anchors[0].x = originalAnchorX + 25;
@@ -10746,7 +11452,12 @@ describe('syncGlyphFromJson', () => {
             'Drag point 3',
             undefined,
             undefined,
-            'layer-1'
+            'layer-1',
+            undefined,
+            undefined,
+            undefined,
+            'test-sync',
+            null
         );
 
         expect(bridge.undo('A', 'layer-1')).not.toBeNull();
@@ -10800,7 +11511,12 @@ describe('syncGlyphFromJson', () => {
             'Add path',
             undefined,
             undefined,
-            'layer-1'
+            'layer-1',
+            undefined,
+            undefined,
+            undefined,
+            'test-sync',
+            null
         );
         flushTimers();
         dispatchSpy.mockClear();
@@ -11057,7 +11773,10 @@ describe('ChangeBridge _syncJsonFromYDoc scope-aware undo regression', () => {
         expect(glyphBLayerBefore).toBeDefined();
 
         // Record a node-position change on glyph A, layer-1
-        bridge.beginTransaction('Move node');
+        bridge.beginTransaction('Move node', null, {
+            compileChangeSource: 'test-sync',
+            compileEditType: null
+        });
         bridge.recordChange(
             ['glyphs', 'A', 'layers', 'layer-1', 'shapes', 0, 'nodes', 0],
             'x',
@@ -11098,7 +11817,10 @@ describe('ChangeBridge _syncJsonFromYDoc scope-aware undo regression', () => {
         window.changeBridge = bridge;
 
         // Record a width change on glyph A, layer-1
-        bridge.beginTransaction('Width change');
+        bridge.beginTransaction('Width change', null, {
+            compileChangeSource: 'test-sync',
+            compileEditType: null
+        });
         bridge.recordChange(
             ['glyphs', 'A', 'layers', 'layer-1'],
             'width',
@@ -11143,7 +11865,18 @@ describe('ChangeBridge _syncJsonFromYDoc scope-aware undo regression', () => {
 
         // Make a layer-scoped change so we have something to undo
         fontJson.glyphs[0].layers[0].width = 700;
-        bridge.syncGlyphFromJson('A', 'Drag', undefined, undefined, 'layer-1');
+        bridge.syncGlyphFromJson(
+            'A',
+            'Drag',
+            undefined,
+            undefined,
+            'layer-1',
+            undefined,
+            undefined,
+            undefined,
+            'test-sync',
+            null
+        );
         flushTimers();
 
         // Capture broadcasts
@@ -11191,7 +11924,12 @@ describe('ChangeBridge _syncJsonFromYDoc scope-aware undo regression', () => {
             'Drag',
             undefined,
             undefined,
-            'layer-1'
+            'layer-1',
+            undefined,
+            undefined,
+            undefined,
+            'test-sync',
+            null
         );
 
         // Verify the undo was effective locally
@@ -11212,9 +11950,23 @@ describe('ChangeBridge _syncJsonFromYDoc scope-aware undo regression', () => {
         const sync = new WindowSync(bridge, 'font-channel-nodouble');
 
         // Create a font-scoped history item that replays directly
-        bridge.beginTransaction('Font scope edit');
+        bridge.beginTransaction('Font scope edit', null, {
+            compileChangeSource: 'test-sync',
+            compileEditType: null
+        });
         fontJson.glyphs[0].layers[0].width = 700;
-        bridge.syncGlyphFromJson('A', 'Font scope edit');
+        bridge.syncGlyphFromJson(
+            'A',
+            'Font scope edit',
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            'test-sync',
+            null
+        );
         bridge.endTransaction();
         flushTimers();
 
@@ -11261,7 +12013,18 @@ describe('ChangeBridge _syncJsonFromYDoc scope-aware undo regression', () => {
 
         // Apply the same edit on both
         const applyEdit = (b) => {
-            b.syncGlyphFromJson('A', 'Drag', undefined, undefined, 'layer-1');
+            b.syncGlyphFromJson(
+                'A',
+                'Drag',
+                undefined,
+                undefined,
+                'layer-1',
+                undefined,
+                undefined,
+                undefined,
+                'test-sync',
+                null
+            );
         };
         applyEdit(bridge);
         flushTimers();
@@ -11714,14 +12477,18 @@ describe('ChangeBridge _syncJsonFromYDoc scope-aware undo regression', () => {
         bridge.onLocalUpdate((update) => emittedUpdates.push(update));
 
         fontJson.note = 'Local edit won the race';
-        bridge.applySyntheticChangeSet('Local note change', [
-            {
-                op: 'set',
-                path: ['note'],
-                oldValue: '',
-                newValue: 'Local edit won the race'
-            }
-        ]);
+        bridge.applySyntheticChangeSet(
+            'Local note change',
+            [
+                {
+                    op: 'set',
+                    path: ['note'],
+                    oldValue: '',
+                    newValue: 'Local edit won the race'
+                }
+            ],
+            { compileChangeSource: 'test-sync', compileEditType: null }
+        );
         emittedUpdates.length = 0;
 
         const sourceSnapshot = cloneValue(fontJson);

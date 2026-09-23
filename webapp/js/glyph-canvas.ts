@@ -1588,7 +1588,10 @@ class GlyphCanvas {
             }
         };
         let selectionQueuedForBridgeRefresh = false;
-        bridge?.beginTransaction('Paste glyphs');
+        bridge?.beginTransaction('Paste glyphs', null, {
+            compileChangeSource: 'keyboard-outline',
+            compileEditType: null
+        });
         let result;
         try {
             result = withSuppressedModelRecording(() =>
@@ -6771,7 +6774,11 @@ class GlyphCanvas {
                 layerId: targetLayer.id!
             }));
         const affectedGlyphNames = new Set<string>([glyphName]);
-        window.patchSyncEngine?.beginTransaction('Replace component reference');
+        window.patchSyncEngine?.beginTransaction(
+            'Replace component reference',
+            null,
+            { compileChangeSource: 'keyboard-outline', compileEditType: null }
+        );
         try {
             for (const targetComponent of targetComponents) {
                 if (targetComponent?.isComponent()) {
@@ -6878,7 +6885,10 @@ class GlyphCanvas {
             return;
         }
 
-        window.patchSyncEngine?.beginTransaction('Add guide');
+        window.patchSyncEngine?.beginTransaction('Add guide', null, {
+            compileChangeSource: 'keyboard-guide',
+            compileEditType: 'guide'
+        });
         try {
             layer.addGuide({
                 x: Math.round(position.x),
@@ -6931,7 +6941,10 @@ class GlyphCanvas {
 
         const linkedLayers = activeLayer._getLinkedLayers?.() || [];
         const affectedGlyphNames = new Set<string>([glyphName]);
-        window.patchSyncEngine?.beginTransaction('Add component');
+        window.patchSyncEngine?.beginTransaction('Add component', null, {
+            compileChangeSource: 'keyboard-outline',
+            compileEditType: null
+        });
         try {
             for (const targetLayer of [activeLayer, ...linkedLayers]) {
                 targetLayer.addComponent(reference);
@@ -7024,7 +7037,10 @@ class GlyphCanvas {
         const affectedGlyphNames = new Set<string>([glyphName]);
         const roundedX = Math.round(position.x);
         const roundedY = Math.round(position.y);
-        window.patchSyncEngine?.beginTransaction('Add anchor');
+        window.patchSyncEngine?.beginTransaction('Add anchor', null, {
+            compileChangeSource: 'keyboard-anchor',
+            compileEditType: null
+        });
         try {
             for (const targetLayer of targetLayers) {
                 targetLayer.addAnchor(roundedX, roundedY, name);
@@ -7165,7 +7181,10 @@ class GlyphCanvas {
             return;
         }
 
-        window.patchSyncEngine?.beginTransaction('Rename guide');
+        window.patchSyncEngine?.beginTransaction('Rename guide', null, {
+            compileChangeSource: 'keyboard-guide',
+            compileEditType: 'guide'
+        });
         try {
             guide.name = nextName;
         } finally {
@@ -7205,7 +7224,10 @@ class GlyphCanvas {
 
         const transactionLabel =
             field === 'angle' ? 'Set guide angle' : 'Set guide position';
-        window.patchSyncEngine?.beginTransaction(transactionLabel);
+        window.patchSyncEngine?.beginTransaction(transactionLabel, null, {
+            compileChangeSource: 'keyboard-guide',
+            compileEditType: 'guide'
+        });
         try {
             if (field === 'angle') {
                 guide.pos.angle = numericValue;
@@ -7267,7 +7289,14 @@ class GlyphCanvas {
             const selectedName = guide.name;
             const linkedLayers = layer._getLinkedLayers?.() || [];
 
-            window.patchSyncEngine?.beginTransaction('Make guide global');
+            window.patchSyncEngine?.beginTransaction(
+                'Make guide global',
+                null,
+                {
+                    compileChangeSource: 'keyboard-guide',
+                    compileEditType: 'guide'
+                }
+            );
             try {
                 layer.removeGuide(selectedIndex);
                 if (selectedName) {
@@ -7301,7 +7330,10 @@ class GlyphCanvas {
             // Global → Local
             const selectedIndex = handle.index;
 
-            window.patchSyncEngine?.beginTransaction('Make guide local');
+            window.patchSyncEngine?.beginTransaction('Make guide local', null, {
+                compileChangeSource: 'keyboard-guide',
+                compileEditType: 'guide'
+            });
             try {
                 master.removeGuide(selectedIndex);
                 layer.addGuide(pos, name, color);
@@ -7392,7 +7424,10 @@ class GlyphCanvas {
                 layerId: targetLayer.id!
             }));
 
-        window.patchSyncEngine?.beginTransaction('Rename anchor');
+        window.patchSyncEngine?.beginTransaction('Rename anchor', null, {
+            compileChangeSource: 'keyboard-anchor',
+            compileEditType: null
+        });
         try {
             anchor.name = nextName;
             for (const linkedLayer of linkedLayers) {
@@ -7448,7 +7483,10 @@ class GlyphCanvas {
 
         let changed = false;
         const affectedGlyphNames = new Set<string>();
-        window.patchSyncEngine?.beginTransaction('Set anchor position');
+        window.patchSyncEngine?.beginTransaction('Set anchor position', null, {
+            compileChangeSource: 'keyboard-anchor',
+            compileEditType: null
+        });
         try {
             for (const anchor of selectedAnchors) {
                 if (field === 'x') {
@@ -7534,7 +7572,11 @@ class GlyphCanvas {
 
         let changed = false;
         const affectedGlyphNames = new Set<string>();
-        window.patchSyncEngine?.beginTransaction('Set component transform');
+        window.patchSyncEngine?.beginTransaction(
+            'Set component transform',
+            null,
+            { compileChangeSource: 'keyboard-outline', compileEditType: null }
+        );
         try {
             for (const component of selectedComponents) {
                 if (
@@ -7603,7 +7645,9 @@ class GlyphCanvas {
         let changed = false;
         const affectedGlyphNames = new Set<string>([glyph.name]);
         window.patchSyncEngine?.beginTransaction(
-            'Set component automatic alignment'
+            'Set component automatic alignment',
+            null,
+            { compileChangeSource: 'keyboard-outline', compileEditType: null }
         );
         try {
             for (const layer of glyph.layers || []) {
@@ -7672,7 +7716,9 @@ class GlyphCanvas {
 
         const affectedGlyphNames = new Set<string>([glyphName]);
         window.patchSyncEngine?.beginTransaction(
-            'Set component anchor override'
+            'Set component anchor override',
+            null,
+            { compileChangeSource: 'keyboard-anchor', compileEditType: null }
         );
         try {
             component.anchor = nextAnchor;
@@ -8873,7 +8919,12 @@ class GlyphCanvas {
         window.patchSyncEngine?.beginTransaction(
             include
                 ? 'Add kern group membership'
-                : 'Remove kern group membership'
+                : 'Remove kern group membership',
+            null,
+            {
+                compileChangeSource: 'keyboard-kerning-groups',
+                compileEditType: 'kerning-groups'
+            }
         );
         try {
             if (
@@ -9423,7 +9474,10 @@ class GlyphCanvas {
         value: number | null,
         isRTL: boolean
     ): void {
-        window.patchSyncEngine?.beginTransaction('Edit kerning pair');
+        window.patchSyncEngine?.beginTransaction('Edit kerning pair', null, {
+            compileChangeSource: 'keyboard-kerning-value',
+            compileEditType: 'kerning-value'
+        });
         try {
             setKerningPairValueOnMaster(
                 master,

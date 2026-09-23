@@ -46,7 +46,9 @@ function beforePythonExecution(code?: string) {
         {
             historyItemId: assistantExecution?.id ?? null,
             promptGroupId: assistantExecution?.id ?? null,
-            historySummary: assistantExecution?.historySummary ?? null
+            historySummary: assistantExecution?.historySummary ?? null,
+            compileChangeSource: assistantExecution ? 'assistant' : 'python',
+            compileEditType: null
         }
     );
     if (bridge) {

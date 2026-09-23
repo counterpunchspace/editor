@@ -476,20 +476,24 @@ describe('Assistant prompt transaction metadata', () => {
         bridge.onLocalUpdate((update, _message, entries, documentId) => {
             packets.push({ update, entries, documentId });
         });
-        bridge.applySyntheticChangeSet('Reorder collections', [
-            {
-                op: 'set',
-                path: ['glyphOrder'],
-                oldValue: ['A', 'B'],
-                newValue: ['B', 'A']
-            },
-            {
-                op: 'set',
-                path: ['glyphs', 'A', 'layerOrder'],
-                oldValue: ['layer-1', 'layer-2'],
-                newValue: ['layer-2', 'layer-1']
-            }
-        ]);
+        bridge.applySyntheticChangeSet(
+            'Reorder collections',
+            [
+                {
+                    op: 'set',
+                    path: ['glyphOrder'],
+                    oldValue: ['A', 'B'],
+                    newValue: ['B', 'A']
+                },
+                {
+                    op: 'set',
+                    path: ['glyphs', 'A', 'layerOrder'],
+                    oldValue: ['layer-1', 'layer-2'],
+                    newValue: ['layer-2', 'layer-1']
+                }
+            ],
+            { compileChangeSource: 'test-sync', compileEditType: null }
+        );
 
         expect(bridge.getYValue(['glyphs', 'A'])).toBeInstanceOf(Y.Map);
         expect(bridge.getFontJsonSnapshot().glyphs).toEqual(
@@ -557,16 +561,22 @@ describe('Assistant prompt transaction metadata', () => {
 
         bridge.beginTransaction('Assistant changes', null, {
             promptGroupId: 'assistant-prompt-1',
-            historySummary: 'Assistant changes'
+            historySummary: 'Assistant changes',
+            compileChangeSource: 'test-sync',
+            compileEditType: null
         });
-        bridge.applySyntheticChangeSet('Assistant changes', [
-            {
-                op: 'set',
-                path: ['format_specific', 'source'],
-                oldValue: undefined,
-                newValue: 'assistant'
-            }
-        ]);
+        bridge.applySyntheticChangeSet(
+            'Assistant changes',
+            [
+                {
+                    op: 'set',
+                    path: ['format_specific', 'source'],
+                    oldValue: undefined,
+                    newValue: 'assistant'
+                }
+            ],
+            { compileChangeSource: 'test-sync', compileEditType: null }
+        );
 
         expect(
             bridge.updateTransactionMetadata(
@@ -598,17 +608,23 @@ describe('Assistant prompt transaction metadata', () => {
 
         bridge.beginTransaction('Assistant changes', null, {
             promptGroupId: 'assistant-prompt-2',
-            historySummary: 'Assistant changes'
+            historySummary: 'Assistant changes',
+            compileChangeSource: 'test-sync',
+            compileEditType: null
         });
         bridge.recordChange(['names'], 'familyName', 'TestFont', 'PromptFont');
-        bridge.applySyntheticChangeSet('Assistant changes', [
-            {
-                op: 'set',
-                path: ['format_specific', 'source'],
-                oldValue: undefined,
-                newValue: 'python'
-            }
-        ]);
+        bridge.applySyntheticChangeSet(
+            'Assistant changes',
+            [
+                {
+                    op: 'set',
+                    path: ['format_specific', 'source'],
+                    oldValue: undefined,
+                    newValue: 'python'
+                }
+            ],
+            { compileChangeSource: 'test-sync', compileEditType: null }
+        );
         expect(
             bridge.updateTransactionMetadata(
                 'assistant-prompt-2',

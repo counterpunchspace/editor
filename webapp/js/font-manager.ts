@@ -29,6 +29,7 @@ import {
     withSuppressedModelRecording
 } from './babelfont-model';
 import { canonicalizeImportedFontJson } from './font-import-canonicalization';
+import { compilationPlan, type CompileEditStamp } from './edit-intent';
 import { jsonToYDoc, fromYType, getYPath } from './change-bridge-ydoc';
 import {
     describeRestingLayerViolation,
@@ -376,7 +377,7 @@ type CapturedGlyphCanvasState = {
 
 export type EditingCompileContext = {
     changeSource: string | null;
-    editType: 'outline' | 'anchor' | 'kerning-value' | 'kerning-groups' | null;
+    editType: CompileEditStamp;
     dataFreshnessMode:
         'authoritative-worker-yjs' | 'live-drag-worker-preview' | null;
 };
@@ -649,8 +650,7 @@ class FontManager {
     isCompiling: boolean;
     glyphOrderCache: string[] | null;
     lastChangeSource: string | null = null; // Track what triggered the last change (keyboard, mouse-drag, etc.)
-    lastEditType:
-        'outline' | 'anchor' | 'kerning-value' | 'kerning-groups' | null = null; // Track edit type for compilation optimization
+    lastEditType: CompileEditStamp = null;
     lastCompilationMode:
         | 'full'
         | 'outline-only'
@@ -3422,73 +3422,16 @@ class FontManager {
                 if (forceFullWorkerCompile) {
                     this.forceFullEditingCacheRefresh = false;
                 }
-                const isInteractiveSource =
-                    isMouseDragSource || isKeyboardSource;
-                // Determine compilation mode based on edit type
-                const isInteractiveEdit =
-                    isInteractiveSource &&
-                    (dragActiveAtRequest || isKeyboardSource);
-                // Remote edits use the same fast-path mode as the
-                // original edit (anchor-only / outline-only) so the
-                // linked window's editing compile is efficient.
-                const isRemoteFastPathEdit =
-                    isRemoteSource && editTypeAtRequest !== null;
-                const isCommittedLayerBatchFastPathEdit =
-                    isMasterReinterpolateBatchSource &&
-                    editTypeAtRequest === 'outline';
-                const isTextInputEdit =
-                    incrementalChangeSource === 'text-input';
-                compilationMode = 'full';
-                let optionOverrides:
-                    | {
-                          skip_features?: boolean;
-                          skip_kerning?: boolean;
-                          skip_outlines?: boolean;
-                          produce_varc_table?: boolean;
-                      }
-                    | undefined;
-                if (
-                    !forceFullWorkerCompile &&
-                    (isInteractiveEdit ||
-                        isRemoteFastPathEdit ||
-                        isCommittedLayerBatchFastPathEdit) &&
-                    editTypeAtRequest === 'outline'
-                ) {
-                    compilationMode = 'outline-only';
-                    optionOverrides = {
-                        skip_features: true,
-                        skip_kerning: true,
-                        produce_varc_table: false
-                    };
-                } else if (
-                    !forceFullWorkerCompile &&
-                    (isInteractiveEdit || isRemoteFastPathEdit) &&
-                    editTypeAtRequest === 'anchor'
-                ) {
-                    compilationMode = 'anchor-only';
-                    optionOverrides = {
-                        produce_varc_table: false
-                    };
-                } else if (
-                    !forceFullWorkerCompile &&
-                    (isInteractiveEdit || isRemoteFastPathEdit) &&
-                    (editTypeAtRequest === 'kerning-value' ||
-                        editTypeAtRequest === 'kerning-groups')
-                ) {
-                    compilationMode = 'kerning-only';
-                    optionOverrides = {
-                        produce_varc_table: false
-                    };
-                } else if (isTextInputEdit) {
-                    // Text typing: font data unchanged, only subset changed.
-                    // Features and kerning must stay ON — Arabic and other
-                    // connected scripts rely on them to keep letters joined.
-                    // A deferred full compile fires after typing settles.
-                    compilationMode = 'text-input';
-                    optionOverrides = {
-                        produce_varc_table: false
-                    };
-                }
+                const plan = compilationPlan({
+                    changeSource: incrementalChangeSource,
+                    editType: editTypeAtRequest,
+                    dataFreshnessMode: dataFreshnessModeAtRequest,
+                    forceFull: forceFullWorkerCompile
+                });
+                compilationMode = plan.skipCompile
+                    ? 'full'
+                    : plan.compilationMode;
+                const optionOverrides = plan.optionOverrides;
 
                 // Pre-compilation validation: assert canonical shape/array
                 // structure before any compile path that still consumes the
@@ -6251,12 +6194,7 @@ class FontManager {
         if (isInteractiveEdit) {
             this.clearEditingCompileContext();
         } else {
-            const editType = changeSource.endsWith('-anchor')
-                ? 'anchor'
-                : changeSource.endsWith('-outline')
-                  ? 'outline'
-                  : null;
-            this.setEditingCompileContext(changeSource, editType);
+            this.setEditingCompileContext(changeSource, null);
         }
 
         if (isInteractiveEdit) {

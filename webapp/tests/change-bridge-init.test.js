@@ -3476,14 +3476,18 @@ describe('bridge Yjs worker callback', () => {
             remoteEntries = entries;
         });
 
-        senderBridge.applySyntheticChangeSet('Set vendor metadata', [
-            {
-                op: 'set',
-                path: ['format_specific', 'com.example.vendor'],
-                oldValue: null,
-                newValue: { enabled: true }
-            }
-        ]);
+        senderBridge.applySyntheticChangeSet(
+            'Set vendor metadata',
+            [
+                {
+                    op: 'set',
+                    path: ['format_specific', 'com.example.vendor'],
+                    oldValue: null,
+                    newValue: { enabled: true }
+                }
+            ],
+            { compileChangeSource: 'test-sync', compileEditType: null }
+        );
 
         receiverBridge.applyRemoteUpdate(remoteUpdate, remoteEntries);
         await Promise.resolve();
@@ -4692,15 +4696,21 @@ describe('committed Yjs emission funnel', () => {
             committedPackets.push({ entries, context });
         });
 
-        bridge.applySyntheticChangeSet('Set sidebearing', [
-            {
-                op: 'set',
-                path: ['glyphs', 'A', 'layers', 'layer-1', 'width'],
-                oldValue: 600,
-                newValue: 620,
-                workerReplayTargets: [{ glyphName: 'A', layerId: 'layer-1' }]
-            }
-        ]);
+        bridge.applySyntheticChangeSet(
+            'Set sidebearing',
+            [
+                {
+                    op: 'set',
+                    path: ['glyphs', 'A', 'layers', 'layer-1', 'width'],
+                    oldValue: 600,
+                    newValue: 620,
+                    workerReplayTargets: [
+                        { glyphName: 'A', layerId: 'layer-1' }
+                    ]
+                }
+            ],
+            { compileChangeSource: 'test-sync', compileEditType: null }
+        );
         expect(committedPackets).toHaveLength(1);
         expect(committedPackets[0].entries).toHaveLength(1);
         expect(committedPackets[0].context).toEqual(

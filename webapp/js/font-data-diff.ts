@@ -24,10 +24,38 @@ function valuesDiffer(left: unknown, right: unknown): boolean {
     return JSON.stringify(left) !== JSON.stringify(right);
 }
 
+function isFeatureTuple(
+    value: unknown
+): value is [string, Record<string, unknown>] {
+    return (
+        Array.isArray(value) &&
+        value.length >= 2 &&
+        typeof value[0] === 'string' &&
+        isPlainObject(value[1])
+    );
+}
+
+/** Same tags in the same order: diff each feature's code instead of the whole list. */
+function isSameOrderFeatureTupleList(
+    beforeValue: unknown[],
+    afterValue: unknown[]
+): boolean {
+    if (beforeValue.length !== afterValue.length) {
+        return false;
+    }
+    return beforeValue.every(
+        (item, index) =>
+            isFeatureTuple(item) &&
+            isFeatureTuple(afterValue[index]) &&
+            item[0] === afterValue[index][0]
+    );
+}
+
 /**
  * Derive forward and inverse structural operations between two font snapshots.
- * Glyphs and layers are keyed by their stable names and ids; other arrays stay
- * atomic so their ordering and storage representation remain schema-safe.
+ * Glyphs and layers are keyed by their stable names and ids. Feature lists
+ * with unchanged tags diff each feature's code. Other arrays stay atomic so
+ * their ordering and storage representation remain schema-safe.
  */
 export function diffFontDataToPatchPairs(
     beforeValue: unknown,
@@ -113,6 +141,37 @@ export function diffFontDataToPatchPairs(
                         value: beforeOrder
                     }
                 });
+            }
+            return patchPairs;
+        }
+
+        const isFeatureList =
+            path.length >= 2 &&
+            path[path.length - 2] === 'features' &&
+            path[path.length - 1] === 'features';
+        if (
+            isFeatureList &&
+            valuesDiffer(beforeValue, afterValue) &&
+            isSameOrderFeatureTupleList(beforeValue, afterValue)
+        ) {
+            for (let index = 0; index < beforeValue.length; index++) {
+                const beforeTuple = beforeValue[index] as [
+                    string,
+                    Record<string, unknown>
+                ];
+                const afterTuple = afterValue[index] as [
+                    string,
+                    Record<string, unknown>
+                ];
+                // Path segment 1 is the code record. Replacing the tuple
+                // array itself writes that array into the feature tag.
+                diffFontDataToPatchPairs(
+                    beforeTuple[1],
+                    afterTuple[1],
+                    [...path, index, 1],
+                    null,
+                    patchPairs
+                );
             }
             return patchPairs;
         }

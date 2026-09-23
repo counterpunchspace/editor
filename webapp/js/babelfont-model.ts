@@ -3587,13 +3587,21 @@ function recordRemoveAndMarkDirty(
     markFontDirty();
 }
 
-function withBridgeTransaction<T>(label: string, fn: () => T): T {
+function withBridgeTransaction<T>(
+    label: string,
+    compileChangeSource: string,
+    compileEditType: string | null,
+    fn: () => T
+): T {
     const bridge = getPatchSyncEngine();
     if (!bridge) {
         return fn();
     }
 
-    bridge.beginTransaction(label);
+    bridge.beginTransaction(label, null, {
+        compileChangeSource,
+        compileEditType
+    });
     try {
         return fn();
     } finally {
@@ -4132,6 +4140,8 @@ function getPreciseLiveMutableValue<T>(
                         const nextArgs = args.map(unwrapLiveMutableValue);
                         return withBridgeTransaction(
                             `Edit ${String(currentPath[currentPath.length - 1] ?? 'array')}`,
+                            'model-edit',
+                            null,
                             () => {
                                 const oldValue = cloneForHistory(target);
                                 const operationResult = Reflect.apply(
@@ -4772,6 +4782,8 @@ export class Path extends ArrayElementBase<PathData, Layer | Shape> {
         this.withLayerFingerprintChangeEvent(() => {
             withBridgeTransaction(
                 value ? 'Subtract paths' : 'Clear path subtraction',
+                'keyboard-outline',
+                null,
                 () => {
                     setFormatSpecificKey(
                         this,
@@ -8399,98 +8411,103 @@ export class Layer extends ArrayElementBase {
             }
         };
 
-        return withBridgeTransaction(label, () => {
-            if (!input) {
-                this.clearEffectiveSidebearingKey(side);
-                const affectedGlyphNames = new Set<string>(
-                    [glyphName].filter(Boolean) as string[]
-                );
-                recomputeDependentMetrics(affectedGlyphNames);
-                return {
-                    ...this.resolveMetricsKey(side),
-                    updateScope,
-                    affectedGlyphNames: [...affectedGlyphNames]
-                };
-            }
-
-            if (this.isAutomaticAlignedLayer() && !/^==?[+-]/.test(input)) {
-                return {
-                    input,
-                    value: null,
-                    error: 'Automatic sidebearings only accept =+/- or ==+/- adjustments',
-                    referencedGlyphNames: [],
-                    isLocal: this.hasLocalSidebearingKey(side),
-                    updateScope: 'layer',
-                    affectedGlyphNames: glyphNameList
-                };
-            }
-
-            if (isPlainNumericInput) {
-                this.clearEffectiveSidebearingKey(side);
-                this.setDirectSidebearing(side, Number(input));
-                const affectedGlyphNames = new Set<string>(
-                    [glyphName].filter(Boolean) as string[]
-                );
-                recomputeDependentMetrics(affectedGlyphNames);
-                return {
-                    input,
-                    value: Number(input),
-                    error: null,
-                    referencedGlyphNames: [],
-                    isLocal: false,
-                    updateScope,
-                    affectedGlyphNames: [...affectedGlyphNames]
-                };
-            }
-
-            if (useLocalKeyStorage) {
-                if (side === 'left') {
-                    this.leftMetricsKey = input;
-                } else {
-                    this.rightMetricsKey = input;
+        return withBridgeTransaction(
+            label,
+            'keyboard-sidebearing',
+            null,
+            () => {
+                if (!input) {
+                    this.clearEffectiveSidebearingKey(side);
+                    const affectedGlyphNames = new Set<string>(
+                        [glyphName].filter(Boolean) as string[]
+                    );
+                    recomputeDependentMetrics(affectedGlyphNames);
+                    return {
+                        ...this.resolveMetricsKey(side),
+                        updateScope,
+                        affectedGlyphNames: [...affectedGlyphNames]
+                    };
                 }
-            } else {
-                this.setEffectiveSidebearingKey(side, input, false);
-            }
-            const resolution = this.resolveMetricsKey(side);
-            if (resolution.error || resolution.value === null) {
+
+                if (this.isAutomaticAlignedLayer() && !/^==?[+-]/.test(input)) {
+                    return {
+                        input,
+                        value: null,
+                        error: 'Automatic sidebearings only accept =+/- or ==+/- adjustments',
+                        referencedGlyphNames: [],
+                        isLocal: this.hasLocalSidebearingKey(side),
+                        updateScope: 'layer',
+                        affectedGlyphNames: glyphNameList
+                    };
+                }
+
+                if (isPlainNumericInput) {
+                    this.clearEffectiveSidebearingKey(side);
+                    this.setDirectSidebearing(side, Number(input));
+                    const affectedGlyphNames = new Set<string>(
+                        [glyphName].filter(Boolean) as string[]
+                    );
+                    recomputeDependentMetrics(affectedGlyphNames);
+                    return {
+                        input,
+                        value: Number(input),
+                        error: null,
+                        referencedGlyphNames: [],
+                        isLocal: false,
+                        updateScope,
+                        affectedGlyphNames: [...affectedGlyphNames]
+                    };
+                }
+
+                if (useLocalKeyStorage) {
+                    if (side === 'left') {
+                        this.leftMetricsKey = input;
+                    } else {
+                        this.rightMetricsKey = input;
+                    }
+                } else {
+                    this.setEffectiveSidebearingKey(side, input, false);
+                }
+                const resolution = this.resolveMetricsKey(side);
+                if (resolution.error || resolution.value === null) {
+                    return {
+                        ...resolution,
+                        updateScope,
+                        affectedGlyphNames: glyphNameList
+                    };
+                }
+
+                const applied = getAppliedMetricsKeySidebearing(
+                    this,
+                    side,
+                    resolution
+                );
+                if (applied.error || applied.value === null) {
+                    return {
+                        ...resolution,
+                        value: null,
+                        error: applied.error,
+                        updateScope,
+                        affectedGlyphNames: glyphNameList
+                    };
+                }
+
+                const affectedGlyphNames = new Set<string>(
+                    [glyphName].filter(Boolean) as string[]
+                );
+
+                if (!this.isAutomaticAlignedLayer()) {
+                    this.setDirectSidebearing(side, applied.value);
+                }
+
+                recomputeDependentMetrics(affectedGlyphNames);
                 return {
                     ...resolution,
                     updateScope,
-                    affectedGlyphNames: glyphNameList
+                    affectedGlyphNames: [...affectedGlyphNames]
                 };
             }
-
-            const applied = getAppliedMetricsKeySidebearing(
-                this,
-                side,
-                resolution
-            );
-            if (applied.error || applied.value === null) {
-                return {
-                    ...resolution,
-                    value: null,
-                    error: applied.error,
-                    updateScope,
-                    affectedGlyphNames: glyphNameList
-                };
-            }
-
-            const affectedGlyphNames = new Set<string>(
-                [glyphName].filter(Boolean) as string[]
-            );
-
-            if (!this.isAutomaticAlignedLayer()) {
-                this.setDirectSidebearing(side, applied.value);
-            }
-
-            recomputeDependentMetrics(affectedGlyphNames);
-            return {
-                ...resolution,
-                updateScope,
-                affectedGlyphNames: [...affectedGlyphNames]
-            };
-        });
+        );
     }
 
     private getGlobalSidebearingKey(side: SidebearingSide): string | undefined {
@@ -8722,12 +8739,17 @@ export class Layer extends ArrayElementBase {
      */
     set lsb(value: number) {
         assertModelMutationAllowed();
-        withBridgeTransaction(getSidebearingTransactionLabel('left'), () => {
-            this.setDirectSidebearing('left', value);
-            this.getFont()?.recomputeMetricsKeys(
-                new Set([(this.parent() as Glyph)?.name].filter(Boolean))
-            );
-        });
+        withBridgeTransaction(
+            getSidebearingTransactionLabel('left'),
+            'keyboard-sidebearing',
+            null,
+            () => {
+                this.setDirectSidebearing('left', value);
+                this.getFont()?.recomputeMetricsKeys(
+                    new Set([(this.parent() as Glyph)?.name].filter(Boolean))
+                );
+            }
+        );
     }
 
     /**
@@ -8745,12 +8767,17 @@ export class Layer extends ArrayElementBase {
      */
     set rsb(value: number) {
         assertModelMutationAllowed();
-        withBridgeTransaction(getSidebearingTransactionLabel('right'), () => {
-            this.setDirectSidebearing('right', value);
-            this.getFont()?.recomputeMetricsKeys(
-                new Set([(this.parent() as Glyph)?.name].filter(Boolean))
-            );
-        });
+        withBridgeTransaction(
+            getSidebearingTransactionLabel('right'),
+            'keyboard-sidebearing',
+            null,
+            () => {
+                this.setDirectSidebearing('right', value);
+                this.getFont()?.recomputeMetricsKeys(
+                    new Set([(this.parent() as Glyph)?.name].filter(Boolean))
+                );
+            }
+        );
     }
 
     /**
@@ -9197,17 +9224,22 @@ export class Layer extends ArrayElementBase {
         transform?: number[] | Babelfont.DecomposedAffine
     ): Component {
         assertModelMutationAllowed();
-        return withBridgeTransaction('Add component', () => {
-            const componentData: Babelfont.Component = {
-                id: generateStableId(),
-                reference,
-                transform: this.normalizeTransform(transform)
-            };
-            const shapeData: Babelfont.Shape = componentData;
-            const shape = this.addShape(shapeData);
-            this.enableAutomaticCompositionIfEligible();
-            return shape.asComponent();
-        });
+        return withBridgeTransaction(
+            'Add component',
+            'keyboard-outline',
+            null,
+            () => {
+                const componentData: Babelfont.Component = {
+                    id: generateStableId(),
+                    reference,
+                    transform: this.normalizeTransform(transform)
+                };
+                const shapeData: Babelfont.Shape = componentData;
+                const shape = this.addShape(shapeData);
+                this.enableAutomaticCompositionIfEligible();
+                return shape.asComponent();
+            }
+        );
     }
 
     /**
@@ -11130,63 +11162,71 @@ export class Glyph extends ArrayElementBase {
             );
         }
 
-        return withBridgeTransaction('Add feature variation', () => {
-            for (const baseLayer of baseLayers) {
-                const masterId = (baseLayer.master as Unsafe).master;
-                const layerData = cloneForHistory(baseLayer) as Babelfont.Layer;
-                const baseBackgroundLayer = baseLayer.background_layer_id
-                    ? this.data.layers?.find(
-                          (candidate: Unsafe) =>
-                              candidate.id === baseLayer.background_layer_id &&
-                              candidate.is_background
-                      )
-                    : undefined;
-                layerData.id = this.createUniqueLayerId();
-                layerData.master = {
-                    type: 'AssociatedWithMaster',
-                    master: masterId
-                } as Babelfont.LayerType;
-                delete layerData.location;
-                delete layerData.is_background;
-                delete layerData.background_layer_id;
-                const attributes =
-                    layerData.format_specific?.[
-                        GLYPHS_FEATURE_VARIATION_ATTRIBUTES_KEY
-                    ];
-                layerData.format_specific = {
-                    ...(layerData.format_specific || {}),
-                    [GLYPHS_FEATURE_VARIATION_ATTRIBUTES_KEY]: {
-                        ...(attributes &&
-                        typeof attributes === 'object' &&
-                        !Array.isArray(attributes)
-                            ? cloneForHistory(attributes)
-                            : {}),
-                        axisRules: cloneForHistory(axisRules)
-                    }
-                };
-
-                if (baseBackgroundLayer) {
-                    const backgroundLayerData = cloneForHistory(
-                        baseBackgroundLayer
+        return withBridgeTransaction(
+            'Add feature variation',
+            'feature-code',
+            'feature',
+            () => {
+                for (const baseLayer of baseLayers) {
+                    const masterId = (baseLayer.master as Unsafe).master;
+                    const layerData = cloneForHistory(
+                        baseLayer
                     ) as Babelfont.Layer;
-                    backgroundLayerData.id = this.createUniqueLayerId();
-                    backgroundLayerData.master = cloneForHistory(
-                        layerData.master
-                    );
-                    delete backgroundLayerData.location;
-                    backgroundLayerData.is_background = true;
-                    backgroundLayerData.background_layer_id = layerData.id;
-                    layerData.background_layer_id = backgroundLayerData.id;
+                    const baseBackgroundLayer = baseLayer.background_layer_id
+                        ? this.data.layers?.find(
+                              (candidate: Unsafe) =>
+                                  candidate.id ===
+                                      baseLayer.background_layer_id &&
+                                  candidate.is_background
+                          )
+                        : undefined;
+                    layerData.id = this.createUniqueLayerId();
+                    layerData.master = {
+                        type: 'AssociatedWithMaster',
+                        master: masterId
+                    } as Babelfont.LayerType;
+                    delete layerData.location;
+                    delete layerData.is_background;
+                    delete layerData.background_layer_id;
+                    const attributes =
+                        layerData.format_specific?.[
+                            GLYPHS_FEATURE_VARIATION_ATTRIBUTES_KEY
+                        ];
+                    layerData.format_specific = {
+                        ...(layerData.format_specific || {}),
+                        [GLYPHS_FEATURE_VARIATION_ATTRIBUTES_KEY]: {
+                            ...(attributes &&
+                            typeof attributes === 'object' &&
+                            !Array.isArray(attributes)
+                                ? cloneForHistory(attributes)
+                                : {}),
+                            axisRules: cloneForHistory(axisRules)
+                        }
+                    };
+
+                    if (baseBackgroundLayer) {
+                        const backgroundLayerData = cloneForHistory(
+                            baseBackgroundLayer
+                        ) as Babelfont.Layer;
+                        backgroundLayerData.id = this.createUniqueLayerId();
+                        backgroundLayerData.master = cloneForHistory(
+                            layerData.master
+                        );
+                        delete backgroundLayerData.location;
+                        backgroundLayerData.is_background = true;
+                        backgroundLayerData.background_layer_id = layerData.id;
+                        layerData.background_layer_id = backgroundLayerData.id;
+                        this.appendRawLayer(layerData);
+                        this.appendRawLayer(backgroundLayerData);
+                        continue;
+                    }
+
                     this.appendRawLayer(layerData);
-                    this.appendRawLayer(backgroundLayerData);
-                    continue;
                 }
 
-                this.appendRawLayer(layerData);
+                return new FeatureVariationGlyph(this, familyId);
             }
-
-            return new FeatureVariationGlyph(this, familyId);
-        });
+        );
     }
 
     /**
@@ -11200,17 +11240,22 @@ export class Glyph extends ArrayElementBase {
             typeof featureVariation === 'string'
                 ? featureVariation
                 : featureVariation.id;
-        withBridgeTransaction('Remove feature variation', () => {
-            const layerIds = this.getFeatureVariationLayerEntries(familyId)
-                .flatMap((entry) => [
-                    entry.layer.id,
-                    entry.layer.background_layer_id
-                ])
-                .filter((layerId): layerId is string => !!layerId);
-            for (const layerId of layerIds) {
-                this.removeLayerById(layerId);
+        withBridgeTransaction(
+            'Remove feature variation',
+            'feature-code',
+            'feature',
+            () => {
+                const layerIds = this.getFeatureVariationLayerEntries(familyId)
+                    .flatMap((entry) => [
+                        entry.layer.id,
+                        entry.layer.background_layer_id
+                    ])
+                    .filter((layerId): layerId is string => !!layerId);
+                for (const layerId of layerIds) {
+                    this.removeLayerById(layerId);
+                }
             }
-        });
+        );
     }
 
     private static readonly BUILTIN_CATEGORIES = new Set([
@@ -11371,59 +11416,66 @@ export class Glyph extends ArrayElementBase {
      */
     applyComputedAnchors(anchorNames: string[] = []): boolean {
         assertModelMutationAllowed();
-        return withBridgeTransaction('Apply computed anchors', () => {
-            const requestedNames = new Set(
-                (anchorNames || []).filter(
-                    (name): name is string =>
-                        typeof name === 'string' && name.length > 0
-                )
-            );
-            const applyAll = requestedNames.size === 0;
-            let changed = false;
+        return withBridgeTransaction(
+            'Apply computed anchors',
+            'keyboard-anchor',
+            null,
+            () => {
+                const requestedNames = new Set(
+                    (anchorNames || []).filter(
+                        (name): name is string =>
+                            typeof name === 'string' && name.length > 0
+                    )
+                );
+                const applyAll = requestedNames.size === 0;
+                let changed = false;
 
-            for (const layer of this.layers || []) {
-                if (layer.is_background) {
-                    continue;
-                }
-
-                const computed = layer.computedAnchors();
-                const names = applyAll
-                    ? Object.keys(computed)
-                    : [...requestedNames];
-                for (const name of names) {
-                    const point = computed[name];
-                    if (!point) {
+                for (const layer of this.layers || []) {
+                    if (layer.is_background) {
                         continue;
                     }
 
-                    const existing = layer.findAnchor(name);
-                    if (existing) {
-                        if (
-                            Math.abs(existing.x - point.x) >
-                                METRIC_UPDATE_EPSILON ||
-                            Math.abs(existing.y - point.y) >
-                                METRIC_UPDATE_EPSILON
-                        ) {
-                            existing.x = point.x;
-                            existing.y = point.y;
-                            changed = true;
+                    const computed = layer.computedAnchors();
+                    const names = applyAll
+                        ? Object.keys(computed)
+                        : [...requestedNames];
+                    for (const name of names) {
+                        const point = computed[name];
+                        if (!point) {
+                            continue;
                         }
-                        continue;
+
+                        const existing = layer.findAnchor(name);
+                        if (existing) {
+                            if (
+                                Math.abs(existing.x - point.x) >
+                                    METRIC_UPDATE_EPSILON ||
+                                Math.abs(existing.y - point.y) >
+                                    METRIC_UPDATE_EPSILON
+                            ) {
+                                existing.x = point.x;
+                                existing.y = point.y;
+                                changed = true;
+                            }
+                            continue;
+                        }
+
+                        layer.addAnchor(point.x, point.y, name);
+                        changed = true;
                     }
-
-                    layer.addAnchor(point.x, point.y, name);
-                    changed = true;
                 }
-            }
 
-            if (changed) {
-                (
-                    this.parent() as Font | undefined
-                )?.rebuildAutomaticCompositesForGlyphs(new Set([this.name]));
-            }
+                if (changed) {
+                    (
+                        this.parent() as Font | undefined
+                    )?.rebuildAutomaticCompositesForGlyphs(
+                        new Set([this.name])
+                    );
+                }
 
-            return changed;
-        });
+                return changed;
+            }
+        );
     }
 
     get layers(): Layer[] | undefined {
@@ -12094,6 +12146,8 @@ export class FeatureVariationGlyph {
 
         return withBridgeTransaction(
             'Update feature variation settings',
+            'feature-code',
+            'feature',
             () => {
                 for (const layer of layers) {
                     const attributes =
@@ -12538,16 +12592,21 @@ export class Master extends ArrayElementBase {
 
     set kerning_rtl(value: Record<string, number>) {
         assertModelMutationAllowed();
-        withBridgeTransaction('Set RTL kerning', () => {
-            assertModelMutationAllowed();
-            const old = this.data.kerning_rtl;
-            this.data.kerning_rtl = value;
-            const font = this.parent();
-            if (font instanceof Font) {
-                syncKerningRtlToFormatSpecific(font, this.data.id, value);
+        withBridgeTransaction(
+            'Set RTL kerning',
+            'keyboard-kerning-value',
+            'kerning-value',
+            () => {
+                assertModelMutationAllowed();
+                const old = this.data.kerning_rtl;
+                this.data.kerning_rtl = value;
+                const font = this.parent();
+                if (font instanceof Font) {
+                    syncKerningRtlToFormatSpecific(font, this.data.id, value);
+                }
+                recordAndMarkDirty(this, 'kerning_rtl', old, value);
             }
-            recordAndMarkDirty(this, 'kerning_rtl', old, value);
-        });
+        );
     }
 
     /**
@@ -14204,7 +14263,7 @@ export class Font extends ModelBase {
             codepointsByOldName.set(oldName, codepoints);
         }
 
-        withBridgeTransaction('Rename glyphs', () => {
+        withBridgeTransaction('Rename glyphs', 'model-edit', null, () => {
             assertModelMutationAllowed();
             // Preflight before any model writes — withBridgeTransaction commits
             // buffered ops in `finally` even when the body throws.
@@ -14678,18 +14737,23 @@ export class Font extends ModelBase {
         });
         const toDuplicate = uniqueNames.filter((name) => this.findGlyph(name));
         assertCanAddGlyphs(toDuplicate.length);
-        return withBridgeTransaction('Duplicate glyphs', () => {
-            const created: Glyph[] = [];
-            for (const name of toDuplicate) {
-                const glyph = this.findGlyph(name);
-                if (!glyph) {
-                    continue;
+        return withBridgeTransaction(
+            'Duplicate glyphs',
+            'model-edit',
+            null,
+            () => {
+                const created: Glyph[] = [];
+                for (const name of toDuplicate) {
+                    const glyph = this.findGlyph(name);
+                    if (!glyph) {
+                        continue;
+                    }
+                    const newName = this.allocateUniqueGlyphName(name);
+                    created.push(this.duplicateGlyph(glyph, newName));
                 }
-                const newName = this.allocateUniqueGlyphName(name);
-                created.push(this.duplicateGlyph(glyph, newName));
+                return created;
             }
-            return created;
-        });
+        );
     }
 
     /**
@@ -15138,7 +15202,13 @@ export class Font extends ModelBase {
                 applyWorkerGeneratedYjsUpdate(
                     bridge,
                     finalUpdate,
-                    buildInterpolationRustBatchOperations(metadata),
+                    buildInterpolationRustBatchOperations(metadata).map(
+                        (operation) => ({
+                            ...operation,
+                            compileChangeSource: 'master-topology',
+                            compileEditType: 'master-topology'
+                        })
+                    ),
                     'Add master',
                     documentUpdates?.length ? documentUpdates : undefined
                 );
@@ -15267,7 +15337,13 @@ export class Font extends ModelBase {
                 applyWorkerGeneratedYjsUpdate(
                     bridge,
                     batchResult.update,
-                    buildInterpolationRustBatchOperations(batchResult.metadata),
+                    buildInterpolationRustBatchOperations(
+                        batchResult.metadata
+                    ).map((operation) => ({
+                        ...operation,
+                        compileChangeSource: 'master-topology',
+                        compileEditType: 'master-topology'
+                    })),
                     'Remove master',
                     batchResult.updates?.length
                         ? batchResult.updates
@@ -15383,7 +15459,7 @@ export class Font extends ModelBase {
         }>
     ): Glyph[] {
         assertCanAddGlyphs(glyphs.length);
-        return withBridgeTransaction('Add glyphs', () =>
+        return withBridgeTransaction('Add glyphs', 'model-edit', null, () =>
             glyphs.map((glyph) => {
                 const added = this.addGlyph(
                     glyph.name,
@@ -15751,6 +15827,8 @@ export class Font extends ModelBase {
             deletedNames.size === 1
                 ? `Delete glyph ${[...deletedNames][0]}`
                 : `Delete ${deletedNames.size} glyphs`,
+            'model-edit',
+            null,
             () => {
                 assertModelMutationAllowed();
                 for (const glyph of this.glyphs) {

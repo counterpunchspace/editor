@@ -835,7 +835,12 @@ test.describe('Cloud collab three-window ChangeBridge sync', () => {
                         'Drag point',
                         undefined,
                         undefined,
-                        layerId
+                        layerId,
+                        undefined,
+                        undefined,
+                        undefined,
+                        'test-sync',
+                        null
                     );
 
                     // Check what the Y.Doc looks like AFTER sync
@@ -1679,7 +1684,12 @@ test.describe('Cloud collab three-window ChangeBridge sync', () => {
                         'Drag point after intermediate layer delete',
                         undefined,
                         undefined,
-                        layerId
+                        layerId,
+                        undefined,
+                        undefined,
+                        undefined,
+                        'test-sync',
+                        null
                     );
 
                     return {
@@ -1924,7 +1934,12 @@ test.describe('Cloud collab three-window ChangeBridge sync', () => {
                     'Invitee edit',
                     undefined,
                     undefined,
-                    layer.id
+                    layer.id,
+                    undefined,
+                    undefined,
+                    undefined,
+                    'test-sync',
+                    null
                 );
                 return { glyphName: glyph.name, oldX, newX: node.x };
             });
@@ -2214,7 +2229,12 @@ test.describe('Cloud collab three-window ChangeBridge sync', () => {
                         'Revoked edit',
                         undefined,
                         undefined,
-                        layer.id
+                        layer.id,
+                        undefined,
+                        undefined,
+                        undefined,
+                        'test-sync',
+                        null
                     );
                     return { oldX, newX: node.x, threw: false };
                 } catch (error) {
@@ -2256,7 +2276,12 @@ test.describe('Cloud collab three-window ChangeBridge sync', () => {
                         'Owner after revoke',
                         undefined,
                         undefined,
-                        layerId
+                        layerId,
+                        undefined,
+                        undefined,
+                        undefined,
+                        'test-sync',
+                        null
                     );
                     return { oldX, newX: node.x };
                 },
@@ -2447,7 +2472,12 @@ test.describe('Cloud collab three-window ChangeBridge sync', () => {
                     'Owner edit for viewer',
                     undefined,
                     undefined,
-                    layer.id
+                    layer.id,
+                    undefined,
+                    undefined,
+                    undefined,
+                    'test-sync',
+                    null
                 );
                 return { oldX, newX: node.x };
             });
@@ -2469,7 +2499,12 @@ test.describe('Cloud collab three-window ChangeBridge sync', () => {
                         'Viewer edit',
                         undefined,
                         undefined,
-                        layer.id
+                        layer.id,
+                        undefined,
+                        undefined,
+                        undefined,
+                        'test-sync',
+                        null
                     );
                     return { oldX, threw: false, error: null };
                 } catch (error) {
@@ -2553,7 +2588,12 @@ test.describe('Cloud collab three-window ChangeBridge sync', () => {
                     'Persist before reload',
                     undefined,
                     undefined,
-                    layer.id
+                    layer.id,
+                    undefined,
+                    undefined,
+                    undefined,
+                    'test-sync',
+                    null
                 );
                 return { oldX, newX: node.x };
             });

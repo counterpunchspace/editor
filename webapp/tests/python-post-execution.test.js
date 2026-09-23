@@ -131,7 +131,11 @@ describe('Python post-execution synthetic commit alignment', () => {
                     editSource: 'python'
                 })
             ]),
-            { ignoreRecordingSuppression: true }
+            {
+                ignoreRecordingSuppression: true,
+                compileChangeSource: 'python',
+                compileEditType: null
+            }
         );
         expect(bridge.endTransaction).toHaveBeenCalledTimes(1);
     });
@@ -196,7 +200,10 @@ describe('Python post-execution synthetic commit alignment', () => {
         bridge.onLocalUpdate((update, _message, entries) => {
             emittedUpdates.push({ update, entries });
         });
-        bridge.beginTransaction('Python script');
+        bridge.beginTransaction('Python script', null, {
+            compileChangeSource: 'test-sync',
+            compileEditType: null
+        });
         const releaseRecordingSuppression = bridge.beginRecordingSuppression();
 
         commitPythonExecutionSyntheticChanges(
@@ -324,7 +331,11 @@ describe('Python post-execution synthetic commit alignment', () => {
                     ]
                 })
             ],
-            { ignoreRecordingSuppression: true }
+            {
+                ignoreRecordingSuppression: true,
+                compileChangeSource: 'python',
+                compileEditType: null
+            }
         );
         expect(executionOrder).toEqual(['commit', 'fontModelSync']);
     });
@@ -369,7 +380,11 @@ describe('Python post-execution synthetic commit alignment', () => {
                     newValue: ['b', 'a']
                 })
             ],
-            { ignoreRecordingSuppression: true }
+            {
+                ignoreRecordingSuppression: true,
+                compileChangeSource: 'python',
+                compileEditType: null
+            }
         );
     });
 
@@ -425,7 +440,11 @@ describe('Python post-execution synthetic commit alignment', () => {
                     editSource: 'assistant'
                 })
             ]),
-            { ignoreRecordingSuppression: true }
+            {
+                ignoreRecordingSuppression: true,
+                compileChangeSource: 'assistant',
+                compileEditType: null
+            }
         );
         expect(bridge.endTransaction).toHaveBeenCalledTimes(1);
     });
@@ -451,7 +470,9 @@ describe('Python post-execution synthetic commit alignment', () => {
         sender.beginTransaction('Python script', null, {
             historyItemId: 'prompt-python-suppression',
             promptGroupId: 'prompt-python-suppression',
-            historySummary: 'Rename family'
+            historySummary: 'Rename family',
+            compileChangeSource: 'test-sync',
+            compileEditType: null
         });
         const releaseRecordingSuppression = sender.beginRecordingSuppression();
 
@@ -676,7 +697,9 @@ describe('Python post-execution synthetic commit alignment', () => {
         sender.beginTransaction('Reorder features', null, {
             historyItemId: 'prompt-feature-reorder',
             promptGroupId: 'prompt-feature-reorder',
-            historySummary: 'Reorder features'
+            historySummary: 'Reorder features',
+            compileChangeSource: 'test-sync',
+            compileEditType: null
         });
         setActiveAssistantPythonExecution({
             id: 'prompt-feature-reorder',
@@ -705,7 +728,9 @@ describe('Python post-execution synthetic commit alignment', () => {
         sender.beginTransaction('Update feature code', null, {
             historyItemId: 'prompt-feature-reorder',
             promptGroupId: 'prompt-feature-reorder',
-            historySummary: 'Reorder features'
+            historySummary: 'Reorder features',
+            compileChangeSource: 'test-sync',
+            compileEditType: null
         });
         setActiveAssistantPythonExecution({
             id: 'prompt-feature-reorder',
@@ -845,7 +870,10 @@ describe('Python post-execution synthetic commit alignment', () => {
             historySummary: 'Adjust family and A'
         };
         const commit = (label, change) => {
-            sender.beginTransaction(label, null, promptHistoryMetadata);
+            sender.beginTransaction(label, null, promptHistoryMetadata, {
+                compileChangeSource: 'test-sync',
+                compileEditType: null
+            });
             change();
             sender.endTransaction();
         };

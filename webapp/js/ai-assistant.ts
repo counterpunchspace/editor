@@ -100,11 +100,18 @@ type BinaryFontWorkerState = {
     bootstrapWorkerCacheFromFontState?: (
         state: Uint8Array | ArrayBufferLike
     ) => Promise<void>;
+    seedWorkerDocumentSet?: (
+        documents: Array<{ documentId: string; bytes: Uint8Array }>
+    ) => Promise<void>;
     compileCached?: (
         target: string,
         filename: string
     ) => Promise<{ result: Uint8Array }>;
-    compileCommittedDebugFont?: (subsetGlyphs: string[]) => Promise<{
+    compileCommittedDebugFont?: (
+        subsetGlyphs: string[],
+        filename?: string,
+        target?: string
+    ) => Promise<{
         result: Uint8Array;
         filename: string;
         time_taken: number;
@@ -116,7 +123,13 @@ type BinaryFontWorkerState = {
 type BinaryFontManagerState = {
     workerCacheUpdatePromise?: Promise<void> | null;
     buildWorkerSeedYjsState?: () => Uint8Array | null;
+    buildWorkerSeedDocumentSet?: () => Array<{
+        documentId: string;
+        bytes: Uint8Array;
+    }> | null;
     deriveSubsetGlyphsFromText?: (text: string) => string[];
+    resolveEditingTextForCompile?: (text?: string) => string;
+    getEditingSubsetSnapshot?: () => string[];
     currentFont?: {
         sourcePlugin?: { getId?: () => string };
         path?: string;
@@ -589,7 +602,7 @@ async function buildBinaryFontSnapshot(
 
 const BINARY_FONT_API_DOCS = `Binary font tools use a discover -> inspect workflow.
 
-1. Call compile_binary_font first. It compiles the current committed font in an isolated analysis worker and returns only a stable fontHash. Use target "subset" together with text when you want the existing layout-closure path to derive subset glyphs from that text.
+1. Call compile_binary_font first. It returns only a stable 16-hex-digit fontHash, not a glyph count. Target "full" compiles every glyph in the committed font. Target "subset" requires text and compiles the layout closure of that text.
 2. Use describe_binary_font to see which path families, child collections, and snapshot profiles are supported. This is static guidance only; it does not require a fontHash.
 3. Use search_binary_font_surface to search the static binary-font surface metadata, path families, and snapshot profiles by keyword. Use this before compiling when you are still discovering the tool surface.
 4. Use list_binary_font_children to enumerate the immediate children of a compiled font collection path such as /tables/name/records or /tables/fvar/axes. This requires a fontHash because it reads the compiled font.
@@ -708,6 +721,25 @@ async function prepareBinaryFontAnalysisWorker(
         throw new Error(
             'Binary-font analysis is unavailable while an edit preview is active. Retry after the edit commits.'
         );
+    }
+
+    if (analysisCompiler.hasWorkerCacheDocument?.()) {
+        // The analysis worker is seeded once, then kept current by the same
+        // incremental Yjs mirror as the editing worker. Rebuilding every
+        // glyph shard here is what made each compile far slower than typing.
+        return;
+    }
+
+    const documentSet = fontManager.buildWorkerSeedDocumentSet?.() || null;
+    if (
+        documentSet?.length &&
+        typeof analysisCompiler.seedWorkerDocumentSet === 'function'
+    ) {
+        // Glyph outlines live in per-glyph shards. The core snapshot has
+        // features and masters but no glyph bodies, so a core-only seed
+        // compiles an empty glyph set and traps in the metrics pass.
+        await analysisCompiler.seedWorkerDocumentSet(documentSet);
+        return;
     }
 
     if (
@@ -3875,22 +3907,16 @@ if '_assistant_original_stdout' in dir():
                     analysisCompiler,
                     () => JSON.stringify(getFontRevision())
                 );
+
                 if (subsetTarget) {
-                    const deriveSubsetGlyphsFromText =
-                        fontManager.deriveSubsetGlyphsFromText;
-                    if (typeof deriveSubsetGlyphsFromText !== 'function') {
+                    if (
+                        typeof fontManager.deriveSubsetGlyphsFromText !==
+                        'function'
+                    ) {
                         throw new Error(
                             'compile_binary_font subset target requires layout-closure support.'
                         );
                     }
-
-                    const subsetGlyphs = deriveSubsetGlyphsFromText(args.text);
-                    if (!subsetGlyphs.length) {
-                        throw new Error(
-                            'target "subset" requires text that resolves to at least one glyph.'
-                        );
-                    }
-
                     if (
                         typeof analysisCompiler.compileCommittedDebugFont !==
                         'function'
@@ -3899,10 +3925,19 @@ if '_assistant_original_stdout' in dir():
                             'compile_binary_font subset target is not available in the analysis compiler.'
                         );
                     }
-
+                    const subsetGlyphs = fontManager.deriveSubsetGlyphsFromText(
+                        args.text
+                    );
+                    if (!subsetGlyphs.length) {
+                        throw new Error(
+                            'target "subset" requires text that resolves to at least one glyph.'
+                        );
+                    }
                     const result =
                         await analysisCompiler.compileCommittedDebugFont(
-                            subsetGlyphs
+                            subsetGlyphs,
+                            'assistant-binary-font.ttf',
+                            'editing'
                         );
                     const fontHash = String(result.fontHash || '').trim();
                     if (!fontHash) {
@@ -3919,7 +3954,7 @@ if '_assistant_original_stdout' in dir():
                     );
                 }
                 const result = await analysisCompiler.compileBinaryFont(
-                    target,
+                    'full',
                     'assistant-binary-font.ttf',
                     getBinaryFontAnalysisWorkerState(analysisCompiler)
                 );

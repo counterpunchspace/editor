@@ -435,7 +435,10 @@ describe('glyph catch-up for edits outside the receiver subset', () => {
     test('a multi-glyph edit publishes one collab envelope with every dirty id', () => {
         const { bridge, font } = createEngine('writer');
         const packets = capturePackets(bridge);
-        bridge.beginTransaction('edit');
+        bridge.beginTransaction('edit', null, {
+            compileChangeSource: 'test-sync',
+            compileEditType: null
+        });
         font.findGlyph('A').layers[0].width = 111;
         font.findGlyph('B').layers[0].width = 222;
         bridge.endTransaction();

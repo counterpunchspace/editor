@@ -176,9 +176,7 @@ fn glyph_document_id(glyph_id: &str) -> String {
     format!("glyph:{}", glyph_id)
 }
 
-fn glyph_root_maps(
-    txn: &yrs::TransactionMut,
-) -> Result<(yrs::MapRef, yrs::MapRef), JsValue> {
+fn glyph_root_maps(txn: &yrs::TransactionMut) -> Result<(yrs::MapRef, yrs::MapRef), JsValue> {
     let glyph_map = txn
         .get_map("glyph")
         .ok_or_else(|| JsValue::from_str("Missing glyph map in glyph Y.Doc"))?;
@@ -841,14 +839,13 @@ pub fn reinterpolate_master_layers_yjs(master_id: &str) -> Result<JsValue, JsVal
             };
             let (old_value, new_value) = {
                 let txn = clone.doc.transact();
-                let old_value = layer_json_from_glyph_root(&txn, &target.layer_id).ok_or_else(
-                    || {
+                let old_value =
+                    layer_json_from_glyph_root(&txn, &target.layer_id).ok_or_else(|| {
                         JsValue::from_str(&format!(
                             "Missing raw Y.Doc layer {}::{} during reinterpolation",
                             target.glyph_name, target.layer_id
                         ))
-                    },
-                )?;
+                    })?;
                 (
                     old_value.clone(),
                     merge_reinterpolated_layer(&old_value, regenerated_value),
@@ -1007,12 +1004,13 @@ fn build_reinterpolate_layer_batch(
         };
         let (old_value, new_value) = {
             let txn = clone.doc.transact();
-            let old_value = layer_json_from_glyph_root(&txn, &target.layer_id).ok_or_else(|| {
-                JsValue::from_str(&format!(
-                    "Missing raw Y.Doc layer {}::{} during reinterpolation",
-                    target.glyph_name, target.layer_id
-                ))
-            })?;
+            let old_value =
+                layer_json_from_glyph_root(&txn, &target.layer_id).ok_or_else(|| {
+                    JsValue::from_str(&format!(
+                        "Missing raw Y.Doc layer {}::{} during reinterpolation",
+                        target.glyph_name, target.layer_id
+                    ))
+                })?;
             let new_value = merge_reinterpolated_layer(&old_value, regenerated_value);
             (old_value, new_value)
         };
@@ -1098,10 +1096,7 @@ pub fn reinterpolate_layer_yjs(glyph_name: &str, layer_id: &str) -> Result<JsVal
     let (update, metadata) = build_reinterpolate_layer_batch(glyph_name, layer_id)?;
     if glyph_shards_active() {
         if let Some(glyph_id) = GLYPH_ID_BY_NAME.lock().unwrap().get(glyph_name).cloned() {
-            return encode_result_packets(
-                vec![(glyph_document_id(&glyph_id), update)],
-                &metadata,
-            );
+            return encode_result_packets(vec![(glyph_document_id(&glyph_id), update)], &metadata);
         }
     }
     encode_result(update, &metadata)
@@ -1332,8 +1327,7 @@ pub fn refine_layer_snapshots_yjs(
             .collect();
         let mut clones = clone_named_glyph_docs(&names)?;
         for override_entry in overrides {
-            let Some(clone) = find_cloned_glyph_mut(&mut clones, &override_entry.glyph_name)
-            else {
+            let Some(clone) = find_cloned_glyph_mut(&mut clones, &override_entry.glyph_name) else {
                 continue;
             };
             let old_value = {

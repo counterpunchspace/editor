@@ -22,7 +22,10 @@ async function runConvertToCounterpunch(): Promise<void> {
         return;
     }
 
-    window.patchSyncEngine?.beginTransaction('Convert to Counterpunch');
+    window.patchSyncEngine?.beginTransaction('Convert to Counterpunch', null, {
+        compileChangeSource: 'model-edit',
+        compileEditType: null
+    });
     let convertedCount = 0;
     let compositeCount = 0;
     try {

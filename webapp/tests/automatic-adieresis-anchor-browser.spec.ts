@@ -1723,6 +1723,13 @@ test.describe('automatic adieresis anchor browser commit', () => {
             await getRenderedAdieresisBounds(page);
         const compileTrackerBeforeDrag =
             await getEditingFontCompileTracker(page);
+        const adieresisIsAutomatic = await page.evaluate(
+            () =>
+                (window as any).currentFontModel
+                    ?.findGlyph?.('adieresis')
+                    ?.layers?.[0]?.isAutomaticAlignedLayer?.() === true
+        );
+        expect(adieresisIsAutomatic).toBe(true);
         expect(beforeState.bridgeTranslation).toEqual([150, 720]);
         expect(beforeState.workerYDocTranslation).toEqual(
             beforeState.bridgeTranslation
@@ -1748,6 +1755,7 @@ test.describe('automatic adieresis anchor browser commit', () => {
             committedCompileEvent,
             JSON.stringify(compileTrackerAfterDrag)
         ).toBeTruthy();
+        expect(committedCompileEvent?.compilationMode).toBe('full');
         const workerPipelineAfterDrag =
             await getEditingWorkerPipelineTracker(page);
         const applyEvents = workerPipelineAfterDrag.events.filter(

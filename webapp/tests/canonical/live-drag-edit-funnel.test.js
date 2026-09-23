@@ -68,8 +68,8 @@ describe('LiveDragEditFunnel', () => {
         funnel.queue({
             kind: 'sidebearing',
             compile: {
-                changeSource: 'mouse-drag-outline',
-                editType: 'outline'
+                changeSource: 'mouse-drag-sidebearing',
+                editType: 'sidebearing'
             },
             run: () => {
                 calls.push('refresh');
@@ -84,8 +84,8 @@ describe('LiveDragEditFunnel', () => {
         expect(window.fontManager.recordedCompileContexts).toEqual([
             {
                 compileRequestVersion: 1,
-                changeSource: 'mouse-drag-outline',
-                editType: 'outline',
+                changeSource: 'mouse-drag-sidebearing',
+                editType: 'sidebearing',
                 dataFreshnessMode: 'live-drag-worker-preview'
             }
         ]);
@@ -93,8 +93,8 @@ describe('LiveDragEditFunnel', () => {
             window.fontManager.currentFont.requestRecompileWithoutDataChange
         ).toHaveBeenCalledWith({
             compileContext: {
-                changeSource: 'mouse-drag-outline',
-                editType: 'outline',
+                changeSource: 'mouse-drag-sidebearing',
+                editType: 'sidebearing',
                 dataFreshnessMode: 'live-drag-worker-preview'
             }
         });

@@ -2138,6 +2138,11 @@ describe('Automatic component editing canonical behavior', () => {
 
         try {
             setupCanvasForLayer(canvas, dragFont, 'A', 'A0');
+            expect(
+                dragFont
+                    .findGlyph('visibleComposite')
+                    .layers[0].isAutomaticAlignedLayer()
+            ).toBe(true);
             fontManager.updateEditingSubsetSnapshot(['visibleComposite']);
             canvas.textRunEditor.glyphNameBuffer = ['visibleComposite'];
 

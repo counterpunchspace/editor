@@ -1867,8 +1867,8 @@ describe('FontManager editing subset inclusion', () => {
         });
     });
 
-    test('keyboard-sidebearing compiles stay on the outline-only incremental fast path', async () => {
-        setRequestCompileContext('keyboard-sidebearing', 'outline');
+    test('keyboard-sidebearing live compiles use sidebearing outline-only flags', async () => {
+        setRequestCompileContext('keyboard-sidebearing', 'sidebearing');
 
         await fontManager.compileEditingFont('a', [], ['a']);
 
@@ -2050,24 +2050,18 @@ describe('FontManager editing subset inclusion', () => {
         ).not.toHaveProperty('skip_features');
     });
 
-    test('anchor undo-redo compiles keep kerning enabled in anchor-only mode', async () => {
-        setRequestCompileContext('keyboard-anchor', 'anchor');
+    test('anchor undo compiles full when the forward stamp is null', async () => {
+        setRequestCompileContext('keyboard-anchor', null);
 
         await fontManager.compileEditingFont('a', [], ['a']);
 
         expect(compileEditingSpy).toHaveBeenCalledTimes(1);
         expect(compileEditingSpy.mock.calls[0][3]).toMatchObject({
-            compileSource: 'keyboard-anchor',
-            optionOverrides: {
-                produce_varc_table: false
-            }
+            compileSource: 'keyboard-anchor'
         });
         expect(
             compileEditingSpy.mock.calls[0][3].optionOverrides
-        ).not.toHaveProperty('skip_kerning');
-        expect(
-            compileEditingSpy.mock.calls[0][3].optionOverrides
-        ).not.toHaveProperty('skip_features');
+        ).toBeUndefined();
     });
 
     test('keyboard kerning-value compiles use the kerning-only fast path', async () => {

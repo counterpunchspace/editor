@@ -8,6 +8,7 @@
  */
 
 import * as Y from 'yjs';
+import { assertCompileStamp } from './edit-intent';
 import {
     jsonToYDoc,
     jsonToCoreFontMap,
@@ -573,6 +574,8 @@ export class PatchSyncEngine {
     private _txDepth = 0;
     /** Current transaction label (outermost) */
     private _txLabel: string | null = null;
+    private _txCompileChangeSource: string | null = null;
+    private _txCompileEditType: string | null = null;
     /** Current transaction ID */
     private _txId: number | null = null;
     /** Wall-clock start time for the outermost transaction. */
@@ -2565,7 +2568,11 @@ export class PatchSyncEngine {
     applySyntheticChangeSet(
         label: string,
         operations: SyntheticChangeOperation[],
-        options?: { ignoreRecordingSuppression?: boolean }
+        options?: {
+            ignoreRecordingSuppression?: boolean;
+            compileChangeSource?: string | null;
+            compileEditType?: string | null;
+        }
     ): void {
         if (!operations.length || !this._fontJson || this._isSyncing) {
             return;
@@ -2573,6 +2580,16 @@ export class PatchSyncEngine {
         if (this._suppressRecording && !options?.ignoreRecordingSuppression) {
             return;
         }
+        const stamped = assertCompileStamp(
+            options?.compileChangeSource ??
+                operations.find((operation) => operation.compileChangeSource)
+                    ?.compileChangeSource,
+            options?.compileEditType !== undefined
+                ? options.compileEditType
+                : operations.find(
+                      (operation) => operation.compileEditType !== undefined
+                  )?.compileEditType
+        );
         assertCloudAssetMutable();
 
         if (!operations.some((operation) => operation.path.length > 0)) {
@@ -2597,8 +2614,13 @@ export class PatchSyncEngine {
                     oldValue: cloneHistoryValue(operation.oldValue),
                     newValue: cloneHistoryValue(operation.newValue),
                     editSource: operation.editSource ?? null,
-                    compileChangeSource: operation.compileChangeSource ?? null,
-                    compileEditType: operation.compileEditType ?? null,
+                    compileChangeSource:
+                        operation.compileChangeSource ??
+                        stamped.compileChangeSource,
+                    compileEditType:
+                        operation.compileEditType !== undefined
+                            ? operation.compileEditType
+                            : stamped.compileEditType,
                     visualAnchorSide: operation.visualAnchorSide ?? null,
                     workerReplayTargets: normalizeWorkerReplayTargets(
                         operation.workerReplayTargets
@@ -2613,7 +2635,7 @@ export class PatchSyncEngine {
             }),
             label,
             false,
-            options?.ignoreRecordingSuppression === true
+            false
         );
     }
 
@@ -2781,11 +2803,19 @@ export class PatchSyncEngine {
             historyItemId?: string | null;
             promptGroupId?: string | null;
             historySummary?: string | null;
+            compileChangeSource?: string | null;
+            compileEditType?: string | null;
         }
     ): void {
         this._txDepth++;
         if (this._txDepth === 1) {
+            const stamp = assertCompileStamp(
+                historyMetadata?.compileChangeSource,
+                historyMetadata?.compileEditType
+            );
             this._txLabel = label;
+            this._txCompileChangeSource = stamp.compileChangeSource;
+            this._txCompileEditType = stamp.compileEditType;
             this._txId = this._nextTxId++;
             this._txStartTimeMs = performance.now();
             this._txHistoryItemId =
@@ -2836,6 +2866,8 @@ export class PatchSyncEngine {
             }
             this._txBufferedOperations = [];
             this._txLabel = null;
+            this._txCompileChangeSource = null;
+            this._txCompileEditType = null;
             this._txId = null;
             this._txStartTimeMs = null;
             this._txHistoryItemId = null;
@@ -3070,6 +3102,7 @@ export class PatchSyncEngine {
         if (this._suppressRecording || this._isSyncing) {
             return;
         }
+        assertCompileStamp(compileChangeSource, compileEditType);
         assertCloudAssetMutable();
 
         const uniqueTargets: LayerSnapshotSyncTarget[] = [];
@@ -4182,6 +4215,7 @@ export class PatchSyncEngine {
         if (!this._fontJson || this._suppressRecording || this._isSyncing)
             return;
 
+        assertCompileStamp(compileChangeSource, compileEditType);
         assertCloudAssetMutable();
 
         const uniqueGlyphNames = Array.from(
@@ -6140,6 +6174,8 @@ export class PatchSyncEngine {
         this._glyphRevisionClock = 0;
         this._txDepth = 0;
         this._txLabel = null;
+        this._txCompileChangeSource = null;
+        this._txCompileEditType = null;
         this._txId = null;
         this._txStartTimeMs = null;
         this._txHistoryItemId = null;
@@ -7115,8 +7151,11 @@ export class PatchSyncEngine {
                 oldValue: operation.oldValue,
                 newValue: operation.newValue,
                 editSource: operation.editSource ?? null,
-                compileChangeSource: operation.compileChangeSource ?? null,
-                compileEditType: operation.compileEditType ?? null,
+                compileChangeSource:
+                    operation.compileChangeSource ??
+                    this._txCompileChangeSource,
+                compileEditType:
+                    operation.compileEditType ?? this._txCompileEditType,
                 replayOldValue: this._cloneReplayValue(
                     operation.applyOldValue === undefined
                         ? operation.oldValue

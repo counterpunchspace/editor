@@ -560,7 +560,9 @@ async function enableAInheritorAutomaticComponents(page: Page): Promise<{
             };
 
             (window as any).patchSyncEngine?.beginTransaction(
-                'Enable automatic alignment for a inheritors'
+                'Enable automatic alignment for a inheritors',
+                null,
+                { compileChangeSource: 'test-sync', compileEditType: null }
             );
             try {
                 for (const glyphName of inheritorNames) {

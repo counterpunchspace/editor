@@ -732,7 +732,10 @@ export class KerningEditorDialog {
             return;
         }
 
-        window.patchSyncEngine?.beginTransaction('Edit kerning pair');
+        window.patchSyncEngine?.beginTransaction('Edit kerning pair', null, {
+            compileChangeSource: 'keyboard-kerning-value',
+            compileEditType: 'kerning-value'
+        });
         try {
             setKerningPairValueOnMaster(
                 master,
@@ -766,7 +769,10 @@ export class KerningEditorDialog {
         }
 
         const isRTL = this.direction === 'rtl';
-        window.patchSyncEngine?.beginTransaction('Delete kerning pair');
+        window.patchSyncEngine?.beginTransaction('Delete kerning pair', null, {
+            compileChangeSource: 'keyboard-kerning-value',
+            compileEditType: 'kerning-value'
+        });
         try {
             for (const master of masters) {
                 setKerningPairValueOnMaster(master, first, second, null, isRTL);

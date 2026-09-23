@@ -1332,35 +1332,39 @@ describe('section 1 sparse Yjs packets', () => {
         );
         const replica = cloneDoc(glyphDoc);
         const packets = captureBridgePackets(bridge, () => {
-            bridge.applySyntheticChangeSet('Delete node and drag it', [
-                {
-                    op: 'set',
-                    path: [
-                        'glyphs',
-                        'A',
-                        'layers',
-                        'layer-1',
-                        'shapes',
-                        0,
-                        'nodes'
-                    ],
-                    oldValue: oldNodes,
-                    newValue: kept
-                },
-                {
-                    op: 'set',
-                    path: [
-                        'glyphs',
-                        'A',
-                        'layers',
-                        'layer-1',
-                        'nodePositionsById',
-                        removedId
-                    ],
-                    oldValue: `${oldNodes[1].x} ${oldNodes[1].y}`,
-                    newValue: '99 99'
-                }
-            ]);
+            bridge.applySyntheticChangeSet(
+                'Delete node and drag it',
+                [
+                    {
+                        op: 'set',
+                        path: [
+                            'glyphs',
+                            'A',
+                            'layers',
+                            'layer-1',
+                            'shapes',
+                            0,
+                            'nodes'
+                        ],
+                        oldValue: oldNodes,
+                        newValue: kept
+                    },
+                    {
+                        op: 'set',
+                        path: [
+                            'glyphs',
+                            'A',
+                            'layers',
+                            'layer-1',
+                            'nodePositionsById',
+                            removedId
+                        ],
+                        oldValue: `${oldNodes[1].x} ${oldNodes[1].y}`,
+                        newValue: '99 99'
+                    }
+                ],
+                { compileChangeSource: 'test-sync', compileEditType: null }
+            );
         });
         expect(packetBytes(packets)).toBeGreaterThan(0);
         for (const packet of packets) {

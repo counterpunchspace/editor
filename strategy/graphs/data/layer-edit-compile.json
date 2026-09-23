@@ -1,7 +1,7 @@
 {
   "id": "layer-edit-compile",
   "title": "Layer-edit compile graph",
-  "lede": "Stories on the left: gesture, stamps, extra classifiers, JS events, then the change bridge, then overview filter events. Local canvas commits fan out into ChangeBridge; linked or remote windows fan in from it. Funnels merge into one compileEditingFont, then editingFontCompiled, canvas modes, then glyphCanvasRendered. Hover a path to see where it starts and stops.",
+  "lede": "Stories on the left. The writer stamps EditIntent. The funnel never infers a type from paths or labels. Live sidebearing is its own stamp. Committed outline, anchor, and sidebearing stamps are null, which is one full compile. Linked windows compile that same stamp. Hover a path to see where it starts and stops.",
   "layout": {
     "chipW": 192,
     "chipH": 58,
@@ -222,7 +222,7 @@
     {
       "id": "alias",
       "label": "Alias / lie",
-      "explain": "Dashed accent: sidebearing compiled as outline, or a leak.",
+      "explain": "Dashed accent: a hop that skips the funnel.",
       "color": "orange",
       "node": {
         "kind": "alias"
@@ -431,7 +431,7 @@
     },
     {
       "id": "cl-outline",
-      "label": "infer still outline",
+      "label": "stamp is null (full)",
       "icons": [
         "account_tree"
       ],
@@ -521,7 +521,7 @@
     },
     {
       "id": "cl-anchor",
-      "label": "infer still anchor",
+      "label": "stamp is null (full)",
       "icons": [
         "account_tree"
       ],
@@ -577,14 +577,14 @@
     },
     {
       "id": "ls-sb",
-      "label": "compiled as outline",
+      "label": "editType sidebearing",
       "icons": [
         "swap_horiz"
       ],
       "stage": "live",
       "kind": "alias",
       "region": "story",
-      "sub": "changeSource mouse-drag-outline",
+      "sub": "mouse-drag-sidebearing",
       "row": 2,
       "col": 1,
       "unify": {

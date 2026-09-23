@@ -268,7 +268,7 @@ export const ASSISTANT_TOOLS: AssistantTool[] = [
         function: {
             name: 'compile_binary_font',
             description:
-                'Compile the current committed font in an isolated analysis worker and return only a stable fontHash. This tool is read-only for the editor, waits for committed worker state, is unavailable during an active edit preview, and never exposes binary bytes. Use target subset only together with text when you want the existing layout-closure path to derive subset glyphs. Pass the returned fontHash explicitly to the other binary-font tools; they never compile implicitly.',
+                'Compile the current committed font in an isolated analysis worker and return only a stable fontHash. The hash is always 16 hex digits; it is not a glyph count. Target full compiles every glyph. Target subset requires text and compiles the layout closure of that text. The tool is read-only for the editor, waits for committed worker state, is unavailable during an active edit preview, and never exposes binary bytes. Pass the returned fontHash explicitly to the other binary-font tools; they never compile implicitly.',
             parameters: {
                 type: 'object',
                 properties: {
@@ -276,7 +276,7 @@ export const ASSISTANT_TOOLS: AssistantTool[] = [
                         type: 'string',
                         enum: ['full', 'subset'],
                         description:
-                            'Optional compile target. Defaults to full. Use subset only together with text when you want the existing subset-closure path.'
+                            'Optional compile target. Defaults to full, which compiles every glyph. Use subset together with text to compile the layout closure of that text.'
                     },
                     text: {
                         type: 'string',

@@ -22,6 +22,10 @@ import { timelineSpanEnd, timelineSpanStart } from './perf-timeline';
 import { Logger } from './logger';
 import { processCommittedEdit } from './compiled-edit-funnel';
 import {
+    readCommittedCompileStamp,
+    type CompileEditStamp
+} from './edit-intent';
+import {
     computeLayerRecompositionClosure,
     deriveEditKindsFromOperations
 } from './recomposition-closure';
@@ -849,8 +853,7 @@ export function buildCascadingRecompositionOperations(
  * (anchor-only / outline-only) instead of always falling back to
  * a full compile after the Yjs commit lands.
  */
-type CommittedCompileEditType =
-    'anchor' | 'outline' | 'guide' | 'kerning-value' | 'kerning-groups' | null;
+type CommittedCompileEditType = CompileEditStamp;
 
 type NonGlyphChangeHint =
     | 'feature-code'
@@ -893,9 +896,7 @@ function packetMixesKerningAndGlyphEdits(entries: ChangeLogEntry[]): boolean {
     let hasGlyphOrLayerChange = false;
     for (const entry of entries) {
         const path = entry.path ?? '';
-        if (
-            inferKerningEditTypeFromMetadata(entry.transactionLabel ?? '', path)
-        ) {
+        if (kerningHintFromPath(path)) {
             hasKerningChange = true;
         }
         if (pathTouchesGlyphOrLayer(path)) {
@@ -908,19 +909,11 @@ function packetMixesKerningAndGlyphEdits(entries: ChangeLogEntry[]): boolean {
     return false;
 }
 
-function inferKerningEditTypeFromMetadata(
-    label: string,
-    path: string
-): CommittedCompileEditType {
-    const normalizedLabel = label.toLowerCase();
-    if (
-        normalizedLabel.includes('kern group membership') ||
-        pathTouchesKerningGroups(path)
-    ) {
+function kerningHintFromPath(path: string): CommittedCompileEditType {
+    if (pathTouchesKerningGroups(path)) {
         return 'kerning-groups';
     }
     if (
-        normalizedLabel.includes('kerning pair') ||
         pathTouchesMasterKerning(path) ||
         pathTouchesRtlKerningFormatSpecific(path)
     ) {
@@ -939,10 +932,11 @@ function collectNonGlyphChangeHints(
         if (path === 'glyphRevisions' || path.startsWith('glyphRevisions.')) {
             continue;
         }
-        const kerningEditType = inferKerningEditTypeFromMetadata(
-            entry.transactionLabel ?? '',
-            path
-        );
+        const kerningEditType =
+            entry.compileEditType === 'kerning-value' ||
+            entry.compileEditType === 'kerning-groups'
+                ? entry.compileEditType
+                : kerningHintFromPath(path);
         let hasSpecializedHint = false;
         if (path === 'features' || path.startsWith('features.')) {
             hints.add('feature-code');
@@ -1001,193 +995,23 @@ function isSidebearingKeyCommittedEntry(entry: ChangeLogEntry): boolean {
     );
 }
 
-function getExplicitCommittedCompileContext(entries: ChangeLogEntry[]): {
-    editType: CommittedCompileEditType;
-    changeSource: string;
-} | null {
-    for (const entry of entries) {
-        if (!entry.compileChangeSource) {
-            continue;
-        }
-
-        const compileEditType = entry.compileEditType;
-        return {
-            changeSource: entry.compileChangeSource,
-            editType:
-                compileEditType === 'anchor' ||
-                compileEditType === 'outline' ||
-                compileEditType === 'guide' ||
-                compileEditType === 'kerning-value' ||
-                compileEditType === 'kerning-groups'
-                    ? compileEditType
-                    : null
-        };
-    }
-
-    return null;
-}
-
-function inferCommittedEditTypeFromEntries(
+function readStampForOrigin(
     entries: ChangeLogEntry[],
     origin: CommittedChangeOrigin
 ): {
     editType: CommittedCompileEditType;
     changeSource: string;
 } {
-    const explicitContext = getExplicitCommittedCompileContext(entries);
-    if (explicitContext) {
-        return explicitContext;
+    const fallback =
+        origin === 'remote' ? 'remote-change' : 'change-bridge-local';
+    const stamp = readCommittedCompileStamp(entries, fallback);
+    if (stamp.unstamped && entries.length > 0) {
+        console.warn(
+            'Committed packet has no compileChangeSource; compiling full',
+            { origin, paths: entries.map((entry) => entry.path).slice(0, 4) }
+        );
     }
-
-    const changeSourceFor = (editType: CommittedCompileEditType): string =>
-        getCommittedChangeSource(origin, editType);
-
-    for (const entry of entries) {
-        const label = entry.transactionLabel ?? '';
-        const path = entry.path ?? '';
-        const isLayerSnapshotWithShapes = (value: unknown): boolean => {
-            if (!value || typeof value !== 'object' || Array.isArray(value)) {
-                return false;
-            }
-
-            const snapshot = value as Record<string, unknown>;
-            return Array.isArray(snapshot.shapes);
-        };
-        const hasReplayTargets =
-            normalizeWorkerReplayTargets(entry.workerReplayTargets).length > 0;
-        if (origin === 'local' && path.startsWith('features.')) {
-            return {
-                editType: null,
-                changeSource: 'feature-code'
-            };
-        }
-        // Master topology changes must rebuild fvar/avar/gvar. Classifying them
-        // as outline-only leaves the editing VF without the new/removed master
-        // tuple, so locations past the previous extrema fall back to the default
-        // master (e.g. Regular at the new axis max).
-        if (label === 'Add master' || label === 'Remove master') {
-            return {
-                editType: null,
-                changeSource: changeSourceFor(null)
-            };
-        }
-        // Outline-only skips kerning; kerning-only skips outlines. Packets that
-        // change both (for example enabling automatic alignment while assigning
-        // inherited kerning groups) must compile as full and reshape immediately.
-        if (packetMixesKerningAndGlyphEdits(entries)) {
-            return {
-                editType: null,
-                changeSource: changeSourceFor(null)
-            };
-        }
-        if (
-            hasReplayTargets &&
-            (label === 'Reinterpolate layer batch sync' ||
-                label === 'Reinterpolate layer sync')
-        ) {
-            return {
-                editType: 'outline',
-                changeSource:
-                    origin === 'local' &&
-                    label === 'Reinterpolate layer batch sync'
-                        ? 'master-reinterpolate-batch'
-                        : changeSourceFor('outline')
-            };
-        }
-        if (
-            label.toLowerCase().includes('anchor') ||
-            /(^|\.)anchors(\.|$)/.test(path)
-        ) {
-            return {
-                editType: 'anchor',
-                changeSource: changeSourceFor('anchor')
-            };
-        }
-        if (
-            label.toLowerCase().includes('guide') ||
-            /(^|\.)guides(\.|$)/.test(path)
-        ) {
-            return {
-                editType: 'guide',
-                changeSource: changeSourceFor('guide')
-            };
-        }
-        if (
-            isLayerSnapshotWithShapes(entry.replayOldValue) ||
-            isLayerSnapshotWithShapes(entry.replayNewValue) ||
-            isLayerSnapshotWithShapes(entry.oldValue) ||
-            isLayerSnapshotWithShapes(entry.newValue)
-        ) {
-            return {
-                editType: 'outline',
-                changeSource: changeSourceFor('outline')
-            };
-        }
-        if (
-            entry.visualAnchorSide === 'left' ||
-            entry.visualAnchorSide === 'right' ||
-            label.toLowerCase().includes('sidebearing') ||
-            label.toLowerCase().includes('lsb') ||
-            label.toLowerCase().includes('rsb') ||
-            /(^|\.)nodes(\.|$)/.test(path) ||
-            /(^|\.)shapes(\.|$)/.test(path)
-        ) {
-            return {
-                editType: 'outline',
-                changeSource: changeSourceFor('outline')
-            };
-        }
-
-        const kerningEditType = inferKerningEditTypeFromMetadata(label, path);
-        if (kerningEditType) {
-            return {
-                editType: kerningEditType,
-                changeSource: changeSourceFor(kerningEditType)
-            };
-        }
-    }
-    return { editType: null, changeSource: changeSourceFor(null) };
-}
-
-function getCommittedChangeSource(
-    origin: CommittedChangeOrigin,
-    editType: CommittedCompileEditType
-): string {
-    if (origin === 'remote') {
-        if (editType === 'anchor') {
-            return 'remote-anchor';
-        }
-        if (editType === 'outline') {
-            return 'remote-outline';
-        }
-        if (editType === 'guide') {
-            return 'remote-guide';
-        }
-        if (editType === 'kerning-value') {
-            return 'remote-kerning-value';
-        }
-        if (editType === 'kerning-groups') {
-            return 'remote-kerning-groups';
-        }
-        return 'remote-change';
-    }
-
-    if (editType === 'anchor') {
-        return 'keyboard-anchor';
-    }
-    if (editType === 'outline') {
-        return 'keyboard-outline';
-    }
-    if (editType === 'guide') {
-        return 'keyboard-guide';
-    }
-    if (editType === 'kerning-value') {
-        return 'keyboard-kerning-value';
-    }
-    if (editType === 'kerning-groups') {
-        return 'keyboard-kerning-groups';
-    }
-    return 'change-bridge-local';
+    return { editType: stamp.editType, changeSource: stamp.changeSource };
 }
 
 function inferLocalCompileContextFromHistoryItem(
@@ -1200,7 +1024,7 @@ function inferLocalCompileContextFromHistoryItem(
     const semanticEntries = entries.flatMap(
         (entry) => entry.semanticChangeLogEntries ?? []
     );
-    return inferCommittedEditTypeFromEntries(
+    return readStampForOrigin(
         semanticEntries.length > 0 ? semanticEntries : entries,
         'local'
     );
@@ -2220,25 +2044,27 @@ function inferHistoryItemKerningEditType(
     if (!historyItem) {
         return null;
     }
-
-    const transactionLabel = historyItem.transactionLabel ?? '';
+    const entries = historyItem.entries ?? [];
+    if (entries.some((entry) => entry.compileChangeSource)) {
+        const stamp = readStampForOrigin(entries, 'local');
+        return stamp.editType === 'kerning-value' ||
+            stamp.editType === 'kerning-groups'
+            ? stamp.editType
+            : null;
+    }
     for (const path of historyItem.touchedPaths ?? []) {
-        const editType = inferKerningEditTypeFromMetadata(
-            transactionLabel,
-            path
-        );
+        const editType = kerningHintFromPath(path);
         if (editType) {
             return editType;
         }
     }
-
-    return inferKerningEditTypeFromMetadata(transactionLabel, '');
+    return null;
 }
 
 function resolveLocalCommittedCompileContext(
     entries: ChangeLogEntry[]
 ): LocalCommittedCompileContext {
-    return inferCommittedEditTypeFromEntries(entries, 'local');
+    return readStampForOrigin(entries, 'local');
 }
 
 async function awaitCommittedEditingCompileReady(
@@ -2259,10 +2085,11 @@ async function awaitCommittedEditingCompileReady(
 
 function committedPacketLocksKerningPair(entries: ChangeLogEntry[]): boolean {
     return entries.some((entry) => {
-        const editType = inferKerningEditTypeFromMetadata(
-            entry.transactionLabel ?? '',
-            entry.path ?? ''
-        );
+        const editType =
+            entry.compileEditType === 'kerning-value' ||
+            entry.compileEditType === 'kerning-groups'
+                ? entry.compileEditType
+                : kerningHintFromPath(entry.path ?? '');
         return editType === 'kerning-value' || editType === 'kerning-groups';
     });
 }
@@ -2583,7 +2410,7 @@ export async function handleCommittedChangeRefresh(
         await awaitCommittedWorkerCacheSettled(awaitWorkerSync);
 
         const replayTargets = collectReplayTargetsFromEntries(entries);
-        const { editType, changeSource } = inferCommittedEditTypeFromEntries(
+        const { editType, changeSource } = readStampForOrigin(
             entries,
             'remote'
         );

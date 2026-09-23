@@ -210,7 +210,12 @@ export async function nudgeGlyphNode(
                 transactionLabel,
                 undefined,
                 undefined,
-                layer.id
+                layer.id,
+                undefined,
+                undefined,
+                undefined,
+                'test-sync',
+                null
             );
             await (
                 window as any

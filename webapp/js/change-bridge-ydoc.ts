@@ -200,7 +200,11 @@ function featureEntryRecord(
     if (!id) {
         id = generateStableId();
     }
-    return { id, tag, code };
+    return {
+        id,
+        tag,
+        code: code === undefined ? { code: '' } : code
+    };
 }
 
 function featureTupleField(
@@ -626,6 +630,9 @@ function replaceYMapContentsInternal(
     }
 
     for (const [key, value] of Object.entries(normalizedRecord)) {
+        if (value === undefined && key === 'code') {
+            continue;
+        }
         const current = yMapGet(targetMap, key);
         if (
             (key === 'anchors' || key === 'guides' || key === 'features') &&

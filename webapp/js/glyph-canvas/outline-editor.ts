@@ -1515,8 +1515,13 @@ export class OutlineEditor {
     private _liveAnchorPreviewGeneration: number = 0;
     private _anchorAffectedGlyphNames: Set<string> = new Set();
     private _committedOutlineAffectedGlyphNames: Set<string> = new Set();
-    private liveDragEditFunnel = new LiveDragEditFunnel();
-    private keyboardPreviewEditFunnel = new KeyboardPreviewEditFunnel();
+    private livePreviewEditFunnel = new LiveDragEditFunnel();
+    private get liveDragEditFunnel(): LiveDragEditFunnel {
+        return this.livePreviewEditFunnel;
+    }
+    private get keyboardPreviewEditFunnel(): KeyboardPreviewEditFunnel {
+        return this.livePreviewEditFunnel;
+    }
     private _pendingKeyboardPreviewCommit: {
         preMoveDesc?: string;
         affectedGlyphNames?: Set<string>;
@@ -2465,7 +2470,10 @@ export class OutlineEditor {
             }))
         );
         const bridge = window.patchSyncEngine;
-        bridge?.beginTransaction(label);
+        bridge?.beginTransaction(label, null, {
+            compileChangeSource: 'keyboard-outline',
+            compileEditType: null
+        });
         let mapping: Map<number, number> = new Map();
         try {
             withSuppressedModelRecording(() => {
@@ -2517,7 +2525,10 @@ export class OutlineEditor {
         const label = enabled ? 'Subtract paths' : 'Clear path subtraction';
         const bridge = window.patchSyncEngine;
         let changed = false;
-        bridge?.beginTransaction(label);
+        bridge?.beginTransaction(label, null, {
+            compileChangeSource: 'keyboard-outline',
+            compileEditType: null
+        });
         try {
             for (const layer of layers) {
                 for (const shapeIndex of pathShapeIndexes) {
@@ -2863,7 +2874,10 @@ export class OutlineEditor {
         const masterGuidesBefore = master?.guides?.length ?? 0;
 
         const bridge = window.patchSyncEngine;
-        bridge?.beginTransaction('Paste');
+        bridge?.beginTransaction('Paste', null, {
+            compileChangeSource: 'keyboard-outline',
+            compileEditType: null
+        });
         let result;
         let activePasteAnchorNames: string[] = [];
         try {
@@ -3053,7 +3067,10 @@ export class OutlineEditor {
         }
 
         const bridge = window.patchSyncEngine;
-        bridge?.beginTransaction('Replace paths in place');
+        bridge?.beginTransaction('Replace paths in place', null, {
+            compileChangeSource: 'keyboard-outline',
+            compileEditType: null
+        });
         let result;
         try {
             result = applyReplaceSelectedPaths({
@@ -4179,10 +4196,14 @@ export class OutlineEditor {
                     };
                 }
 
-                if (
-                    previewKind === 'outline' ||
-                    previewKind === 'sidebearing'
-                ) {
+                if (previewKind === 'sidebearing') {
+                    return {
+                        changeSource: 'keyboard-sidebearing',
+                        editType: 'sidebearing' as const
+                    };
+                }
+
+                if (previewKind === 'outline') {
                     return {
                         changeSource: 'keyboard-outline',
                         editType: 'outline' as const
@@ -4238,7 +4259,10 @@ export class OutlineEditor {
                 typeof bridge?.beginTransaction === 'function';
 
             if (hasTransaction) {
-                bridge.beginTransaction('Arrow key');
+                bridge.beginTransaction('Arrow key', null, {
+                    compileChangeSource: 'keyboard-outline',
+                    compileEditType: null
+                });
             }
 
             try {
@@ -5393,8 +5417,8 @@ export class OutlineEditor {
         this.liveDragEditFunnel.queue({
             kind: 'sidebearing',
             compile: {
-                changeSource: 'mouse-drag-outline',
-                editType: 'outline'
+                changeSource: 'mouse-drag-sidebearing',
+                editType: 'sidebearing'
             },
             isActive: () => this.isDraggingSidebearing,
             run: async () => {
@@ -5837,7 +5861,10 @@ export class OutlineEditor {
 
         const startedTransaction = !options?.reuseTransaction;
         if (startedTransaction) {
-            bridge.beginTransaction(label);
+            bridge.beginTransaction(label, null, {
+                compileChangeSource: 'keyboard-outline',
+                compileEditType: null
+            });
         }
         try {
             this._syncCurrentGlyphToYDoc(
@@ -8788,7 +8815,10 @@ export class OutlineEditor {
             layer.toJSON()
         );
 
-        bridge?.beginTransaction('Reinterpolate layer');
+        bridge?.beginTransaction('Reinterpolate layer', null, {
+            compileChangeSource: 'master-reinterpolate-batch',
+            compileEditType: null
+        });
 
         try {
             withSuppressedModelRecording(() => {
@@ -10377,7 +10407,10 @@ export class OutlineEditor {
             this._hasMoved = false;
             this._dragType = 'guide';
             this._preDragDesc = this._buildGuideDesc();
-            window.patchSyncEngine?.beginTransaction('Drag guide');
+            window.patchSyncEngine?.beginTransaction('Drag guide', null, {
+                compileChangeSource: 'mouse-drag-guide',
+                compileEditType: 'guide'
+            });
             this.glyphCanvas.lastMouseX = e.clientX;
             this.glyphCanvas.lastMouseY = e.clientY;
             this.lastGlyphX = null;
@@ -10419,7 +10452,12 @@ export class OutlineEditor {
             window.patchSyncEngine?.beginTransaction(
                 getSidebearingTransactionLabel(
                     this.hoveredSidebearingHandle.side
-                )
+                ),
+                null,
+                {
+                    compileChangeSource: 'mouse-drag-sidebearing',
+                    compileEditType: null
+                }
             );
             this.glyphCanvas.lastMouseX = e.clientX;
             this.glyphCanvas.lastMouseY = e.clientY;
@@ -10468,7 +10506,10 @@ export class OutlineEditor {
                 this._dragType = 'anchor';
                 this.resetLiveAnchorRefreshState();
                 this._preDragDesc = this._buildAnchorDesc();
-                window.patchSyncEngine?.beginTransaction('Drag anchor');
+                window.patchSyncEngine?.beginTransaction('Drag anchor', null, {
+                    compileChangeSource: 'mouse-drag-anchor',
+                    compileEditType: null
+                });
                 this.glyphCanvas.lastMouseX = e.clientX;
                 this.glyphCanvas.lastMouseY = e.clientY;
                 this.lastGlyphX = null; // Reset for delta calculation
@@ -10509,7 +10550,12 @@ export class OutlineEditor {
                 this._dragType = 'slide-point';
                 this._preDragDesc = this._buildNodeDesc();
                 window.patchSyncEngine?.beginTransaction(
-                    'Move point along curve'
+                    'Move point along curve',
+                    null,
+                    {
+                        compileChangeSource: 'mouse-drag-outline',
+                        compileEditType: null
+                    }
                 );
                 this.glyphCanvas.lastMouseX = e.clientX;
                 this.glyphCanvas.lastMouseY = e.clientY;
@@ -10593,7 +10639,10 @@ export class OutlineEditor {
                     : null;
                 this._preDragDesc = this._buildNodeDesc();
                 this._pointDragDeltaX = 0;
-                window.patchSyncEngine?.beginTransaction('Drag point');
+                window.patchSyncEngine?.beginTransaction('Drag point', null, {
+                    compileChangeSource: 'mouse-drag-outline',
+                    compileEditType: null
+                });
                 this.glyphCanvas.lastMouseX = e.clientX;
                 this.glyphCanvas.lastMouseY = e.clientY;
                 this.lastGlyphX = null; // Reset for delta calculation
@@ -10653,7 +10702,14 @@ export class OutlineEditor {
                 this._dragType = 'component';
                 this._preDragDesc = this._buildComponentDesc();
                 this._componentDragDeltaX = 0;
-                window.patchSyncEngine?.beginTransaction('Drag component');
+                window.patchSyncEngine?.beginTransaction(
+                    'Drag component',
+                    null,
+                    {
+                        compileChangeSource: 'mouse-drag-outline',
+                        compileEditType: null
+                    }
+                );
                 this.glyphCanvas.lastMouseX = e.clientX;
                 this.glyphCanvas.lastMouseY = e.clientY;
                 this.lastGlyphX = null;
@@ -12545,7 +12601,10 @@ export class OutlineEditor {
         this._preDragDesc = this.buildSelectionResizeDescription(bounds);
         this.selectedSidebearingHandle = null;
         this.selectedGuideHandle = null;
-        window.patchSyncEngine?.beginTransaction('Scale selection');
+        window.patchSyncEngine?.beginTransaction('Scale selection', null, {
+            compileChangeSource: 'keyboard-outline',
+            compileEditType: null
+        });
         this.glyphCanvas.lastMouseX = e.clientX;
         this.glyphCanvas.lastMouseY = e.clientY;
         this.lastGlyphX = null;
@@ -15008,7 +15067,11 @@ export class OutlineEditor {
         const startedAddPointTx = Boolean(
             _addPtBridge && !_addPtBridge.inTransaction
         );
-        if (startedAddPointTx) _addPtBridge.beginTransaction('Add point');
+        if (startedAddPointTx)
+            _addPtBridge.beginTransaction('Add point', null, {
+                compileChangeSource: 'keyboard-outline',
+                compileEditType: null
+            });
         try {
             withSuppressedModelRecording(() => {
                 insertedNodeIndex = activePath._addPoint(
@@ -15127,7 +15190,10 @@ export class OutlineEditor {
             (window as any).patchSyncEngine ?? (window as any).changeBridge;
         const startedTx = Boolean(bridge && !bridge.inTransaction);
         if (startedTx) {
-            bridge.beginTransaction('Cut path');
+            bridge.beginTransaction('Cut path', null, {
+                compileChangeSource: 'keyboard-outline',
+                compileEditType: null
+            });
         }
         try {
             const insertedPoint = await this.commitHoveredAddPointPreview();
@@ -16012,7 +16078,10 @@ export class OutlineEditor {
         let insertedShapeIndices: number[] = [];
         const label = 'Decompose component';
         const bridge = window.patchSyncEngine;
-        bridge?.beginTransaction(label);
+        bridge?.beginTransaction(label, null, {
+            compileChangeSource: 'keyboard-outline',
+            compileEditType: null
+        });
         try {
             withSuppressedModelRecording(() => {
                 for (const shapeIndex of shapeIndices) {
@@ -16139,7 +16208,10 @@ export class OutlineEditor {
             (window as any).patchSyncEngine ?? (window as any).changeBridge;
 
         if (options.granularSync && bridge) {
-            bridge.beginTransaction(label);
+            bridge.beginTransaction(label, null, {
+                compileChangeSource: 'keyboard-outline',
+                compileEditType: null
+            });
             try {
                 withSuppressedModelRecording(() => {
                     changed = mutate(activePath, 0);
@@ -16798,7 +16870,10 @@ export class OutlineEditor {
             return;
         }
 
-        bridge.beginTransaction('Draw path');
+        bridge.beginTransaction('Draw path', null, {
+            compileChangeSource: 'keyboard-outline',
+            compileEditType: null
+        });
         try {
             bridge.syncLayerSnapshotsFromJson(
                 [foregroundLayer, layer].map((layerModel: any) => ({
@@ -17092,7 +17167,11 @@ export class OutlineEditor {
         const startedOpenTx = Boolean(
             _openBridge && !_openBridge.inTransaction
         );
-        if (startedOpenTx) _openBridge.beginTransaction('Open path');
+        if (startedOpenTx)
+            _openBridge.beginTransaction('Open path', null, {
+                compileChangeSource: 'keyboard-outline',
+                compileEditType: null
+            });
         try {
             withSuppressedModelRecording(() => {
                 changed = activePath._openClosedPathAtNode(point.nodeIndex);
@@ -17166,7 +17245,11 @@ export class OutlineEditor {
         const startedSplitTx = Boolean(
             _splitBridge && !_splitBridge.inTransaction
         );
-        if (startedSplitTx) _splitBridge.beginTransaction('Split path');
+        if (startedSplitTx)
+            _splitBridge.beginTransaction('Split path', null, {
+                compileChangeSource: 'keyboard-outline',
+                compileEditType: null
+            });
         try {
             withSuppressedModelRecording(() => {
                 splitResult = currentLayerModel.splitOpenPathAtNode(
@@ -17278,7 +17361,10 @@ export class OutlineEditor {
                 (window as any).patchSyncEngine ?? (window as any).changeBridge;
             const _closeLabel = options.changeLabel || 'Close path';
             if (_closeBridge && !options.reuseTransaction)
-                _closeBridge.beginTransaction(_closeLabel);
+                _closeBridge.beginTransaction(_closeLabel, null, {
+                    compileChangeSource: 'keyboard-outline',
+                    compileEditType: null
+                });
             try {
                 let pendingPair: {
                     sourceEndpoint: OpenPathEndpointRef;
@@ -17449,7 +17535,10 @@ export class OutlineEditor {
         const _mergeBridge =
             (window as any).patchSyncEngine ?? (window as any).changeBridge;
         if (_mergeBridge && !reuseTransaction)
-            _mergeBridge.beginTransaction('Close path');
+            _mergeBridge.beginTransaction('Close path', null, {
+                compileChangeSource: 'keyboard-outline',
+                compileEditType: null
+            });
         try {
             withSuppressedModelRecording(() => {
                 changed = activePath._closeOpenPathByMerge();
@@ -17534,7 +17623,7 @@ export class OutlineEditor {
     private prepareStructuralOutlineCompile(
         changeSource: string = 'keyboard-outline'
     ): void {
-        fontManager.setEditingCompileContext(changeSource, 'outline');
+        fontManager.setEditingCompileContext(changeSource, null);
     }
 
     private queueStructuralOutlineCompileFromModel(
@@ -18356,7 +18445,10 @@ export class OutlineEditor {
         const bridge = window.patchSyncEngine;
         const hasTransaction = typeof bridge?.beginTransaction === 'function';
         if (hasTransaction) {
-            bridge.beginTransaction('Set sidebearing');
+            bridge.beginTransaction('Set sidebearing', null, {
+                compileChangeSource: 'keyboard-sidebearing',
+                compileEditType: null
+            });
         }
         try {
             const layer = this.getSelectionScopeLayerModel(
@@ -18956,7 +19048,10 @@ export class OutlineEditor {
             !hasGuideSelection
                 ? 'Delete component(s)'
                 : 'Delete point(s)';
-        bridge?.beginTransaction(deletionLabel);
+        bridge?.beginTransaction(deletionLabel, null, {
+            compileChangeSource: 'keyboard-outline',
+            compileEditType: null
+        });
         try {
             const deleteContourFromLayer = (layerModel: Layer): void => {
                 for (const pathIndex of contourIndicesDescending) {

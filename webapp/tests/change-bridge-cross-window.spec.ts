@@ -130,7 +130,12 @@ test.describe('Cross-window ChangeBridge sync', () => {
                 'Drag point',
                 undefined,
                 undefined,
-                layerId
+                layerId,
+                undefined,
+                undefined,
+                undefined,
+                'test-sync',
+                null
             );
 
             return {

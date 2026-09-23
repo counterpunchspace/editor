@@ -69,7 +69,12 @@ describe('metrics-key point drag regression', () => {
                 'Drag point',
                 `node '(${Math.round(originalNode.x)}, ${Math.round(originalNode.y)})'`,
                 `LEFT (${Math.round(originalNode.x + deltaX)}, ${Math.round(originalNode.y + deltaY)})`,
-                layer.id
+                layer.id,
+                undefined,
+                undefined,
+                undefined,
+                'test-sync',
+                null
             );
 
             expect(bridge.canUndo('a', layer.id)).toBe(true);

@@ -112,7 +112,10 @@ function pasteLikeCanvas(font, bridge, clipboardGlyphName = 'a') {
         ]
     };
 
-    bridge.beginTransaction('Paste glyphs');
+    bridge.beginTransaction('Paste glyphs', null, {
+        compileChangeSource: 'test-sync',
+        compileEditType: null
+    });
     let result;
     try {
         result = withSuppressedModelRecording(() =>

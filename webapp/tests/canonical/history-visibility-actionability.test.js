@@ -190,7 +190,10 @@ describe('history visibility vs undo actionability', () => {
         window.patchSyncEngine = bridge;
         window.changeBridge = bridge;
 
-        bridge.beginTransaction('Edit kerning pair');
+        bridge.beginTransaction('Edit kerning pair', null, {
+            compileChangeSource: 'test-sync',
+            compileEditType: null
+        });
         bridge.recordChange(
             ['masters', 'master-regular', 'kerning', 'A'],
             'V',
@@ -232,7 +235,10 @@ describe('history visibility vs undo actionability', () => {
         window.patchSyncEngine = bridge;
         window.changeBridge = bridge;
 
-        bridge.beginTransaction('Edit kerning pair');
+        bridge.beginTransaction('Edit kerning pair', null, {
+            compileChangeSource: 'test-sync',
+            compileEditType: null
+        });
         bridge.recordChange(
             ['masters', 'master-regular', 'kerning', 'A'],
             'V',
@@ -259,7 +265,10 @@ describe('history visibility vs undo actionability', () => {
         window.patchSyncEngine = bridge;
         window.changeBridge = bridge;
 
-        bridge.beginTransaction('Make guide global');
+        bridge.beginTransaction('Make guide global', null, {
+            compileChangeSource: 'test-sync',
+            compileEditType: null
+        });
         bridge.recordChange(
             ['glyphs', 'A', 'layers', 'layer-1'],
             'guides',
@@ -305,7 +314,10 @@ describe('history visibility vs undo actionability', () => {
         window.patchSyncEngine = bridge;
         window.changeBridge = bridge;
 
-        bridge.beginTransaction('Set family name');
+        bridge.beginTransaction('Set family name', null, {
+            compileChangeSource: 'test-sync',
+            compileEditType: null
+        });
         bridge.recordChange(['names'], 'familyName', 'TestFont', 'Other');
         bridge.endTransaction();
 

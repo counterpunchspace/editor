@@ -421,7 +421,12 @@ test.describe('Cloud P0 integrity Playwright gates', () => {
                         'blocked wal',
                         undefined,
                         undefined,
-                        layer.id
+                        layer.id,
+                        undefined,
+                        undefined,
+                        undefined,
+                        'test-sync',
+                        null
                     );
                 } catch (err) {
                     threw = true;

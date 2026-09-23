@@ -5063,7 +5063,14 @@ class FontInfoManager {
 
         const bridge = window.patchSyncEngine as
             | {
-                  beginTransaction: (label: string) => void;
+                  beginTransaction: (
+                      label: string,
+                      historyTarget?: unknown,
+                      historyMetadata?: {
+                          compileChangeSource?: string | null;
+                          compileEditType?: string | null;
+                      }
+                  ) => void;
                   endTransaction: () => void;
                   applySyntheticChangeSet: (
                       label: string,
@@ -5072,7 +5079,14 @@ class FontInfoManager {
                           path: (string | number)[];
                           oldValue: unknown;
                           newValue: unknown;
-                      }>
+                          compileChangeSource?: string | null;
+                          compileEditType?: string | null;
+                      }>,
+                      options?: {
+                          compileChangeSource?: string | null;
+                          compileEditType?: string | null;
+                          ignoreRecordingSuppression?: boolean;
+                      }
                   ) => void;
                   runWithoutRecording?: <T>(fn: () => T) => T;
               }
@@ -5080,7 +5094,10 @@ class FontInfoManager {
 
         const label = 'Edit font name';
         if (bridge) {
-            bridge.beginTransaction(label);
+            bridge.beginTransaction(label, null, {
+                compileChangeSource: 'font-info',
+                compileEditType: null
+            });
             try {
                 if (bridge.runWithoutRecording) {
                     bridge.runWithoutRecording(() =>
@@ -5095,12 +5112,16 @@ class FontInfoManager {
                         ? {
                               op: 'remove',
                               path: ['names', key],
+                              compileChangeSource: 'font-info',
+                              compileEditType: null,
                               oldValue: { ...previousValue },
                               newValue: undefined
                           }
                         : {
                               op: 'set',
                               path: ['names', key],
+                              compileChangeSource: 'font-info',
+                              compileEditType: null,
                               oldValue:
                                   Object.keys(previousValue).length > 0
                                       ? { ...previousValue }
@@ -5153,7 +5174,14 @@ class FontInfoManager {
     }) {
         const bridge = window.patchSyncEngine as
             | {
-                  beginTransaction: (label: string) => void;
+                  beginTransaction: (
+                      label: string,
+                      historyTarget?: unknown,
+                      historyMetadata?: {
+                          compileChangeSource?: string | null;
+                          compileEditType?: string | null;
+                      }
+                  ) => void;
                   endTransaction: () => void;
                   applySyntheticChangeSet: (
                       label: string,
@@ -5162,14 +5190,24 @@ class FontInfoManager {
                           path: (string | number)[];
                           oldValue: unknown;
                           newValue: unknown;
-                      }>
+                          compileChangeSource?: string | null;
+                          compileEditType?: string | null;
+                      }>,
+                      options?: {
+                          compileChangeSource?: string | null;
+                          compileEditType?: string | null;
+                          ignoreRecordingSuppression?: boolean;
+                      }
                   ) => void;
                   runWithoutRecording?: <T>(fn: () => T) => T;
               }
             | undefined;
 
         if (bridge) {
-            bridge.beginTransaction(options.label);
+            bridge.beginTransaction(options.label, null, {
+                compileChangeSource: 'font-info',
+                compileEditType: null
+            });
             try {
                 if (bridge.runWithoutRecording) {
                     bridge.runWithoutRecording(() => options.applyLocal());
@@ -5177,21 +5215,28 @@ class FontInfoManager {
                     options.applyLocal();
                 }
 
-                bridge.applySyntheticChangeSet(options.label, [
-                    options.remove
-                        ? {
-                              op: 'remove',
-                              path: options.path,
-                              oldValue: options.oldValue,
-                              newValue: undefined
-                          }
-                        : {
-                              op: 'set',
-                              path: options.path,
-                              oldValue: options.oldValue,
-                              newValue: options.newValue
-                          }
-                ]);
+                bridge.applySyntheticChangeSet(
+                    options.label,
+                    [
+                        options.remove
+                            ? {
+                                  op: 'remove',
+                                  path: options.path,
+                                  oldValue: options.oldValue,
+                                  newValue: undefined
+                              }
+                            : {
+                                  op: 'set',
+                                  path: options.path,
+                                  oldValue: options.oldValue,
+                                  newValue: options.newValue
+                              }
+                    ],
+                    {
+                        compileChangeSource: 'font-info',
+                        compileEditType: null
+                    }
+                );
             } finally {
                 bridge.endTransaction();
             }
@@ -5218,7 +5263,14 @@ class FontInfoManager {
     }) {
         const bridge = window.patchSyncEngine as
             | {
-                  beginTransaction: (label: string) => void;
+                  beginTransaction: (
+                      label: string,
+                      historyTarget?: unknown,
+                      historyMetadata?: {
+                          compileChangeSource?: string | null;
+                          compileEditType?: string | null;
+                      }
+                  ) => void;
                   endTransaction: () => void;
                   applySyntheticChangeSet: (
                       label: string,
@@ -5227,14 +5279,24 @@ class FontInfoManager {
                           path: (string | number)[];
                           oldValue: unknown;
                           newValue: unknown;
-                      }>
+                          compileChangeSource?: string | null;
+                          compileEditType?: string | null;
+                      }>,
+                      options?: {
+                          compileChangeSource?: string | null;
+                          compileEditType?: string | null;
+                          ignoreRecordingSuppression?: boolean;
+                      }
                   ) => void;
                   runWithoutRecording?: <T>(fn: () => T) => T;
               }
             | undefined;
 
         if (bridge) {
-            bridge.beginTransaction(options.label);
+            bridge.beginTransaction(options.label, null, {
+                compileChangeSource: 'font-info',
+                compileEditType: null
+            });
             try {
                 if (bridge.runWithoutRecording) {
                     bridge.runWithoutRecording(() => options.applyLocal());
@@ -5249,7 +5311,15 @@ class FontInfoManager {
                         path: c.path,
                         oldValue: c.oldValue,
                         newValue: c.newValue
-                    }))
+                    })),
+                    {
+                        compileChangeSource: options.label.includes('master')
+                            ? 'master-topology'
+                            : 'font-info',
+                        compileEditType: options.label.includes('master')
+                            ? 'master-topology'
+                            : null
+                    }
                 );
             } finally {
                 bridge.endTransaction();
@@ -7414,7 +7484,14 @@ class FontInfoManager {
 
         const bridge = window.patchSyncEngine as
             | {
-                  beginTransaction: (label: string) => void;
+                  beginTransaction: (
+                      label: string,
+                      historyTarget?: unknown,
+                      historyMetadata?: {
+                          compileChangeSource?: string | null;
+                          compileEditType?: string | null;
+                      }
+                  ) => void;
                   endTransaction: () => void;
                   applySyntheticChangeSet: (
                       label: string,
@@ -7423,7 +7500,14 @@ class FontInfoManager {
                           path: (string | number)[];
                           oldValue: unknown;
                           newValue: unknown;
-                      }>
+                          compileChangeSource?: string | null;
+                          compileEditType?: string | null;
+                      }>,
+                      options?: {
+                          compileChangeSource?: string | null;
+                          compileEditType?: string | null;
+                          ignoreRecordingSuppression?: boolean;
+                      }
                   ) => void;
                   runWithoutRecording?: <T>(fn: () => T) => T;
               }
@@ -7444,7 +7528,10 @@ class FontInfoManager {
                   : nextValue;
 
         if (bridge) {
-            bridge.beginTransaction(label);
+            bridge.beginTransaction(label, null, {
+                compileChangeSource: 'font-info',
+                compileEditType: null
+            });
             try {
                 if (bridge.runWithoutRecording) {
                     bridge.runWithoutRecording(() =>
@@ -7454,21 +7541,28 @@ class FontInfoManager {
                     this.applyLocalRootFontFieldValue(key, nextValue);
                 }
 
-                bridge.applySyntheticChangeSet(label, [
-                    nextValue === undefined
-                        ? {
-                              op: 'remove',
-                              path: [key],
-                              oldValue: normalizedOldValue,
-                              newValue: undefined
-                          }
-                        : {
-                              op: 'set',
-                              path: [key],
-                              oldValue: normalizedOldValue,
-                              newValue: normalizedNextValue
-                          }
-                ]);
+                bridge.applySyntheticChangeSet(
+                    label,
+                    [
+                        nextValue === undefined
+                            ? {
+                                  op: 'remove',
+                                  path: [key],
+                                  oldValue: normalizedOldValue,
+                                  newValue: undefined
+                              }
+                            : {
+                                  op: 'set',
+                                  path: [key],
+                                  oldValue: normalizedOldValue,
+                                  newValue: normalizedNextValue
+                              }
+                    ],
+                    {
+                        compileChangeSource: 'font-info',
+                        compileEditType: null
+                    }
+                );
             } finally {
                 bridge.endTransaction();
             }
@@ -7539,7 +7633,14 @@ class FontInfoManager {
 
         const bridge = window.patchSyncEngine as
             | {
-                  beginTransaction: (label: string) => void;
+                  beginTransaction: (
+                      label: string,
+                      historyTarget?: unknown,
+                      historyMetadata?: {
+                          compileChangeSource?: string | null;
+                          compileEditType?: string | null;
+                      }
+                  ) => void;
                   endTransaction: () => void;
                   applySyntheticChangeSet: (
                       label: string,
@@ -7548,7 +7649,14 @@ class FontInfoManager {
                           path: (string | number)[];
                           oldValue: unknown;
                           newValue: unknown;
-                      }>
+                          compileChangeSource?: string | null;
+                          compileEditType?: string | null;
+                      }>,
+                      options?: {
+                          compileChangeSource?: string | null;
+                          compileEditType?: string | null;
+                          ignoreRecordingSuppression?: boolean;
+                      }
                   ) => void;
                   runWithoutRecording?: <T>(fn: () => T) => T;
               }
@@ -7559,7 +7667,10 @@ class FontInfoManager {
         const normalizedNextValue = cloneCustomOTFieldValue(nextValue);
 
         if (bridge) {
-            bridge.beginTransaction(label);
+            bridge.beginTransaction(label, null, {
+                compileChangeSource: 'font-info',
+                compileEditType: null
+            });
             try {
                 if (bridge.runWithoutRecording) {
                     bridge.runWithoutRecording(() =>
@@ -7569,21 +7680,32 @@ class FontInfoManager {
                     this.applyLocalCustomOTValue(key, nextValue);
                 }
 
-                bridge.applySyntheticChangeSet(label, [
-                    nextValue === undefined
-                        ? {
-                              op: 'remove',
-                              path: ['custom_ot_values', key],
-                              oldValue: normalizedOldValue,
-                              newValue: undefined
-                          }
-                        : {
-                              op: 'set',
-                              path: ['custom_ot_values', key],
-                              oldValue: normalizedOldValue,
-                              newValue: normalizedNextValue
-                          }
-                ]);
+                bridge.applySyntheticChangeSet(
+                    label,
+                    [
+                        nextValue === undefined
+                            ? {
+                                  op: 'remove',
+                                  path: ['custom_ot_values', key],
+                                  compileChangeSource: 'font-info',
+                                  compileEditType: null,
+                                  oldValue: normalizedOldValue,
+                                  newValue: undefined
+                              }
+                            : {
+                                  op: 'set',
+                                  path: ['custom_ot_values', key],
+                                  compileChangeSource: 'font-info',
+                                  compileEditType: null,
+                                  oldValue: normalizedOldValue,
+                                  newValue: normalizedNextValue
+                              }
+                    ],
+                    {
+                        compileChangeSource: 'font-info',
+                        compileEditType: null
+                    }
+                );
             } finally {
                 bridge.endTransaction();
             }
@@ -8714,9 +8836,15 @@ class FontInfoManager {
             });
         }
 
-        bridge.beginTransaction('Edit feature code', historyTarget);
+        bridge.beginTransaction('Edit feature code', historyTarget, {
+            compileChangeSource: 'feature-code',
+            compileEditType: 'feature'
+        });
         try {
-            bridge.applySyntheticChangeSet('Edit feature code', operations);
+            bridge.applySyntheticChangeSet('Edit feature code', operations, {
+                compileChangeSource: 'feature-code',
+                compileEditType: 'feature'
+            });
         } finally {
             bridge.endTransaction();
         }
@@ -8844,18 +8972,29 @@ class FontInfoManager {
             const historyTarget = this.getSelectedCodeHistoryTarget();
             bridge.beginTransaction(
                 'Toggle automatic generation',
-                historyTarget
+                historyTarget,
+                {
+                    compileChangeSource: 'feature-code',
+                    compileEditType: 'feature'
+                }
             );
 
             try {
-                bridge.applySyntheticChangeSet('Toggle automatic generation', [
+                bridge.applySyntheticChangeSet(
+                    'Toggle automatic generation',
+                    [
+                        {
+                            op: 'set',
+                            path,
+                            oldValue: previousAutomatic,
+                            newValue: nextAutomatic
+                        }
+                    ],
                     {
-                        op: 'set',
-                        path,
-                        oldValue: previousAutomatic,
-                        newValue: nextAutomatic
+                        compileChangeSource: 'feature-code',
+                        compileEditType: 'feature'
                     }
-                ]);
+                );
             } finally {
                 bridge.endTransaction();
             }
@@ -8937,7 +9076,10 @@ class FontInfoManager {
         }
 
         const bridge = window.patchSyncEngine;
-        bridge?.beginTransaction('Reorder features', historyTarget);
+        bridge?.beginTransaction('Reorder features', historyTarget, {
+            compileChangeSource: 'feature-code',
+            compileEditType: 'feature'
+        });
 
         let movedFeature;
 

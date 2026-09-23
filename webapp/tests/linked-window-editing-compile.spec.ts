@@ -1870,6 +1870,42 @@ test.describe('Linked window editing compile regression', () => {
         expect(afterSenderState.markY).toBe(afterSenderState.anchorY);
         expect(afterLinkedState.anchorY).toBe(afterSenderState.anchorY);
         expect(afterLinkedState.markY).toBe(afterSenderState.markY);
+        const senderCompiled = await getEditingFontVisualSample(mainPage, 'ä');
+        const linkedCompiled = await getEditingFontVisualSample(
+            linkedPage,
+            'ä'
+        );
+        expect(linkedCompiled.pixelHash).toBe(senderCompiled.pixelHash);
+
+        const beforeUndoMain = await getEditingFontCompileTracker(mainPage);
+        const beforeUndoLinked = await getEditingFontCompileTracker(linkedPage);
+        await runAAdieresisUndoRedo(mainPage, 'undo');
+        await waitForCompileOnBoth(
+            mainPage,
+            linkedPage,
+            beforeUndoMain.count,
+            beforeUndoLinked.count,
+            'undo anchor commit'
+        );
+        const undoneSender = await getEditingFontVisualSample(mainPage, 'ä');
+        const undoneLinked = await getEditingFontVisualSample(linkedPage, 'ä');
+        expect(undoneLinked.pixelHash).toBe(undoneSender.pixelHash);
+        expect(undoneSender.pixelHash).not.toBe(senderCompiled.pixelHash);
+
+        const beforeRedoMain = await getEditingFontCompileTracker(mainPage);
+        const beforeRedoLinked = await getEditingFontCompileTracker(linkedPage);
+        await runAAdieresisUndoRedo(mainPage, 'redo');
+        await waitForCompileOnBoth(
+            mainPage,
+            linkedPage,
+            beforeRedoMain.count,
+            beforeRedoLinked.count,
+            'redo anchor commit'
+        );
+        const redoneSender = await getEditingFontVisualSample(mainPage, 'ä');
+        const redoneLinked = await getEditingFontVisualSample(linkedPage, 'ä');
+        expect(redoneLinked.pixelHash).toBe(redoneSender.pixelHash);
+        expect(redoneSender.pixelHash).toBe(senderCompiled.pixelHash);
 
         await context.close();
     });

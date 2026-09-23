@@ -5157,7 +5157,10 @@ class GlyphOverview {
 
         const bridge = window.patchSyncEngine;
         const label = getSidebearingTransactionLabel(side);
-        bridge?.beginTransaction(label);
+        bridge?.beginTransaction(label, null, {
+            compileChangeSource: 'keyboard-sidebearing',
+            compileEditType: null
+        });
         try {
             for (const layer of layers) {
                 layer.applySidebearingInput(side, rawValue);
@@ -5259,7 +5262,10 @@ class GlyphOverview {
             return;
         }
 
-        window.patchSyncEngine?.beginTransaction('Set glyph Unicode');
+        window.patchSyncEngine?.beginTransaction('Set glyph Unicode', null, {
+            compileChangeSource: 'font-info',
+            compileEditType: null
+        });
         try {
             glyph.codepoints = next.length > 0 ? next : undefined;
         } finally {
@@ -5283,7 +5289,12 @@ class GlyphOverview {
         window.patchSyncEngine?.beginTransaction(
             include
                 ? 'Add kern group membership'
-                : 'Remove kern group membership'
+                : 'Remove kern group membership',
+            null,
+            {
+                compileChangeSource: 'keyboard-kerning-groups',
+                compileEditType: 'kerning-groups'
+            }
         );
         try {
             if (

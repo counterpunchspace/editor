@@ -92,7 +92,10 @@ describe('history layer availability', () => {
         bridge.initFromJson(fontJson);
         window.changeBridge = bridge;
 
-        bridge.beginTransaction('Set component automatic alignment');
+        bridge.beginTransaction('Set component automatic alignment', null, {
+            compileChangeSource: 'test-sync',
+            compileEditType: null
+        });
         bridge.recordChange(
             ['glyphs', 'A', 'layers', 'layer-1'],
             'width',
@@ -353,7 +356,10 @@ describe('history layer availability', () => {
         bridge.initFromJson(fontJson);
         window.changeBridge = bridge;
 
-        bridge.beginTransaction('Move anchor with dependents');
+        bridge.beginTransaction('Move anchor with dependents', null, {
+            compileChangeSource: 'test-sync',
+            compileEditType: null
+        });
         bridge.recordChange(
             ['glyphs', 'A', 'layers', 'layer-1'],
             'width',
@@ -429,7 +435,10 @@ describe('history layer availability', () => {
             }
         };
 
-        bridge.beginTransaction('Move anchor with dependents');
+        bridge.beginTransaction('Move anchor with dependents', null, {
+            compileChangeSource: 'test-sync',
+            compileEditType: null
+        });
         bridge.recordChange(
             ['glyphs', 'A', 'layers', 'layer-1'],
             'anchors',
@@ -445,7 +454,10 @@ describe('history layer availability', () => {
         bridge.endTransaction();
 
         compositeIsAutomatic = false;
-        bridge.beginTransaction('Turn composite manual');
+        bridge.beginTransaction('Turn composite manual', null, {
+            compileChangeSource: 'test-sync',
+            compileEditType: null
+        });
         bridge.recordChange(
             ['glyphs', 'B', 'layers', 'layer-2'],
             'width',
@@ -504,7 +516,10 @@ describe('history layer availability', () => {
             }
         };
 
-        bridge.beginTransaction('Move anchor with dependents');
+        bridge.beginTransaction('Move anchor with dependents', null, {
+            compileChangeSource: 'test-sync',
+            compileEditType: null
+        });
         bridge.recordChange(
             ['glyphs', 'A', 'layers', 'layer-1'],
             'anchors',

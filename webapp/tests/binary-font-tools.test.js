@@ -161,7 +161,14 @@ describe('split binary-font assistant tools', () => {
                 path: 'memory:///font.glyphs',
                 changeVersion: 1
             },
-            deriveSubsetGlyphsFromText: jest.fn(() => ['A', 'B']),
+            deriveSubsetGlyphsFromText: jest.fn(function () {
+                if (!this || !this.currentFont) {
+                    throw new TypeError(
+                        "Cannot read properties of undefined (reading 'currentFont')"
+                    );
+                }
+                return ['A', 'B'];
+            }),
             workerCacheUpdatePromise: null,
             buildWorkerSeedYjsState: jest.fn(() => new Uint8Array([9, 8, 7]))
         };
@@ -177,7 +184,9 @@ describe('split binary-font assistant tools', () => {
         window.fullFontCompilation.awaitWorkerDocumentSync = jest
             .fn()
             .mockResolvedValue();
-        window.fullFontCompilation.hasWorkerCacheDocument = jest.fn(() => true);
+        window.fullFontCompilation.hasWorkerCacheDocument = jest.fn(
+            () => false
+        );
         window.fullFontCompilation.bootstrapWorkerCacheFromFontState = jest
             .fn()
             .mockResolvedValue();
@@ -252,8 +261,82 @@ describe('split binary-font assistant tools', () => {
                 hasWorkerCacheDocument: expect.any(Function)
             })
         );
+        expect(
+            window.fullFontCompilation.compileCommittedDebugFont
+        ).not.toHaveBeenCalled();
         expect(window.fontCompilation.compileBinaryFont).not.toHaveBeenCalled();
         expect(window.fontCompilation.storeFontJson).not.toHaveBeenCalled();
+    });
+
+    test('seeds glyph shards instead of the core snapshot when a document set exists', async () => {
+        const shards = [
+            { documentId: 'font-core', bytes: new Uint8Array([1]) },
+            { documentId: 'glyph:A', bytes: new Uint8Array([2]) }
+        ];
+        window.fontManager.buildWorkerSeedDocumentSet = jest.fn(() => shards);
+        window.fullFontCompilation.seedWorkerDocumentSet = jest
+            .fn()
+            .mockResolvedValue();
+        const assistant = new AIAssistant();
+
+        await expect(
+            assistant.executeToolCall({
+                function: {
+                    name: 'compile_binary_font',
+                    arguments: JSON.stringify({ target: 'full', text: '' })
+                }
+            })
+        ).resolves.toBe('binary-hash-1');
+
+        expect(
+            window.fullFontCompilation.seedWorkerDocumentSet
+        ).toHaveBeenCalledWith(shards);
+        expect(
+            window.fullFontCompilation.bootstrapWorkerCacheFromFontState
+        ).not.toHaveBeenCalled();
+        expect(
+            window.fullFontCompilation.compileBinaryFont
+        ).toHaveBeenCalledWith(
+            'full',
+            'assistant-binary-font.ttf',
+            expect.any(Object)
+        );
+        expect(
+            window.fullFontCompilation.compileCommittedDebugFont
+        ).not.toHaveBeenCalled();
+    });
+
+    test('reuses a warm analysis worker for a full compile', async () => {
+        const shards = [
+            { documentId: 'font-core', bytes: new Uint8Array([1]) },
+            { documentId: 'glyph:A', bytes: new Uint8Array([2]) }
+        ];
+        window.fontManager.buildWorkerSeedDocumentSet = jest.fn(() => shards);
+        window.fullFontCompilation.hasWorkerCacheDocument.mockReturnValue(true);
+        window.fullFontCompilation.seedWorkerDocumentSet = jest
+            .fn()
+            .mockResolvedValue();
+        const assistant = new AIAssistant();
+
+        await expect(
+            assistant.executeToolCall({
+                function: {
+                    name: 'compile_binary_font',
+                    arguments: JSON.stringify({ target: 'full', text: '' })
+                }
+            })
+        ).resolves.toBe('binary-hash-1');
+
+        expect(
+            window.fontManager.deriveSubsetGlyphsFromText
+        ).not.toHaveBeenCalled();
+        expect(
+            window.fullFontCompilation.seedWorkerDocumentSet
+        ).not.toHaveBeenCalled();
+        expect(window.fullFontCompilation.compileBinaryFont).toHaveBeenCalled();
+        expect(
+            window.fullFontCompilation.compileCommittedDebugFont
+        ).not.toHaveBeenCalled();
     });
 
     test('shape reads the requested hash and never compiles implicitly', async () => {
@@ -416,7 +499,11 @@ describe('split binary-font assistant tools', () => {
         ).toHaveBeenCalledWith('AB');
         expect(
             window.fullFontCompilation.compileCommittedDebugFont
-        ).toHaveBeenCalledWith(['A', 'B']);
+        ).toHaveBeenCalledWith(
+            ['A', 'B'],
+            'assistant-binary-font.ttf',
+            'editing'
+        );
         expect(
             window.fullFontCompilation.compileBinaryFont
         ).not.toHaveBeenCalled();

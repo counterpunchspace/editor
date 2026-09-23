@@ -19,6 +19,7 @@
 
 import { Logger } from './logger';
 import type { EditingCompileContext } from './font-manager';
+import { compilationPlan, normalizeCompileEditStamp } from './edit-intent';
 
 const console = new Logger('CompiledEditFunnel');
 
@@ -86,16 +87,11 @@ function shouldArmDeferredFullCompile(
     changeSource: string,
     editType: string | null
 ): boolean {
-    if (editType === null || changeSource.startsWith('remote-')) {
-        return false;
-    }
-
-    return (
-        editType === 'outline' ||
-        editType === 'anchor' ||
-        editType === 'kerning-value' ||
-        editType === 'kerning-groups'
-    );
+    return compilationPlan({
+        changeSource,
+        editType: normalizeCompileEditStamp(editType),
+        dataFreshnessMode: COMMITTED_DATA_FRESHNESS_MODE
+    }).armDeferredFull;
 }
 
 /**

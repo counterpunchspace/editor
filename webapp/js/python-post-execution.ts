@@ -55,7 +55,11 @@ type PythonExecutionCommitBridge = {
     applySyntheticChangeSet: (
         label: string,
         operations: SyntheticChangeOperation[],
-        options?: { ignoreRecordingSuppression?: boolean }
+        options?: {
+            ignoreRecordingSuppression?: boolean;
+            compileChangeSource?: string | null;
+            compileEditType?: string | null;
+        }
     ) => void;
     endTransaction: () => { changeLogEntries: unknown[] } | null;
 };
@@ -222,7 +226,11 @@ export function commitPythonExecutionSyntheticChanges(
                     ...operation,
                     editSource
                 })),
-                { ignoreRecordingSuppression: true }
+                {
+                    ignoreRecordingSuppression: true,
+                    compileChangeSource: editSource,
+                    compileEditType: null
+                }
             );
             didApplyOperations = true;
         }
