@@ -1140,7 +1140,10 @@ test.describe('Cloud collab three-window ChangeBridge sync', () => {
                         undefined,
                         undefined,
                         undefined,
-                        changedLayerTargets
+                        changedLayerTargets,
+                        'mouse-drag-anchor',
+                        'mouse-drag-anchor',
+                        null
                     );
 
                     return {
@@ -1815,7 +1818,10 @@ test.describe('Cloud collab three-window ChangeBridge sync', () => {
                         undefined,
                         undefined,
                         undefined,
-                        changedLayerTargets
+                        changedLayerTargets,
+                        'mouse-drag-anchor',
+                        'mouse-drag-anchor',
+                        null
                     );
 
                     return {

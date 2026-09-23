@@ -18653,7 +18653,14 @@ describe('OutlineEditor exact selected layers', () => {
                         })
                     })
                 ]),
-                'Draw path'
+                'Draw path',
+                undefined,
+                undefined,
+                undefined,
+                undefined,
+                'keyboard-outline',
+                'keyboard-outline',
+                null
             );
         } finally {
             window.patchSyncEngine = originalPatchSyncEngine;
@@ -19568,7 +19575,12 @@ describe('OutlineEditor exact selected layers', () => {
                 'Create interpolated layer sync',
                 undefined,
                 undefined,
-                newLayer.id
+                newLayer.id,
+                undefined,
+                undefined,
+                'layer-create',
+                'layer-create',
+                null
             );
             expect(forceFullWorkerCacheUpdateSpy).not.toHaveBeenCalled();
             expect(selectLayerSpy).toHaveBeenCalled();
@@ -19650,7 +19662,12 @@ describe('OutlineEditor exact selected layers', () => {
                 'Create interpolated layer sync',
                 undefined,
                 undefined,
-                intermediate.id
+                intermediate.id,
+                undefined,
+                undefined,
+                'layer-create',
+                'layer-create',
+                null
             );
 
             const intermediateLayerId = intermediate.id;
@@ -19665,7 +19682,15 @@ describe('OutlineEditor exact selected layers', () => {
             ).toBeUndefined();
             expect(patchSyncEngine.syncGlyphFromJson).toHaveBeenLastCalledWith(
                 'A',
-                'Delete layer sync'
+                'Delete layer sync',
+                undefined,
+                undefined,
+                intermediateLayerId,
+                undefined,
+                undefined,
+                'layer-delete',
+                'layer-delete',
+                null
             );
         } finally {
             window.patchSyncEngine = originalPatchSyncEngine;
@@ -19720,7 +19745,15 @@ describe('OutlineEditor exact selected layers', () => {
             expect(currentFont.syncJsonFromModel).not.toHaveBeenCalled();
             expect(patchSyncEngine.syncGlyphFromJson).toHaveBeenCalledWith(
                 'A',
-                'Delete layer sync'
+                'Delete layer sync',
+                undefined,
+                undefined,
+                expect.any(String),
+                undefined,
+                undefined,
+                'layer-delete',
+                'layer-delete',
+                null
             );
             expect(forceFullWorkerCacheUpdateSpy).not.toHaveBeenCalled();
             expect(animateSpy).toHaveBeenCalledWith({ wght: 0 }, 10);
@@ -19876,7 +19909,15 @@ describe('OutlineEditor exact selected layers', () => {
             expect(currentFont.syncJsonFromModel).not.toHaveBeenCalled();
             expect(patchSyncEngine.syncGlyphFromJson).toHaveBeenCalledWith(
                 'B',
-                'Delete layer sync'
+                'Delete layer sync',
+                undefined,
+                undefined,
+                'brace-layer',
+                undefined,
+                undefined,
+                'layer-delete',
+                'layer-delete',
+                null
             );
             expect(forceFullWorkerCacheUpdateSpy).not.toHaveBeenCalled();
         } finally {
@@ -20007,7 +20048,15 @@ describe('OutlineEditor exact selected layers', () => {
             expect(currentFont.syncJsonFromModel).not.toHaveBeenCalled();
             expect(patchSyncEngine.syncGlyphFromJson).toHaveBeenCalledWith(
                 'A',
-                'Delete layer sync'
+                'Delete layer sync',
+                undefined,
+                undefined,
+                expect.any(String),
+                undefined,
+                undefined,
+                'layer-delete',
+                'layer-delete',
+                null
             );
             expect(forceFullWorkerCacheUpdateSpy).not.toHaveBeenCalled();
             expect(animateSpy).toHaveBeenCalledWith({ wght: 400 }, 10);
@@ -20106,7 +20155,12 @@ describe('OutlineEditor exact selected layers', () => {
                 'Reinterpolate layer sync',
                 undefined,
                 undefined,
-                recreatedLayer.id
+                recreatedLayer.id,
+                undefined,
+                undefined,
+                'layer-reinterpolate',
+                'layer-reinterpolate',
+                null
             );
             expect(endTransactionSpy).toHaveBeenCalledTimes(1);
             expect(selectLayerSpy).not.toHaveBeenCalled();
@@ -20249,7 +20303,12 @@ describe('OutlineEditor exact selected layers', () => {
                 'Reinterpolate layer sync',
                 undefined,
                 undefined,
-                'brace-layer'
+                'brace-layer',
+                undefined,
+                undefined,
+                'layer-reinterpolate',
+                'layer-reinterpolate',
+                null
             );
         } finally {
             window.autoCompileManager = originalAutoCompileManager;
@@ -20803,7 +20862,12 @@ describe('OutlineEditor exact selected layers', () => {
                 'Create interpolated layer sync',
                 undefined,
                 undefined,
-                newLayer.id
+                newLayer.id,
+                undefined,
+                undefined,
+                'layer-create',
+                'layer-create',
+                null
             );
             expect(forceFullWorkerCacheUpdateSpy).not.toHaveBeenCalled();
         } finally {

@@ -3565,7 +3565,14 @@ describe('Transactions', () => {
                 { glyphName: 'A', layerId: extraThinLayer.id },
                 { glyphName: 'A', layerId: regularLayer.id }
             ],
-            'Convert'
+            'Convert',
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            'test-sync',
+            'test-sync',
+            null
         );
 
         const paths = bridge.getChangeLog().map((entry) => entry.path);
@@ -3595,7 +3602,14 @@ describe('Transactions', () => {
         extraThinLayer.shapes[0].nodes[0].x = 225;
         bridge.syncLayersFromJson(
             [{ glyphName: 'A', layerId: extraThinLayer.id }],
-            'Move path again'
+            'Move path again',
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            'test-sync',
+            'test-sync',
+            null
         );
         receiverBridge.applyRemoteUpdate(
             update,
@@ -3634,7 +3648,14 @@ describe('Transactions', () => {
         layer.shapes[0].nodes[0].x = 125;
         bridge.syncLayersFromJson(
             [{ glyphName: 'A', layerId: layer.id }],
-            'Move path'
+            'Move path',
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            'test-sync',
+            'test-sync',
+            null
         );
         receiverBridge.applyRemoteUpdate(
             update,
@@ -3644,7 +3665,14 @@ describe('Transactions', () => {
         layer.shapes[0].nodes[0].x = 225;
         bridge.syncLayersFromJson(
             [{ glyphName: 'A', layerId: layer.id }],
-            'Move path again'
+            'Move path again',
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            'test-sync',
+            'test-sync',
+            null
         );
         receiverBridge.applyRemoteUpdate(
             update,
@@ -3717,7 +3745,14 @@ describe('Transactions', () => {
 
         bridge.syncLayersFromJson(
             [{ glyphName: 'B', layerId: 'layer-2' }],
-            'Seed dependent component'
+            'Seed dependent component',
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            'test-sync',
+            'test-sync',
+            null
         );
         receiverBridge.applyRemoteUpdate(lastUpdate, lastEntries);
         const logStart = bridge.getChangeLog().length;
@@ -4583,7 +4618,14 @@ describe('Model setter change recording', () => {
 
         bridge.syncLayersFromJson(
             [{ glyphName: 'A', layerId: layer.id }],
-            'Draw path'
+            'Draw path',
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            'test-sync',
+            'test-sync',
+            null
         );
 
         const rawLayer = fromYType(
@@ -4627,7 +4669,14 @@ describe('Model setter change recording', () => {
 
         bridge.syncLayersFromJson(
             [{ glyphName: 'A', layerId: background.id }],
-            'Draw path'
+            'Draw path',
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            'test-sync',
+            'test-sync',
+            null
         );
 
         const rawBackground = fromYType(
@@ -6777,7 +6826,10 @@ describe('WindowSync', () => {
                 undefined,
                 undefined,
                 editKind === 'sidebearing' ? 'left' : undefined,
-                replayTargets
+                replayTargets,
+                'test-sync',
+                'test-sync',
+                null
             );
         }
 
@@ -11031,7 +11083,10 @@ describe('syncGlyphFromJson', () => {
             undefined,
             undefined,
             undefined,
-            changedTargets
+            changedTargets,
+            'test-sync',
+            'test-sync',
+            null
         );
 
         const remoteEntries = senderBridge.getNewChangeLogEntries();
@@ -11191,7 +11246,10 @@ describe('syncGlyphFromJson', () => {
             undefined,
             undefined,
             undefined,
-            changedTargets
+            changedTargets,
+            'test-sync',
+            'test-sync',
+            null
         );
 
         const changeEntries = senderBridge
@@ -11320,7 +11378,10 @@ describe('syncGlyphFromJson', () => {
             [
                 { glyphName: 'A', layerId: 'layer-1' },
                 { glyphName: 'B', layerId: 'layer-2' }
-            ]
+            ],
+            'test-sync',
+            'test-sync',
+            null
         );
         bridge.endTransaction();
 
@@ -11400,7 +11461,10 @@ describe('syncGlyphFromJson', () => {
             undefined,
             undefined,
             undefined,
-            changedTargets
+            changedTargets,
+            'test-sync',
+            'test-sync',
+            null
         );
 
         expect(fontJson.glyphs[0].layers[0].anchors[0].x).toBe(321);
@@ -11471,7 +11535,10 @@ describe('syncGlyphFromJson', () => {
             [
                 { glyphName: 'A', layerId: 'layer-1' },
                 { glyphName: 'B', layerId: 'layer-2' }
-            ]
+            ],
+            'test-sync',
+            'test-sync',
+            null
         );
 
         fontJson.glyphs[0].layers[0].shapes[0].nodes[0].x =

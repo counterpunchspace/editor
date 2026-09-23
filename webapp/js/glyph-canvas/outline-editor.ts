@@ -8593,17 +8593,24 @@ export class OutlineEditor {
         const createBridge = window.patchSyncEngine;
         let preparedStructuralChange = false;
         if (createBridge) {
+            const changeSource = options.changeSource || 'layer-create';
+            const compileMetadata =
+                this.getCommittedCompileMetadata(changeSource);
             preparedStructuralChange =
-                this.prepareCommittedStructuralOutlineChange(
-                    options.changeSource || 'layer-create',
-                    { triggerCompile: false }
-                );
+                this.prepareCommittedStructuralOutlineChange(changeSource, {
+                    triggerCompile: false
+                });
             createBridge.syncGlyphFromJson(
                 sourceGlyphName,
                 'Create interpolated layer sync',
                 undefined,
                 undefined,
-                newLayer.id
+                newLayer.id,
+                undefined,
+                undefined,
+                compileMetadata.editSource,
+                compileMetadata.changeSource,
+                compileMetadata.editType
             );
         }
 
@@ -8683,14 +8690,24 @@ export class OutlineEditor {
         const deleteBridge = window.patchSyncEngine;
         let preparedStructuralChange = false;
         if (deleteBridge) {
+            const changeSource = options?.changeSource || 'layer-delete';
+            const compileMetadata =
+                this.getCommittedCompileMetadata(changeSource);
             preparedStructuralChange =
-                this.prepareCommittedStructuralOutlineChange(
-                    options?.changeSource || 'layer-delete',
-                    { triggerCompile: false }
-                );
+                this.prepareCommittedStructuralOutlineChange(changeSource, {
+                    triggerCompile: false
+                });
             deleteBridge.syncGlyphFromJson(
                 sourceGlyphName,
-                'Delete layer sync'
+                'Delete layer sync',
+                undefined,
+                undefined,
+                layerId,
+                undefined,
+                undefined,
+                compileMetadata.editSource,
+                compileMetadata.changeSource,
+                compileMetadata.editType
             );
         }
 
@@ -8872,6 +8889,8 @@ export class OutlineEditor {
             // sync, undo would produce a layer missing most fields.
             let preparedStructuralChange = false;
             if (bridge) {
+                const compileMetadata =
+                    this.getCommittedCompileMetadata(changeSource);
                 preparedStructuralChange =
                     this.prepareCommittedStructuralOutlineChange(changeSource, {
                         triggerCompile: false
@@ -8881,7 +8900,12 @@ export class OutlineEditor {
                     'Reinterpolate layer sync',
                     undefined,
                     undefined,
-                    newLayer.id
+                    newLayer.id,
+                    undefined,
+                    undefined,
+                    compileMetadata.editSource,
+                    compileMetadata.changeSource,
+                    compileMetadata.editType
                 );
             }
 
@@ -16881,7 +16905,14 @@ export class OutlineEditor {
                     layerId: layerModel.id,
                     layerJson: layerModel.toJSON()
                 })),
-                'Draw path'
+                'Draw path',
+                undefined,
+                undefined,
+                undefined,
+                undefined,
+                'keyboard-outline',
+                'keyboard-outline',
+                null
             );
         } finally {
             bridge.endTransaction();

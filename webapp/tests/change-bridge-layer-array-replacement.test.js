@@ -78,7 +78,14 @@ describe('ChangeBridge layer snapshot array replacement', () => {
         bridge.setFontJson(updatedFontJson);
         bridge.syncLayersFromJson(
             [{ glyphName: 'oacute', layerId: 'L0' }],
-            'Drag anchor'
+            'Drag anchor',
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            'test-sync',
+            'test-sync',
+            null
         );
 
         // Layer root identity preserved (deep-merge, not replace)
@@ -94,7 +101,14 @@ describe('ChangeBridge layer snapshot array replacement', () => {
         bridge.setFontJson(secondFontJson);
         bridge.syncLayersFromJson(
             [{ glyphName: 'oacute', layerId: 'L0' }],
-            'Drag anchor'
+            'Drag anchor',
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            'test-sync',
+            'test-sync',
+            null
         );
 
         expect(layerMap).toBe(initialLayerMap);

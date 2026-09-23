@@ -685,6 +685,25 @@ async function getEditingFontVisualSample(
     return page.evaluate((t) => (window as any).__sampleEditingFont(t), text);
 }
 
+async function getSettledEditingFontVisualSamples(
+    mainPage: Page,
+    linkedPage: Page,
+    text: string
+): Promise<{
+    sender: EditingFontVisualSample;
+    linked: EditingFontVisualSample;
+}> {
+    let sender = await getEditingFontVisualSample(mainPage, text);
+    let linked = await getEditingFontVisualSample(linkedPage, text);
+    const deadline = Date.now() + 5000;
+    while (sender.pixelHash !== linked.pixelHash && Date.now() < deadline) {
+        await mainPage.waitForTimeout(250);
+        sender = await getEditingFontVisualSample(mainPage, text);
+        linked = await getEditingFontVisualSample(linkedPage, text);
+    }
+    return { sender, linked };
+}
+
 function expectVisualSampleNonEmpty(sample: EditingFontVisualSample): void {
     expect(
         sample.pixelCount,
@@ -1902,8 +1921,8 @@ test.describe('Linked window editing compile regression', () => {
             beforeRedoLinked.count,
             'redo anchor commit'
         );
-        const redoneSender = await getEditingFontVisualSample(mainPage, 'ä');
-        const redoneLinked = await getEditingFontVisualSample(linkedPage, 'ä');
+        const { sender: redoneSender, linked: redoneLinked } =
+            await getSettledEditingFontVisualSamples(mainPage, linkedPage, 'ä');
         expect(redoneLinked.pixelHash).toBe(redoneSender.pixelHash);
         expect(redoneSender.pixelHash).toBe(senderCompiled.pixelHash);
 

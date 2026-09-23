@@ -1410,7 +1410,9 @@ export class PatchSyncEngine {
                 op: 'remove',
                 path: ['format_specific', CLOUD_PLUGIN_OWNED_KEY],
                 oldValue: existingFormat[CLOUD_PLUGIN_OWNED_KEY],
-                newValue: undefined
+                newValue: undefined,
+                compileChangeSource: 'cloud-catalog',
+                compileEditType: null
             });
         }
         this._queueOrCommitOperations(operations, 'Update cloud catalog');
@@ -2800,6 +2802,8 @@ export class PatchSyncEngine {
                     path,
                     oldValue,
                     newValue,
+                    compileChangeSource: 'external-source-reload',
+                    compileEditType: null,
                     applyMode:
                         isObjectValue && isGlyphRoot
                             ? ('glyph-snapshot' as BatchApplyMode)
@@ -3052,6 +3056,7 @@ export class PatchSyncEngine {
             return;
         }
 
+        assertCompileStamp(compileChangeSource, compileEditType);
         assertCloudAssetMutable();
 
         const uniqueTargets = normalizeWorkerReplayTargets(layerTargets);
@@ -7227,7 +7232,9 @@ export class PatchSyncEngine {
                     operation.compileChangeSource ??
                     this._txCompileChangeSource,
                 compileEditType:
-                    operation.compileEditType ?? this._txCompileEditType,
+                    operation.compileEditType !== undefined
+                        ? operation.compileEditType
+                        : this._txCompileEditType,
                 replayOldValue: this._cloneReplayValue(
                     operation.applyOldValue === undefined
                         ? operation.oldValue
