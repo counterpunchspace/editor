@@ -393,6 +393,10 @@ jobs:
                   # That file has no secrets, so each deploy drops dashboard
                   # secrets such as RESEND_API_KEY. Hide it and keep the
                   # project bindings already stored on the Pages project.
+                  # CI checks out a detached commit, so wrangler would record
+                  # the branch as HEAD and create a Preview deployment.
+                  # preview.counterpunch.space and counterpunch.space stay on
+                  # the Production deployment until the branch is main.
                   mv wrangler.toml wrangler.toml.cutover-bak
                   restore_config() {
                     if [ -f wrangler.toml.cutover-bak ]; then
@@ -400,7 +404,7 @@ jobs:
                     fi
                   }
                   trap restore_config EXIT
-                  npx wrangler pages deploy dist --project-name="$project" --commit-dirty=true
+                  npx wrangler pages deploy dist --project-name="$project" --branch main --commit-dirty=true
                   npx wrangler pages secret list --project-name="$project" || true
 
             - name: Real-email signup gate
