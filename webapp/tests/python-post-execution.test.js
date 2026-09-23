@@ -592,7 +592,9 @@ describe('Python post-execution synthetic commit alignment', () => {
             {
                 historyItemId: 'prompt-1',
                 promptGroupId: 'prompt-1',
-                historySummary: 'Reorder features'
+                historySummary: 'Reorder features',
+                compileChangeSource: 'assistant',
+                compileEditType: null
             }
         );
         expect(bridge.setRecordingSuppressed).toHaveBeenCalledWith(true);
@@ -867,13 +869,12 @@ describe('Python post-execution synthetic commit alignment', () => {
         const promptHistoryMetadata = {
             historyItemId: 'prompt-mixed-scope',
             promptGroupId: 'prompt-mixed-scope',
-            historySummary: 'Adjust family and A'
+            historySummary: 'Adjust family and A',
+            compileChangeSource: 'test-sync',
+            compileEditType: null
         };
         const commit = (label, change) => {
-            sender.beginTransaction(label, null, promptHistoryMetadata, {
-                compileChangeSource: 'test-sync',
-                compileEditType: null
-            });
+            sender.beginTransaction(label, null, promptHistoryMetadata);
             change();
             sender.endTransaction();
         };

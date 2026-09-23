@@ -74,7 +74,7 @@
                 "webapp/js/font-compilation.ts::FontCompilation.seedWorkerDocumentSet::seedYdoc",
                 "webapp/js/font-compilation.ts::FontCompilation.seedWorkerYDocFromState::seedYdoc",
                 "webapp/js/font-manager.ts::FontManager.reloadCurrentFontFromSource::storeFontJson",
-                "webapp/js/window-sync.ts::WindowSync._handleMessage::seedYdoc"
+                "webapp/js/window-sync.ts::WindowSync._seedLinkedWorker::seedYdoc"
             ]
         }
     ],

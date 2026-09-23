@@ -764,7 +764,12 @@ describe('Outline Editing canonical behavior', () => {
         expect(canvas.outlineEditor.isSlidingSmoothPointAlongCurve).toBe(true);
         expect(canvas.outlineEditor.isDraggingPoint).toBe(true);
         expect(window.changeBridge.beginTransaction).toHaveBeenCalledWith(
-            'Move point along curve'
+            'Move point along curve',
+            null,
+            expect.objectContaining({
+                compileChangeSource: 'mouse-drag-outline',
+                compileEditType: null
+            })
         );
     });
 

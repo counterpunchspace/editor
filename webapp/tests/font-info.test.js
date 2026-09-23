@@ -285,7 +285,11 @@ describe('FontInfo feature code compilation scheduling', () => {
                 type: 'feature',
                 key: 'feature:liga:1',
                 label: 'liga'
-            }
+            },
+            expect.objectContaining({
+                compileChangeSource: 'feature-code',
+                compileEditType: 'feature'
+            })
         );
         expect(context.applySyntheticChangeSet).toHaveBeenCalledWith(
             'Edit feature code',
@@ -296,7 +300,11 @@ describe('FontInfo feature code compilation scheduling', () => {
                     oldValue: 'sub f i by fi;',
                     newValue: 'sub f l by fl;'
                 }
-            ]
+            ],
+            expect.objectContaining({
+                compileChangeSource: 'feature-code',
+                compileEditType: 'feature'
+            })
         );
         expect(context.endTransaction).toHaveBeenCalledTimes(1);
         expect(context.syncJsonFromModel).not.toHaveBeenCalled();
@@ -334,7 +342,11 @@ describe('FontInfo feature code compilation scheduling', () => {
                     oldValue: true,
                     newValue: false
                 }
-            ]
+            ],
+            expect.objectContaining({
+                compileChangeSource: 'feature-code',
+                compileEditType: 'feature'
+            })
         );
         expect(context.codeData.automatic).toBe(false);
         expect(
@@ -453,7 +465,11 @@ describe('FontInfo feature code compilation scheduling', () => {
                 type: 'feature',
                 key: 'feature:liga:1',
                 label: 'liga'
-            }
+            },
+            expect.objectContaining({
+                compileChangeSource: 'feature-code',
+                compileEditType: 'feature'
+            })
         );
         expect(applySyntheticChangeSet).toHaveBeenCalledWith(
             'Toggle automatic generation',
@@ -464,7 +480,11 @@ describe('FontInfo feature code compilation scheduling', () => {
                     oldValue: false,
                     newValue: true
                 }
-            ]
+            ],
+            expect.objectContaining({
+                compileChangeSource: 'feature-code',
+                compileEditType: 'feature'
+            })
         );
         expect(endTransaction).toHaveBeenCalledTimes(1);
         expect(codeData.automatic).toBe(true);
@@ -567,10 +587,19 @@ describe('FontInfo feature code compilation scheduling', () => {
             en: 'New Family'
         });
 
-        expect(beginTransaction).toHaveBeenCalledWith('Edit font name');
+        expect(beginTransaction).toHaveBeenCalledWith(
+            'Edit font name',
+            null,
+            expect.objectContaining({
+                compileChangeSource: 'font-info',
+                compileEditType: null
+            })
+        );
         expect(runWithoutRecording).toHaveBeenCalledTimes(1);
         expect(applySyntheticChangeSet).toHaveBeenCalledWith('Edit font name', [
             {
+                compileChangeSource: 'font-info',
+                compileEditType: null,
                 op: 'set',
                 path: ['names', 'family_name'],
                 oldValue: { en: 'Old Family' },
@@ -648,6 +677,8 @@ describe('FontInfo feature code compilation scheduling', () => {
 
         expect(applySyntheticChangeSet).toHaveBeenCalledWith('Edit font name', [
             {
+                compileChangeSource: 'font-info',
+                compileEditType: null,
                 op: 'set',
                 path: ['names', 'family_name'],
                 oldValue: undefined,
@@ -712,9 +743,18 @@ describe('FontInfo feature code compilation scheduling', () => {
             })
         );
 
-        expect(beginTransaction).toHaveBeenCalledWith('Edit font name');
+        expect(beginTransaction).toHaveBeenCalledWith(
+            'Edit font name',
+            null,
+            expect.objectContaining({
+                compileChangeSource: 'font-info',
+                compileEditType: null
+            })
+        );
         expect(applySyntheticChangeSet).toHaveBeenCalledWith('Edit font name', [
             {
+                compileChangeSource: 'font-info',
+                compileEditType: null,
                 op: 'set',
                 path: ['names', 'family_name'],
                 oldValue: { en: 'Old Family' },
@@ -760,7 +800,14 @@ describe('FontInfo feature code compilation scheduling', () => {
 
         fontInfoManager.commitRootFontFieldValue('upm', 2048);
 
-        expect(beginTransaction).toHaveBeenCalledWith('Edit font property');
+        expect(beginTransaction).toHaveBeenCalledWith(
+            'Edit font property',
+            null,
+            expect.objectContaining({
+                compileChangeSource: 'font-info',
+                compileEditType: null
+            })
+        );
         expect(runWithoutRecording).toHaveBeenCalledTimes(1);
         expect(applySyntheticChangeSet).toHaveBeenCalledWith(
             'Edit font property',
@@ -771,7 +818,11 @@ describe('FontInfo feature code compilation scheduling', () => {
                     oldValue: 1000,
                     newValue: 2048
                 }
-            ]
+            ],
+            expect.objectContaining({
+                compileChangeSource: 'font-info',
+                compileEditType: null
+            })
         );
         expect(endTransaction).toHaveBeenCalledTimes(1);
         expect(window.currentFontModel.upm).toBe(2048);
@@ -858,7 +909,14 @@ describe('FontInfo feature code compilation scheduling', () => {
 
         nowButton.click();
 
-        expect(beginTransaction).toHaveBeenCalledWith('Edit font property');
+        expect(beginTransaction).toHaveBeenCalledWith(
+            'Edit font property',
+            null,
+            expect.objectContaining({
+                compileChangeSource: 'font-info',
+                compileEditType: null
+            })
+        );
         const operations = applySyntheticChangeSet.mock.calls[0][1];
         expect(operations[0].path).toEqual(['date']);
         expect(operations[0].newValue).toBeInstanceOf(Date);
@@ -899,18 +957,29 @@ describe('FontInfo feature code compilation scheduling', () => {
         fontInfoManager.commitCustomOTValue('os2_vendor_id', 'WXYZ');
 
         expect(beginTransaction).toHaveBeenCalledWith(
-            'Edit custom OpenType value'
+            'Edit custom OpenType value',
+            null,
+            expect.objectContaining({
+                compileChangeSource: 'font-info',
+                compileEditType: null
+            })
         );
         expect(applySyntheticChangeSet).toHaveBeenCalledWith(
             'Edit custom OpenType value',
             [
                 {
+                    compileChangeSource: 'font-info',
+                    compileEditType: null,
                     op: 'set',
                     path: ['custom_ot_values', 'os2_vendor_id'],
                     oldValue: 'ABCD',
                     newValue: 'WXYZ'
                 }
-            ]
+            ],
+            expect.objectContaining({
+                compileChangeSource: 'font-info',
+                compileEditType: null
+            })
         );
         expect(endTransaction).toHaveBeenCalledTimes(1);
         expect(window.currentFontModel.custom_ot_values.os2_vendor_id).toBe(
@@ -1255,7 +1324,11 @@ describe('FontInfo feature code compilation scheduling', () => {
                     oldValue: 800,
                     newValue: 825
                 }
-            ]
+            ],
+            expect.objectContaining({
+                compileChangeSource: 'font-info',
+                compileEditType: null
+            })
         );
 
         fontInfoManager.switchTab('instances');
@@ -1290,7 +1363,11 @@ describe('FontInfo feature code compilation scheduling', () => {
                     oldValue: 'Bold',
                     newValue: 'Black'
                 }
-            ]
+            ],
+            expect.objectContaining({
+                compileChangeSource: 'font-info',
+                compileEditType: null
+            })
         );
     });
 
@@ -1662,7 +1739,11 @@ describe('FontInfo feature code compilation scheduling', () => {
                         expect.objectContaining({ id: 'M1' })
                     ]
                 }
-            ]
+            ],
+            expect.objectContaining({
+                compileChangeSource: 'font-info',
+                compileEditType: null
+            })
         );
         expect(updatePropertiesUI).toHaveBeenCalledWith({
             skipAutoSelectMatchingLayer: true
@@ -1886,7 +1967,11 @@ describe('FontInfo feature code compilation scheduling', () => {
                         expect.objectContaining({ id: 'M1' })
                     ]
                 }
-            ]
+            ],
+            expect.objectContaining({
+                compileChangeSource: 'font-info',
+                compileEditType: null
+            })
         );
     });
 
@@ -1960,18 +2045,25 @@ describe('FontInfo feature code compilation scheduling', () => {
         addInstanceButton.focus();
         addInstanceButton.click();
 
-        expect(applySyntheticChangeSet).toHaveBeenCalledWith('Add instance', [
-            {
-                op: 'set',
-                path: ['instances'],
-                oldValue: expect.any(Array),
-                newValue: expect.arrayContaining([
-                    expect.objectContaining({
-                        name: { dflt: 'Instance 3' }
-                    })
-                ])
-            }
-        ]);
+        expect(applySyntheticChangeSet).toHaveBeenCalledWith(
+            'Add instance',
+            [
+                {
+                    op: 'set',
+                    path: ['instances'],
+                    oldValue: expect.any(Array),
+                    newValue: expect.arrayContaining([
+                        expect.objectContaining({
+                            name: { dflt: 'Instance 3' }
+                        })
+                    ])
+                }
+            ],
+            expect.objectContaining({
+                compileChangeSource: 'font-info',
+                compileEditType: null
+            })
+        );
         expect(
             document.querySelectorAll(
                 '#fontinfo-instances-content .fontinfo-record-item'
@@ -1997,7 +2089,11 @@ describe('FontInfo feature code compilation scheduling', () => {
                         expect.objectContaining({ id: 'I2' })
                     ])
                 }
-            ]
+            ],
+            expect.objectContaining({
+                compileChangeSource: 'font-info',
+                compileEditType: null
+            })
         );
         expect(
             document.querySelectorAll(
@@ -2051,7 +2147,11 @@ describe('FontInfo feature code compilation scheduling', () => {
                         expect.objectContaining({ id: 'I1' })
                     ]
                 }
-            ]
+            ],
+            expect.objectContaining({
+                compileChangeSource: 'font-info',
+                compileEditType: null
+            })
         );
         expect(
             document.querySelector(
@@ -2270,7 +2370,11 @@ describe('FontInfo feature code compilation scheduling', () => {
                         expect.objectContaining({ id: 'I1' })
                     ]
                 }
-            ]
+            ],
+            expect.objectContaining({
+                compileChangeSource: 'font-info',
+                compileEditType: null
+            })
         );
     });
 
@@ -2473,18 +2577,25 @@ describe('FontInfo feature code compilation scheduling', () => {
         addAxesButton.focus();
         addAxesButton.click();
 
-        expect(applySyntheticChangeSet).toHaveBeenCalledWith('Add axis', [
-            {
-                op: 'set',
-                path: ['axes'],
-                oldValue: expect.any(Array),
-                newValue: expect.arrayContaining([
-                    expect.objectContaining({
-                        name: { dflt: 'Axis 3' }
-                    })
-                ])
-            }
-        ]);
+        expect(applySyntheticChangeSet).toHaveBeenCalledWith(
+            'Add axis',
+            [
+                {
+                    op: 'set',
+                    path: ['axes'],
+                    oldValue: expect.any(Array),
+                    newValue: expect.arrayContaining([
+                        expect.objectContaining({
+                            name: { dflt: 'Axis 3' }
+                        })
+                    ])
+                }
+            ],
+            expect.objectContaining({
+                compileChangeSource: 'font-info',
+                compileEditType: null
+            })
+        );
         expect(
             document.querySelectorAll(
                 '#fontinfo-axes-content .fontinfo-record-item'
@@ -2498,17 +2609,24 @@ describe('FontInfo feature code compilation scheduling', () => {
         fontInfoManager.setDeleteConfirmationHandler(true);
         removeAxesButton.click();
 
-        expect(applySyntheticChangeSet).toHaveBeenCalledWith('Remove axis', [
-            {
-                op: 'set',
-                path: ['axes'],
-                oldValue: expect.any(Array),
-                newValue: expect.arrayContaining([
-                    expect.objectContaining({ tag: 'wght' }),
-                    expect.objectContaining({ tag: 'wdth' })
-                ])
-            }
-        ]);
+        expect(applySyntheticChangeSet).toHaveBeenCalledWith(
+            'Remove axis',
+            [
+                {
+                    op: 'set',
+                    path: ['axes'],
+                    oldValue: expect.any(Array),
+                    newValue: expect.arrayContaining([
+                        expect.objectContaining({ tag: 'wght' }),
+                        expect.objectContaining({ tag: 'wdth' })
+                    ])
+                }
+            ],
+            expect.objectContaining({
+                compileChangeSource: 'font-info',
+                compileEditType: null
+            })
+        );
         expect(
             document.querySelectorAll(
                 '#fontinfo-axes-content .fontinfo-record-item'
@@ -2549,17 +2667,24 @@ describe('FontInfo feature code compilation scheduling', () => {
             0
         );
 
-        expect(applySyntheticChangeSet).toHaveBeenCalledWith('Reorder axes', [
-            {
-                op: 'set',
-                path: ['axes'],
-                oldValue: expect.any(Array),
-                newValue: [
-                    expect.objectContaining({ tag: 'wdth' }),
-                    expect.objectContaining({ tag: 'wght' })
-                ]
-            }
-        ]);
+        expect(applySyntheticChangeSet).toHaveBeenCalledWith(
+            'Reorder axes',
+            [
+                {
+                    op: 'set',
+                    path: ['axes'],
+                    oldValue: expect.any(Array),
+                    newValue: [
+                        expect.objectContaining({ tag: 'wdth' }),
+                        expect.objectContaining({ tag: 'wght' })
+                    ]
+                }
+            ],
+            expect.objectContaining({
+                compileChangeSource: 'font-info',
+                compileEditType: null
+            })
+        );
         expect(
             document.querySelector(
                 '#fontinfo-axes-content .fontinfo-record-item-primary'
@@ -2649,17 +2774,24 @@ describe('FontInfo feature code compilation scheduling', () => {
         );
         fontInfoManager.onAxisDragEnd();
 
-        expect(applySyntheticChangeSet).toHaveBeenCalledWith('Reorder axes', [
-            {
-                op: 'set',
-                path: ['axes'],
-                oldValue: expect.any(Array),
-                newValue: [
-                    expect.objectContaining({ tag: 'wdth' }),
-                    expect.objectContaining({ tag: 'wght' })
-                ]
-            }
-        ]);
+        expect(applySyntheticChangeSet).toHaveBeenCalledWith(
+            'Reorder axes',
+            [
+                {
+                    op: 'set',
+                    path: ['axes'],
+                    oldValue: expect.any(Array),
+                    newValue: [
+                        expect.objectContaining({ tag: 'wdth' }),
+                        expect.objectContaining({ tag: 'wght' })
+                    ]
+                }
+            ],
+            expect.objectContaining({
+                compileChangeSource: 'font-info',
+                compileEditType: null
+            })
+        );
     });
 
     test('visible axes list rebuilds on fontModelSync structural changes', () => {

@@ -1392,13 +1392,17 @@ export class PatchSyncEngine {
                 op: 'set',
                 path: [CORE_GLYPH_CATALOG_KEY],
                 oldValue: fontRecord[CORE_GLYPH_CATALOG_KEY],
-                newValue: owned.glyphCatalog
+                newValue: owned.glyphCatalog,
+                compileChangeSource: 'cloud-catalog',
+                compileEditType: null
             },
             {
                 op: 'set',
                 path: [CORE_CODEPOINT_INDEX_KEY],
                 oldValue: fontRecord[CORE_CODEPOINT_INDEX_KEY],
-                newValue: owned.codepointIndex
+                newValue: owned.codepointIndex,
+                compileChangeSource: 'cloud-catalog',
+                compileEditType: null
             }
         ];
         if (CLOUD_PLUGIN_OWNED_KEY in existingFormat) {

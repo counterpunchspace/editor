@@ -153,8 +153,8 @@ describe('handleRemoteChangeRefresh', () => {
         expect(awaitWorkerSync).toHaveBeenCalledTimes(1);
         expect(requestCompile).toHaveBeenCalledTimes(1);
         expect(requestCompile).toHaveBeenCalledWith(
-            'keyboard-anchor',
-            'anchor'
+            'change-bridge-local',
+            null
         );
         expect(queueCacheRefresh).not.toHaveBeenCalled();
         expect(refreshOrder).toEqual(['sync', 'compile']);
@@ -254,8 +254,8 @@ describe('handleRemoteChangeRefresh', () => {
         });
         expect(outlineEditor.fetchLayerData).toHaveBeenCalledWith(true, 'a');
         expect(requestCompile).toHaveBeenCalledWith(
-            'keyboard-outline',
-            'outline'
+            'change-bridge-local',
+            null
         );
         expect(refreshOrder).toEqual([
             'sync',
@@ -340,8 +340,8 @@ describe('handleRemoteChangeRefresh', () => {
         ).not.toHaveBeenCalled();
         expect(outlineEditor.fetchLayerData).not.toHaveBeenCalled();
         expect(requestCompile).toHaveBeenCalledWith(
-            'keyboard-outline',
-            'outline'
+            'change-bridge-local',
+            null
         );
     });
 
@@ -433,8 +433,8 @@ describe('handleRemoteChangeRefresh', () => {
                 glyphCanvas.requestRepaintAfterCompile
             ).toHaveBeenCalledTimes(1);
             expect(requestCompile).toHaveBeenCalledWith(
-                'keyboard-outline',
-                'outline'
+                'change-bridge-local',
+                null
             );
         }
     );
@@ -502,8 +502,8 @@ describe('handleRemoteChangeRefresh', () => {
         expect(awaitWorkerSync).toHaveBeenCalledTimes(1);
         expect(queueCacheRefresh).not.toHaveBeenCalled();
         expect(requestCompile).toHaveBeenCalledWith(
-            'keyboard-anchor',
-            'anchor'
+            'change-bridge-local',
+            null
         );
         expect(refreshOrder).toEqual(['sync', 'compile']);
     });
@@ -557,8 +557,8 @@ describe('handleRemoteChangeRefresh', () => {
         expect(awaitWorkerSync).toHaveBeenCalledTimes(1);
         expect(refreshWorkerCacheForReplayTargets).not.toHaveBeenCalled();
         expect(requestCompile).toHaveBeenCalledWith(
-            'keyboard-outline',
-            'outline'
+            'change-bridge-local',
+            null
         );
         expect(refreshOrder).toEqual(['sync', 'compile']);
     });
@@ -637,8 +637,8 @@ describe('handleRemoteChangeRefresh', () => {
         expect(awaitWorkerSync).toHaveBeenCalledTimes(2);
         expect(queueCacheRefresh).not.toHaveBeenCalled();
         expect(requestCompile).toHaveBeenCalledWith(
-            'keyboard-anchor',
-            'anchor'
+            'change-bridge-local',
+            null
         );
         expect(refreshOrder).toEqual(['sync', 'sync', 'compile']);
     });
@@ -848,11 +848,11 @@ describe('handleRemoteChangeRefresh', () => {
             sidebarErrorDisplay.showError = originalShowError;
         }
 
-        expect(awaitWorkerSync).toHaveBeenCalledTimes(1);
+        expect(awaitWorkerSync).toHaveBeenCalledTimes(2);
         expect(sendMessageMock).not.toHaveBeenCalled();
         expect(requestCompile).toHaveBeenCalledWith(
-            'keyboard-outline',
-            'outline'
+            'change-bridge-local',
+            null
         );
         expect(showErrorMock).not.toHaveBeenCalled();
         expect(
@@ -915,11 +915,11 @@ describe('handleRemoteChangeRefresh', () => {
             sidebarErrorDisplay.showError = originalShowError;
         }
 
-        expect(awaitWorkerSync).toHaveBeenCalledTimes(1);
+        expect(awaitWorkerSync).toHaveBeenCalledTimes(2);
         expect(sendMessageMock).not.toHaveBeenCalled();
         expect(requestCompile).toHaveBeenCalledWith(
-            'keyboard-outline',
-            'outline'
+            'change-bridge-local',
+            null
         );
         expect(showErrorMock).not.toHaveBeenCalled();
     });
@@ -1062,12 +1062,12 @@ describe('handleRemoteChangeRefresh', () => {
             sidebarErrorDisplay.showError = originalShowError;
         }
 
-        expect(awaitWorkerSync).toHaveBeenCalledTimes(1);
+        expect(awaitWorkerSync).toHaveBeenCalledTimes(2);
         expect(sendMessageMock).not.toHaveBeenCalled();
         expect(showErrorMock).not.toHaveBeenCalled();
         expect(requestCompile).toHaveBeenCalledWith(
-            'keyboard-outline',
-            'outline'
+            'change-bridge-local',
+            null
         );
     });
 
@@ -1168,12 +1168,12 @@ describe('handleRemoteChangeRefresh', () => {
             sidebarErrorDisplay.showError = originalShowError;
         }
 
-        expect(awaitWorkerSync).toHaveBeenCalledTimes(1);
+        expect(awaitWorkerSync).toHaveBeenCalledTimes(2);
         expect(sendMessageMock).not.toHaveBeenCalled();
         expect(showErrorMock).not.toHaveBeenCalled();
         expect(requestCompile).toHaveBeenCalledWith(
-            'keyboard-outline',
-            'outline'
+            'change-bridge-local',
+            null
         );
     });
 
@@ -1281,12 +1281,12 @@ describe('handleRemoteChangeRefresh', () => {
             sidebarErrorDisplay.showError = originalShowError;
         }
 
-        expect(awaitWorkerSync).toHaveBeenCalledTimes(1);
+        expect(awaitWorkerSync).toHaveBeenCalledTimes(2);
         expect(sendMessageMock).not.toHaveBeenCalled();
         expect(showErrorMock).not.toHaveBeenCalled();
         expect(requestCompile).toHaveBeenCalledWith(
-            'keyboard-outline',
-            'outline'
+            'change-bridge-local',
+            null
         );
     });
 
@@ -1386,12 +1386,12 @@ describe('handleRemoteChangeRefresh', () => {
             sidebarErrorDisplay.showError = originalShowError;
         }
 
-        expect(awaitWorkerSync).toHaveBeenCalledTimes(1);
+        expect(awaitWorkerSync).toHaveBeenCalledTimes(2);
         expect(sendMessageMock).not.toHaveBeenCalled();
         expect(showErrorMock).not.toHaveBeenCalled();
         expect(requestCompile).toHaveBeenCalledWith(
-            'keyboard-outline',
-            'outline'
+            'change-bridge-local',
+            null
         );
     });
 
@@ -1548,12 +1548,12 @@ describe('handleRemoteChangeRefresh', () => {
             sidebarErrorDisplay.showError = originalShowError;
         }
 
-        expect(awaitWorkerSync).toHaveBeenCalledTimes(1);
+        expect(awaitWorkerSync).toHaveBeenCalledTimes(2);
         expect(sendMessageMock).not.toHaveBeenCalled();
         expect(showErrorMock).not.toHaveBeenCalled();
         expect(requestCompile).toHaveBeenCalledWith(
-            'keyboard-anchor',
-            'anchor'
+            'change-bridge-local',
+            null
         );
     });
 
@@ -1643,15 +1643,15 @@ describe('handleRemoteChangeRefresh', () => {
             sidebarErrorDisplay.showError = originalShowError;
         }
 
-        expect(awaitWorkerSync).toHaveBeenCalledTimes(1);
+        expect(awaitWorkerSync).toHaveBeenCalledTimes(2);
         expect(sendMessageMock).not.toHaveBeenCalled();
         expect(showErrorMock).not.toHaveBeenCalled();
         expect(
             fontManagerState.pendingCommittedKeyboardDriftCheckAfterDrag
         ).toBe(false);
         expect(requestCompile).toHaveBeenCalledWith(
-            'keyboard-outline',
-            'outline'
+            'change-bridge-local',
+            null
         );
     });
 
@@ -1713,12 +1713,12 @@ describe('handleRemoteChangeRefresh', () => {
             sidebarErrorDisplay.showError = originalShowError;
         }
 
-        expect(awaitWorkerSync).toHaveBeenCalledTimes(1);
+        expect(awaitWorkerSync).toHaveBeenCalledTimes(2);
         expect(sendMessageMock).not.toHaveBeenCalled();
         expect(showErrorMock).not.toHaveBeenCalled();
         expect(requestCompile).toHaveBeenCalledWith(
-            'keyboard-outline',
-            'outline'
+            'change-bridge-local',
+            null
         );
     });
 
@@ -1764,8 +1764,8 @@ describe('handleRemoteChangeRefresh', () => {
 
         expect(queueCacheRefresh).not.toHaveBeenCalled();
         expect(requestCompile).toHaveBeenCalledWith(
-            'keyboard-anchor',
-            'anchor'
+            'change-bridge-local',
+            null
         );
     });
 
@@ -1821,8 +1821,8 @@ describe('handleRemoteChangeRefresh', () => {
         expect(awaitWorkerSync).toHaveBeenCalledTimes(1);
         expect(queueCacheRefresh).not.toHaveBeenCalled();
         expect(requestCompile).toHaveBeenCalledWith(
-            'master-reinterpolate-batch',
-            'outline'
+            'change-bridge-local',
+            null
         );
         expect(refreshOrder).toEqual(['sync', 'compile']);
     });
@@ -2216,8 +2216,8 @@ describe('handleRemoteChangeRefresh', () => {
 
         expect(requestCompile).toHaveBeenCalledTimes(1);
         expect(requestCompile).toHaveBeenCalledWith(
-            'keyboard-anchor',
-            'anchor'
+            'change-bridge-local',
+            null
         );
         expect(glyphChangedHandler).toHaveBeenCalledTimes(1);
         expect(glyphChangedHandler.mock.calls[0][0].detail).toEqual({
@@ -2310,8 +2310,8 @@ describe('handleRemoteChangeRefresh', () => {
             expect(requestCompile).toHaveBeenCalledTimes(1);
             expect(requestCompile).toHaveBeenNthCalledWith(
                 1,
-                'remote-anchor',
-                'anchor'
+                'remote-change',
+                null
             );
             expect(refreshOrder).toEqual([
                 'sync',
@@ -2411,7 +2411,7 @@ describe('handleRemoteChangeRefresh', () => {
         });
         expect(fetchLayerData).toHaveBeenCalledWith(true, 'a');
         expect(requestRepaintAfterCompile).toHaveBeenCalledTimes(1);
-        expect(requestCompile).toHaveBeenCalledWith('remote-anchor', 'anchor');
+        expect(requestCompile).toHaveBeenCalledWith('remote-change', null);
         expect(refreshOrder).toEqual([
             'sync',
             'reconcile',
@@ -2467,8 +2467,8 @@ describe('handleRemoteChangeRefresh', () => {
         expect(queueCacheRefresh).not.toHaveBeenCalled();
         expect(requestCompile).toHaveBeenNthCalledWith(
             1,
-            'remote-outline',
-            'outline'
+            'remote-change',
+            null
         );
         expect(requestCompile).toHaveBeenCalledTimes(1);
     });
@@ -2515,10 +2515,7 @@ describe('handleRemoteChangeRefresh', () => {
         );
 
         expect(queueCacheRefresh).not.toHaveBeenCalled();
-        expect(requestCompile).toHaveBeenCalledWith(
-            'remote-outline',
-            'outline'
-        );
+        expect(requestCompile).toHaveBeenCalledWith('remote-change', null);
     });
 
     test('classifies forwarded single-layer reinterpolation packets as remote outline edits', async () => {
@@ -2541,10 +2538,7 @@ describe('handleRemoteChangeRefresh', () => {
         );
 
         expect(queueCacheRefresh).not.toHaveBeenCalled();
-        expect(requestCompile).toHaveBeenCalledWith(
-            'remote-outline',
-            'outline'
-        );
+        expect(requestCompile).toHaveBeenCalledWith('remote-change', null);
     });
 
     test('classifies forwarded add-master batch packets as full remote compiles', async () => {
@@ -2647,8 +2641,8 @@ describe('handleRemoteChangeRefresh', () => {
         expect(awaitWorkerSync).toHaveBeenCalledTimes(1);
         expect(queueCacheRefresh).not.toHaveBeenCalled();
         expect(requestCompile).toHaveBeenCalledWith(
-            'keyboard-outline',
-            'outline'
+            'change-bridge-local',
+            null
         );
     });
 
@@ -2702,8 +2696,8 @@ describe('handleRemoteChangeRefresh', () => {
         expect(awaitWorkerSync).toHaveBeenCalledTimes(1);
         expect(queueCacheRefresh).not.toHaveBeenCalled();
         expect(requestCompile).toHaveBeenCalledWith(
-            'keyboard-outline',
-            'outline'
+            'change-bridge-local',
+            null
         );
     });
 
@@ -2749,7 +2743,10 @@ describe('handleRemoteChangeRefresh', () => {
         // when the edit is not a layer-scoped GUI packet.
         expect(awaitWorkerSync).toHaveBeenCalledTimes(1);
         expect(queueCacheRefresh).not.toHaveBeenCalled();
-        expect(requestCompile).toHaveBeenCalledWith('feature-code', null);
+        expect(requestCompile).toHaveBeenCalledWith(
+            'change-bridge-local',
+            null
+        );
     });
 
     test('classifies local feature-code commits as feature-code recompiles', async () => {
@@ -2789,7 +2786,10 @@ describe('handleRemoteChangeRefresh', () => {
 
         expect(awaitWorkerSync).toHaveBeenCalledTimes(1);
         expect(queueCacheRefresh).not.toHaveBeenCalled();
-        expect(requestCompile).toHaveBeenCalledWith('feature-code', null);
+        expect(requestCompile).toHaveBeenCalledWith(
+            'change-bridge-local',
+            null
+        );
     });
 
     describe('idle view lock', () => {
@@ -2966,6 +2966,8 @@ describe('handleRemoteChangeRefresh', () => {
                     {
                         transactionLabel: 'Edit kerning pair',
                         path: 'masters.0.kerning.A.V',
+                        compileChangeSource: 'remote-kerning-value',
+                        compileEditType: 'kerning-value',
                         oldValue: 0,
                         newValue: -40
                     }
@@ -3652,7 +3654,10 @@ describe('bridge Yjs worker callback', () => {
             [],
             expect.objectContaining({
                 invalidateLayoutClosure: false,
-                nonGlyphChangeHints: ['kerning-value']
+                nonGlyphChangeHints: [
+                    'top-level:format_specific',
+                    'kerning-value'
+                ]
             })
         );
         expect(hasWorkerCacheDocumentSpy).toHaveBeenCalled();
@@ -3660,7 +3665,10 @@ describe('bridge Yjs worker callback', () => {
             expect.objectContaining({
                 type: 'applyYjsUpdate',
                 changedGlyphs: [],
-                nonGlyphChangeHints: ['kerning-value'],
+                nonGlyphChangeHints: [
+                    'top-level:format_specific',
+                    'kerning-value'
+                ],
                 invalidateLayoutClosure: false
             })
         );
@@ -5210,6 +5218,8 @@ describe('committed undo/redo compile requests', () => {
                 {
                     historyAction: 'undo',
                     transactionLabel: 'Move anchor',
+                    compileChangeSource: 'keyboard-anchor',
+                    compileEditType: 'anchor',
                     path: 'glyphs.a.layers.layer-1.anchors.0.x',
                     workerReplayTargets: [
                         { glyphName: 'a', layerId: 'layer-1' }
@@ -5515,7 +5525,7 @@ describe('committed undo/redo compile requests', () => {
             );
 
             expect(refreshWorkerCacheForReplayTargets).not.toHaveBeenCalled();
-            expect(awaitWorkerSync).toHaveBeenCalledTimes(1);
+            expect(awaitWorkerSync).toHaveBeenCalledTimes(2);
             expect(requestRecompileWithoutDataChange).toHaveBeenCalledTimes(1);
         } finally {
             hasWorkerCacheDocument.mockRestore();
@@ -5556,6 +5566,8 @@ describe('committed undo/redo compile requests', () => {
                     {
                         historyAction,
                         transactionLabel: 'Edit kerning pair',
+                        compileChangeSource: 'keyboard-kerning-value',
+                        compileEditType: 'kerning-value',
                         path: 'masters.master-1.kerning_rtl.@AFirst:@VSecond',
                         oldValue: -50,
                         newValue: -80
@@ -5819,6 +5831,8 @@ describe('committed undo/redo compile requests', () => {
                     entries: [
                         {
                             transactionLabel: 'Arrow key',
+                            compileChangeSource: 'keyboard-outline',
+                            compileEditType: 'outline',
                             path: 'glyphs.a:layers.layer-1:',
                             oldValue: 'node 0.17: (258, 472)',
                             newValue: '(258, 462)',
@@ -5883,7 +5897,7 @@ describe('committed undo/redo compile requests', () => {
         expect(fetchLayerData).not.toHaveBeenCalled();
     });
 
-    test('local committed default-master sidebearing refreshes exactly without fetching layer data', async () => {
+    test('unstamped local sidebearing commits compile full and refresh layer data', async () => {
         const originalFontManager = window.fontManager;
         const originalGlyphCanvas = window.glyphCanvas;
         const fetchLayerData = jest.fn();
@@ -5949,12 +5963,12 @@ describe('committed undo/redo compile requests', () => {
             window.glyphCanvas = originalGlyphCanvas;
         }
 
-        expect(refreshSelectedLayerFromModel).toHaveBeenCalledTimes(1);
-        expect(fetchLayerData).not.toHaveBeenCalled();
+        expect(refreshSelectedLayerFromModel).not.toHaveBeenCalled();
+        expect(fetchLayerData).toHaveBeenCalledTimes(1);
         expect(refreshGlyphAdvancesLive).not.toHaveBeenCalled();
         expect(requestCompile).toHaveBeenCalledWith(
-            'keyboard-outline',
-            'outline'
+            'change-bridge-local',
+            null
         );
     });
 
@@ -6014,8 +6028,8 @@ describe('committed undo/redo compile requests', () => {
 
         expect(fetchLayerData).toHaveBeenCalledWith(true, 'a');
         expect(requestCompile).toHaveBeenCalledWith(
-            'keyboard-outline',
-            'outline'
+            'change-bridge-local',
+            null
         );
     });
 

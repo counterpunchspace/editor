@@ -1671,7 +1671,12 @@ describe('Babelfont Object Model', () => {
             expect(baseRegular.paths[0].nodes[0].x).toBe(0);
             expect(bridge.beginTransaction).toHaveBeenCalledTimes(1);
             expect(bridge.beginTransaction).toHaveBeenCalledWith(
-                'Add feature variation'
+                'Add feature variation',
+                null,
+                expect.objectContaining({
+                    compileChangeSource: 'feature-code',
+                    compileEditType: 'feature'
+                })
             );
             expect(bridge.endTransaction).toHaveBeenCalledTimes(1);
             expect(bridge.recordAdd).toHaveBeenCalledTimes(3);
@@ -1691,7 +1696,12 @@ describe('Babelfont Object Model', () => {
             glyph.removeFeatureVariation(addedVariation);
             expect(bridge.beginTransaction).toHaveBeenCalledTimes(2);
             expect(bridge.beginTransaction).toHaveBeenLastCalledWith(
-                'Remove feature variation'
+                'Remove feature variation',
+                null,
+                expect.objectContaining({
+                    compileChangeSource: 'feature-code',
+                    compileEditType: 'feature'
+                })
             );
             expect(bridge.endTransaction).toHaveBeenCalledTimes(2);
             expect(bridge.recordRemove).toHaveBeenCalledTimes(3);
@@ -1758,7 +1768,12 @@ describe('Babelfont Object Model', () => {
             ]);
             expect(bridge.beginTransaction).toHaveBeenCalledTimes(1);
             expect(bridge.beginTransaction).toHaveBeenCalledWith(
-                'Update feature variation settings'
+                'Update feature variation settings',
+                null,
+                expect.objectContaining({
+                    compileChangeSource: 'feature-code',
+                    compileEditType: 'feature'
+                })
             );
             expect(bridge.endTransaction).toHaveBeenCalledTimes(1);
             expect(bridge.recordChange).toHaveBeenCalledTimes(

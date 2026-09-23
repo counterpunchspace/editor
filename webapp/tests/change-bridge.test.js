@@ -7238,7 +7238,18 @@ describe('syncGlyphFromJson', () => {
         fontJson.glyphs[0].layers[0].width = 700;
         fontJson.glyphs[1].layers[0].width = 750;
 
-        bridge.syncGlyphsFromJson(['A', 'B'], 'Drag pair');
+        bridge.syncGlyphsFromJson(
+            ['A', 'B'],
+            'Drag pair',
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            'test-sync',
+            null
+        );
 
         const historyItems = buildHistoryStackItems(bridge.getChangeLog(), {
             includeUndone: true

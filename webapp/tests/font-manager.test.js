@@ -1380,6 +1380,7 @@ describe('FontManager editing subset inclusion', () => {
     let hideErrorSpy;
 
     beforeEach(() => {
+        fontManager.pendingBabelfontJsonSyncAfterDrag = false;
         originalOpenedFonts = fontManager.openedFonts;
         originalCurrentFontId = fontManager.currentFontId;
         originalGlyphCanvas = window.glyphCanvas;
@@ -1766,13 +1767,11 @@ describe('FontManager editing subset inclusion', () => {
         expect(fontManager.pendingBabelfontJsonSyncAfterDrag).toBe(false);
         expect(compileEditingSpy).toHaveBeenCalledTimes(1);
         expect(compileEditingSpy.mock.calls[0][3]).toMatchObject({
-            compileSource: 'keyboard-outline',
-            optionOverrides: {
-                skip_features: true,
-                skip_kerning: true,
-                produce_varc_table: false
-            }
+            compileSource: 'keyboard-outline'
         });
+        expect(
+            compileEditingSpy.mock.calls[0][3].optionOverrides
+        ).toBeUndefined();
     });
 
     test('authoritative committed keyboard outline compile after a drag skips the stale canonical JSON resync', async () => {
@@ -1791,13 +1790,11 @@ describe('FontManager editing subset inclusion', () => {
         expect(fontManager.pendingBabelfontJsonSyncAfterDrag).toBe(true);
         expect(compileEditingSpy).toHaveBeenCalledTimes(1);
         expect(compileEditingSpy.mock.calls[0][3]).toMatchObject({
-            compileSource: 'keyboard-outline',
-            optionOverrides: {
-                skip_features: true,
-                skip_kerning: true,
-                produce_varc_table: false
-            }
+            compileSource: 'keyboard-outline'
         });
+        expect(
+            compileEditingSpy.mock.calls[0][3].optionOverrides
+        ).toBeUndefined();
     });
 
     test('remote outline compile after a drag resyncs stale canonical JSON before compiling', async () => {
@@ -1862,13 +1859,11 @@ describe('FontManager editing subset inclusion', () => {
         expect(fontManager.pendingBabelfontJsonSyncAfterDrag).toBe(true);
         expect(compileEditingSpy).toHaveBeenCalledTimes(1);
         expect(compileEditingSpy.mock.calls[0][3]).toMatchObject({
-            compileSource: 'keyboard-outline',
-            optionOverrides: {
-                skip_features: true,
-                skip_kerning: true,
-                produce_varc_table: false
-            }
+            compileSource: 'keyboard-outline'
         });
+        expect(
+            compileEditingSpy.mock.calls[0][3].optionOverrides
+        ).toBeUndefined();
     });
 
     test('keyboard-sidebearing live compiles use sidebearing outline-only flags', async () => {
@@ -2132,12 +2127,12 @@ describe('FontManager editing subset inclusion', () => {
     });
 
     test.each([
-        ['keyboard-outline', 'outline', 'outline-only'],
-        ['keyboard', 'outline', 'outline-only'],
-        ['keyboard-sidebearing', 'outline', 'outline-only'],
-        ['keyboard-anchor', 'anchor', 'anchor-only'],
-        ['mouse-drag-outline', 'outline', 'outline-only'],
-        ['mouse-drag-anchor', 'anchor', 'anchor-only'],
+        ['keyboard-outline', 'outline', 'full'],
+        ['keyboard', 'outline', 'full'],
+        ['keyboard-sidebearing', 'outline', 'full'],
+        ['keyboard-anchor', 'anchor', 'full'],
+        ['mouse-drag-outline', 'outline', 'full'],
+        ['mouse-drag-anchor', 'anchor', 'full'],
         ['debounced-post-interaction-full-compile', null, 'full']
     ])(
         'compileEditingFont clears processed compile context for %s',

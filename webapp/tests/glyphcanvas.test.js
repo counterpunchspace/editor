@@ -1867,7 +1867,12 @@ describe('GlyphCanvas onMouseUp', () => {
             });
 
             expect(window.changeBridge.beginTransaction).toHaveBeenCalledWith(
-                'Set LSB'
+                'Set LSB',
+                null,
+                expect.objectContaining({
+                    compileChangeSource: 'mouse-drag-sidebearing',
+                    compileEditType: null
+                })
             );
 
             canvas.outlineEditor.isDraggingSidebearing = true;
@@ -2920,7 +2925,12 @@ describe('GlyphCanvas onMouseUp', () => {
             await canvas.outlineEditor.onMouseUp({ clientX: 13, clientY: 23 });
 
             expect(window.changeBridge.beginTransaction).toHaveBeenCalledWith(
-                'Drag point'
+                'Drag point',
+                null,
+                expect.objectContaining({
+                    compileChangeSource: 'mouse-drag-outline',
+                    compileEditType: null
+                })
             );
             expect(syncSpy).not.toHaveBeenCalled();
             expect(
@@ -5268,7 +5278,12 @@ describe('GlyphCanvas property panel metrics edits', () => {
                 'left'
             );
             expect(window.changeBridge.beginTransaction).toHaveBeenCalledWith(
-                'Set sidebearing'
+                'Set sidebearing',
+                null,
+                expect.objectContaining({
+                    compileChangeSource: 'keyboard-sidebearing',
+                    compileEditType: null
+                })
             );
             expect(callOrder).toEqual([
                 'begin',
@@ -10621,7 +10636,14 @@ describe('GlyphCanvas deleteSelectedNodes', () => {
             await canvas.outlineEditor.onMouseUp({ clientX: 30, clientY: 40 });
 
             expect(linkedLayersSpy).toHaveBeenCalled();
-            expect(bridge.beginTransaction).toHaveBeenCalledWith('Split path');
+            expect(bridge.beginTransaction).toHaveBeenCalledWith(
+                'Split path',
+                null,
+                expect.objectContaining({
+                    compileChangeSource: 'keyboard-outline',
+                    compileEditType: null
+                })
+            );
             expect(bridge.syncGlyphFromJson).toHaveBeenCalledTimes(1);
             expect(bridge.endTransaction).toHaveBeenCalled();
             expect(
@@ -10811,7 +10833,14 @@ describe('GlyphCanvas deleteSelectedNodes', () => {
             });
 
             expect(linkedLayersSpy).toHaveBeenCalled();
-            expect(bridge.beginTransaction).toHaveBeenCalledWith('Draw path');
+            expect(bridge.beginTransaction).toHaveBeenCalledWith(
+                'Draw path',
+                null,
+                expect.objectContaining({
+                    compileChangeSource: 'keyboard-outline',
+                    compileEditType: null
+                })
+            );
             expect(bridge.syncGlyphFromJson).toHaveBeenCalledTimes(1);
             expect(bridge.endTransaction).toHaveBeenCalledTimes(1);
             expect(canvas.outlineEditor.pendingCommandPathEdit).toBeNull();
@@ -11029,7 +11058,14 @@ describe('GlyphCanvas deleteSelectedNodes', () => {
             });
 
             expect(bridge.beginTransaction).toHaveBeenCalledTimes(1);
-            expect(bridge.beginTransaction).toHaveBeenCalledWith('Draw path');
+            expect(bridge.beginTransaction).toHaveBeenCalledWith(
+                'Draw path',
+                null,
+                expect.objectContaining({
+                    compileChangeSource: 'keyboard-outline',
+                    compileEditType: null
+                })
+            );
             expect(bridge.syncGlyphFromJson).toHaveBeenCalledTimes(1);
             expect(bridge.endTransaction).toHaveBeenCalledTimes(1);
             expect(canvas.outlineEditor.pendingCommandPathEdit).toBeNull();
@@ -11423,7 +11459,14 @@ describe('GlyphCanvas deleteSelectedNodes', () => {
             });
 
             expect(linkedLayersSpy).toHaveBeenCalled();
-            expect(bridge.beginTransaction).toHaveBeenCalledWith('Draw path');
+            expect(bridge.beginTransaction).toHaveBeenCalledWith(
+                'Draw path',
+                null,
+                expect.objectContaining({
+                    compileChangeSource: 'keyboard-outline',
+                    compileEditType: null
+                })
+            );
             expect(bridge.syncGlyphFromJson).toHaveBeenCalledTimes(1);
             expect(bridge.endTransaction).toHaveBeenCalledTimes(1);
             expect(canvas.outlineEditor.pendingCommandPathEdit).toBeNull();
@@ -11603,7 +11646,14 @@ describe('GlyphCanvas deleteSelectedNodes', () => {
             });
 
             expect(linkedLayersSpy).toHaveBeenCalled();
-            expect(bridge.beginTransaction).toHaveBeenCalledWith('Draw path');
+            expect(bridge.beginTransaction).toHaveBeenCalledWith(
+                'Draw path',
+                null,
+                expect.objectContaining({
+                    compileChangeSource: 'keyboard-outline',
+                    compileEditType: null
+                })
+            );
             expect(bridge.syncGlyphFromJson).toHaveBeenCalledTimes(1);
             expect(bridge.endTransaction).toHaveBeenCalledTimes(1);
             expect(canvas.outlineEditor.pendingCommandPathEdit).toBeNull();
@@ -11787,7 +11837,14 @@ describe('GlyphCanvas deleteSelectedNodes', () => {
             await new Promise((resolve) => setTimeout(resolve, 0));
 
             expect(linkedLayersSpy).toHaveBeenCalled();
-            expect(bridge.beginTransaction).toHaveBeenCalledWith('Convert');
+            expect(bridge.beginTransaction).toHaveBeenCalledWith(
+                'Convert',
+                null,
+                expect.objectContaining({
+                    compileChangeSource: 'keyboard-outline',
+                    compileEditType: null
+                })
+            );
             expect(bridge.syncGlyphFromJson).toHaveBeenCalledTimes(1);
             expect(bridge.syncLayersFromJson).not.toHaveBeenCalled();
             expect(
@@ -12425,7 +12482,12 @@ describe('OutlineEditor structural outline compile scheduling', () => {
             await flushStructuralCompileTick();
 
             expect(env.bridge.beginTransaction).toHaveBeenCalledWith(
-                'Draw path'
+                'Draw path',
+                null,
+                expect.objectContaining({
+                    compileChangeSource: 'keyboard-outline',
+                    compileEditType: null
+                })
             );
             expect(env.bridge.endTransaction).toHaveBeenCalledTimes(1);
             expect(canvas.outlineEditor.pendingCommandPathEdit).toBeNull();
@@ -13750,7 +13812,14 @@ describe('GlyphCanvas anchor movement', () => {
             );
             expect(
                 window.patchSyncEngine.beginTransaction
-            ).toHaveBeenCalledWith('Add point');
+            ).toHaveBeenCalledWith(
+                'Add point',
+                null,
+                expect.objectContaining({
+                    compileChangeSource: 'keyboard-outline',
+                    compileEditType: null
+                })
+            );
             expect(window.patchSyncEngine.endTransaction).toHaveBeenCalled();
         } finally {
             window.patchSyncEngine = originalPatchSyncEngine;
@@ -16738,7 +16807,14 @@ describe('Text-mode kerning property panel', () => {
 
             expect(
                 window.patchSyncEngine.beginTransaction
-            ).toHaveBeenCalledWith('Edit kerning pair');
+            ).toHaveBeenCalledWith(
+                'Edit kerning pair',
+                null,
+                expect.objectContaining({
+                    compileChangeSource: 'keyboard-kerning-value',
+                    compileEditType: 'kerning-value'
+                })
+            );
             expect(window.patchSyncEngine.endTransaction).toHaveBeenCalled();
             expect(recordChange).toHaveBeenCalledTimes(2);
             const formatSpecificChange = recordChange.mock.calls.find(
@@ -18553,7 +18629,14 @@ describe('OutlineEditor exact selected layers', () => {
             const background = glyph.findLayerById(
                 foreground.background_layer_id
             );
-            expect(beginTransaction).toHaveBeenCalledWith('Draw path');
+            expect(beginTransaction).toHaveBeenCalledWith(
+                'Draw path',
+                null,
+                expect.objectContaining({
+                    compileChangeSource: 'keyboard-outline',
+                    compileEditType: null
+                })
+            );
             expect(endTransaction).toHaveBeenCalledTimes(1);
             expect(syncLayerSnapshotsFromJson).toHaveBeenCalledWith(
                 expect.arrayContaining([
@@ -20011,7 +20094,12 @@ describe('OutlineEditor exact selected layers', () => {
                 window.autoCompileManager.checkAndSchedule
             ).not.toHaveBeenCalled();
             expect(beginTransactionSpy).toHaveBeenCalledWith(
-                'Reinterpolate layer'
+                'Reinterpolate layer',
+                null,
+                expect.objectContaining({
+                    compileChangeSource: 'master-reinterpolate-batch',
+                    compileEditType: null
+                })
             );
             expect(syncGlyphFromJsonSpy).toHaveBeenCalledWith(
                 'A',
