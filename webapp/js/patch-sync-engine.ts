@@ -4388,6 +4388,16 @@ export class PatchSyncEngine {
                           Record<string, unknown>
                       >)
                     : [];
+                // A layer id whose JSON is already gone is a structural
+                // delete. Layer scope would apply the transaction label as
+                // a delta and leave the Y layer in place.
+                const syncLayerId =
+                    layerId &&
+                    glyphLayers.some(
+                        (layer: Record<string, unknown>) => layer.id === layerId
+                    )
+                        ? layerId
+                        : null;
                 const glyphSnapshot = this._normalizeGlyphSnapshot(
                     target.glyphJson,
                     target.previousGlyphJson
@@ -4395,28 +4405,28 @@ export class PatchSyncEngine {
                 const previousGlyphSnapshot = this._normalizeGlyphSnapshot(
                     target.previousGlyphJson
                 );
-                const layerSnapshot = layerId
+                const layerSnapshot = syncLayerId
                     ? this._normalizeLayerSnapshot(
-                          layerId,
+                          syncLayerId,
                           glyphLayers.find(
                               (layer: Record<string, unknown>) =>
-                                  layer.id === layerId
+                                  layer.id === syncLayerId
                           ),
                           previousGlyphLayers.find(
                               (layer: Record<string, unknown>) =>
-                                  layer.id === layerId
+                                  layer.id === syncLayerId
                           )
                       )
                     : undefined;
-                const previousLayerSnapshot = layerId
+                const previousLayerSnapshot = syncLayerId
                     ? previousGlyphLayers.find(
                           (layer: Record<string, unknown>) =>
-                              layer.id === layerId
+                              layer.id === syncLayerId
                       )
                     : undefined;
-                const isLayerScope = undoScope === 'layer' && layerId;
+                const isLayerScope = undoScope === 'layer' && !!syncLayerId;
                 const originatingLayerId =
-                    layerId ??
+                    syncLayerId ??
                     (Array.isArray(target.glyphJson.layers)
                         ? String(
                               (
@@ -4427,10 +4437,11 @@ export class PatchSyncEngine {
                           ) || null
                         : null);
 
+                const layerPathId = syncLayerId ?? layerId ?? '';
                 return {
                     op: 'set' as ChangeOp,
                     path: isLayerScope
-                        ? ['glyphs', target.glyphName, 'layers', layerId]
+                        ? ['glyphs', target.glyphName, 'layers', layerPathId]
                         : ['glyphs', target.glyphName],
                     oldValue:
                         undoScope === 'font'
@@ -4448,7 +4459,7 @@ export class PatchSyncEngine {
                     originatingGlyphName: target.glyphName,
                     originatingLayerId,
                     applyPath: isLayerScope
-                        ? ['glyphs', target.glyphName, 'layers', layerId]
+                        ? ['glyphs', target.glyphName, 'layers', layerPathId]
                         : ['glyphs', target.glyphName],
                     applyOldValue: isLayerScope
                         ? previousLayerSnapshot

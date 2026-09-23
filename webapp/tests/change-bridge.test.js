@@ -10611,6 +10611,56 @@ describe('syncGlyphFromJson', () => {
         receiverBridge.destroy();
     });
 
+    test('layer-id glyph sync of a removed layer prunes that layer from peers', () => {
+        const senderFontJson = makeThreeMasterThreeLayerFont();
+        const receiverFontJson = cloneValue(senderFontJson);
+        const senderBridge = new ChangeBridge('sender-deleted-layer-id');
+        const receiverBridge = new ChangeBridge('receiver-deleted-layer-id');
+        let lastUpdate = null;
+
+        senderBridge.initFromJson(senderFontJson);
+        receiverBridge.setFontJson(receiverFontJson);
+        receiverBridge.applyDocumentSetState(senderBridge.encodeDocumentSet());
+        senderBridge.onLocalUpdate((update) => {
+            lastUpdate = update;
+        });
+
+        const removedLayerId = senderFontJson.glyphs[0].layers[1].id;
+        senderFontJson.glyphs[0].layers.splice(1, 1);
+        senderBridge.syncGlyphFromJson(
+            'A',
+            'Delete layer sync',
+            undefined,
+            undefined,
+            removedLayerId,
+            undefined,
+            undefined,
+            'layer-delete',
+            'layer-delete',
+            null
+        );
+
+        receiverBridge.applyRemoteUpdate(
+            lastUpdate,
+            senderBridge.getNewChangeLogEntries()
+        );
+
+        expect(
+            receiverFontJson.glyphs[0].layers.map((layer) => layer.id)
+        ).toEqual(senderFontJson.glyphs[0].layers.map((layer) => layer.id));
+        expect(
+            receiverFontJson.glyphs[0].layers.some(
+                (layer) => layer.id === removedLayerId
+            )
+        ).toBe(false);
+        expect(
+            senderBridge.getYValue(['glyphs', 'A', 'layers', removedLayerId])
+        ).toBeUndefined();
+
+        senderBridge.destroy();
+        receiverBridge.destroy();
+    });
+
     test('cloud envelope glyph-snapshot layer delete prunes remote JSON without snapshot metadata', () => {
         const senderFontJson = makeThreeMasterThreeLayerFont();
         const receiverFontJson = cloneValue(senderFontJson);
