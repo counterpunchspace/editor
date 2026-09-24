@@ -82,7 +82,7 @@ This is not the same as `CLOUD_E2E_PAT`. The PAT never talks to Cloudflare. Miss
 
 ## Real-email signup gate
 
-After website Pages deploy and before editor Pages, cutover `POST`s `/api/auth/request-login` to `https://preview.counterpunch.space` or `https://counterpunch.space`, polls Gmail IMAP for the Resend mail, `GET`s `/api/auth/verify`, then deletes the `+cp-e2e-{run_id}` user from shared D1 `context_users`. Local cloud-collab e2e still uses `AUTH_TOKEN_ALLOW_INSECURE_LOCAL_FALLBACK`; this gate is not in `ci.yml`.
+After website Pages deploy and before editor Pages, cutover `POST`s `/api/auth/request-login` to `https://preview.counterpunch.space` or `https://counterpunch.space`, polls Gmail IMAP for the Resend mail, `GET`s `/api/auth/verify`, then deletes the `+cp-e2e-{run_id}` user from shared D1 `context_users` and expunges that run's signup message from the Gmail inbox. Local cloud-collab e2e still uses `AUTH_TOKEN_ALLOW_INSECURE_LOCAL_FALLBACK`; this gate is not in `ci.yml`.
 
 ### Operator setup (once, before the first cutover that includes this step)
 

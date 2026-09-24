@@ -7,6 +7,7 @@ interface ExampleManifestEntry {
     testOnly?: boolean;
     type?: 'directory' | 'file';
     fileList?: string;
+    groups?: string[];
 }
 
 interface ExampleManifest {
@@ -49,10 +50,20 @@ async function loadExampleFonts() {
         const examplesParam = new URLSearchParams(window.location.search).get(
             'examples'
         );
-        const loadTestOnly = isTestMode && examplesParam !== 'core';
-        const examplesToLoad = (manifest.examples || []).filter(
-            (example) => !example.testOnly || loadTestOnly
-        );
+        const namedGroup =
+            isTestMode && !!examplesParam && examplesParam !== 'core';
+        const examplesToLoad = (manifest.examples || []).filter((example) => {
+            if (!example.testOnly) {
+                return true;
+            }
+            if (!isTestMode) {
+                return false;
+            }
+            if (namedGroup) {
+                return example.groups?.includes(examplesParam) === true;
+            }
+            return examplesParam !== 'core';
+        });
         console.log(
             '[ExampleLoader]',
             `Found ${manifest.examples.length} example(s) in manifest, loading ${examplesToLoad.length}`

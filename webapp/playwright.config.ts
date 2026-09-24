@@ -113,6 +113,7 @@ export default defineConfig({
         {
             name: 'cloud-collab',
             testMatch: ['**/cloud-collab*.spec.ts', '**/cloud-wal-idb.spec.ts'],
+            testIgnore: ['**/cloud-collab-preview-smoke.spec.ts'],
             timeout: 480000,
             use: {
                 ...devices['Desktop Chrome'],
@@ -131,7 +132,31 @@ export default defineConfig({
                 },
                 contextOptions: {}
             }
-        }
+        },
+        ...(process.env.CLOUD_COLLAB_PREVIEW_SMOKE === '1'
+            ? [
+                  {
+                      name: 'cloud-collab-preview',
+                      testMatch: ['**/cloud-collab-preview-smoke.spec.ts'],
+                      timeout: 300000,
+                      use: {
+                          ...devices['Desktop Chrome'],
+                          launchOptions: {
+                              args: [
+                                  '--enable-features=SharedArrayBuffer',
+                                  '--disable-extensions',
+                                  '--disable-component-extensions-with-background-pages',
+                                  '--disable-background-networking',
+                                  '--disable-sync',
+                                  '--no-default-browser-check',
+                                  '--no-first-run'
+                              ],
+                              chromiumSandbox: true
+                          }
+                      }
+                  }
+              ]
+            : [])
 
         // {
         //     name: 'webkit',

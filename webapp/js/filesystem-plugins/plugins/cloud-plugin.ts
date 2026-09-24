@@ -3339,6 +3339,68 @@ export class CloudPlugin extends FilesystemPlugin {
         }
     }
 
+    syncCatalogGlyphCount(): void {
+        const assetId = this.getCurrentAssetIdForSharing();
+        if (!assetId) {
+            return;
+        }
+        const glyphCount = this._liveGlyphCount();
+        void this._postCatalogGlyphCount(assetId, glyphCount);
+    }
+
+    async deleteAsset(assetId?: string): Promise<void> {
+        const user = await this._ensureCloudUser({
+            allowLoginRedirect: true
+        });
+        if (!user) {
+            throw new Error('Authentication required');
+        }
+        const resolvedAssetId = this._resolveShareAssetId(assetId);
+        const resp = await fetch(
+            `${this._websiteBaseUrl}/api/cloud/assets/${encodeURIComponent(resolvedAssetId)}`,
+            {
+                method: 'DELETE',
+                credentials: 'include',
+                headers: getCloudRequestHeaders({
+                    'Content-Type': 'application/json'
+                }),
+                body: '{}'
+            }
+        );
+        const data = (await resp.json().catch(() => ({}))) as {
+            error?: string;
+        };
+        if (!resp.ok && resp.status !== 202) {
+            throw new Error(data.error || 'Failed to delete cloud font');
+        }
+    }
+
+    private async _postCatalogGlyphCount(
+        assetId: string,
+        glyphCount: number
+    ): Promise<void> {
+        const resp = await fetch(
+            `${this._websiteBaseUrl}/api/cloud/assets/${encodeURIComponent(assetId)}/glyph-count`,
+            {
+                method: 'POST',
+                credentials: 'include',
+                headers: getCloudRequestHeaders({
+                    'Content-Type': 'application/json'
+                }),
+                body: JSON.stringify({ glyphCount })
+            }
+        );
+        if (!resp.ok) {
+            const data = (await resp.json().catch(() => ({}))) as {
+                error?: string;
+            };
+            console.warn(
+                data.error ||
+                    `Catalog glyph count update failed (${resp.status})`
+            );
+        }
+    }
+
     // ── Opening a cloud font ─────────────────────────────────────
 
     /**

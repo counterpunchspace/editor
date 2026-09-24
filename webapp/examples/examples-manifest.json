@@ -7,6 +7,18 @@
             "destination": "/user/Fustat.glyphs"
         },
         {
+            "testOnly": true,
+            "groups": ["collab-fixtures"],
+            "source": "examples/bbox.glyphs",
+            "destination": "/user/bbox.glyphs"
+        },
+        {
+            "testOnly": true,
+            "groups": ["collab-fixtures"],
+            "source": "examples/NestedComponents.glyphs",
+            "destination": "/user/NestedComponents.glyphs"
+        },
+        {
             "type": "directory",
             "testOnly": true,
             "source": "examples/YanoneKaffeesatz.glyphspackage",

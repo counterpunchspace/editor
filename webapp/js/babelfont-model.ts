@@ -3632,6 +3632,13 @@ function assertCanAddGlyphs(additionalGlyphCount: number): void {
     }
 }
 
+function notifyCatalogGlyphCount(): void {
+    const plugin = getCurrentSourcePlugin() as {
+        syncCatalogGlyphCount?: () => void;
+    } | null;
+    plugin?.syncCatalogGlyphCount?.();
+}
+
 function getGlyphMetricFormatSpecificKey(side: SidebearingSide): string {
     return side === 'left'
         ? GLYPHS_GLYPH_METRIC_LEFT_KEY
@@ -15447,6 +15454,7 @@ export class Font extends ModelBase {
             }
         });
         recordAddAndMarkDirty(['glyphs', name], glyphData);
+        notifyCatalogGlyphCount();
         return glyph;
     }
 
@@ -15947,6 +15955,7 @@ export class Font extends ModelBase {
         );
 
         applyGlyphDeleteUiContext(deletedNames, codepointsByDeletedName);
+        notifyCatalogGlyphCount();
     }
 
     /**
@@ -15966,6 +15975,7 @@ export class Font extends ModelBase {
             this._glyphWrappers = null; // Invalidate cache
             this.invalidateReverseComponentIndex();
             recordRemoveAndMarkDirty(['glyphs', name], removedGlyph);
+            notifyCatalogGlyphCount();
             return true;
         }
         return false;
