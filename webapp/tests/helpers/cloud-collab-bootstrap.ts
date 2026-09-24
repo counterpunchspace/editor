@@ -98,7 +98,8 @@ export async function openInviteeOnAsset(
     request: Parameters<typeof bootstrapCloudCollabSession>[0],
     ownerPage: Page,
     emails: ReturnType<typeof makeCloudCollabEmails>,
-    assetId: string
+    assetId: string,
+    options?: { sparse?: boolean }
 ): Promise<{ inviteeContext: BrowserContext; inviteePage: Page }> {
     const inviteeSession = await bootstrapCloudCollabSession(
         request,
@@ -124,7 +125,14 @@ export async function openInviteeOnAsset(
     expect(editorHref).toBeTruthy();
     const inviteePage = await inviteeContext.newPage();
     await collectPageErrors(inviteePage);
-    await gotoEditorPage(inviteePage, editorHrefWithTestMode(editorHref!));
+    const editorHrefForInvitee = editorHrefWithTestMode(editorHref!);
+    if (options?.sparse) {
+        const sparseUrl = new URL(editorHrefForInvitee);
+        sparseUrl.searchParams.set('sparse', 'true');
+        await gotoEditorPage(inviteePage, sparseUrl.toString());
+    } else {
+        await gotoEditorPage(inviteePage, editorHrefForInvitee);
+    }
     await waitForCanvasReady(inviteePage);
     try {
         await waitForFontLoaded(inviteePage);

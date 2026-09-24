@@ -833,17 +833,6 @@ export function computeSparseHydrationPartition(options: {
         return false;
     };
     const working = new Set(nestedParts);
-    for (const id of previousWorkingIds) {
-        if (
-            !id ||
-            working.has(id) ||
-            isMetricsStemOf(id, working) ||
-            isMetricsStemOf(id, reverseWorking)
-        ) {
-            continue;
-        }
-        working.add(id);
-    }
     for (const id of closeSet(
         [...working],
         forwardAdjacencyOfKind(edges, 'component', true)
@@ -886,6 +875,22 @@ export function computeSparseHydrationPartition(options: {
         )
     );
     const hidden = [...hiddenDependencies].filter((id) => !working.has(id));
+    // Already-chosen glyphs stay resident. They do not start another reverse
+    // or forward close, so a new composite or base is discovered only when
+    // the caller passes those glyphs as seeds.
+    const hiddenSet = new Set(hidden);
+    for (const id of previousWorkingIds) {
+        if (
+            !id ||
+            working.has(id) ||
+            hiddenSet.has(id) ||
+            isMetricsStemOf(id, working) ||
+            isMetricsStemOf(id, reverseWorking)
+        ) {
+            continue;
+        }
+        working.add(id);
+    }
     const workingIds = [...working];
     return {
         workingIds,

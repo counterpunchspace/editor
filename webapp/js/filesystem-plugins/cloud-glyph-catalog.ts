@@ -322,15 +322,9 @@ export function patchCloudOwnedGlyph(
         (entry) => String(entry.name || '') === glyphName
     );
     if (!glyph) {
-        const deletedId = Object.values(existing.glyphCatalog).find(
-            (entry) => entry.name === glyphName && entry.deleted !== true
-        )?.glyphId;
-        if (deletedId) {
-            return applyCloudOwnedData(fontJson, {
-                deletedGlyphIds: [deletedId]
-            });
-        }
-        return applyCloudOwnedData(fontJson);
+        // A catalog-dirty path for a glyph the body does not list yet is not
+        // a delete. Deletes arrive as explicit glyph-root removes.
+        return existing;
     }
     const glyphId = ensureImmutableGlyphId(glyph);
     const previous = glyphCatalog[glyphId];

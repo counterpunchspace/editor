@@ -154,6 +154,31 @@ function pathFromCommittedEntry(entry: {
     return [];
 }
 
+const RESIDENT_CLOSURE_CORE_ROOTS = new Set([
+    'features',
+    'glyphs',
+    'glyphOrder',
+    'glyphCatalog'
+]);
+
+/** Remote edges, feature text, or a new catalog glyph can enlarge the resident closure. */
+function committedChangeAffectsResidentClosure(
+    entries: Array<{ path?: string | Array<string | number> }>,
+    documentId?: string
+): boolean {
+    if (documentId === FONT_DEPS_DOCUMENT_ID) {
+        return true;
+    }
+    if (documentId && documentId !== FONT_CORE_DOCUMENT_ID) {
+        return false;
+    }
+    return entries.some((entry) =>
+        RESIDENT_CLOSURE_CORE_ROOTS.has(
+            String(pathFromCommittedEntry(entry)[0] ?? '')
+        )
+    );
+}
+
 function decodeBase64UrlJson<T>(value: string): T | null {
     try {
         const normalized = value.replace(/-/g, '+').replace(/_/g, '/');
@@ -841,6 +866,9 @@ export class CloudPlugin extends FilesystemPlugin {
     private _documentSet: CloudDocumentSet | null = null;
     private _catalogListener: CommittedChangeListener | null = null;
     private _glyphCatchUpListener: CommittedChangeListener | null = null;
+    private _residentClosureListener: CommittedChangeListener | null = null;
+    private _residentClosureTimer: number | null = null;
+    private _residentClosureAttempt = 0;
     private _coreHydratedListener: (() => void) | null = null;
     private _glyphCatchUpInFlight = new Set<string>();
     private _pendingOpenAsset: {
@@ -1691,6 +1719,9 @@ export class CloudPlugin extends FilesystemPlugin {
             if (this._glyphCatchUpListener) {
                 bridge.offCommittedChange?.(this._glyphCatchUpListener);
             }
+            if (this._residentClosureListener) {
+                bridge.offCommittedChange?.(this._residentClosureListener);
+            }
             if (this._coreHydratedListener) {
                 this._activeAssetSizeBridge.offCoreHydrated?.(
                     this._coreHydratedListener
@@ -1701,6 +1732,12 @@ export class CloudPlugin extends FilesystemPlugin {
         this._activeAssetSizeListener = null;
         this._catalogListener = null;
         this._glyphCatchUpListener = null;
+        this._residentClosureListener = null;
+        this._residentClosureAttempt = 0;
+        if (this._residentClosureTimer !== null) {
+            window.clearTimeout(this._residentClosureTimer);
+            this._residentClosureTimer = null;
+        }
         this._coreHydratedListener = null;
     }
 
@@ -1774,6 +1811,26 @@ export class CloudPlugin extends FilesystemPlugin {
                 onCommittedChange?: (cb: CommittedChangeListener) => void;
             }
         ).onCommittedChange?.(this._glyphCatchUpListener);
+        this._residentClosureListener = (entries, context) => {
+            if (context.origin !== 'remote') {
+                return;
+            }
+            if (
+                !committedChangeAffectsResidentClosure(
+                    entries,
+                    context.documentId
+                )
+            ) {
+                return;
+            }
+            this._residentClosureAttempt = 0;
+            this._scheduleResidentClosureHydration();
+        };
+        (
+            bridge as PatchSyncEngine & {
+                onCommittedChange?: (cb: CommittedChangeListener) => void;
+            }
+        ).onCommittedChange?.(this._residentClosureListener);
         this._coreHydratedListener = () => {
             if (bridge.hasSparseWorkingSet?.()) {
                 return;
@@ -2230,6 +2287,84 @@ export class CloudPlugin extends FilesystemPlugin {
 
     setPendingSparseHydration(sparse: boolean): void {
         this._pendingSparseHydration = sparse;
+    }
+
+    /**
+     * After a remote edge, feature, or catalog change, close the glyphs this
+     * window already has. Seeds are the resident working set, so a new
+     * composite, a new base, or a new GSUB alternate of those seeds is fetched.
+     * Linked windows leave fetching to the main window.
+     */
+    private _scheduleResidentClosureHydration(): void {
+        if (window.windowRole?.isLinkedWindow?.()) {
+            return;
+        }
+        const bridge = window.patchSyncEngine;
+        if (!bridge?.hasSparseWorkingSet?.()) {
+            return;
+        }
+        if (this._residentClosureTimer !== null) {
+            window.clearTimeout(this._residentClosureTimer);
+        }
+        const delay = Math.min(8000, 250 * 2 ** this._residentClosureAttempt);
+        this._residentClosureTimer = window.setTimeout(() => {
+            this._residentClosureTimer = null;
+            void this._hydrateResidentClosure();
+        }, delay);
+    }
+
+    private _residentWorkingGlyphNames(bridge: PatchSyncEngine): string[] {
+        const fontJson = this._currentFontJson() || {};
+        const catalog = Object.values(
+            catalogFromCoreJson(fontJson)?.glyphCatalog || {}
+        );
+        const nameById = new Map(
+            catalog.map((entry) => [entry.glyphId, entry.name])
+        );
+        const names = new Set<string>();
+        for (const glyphId of bridge.listSparseWorkingGlyphIds?.() ?? []) {
+            const name = nameById.get(glyphId);
+            if (name) {
+                names.add(name);
+            }
+        }
+        for (const name of activeEditorGlyphNames()) {
+            if (name) {
+                names.add(name);
+            }
+        }
+        return [...names];
+    }
+
+    private async _hydrateResidentClosure(): Promise<void> {
+        if (window.windowRole?.isLinkedWindow?.()) {
+            return;
+        }
+        const bridge = window.patchSyncEngine;
+        if (!bridge?.hasSparseWorkingSet?.()) {
+            return;
+        }
+        const glyphNames = this._residentWorkingGlyphNames(bridge);
+        if (!glyphNames.length) {
+            return;
+        }
+        try {
+            await this.ensureSparseHydration({
+                glyphNames,
+                purpose: 'ui'
+            });
+            this._residentClosureAttempt = 0;
+        } catch (error) {
+            console.warn(
+                'CloudPlugin: resident closure hydration failed',
+                error
+            );
+            if (this._residentClosureAttempt >= 6) {
+                return;
+            }
+            this._residentClosureAttempt += 1;
+            this._scheduleResidentClosureHydration();
+        }
     }
 
     /**

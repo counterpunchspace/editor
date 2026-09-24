@@ -940,6 +940,142 @@ describe('font-deps UUID edges continued', () => {
         ).toEqual(['aacute.ss03', 'adieresis.ss03', 'ae.ss03'].sort());
     });
 
+    it('replans a resident seed when a new composite or base edge arrives', () => {
+        const a = 'id-a';
+        const composite = 'id-adieresis';
+        const newcomp = 'id-newcomp';
+        const inheritor = 'id-a-wide';
+        const newbase = 'id-newbase';
+        const catalog = [
+            { glyphId: a, name: 'a' },
+            { glyphId: composite, name: 'adieresis' },
+            { glyphId: newcomp, name: 'newcomp' },
+            { glyphId: inheritor, name: 'a.wide' },
+            { glyphId: newbase, name: 'newbase' }
+        ];
+        const downstream = {
+            [newcomp]: { [a]: 'component' },
+            [inheritor]: { [a]: 'metrics-key' },
+            [composite]: { [a]: 'component' }
+        };
+        const fromResidentBase = computeSparseHydrationPartition({
+            seedIds: [a],
+            previousWorkingIds: [a],
+            edges: downstream,
+            catalog
+        });
+        expect(fromResidentBase.workingIds).toEqual(
+            expect.arrayContaining([a, newcomp, composite])
+        );
+        expect(fromResidentBase.workingIds).not.toContain(inheritor);
+        expect(fromResidentBase.hiddenIds).toContain(inheritor);
+        expect(fromResidentBase.loadIds).toContain(inheritor);
+
+        const forward = computeSparseHydrationPartition({
+            seedIds: [composite],
+            previousWorkingIds: [composite],
+            edges: {
+                [composite]: { [a]: 'component', [newbase]: 'component' }
+            },
+            catalog
+        });
+        expect(forward.loadIds).toEqual(
+            expect.arrayContaining([composite, a, newbase])
+        );
+
+        const previousOnly = computeSparseHydrationPartition({
+            seedIds: [],
+            previousWorkingIds: [a, composite],
+            edges: {
+                ...downstream,
+                [composite]: { [a]: 'component', [newbase]: 'component' }
+            },
+            catalog
+        });
+        expect(previousOnly.workingIds).toEqual(
+            expect.arrayContaining([a, composite])
+        );
+        expect(previousOnly.workingIds).not.toContain(newcomp);
+        expect(previousOnly.hiddenIds).not.toContain(inheritor);
+        expect(previousOnly.loadIds).not.toContain(newbase);
+        expect(previousOnly.loadIds).not.toContain(newcomp);
+    });
+
+    it('hydrates a new GSUB alternate of a resident seed and not of the reverse set', () => {
+        const catalog = [
+            { glyphId: 'id-a', name: 'a' },
+            { glyphId: 'id-a-ss01', name: 'a.ss01' },
+            { glyphId: 'id-mark', name: 'ss01mark' },
+            { glyphId: 'id-adieresis', name: 'adieresis' },
+            { glyphId: 'id-adieresis-alt', name: 'adieresis.alt' }
+        ];
+        const edges = {
+            'id-adieresis': { 'id-a': 'component' },
+            'id-a-ss01': { 'id-mark': 'component' }
+        };
+        const fontJson = {
+            glyphCatalog: Object.fromEntries(
+                catalog.map((entry) => [entry.glyphId, entry])
+            ),
+            features: {
+                features: [
+                    ['ss01', { code: 'sub a by a.ss01;' }],
+                    ['salt', { code: 'sub adieresis by adieresis.alt;' }]
+                ]
+            }
+        };
+        const before = resolveHydrationSeeds({
+            fontJson: {
+                ...fontJson,
+                features: { features: [] }
+            },
+            glyphNames: ['a']
+        });
+        expect(before.layoutIds).not.toContain('id-a-ss01');
+
+        const resolved = resolveHydrationSeeds({
+            fontJson,
+            glyphNames: ['a']
+        });
+        expect(resolved.seedIds).toEqual(['id-a']);
+        expect(resolved.layoutIds).toContain('id-a-ss01');
+        expect(resolved.layoutIds).not.toContain('id-adieresis-alt');
+
+        const partition = computeSparseHydrationPartition({
+            seedIds: resolved.seedIds,
+            layoutIds: resolved.layoutIds,
+            previousWorkingIds: ['id-a'],
+            edges,
+            catalog
+        });
+        expect(partition.workingIds).toEqual(
+            expect.arrayContaining([
+                'id-a',
+                'id-a-ss01',
+                'id-mark',
+                'id-adieresis'
+            ])
+        );
+        expect(partition.workingIds).not.toContain('id-adieresis-alt');
+        expect(partition.loadIds).not.toContain('id-adieresis-alt');
+
+        const emptySeeds = resolveHydrationSeeds({
+            fontJson,
+            glyphNames: []
+        });
+        expect(emptySeeds).toEqual({ seedIds: [], layoutIds: [] });
+        const undiscovered = computeSparseHydrationPartition({
+            seedIds: emptySeeds.seedIds,
+            layoutIds: emptySeeds.layoutIds,
+            previousWorkingIds: ['id-a'],
+            edges,
+            catalog
+        });
+        expect(undiscovered.workingIds).not.toContain('id-a-ss01');
+        expect(undiscovered.loadIds).not.toContain('id-mark');
+        expect(undiscovered.loadIds).not.toContain('id-adieresis-alt');
+    });
+
     it('loads a layout-alt sidebearing stem hidden instead of reverse-closing Latin', () => {
         const a = 'id-a';
         const ss03 = 'id-a-ss03';
@@ -2736,6 +2872,35 @@ describe('catalog tombstones and published hydrate pair', () => {
         expect(catalogAcceptsGlyphWrite(owned.glyphCatalog, 'id-b', 0)).toBe(
             false
         );
+    });
+
+    it('does not tombstone a live catalog glyph a single-glyph patch cannot see yet', () => {
+        const fontJson = {
+            glyphs: [{ name: 'a', id: 'id-a', codepoints: [97], layers: [] }],
+            [CORE_GLYPH_CATALOG_KEY]: {
+                'id-a': {
+                    glyphId: 'id-a',
+                    name: 'a',
+                    codepoints: [97],
+                    latestGlyphRevision: '0',
+                    exported: true,
+                    deleted: false,
+                    generation: 0
+                },
+                'id-new': {
+                    glyphId: 'id-new',
+                    name: 'newcomp',
+                    codepoints: [],
+                    latestGlyphRevision: '0',
+                    exported: true,
+                    deleted: false,
+                    generation: 0
+                }
+            }
+        };
+        const owned = patchCloudOwnedGlyph(fontJson, 'newcomp');
+        expect(owned.glyphCatalog['id-new'].deleted).not.toBe(true);
+        expect(owned.glyphCatalog['id-new'].generation).toBe(0);
     });
 
     it('fails closed when seed catalog bodies are missing', () => {
