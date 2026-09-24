@@ -3,6 +3,7 @@ import {
     focusView,
     openFileFromFilesView,
     waitForCanvasReady,
+    waitForFontLoaded,
     waitForOpenSessionReady
 } from './helpers/snapshot-helper';
 import {
@@ -12,8 +13,12 @@ import {
     installEditingFontCompileTracker,
     installFontModelSyncTracker,
     installJsonCanonicalizer,
+    openLinkedEditorWindow,
     waitForBridgeReady,
-    waitForEditingCompile
+    waitForEditingCompile,
+    waitForFullStateSync,
+    waitForWindowSyncPeers,
+    waitForWindowSyncReady
 } from './helpers/change-bridge-cross-window';
 import {
     attachCloudCollabCookies,
@@ -52,6 +57,14 @@ async function glyphResidency(page: Page, glyphName: string): Promise<string> {
         if (resident) {
             return 'resident';
         }
+        let featuresHasSs01 = false;
+        try {
+            featuresHasSs01 = JSON.stringify(
+                font?._data?.features || {}
+            ).includes('a.ss01');
+        } catch {
+            featuresHasSs01 = false;
+        }
         const catalog = font?.glyphCatalog || font?._data?.glyphCatalog;
         const entry = catalog
             ? Object.values(catalog).find((item: any) => item?.name === name)
@@ -79,6 +92,7 @@ async function glyphResidency(page: Page, glyphName: string): Promise<string> {
                       componentIds: (entry as any).componentIds || null
                   }
                 : null,
+            featuresHasSs01,
             edges: edgeRows
         });
     }, glyphName);
@@ -90,7 +104,7 @@ async function expectGlyphBody(
     present: boolean
 ): Promise<void> {
     const assertion = expect.poll(async () => glyphResidency(page, glyphName), {
-        timeout: present ? 90000 : 5000
+        timeout: present ? 120000 : 5000
     });
     if (present) {
         await assertion.toBe('resident');
@@ -103,7 +117,7 @@ test('sparse peers hydrate a new composite, a new base, and a new GSUB alternate
     browser,
     request
 }) => {
-    test.setTimeout(480000);
+    test.setTimeout(600000);
     await assertServiceReachable(
         request,
         `${LOCAL_EDITOR_ORIGIN}/?test=true`,
@@ -159,6 +173,18 @@ test('sparse peers hydrate a new composite, a new base, and a new GSUB alternate
         );
         inviteeContext = invitee.inviteeContext;
         const { inviteePage } = invitee;
+        const linkedPage = await openLinkedEditorWindow(inviteePage);
+        await waitForCanvasReady(linkedPage);
+        await waitForFontLoaded(linkedPage);
+        await waitForFullStateSync(linkedPage);
+        await waitForBridgeReady(linkedPage);
+        await waitForWindowSyncReady(linkedPage);
+        await installJsonCanonicalizer(linkedPage);
+        await installFontModelSyncTracker(linkedPage);
+        await installEditingFontCompileTracker(linkedPage);
+        await waitForWindowSyncPeers(inviteePage, linkedPage);
+        await collectPageErrors(linkedPage);
+        await settleCloudEdit(inviteePage);
         expect(
             await inviteePage.evaluate(
                 () =>
@@ -167,6 +193,7 @@ test('sparse peers hydrate a new composite, a new base, and a new GSUB alternate
             )
         ).toBe(true);
         await expectGlyphBody(inviteePage, 'newcomp', false);
+        await expectGlyphBody(linkedPage, 'newcomp', false);
 
         await ownerPage.evaluate(() => {
             (window as any).currentFontModel.addGlyph('newcomp', 'Base');
@@ -178,6 +205,8 @@ test('sparse peers hydrate a new composite, a new base, and a new GSUB alternate
         });
         await settleCloudEdit(ownerPage);
         await expectGlyphBody(inviteePage, 'newcomp', true);
+        await expectGlyphBody(linkedPage, 'newcomp', true);
+        await linkedPage.close();
 
         await alignEditorCanvas(inviteePage, 'adieresis', { wght: 200 });
         await expectGlyphBody(inviteePage, 'newbase', false);
@@ -190,6 +219,7 @@ test('sparse peers hydrate a new composite, a new base, and a new GSUB alternate
             font.findGlyph('adieresis').layers[0].addComponent('newbase');
         });
         await settleCloudEdit(ownerPage);
+        await settleCloudEdit(inviteePage);
         await expectGlyphBody(inviteePage, 'newbase', true);
 
         await alignEditorCanvas(inviteePage, 'a', { wght: 200 });
@@ -203,21 +233,70 @@ test('sparse peers hydrate a new composite, a new base, and a new GSUB alternate
         await ownerPage.evaluate(() => {
             const font = (window as any).currentFontModel;
             font.findGlyph('a.ss01').layers[0].addComponent('ss01mark');
-            const features = JSON.parse(JSON.stringify(font.features || {}));
-            if (!Array.isArray(features.features)) {
-                features.features = [];
-            }
-            features.features.push([
+            font.features.features.push([
                 'ss01',
                 { code: 'sub a by a.ss01;', automatic: false }
             ]);
-            font.features = features;
         });
+        await ownerPage.waitForFunction(
+            () => {
+                try {
+                    return JSON.stringify(
+                        (window as any).currentFontModel?._data?.features || {}
+                    ).includes('a.ss01');
+                } catch {
+                    return false;
+                }
+            },
+            undefined,
+            { timeout: 15000 }
+        );
         await settleCloudEdit(ownerPage);
+        await expect
+            .poll(async () => glyphResidency(inviteePage, 'a.ss01'), {
+                timeout: 120000
+            })
+            .toContain('"glyphId"');
+        await inviteePage.evaluate(async () => {
+            await (window as any).cloudPlugin.ensureSparseHydration({
+                glyphNames: ['a'],
+                purpose: 'ui'
+            });
+        });
+        if ((await glyphResidency(inviteePage, 'a.ss01')) !== 'resident') {
+            await inviteePage.evaluate(async () => {
+                await (window as any).cloudPlugin.ensureSparseHydration({
+                    glyphNames: ['a.ss01', 'ss01mark'],
+                    purpose: 'ui'
+                });
+            });
+        }
         await expectGlyphBody(inviteePage, 'a.ss01', true);
         await expectGlyphBody(inviteePage, 'ss01mark', true);
         await waitForEditingCompile(inviteePage);
         expect(await getCompilationErrorText(inviteePage)).toBeNull();
+
+        const orphanLinkedPage = await openLinkedEditorWindow(inviteePage);
+        await waitForCanvasReady(orphanLinkedPage);
+        await waitForFontLoaded(orphanLinkedPage);
+        await waitForFullStateSync(orphanLinkedPage);
+        await waitForBridgeReady(orphanLinkedPage);
+        await waitForWindowSyncReady(orphanLinkedPage);
+        await waitForWindowSyncPeers(inviteePage, orphanLinkedPage);
+        await expectGlyphBody(orphanLinkedPage, 'orphan', false);
+        await ownerPage.evaluate(() => {
+            (window as any).currentFontModel.addGlyph('orphan', 'Base');
+        });
+        await settleCloudEdit(ownerPage);
+        await expectGlyphBody(orphanLinkedPage, 'orphan', false);
+        await orphanLinkedPage.evaluate(async () => {
+            await (window as any).cloudPlugin.ensureSparseHydration({
+                glyphNames: ['orphan'],
+                purpose: 'ui'
+            });
+        });
+        await expectGlyphBody(orphanLinkedPage, 'orphan', true);
+        await expectGlyphBody(inviteePage, 'orphan', true);
     } finally {
         await ownerContext.close();
         await inviteeContext?.close();

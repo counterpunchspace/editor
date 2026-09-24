@@ -186,6 +186,166 @@ describe('linked window resident snapshot', () => {
         sync.destroy();
     });
 
+    test('catch-up of a new glyph shard is findGlyph with layers', async () => {
+        const { Font } = require('../js/babelfont-model');
+        const { PatchSyncEngine } = require('../js/patch-sync-engine');
+        const {
+            applyCloudOwnedData
+        } = require('../js/filesystem-plugins/cloud-glyph-catalog');
+        const previousFontModel = window.currentFontModel;
+        const layer = { id: 'layer-1', width: 600, shapes: [] };
+        const sourceJson = {
+            upm: 1000,
+            glyphs: [
+                { name: 'a', id: 'id-a', layers: [layer] },
+                {
+                    name: 'newcomp',
+                    id: 'id-new',
+                    layers: [{ id: 'layer-new', width: 600, shapes: [] }]
+                }
+            ]
+        };
+        applyCloudOwnedData(sourceJson);
+        const source = new PatchSyncEngine('catch-up-source');
+        source.initFromJson(sourceJson);
+        const bytes = source.encodeDocumentState('glyph:id-new');
+        expect(bytes.byteLength).toBeGreaterThan(0);
+
+        const linkedJson = {
+            upm: 1000,
+            glyphs: [{ name: 'a', id: 'id-a', layers: [{ ...layer }] }]
+        };
+        applyCloudOwnedData(linkedJson);
+        const linked = new PatchSyncEngine('catch-up-linked');
+        linked.initFromJson(linkedJson);
+        const font = new Font(linked.getFontJsonSnapshot());
+        window.currentFontModel = font;
+        expect(font.findGlyph('newcomp')).toBeUndefined();
+
+        window.windowRole = {
+            sessionId: 'test',
+            isMainWindow: () => false,
+            isLinkedWindow: () => true
+        };
+        const sync = new WindowSync(linked, 'test-catch-up-findglyph');
+        const envelope = createLinkedWindowCatchUpEnvelope(
+            'glyph:id-new',
+            'main'
+        );
+        sync._handleMessage({
+            type: 'yjs-update',
+            updates: [
+                {
+                    update: bytes,
+                    documentId: 'glyph:id-new',
+                    collaborationMessage: envelope
+                }
+            ],
+            windowId: 'main',
+            sessionId: 'test'
+        });
+        await Promise.resolve();
+        await Promise.resolve();
+
+        const glyph = window.currentFontModel.findGlyph('newcomp');
+        expect(glyph).toBeDefined();
+        expect(Array.isArray(glyph.layers) && glyph.layers.length > 0).toBe(
+            true
+        );
+        sync.destroy();
+        source.destroy();
+        linked.destroy();
+        window.currentFontModel = previousFontModel;
+    });
+
+    test('overview hydrate broadcasts catch-up bytes for a fetched shard', async () => {
+        const { PatchSyncEngine } = require('../js/patch-sync-engine');
+        const { CloudAdapter } = require('../js/cloud-adapter');
+        const {
+            CloudPlugin
+        } = require('../js/filesystem-plugins/plugins/cloud-plugin');
+        const {
+            applyCloudOwnedData
+        } = require('../js/filesystem-plugins/cloud-glyph-catalog');
+        const previousSync = window.windowSync;
+        const previousFontManager = window.fontManager;
+        const previousPatch = window.patchSyncEngine;
+        const layer = { id: 'layer-1', width: 600, shapes: [] };
+        const fullJson = {
+            upm: 1000,
+            glyphs: [
+                { name: 'a', id: 'id-a', layers: [layer] },
+                {
+                    name: 'newcomp',
+                    id: 'id-new',
+                    layers: [{ id: 'layer-new', width: 600, shapes: [] }]
+                }
+            ]
+        };
+        applyCloudOwnedData(fullJson);
+        const source = new PatchSyncEngine('hydrate-source');
+        source.initFromJson(JSON.parse(JSON.stringify(fullJson)));
+        const shardBytes = source.encodeDocumentState('glyph:id-new');
+        source.destroy();
+
+        fullJson.glyphs = fullJson.glyphs.filter((glyph) => glyph.name === 'a');
+        const bridge = new PatchSyncEngine('hydrate-main');
+        bridge.initFromJson(fullJson);
+        bridge.beginSparseWorkingSet(['id-a']);
+        const plugin = new CloudPlugin();
+        plugin._activeAssetId = 'asset-1';
+        plugin._fetchRoomToken = async () => ({
+            token: 'token',
+            roomUrl: 'ws://localhost:8787/room/asset-1'
+        });
+        plugin._refreshAssetLimitsAfterCatalogChange = async () => {};
+        plugin._recomputeActiveAssetSize = () => {};
+        window.patchSyncEngine = bridge;
+        window.fontManager = {
+            currentFont: {
+                babelfontData: bridge.getFontJsonSnapshot(),
+                fontModel: {
+                    toJSON: () => bridge.getFontJsonSnapshot()
+                }
+            }
+        };
+        const broadcastDocumentCatchUp = jest.fn();
+        window.windowSync = {
+            broadcastDocumentCatchUp,
+            broadcastSparseResidency: jest.fn()
+        };
+        const hydrateSpy = jest
+            .spyOn(CloudAdapter.prototype, 'hydrateDocumentSet')
+            .mockImplementation(async (_token, _roomUrl, documentIds = []) => {
+                const result = new Map();
+                for (const documentId of documentIds) {
+                    if (documentId === 'glyph:id-new') {
+                        result.set(documentId, shardBytes);
+                    }
+                }
+                return result;
+            });
+        try {
+            await plugin._hydrateOverviewGlyphs({
+                glyphNames: ['newcomp'],
+                purpose: 'ui'
+            });
+            expect(broadcastDocumentCatchUp).toHaveBeenCalledWith(
+                'glyph:id-new',
+                expect.any(Uint8Array)
+            );
+            expect(
+                broadcastDocumentCatchUp.mock.calls[0][1].byteLength
+            ).toBeGreaterThan(0);
+        } finally {
+            hydrateSpy.mockRestore();
+            window.windowSync = previousSync;
+            window.fontManager = previousFontManager;
+            window.patchSyncEngine = previousPatch;
+            bridge.destroy();
+        }
+    });
+
     test('main window serves a linked hydration request', async () => {
         window.windowRole = {
             sessionId: 'test',
