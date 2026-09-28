@@ -2343,6 +2343,13 @@ describe('CloudPlugin glyph add quota', () => {
         );
     });
 
+    test('allows a glyph add when the owner limit is not loaded yet', () => {
+        plugin._eligibility = null;
+        window.currentFontModel = { glyphs: new Array(1001).fill({}) };
+
+        expect(plugin.getCachedCanAddGlyphs(1).allowed).toBe(true);
+    });
+
     test('allows adding up to the remaining live slots', () => {
         window.currentFontModel = { glyphs: [{}] };
         expect(plugin.getCachedCanAddGlyphs(1).allowed).toBe(true);

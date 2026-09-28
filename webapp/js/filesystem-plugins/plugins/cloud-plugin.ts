@@ -863,6 +863,7 @@ export class CloudPlugin extends FilesystemPlugin {
     private _sparsePreviewOnly = false;
     private _eligibility: CloudEligibility | null = null;
     private _assetLimits: CloudAssetLimits | null = null;
+    private _assetLimitsEpoch = 0;
     private _documentSet: CloudDocumentSet | null = null;
     private _catalogListener: CommittedChangeListener | null = null;
     private _glyphCatchUpListener: CommittedChangeListener | null = null;
@@ -2179,7 +2180,7 @@ export class CloudPlugin extends FilesystemPlugin {
         ) {
             return this._eligibility.maxGlyphsPerFont ?? null;
         }
-        return 1000;
+        return null;
     }
 
     private _glyphAddGate(
@@ -2846,6 +2847,7 @@ export class CloudPlugin extends FilesystemPlugin {
     private async _fetchAssetLimits(
         assetId: string
     ): Promise<CloudAssetLimits | null> {
+        const epoch = ++this._assetLimitsEpoch;
         try {
             const resp = await fetch(
                 `${this._websiteBaseUrl}/api/cloud/assets/${encodeURIComponent(assetId)}/limits`,
@@ -2858,7 +2860,9 @@ export class CloudPlugin extends FilesystemPlugin {
                 return null;
             }
             const data = (await resp.json()) as CloudAssetLimits;
-            this._assetLimits = data;
+            if (epoch === this._assetLimitsEpoch) {
+                this._assetLimits = data;
+            }
             return data;
         } catch {
             return null;
@@ -3620,6 +3624,7 @@ export class CloudPlugin extends FilesystemPlugin {
         });
 
         this._disconnectCurrent();
+        void this._fetchAssetLimits(assetId);
 
         let { token, roomUrl, needsMigration } =
             await this._fetchRoomToken(assetId);
@@ -4050,6 +4055,7 @@ export class CloudPlugin extends FilesystemPlugin {
 
         this._activeAssetId = assetId;
         this._cacheAssetRole(assetId, asset.role);
+        void this._fetchAssetLimits(assetId);
         this._finalizeCurrentFontAsSavedCloudAsset(assetId);
         console.log('[CloudPlugin] saveAs phases', {
             captureEncodeMs: seed.captureEncodeMs,
@@ -4204,6 +4210,7 @@ export class CloudPlugin extends FilesystemPlugin {
         const bridge = window.patchSyncEngine;
         this._disconnectCurrent();
         this._activeAssetId = assetId;
+        void this._fetchAssetLimits(assetId);
 
         if (!bridge) {
             console.error('No patchSyncEngine available — load a font first');
@@ -4311,6 +4318,8 @@ export class CloudPlugin extends FilesystemPlugin {
     }
 
     private _disconnectCurrent(): void {
+        this._assetLimitsEpoch += 1;
+        this._assetLimits = null;
         this._stopTrackingActiveAssetSize();
         this._stopEditingSubsetSync();
         const pending =
