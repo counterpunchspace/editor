@@ -2909,9 +2909,12 @@ async function deleteItem(itemPath: string, itemName: string, isDir: boolean) {
         return;
     }
 
-    const confirmMsg = isDir
-        ? `Delete folder "${itemName}" and all its contents?`
-        : `Delete file "${itemName}"?`;
+    const confirmMsg =
+        !isDir && fileSystemCache.currentPlugin.getId() === 'cloud'
+            ? `Delete "${itemName}" from Cloud permanently? This removes the Cloud copy for everyone and cannot be undone.`
+            : isDir
+              ? `Delete folder "${itemName}" and all its contents?`
+              : `Delete file "${itemName}"?`;
 
     if (!confirm(confirmMsg)) return;
 

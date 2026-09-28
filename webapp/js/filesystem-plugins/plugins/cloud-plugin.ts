@@ -2235,8 +2235,15 @@ export class CloudPlugin extends FilesystemPlugin {
             case 'download':
             case 'rename':
                 return false;
-            case 'delete':
-                return !target.isDir;
+            case 'delete': {
+                if (target.isDir) {
+                    return false;
+                }
+                const assetId = String(target.path || '')
+                    .replace(/^cloud:\/\//, '')
+                    .trim();
+                return this.getCachedAssetRole(assetId) === 'owner';
+            }
             default:
                 return super.supportsFileContextAction(action, target);
         }
@@ -3491,23 +3498,28 @@ export class CloudPlugin extends FilesystemPlugin {
             throw new Error('Authentication required');
         }
         const resolvedAssetId = this._resolveShareAssetId(assetId);
-        const resp = await fetch(
-            `${this._websiteBaseUrl}/api/cloud/assets/${encodeURIComponent(resolvedAssetId)}`,
-            {
+        const deleteUrl = `${this._websiteBaseUrl}/api/cloud/assets/${encodeURIComponent(resolvedAssetId)}`;
+        for (let attempt = 0; attempt < 1000; attempt += 1) {
+            const resp = await fetch(deleteUrl, {
                 method: 'DELETE',
                 credentials: 'include',
                 headers: getCloudRequestHeaders({
                     'Content-Type': 'application/json'
                 }),
                 body: '{}'
+            });
+            const data = (await resp.json().catch(() => ({}))) as {
+                error?: string;
+                complete?: boolean;
+            };
+            if (!resp.ok && resp.status !== 202) {
+                throw new Error(data.error || 'Failed to delete cloud font');
             }
-        );
-        const data = (await resp.json().catch(() => ({}))) as {
-            error?: string;
-        };
-        if (!resp.ok && resp.status !== 202) {
-            throw new Error(data.error || 'Failed to delete cloud font');
+            if (data.complete !== false) {
+                return;
+            }
         }
+        throw new Error('Cloud delete did not finish');
     }
 
     private async _postCatalogGlyphCount(
@@ -4941,18 +4953,30 @@ export class CloudPlugin extends FilesystemPlugin {
 
     private async _abortPendingAsset(assetId: string): Promise<void> {
         const url = `${this._websiteBaseUrl}/api/cloud/assets/${encodeURIComponent(assetId)}/abort`;
-        const resp = await fetch(url, {
-            method: 'POST',
-            cache: 'no-store',
-            credentials: 'include',
-            headers: getCloudRequestHeaders({
-                'Content-Type': 'application/json'
-            }),
-            body: JSON.stringify({ reason: 'bootstrap_failed' })
-        });
-        if (!resp.ok) {
-            const body = await resp.text().catch(() => '');
-            throw new Error(`abort request failed: ${resp.status} ${body}`);
+        for (let attempt = 0; attempt < 1000; attempt += 1) {
+            const resp = await fetch(url, {
+                method: 'POST',
+                cache: 'no-store',
+                credentials: 'include',
+                headers: getCloudRequestHeaders({
+                    'Content-Type': 'application/json'
+                }),
+                body: JSON.stringify({ reason: 'bootstrap_failed' })
+            });
+            if (resp.status === 404) {
+                return;
+            }
+            if (!resp.ok) {
+                const body = await resp.text().catch(() => '');
+                throw new Error(`abort request failed: ${resp.status} ${body}`);
+            }
+            const data = (await resp.json().catch(() => ({}))) as {
+                complete?: boolean;
+            };
+            if (data.complete !== false) {
+                return;
+            }
         }
+        throw new Error('Cloud delete did not finish');
     }
 }

@@ -175,11 +175,6 @@ function getDefaultRoomWorkerUrl(): string {
 /** Default website base URL for the room-token endpoint. */
 const DEFAULT_WEBSITE_BASE_URL = resolveWebsiteURL();
 
-type CloudDeleteResponse = {
-    success?: boolean;
-    error?: string;
-};
-
 type CloudAssetRole = 'owner' | 'editor' | 'viewer';
 
 export type CloudSeededShardAttestation = {
@@ -5352,38 +5347,41 @@ export class CloudAdapter implements FileSystemAdapter {
             throw new Error('Missing cloud asset id');
         }
 
-        const resp = await fetch(
-            `${this._websiteBaseUrl}/api/cloud/assets/${encodeURIComponent(assetId)}`,
-            {
+        const deleteUrl = `${this._websiteBaseUrl}/api/cloud/assets/${encodeURIComponent(assetId)}`;
+        for (let attempt = 0; attempt < 1000; attempt += 1) {
+            const resp = await fetch(deleteUrl, {
                 method: 'DELETE',
                 credentials: 'include',
-                headers: getCloudRequestHeaders()
-            }
-        );
+                headers: getCloudRequestHeaders({
+                    'Content-Type': 'application/json'
+                })
+            });
 
-        if (!resp.ok) {
-            const body = await resp.text().catch(() => '');
-            throw new Error(
-                `Failed to delete cloud asset: ${resp.status} ${body}`
-            );
-        }
-
-        if (resp.status !== 204) {
-            const data = await parseRequiredJsonResponse<CloudDeleteResponse>(
-                resp,
-                'Failed to delete cloud asset'
-            );
-            if (data.success !== true) {
+            if (!resp.ok) {
+                const body = await resp.text().catch(() => '');
                 throw new Error(
-                    data.error ||
-                        'Cloud delete response did not confirm success'
+                    `Failed to delete cloud asset: ${resp.status} ${body}`
                 );
             }
+            const data = (await resp.json().catch(() => ({}))) as {
+                complete?: boolean;
+                success?: boolean;
+                error?: string;
+            };
+            if (data.complete !== false) {
+                if (data.success !== true) {
+                    throw new Error(
+                        data.error ||
+                            'Cloud delete response did not confirm success'
+                    );
+                }
+                if (this._assetId === assetId) {
+                    this.disconnect();
+                }
+                return;
+            }
         }
-
-        if (this._assetId === assetId) {
-            this.disconnect();
-        }
+        throw new Error('Cloud delete did not finish');
     }
 
     async renameItem(

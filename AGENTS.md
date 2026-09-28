@@ -5,7 +5,7 @@
 Website D1 is the only source of truth for cloud quotas. The subscription that
 counts is the **asset owner’s**, never the accessing collaborator’s. CloudPlugin
 and the collab Worker/DO must both enforce; client-only checks are not enough.
-Basic: `maxFontsOwned = 1`, `maxGlyphsPerFont = 1000` (`null` = unlimited).
+Basic quotas live in website `webapp/js/pricing-config.js` (`null` = unlimited).
 Per-shard encoded Y.Doc ceiling: 5 MiB (warn at 75%; live commit asks the
 cloud plugin and reverts on reject). See
 `strategy/CLOUD_COLLABORATION_ARCHITECTURE.md`.

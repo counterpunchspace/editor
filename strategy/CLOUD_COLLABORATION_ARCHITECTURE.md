@@ -52,7 +52,7 @@ Worker-class `compactor` on sharded R2 keys is in v1.
 | In v1 | Later |
 | --- | --- |
 | Per-shard DOs, HTTP seed/hydrate, external Worker compaction | Fat-process compactor for oversized shards |
-| Hydrate policy `all` (Basic: 1 font, ≤1000 glyphs) | CJK working-set hydrate + layout-closure UX |
+| Hydrate policy `all` (Basic quotas from `getPricingProducts()`) | CJK working-set hydrate + layout-closure UX |
 | Owner quotas, 5 MiB per Y.Doc, plugin catalog/deps | Fly/session full-font builder |
 | Document-scoped BC `documentId`; linked worker `seedWorkerDocumentSet` | CJK-style selective linked bootstrap |
 | compactor as-is (room id + R2 shard keys) | Legacy whole-font room migration |
@@ -97,7 +97,7 @@ Use these as stress cases when sizing catalog/deps budgets and hydrate UX:
 | Small vs large | Same machinery; default hydrate policy is `all` vs working-set |
 | Full-font compile | Session-scoped Fly Machine (8–16 GB); core dirty + HTTP glyph catch-up (not v1) |
 | Quotas | Website is source of truth; **asset owner** subscription; plugin **and** collab enforce |
-| Basic plan | 1 owned font, 1000 glyphs (`null` = unlimited for future tiers) |
+| Basic plan | Quotas on `getPricingProducts().basic` (`null` = unlimited) |
 | Client shard ceiling | 5 MiB encoded per Y.Doc (`MAX_SHARD_BYTES` = 5 242 880); warn at 75%; seed/save/commit block at cap |
 | Live Yjs packet | **256 KiB** (`MAX_YJS_PACKET_BYTES`); fail-closed at send (`settings.ts` / `evaluateCollabSubmit`) |
 | Dirty tail / compact trigger | Soft **256 KiB** or **64** rows; hard **262 893** B (~257 KiB leftover); then `tail_full`, compact still runs |
@@ -131,8 +131,9 @@ Worker/DO must both enforce.
 | `GET /api/internal/cloud/assets/:id/limits` | Asset owner (service token) | Collab seed / catalog insert |
 | `POST /api/internal/cloud/assets/:id/glyph-count` | Service token | Persist `font_assets.glyph_count` |
 
-**Basic** (and current no-membership cloud grant): `maxFontsOwned = 1`,
-`maxGlyphsPerFont = 1000`. Convention: `null` means unlimited.
+**Basic** (and current no-membership cloud grant) reads `maxFontsOwned`,
+`maxGlyphsPerFont`, and `maxInvitesPerAsset` from `getPricingProducts()`.
+Convention: `null` means unlimited.
 
 Glyph count is stored on `font_assets.glyph_count` and in core-shard manifest
 metadata. Rooms must **not** hydrate glyph bodies to count glyphs.
@@ -988,7 +989,7 @@ Still to do:
 Settled in v1 (do not re-open without a product change):
 
 - Owner-subscription quotas (website source of truth; plugin + collab enforce)
-- Basic: 1 font / 1000 glyphs
+- Basic quotas: `getPricingProducts().basic`
 - Cmap: per-entry `codepoints` **plus** reverse `codepoint → glyphId[]`
 - Browser per-shard encoded ceiling: 5 MiB (warn 75%; live commit reverts on reject)
 - Worker-class compactor is `compactor` once room IDs/R2 keys are sharded
