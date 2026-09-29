@@ -2076,6 +2076,8 @@ async function saveCurrentFontAsToPath(): Promise<void> {
         return;
     }
 
+    hidePluginMessage();
+
     try {
         await withFileDialogBusy(
             {
@@ -2251,6 +2253,7 @@ async function confirmFileDialogPrimaryAction(): Promise<void> {
     }
 
     const fileHandle = (window as any)._fileHandles?.[selectedDialogPath];
+    hidePluginMessage();
     await withFileDialogBusy(
         {
             message: 'Opening font…',
