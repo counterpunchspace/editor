@@ -63,6 +63,9 @@ function escapeHtml(value: string): string {
         .replace(/>/g, '&gt;');
 }
 
+/** Above Open/Save (`.file-dialog-overlay` is 11000). */
+export const TRANSFER_PROGRESS_Z_INDEX = 12000;
+
 function defaultTitle(kind: TransferProgressKind): string {
     return kind === 'seed' ? 'Saving' : 'Opening';
 }
@@ -99,7 +102,7 @@ export async function runWithTransferProgress<T>(
     const overlay = document.createElement('div');
     overlay.className = 'info-popup-overlay transfer-progress-overlay';
     overlay.style.display = 'flex';
-    overlay.style.zIndex = '10003';
+    overlay.style.zIndex = String(TRANSFER_PROGRESS_Z_INDEX);
     overlay.setAttribute('role', 'dialog');
     overlay.setAttribute('aria-modal', 'true');
     overlay.setAttribute('aria-labelledby', 'transfer-progress-title');

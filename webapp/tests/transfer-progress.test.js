@@ -4,6 +4,7 @@
 
 const {
     TransferCancelledError,
+    TRANSFER_PROGRESS_Z_INDEX,
     isTransferCancelled,
     runWithTransferProgress
 } = require('../js/ui/transfer-progress.ts');
@@ -19,9 +20,14 @@ describe('transfer progress dialog', () => {
             message: 'Loading font…',
             total: 4,
             work: async (session) => {
-                expect(
-                    document.querySelector('.transfer-progress-overlay')
-                ).toBeTruthy();
+                const overlay = document.querySelector(
+                    '.transfer-progress-overlay'
+                );
+                expect(overlay).toBeTruthy();
+                expect(overlay.style.zIndex).toBe(
+                    String(TRANSFER_PROGRESS_Z_INDEX)
+                );
+                expect(Number(overlay.style.zIndex)).toBeGreaterThan(11000);
                 session.update({ completed: 2 });
                 const bar = document.querySelector('.transfer-progress-bar');
                 expect(bar.value).toBe(2);

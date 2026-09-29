@@ -448,6 +448,7 @@
 }
 
 /* Sit above Open/Save (.file-dialog-overlay is 11000). */
+.transfer-progress-overlay,
 .folder-permissions-overlay {
     z-index: 12000;
 }
