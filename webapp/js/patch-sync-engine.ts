@@ -537,6 +537,61 @@ function getLayerFingerprintFromJson(layerJson: Unsafe): string | null {
 }
 
 /**
+ * Catalog entries often set optional fields to undefined. Yjs omits those
+ * keys, so a later projection must not treat the missing key as a change.
+ */
+function normalizeCloudOwnedValue(value: unknown): unknown {
+    if (value === undefined) {
+        return undefined;
+    }
+    try {
+        return JSON.parse(JSON.stringify(value));
+    } catch {
+        return value;
+    }
+}
+
+/** Yjs stores glyph codepoints as a membership map (`{ "65": true }`). */
+function codepointsAsSortedNumbers(value: unknown): number[] {
+    if (Array.isArray(value)) {
+        return value
+            .map((item) => Number(item))
+            .filter((item) => Number.isFinite(item))
+            .sort((left, right) => left - right);
+    }
+    if (value && typeof value === 'object') {
+        return Object.entries(value as Record<string, unknown>)
+            .filter(([, member]) => member === true)
+            .map(([key]) => Number(key))
+            .filter((item) => Number.isFinite(item))
+            .sort((left, right) => left - right);
+    }
+    return [];
+}
+
+/** Key-order independent compare for catalog and cmap projections. */
+function stableCloudOwnedJson(value: unknown): string {
+    const normalized = normalizeCloudOwnedValue(value);
+    if (Array.isArray(normalized)) {
+        return `[${normalized.map((item) => stableCloudOwnedJson(item)).join(',')}]`;
+    }
+    if (normalized && typeof normalized === 'object') {
+        const record = normalized as Record<string, unknown>;
+        return `{${Object.keys(record)
+            .sort()
+            .map((key) => {
+                const item =
+                    key === 'codepoints'
+                        ? codepointsAsSortedNumbers(record[key])
+                        : record[key];
+                return `${JSON.stringify(key)}:${stableCloudOwnedJson(item)}`;
+            })
+            .join(',')}}`;
+    }
+    return JSON.stringify(normalized) ?? 'null';
+}
+
+/**
  * Central patch processor that keeps Yjs Y.Doc in sync with the
  * babelfont JSON object model.
  */
@@ -1424,6 +1479,21 @@ export class PatchSyncEngine {
         this._coreHydratedListeners.delete(cb);
     }
 
+    /**
+     * Copy the Y.Doc catalog onto the live font JSON before a sparse fetch.
+     * A font-core update can be encoded and relayed before the model key is
+     * refreshed, so seed lookup would miss a glyph the catalog already names.
+     */
+    refreshOwnedCatalogFromYDoc(): void {
+        if (this.fontMap.get(CORE_GLYPH_CATALOG_KEY) === undefined) {
+            return;
+        }
+        this._syncTopLevelFontKeyFromYDoc(CORE_GLYPH_CATALOG_KEY);
+        if (this.fontMap.get(CORE_CODEPOINT_INDEX_KEY) !== undefined) {
+            this._syncTopLevelFontKeyFromYDoc(CORE_CODEPOINT_INDEX_KEY);
+        }
+    }
+
     syncCloudOwnedProjection(owned: CloudOwnedFontData): void {
         if (!this._fontJson) {
             this._fontJson = {};
@@ -1435,24 +1505,73 @@ export class PatchSyncEngine {
             !Array.isArray(fontRecord.format_specific)
                 ? (fontRecord.format_specific as Record<string, unknown>)
                 : {};
-        const operations: TransactionBufferedOperation[] = [
-            {
-                op: 'set',
-                path: [CORE_GLYPH_CATALOG_KEY],
-                oldValue: fontRecord[CORE_GLYPH_CATALOG_KEY],
-                newValue: owned.glyphCatalog,
-                compileChangeSource: 'cloud-catalog',
-                compileEditType: null
-            },
-            {
-                op: 'set',
-                path: [CORE_CODEPOINT_INDEX_KEY],
-                oldValue: fontRecord[CORE_CODEPOINT_INDEX_KEY],
-                newValue: owned.codepointIndex,
-                compileChangeSource: 'cloud-catalog',
-                compileEditType: null
+        const catalogOp = {
+            compileChangeSource: 'cloud-catalog',
+            compileEditType: null
+        } as const;
+        const yCatalog = this.fontMap.get(CORE_GLYPH_CATALOG_KEY);
+        const yIndex = this.fontMap.get(CORE_CODEPOINT_INDEX_KEY);
+        const previousCatalog =
+            yCatalog instanceof Y.Map
+                ? (fromYType(yCatalog) as CloudOwnedFontData['glyphCatalog'])
+                : {};
+        const previousIndex =
+            yIndex instanceof Y.Map
+                ? (fromYType(yIndex) as CloudOwnedFontData['codepointIndex'])
+                : {};
+        const catalogChanged = (previous: unknown, next: unknown): boolean =>
+            stableCloudOwnedJson(previous) !== stableCloudOwnedJson(next);
+        const operations: TransactionBufferedOperation[] = [];
+        for (const [glyphId, entry] of Object.entries(owned.glyphCatalog)) {
+            if (!catalogChanged(previousCatalog[glyphId], entry)) {
+                continue;
             }
-        ];
+            operations.push({
+                op: 'set',
+                path: [CORE_GLYPH_CATALOG_KEY, glyphId],
+                oldValue: previousCatalog[glyphId],
+                newValue: entry,
+                ...catalogOp
+            });
+        }
+        for (const glyphId of Object.keys(previousCatalog)) {
+            if (owned.glyphCatalog[glyphId]) {
+                continue;
+            }
+            operations.push({
+                op: 'remove',
+                path: [CORE_GLYPH_CATALOG_KEY, glyphId],
+                oldValue: previousCatalog[glyphId],
+                newValue: undefined,
+                ...catalogOp
+            });
+        }
+        for (const [codepoint, glyphIds] of Object.entries(
+            owned.codepointIndex
+        )) {
+            if (!catalogChanged(previousIndex[codepoint], glyphIds)) {
+                continue;
+            }
+            operations.push({
+                op: 'set',
+                path: [CORE_CODEPOINT_INDEX_KEY, codepoint],
+                oldValue: previousIndex[codepoint],
+                newValue: glyphIds,
+                ...catalogOp
+            });
+        }
+        for (const codepoint of Object.keys(previousIndex)) {
+            if (owned.codepointIndex[codepoint]) {
+                continue;
+            }
+            operations.push({
+                op: 'remove',
+                path: [CORE_CODEPOINT_INDEX_KEY, codepoint],
+                oldValue: previousIndex[codepoint],
+                newValue: undefined,
+                ...catalogOp
+            });
+        }
         if (CLOUD_PLUGIN_OWNED_KEY in existingFormat) {
             operations.push({
                 op: 'remove',
@@ -1463,7 +1582,13 @@ export class PatchSyncEngine {
                 compileEditType: null
             });
         }
-        this._queueOrCommitOperations(operations, 'Update cloud catalog');
+        const batchSize = 20;
+        for (let index = 0; index < operations.length; index += batchSize) {
+            this._queueOrCommitOperations(
+                operations.slice(index, index + batchSize),
+                'Update cloud catalog'
+            );
+        }
         fontRecord[CORE_GLYPH_CATALOG_KEY] = owned.glyphCatalog;
         fontRecord[CORE_CODEPOINT_INDEX_KEY] = owned.codepointIndex;
         if (CLOUD_PLUGIN_OWNED_KEY in existingFormat) {
@@ -5775,6 +5900,38 @@ export class PatchSyncEngine {
         });
     }
 
+    /**
+     * Glyph-root adds still sitting in an open transaction are not in the
+     * Yjs glyph order yet. A rebuild must keep them until that transaction
+     * commits or the add is removed from the buffer.
+     */
+    private _uncommittedLocalGlyphAdds(): string[] {
+        const names: string[] = [];
+        const seen = new Set<string>();
+        for (const operation of this._txBufferedOperations) {
+            if (!this._isGlyphRootPath(operation.path)) {
+                continue;
+            }
+            const glyphName = String(operation.path[1] || '');
+            if (!glyphName) {
+                continue;
+            }
+            if (operation.op === 'remove') {
+                const index = names.indexOf(glyphName);
+                if (index >= 0) {
+                    names.splice(index, 1);
+                }
+                seen.delete(glyphName);
+                continue;
+            }
+            if (operation.op === 'add' && !seen.has(glyphName)) {
+                names.push(glyphName);
+                seen.add(glyphName);
+            }
+        }
+        return names;
+    }
+
     private _syncAllGlyphsFromYDoc(
         mergeExistingGlyphs = false,
         options?: { dropGlyphIds?: Iterable<string> }
@@ -5861,6 +6018,29 @@ export class PatchSyncEngine {
                 glyphSnapshot
             });
         }
+        for (const glyphName of this._uncommittedLocalGlyphAdds()) {
+            if (reconstructed.some((item) => item.glyphName === glyphName)) {
+                continue;
+            }
+            const existingGlyph = existingGlyphsByName.get(glyphName);
+            const existingId =
+                typeof existingGlyph?.id === 'string' ? existingGlyph.id : '';
+            if (
+                !existingGlyph ||
+                (existingId && dropGlyphIds.has(existingId))
+            ) {
+                continue;
+            }
+            reconstructed.push({
+                glyphName,
+                glyphId:
+                    this._glyphIdByName.get(glyphName) ||
+                    existingId ||
+                    undefined,
+                glyphSnapshot: existingGlyph,
+                preserveExisting: true
+            });
+        }
         for (const {
             glyphName,
             glyphId,
@@ -5916,6 +6096,18 @@ export class PatchSyncEngine {
         );
         if (key === CORE_GLYPH_CATALOG_KEY) {
             this._aliasResidentGlyphNamesFromCatalog();
+            // Checkpoint and live font-core applies both land here. The
+            // committed-change listener misses a catalog that arrived as a
+            // document snapshot, so sparse windows replan from this copy.
+            if (
+                this._isApplyingRemote &&
+                this._sparseSession &&
+                typeof window !== 'undefined'
+            ) {
+                window.dispatchEvent(
+                    new CustomEvent('cloud-catalog-resident-closure')
+                );
+            }
         }
     }
 

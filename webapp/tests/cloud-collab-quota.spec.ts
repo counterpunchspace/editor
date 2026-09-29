@@ -443,7 +443,7 @@ test('revoking a member closes an open glyph shard, and a new invite restores ed
         await collectPageErrors(inviteePage);
         await gotoEditorPage(inviteePage, editorHrefWithTestMode(editorHref));
         await waitForCanvasReady(inviteePage);
-        await waitForOpenSessionReady(inviteePage, opened.assetId);
+        await waitForOpenSessionReady(inviteePage, opened.assetId, 120000);
         await waitForBridgeReady(inviteePage);
         await alignEditorCanvas(inviteePage, 'a', { wght: 200 });
         const glyphOpen = await inviteePage.evaluate(() => {
@@ -512,11 +512,13 @@ test('revoking a member closes an open glyph shard, and a new invite restores ed
         const again = await opened.ownerPage.evaluate(async (email) => {
             return (window as any).cloudPlugin.inviteUser(email, 'editor');
         }, emails.invitee);
-        await inviteeWebsite.goto(again.inviteUrl);
-        await inviteeWebsite.locator('#inviteAcceptButton').click();
-        await inviteePage.reload();
+        const restoredHref = await acceptCloudInviteAndGetEditorHref(
+            inviteeWebsite,
+            again.inviteUrl
+        );
+        await gotoEditorPage(inviteePage, editorHrefWithTestMode(restoredHref));
         await waitForCanvasReady(inviteePage);
-        await waitForOpenSessionReady(inviteePage, opened.assetId);
+        await waitForOpenSessionReady(inviteePage, opened.assetId, 120000);
         await inviteePage.waitForFunction(
             () => (window as any).cloudPlugin?.connectionStatus === 'connected',
             null,

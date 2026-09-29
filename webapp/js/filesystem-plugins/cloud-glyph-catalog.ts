@@ -252,6 +252,68 @@ function writeOwnedToCoreJson(
     }
 }
 
+/**
+ * Mark explicit deletes in the existing catalog. A full rebuild would rewrite
+ * every entry whose live body does not round-trip onto Yjs, and those packets
+ * fill the room spool.
+ */
+export function tombstoneCloudOwnedGlyphs(
+    fontJson: Record<string, unknown>,
+    deletedGlyphIds: Iterable<string>
+): CloudOwnedFontData {
+    const existing = catalogFromCoreJson(fontJson);
+    if (!existing) {
+        return applyCloudOwnedData(fontJson, { deletedGlyphIds });
+    }
+    const deleted = new Set(
+        [...deletedGlyphIds].filter((glyphId) => Boolean(glyphId))
+    );
+    const glyphCatalog: Record<string, GlyphCatalogEntry> = {
+        ...existing.glyphCatalog
+    };
+    const codepointIndex: Record<string, string[]> = {
+        ...existing.codepointIndex
+    };
+    for (const glyphId of deleted) {
+        const entry = glyphCatalog[glyphId];
+        if (!entry || entry.deleted === true) {
+            continue;
+        }
+        for (const codepoint of entry.codepoints || []) {
+            const key = String(codepoint);
+            const members = (codepointIndex[key] || []).filter(
+                (member) => member !== glyphId
+            );
+            if (members.length) {
+                codepointIndex[key] = members;
+            } else {
+                delete codepointIndex[key];
+            }
+        }
+        glyphCatalog[glyphId] = tombstoneCatalogEntry(entry);
+    }
+    for (const [glyphId, entry] of Object.entries(glyphCatalog)) {
+        if (
+            !entry.componentIds?.some((componentId) => deleted.has(componentId))
+        ) {
+            continue;
+        }
+        const componentIds = entry.componentIds.filter(
+            (componentId) => !deleted.has(componentId)
+        );
+        const next = { ...entry };
+        if (componentIds.length) {
+            next.componentIds = componentIds;
+        } else {
+            delete next.componentIds;
+        }
+        glyphCatalog[glyphId] = next;
+    }
+    const owned: CloudOwnedFontData = { glyphCatalog, codepointIndex };
+    writeOwnedToCoreJson(fontJson, owned);
+    return owned;
+}
+
 export function applyCloudOwnedData(
     fontJson: Record<string, unknown>,
     options: { deletedGlyphIds?: Iterable<string> } = {}

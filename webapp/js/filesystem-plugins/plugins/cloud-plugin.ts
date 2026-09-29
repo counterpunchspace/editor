@@ -46,6 +46,7 @@ import { readUrlState } from '../../url-state';
 import { beginLoadingCursor, endLoadingCursor } from '../../loading-cursor';
 import {
     applyCloudOwnedData,
+    tombstoneCloudOwnedGlyphs,
     catalogFromCoreJson,
     catalogNeedsUpdate,
     incompleteCloudSeedReason,
@@ -896,6 +897,7 @@ export class CloudPlugin extends FilesystemPlugin {
     private _catalogListener: CommittedChangeListener | null = null;
     private _glyphCatchUpListener: CommittedChangeListener | null = null;
     private _residentClosureListener: CommittedChangeListener | null = null;
+    private _catalogClosureListener: (() => void) | null = null;
     private _residentClosureTimer: number | null = null;
     private _residentClosureAttempt = 0;
     private _coreHydratedListener: (() => void) | null = null;
@@ -1771,6 +1773,13 @@ export class CloudPlugin extends FilesystemPlugin {
         this._catalogListener = null;
         this._glyphCatchUpListener = null;
         this._residentClosureListener = null;
+        if (this._catalogClosureListener) {
+            window.removeEventListener(
+                'cloud-catalog-resident-closure',
+                this._catalogClosureListener
+            );
+            this._catalogClosureListener = null;
+        }
         this._residentClosureAttempt = 0;
         if (this._residentClosureTimer !== null) {
             window.clearTimeout(this._residentClosureTimer);
@@ -1885,6 +1894,14 @@ export class CloudPlugin extends FilesystemPlugin {
             this._catchUpFromCoreRevisionMap();
         };
         bridge.onCoreHydrated?.(this._coreHydratedListener);
+        this._catalogClosureListener = () => {
+            this._residentClosureAttempt = 0;
+            this._scheduleResidentClosureHydration();
+        };
+        window.addEventListener(
+            'cloud-catalog-resident-closure',
+            this._catalogClosureListener
+        );
         this._recomputeActiveAssetSize();
     }
 
@@ -2413,7 +2430,7 @@ export class CloudPlugin extends FilesystemPlugin {
                 'CloudPlugin: resident closure hydration failed',
                 error
             );
-            if (this._residentClosureAttempt >= 15) {
+            if (this._residentClosureAttempt >= 40) {
                 return;
             }
             this._residentClosureAttempt += 1;
@@ -2529,6 +2546,7 @@ export class CloudPlugin extends FilesystemPlugin {
             hydrationGeneration === this._hydrationGeneration &&
             this.activeAssetId === assetId &&
             window.patchSyncEngine === bridge;
+        bridge.refreshOwnedCatalogFromYDoc?.();
         const fontJson =
             this._currentFontJson() || getCloudFontJsonFromBridge(bridge) || {};
         const owned = catalogFromCoreJson(fontJson);
@@ -3035,16 +3053,17 @@ export class CloudPlugin extends FilesystemPlugin {
             this._isSyncingCatalog = true;
             try {
                 if (pending.catalogDirty) {
-                    const owned =
-                        pending.deletedGlyphIds.length ||
-                        pending.catalogGlyphs.length !== 1
-                            ? applyCloudOwnedData(fontJson, {
-                                  deletedGlyphIds: pending.deletedGlyphIds
-                              })
-                            : patchCloudOwnedGlyph(
-                                  fontJson,
-                                  pending.catalogGlyphs[0]
-                              );
+                    const owned = pending.deletedGlyphIds.length
+                        ? tombstoneCloudOwnedGlyphs(
+                              fontJson,
+                              pending.deletedGlyphIds
+                          )
+                        : pending.catalogGlyphs.length !== 1
+                          ? applyCloudOwnedData(fontJson)
+                          : patchCloudOwnedGlyph(
+                                fontJson,
+                                pending.catalogGlyphs[0]
+                            );
                     window.patchSyncEngine?.syncCloudOwnedProjection?.(owned);
                 }
                 if (pending.depsGlyphs.size > 0) {

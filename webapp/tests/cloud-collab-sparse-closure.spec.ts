@@ -66,9 +66,17 @@ async function glyphResidency(page: Page, glyphName: string): Promise<string> {
             featuresHasSs01 = false;
         }
         const catalog = font?.glyphCatalog || font?._data?.glyphCatalog;
-        const entry = catalog
-            ? Object.values(catalog).find((item: any) => item?.name === name)
-            : null;
+        const catalogValues = catalog ? Object.values(catalog) : [];
+        const entry = catalogValues.find((item: any) => item?.name === name);
+        const bridgeJson = bridge?.getFontJsonSnapshot?.() || {};
+        const bridgeCatalog =
+            bridgeJson.glyphCatalog &&
+            typeof bridgeJson.glyphCatalog === 'object'
+                ? Object.values(bridgeJson.glyphCatalog as Record<string, any>)
+                : [];
+        const order = Array.isArray(bridgeJson.glyphOrder)
+            ? bridgeJson.glyphOrder
+            : [];
         const edges = bridge?.depsDoc?.getMap?.('deps')?.get?.('edges');
         const edgeRows: string[] = [];
         if (edges?.forEach) {
@@ -82,6 +90,7 @@ async function glyphResidency(page: Page, glyphName: string): Promise<string> {
                 }
             });
         }
+        const cloud = (window as any).cloudPlugin?.getLiveAccessSnapshot?.();
         return JSON.stringify({
             name,
             sparse: bridge?.hasSparseWorkingSet?.() === true,
@@ -92,6 +101,18 @@ async function glyphResidency(page: Page, glyphName: string): Promise<string> {
                       componentIds: (entry as any).componentIds || null
                   }
                 : null,
+            modelCatalogCount: catalogValues.length,
+            bridgeCatalogCount: bridgeCatalog.length,
+            bridgeHasName: bridgeCatalog.some(
+                (item: any) => item?.name === name
+            ),
+            orderHasName: order.includes(name),
+            modelGlyphCount: Array.isArray(font?._data?.glyphs)
+                ? font._data.glyphs.length
+                : null,
+            connectionStatus: cloud?.connectionStatus || null,
+            pendingSyncCount:
+                (window as any).cloudPlugin?.getPendingSyncCount?.() ?? null,
             featuresHasSs01,
             edges: edgeRows
         });
@@ -230,6 +251,16 @@ test('sparse peers hydrate a new composite, a new base, and a new GSUB alternate
             font.addGlyph('a.ss01', 'Base');
         });
         await settleCloudEdit(ownerPage);
+        await ownerPage.waitForFunction(
+            () => {
+                const glyph = (window as any).currentFontModel?.findGlyph?.(
+                    'a.ss01'
+                );
+                return Array.isArray(glyph?.layers) && glyph.layers.length > 0;
+            },
+            null,
+            { timeout: 30000 }
+        );
         await ownerPage.evaluate(() => {
             const font = (window as any).currentFontModel;
             font.findGlyph('a.ss01').layers[0].addComponent('ss01mark');

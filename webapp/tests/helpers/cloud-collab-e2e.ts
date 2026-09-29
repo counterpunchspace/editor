@@ -140,21 +140,64 @@ export async function waitForCloudLiveIdle(
     page: Page,
     timeoutMs = 90000
 ): Promise<void> {
-    await page.waitForFunction(
-        () => {
-            const plugin = (window as any).cloudPlugin;
-            const assetId = plugin?.activeAssetId;
-            if (!plugin || !assetId) {
-                return false;
-            }
-            return (
-                plugin.connectionStatus === 'connected' &&
-                plugin.getAssetPendingSyncCount(assetId) === 0
-            );
-        },
-        null,
-        { timeout: timeoutMs }
-    );
+    try {
+        await page.waitForFunction(
+            () => {
+                const plugin = (window as any).cloudPlugin;
+                const assetId = plugin?.activeAssetId;
+                if (!plugin || !assetId) {
+                    return false;
+                }
+                return (
+                    plugin.connectionStatus === 'connected' &&
+                    plugin.getAssetPendingSyncCount(assetId) === 0
+                );
+            },
+            null,
+            { timeout: timeoutMs }
+        );
+    } catch (error) {
+        const detail = await page
+            .evaluate(() => {
+                const snapshot = (
+                    window as Window & {
+                        __collabIntegrity?: {
+                            snapshot: () => Record<string, unknown>;
+                        };
+                    }
+                ).__collabIntegrity?.snapshot?.();
+                if (!snapshot) {
+                    return null;
+                }
+                const session = snapshot.session as
+                    | {
+                          adapters?: Array<Record<string, unknown>>;
+                          walRecords?: unknown;
+                      }
+                    | null
+                    | undefined;
+                return {
+                    connectionStatus: snapshot.connectionStatus,
+                    activeAssetId: snapshot.activeAssetId,
+                    pendingSyncCount: snapshot.pendingSyncCount,
+                    liveAccess: snapshot.liveAccess,
+                    walRecords: session?.walRecords ?? null,
+                    adapters: (session?.adapters || []).map((adapter) => ({
+                        documentId: adapter.documentId,
+                        status: adapter.status,
+                        pendingOutbound: adapter.pendingOutbound,
+                        durableOutbox: adapter.durableOutbox,
+                        pendingSyncCount: adapter.pendingSyncCount,
+                        lastReconnectReason: adapter.lastReconnectReason
+                    }))
+                };
+            })
+            .catch(() => null);
+        const message = error instanceof Error ? error.message : String(error);
+        throw new Error(
+            `cloud live did not go idle: ${JSON.stringify(detail)}\n${message}`
+        );
+    }
 }
 
 export async function dumpCollabIntegrity(

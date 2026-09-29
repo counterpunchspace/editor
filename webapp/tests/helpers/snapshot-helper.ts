@@ -1082,7 +1082,8 @@ export async function waitForFontLoaded(
  */
 export async function waitForOpenSessionReady(
     page: any,
-    expectedFilename?: string
+    expectedFilename?: string,
+    filenameTimeoutMs = 15000
 ) {
     return timedStep('helper:waitForOpenSessionReady', async () => {
         if (expectedFilename) {
@@ -1097,7 +1098,7 @@ export async function waitForOpenSessionReady(
                             return editorFile.includes(filename);
                         },
                         expectedFilename,
-                        { timeout: 15000 }
+                        { timeout: filenameTimeoutMs }
                     );
                 }
             );

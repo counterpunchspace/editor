@@ -8,7 +8,8 @@ const {
     CORE_GLYPH_CATALOG_KEY,
     ensureImmutableGlyphId,
     patchCloudOwnedGlyph,
-    stripOwnedFontData
+    stripOwnedFontData,
+    tombstoneCloudOwnedGlyphs
 } = require('../js/filesystem-plugins/cloud-glyph-catalog');
 const {
     buildFontDepsIndex,
@@ -2775,6 +2776,174 @@ describe('section 2 catalog packets and freshness', () => {
         fatBridge.destroy();
     });
 
+    it('does not emit a catalog packet when the projection is unchanged', () => {
+        const fontJson = twoGlyphFont();
+        const bridge = new PatchSyncEngine('catalog-noop');
+        bridge.initFromJson(fontJson);
+        const owned = applyCloudOwnedData(fontJson);
+        bridge.syncCloudOwnedProjection(owned);
+        const batches = [];
+        const original = bridge._queueOrCommitOperations.bind(bridge);
+        bridge._queueOrCommitOperations = (operations, label) => {
+            batches.push(operations);
+            return original(operations, label);
+        };
+        const baseline = Y.encodeStateVector(bridge.yDoc);
+        bridge.syncCloudOwnedProjection(applyCloudOwnedData(fontJson));
+        const update = Y.encodeStateAsUpdate(bridge.yDoc, baseline);
+        expect(batches).toEqual([]);
+        expect(update.byteLength).toBeLessThanOrEqual(2);
+        bridge.destroy();
+    });
+
+    it('projects a glyph rename as one catalog entry', () => {
+        const fontJson = twoGlyphFont();
+        const bridge = new PatchSyncEngine('catalog-rename');
+        bridge.initFromJson(fontJson);
+        bridge.syncCloudOwnedProjection(applyCloudOwnedData(fontJson));
+        fontJson.glyphs[0].name = 'A.renamed';
+        const batches = [];
+        const original = bridge._queueOrCommitOperations.bind(bridge);
+        bridge._queueOrCommitOperations = (operations, label) => {
+            batches.push(operations);
+            return original(operations, label);
+        };
+        bridge.syncCloudOwnedProjection(
+            patchCloudOwnedGlyph(fontJson, 'A.renamed')
+        );
+        const catalogSets = batches
+            .flat()
+            .filter(
+                (operation) =>
+                    operation.op === 'set' &&
+                    operation.path[0] === CORE_GLYPH_CATALOG_KEY
+            );
+        expect(catalogSets).toHaveLength(1);
+        expect(catalogSets[0].newValue.name).toBe('A.renamed');
+        expect(catalogSets[0].path[1]).toBe(fontJson.glyphs[0].id);
+        bridge.destroy();
+    });
+
+    it('tombstones one glyph without rewriting the rest of a large catalog', () => {
+        const glyphs = [];
+        for (let index = 0; index < 400; index += 1) {
+            glyphs.push({
+                name: `g${index}`,
+                codepoints: [index + 32],
+                layers: [{ id: `layer-${index}`, width: 600, shapes: [] }]
+            });
+        }
+        glyphs[10].layers[0].shapes.push({
+            reference: 'g0',
+            transform: {
+                translation: [0, 0],
+                rotation: 0,
+                scale: [1, 1],
+                skew: [0, 0],
+                order: 'RestOfTheWorld'
+            }
+        });
+        const fontJson = { upm: 1000, glyphs };
+        const bridge = new PatchSyncEngine('catalog-large-delete');
+        bridge.initFromJson(fontJson);
+        bridge.syncCloudOwnedProjection(applyCloudOwnedData(fontJson));
+        const removed = fontJson.glyphs.pop();
+        const batches = [];
+        const original = bridge._queueOrCommitOperations.bind(bridge);
+        bridge._queueOrCommitOperations = (operations, label) => {
+            batches.push(operations);
+            return original(operations, label);
+        };
+        const baseline = Y.encodeStateVector(bridge.yDoc);
+        bridge.syncCloudOwnedProjection(
+            applyCloudOwnedData(fontJson, {
+                deletedGlyphIds: [removed.id]
+            })
+        );
+        const update = Y.encodeStateAsUpdate(bridge.yDoc, baseline);
+        const operations = batches.flat();
+        expect(operations.map((operation) => operation.path)).toEqual([
+            [CORE_GLYPH_CATALOG_KEY, removed.id]
+        ]);
+        expect(update.byteLength).toBeLessThan(20000);
+        bridge.destroy();
+    });
+
+    it('treats an empty codepoint list like a missing one', () => {
+        const fontJson = {
+            upm: 1000,
+            glyphs: [
+                {
+                    name: 'A',
+                    codepoints: [],
+                    layers: [{ id: 'layer-a', width: 600, shapes: [] }]
+                }
+            ]
+        };
+        const bridge = new PatchSyncEngine('catalog-empty-cps');
+        bridge.initFromJson(fontJson);
+        bridge.syncCloudOwnedProjection(applyCloudOwnedData(fontJson));
+        const batches = [];
+        bridge._queueOrCommitOperations = (operations) => {
+            batches.push(operations);
+        };
+        bridge.syncCloudOwnedProjection(applyCloudOwnedData(fontJson));
+        expect(batches).toEqual([]);
+        bridge.destroy();
+    });
+
+    it('tombstones a deleted glyph without rewriting an unchanged neighbor', () => {
+        const fontJson = {
+            upm: 1000,
+            glyphs: [
+                {
+                    name: 'base',
+                    codepoints: [66],
+                    layers: [{ id: 'layer-base', width: 600, shapes: [] }]
+                },
+                {
+                    name: 'accent',
+                    codepoints: [67],
+                    layers: [
+                        {
+                            id: 'layer-accent',
+                            width: 600,
+                            shapes: [{ reference: 'base' }]
+                        }
+                    ]
+                },
+                {
+                    name: 'other',
+                    codepoints: [68],
+                    layers: [{ id: 'layer-other', width: 600, shapes: [] }]
+                }
+            ]
+        };
+        const bridge = new PatchSyncEngine('catalog-tombstone-only');
+        bridge.initFromJson(fontJson);
+        bridge.syncCloudOwnedProjection(applyCloudOwnedData(fontJson));
+        const removed = fontJson.glyphs.shift();
+        const batches = [];
+        const original = bridge._queueOrCommitOperations.bind(bridge);
+        bridge._queueOrCommitOperations = (operations, label) => {
+            batches.push(operations);
+            return original(operations, label);
+        };
+        const baseline = Y.encodeStateVector(bridge.yDoc);
+        bridge.syncCloudOwnedProjection(
+            tombstoneCloudOwnedGlyphs(fontJson, [removed.id])
+        );
+        const update = Y.encodeStateAsUpdate(bridge.yDoc, baseline);
+        const paths = batches.flat().map((operation) => operation.path);
+        expect(paths).toEqual([
+            [CORE_GLYPH_CATALOG_KEY, removed.id],
+            [CORE_GLYPH_CATALOG_KEY, fontJson.glyphs[0].id],
+            [CORE_CODEPOINT_INDEX_KEY, '66']
+        ]);
+        expect(update.byteLength).toBeLessThan(20000);
+        bridge.destroy();
+    });
+
     it('commits glyph body, then deps, then core glyphRevisions', () => {
         const fontJson = twoGlyphFont();
         const bridge = new PatchSyncEngine('freshness-order');
@@ -2925,6 +3094,31 @@ describe('section 2 catalog packets and freshness', () => {
         expect(bridge._fontJson.glyphs.map((glyph) => glyph.name)).toEqual([
             'ARenamed',
             'B'
+        ]);
+        bridge.destroy();
+    });
+
+    it('keeps a glyph added in an open transaction when glyph order has not caught up', () => {
+        const fontJson = twoGlyphFont();
+        const bridge = new PatchSyncEngine('pending-add');
+        bridge.initFromJson(fontJson);
+        fontJson.glyphs.push({
+            name: 'C',
+            id: 'id-c',
+            codepoints: [67],
+            layers: []
+        });
+        bridge._fontJson = fontJson;
+        bridge.beginTransaction('add C', null, {
+            compileChangeSource: 'test-sync',
+            compileEditType: null
+        });
+        bridge.recordAdd(['glyphs', 'C'], fontJson.glyphs[2]);
+        bridge._syncAllGlyphsFromYDoc();
+        expect(bridge._fontJson.glyphs.map((glyph) => glyph.name)).toEqual([
+            'A',
+            'B',
+            'C'
         ]);
         bridge.destroy();
     });

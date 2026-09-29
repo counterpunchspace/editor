@@ -831,24 +831,38 @@ export class WindowSync {
                     this._relayFontCoreCatalog();
                 }
                 let names: string[] = [];
-                for (let attempt = 0; attempt < 4; attempt += 1) {
-                    names =
-                        (await window.cloudPlugin?.ensureSparseHydration?.({
-                            text: msg.text,
-                            glyphNames: msg.glyphNames,
-                            purpose: msg.purpose
-                        })) ?? [];
-                    const unresolved = requested.filter(
-                        (name) =>
-                            !names.includes(name) &&
-                            !window.patchSyncEngine?.glyphDocumentIdForName?.(
+                for (let attempt = 0; attempt < 8; attempt += 1) {
+                    window.patchSyncEngine?.refreshOwnedCatalogFromYDoc?.();
+                    try {
+                        names =
+                            (await window.cloudPlugin?.ensureSparseHydration?.({
+                                text: msg.text,
+                                glyphNames: msg.glyphNames,
+                                purpose: msg.purpose
+                            })) ?? [];
+                    } catch {
+                        names = [];
+                    }
+                    const unresolved = requested.filter((name) => {
+                        if (names.includes(name)) {
+                            return false;
+                        }
+                        const documentId =
+                            window.patchSyncEngine?.glyphDocumentIdForName?.(
                                 name
-                            )
-                    );
-                    if (!unresolved.length || attempt === 3) {
+                            );
+                        return (
+                            !documentId ||
+                            window.patchSyncEngine?.hasResidentGlyphDocument?.(
+                                documentId
+                            ) !== true
+                        );
+                    });
+                    if (!unresolved.length || attempt === 7) {
                         break;
                     }
-                    await new Promise((resolve) => setTimeout(resolve, 500));
+                    const delay = Math.min(2000, 500 * 2 ** attempt);
+                    await new Promise((resolve) => setTimeout(resolve, delay));
                 }
                 this._relayResidentGlyphs(requested.length ? requested : names);
                 this._send({
