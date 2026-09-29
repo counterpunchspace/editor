@@ -1357,6 +1357,54 @@ export class PatchSyncEngine {
         return token === revision;
     }
 
+    /** True when this window already has the glyph shard, even if it is not on screen. */
+    hasResidentGlyphDocument(documentId: string): boolean {
+        const glyphId = glyphIdFromDocumentId(documentId);
+        return !!glyphId && this._glyphDocs.has(glyphId);
+    }
+
+    /** True when the font model lists the catalog name for this shard. */
+    catalogGlyphIsInModel(documentId: string): boolean {
+        const glyphId = glyphIdFromDocumentId(documentId);
+        if (!glyphId || !this._fontJson) {
+            return false;
+        }
+        const owned = catalogFromCoreJson(
+            this._fontJson as Record<string, unknown>
+        );
+        const name =
+            owned?.glyphCatalog[glyphId]?.name ||
+            this._glyphNameById.get(glyphId);
+        if (!name || name === glyphId) {
+            return false;
+        }
+        const glyphs = (this._fontJson as Record<string, unknown>).glyphs;
+        return (
+            Array.isArray(glyphs) &&
+            glyphs.some(
+                (glyph) =>
+                    !!glyph &&
+                    typeof glyph === 'object' &&
+                    ((glyph as { name?: string }).name === name ||
+                        (glyph as { id?: string }).id === glyphId)
+            )
+        );
+    }
+
+    /** Copy a resident shard into the font model under its catalog name. */
+    materializeResidentCatalogGlyph(documentId: string): void {
+        if (!documentId.startsWith('glyph:')) {
+            return;
+        }
+        this._aliasResidentGlyphNamesFromCatalog();
+        const glyphId = documentId.slice('glyph:'.length);
+        const name = this._glyphNameById.get(glyphId);
+        if (!name || name === glyphId) {
+            return;
+        }
+        this._patchGlyphFromYDoc(name, { ignoreExisting: true });
+    }
+
     listGlyphRevisionTokens(): Array<{ glyphId: string; revision: string }> {
         const revisions = this.yDoc.getMap(GLYPH_REVISIONS_KEY);
         const tokens: Array<{ glyphId: string; revision: string }> = [];
@@ -1672,7 +1720,7 @@ export class PatchSyncEngine {
             unloaded.push(glyphId);
         }
         if (unloaded.length) {
-            this._syncAllGlyphsFromYDoc();
+            this._syncAllGlyphsFromYDoc(false, { dropGlyphIds: unloaded });
             this._emitAfterSync();
         }
         return unloaded;
@@ -1781,6 +1829,43 @@ export class PatchSyncEngine {
                     : glyphId;
             this._glyphIdByName.set(name, glyphId);
             this._glyphNameById.set(glyphId, name);
+        }
+        this._aliasResidentGlyphNamesFromCatalog();
+    }
+
+    /**
+     * A caught-up shard can be resident before its Y.Map has a name, so the
+     * index falls back to the glyph id. The catalog already knows the name.
+     */
+    private _aliasResidentGlyphNamesFromCatalog(): void {
+        if (!this._fontJson) {
+            return;
+        }
+        const owned = catalogFromCoreJson(
+            this._fontJson as Record<string, unknown>
+        );
+        if (!owned) {
+            return;
+        }
+        for (const entry of Object.values(owned.glyphCatalog)) {
+            if (!entry?.glyphId || !entry.name || entry.deleted === true) {
+                continue;
+            }
+            if (!this._glyphDocs.has(entry.glyphId)) {
+                continue;
+            }
+            const indexedName = this._glyphNameById.get(entry.glyphId);
+            // A real glyph name wins. The catalog only fills the id fallback
+            // used when a shard arrives before its name field.
+            if (indexedName && indexedName !== entry.glyphId) {
+                continue;
+            }
+            const previousId = this._glyphIdByName.get(entry.name);
+            if (previousId && previousId !== entry.glyphId) {
+                continue;
+            }
+            this._glyphIdByName.set(entry.name, entry.glyphId);
+            this._glyphNameById.set(entry.glyphId, entry.name);
         }
     }
 
@@ -1917,11 +2002,19 @@ export class PatchSyncEngine {
         this._pendingDestroyedGlyphIds.clear();
     }
 
-    private _syncGlyphNameIndexToOrder(): void {
+    private _syncGlyphNameIndexToOrder(options?: {
+        pairSingleRename?: boolean;
+    }): void {
         const remaining = new Set(this._readYGlyphOrderNames());
+        const displaced: string[] = [];
         for (const [glyphName, glyphId] of [...this._glyphIdByName]) {
-            if (!remaining.has(glyphName)) {
-                this._glyphIdByName.delete(glyphName);
+            if (remaining.has(glyphName)) {
+                continue;
+            }
+            this._glyphIdByName.delete(glyphName);
+            if (this._glyphDocs.has(glyphId)) {
+                displaced.push(glyphId);
+            } else {
                 this._glyphNameById.delete(glyphId);
             }
         }
@@ -1934,7 +2027,31 @@ export class PatchSyncEngine {
                 if (nameValue === glyphName) {
                     this._glyphIdByName.set(glyphName, glyphId);
                     this._glyphNameById.set(glyphId, glyphName);
+                    const displacedIndex = displaced.indexOf(glyphId);
+                    if (displacedIndex >= 0) {
+                        displaced.splice(displacedIndex, 1);
+                    }
                     break;
+                }
+            }
+        }
+        const openNames = [...remaining].filter(
+            (glyphName) => !this._glyphIdByName.has(glyphName)
+        );
+        if (
+            options?.pairSingleRename &&
+            displaced.length === 1 &&
+            openNames.length === 1
+        ) {
+            this._glyphIdByName.set(openNames[0], displaced[0]);
+            this._glyphNameById.set(displaced[0], openNames[0]);
+            return;
+        }
+        for (const glyphId of displaced) {
+            const mapped = this._glyphNameById.get(glyphId);
+            if (!mapped || !remaining.has(mapped)) {
+                if (!this._glyphDocs.has(glyphId)) {
+                    this._glyphNameById.delete(glyphId);
                 }
             }
         }
@@ -1964,9 +2081,13 @@ export class PatchSyncEngine {
             return;
         }
         const resolved = remaps.flatMap((remap) => {
+            const mappedId = [...this._glyphNameById.entries()].find(
+                ([, glyphName]) => glyphName === remap.oldName
+            )?.[0];
             const glyphId =
                 this._glyphIdByName.get(remap.oldName) ||
-                this._glyphIdByName.get(remap.newName);
+                this._glyphIdByName.get(remap.newName) ||
+                mappedId;
             if (!glyphId) {
                 return [];
             }
@@ -2634,7 +2755,11 @@ export class PatchSyncEngine {
             op: 'set',
             path: ['glyphOrder'],
             oldValue: oldOrder,
-            newValue: nextOrder
+            newValue: nextOrder,
+            glyphRenames: prepared.map(({ oldName, newName }) => ({
+                oldName,
+                newName
+            }))
         });
         this._queueOrCommitOperations(operations, label);
     }
@@ -5178,8 +5303,77 @@ export class PatchSyncEngine {
             const segments = getPathSegments(String(entry.path || ''));
             return this._isGlyphRootPath(segments) && entry.op === 'remove';
         });
+        const hadGlyphRenames = remoteEntries.some(
+            (entry) => normalizeGlyphRenames(entry.glyphRenames).length > 0
+        );
+        if (hadGlyphRenames) {
+            this._applyGlyphNameRemapsFromEntries(remoteEntries, 'redo');
+        }
         if (glyphOrderTouched || glyphRootRemoved) {
-            this._syncGlyphNameIndexToOrder();
+            if (glyphOrderTouched) {
+                this._remapGlyphIndexFromOrderEntries(remoteEntries);
+            }
+            this._syncGlyphNameIndexToOrder({
+                pairSingleRename: remoteEntries.some(
+                    (entry) =>
+                        normalizeGlyphRenames(entry.glyphRenames).length > 0
+                )
+            });
+        }
+        if (hadGlyphRenames && !glyphOrderTouched) {
+            this._syncAllGlyphsFromYDoc();
+        }
+    }
+
+    private _remapGlyphIndexFromOrderEntries(
+        remoteEntries: ChangeLogEntry[]
+    ): void {
+        for (const entry of remoteEntries) {
+            const segments = getPathSegments(String(entry.path || ''));
+            const previousNames = Array.isArray(entry.oldValue)
+                ? entry.oldValue
+                : Array.isArray(entry.replayOldValue)
+                  ? entry.replayOldValue
+                  : null;
+            if (segments[0] !== 'glyphOrder' || !previousNames) {
+                continue;
+            }
+            const oldNames = previousNames.map((name) => String(name));
+            const nextNames = Array.isArray(entry.newValue)
+                ? entry.newValue
+                : Array.isArray(entry.replayNewValue)
+                  ? entry.replayNewValue
+                  : null;
+            const newNames = nextNames
+                ? nextNames.map((name) => String(name))
+                : this._readYGlyphOrderNames();
+            if (!oldNames.length || oldNames.length !== newNames.length) {
+                continue;
+            }
+            const changes: Array<{ oldName: string; newName: string }> = [];
+            for (let index = 0; index < oldNames.length; index += 1) {
+                const oldName = oldNames[index];
+                const newName = newNames[index];
+                if (!oldName || !newName || oldName === newName) {
+                    continue;
+                }
+                changes.push({ oldName, newName });
+            }
+            if (changes.length !== 1) {
+                continue;
+            }
+            const { oldName, newName } = changes[0];
+            const glyphId = this._glyphIdByName.get(oldName);
+            if (!glyphId) {
+                continue;
+            }
+            const owner = this._glyphIdByName.get(newName);
+            if (owner && owner !== glyphId) {
+                continue;
+            }
+            this._glyphIdByName.delete(oldName);
+            this._glyphIdByName.set(newName, glyphId);
+            this._glyphNameById.set(glyphId, newName);
         }
     }
 
@@ -5566,10 +5760,30 @@ export class PatchSyncEngine {
         });
     }
 
-    private _syncAllGlyphsFromYDoc(mergeExistingGlyphs = false): void {
+    private _stampOrderedGlyphName(glyph: Unsafe, glyphName: string): void {
+        if (
+            !glyph ||
+            typeof glyph !== 'object' ||
+            Array.isArray(glyph) ||
+            typeof (glyph as { name?: unknown }).name !== 'string' ||
+            (glyph as { name?: string }).name === glyphName
+        ) {
+            return;
+        }
+        withSuppressedModelRecording(() => {
+            (glyph as { name: string }).name = glyphName;
+        });
+    }
+
+    private _syncAllGlyphsFromYDoc(
+        mergeExistingGlyphs = false,
+        options?: { dropGlyphIds?: Iterable<string> }
+    ): void {
         if (!this._fontJson) {
             return;
         }
+        this._aliasResidentGlyphNamesFromCatalog();
+        const dropGlyphIds = new Set(options?.dropGlyphIds || []);
 
         const fontRecord = this._fontJson as Record<string, unknown>;
         const existingGlyphs = Array.isArray(fontRecord.glyphs)
@@ -5603,6 +5817,7 @@ export class PatchSyncEngine {
             glyphName: string;
             glyphId?: string;
             glyphSnapshot: Unsafe;
+            preserveExisting?: boolean;
         }> = [];
         for (const glyphName of orderedGlyphNames) {
             const existingGlyph =
@@ -5622,6 +5837,22 @@ export class PatchSyncEngine {
                 }
             );
             if (!glyphSnapshot) {
+                const existingId =
+                    this._glyphIdByName.get(glyphName) ||
+                    (typeof existingGlyph?.id === 'string'
+                        ? existingGlyph.id
+                        : '');
+                if (
+                    existingGlyph &&
+                    (!existingId || !dropGlyphIds.has(existingId))
+                ) {
+                    reconstructed.push({
+                        glyphName,
+                        glyphId: this._glyphIdByName.get(glyphName),
+                        glyphSnapshot: existingGlyph,
+                        preserveExisting: true
+                    });
+                }
                 continue;
             }
             reconstructed.push({
@@ -5630,18 +5861,30 @@ export class PatchSyncEngine {
                 glyphSnapshot
             });
         }
-        for (const { glyphName, glyphId, glyphSnapshot } of reconstructed) {
+        for (const {
+            glyphName,
+            glyphId,
+            glyphSnapshot,
+            preserveExisting
+        } of reconstructed) {
             const existingGlyph =
                 existingGlyphsByName.get(glyphName) ||
                 (glyphId ? existingGlyphsById.get(glyphId) : undefined);
+            if (preserveExisting && existingGlyph) {
+                this._stampOrderedGlyphName(existingGlyph, glyphName);
+                nextGlyphs.push(existingGlyph);
+                continue;
+            }
             if (
                 existingGlyph &&
                 typeof existingGlyph === 'object' &&
                 !Array.isArray(existingGlyph)
             ) {
                 this._assignGlyphSnapshotInPlace(existingGlyph, glyphSnapshot);
+                this._stampOrderedGlyphName(existingGlyph, glyphName);
                 nextGlyphs.push(existingGlyph);
             } else {
+                this._stampOrderedGlyphName(glyphSnapshot, glyphName);
                 nextGlyphs.push(glyphSnapshot);
             }
         }
@@ -5671,6 +5914,9 @@ export class PatchSyncEngine {
         fontRecord[key] = this._cloneRuntimeValue(
             cloneHistoryValue(fromYType(value))
         );
+        if (key === CORE_GLYPH_CATALOG_KEY) {
+            this._aliasResidentGlyphNamesFromCatalog();
+        }
     }
 
     private _readNormalizedGlyphSnapshotFromYDoc(

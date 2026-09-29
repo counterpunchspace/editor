@@ -49,15 +49,65 @@ export function glyphIdFromDocumentId(documentId: string): string | null {
 export function glyphIdsFromRevisionEntries(
     entries: Array<{ path?: string | Array<string | number> | null }>
 ): string[] {
+    return glyphIdsFromPathEntries(entries, GLYPH_REVISIONS_KEY);
+}
+
+/** Glyph ids touched by a core catalog write, including a newly added glyph. */
+export function glyphIdsFromCatalogEntries(
+    entries: Array<{
+        path?: string | Array<string | number> | null;
+        oldValue?: unknown;
+        newValue?: unknown;
+    }>
+): string[] {
+    const ids = new Set(glyphIdsFromPathEntries(entries, 'glyphCatalog'));
+    for (const entry of entries) {
+        const raw = entry.path;
+        const path = Array.isArray(raw)
+            ? raw.map(String).join('.')
+            : typeof raw === 'string'
+              ? raw.replace(/^\./, '')
+              : '';
+        if (path !== 'glyphCatalog') {
+            continue;
+        }
+        const next =
+            entry.newValue &&
+            typeof entry.newValue === 'object' &&
+            !Array.isArray(entry.newValue)
+                ? (entry.newValue as Record<string, unknown>)
+                : null;
+        if (!next) {
+            continue;
+        }
+        const previous =
+            entry.oldValue &&
+            typeof entry.oldValue === 'object' &&
+            !Array.isArray(entry.oldValue)
+                ? (entry.oldValue as Record<string, unknown>)
+                : {};
+        for (const glyphId of Object.keys(next)) {
+            if (!(glyphId in previous)) {
+                ids.add(glyphId);
+            }
+        }
+    }
+    return [...ids];
+}
+
+function glyphIdsFromPathEntries(
+    entries: Array<{ path?: string | Array<string | number> | null }>,
+    rootKey: string
+): string[] {
     const ids = new Set<string>();
     for (const entry of entries) {
         const raw = entry.path;
         const segments = Array.isArray(raw)
             ? raw.map(String)
             : typeof raw === 'string'
-              ? raw.split('.')
+              ? raw.replace(/^\./, '').split('.')
               : [];
-        if (segments[0] === GLYPH_REVISIONS_KEY && segments[1]) {
+        if (segments[0] === rootKey && segments[1]) {
             ids.add(String(segments[1]));
         }
     }

@@ -11,3 +11,5 @@ build/
 # Ignore Playwright test artifacts
 test-results/
 playwright-report/
+# Local cloud-collab wrangler state (can include multi-gigabyte sqlite files)
+.cloud-collab-e2e-wrangler/

@@ -25,6 +25,7 @@ const {
 const {
     FONT_CORE_DOCUMENT_ID,
     glyphDocumentId,
+    glyphIdsFromCatalogEntries,
     glyphIdsFromRevisionEntries
 } = require('../js/filesystem-plugins/cloud-document-set');
 
@@ -260,6 +261,24 @@ describe('glyph catch-up for edits outside the receiver subset', () => {
                 { path: 'glyphs.A:layers.layer-1:width' }
             ])
         ).toEqual(['id-b']);
+    });
+
+    test('glyphIdsFromCatalogEntries reads a new catalog glyph', () => {
+        expect(
+            glyphIdsFromCatalogEntries([
+                { path: 'glyphCatalog.id-new.name' },
+                { path: '.glyphCatalog.id-new.codepoints' },
+                { path: 'glyphOrder.0' },
+                {
+                    path: 'glyphCatalog',
+                    oldValue: { 'id-a': { name: 'A' } },
+                    newValue: {
+                        'id-a': { name: 'A' },
+                        'id-added': { name: 'added' }
+                    }
+                }
+            ]).sort()
+        ).toEqual(['id-added', 'id-new']);
     });
 
     test('local outline edits publish a font-core revision signal', () => {
@@ -537,6 +556,62 @@ describe('glyph catch-up for edits outside the receiver subset', () => {
                 expectedRevision
             )
         ).toBe(true);
+        global.fetch = originalFetch;
+    });
+
+    test('catch-up resumes from the checkpoint when log zero is compacted away', async () => {
+        const writer = createEngine('writer');
+        const receiver = hydrateReceiverFromWriter(writer.bridge);
+        window.changeBridge = writer.bridge;
+        writer.font.findGlyph('B').layers[0].width = 777;
+        const liveTail = writer.bridge.encodeDocumentState(
+            glyphDocumentId('id-b')
+        );
+        const expectedRevision = revisionFor(writer.bridge, 'id-b');
+        const originalFetch = global.fetch;
+        const urls = [];
+        global.fetch = jest.fn(async (input) => {
+            const url = String(input);
+            urls.push(url);
+            if (url.includes('/state')) {
+                return {
+                    ok: true,
+                    status: 200,
+                    headers: new Headers({
+                        'content-type': 'application/octet-stream'
+                    }),
+                    arrayBuffer: async () => liveTail.slice().buffer
+                };
+            }
+            return {
+                ok: false,
+                status: 409,
+                headers: new Headers({
+                    'content-type': 'application/json'
+                }),
+                json: async () => ({
+                    error: 'Cursor is below the retained checkpoint',
+                    code: 'rebaseline_required',
+                    lastCheckpointLogId: 4
+                })
+            };
+        });
+
+        await catchUpCloudDocument({
+            bridge: receiver,
+            token: 'token',
+            roomUrl: 'wss://rooms.example/room/asset-1',
+            websiteBaseUrl: 'https://editor.example',
+            assetId: 'asset-1',
+            documentId: glyphDocumentId('id-b'),
+            expectedRevision,
+            maxAttempts: 4,
+            wait: async () => {}
+        });
+
+        expect(urls.some((url) => url.includes('afterLogId=0'))).toBe(true);
+        expect(urls.some((url) => url.includes('/state'))).toBe(true);
+        expect(glyphWidth(receiver, 'B')).toBe(777);
         global.fetch = originalFetch;
     });
 

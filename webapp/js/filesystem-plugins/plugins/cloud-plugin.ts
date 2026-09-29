@@ -67,6 +67,7 @@ import {
     FONT_CORE_DOCUMENT_ID,
     FONT_DEPS_DOCUMENT_ID,
     glyphDocumentId,
+    glyphIdsFromCatalogEntries,
     glyphIdsFromRevisionEntries,
     hydrateSparseGlyphsToFixedPoint,
     hydrateCoreDepsToPublishedPair,
@@ -139,6 +140,33 @@ function deletedGlyphIdsFromCommittedEntries(
         }
     }
     return [...ids];
+}
+
+function catalogGlyphNameFromCommittedEntry(entry: {
+    path?: string | Array<string | number>;
+    newValue?: unknown;
+}): string | null {
+    const path = pathFromCommittedEntry(entry);
+    if (
+        !catalogNeedsUpdate(path) ||
+        path[0] !== 'glyphs' ||
+        path[1] === undefined ||
+        path[1] === null ||
+        path[1] === ''
+    ) {
+        return null;
+    }
+    // A rename commits glyphs.<oldName>.name after the model already uses
+    // the new name. The catalog patch has to look the glyph up by that name.
+    if (
+        path.length >= 3 &&
+        path[2] === 'name' &&
+        typeof entry.newValue === 'string' &&
+        entry.newValue
+    ) {
+        return entry.newValue;
+    }
+    return String(path[1]);
 }
 
 function pathFromCommittedEntry(entry: {
@@ -871,7 +899,14 @@ export class CloudPlugin extends FilesystemPlugin {
     private _residentClosureTimer: number | null = null;
     private _residentClosureAttempt = 0;
     private _coreHydratedListener: (() => void) | null = null;
+    private _seenGlyphRevisions = new Map<string, string>();
+    private _glyphRevisionSnapshotReady = false;
     private _glyphCatchUpInFlight = new Set<string>();
+    private _glyphCatchUpAgain = new Set<string>();
+    private _glyphCatchUpAttempts = new Map<string, number>();
+    private _glyphCatchUpRetryTimer: number | null = null;
+    private _glyphCatchUpRetryIds = new Set<string>();
+    private _glyphCatchUpForceBody = new Set<string>();
     private _pendingOpenAsset: {
         assetId: string;
         promise: Promise<void>;
@@ -1728,6 +1763,8 @@ export class CloudPlugin extends FilesystemPlugin {
                     this._coreHydratedListener
                 );
             }
+            this._seenGlyphRevisions.clear();
+            this._glyphRevisionSnapshotReady = false;
         }
         this._activeAssetSizeBridge = null;
         this._activeAssetSizeListener = null;
@@ -1738,6 +1775,15 @@ export class CloudPlugin extends FilesystemPlugin {
         if (this._residentClosureTimer !== null) {
             window.clearTimeout(this._residentClosureTimer);
             this._residentClosureTimer = null;
+        }
+        this._glyphCatchUpInFlight.clear();
+        this._glyphCatchUpAgain.clear();
+        this._glyphCatchUpAttempts.clear();
+        this._glyphCatchUpRetryIds.clear();
+        this._glyphCatchUpForceBody.clear();
+        if (this._glyphCatchUpRetryTimer !== null) {
+            window.clearTimeout(this._glyphCatchUpRetryTimer);
+            this._glyphCatchUpRetryTimer = null;
         }
         this._coreHydratedListener = null;
     }
@@ -2052,6 +2098,15 @@ export class CloudPlugin extends FilesystemPlugin {
             return;
         }
         await this.checkEligibility();
+        const glyphCount = listGlyphRecords(fontJson).length;
+        if (
+            this._eligibility?.maxGlyphsPerFont != null &&
+            glyphCount > this._eligibility.maxGlyphsPerFont
+        ) {
+            throw new Error(
+                `Cloud seed blocked: font has ${glyphCount} glyphs but this account allows ${this._eligibility.maxGlyphsPerFont}.`
+            );
+        }
         if (this._eligibility?.capabilities) {
             const missingCaps = missingRequiredCloudCapabilities(
                 this._eligibility.capabilities
@@ -2077,19 +2132,10 @@ export class CloudPlugin extends FilesystemPlugin {
                 'Cloud seed blocked: font-deps could not be rebuilt from loaded glyphs.'
             );
         }
-        const glyphCount = listGlyphRecords(fontJson).length;
         const gate = await this.canAddGlyphs(0);
         if (!gate.allowed) {
             throw new Error(
                 gate.reason || 'Cloud seed blocked: glyph quota exceeded.'
-            );
-        }
-        if (
-            this._eligibility?.maxGlyphsPerFont != null &&
-            glyphCount > this._eligibility.maxGlyphsPerFont
-        ) {
-            throw new Error(
-                `Cloud seed blocked: font has ${glyphCount} glyphs but this account allows ${this._eligibility.maxGlyphsPerFont}.`
             );
         }
     }
@@ -2314,7 +2360,7 @@ export class CloudPlugin extends FilesystemPlugin {
         if (this._residentClosureTimer !== null) {
             window.clearTimeout(this._residentClosureTimer);
         }
-        const delay = Math.min(8000, 250 * 2 ** this._residentClosureAttempt);
+        const delay = Math.min(2000, 250 * 2 ** this._residentClosureAttempt);
         this._residentClosureTimer = window.setTimeout(() => {
             this._residentClosureTimer = null;
             void this._hydrateResidentClosure();
@@ -2367,7 +2413,7 @@ export class CloudPlugin extends FilesystemPlugin {
                 'CloudPlugin: resident closure hydration failed',
                 error
             );
-            if (this._residentClosureAttempt >= 6) {
+            if (this._residentClosureAttempt >= 15) {
                 return;
             }
             this._residentClosureAttempt += 1;
@@ -2904,8 +2950,12 @@ export class CloudPlugin extends FilesystemPlugin {
     }
 
     private _syncCatalogFromCommittedChange: CommittedChangeListener = (
-        entries
+        entries,
+        context
     ) => {
+        if (context.origin === 'remote') {
+            return;
+        }
         const fontJson = this._currentFontJson();
         if (!fontJson) {
             return;
@@ -2930,14 +2980,8 @@ export class CloudPlugin extends FilesystemPlugin {
         const catalogGlyphs = [
             ...new Set(
                 entries
-                    .map(pathFromCommittedEntry)
-                    .filter(
-                        (path) =>
-                            catalogNeedsUpdate(path) &&
-                            path[0] === 'glyphs' &&
-                            path[1]
-                    )
-                    .map((path) => String(path[1]))
+                    .map(catalogGlyphNameFromCommittedEntry)
+                    .filter((name): name is string => Boolean(name))
             )
         ];
         this._enqueueCatalogProjection({
@@ -3029,29 +3073,39 @@ export class CloudPlugin extends FilesystemPlugin {
         ) {
             return;
         }
-        const glyphIds = glyphIdsFromRevisionEntries(entries);
+        const glyphIds = [
+            ...new Set([
+                ...glyphIdsFromRevisionEntries(entries),
+                ...glyphIdsFromCatalogEntries(entries)
+            ])
+        ];
         if (!glyphIds.length) {
             return;
         }
         const bridge = this._activeAssetSizeBridge;
-        const subsetIds = bridge
-            ? this._editingSubsetGlyphIdsForCatchUp(bridge)
-            : [];
-        const catchUpIds = glyphIds.filter((glyphId) =>
-            subsetIds.includes(glyphId)
-        );
-        this._enqueueGlyphCatchUp(catchUpIds);
-        const fontJson = this._currentFontJson();
-        if (!fontJson || !bridge) {
+        const ids = bridge?.hasSparseWorkingSet?.()
+            ? glyphIds.filter((glyphId) => {
+                  const working = new Set(
+                      bridge.listSparseWorkingGlyphIds?.() ?? []
+                  );
+                  if (working.has(glyphId)) {
+                      return true;
+                  }
+                  return this._editingSubsetGlyphIdsForCatchUp(bridge).includes(
+                      glyphId
+                  );
+              })
+            : glyphIds;
+        if (!ids.length) {
             return;
         }
-        const loadedNames = listGlyphRecords(fontJson)
-            .filter((glyph) => catchUpIds.includes(String(glyph.id || '')))
-            .map((glyph) => String(glyph.name || ''))
-            .filter(Boolean);
-        if (loadedNames.length) {
-            bridge.syncFontDepsFromFontJson?.(fontJson, loadedNames);
-        }
+        // The editor may already have moved off this glyph and unloaded its
+        // shard. The revision entry is the list of glyphs that changed.
+        // Do not rebuild font-deps from the local body here: that body is
+        // still the pre-catch-up shard and would erase the peer's new edge.
+        // Sparse windows only catch up glyphs they already keep. A new glyph
+        // with no edge stays on the server until a window asks for it.
+        this._enqueueGlyphCatchUp(ids, { includeUnloaded: true });
     };
 
     private _catchUpFromCoreRevisionMap(): void {
@@ -3059,9 +3113,32 @@ export class CloudPlugin extends FilesystemPlugin {
         if (!bridge) {
             return;
         }
+        const tokens = bridge.listGlyphRevisionTokens?.() ?? [];
+        const next = new Map<string, string>();
+        for (const token of tokens) {
+            if (token?.glyphId && token.revision) {
+                next.set(token.glyphId, token.revision);
+            }
+        }
+        const previous = this._seenGlyphRevisions;
+        const snapshotReady = this._glyphRevisionSnapshotReady;
+        const changed: string[] = [];
+        if (snapshotReady) {
+            for (const [glyphId, revision] of next) {
+                if (previous.get(glyphId) !== revision) {
+                    changed.push(glyphId);
+                }
+            }
+        }
+        this._glyphRevisionSnapshotReady = true;
+        this._seenGlyphRevisions = next;
+        if (changed.length) {
+            this._enqueueGlyphCatchUp(changed, { includeUnloaded: true });
+        }
         const subsetIds = this._editingSubsetGlyphIdsForCatchUp(bridge);
         const staleIds = this._staleGlyphIdsForCatchUp(bridge).filter(
-            (glyphId) => subsetIds.includes(glyphId)
+            (glyphId) =>
+                this._glyphIdEligibleForCatchUp(bridge, glyphId, subsetIds)
         );
         this._enqueueGlyphCatchUp([...new Set([...subsetIds, ...staleIds])]);
     }
@@ -3104,7 +3181,28 @@ export class CloudPlugin extends FilesystemPlugin {
             .map((token) => token.glyphId);
     }
 
-    private _enqueueGlyphCatchUp(glyphIds?: string[]): void {
+    /**
+     * Live editing glyphs, plus shards this window already loaded. A core
+     * revision can arrive after the editor has moved on; those loaded glyphs
+     * still need the offline edit. Unloaded catalog glyphs stay out.
+     */
+    private _glyphIdEligibleForCatchUp(
+        bridge: PatchSyncEngine,
+        glyphId: string,
+        subsetIds: string[]
+    ): boolean {
+        if (subsetIds.includes(glyphId)) {
+            return true;
+        }
+        return (
+            bridge.hasResidentGlyphDocument?.(glyphDocumentId(glyphId)) === true
+        );
+    }
+
+    private _enqueueGlyphCatchUp(
+        glyphIds?: string[],
+        options?: { includeUnloaded?: boolean }
+    ): void {
         const bridge = this._activeAssetSizeBridge;
         if (!this._liveSession || !bridge) {
             return;
@@ -3112,9 +3210,15 @@ export class CloudPlugin extends FilesystemPlugin {
         const tokens = bridge.listGlyphRevisionTokens?.() ?? [];
         const subsetIds = this._editingSubsetGlyphIdsForCatchUp(bridge);
         const requestedIds = glyphIds?.length
-            ? subsetIds.length
-                ? glyphIds.filter((glyphId) => subsetIds.includes(glyphId))
-                : []
+            ? glyphIds.filter(
+                  (glyphId) =>
+                      options?.includeUnloaded === true ||
+                      this._glyphIdEligibleForCatchUp(
+                          bridge,
+                          glyphId,
+                          subsetIds
+                      )
+              )
             : subsetIds;
         if (!requestedIds.length) {
             return;
@@ -3123,7 +3227,9 @@ export class CloudPlugin extends FilesystemPlugin {
             const token = tokens.find((entry) => entry.glyphId === glyphId);
             return {
                 glyphId,
-                revision: token?.revision
+                revision: this._glyphCatchUpForceBody.has(glyphId)
+                    ? undefined
+                    : token?.revision
             };
         });
         const targets = selected
@@ -3133,6 +3239,7 @@ export class CloudPlugin extends FilesystemPlugin {
             }))
             .filter((target) => {
                 if (this._glyphCatchUpInFlight.has(target.documentId)) {
+                    this._glyphCatchUpAgain.add(target.documentId);
                     return false;
                 }
                 if (
@@ -3162,10 +3269,88 @@ export class CloudPlugin extends FilesystemPlugin {
                 );
             })
             .finally(() => {
+                const retryIds: string[] = [];
                 for (const target of targets) {
                     this._glyphCatchUpInFlight.delete(target.documentId);
+                    const glyphId = target.documentId.startsWith('glyph:')
+                        ? target.documentId.slice('glyph:'.length)
+                        : '';
+                    const resident =
+                        typeof bridge.hasResidentGlyphDocument === 'function' &&
+                        bridge.hasResidentGlyphDocument(target.documentId) ===
+                            true;
+                    if (
+                        resident &&
+                        typeof bridge.materializeResidentCatalogGlyph ===
+                            'function'
+                    ) {
+                        bridge.materializeResidentCatalogGlyph(
+                            target.documentId
+                        );
+                    }
+                    const modeled =
+                        typeof bridge.catalogGlyphIsInModel !== 'function' ||
+                        bridge.catalogGlyphIsInModel(target.documentId) ===
+                            true;
+                    if (resident && modeled) {
+                        this._glyphCatchUpAttempts.delete(target.documentId);
+                        this._glyphCatchUpForceBody.delete(glyphId);
+                    } else if (glyphId) {
+                        if (resident && !modeled) {
+                            this._glyphCatchUpForceBody.add(glyphId);
+                        }
+                        const attempts =
+                            (this._glyphCatchUpAttempts.get(
+                                target.documentId
+                            ) ?? 0) + 1;
+                        this._glyphCatchUpAttempts.set(
+                            target.documentId,
+                            attempts
+                        );
+                        if (attempts < 8) {
+                            retryIds.push(glyphId);
+                        }
+                    }
+                }
+                for (const documentId of [...this._glyphCatchUpAgain]) {
+                    if (this._glyphCatchUpInFlight.has(documentId)) {
+                        continue;
+                    }
+                    this._glyphCatchUpAgain.delete(documentId);
+                    const glyphId = documentId.startsWith('glyph:')
+                        ? documentId.slice('glyph:'.length)
+                        : '';
+                    if (glyphId && !retryIds.includes(glyphId)) {
+                        retryIds.push(glyphId);
+                    }
+                }
+                if (bridge.hasSparseWorkingSet?.()) {
+                    this._scheduleResidentClosureHydration();
+                }
+                if (retryIds.length) {
+                    this._scheduleGlyphCatchUpRetry(retryIds);
                 }
             });
+    }
+
+    private _scheduleGlyphCatchUpRetry(glyphIds: string[]): void {
+        for (const glyphId of glyphIds) {
+            if (glyphId) {
+                this._glyphCatchUpRetryIds.add(glyphId);
+            }
+        }
+        if (this._glyphCatchUpRetryTimer !== null || !this._liveSession) {
+            return;
+        }
+        this._glyphCatchUpRetryTimer = window.setTimeout(() => {
+            this._glyphCatchUpRetryTimer = null;
+            const ids = [...this._glyphCatchUpRetryIds];
+            this._glyphCatchUpRetryIds.clear();
+            if (!this._liveSession || !ids.length) {
+                return;
+            }
+            this._enqueueGlyphCatchUp(ids, { includeUnloaded: true });
+        }, 1500);
     }
 
     private async _refreshAssetLimitsAfterCatalogChange(): Promise<void> {

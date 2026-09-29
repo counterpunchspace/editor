@@ -29,7 +29,8 @@ import {
 } from './cloud-durable-wal';
 import {
     FONT_CORE_DOCUMENT_ID,
-    FONT_DEPS_DOCUMENT_ID
+    FONT_DEPS_DOCUMENT_ID,
+    glyphDocumentId
 } from './filesystem-plugins/cloud-document-set';
 import type { PatchSyncEngine } from './patch-sync-engine';
 import {
@@ -1440,20 +1441,37 @@ export class CloudLiveSession {
                 documentId !== FONT_DEPS_DOCUMENT_ID &&
                 documentId.startsWith('glyph:')
         );
-        const tokens = this._options.bridge.listGlyphRevisionTokens?.() ?? [];
-        const glyphTargets = liveGlyphs.map((documentId) => {
-            const glyphId = documentId.startsWith('glyph:')
-                ? documentId.slice('glyph:'.length)
-                : '';
-            const revision = tokens.find(
-                (entry) => entry.glyphId === glyphId
-            )?.revision;
-            return { documentId, expectedRevision: revision };
-        });
+        const bridge = this._options.bridge;
+        const staleResident: string[] = [];
+        for (const token of bridge.listGlyphRevisionTokens?.() ?? []) {
+            if (!token?.glyphId || !token.revision) {
+                continue;
+            }
+            const documentId = glyphDocumentId(token.glyphId);
+            if (bridge.hasResidentGlyphDocument?.(documentId) !== true) {
+                continue;
+            }
+            if (
+                bridge.glyphHasCatchUpRevision?.(documentId, token.revision) ===
+                true
+            ) {
+                continue;
+            }
+            staleResident.push(documentId);
+        }
+        const glyphTargets = [
+            ...new Set([...liveGlyphs, ...staleResident])
+        ].map((documentId) => ({
+            documentId
+        }));
         try {
             if (glyphTargets.length) {
+                // Reconnect must pull the room's glyph bytes. A matching
+                // local revision token can still sit on a stale outline
+                // when the peer missed the live update while offline.
                 await this.catchUpDocuments(glyphTargets, {
-                    includeLiveDocuments: true
+                    includeLiveDocuments: true,
+                    matchCoreRevision: false
                 });
             }
             await catchUpCloudDocument({

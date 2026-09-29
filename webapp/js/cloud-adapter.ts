@@ -638,13 +638,86 @@ export async function catchUpCloudDocument(options: {
             options.documentId
         )
     );
-    liveUrl.searchParams.set('afterLogId', '0');
+    let afterLogId = 0;
+    const setAfterLogId = (cursor: number): void => {
+        afterLogId = cursor;
+        liveUrl.searchParams.set('afterLogId', String(cursor));
+    };
+    setAfterLogId(0);
     const maxAttempts = Math.max(
         1,
         options.maxAttempts ?? CLOUD_GLYPH_CATCH_UP_MAX_ATTEMPTS
     );
     const wait = options.wait ?? defaultGlyphCatchUpWait;
     let lastError: Error | null = null;
+    let fetchedCertifiedCheckpoint = false;
+
+    const revisionSatisfied = (): boolean => {
+        const expectedRevision = resolvedCatchUpRevision(options);
+        if (
+            !expectedRevision ||
+            typeof options.bridge.glyphHasCatchUpRevision !== 'function'
+        ) {
+            return true;
+        }
+        return options.bridge.glyphHasCatchUpRevision(
+            options.documentId,
+            expectedRevision
+        );
+    };
+
+    const applyCatchUpBytes = (bytes: Uint8Array): boolean => {
+        if (!bytes.byteLength) {
+            return false;
+        }
+        let applied = false;
+        if (typeof options.bridge.applyDocumentCatchUp === 'function') {
+            applied = options.bridge.applyDocumentCatchUp(
+                options.documentId,
+                bytes,
+                undefined,
+                undefined,
+                resolvedCatchUpRevision(options)
+            );
+        } else {
+            options.bridge.applyDocumentCheckpoint?.(options.documentId, bytes);
+            applied = true;
+        }
+        if (applied && !revisionSatisfied()) {
+            applied = false;
+        }
+        if (applied && window.windowRole?.isMainWindow()) {
+            window.windowSync?.broadcastCloudRelayUpdate?.(
+                bytes,
+                createLinkedWindowCatchUpEnvelope(
+                    options.documentId,
+                    window.windowRole?.instanceId ?? null
+                ),
+                options.documentId
+            );
+        }
+        return applied;
+    };
+
+    const applyCertifiedCheckpoint = async (): Promise<boolean> => {
+        const stateUrl = normalizeCloudShardHttpUrl(
+            options.roomUrl,
+            options.websiteBaseUrl,
+            options.assetId,
+            options.documentId
+        );
+        const response = await fetch(stateUrl, {
+            method: 'GET',
+            headers: {
+                Authorization: `Bearer ${options.token}`,
+                Accept: 'application/octet-stream'
+            }
+        });
+        if (!response.ok) {
+            return false;
+        }
+        return applyCatchUpBytes(new Uint8Array(await response.arrayBuffer()));
+    };
 
     for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
         if (attempt > 0) {
@@ -681,6 +754,39 @@ export async function catchUpCloudDocument(options: {
                 if (!expectedRevision) {
                     return false;
                 }
+                continue;
+            }
+            if (response.status === 409) {
+                const body = (await response.json().catch(() => null)) as {
+                    code?: string;
+                    lastCheckpointLogId?: number;
+                } | null;
+                const nextCursor = Number(body?.lastCheckpointLogId);
+                if (
+                    body?.code === 'rebaseline_required' &&
+                    Number.isInteger(nextCursor) &&
+                    nextCursor > afterLogId
+                ) {
+                    setAfterLogId(nextCursor);
+                }
+                if (
+                    body?.code === 'rebaseline_required' &&
+                    !fetchedCertifiedCheckpoint
+                ) {
+                    // Log zero is behind the retained checkpoint. The shard
+                    // state response is the checkpoint folded with the live
+                    // tail, which is the outline the room will serve.
+                    fetchedCertifiedCheckpoint = true;
+                    if (await applyCertifiedCheckpoint()) {
+                        refreshEditorAfterGlyphDocumentCatchUp(
+                            options.documentId
+                        );
+                        return true;
+                    }
+                }
+                lastError = new Error(
+                    `Live glyph catch-up failed (409) for ${options.documentId}`
+                );
                 continue;
             }
             if (!response.ok) {
@@ -4243,13 +4349,20 @@ export class CloudAdapter implements FileSystemAdapter {
             return false;
         }
         try {
+            // The room journal has no Y.Doc state vector. After an R2
+            // checkpoint bootstrap, uploading encodeStateDiff(empty) resends
+            // the whole shard, which is larger than the ingress spool. The
+            // tail was already applied from the sync response, and unacked
+            // local edits leave through the outbox.
+            const checkpointAlreadyOnServer =
+                this._skipWorkerReseed || this._checkpointLogId !== null;
             let diff =
                 serverStateVector?.byteLength > 0
                     ? this._bridge.encodeStateDiff(
                           serverStateVector,
                           this._documentId
                       )
-                    : this._skipWorkerReseed
+                    : checkpointAlreadyOnServer
                       ? new Uint8Array()
                       : this._bridge.encodeStateDiff(
                             new Uint8Array(),

@@ -387,6 +387,108 @@ describe('linked window resident snapshot', () => {
         sync.destroy();
     });
 
+    test('main window relays a glyph it already holds when serving hydration', async () => {
+        window.windowRole = {
+            sessionId: 'test',
+            isMainWindow: () => true,
+            isLinkedWindow: () => false
+        };
+        window.cloudPlugin = {
+            ensureSparseHydration: jest.fn(async () => ['newcomp'])
+        };
+        const bridge = {
+            windowId: 'main',
+            onLocalUpdate: () => {},
+            getFontJsonSnapshot: () => ({
+                glyphCatalog: {
+                    'id-new': { glyphId: 'id-new', name: 'newcomp' }
+                }
+            }),
+            hasResidentGlyphDocument: () => true,
+            encodeDocumentState: () => new Uint8Array([9, 9])
+        };
+        const sync = new WindowSync(bridge, 'test-relay-held-glyph');
+        const sent = [];
+        sync._send = (message) => sent.push(message);
+        sync._handleMessage({
+            type: 'hydration-request',
+            requestId: 'req-held',
+            glyphNames: ['newcomp'],
+            purpose: 'ui',
+            windowId: 'linked',
+            sessionId: 'test'
+        });
+        await Promise.resolve();
+        await Promise.resolve();
+
+        expect(sent[0]).toEqual(
+            expect.objectContaining({
+                type: 'yjs-update'
+            })
+        );
+        expect(sent[0].updates[0].documentId).toBe('font-core');
+        expect(sent[0].updates[0].collaborationMessage.source).toBe(
+            'window-sync.catch-up'
+        );
+        expect(sent[1].updates[0].documentId).toBe('glyph:id-new');
+        expect(sent[1].updates[0].collaborationMessage.source).toBe(
+            'window-sync.catch-up'
+        );
+        expect(sent[2]).toEqual(
+            expect.objectContaining({
+                type: 'hydration-result',
+                requestId: 'req-held',
+                glyphNames: ['newcomp']
+            })
+        );
+        sync.destroy();
+    });
+
+    test('linked window asks for a working glyph that has no shard', async () => {
+        jest.useFakeTimers();
+        window.windowRole = {
+            sessionId: 'test',
+            isMainWindow: () => false,
+            isLinkedWindow: () => true
+        };
+        const ensureSparseHydration = jest.fn(async () => ['newcomp']);
+        window.cloudPlugin = {
+            ensureSparseHydration,
+            applyRelayedSparseResidency: () => {}
+        };
+        const bridge = {
+            windowId: 'linked',
+            onLocalUpdate: () => {},
+            setSparseResidency: jest.fn(),
+            unloadCleanGlyphDocuments: jest.fn(),
+            hasResidentGlyphDocument: () => false,
+            getFontJsonSnapshot: () => ({
+                glyphCatalog: {
+                    'id-new': { glyphId: 'id-new', name: 'newcomp' }
+                }
+            })
+        };
+        const sync = new WindowSync(bridge, 'test-missing-working-body');
+        sync._handleMessage({
+            type: 'sparse-residency',
+            residency: {
+                sparse: true,
+                workingGlyphIds: ['id-new'],
+                residentGlyphIds: [],
+                previewOnly: false
+            },
+            windowId: 'main',
+            sessionId: 'test'
+        });
+        await jest.advanceTimersByTimeAsync(200);
+        expect(ensureSparseHydration).toHaveBeenCalledWith({
+            glyphNames: ['newcomp'],
+            purpose: 'ui'
+        });
+        jest.useRealTimers();
+        sync.destroy();
+    });
+
     test('linked hydration request resolves when main answers', async () => {
         window.windowRole = {
             sessionId: 'test',

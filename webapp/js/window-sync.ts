@@ -18,7 +18,8 @@ import {
 } from './collaboration-message';
 import {
     FONT_CORE_DOCUMENT_ID,
-    FONT_DEPS_DOCUMENT_ID
+    FONT_DEPS_DOCUMENT_ID,
+    glyphDocumentId
 } from './filesystem-plugins/cloud-document-set';
 
 /** True when this URL should take the main window's resident font, not reopen the source. */
@@ -41,6 +42,7 @@ export function windowSyncChannelName(fontPath: string): string {
 /** Glyph shards per BroadcastChannel message while seeding a linked window. */
 const LINKED_WINDOW_GLYPH_BATCH = 32;
 const FULL_STATE_TRANSFER_TIMEOUT_MS = 60000;
+const MISSING_GLYPH_HYDRATION_DELAY_MS = 200;
 
 export type SparseResidencyRelay = {
     sparse: boolean;
@@ -220,6 +222,9 @@ export class WindowSync {
     private _snapshotSendChain: Promise<void> = Promise.resolve();
     private _snapshotIdle = true;
     private _hydrationServeChain: Promise<void> = Promise.resolve();
+    private _missingGlyphHydrationTimer: ReturnType<typeof setTimeout> | null =
+        null;
+    private _missingGlyphHydrationNames = new Set<string>();
     private _hydrationRequests = new Map<
         string,
         {
@@ -679,6 +684,131 @@ export class WindowSync {
         this._bridge.unloadCleanGlyphDocuments?.(residency.residentGlyphIds, {
             ignorePeers: true
         });
+        this._scheduleMissingWorkingGlyphHydration(residency.workingGlyphIds);
+    }
+
+    /**
+     * A residency relay can arrive before the glyph bytes, or after an unload.
+     * Ask the main window for working glyphs this window still has no shard for.
+     */
+    private _scheduleMissingWorkingGlyphHydration(
+        workingGlyphIds: string[]
+    ): void {
+        if (window.windowRole?.isLinkedWindow?.() !== true) {
+            return;
+        }
+        const names = workingGlyphIds
+            .filter(
+                (glyphId) =>
+                    !this._bridge.hasResidentGlyphDocument?.(
+                        glyphDocumentId(glyphId)
+                    )
+            )
+            .map((glyphId) => this._glyphNameForId(glyphId))
+            .filter((name): name is string => !!name)
+            .filter((name) => !this._missingGlyphHydrationNames.has(name));
+        if (!names.length) {
+            return;
+        }
+        if (this._missingGlyphHydrationTimer !== null) {
+            clearTimeout(this._missingGlyphHydrationTimer);
+        }
+        this._missingGlyphHydrationTimer = setTimeout(() => {
+            this._missingGlyphHydrationTimer = null;
+            const requested = names.filter(
+                (name) => !this._missingGlyphHydrationNames.has(name)
+            );
+            if (!requested.length) {
+                return;
+            }
+            for (const name of requested) {
+                this._missingGlyphHydrationNames.add(name);
+            }
+            void window.cloudPlugin
+                ?.ensureSparseHydration?.({
+                    glyphNames: requested,
+                    purpose: 'ui'
+                })
+                ?.then(
+                    () => undefined,
+                    () => undefined
+                )
+                ?.finally(() => {
+                    for (const name of requested) {
+                        this._missingGlyphHydrationNames.delete(name);
+                    }
+                });
+        }, MISSING_GLYPH_HYDRATION_DELAY_MS);
+    }
+
+    private _glyphNameForId(glyphId: string): string | null {
+        const fontJson = this._bridge.getFontJsonSnapshot?.() as
+            | {
+                  glyphs?: Array<{ id?: string; name?: string }>;
+                  glyphCatalog?: Record<
+                      string,
+                      { glyphId?: string; name?: string }
+                  >;
+              }
+            | undefined;
+        const catalog = fontJson?.glyphCatalog;
+        if (catalog && typeof catalog === 'object') {
+            for (const entry of Object.values(catalog)) {
+                if (entry?.glyphId === glyphId && entry.name) {
+                    return entry.name;
+                }
+            }
+        }
+        const glyphs = Array.isArray(fontJson?.glyphs) ? fontJson.glyphs : [];
+        const match = glyphs.find((glyph) => glyph?.id === glyphId);
+        return match?.name || null;
+    }
+
+    private _glyphIdForName(glyphName: string): string | null {
+        const fontJson = this._bridge.getFontJsonSnapshot?.() as
+            | {
+                  glyphs?: Array<{ id?: string; name?: string }>;
+                  glyphCatalog?: Record<
+                      string,
+                      { glyphId?: string; name?: string }
+                  >;
+              }
+            | undefined;
+        const catalog = fontJson?.glyphCatalog;
+        if (catalog && typeof catalog === 'object') {
+            for (const entry of Object.values(catalog)) {
+                if (entry?.name === glyphName && entry.glyphId) {
+                    return entry.glyphId;
+                }
+            }
+        }
+        const glyphs = Array.isArray(fontJson?.glyphs) ? fontJson.glyphs : [];
+        const match = glyphs.find((glyph) => glyph?.name === glyphName);
+        return match?.id || null;
+    }
+
+    private _relayResidentGlyphs(glyphNames: string[]): void {
+        if (window.windowRole?.isMainWindow?.() !== true) {
+            return;
+        }
+        for (const glyphName of glyphNames) {
+            const glyphId = this._glyphIdForName(glyphName);
+            if (!glyphId) {
+                continue;
+            }
+            const documentId = glyphDocumentId(glyphId);
+            if (
+                this._bridge.hasResidentGlyphDocument &&
+                !this._bridge.hasResidentGlyphDocument(documentId)
+            ) {
+                continue;
+            }
+            const bytes = this._bridge.encodeDocumentState?.(documentId);
+            if (!bytes?.byteLength) {
+                continue;
+            }
+            this.broadcastDocumentCatchUp(documentId, bytes);
+        }
     }
 
     private _acceptInboundTransfer(transferId: string): boolean {
@@ -696,12 +826,31 @@ export class WindowSync {
     private _serveHydrationRequest(msg: HydrationRequestMsg): void {
         const serve = this._hydrationServeChain.then(async () => {
             try {
-                const names =
-                    (await window.cloudPlugin?.ensureSparseHydration?.({
-                        text: msg.text,
-                        glyphNames: msg.glyphNames,
-                        purpose: msg.purpose
-                    })) ?? [];
+                const requested = msg.glyphNames || [];
+                if (requested.length) {
+                    this._relayFontCoreCatalog();
+                }
+                let names: string[] = [];
+                for (let attempt = 0; attempt < 4; attempt += 1) {
+                    names =
+                        (await window.cloudPlugin?.ensureSparseHydration?.({
+                            text: msg.text,
+                            glyphNames: msg.glyphNames,
+                            purpose: msg.purpose
+                        })) ?? [];
+                    const unresolved = requested.filter(
+                        (name) =>
+                            !names.includes(name) &&
+                            !window.patchSyncEngine?.glyphDocumentIdForName?.(
+                                name
+                            )
+                    );
+                    if (!unresolved.length || attempt === 3) {
+                        break;
+                    }
+                    await new Promise((resolve) => setTimeout(resolve, 500));
+                }
+                this._relayResidentGlyphs(requested.length ? requested : names);
                 this._send({
                     type: 'hydration-result',
                     requestId: msg.requestId,
@@ -725,6 +874,16 @@ export class WindowSync {
             () => undefined,
             () => undefined
         );
+    }
+
+    private _relayFontCoreCatalog(): void {
+        if (window.windowRole?.isMainWindow?.() !== true) {
+            return;
+        }
+        const bytes = this._bridge.encodeDocumentState?.(FONT_CORE_DOCUMENT_ID);
+        if (bytes?.byteLength) {
+            this.broadcastDocumentCatchUp(FONT_CORE_DOCUMENT_ID, bytes);
+        }
     }
 
     private _settleHydrationRequest(msg: HydrationResultMsg): void {
@@ -852,6 +1011,10 @@ export class WindowSync {
 
     /** Clean up. */
     destroy(): void {
+        if (this._missingGlyphHydrationTimer !== null) {
+            clearTimeout(this._missingGlyphHydrationTimer);
+            this._missingGlyphHydrationTimer = null;
+        }
         this._flushOutboundBroadcast();
         this.announceClose();
         this._channel?.close();

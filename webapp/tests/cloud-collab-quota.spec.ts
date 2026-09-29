@@ -126,9 +126,9 @@ test('basic limits reject a second font and a font over the glyph cap, and a bas
     const runId = `quota-${Date.now().toString(36)}`;
     const emails = makeCloudCollabEmails(runId);
     const basic = await setLimitsTier(request, emails.owner, 'basic');
-    expect(basic.maxFontsOwned).not.toBeNull();
-    expect(basic.maxGlyphsPerFont).not.toBeNull();
-    expect(basic.maxInvitesPerAsset).toBe(1);
+    expect(basic.maxFontsOwned).toBe(5);
+    expect(basic.maxGlyphsPerFont).toBe(2000);
+    expect(basic.maxInvitesPerAsset).toBe(2);
 
     const ownerSession = await bootstrapCloudCollabSession(
         request,
@@ -144,20 +144,55 @@ test('basic limits reject a second font and a font over the glyph cap, and a bas
     try {
         await ownerPage.goto('/?test=true&examples=collab-fixtures');
         await waitForCanvasReady(ownerPage);
-        await openFileFromFilesView(ownerPage, 'Fustat.glyphs');
-        await waitForOpenSessionReady(ownerPage, 'Fustat.glyphs');
+        await openFileFromFilesView(ownerPage, 'bbox.glyphs');
+        await waitForOpenSessionReady(ownerPage, 'bbox.glyphs');
         await waitForBridgeReady(ownerPage);
-        const blocked = await ownerPage.evaluate(async (assetName) => {
+        const blocked = await ownerPage.evaluate(async (cap) => {
+            const plugin = (window as any).cloudPlugin;
+            const model = (window as any).fontManager?.currentFont?.fontModel;
+            const savedEligibility = plugin._eligibility;
+            const savedLimits = plugin._assetLimits;
+            plugin._eligibility = null;
+            plugin._assetLimits = null;
+            const masterId = model.masters?.[0]?.id;
+            const glyphs = model._data.glyphs;
+            const originalCount = glyphs.length;
             try {
-                await (window as any).cloudPlugin.saveAs(assetName);
+                while (glyphs.length <= cap) {
+                    const index = glyphs.length;
+                    glyphs.push({
+                        name: `pad${index}`,
+                        category: 'Base',
+                        exported: true,
+                        id: `pad-id-${index}`,
+                        layers: masterId
+                            ? [
+                                  {
+                                      id: `pad-layer-${index}`,
+                                      width: 500,
+                                      shapes: [],
+                                      associatedMasterId: masterId,
+                                      _type: 'Layer'
+                                  }
+                              ]
+                            : []
+                    });
+                }
+                model._glyphWrappers = null;
+                await plugin.saveAs('Bbox-over-cap');
                 return { error: '' };
             } catch (error) {
                 return {
                     error:
                         error instanceof Error ? error.message : String(error)
                 };
+            } finally {
+                glyphs.length = originalCount;
+                model._glyphWrappers = null;
+                plugin._eligibility = savedEligibility;
+                plugin._assetLimits = savedLimits;
             }
-        }, `Fustat-over-cap-${runId}`);
+        }, basic.maxGlyphsPerFont);
         expect(blocked.error).toMatch(/glyph/i);
         expect(blocked.error).toContain(String(basic.maxGlyphsPerFont));
 
@@ -171,40 +206,25 @@ test('basic limits reject a second font and a font over the glyph cap, and a bas
             `Bbox-${runId}`
         );
         await waitForCloudLiveIdle(ownerPage);
-        const second = await ownerPage.evaluate(async (assetName) => {
-            try {
-                await (window as any).cloudPlugin.saveAs(assetName);
-                return { error: '' };
-            } catch (error) {
-                return {
-                    error:
-                        error instanceof Error ? error.message : String(error)
-                };
-            }
-        }, `Bbox-second-${runId}`);
-        expect(second.error).toMatch(/font limit/i);
 
         const pendingA = emails.invitee;
-        const pendingB = emails.viewer;
-        const firstPending = await ownerPage.evaluate(async (email) => {
-            return (window as any).cloudPlugin.inviteUser(email, 'editor');
-        }, pendingA);
-        const secondPending = await ownerPage.evaluate(async (email) => {
-            return (window as any).cloudPlugin.inviteUser(email, 'editor');
-        }, pendingB);
+        const firstPending = await ownerPage.evaluate(
+            async ({ email, assetId: sharedAssetId }) => {
+                return (window as any).cloudPlugin.inviteUser(
+                    email,
+                    'editor',
+                    sharedAssetId
+                );
+            },
+            { email: pendingA, assetId }
+        );
         expect(firstPending.inviteUrl).toContain('token=');
-        expect(secondPending.inviteUrl).toContain('token=');
         const inviteeBasic = await setLimitsTier(request, pendingA, 'basic');
         expect(inviteeBasic.maxGlyphsPerFont).toBe(basic.maxGlyphsPerFont);
         const firstUser = await bootstrapCloudCollabSession(
             request,
             pendingA,
             'invitee'
-        );
-        const secondUser = await bootstrapCloudCollabSession(
-            request,
-            pendingB,
-            'viewer'
         );
         inviteeContext = await browser.newContext();
         await installCrossWindowTrackersOnContext(inviteeContext);
@@ -214,21 +234,112 @@ test('basic limits reject a second font and a font over the glyph cap, and a bas
             firstPage,
             firstPending.inviteUrl
         );
+        const inviteePage = await inviteeContext.newPage();
+        await collectPageErrors(inviteePage);
+        await gotoEditorPage(inviteePage, editorHrefWithTestMode(editorHref));
+        await waitForCanvasReady(inviteePage);
+        await waitForOpenSessionReady(inviteePage, assetId);
+        await waitForBridgeReady(inviteePage);
+        await installJsonCanonicalizer(inviteePage);
+        await installFontModelSyncTracker(inviteePage);
+        await installEditingFontCompileTracker(inviteePage);
+        await inviteePage.waitForFunction(
+            () => ((window as any).currentFontModel?.glyphs?.length || 0) >= 66,
+            null,
+            { timeout: 60000 }
+        );
+        await focusView(ownerPage, 'Meta+Shift+E', 'view-editor');
+        await alignEditorCanvas(ownerPage, 'A', {});
+        await waitForCloudLiveIdle(ownerPage);
+        await waitForCloudLiveIdle(inviteePage);
+        const added = `zzQuota${runId.replace(/[^a-z0-9]/gi, '').slice(-6)}`;
+        await ownerPage.evaluate((name) => {
+            (window as any).currentFontModel.addGlyph(name, 'Base');
+        }, added);
+        await waitForCloudLiveIdle(ownerPage);
+        await inviteePage.waitForFunction(
+            (name) => !!(window as any).currentFontModel?.findGlyph?.(name),
+            added,
+            { timeout: 120000 }
+        );
+        await ownerPage.waitForFunction(
+            (name) => !!(window as any).currentFontModel?.findGlyph?.(name),
+            added,
+            { timeout: 30000 }
+        );
+
+        const pendingB = emails.viewer;
+        const secondPending = await ownerPage.evaluate(
+            async ({ email, assetId: sharedAssetId }) => {
+                return (window as any).cloudPlugin.inviteUser(
+                    email,
+                    'editor',
+                    sharedAssetId
+                );
+            },
+            { email: pendingB, assetId }
+        );
+        expect(secondPending.inviteUrl).toContain('token=');
+        const secondUser = await bootstrapCloudCollabSession(
+            request,
+            pendingB,
+            'viewer'
+        );
         const secondContext = await browser.newContext();
         await attachCloudCollabCookies(secondContext, secondUser);
         const secondPage = await secondContext.newPage();
-        await expect(
-            acceptCloudInviteAndGetEditorHref(
-                secondPage,
-                secondPending.inviteUrl
-            )
-        ).rejects.toThrow(/invite limit/i);
+        await acceptCloudInviteAndGetEditorHref(
+            secondPage,
+            secondPending.inviteUrl
+        );
         await secondContext.close();
 
         const extra = `e2e-${runId}-extra@counterpunch.test`;
-        const capped = await ownerPage.evaluate(async (email) => {
+        const capped = await ownerPage.evaluate(
+            async ({ email, assetId: sharedAssetId }) => {
+                try {
+                    await (window as any).cloudPlugin.inviteUser(
+                        email,
+                        'editor',
+                        sharedAssetId
+                    );
+                    return { error: '' };
+                } catch (error) {
+                    return {
+                        error:
+                            error instanceof Error
+                                ? error.message
+                                : String(error)
+                    };
+                }
+            },
+            { email: extra, assetId }
+        );
+        expect(capped.error).toMatch(/invite limit/i);
+
+        for (let index = 1; index < (basic.maxFontsOwned || 0); index += 1) {
+            const saved = await ownerPage.evaluate(async (assetName) => {
+                try {
+                    const created = await (window as any).cloudPlugin.saveAs(
+                        assetName
+                    );
+                    return { error: '', assetId: String(created || '') };
+                } catch (error) {
+                    return {
+                        error:
+                            error instanceof Error
+                                ? error.message
+                                : String(error),
+                        assetId: ''
+                    };
+                }
+            }, `Bbox-extra-${runId}-${index}`);
+            expect(saved.error, `font ${index + 1}`).toBe('');
+            expect(saved.assetId, `font ${index + 1} id`).toBeTruthy();
+        }
+        const overFont = await ownerPage.evaluate(async (assetName) => {
             try {
-                await (window as any).cloudPlugin.inviteUser(email, 'editor');
+                await (window as any).cloudPlugin.saveAs(assetName);
                 return { error: '' };
             } catch (error) {
                 return {
@@ -236,26 +347,8 @@ test('basic limits reject a second font and a font over the glyph cap, and a bas
                         error instanceof Error ? error.message : String(error)
                 };
             }
-        }, extra);
-        expect(capped.error).toMatch(/invite limit/i);
-
-        await setLimitsTier(request, emails.owner, 'unlimited');
-        const inviteePage = await inviteeContext.newPage();
-        await collectPageErrors(inviteePage);
-        await gotoEditorPage(inviteePage, editorHrefWithTestMode(editorHref));
-        await waitForCanvasReady(inviteePage);
-        await waitForOpenSessionReady(inviteePage, assetId);
-        await waitForBridgeReady(inviteePage);
-        const added = `zzQuota${runId.replace(/[^a-z0-9]/gi, '').slice(-6)}`;
-        await inviteePage.evaluate((name) => {
-            (window as any).currentFontModel.addGlyph(name, 'Base');
-        }, added);
-        await waitForCloudLiveIdle(inviteePage);
-        await ownerPage.waitForFunction(
-            (name) => !!(window as any).currentFontModel?.findGlyph?.(name),
-            added,
-            { timeout: 120000 }
-        );
+        }, `Bbox-over-fonts-${runId}`);
+        expect(overFont.error).toMatch(/font limit/i);
         await cleanupCloudCollabUsers(request, [extra]);
     } finally {
         await ownerContext.close();
@@ -297,11 +390,11 @@ test('an invitation for another signed-in account is refused', async ({
         await attachCloudCollabCookies(viewerContext, viewerSession);
         const viewerPage = await viewerContext.newPage();
         await viewerPage.goto(invite.inviteUrl);
-        await viewerPage.locator('#inviteAcceptButton').click();
-        await expect(viewerPage.locator('.message.error')).toContainText(
-            /does not match/i,
-            { timeout: 30000 }
-        );
+        const mismatch = viewerPage.locator('.message.error');
+        await expect(mismatch).toContainText(/signed in as/i, {
+            timeout: 30000
+        });
+        await expect(mismatch).toContainText(emails.invitee);
     } finally {
         await opened.ownerContext.close();
         await viewerContext?.close();

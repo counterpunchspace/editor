@@ -2829,6 +2829,148 @@ describe('section 2 catalog packets and freshness', () => {
         expect(revisionsIndex).toBeGreaterThan(depsIndex);
         bridge.destroy();
     });
+
+    it('keeps an ordered glyph when its shard is not loaded', () => {
+        const fontJson = twoGlyphFont();
+        const bridge = new PatchSyncEngine('keep-without-body');
+        bridge.initFromJson(fontJson);
+        const glyphId = bridge._fontJson.glyphs[0].id;
+        bridge._glyphDocs.get(glyphId)?.destroy();
+        bridge._glyphDocs.delete(glyphId);
+        bridge._syncAllGlyphsFromYDoc();
+        expect(bridge._fontJson.glyphs.map((glyph) => glyph.name)).toEqual([
+            'A',
+            'B'
+        ]);
+        bridge.destroy();
+    });
+
+    it('drops a glyph a sparse unload removed', () => {
+        const fontJson = twoGlyphFont();
+        const bridge = new PatchSyncEngine('unload-drop');
+        bridge.initFromJson(fontJson);
+        const glyphId = bridge._fontJson.glyphs[0].id;
+        const unloaded = bridge.unloadCleanGlyphDocuments(
+            [bridge._fontJson.glyphs[1].id],
+            { ignorePeers: true }
+        );
+        expect(unloaded).toContain(glyphId);
+        expect(bridge._fontJson.glyphs.map((glyph) => glyph.name)).toEqual([
+            'B'
+        ]);
+        bridge.destroy();
+    });
+
+    it('drops a glyph removed from glyph order', () => {
+        const fontJson = twoGlyphFont();
+        const bridge = new PatchSyncEngine('order-drop');
+        bridge.initFromJson(fontJson);
+        const order = bridge.fontMap.get('glyphOrder');
+        const index = order.toArray().indexOf('A');
+        order.delete(index, 1);
+        bridge._syncAllGlyphsFromYDoc();
+        expect(bridge._fontJson.glyphs.map((glyph) => glyph.name)).toEqual([
+            'B'
+        ]);
+        bridge.destroy();
+    });
+
+    it('follows a glyph order rename onto the glyph that is still stored under the old name', () => {
+        const fontJson = twoGlyphFont();
+        const bridge = new PatchSyncEngine('order-rename');
+        bridge.initFromJson(fontJson);
+        const glyphId = bridge._fontJson.glyphs[0].id;
+        const order = bridge.fontMap.get('glyphOrder');
+        const index = order.toArray().indexOf('A');
+        order.delete(index, 1);
+        order.insert(index, ['ARenamed']);
+        bridge._reconcileGlyphDocsAfterRemoteEntries([
+            {
+                op: 'set',
+                path: 'glyphOrder',
+                oldValue: ['A', 'B'],
+                newValue: ['ARenamed', 'B']
+            }
+        ]);
+        bridge._syncAllGlyphsFromYDoc();
+        expect(bridge._glyphIdByName.get('ARenamed')).toBe(glyphId);
+        expect(bridge._fontJson.glyphs.map((glyph) => glyph.name)).toEqual([
+            'ARenamed',
+            'B'
+        ]);
+        bridge.destroy();
+    });
+
+    it('follows a glyph order rename from collaboration replay values', () => {
+        const fontJson = twoGlyphFont();
+        const bridge = new PatchSyncEngine('order-rename-replay');
+        bridge.initFromJson(fontJson);
+        const glyphId = bridge._fontJson.glyphs[0].id;
+        const order = bridge.fontMap.get('glyphOrder');
+        const index = order.toArray().indexOf('A');
+        order.delete(index, 1);
+        order.insert(index, ['ARenamed']);
+        bridge._reconcileGlyphDocsAfterRemoteEntries([
+            {
+                op: 'set',
+                path: 'glyphOrder',
+                oldValue: undefined,
+                newValue: undefined,
+                replayOldValue: ['A', 'B'],
+                replayNewValue: ['ARenamed', 'B']
+            }
+        ]);
+        bridge._syncAllGlyphsFromYDoc();
+        expect(bridge._glyphIdByName.get('ARenamed')).toBe(glyphId);
+        expect(bridge._fontJson.glyphs.map((glyph) => glyph.name)).toEqual([
+            'ARenamed',
+            'B'
+        ]);
+        bridge.destroy();
+    });
+
+    it('does not bind a removed glyph onto a different order name', () => {
+        const fontJson = twoGlyphFont();
+        const bridge = new PatchSyncEngine('order-pair');
+        bridge.initFromJson(fontJson);
+        const removedId = bridge._fontJson.glyphs[1].id;
+        const order = bridge.fontMap.get('glyphOrder');
+        order.delete(0, 2);
+        order.insert(0, ['C', 'A']);
+        bridge._syncGlyphNameIndexToOrder();
+        expect(bridge._glyphIdByName.get('C')).toBeUndefined();
+        expect(bridge._glyphNameById.get(removedId)).not.toBe('C');
+        bridge.destroy();
+    });
+
+    it('follows glyphRenames after the order name has already moved', () => {
+        const fontJson = twoGlyphFont();
+        const bridge = new PatchSyncEngine('order-glyph-renames');
+        bridge.initFromJson(fontJson);
+        const glyphId = bridge._fontJson.glyphs[0].id;
+        const order = bridge.fontMap.get('glyphOrder');
+        const index = order.toArray().indexOf('A');
+        order.delete(index, 1);
+        order.insert(index, ['ARenamed']);
+        bridge._syncGlyphNameIndexToOrder();
+        bridge._applyGlyphNameRemapsFromEntries(
+            [
+                {
+                    op: 'set',
+                    path: 'glyphs.A.name',
+                    glyphRenames: [{ oldName: 'A', newName: 'ARenamed' }]
+                }
+            ],
+            'redo'
+        );
+        bridge._syncAllGlyphsFromYDoc();
+        expect(bridge._glyphIdByName.get('ARenamed')).toBe(glyphId);
+        expect(bridge._fontJson.glyphs.map((glyph) => glyph.name)).toEqual([
+            'ARenamed',
+            'B'
+        ]);
+        bridge.destroy();
+    });
 });
 
 describe('catalog tombstones and published hydrate pair', () => {

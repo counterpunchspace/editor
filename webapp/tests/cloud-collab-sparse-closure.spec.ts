@@ -253,10 +253,14 @@ test('sparse peers hydrate a new composite, a new base, and a new GSUB alternate
         );
         await settleCloudEdit(ownerPage);
         await expect
-            .poll(async () => glyphResidency(inviteePage, 'a.ss01'), {
-                timeout: 120000
-            })
-            .toContain('"glyphId"');
+            .poll(
+                async () => {
+                    const value = await glyphResidency(inviteePage, 'a.ss01');
+                    return value === 'resident' || value.includes('"glyphId"');
+                },
+                { timeout: 120000 }
+            )
+            .toBe(true);
         await inviteePage.evaluate(async () => {
             await (window as any).cloudPlugin.ensureSparseHydration({
                 glyphNames: ['a'],

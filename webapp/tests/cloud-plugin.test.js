@@ -2570,6 +2570,197 @@ describe('CloudPlugin glyph catch-up from core revision map', () => {
             window.glyphCanvas = originalCanvas;
         }
     });
+
+    test('HTTP-catches a glyph whose core revision changed after its shard was unloaded', async () => {
+        const plugin = new CloudPlugin();
+        const catchUpDocuments = jest.fn().mockResolvedValue([]);
+        plugin._liveSession = { catchUpDocuments };
+        const tokens = [
+            { glyphId: 'edited-a', revision: 'rev-1' },
+            { glyphId: 'other-z', revision: 'rev-1' }
+        ];
+        plugin._activeAssetSizeBridge = {
+            hasSparseWorkingSet: () => false,
+            listSparseWorkingGlyphIds: () => [],
+            glyphDocumentIdForName: () => null,
+            hasResidentGlyphDocument: () => false,
+            listGlyphRevisionTokens: () => tokens,
+            glyphHasCatchUpRevision: (documentId, revision) =>
+                documentId === 'glyph:edited-a' && revision === 'rev-1'
+        };
+        const originalFontManager = window.fontManager;
+        const originalCanvas = window.glyphCanvas;
+        window.fontManager = {
+            getActiveEditorGlyphName: () => 'B',
+            getConstrainedEditingSubsetGlyphs: () => ['B'],
+            getEditingSubsetSnapshot: () => ['B'],
+            getLiveVisibleGlyphNames: () => ['B'],
+            deriveSubsetGlyphsFromText: () => ['B'],
+            resolveEditingTextForCompile: () => 'B'
+        };
+        window.glyphCanvas = { textRunEditor: { glyphNameBuffer: [] } };
+
+        try {
+            plugin._catchUpFromCoreRevisionMap();
+            tokens[0] = { glyphId: 'edited-a', revision: 'rev-2' };
+            plugin._catchUpFromCoreRevisionMap();
+            await Promise.resolve();
+            expect(catchUpDocuments).toHaveBeenCalledWith(
+                [
+                    {
+                        documentId: 'glyph:edited-a',
+                        expectedRevision: 'rev-2'
+                    }
+                ],
+                { includeLiveDocuments: true }
+            );
+        } finally {
+            window.fontManager = originalFontManager;
+            window.glyphCanvas = originalCanvas;
+        }
+    });
+
+    test('HTTP-catches a loaded glyph after the editor has moved on', async () => {
+        const plugin = new CloudPlugin();
+        const catchUpDocuments = jest
+            .fn()
+            .mockResolvedValue(['glyph:loaded-a']);
+        plugin._liveSession = { catchUpDocuments };
+        plugin._activeAssetSizeBridge = {
+            hasSparseWorkingSet: () => false,
+            listSparseWorkingGlyphIds: () => [],
+            glyphDocumentIdForName: (name) =>
+                name === 'B' ? 'glyph:visible-b' : null,
+            hasResidentGlyphDocument: (documentId) =>
+                documentId === 'glyph:loaded-a',
+            listGlyphRevisionTokens: () => [
+                { glyphId: 'loaded-a', revision: 'rev-4' },
+                { glyphId: 'catalog-z', revision: 'rev-9' }
+            ],
+            glyphHasCatchUpRevision: () => false
+        };
+        const originalFontManager = window.fontManager;
+        const originalCanvas = window.glyphCanvas;
+        window.fontManager = {
+            getActiveEditorGlyphName: () => 'B',
+            getConstrainedEditingSubsetGlyphs: () => ['B'],
+            getEditingSubsetSnapshot: () => ['B'],
+            getLiveVisibleGlyphNames: () => ['B'],
+            deriveSubsetGlyphsFromText: () => ['B'],
+            resolveEditingTextForCompile: () => 'B'
+        };
+        window.glyphCanvas = { textRunEditor: { glyphNameBuffer: [] } };
+
+        try {
+            plugin._syncGlyphCatchUpFromCommittedChange(
+                [{ path: 'glyphRevisions.loaded-a' }],
+                { origin: 'remote', documentId: 'font-core' }
+            );
+            await Promise.resolve();
+            expect(catchUpDocuments).toHaveBeenCalledWith(
+                [
+                    {
+                        documentId: 'glyph:loaded-a',
+                        expectedRevision: 'rev-4'
+                    }
+                ],
+                { includeLiveDocuments: true }
+            );
+        } finally {
+            window.fontManager = originalFontManager;
+            window.glyphCanvas = originalCanvas;
+        }
+    });
+
+    test('retries catch-up while a new glyph shard is still unpublished', async () => {
+        jest.useFakeTimers();
+        const plugin = new CloudPlugin();
+        const catchUpDocuments = jest.fn().mockResolvedValue([]);
+        plugin._liveSession = { catchUpDocuments };
+        plugin._activeAssetSizeBridge = {
+            hasSparseWorkingSet: () => false,
+            listSparseWorkingGlyphIds: () => [],
+            glyphDocumentIdForName: () => null,
+            hasResidentGlyphDocument: () => false,
+            listGlyphRevisionTokens: () => [
+                { glyphId: 'id-new', revision: 'rev-1' }
+            ],
+            glyphHasCatchUpRevision: () => false
+        };
+        const originalFontManager = window.fontManager;
+        const originalCanvas = window.glyphCanvas;
+        window.fontManager = {
+            getActiveEditorGlyphName: () => 'a',
+            getConstrainedEditingSubsetGlyphs: () => ['a'],
+            getEditingSubsetSnapshot: () => ['a'],
+            getLiveVisibleGlyphNames: () => ['a'],
+            deriveSubsetGlyphsFromText: () => ['a'],
+            resolveEditingTextForCompile: () => 'a'
+        };
+        window.glyphCanvas = { textRunEditor: { glyphNameBuffer: [] } };
+        try {
+            plugin._syncGlyphCatchUpFromCommittedChange(
+                [{ path: 'glyphRevisions.id-new', newValue: 'rev-1' }],
+                { origin: 'remote', documentId: 'font-core' }
+            );
+            await Promise.resolve();
+            await Promise.resolve();
+            expect(catchUpDocuments).toHaveBeenCalledTimes(1);
+            await jest.advanceTimersByTimeAsync(1500);
+            await Promise.resolve();
+            expect(catchUpDocuments).toHaveBeenCalledTimes(2);
+            expect(catchUpDocuments).toHaveBeenLastCalledWith(
+                [{ documentId: 'glyph:id-new', expectedRevision: 'rev-1' }],
+                { includeLiveDocuments: true }
+            );
+        } finally {
+            plugin._stopTrackingActiveAssetSize?.();
+            window.fontManager = originalFontManager;
+            window.glyphCanvas = originalCanvas;
+            jest.useRealTimers();
+        }
+    });
+
+    test('a glyph rename updates the catalog under the new name', () => {
+        const plugin = new CloudPlugin();
+        const fontJson = {
+            glyphs: [{ id: 'id-a', name: 'ARenamed', layers: [] }],
+            glyphCatalog: {
+                'id-a': {
+                    glyphId: 'id-a',
+                    name: 'A',
+                    codepoints: [],
+                    latestGlyphRevision: '0',
+                    generation: 0,
+                    exported: true
+                }
+            },
+            codepointIndex: {}
+        };
+        plugin._currentFontJson = () => fontJson;
+        const projected = [];
+        const originalEngine = window.patchSyncEngine;
+        window.patchSyncEngine = {
+            syncCloudOwnedProjection: (owned) => projected.push(owned)
+        };
+        try {
+            plugin._syncCatalogFromCommittedChange(
+                [
+                    {
+                        op: 'set',
+                        path: ['glyphs', 'A', 'name'],
+                        oldValue: 'A',
+                        newValue: 'ARenamed'
+                    }
+                ],
+                { origin: 'local', update: new Uint8Array() }
+            );
+            expect(projected).toHaveLength(1);
+            expect(projected[0].glyphCatalog['id-a'].name).toBe('ARenamed');
+        } finally {
+            window.patchSyncEngine = originalEngine;
+        }
+    });
 });
 
 describe('cloud status tooltip', () => {

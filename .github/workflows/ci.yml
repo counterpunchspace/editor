@@ -181,12 +181,15 @@ jobs:
                   WEBSITE_ROOT: ${{ github.workspace }}/_cloud_e2e/website
                   COLLAB_ROOT: ${{ steps.collab.outputs.root }}
                   CLOUD_COLLAB_E2E: "1"
+                  CLOUD_COLLAB_STACK_ROOT: ${{ runner.temp }}/cloud-collab-e2e
 
             - name: Dump cloud-collab stack logs
               if: failure()
+              env:
+                  CLOUD_COLLAB_STACK_ROOT: ${{ runner.temp }}/cloud-collab-e2e
               run: |
                   echo "==== cloud-collab stack logs ===="
-                  logs=$(find webapp/.cloud-collab-e2e-wrangler -name '*.log' 2>/dev/null || true)
+                  logs=$(find "$CLOUD_COLLAB_STACK_ROOT" -name '*.log' 2>/dev/null || true)
                   if [ -z "$logs" ]; then
                     echo "No wrangler logs. Stack likely died before spawn (certs or wrangler missing)."
                     ls -la _cloud_e2e/website/.local-certs 2>/dev/null || echo "No website .local-certs directory"

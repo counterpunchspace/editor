@@ -2380,6 +2380,28 @@ describe('CloudAdapter outbound updates', () => {
         expect(sentFrames).toEqual([]);
     });
 
+    it('does not reupload an R2 checkpoint when the sync response has no state vector', () => {
+        const adapter = new CloudAdapter({
+            assetId: 'asset-123',
+            documentId: 'font-core'
+        });
+        const sentFrames = [];
+        adapter._checkpointLogId = 0;
+        adapter._lastReconnectReason = 'browser-online';
+        adapter._bridge = {
+            encodeStateDiff: jest.fn(() => new Uint8Array(555_130)),
+            getNewChangeLogEntries: jest.fn(() => [])
+        };
+        adapter._ws = {
+            readyState: 1,
+            send: (payload) => sentFrames.push(JSON.parse(payload))
+        };
+
+        expect(adapter._sendSyncComplete(new Uint8Array())).toBe(false);
+        expect(adapter._bridge.encodeStateDiff).not.toHaveBeenCalled();
+        expect(sentFrames).toEqual([]);
+    });
+
     it('splits sync-complete metadata by logical history item', () => {
         const adapter = new CloudAdapter({ assetId: 'asset-123' });
         const sentFrames = [];

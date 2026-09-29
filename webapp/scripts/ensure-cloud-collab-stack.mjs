@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import net from 'node:net';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFileSync, execSync, spawn } from 'node:child_process';
@@ -10,10 +11,9 @@ const webappRoot = path.resolve(
 );
 const editorRoot = path.resolve(webappRoot, '..');
 
-export const CLOUD_COLLAB_STACK_ROOT = path.join(
-    webappRoot,
-    '.cloud-collab-e2e-wrangler'
-);
+export const CLOUD_COLLAB_STACK_ROOT =
+    process.env.CLOUD_COLLAB_STACK_ROOT ||
+    path.join(os.tmpdir(), 'counterpunch-cloud-collab-e2e');
 export const CLOUD_COLLAB_RUN_ID =
     process.env.CLOUD_COLLAB_RUN_ID || String(process.pid);
 export const CLOUD_COLLAB_PERSIST_ROOT = path.join(
