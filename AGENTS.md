@@ -172,6 +172,16 @@ npm run test:snapshots
 
 `previewrelease.sh` pushes unpushed `main` commits and starts **Preview Release**. You do not need to wait for CI locally: the workflow waits for a green `ci.yml` push run on that SHA, freezes the editor/website/collab trio, runs cloud-collab e2e, deploys preview Cloudflare (validator → compactor → room-preview → websitepreview → editorpreview), tags all three repos, and publishes the GitHub prerelease (`v0.0.N-pre.DATE`). Notes are the Unreleased changelog diff. It does not rewrite `CHANGELOG.md`. Canonical write-up: `developer-docs/COMPOSED_RELEASE.md`.
 
+### Pushing the trio (`push.sh`)
+
+`./push.sh` (editor root) pushes `collab`, `website` and `editor`, in that order, so the editor CI tests the sibling `main` branches you just pushed. Only repos with unpushed commits are pushed. `./push.sh --dry-run` shows what would go out.
+
+- It refuses to run if any of the three repos is not on `main`, is behind `origin/main`, or has uncommitted changes (unstaged, staged or untracked). The human commits first.
+- After pushing it runs `ci-watch.sh`, which shows a colored in-place overview of the CI runs for the pushed commits (refreshing every 20 seconds, `CI_WATCH_INTERVAL` to change). It exits 0 when every run and job is green, 1 on the first red (with the failed job, step, last error lines and links), and 2 on timeout or when no run appears. The run URLs are printed at the end.
+- `./ci-watch.sh [dir[:sha] ...]` can be run alone to watch existing commits.
+
+**Agents:** only push or wait for CI when the human explicitly instructs you to, never on your own initiative. When told to, run `./push.sh` in the background and wait for its exit; on exit 1, debug from the printed error output, fix, and report. Commits and pushes still need the explicit request described under "Git and Commits".
+
 ## Code Style Guidelines
 
 ### General

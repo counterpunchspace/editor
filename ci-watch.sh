@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Watch GitHub CI for pushed commits with a live overview that redraws in place
-# every 5 seconds, until everything is green or something is red.
+# every 20 seconds, until everything is green or something is red.
 #
 # Exit 0: every run for every commit succeeded.
 # Exit 1: a run or job failed (failed job, step and error lines are printed).
@@ -9,13 +9,13 @@
 #
 # Usage: ./ci-watch.sh                     # HEAD of collab, website and editor
 #        ./ci-watch.sh <dir>[:<sha>] ...   # specific repos (sha defaults to HEAD)
-# Env:   CI_WATCH_INTERVAL (seconds, default 5), CI_WATCH_TIMEOUT (default 10800)
+# Env:   CI_WATCH_INTERVAL (seconds, default 20), CI_WATCH_TIMEOUT (default 10800)
 
 set -uo pipefail
 
 EDITOR_DIR="$(cd "$(dirname "$0")" && pwd)"
 WORKSPACE="$(cd "$EDITOR_DIR/.." && pwd)"
-INTERVAL="${CI_WATCH_INTERVAL:-5}"
+INTERVAL="${CI_WATCH_INTERVAL:-20}"
 TIMEOUT="${CI_WATCH_TIMEOUT:-10800}"
 NO_RUN_GRACE=600
 
