@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Watch GitHub CI for pushed commits with a live overview that redraws in place
-# every minute, until everything is green or something is red.
+# every 5 seconds, until everything is green or something is red.
 #
 # Exit 0: every run for every commit succeeded.
 # Exit 1: a run or job failed (failed job, step and error lines are printed).
@@ -9,13 +9,13 @@
 #
 # Usage: ./ci-watch.sh                     # HEAD of collab, website and editor
 #        ./ci-watch.sh <dir>[:<sha>] ...   # specific repos (sha defaults to HEAD)
-# Env:   CI_WATCH_INTERVAL (seconds, default 60), CI_WATCH_TIMEOUT (default 10800)
+# Env:   CI_WATCH_INTERVAL (seconds, default 5), CI_WATCH_TIMEOUT (default 10800)
 
 set -uo pipefail
 
 EDITOR_DIR="$(cd "$(dirname "$0")" && pwd)"
 WORKSPACE="$(cd "$EDITOR_DIR/.." && pwd)"
-INTERVAL="${CI_WATCH_INTERVAL:-60}"
+INTERVAL="${CI_WATCH_INTERVAL:-5}"
 TIMEOUT="${CI_WATCH_TIMEOUT:-10800}"
 NO_RUN_GRACE=600
 
@@ -78,6 +78,16 @@ DUR_JQ='def dur: (if . == null or . < 0 then "" elif . >= 3600 then "\(. / 3600 
 
 PREV_LINES=0
 START=$SECONDS
+RUN_URLS=()
+DONE_STREAK=0
+
+print_urls() {
+    [ "${#RUN_URLS[@]}" -gt 0 ] || return 0
+    echo
+    echo "${BOLD}Runs${RESET}"
+    local u
+    for u in "${RUN_URLS[@]}"; do echo "  ${CYAN}$u${RESET}"; done
+}
 
 report_failure() {
     local repo="$1" run_id="$2" run_url="$3"
@@ -111,6 +121,7 @@ while true; do
     ALL_DONE=1
     RED_REPO=""; RED_RUN=""; RED_URL=""
     NO_RUN_REPO=""
+    RUN_URLS=()
 
     FRAME+=("${BOLD}CI${RESET}  ${DIM}updated $(date +%H:%M:%S) · elapsed $(((SECONDS - START) / 60))m · every ${INTERVAL}s · Ctrl-C to stop${RESET}")
     FRAME+=("")
@@ -133,6 +144,7 @@ while true; do
 
         while IFS=$'\t' read -r run_id name state dur url; do
             [ "$state" = "running" -o "$state" = "queued" ] && ALL_DONE=0
+            RUN_URLS+=("$url")
             FRAME+=("  $(icon "$state") ${BOLD}$(fit "$name" 28)${RESET} ${GRAY}$(fit "$state" 12)${RESET} ${dur}")
 
             jobs=$(gh run view "$run_id" --repo "$repo" --json jobs 2>/dev/null) || jobs='{"jobs":[]}'
@@ -140,6 +152,7 @@ while true; do
             n=0
             while IFS=$'\t' read -r jstate jname jdur jstep; do
                 n=$((n + 1))
+                case "$jstate" in running|queued) ALL_DONE=0 ;; esac
                 branch="├─"; [ "$n" -eq "$total" ] && branch="└─"
                 detail=""
                 [ -n "$jstep" ] && detail="  ${DIM}$jstep${RESET}"
@@ -179,22 +192,29 @@ while true; do
 
     if [ -n "$RED_RUN" ]; then
         report_failure "$RED_REPO" "$RED_RUN" "$RED_URL"
+        print_urls
         exit 1
     fi
 
     if [ -n "$NO_RUN_REPO" ] && [ $((SECONDS - START)) -gt "$NO_RUN_GRACE" ]; then
         echo "${RED}Error:${RESET} $NO_RUN_REPO has no CI run after $((NO_RUN_GRACE / 60)) minutes."
         echo "Check: https://github.com/counterpunchspace/$NO_RUN_REPO/actions"
+        print_urls
         exit 2
     fi
 
-    if [ "$ALL_DONE" -eq 1 ]; then
+    # Green only counts after two consecutive complete polls, so runs or
+    # jobs that appear late cannot be missed.
+    if [ "$ALL_DONE" -eq 1 ]; then DONE_STREAK=$((DONE_STREAK + 1)); else DONE_STREAK=0; fi
+    if [ "$DONE_STREAK" -ge 2 ]; then
         echo "${GREEN}${BOLD}GREEN${RESET} all CI runs succeeded."
+        print_urls
         exit 0
     fi
 
     if [ $((SECONDS - START)) -gt "$TIMEOUT" ]; then
         echo "${RED}Error:${RESET} still running after $((TIMEOUT / 60)) minutes. Check GitHub."
+        print_urls
         exit 2
     fi
     sleep "$INTERVAL"
