@@ -115,7 +115,7 @@ export async function setupEditTextMode(
     });
 
     // Zoom to fit
-    await page.keyboard.press('Meta+0');
+    await page.keyboard.press('ControlOrMeta+0');
     await page.waitForTimeout(300);
 }
 
@@ -1072,7 +1072,7 @@ export async function setInterpolatedEditorState(
     glyphName: string,
     location: Record<string, number>
 ): Promise<Record<string, any>> {
-    await focusView(page, 'Meta+Shift+E', 'view-editor');
+    await focusView(page, 'ControlOrMeta+Shift+E', 'view-editor');
     await dismissVisibleTippies(page);
     // setupEditTextMode already waits for shaping to complete
     await setupEditTextMode(page, glyphName);

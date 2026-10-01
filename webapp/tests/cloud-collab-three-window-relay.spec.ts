@@ -138,9 +138,9 @@ test.describe('three-window relay scenarios', () => {
             await waitForCloudLiveIdle(viewerPage);
             await waitForOpenSessionReady(ownerPage, assetId);
             await waitForCloudLiveIdle(ownerPage);
-            await focusView(ownerPage, 'Meta+Shift+E', 'view-editor');
+            await focusView(ownerPage, 'ControlOrMeta+Shift+E', 'view-editor');
             await alignEditorCanvas(ownerPage, 'a', { wght: 200 });
-            await focusView(viewerPage, 'Meta+Shift+E', 'view-editor');
+            await focusView(viewerPage, 'ControlOrMeta+Shift+E', 'view-editor');
             await alignEditorCanvas(viewerPage, 'a', { wght: 200 });
             await waitUntilGlyphLayerDataMatches(ownerPage, viewerPage, ['a']);
             await viewerPage.waitForFunction(

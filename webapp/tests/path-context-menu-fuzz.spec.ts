@@ -29,7 +29,7 @@ async function waitForBridgeReady(page: Page): Promise<void> {
 }
 
 async function navigateToGlyphN(page: Page): Promise<void> {
-    await focusView(page, 'Meta+Shift+E', 'view-editor');
+    await focusView(page, 'ControlOrMeta+Shift+E', 'view-editor');
 
     // Font open can async-load display_string ("Hamburgevons") after model
     // ready and overwrite an early setTextBuffer('n'). Retry until it sticks.

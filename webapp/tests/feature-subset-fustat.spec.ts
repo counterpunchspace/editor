@@ -140,7 +140,7 @@ test('Fustat ss03 line-six edit compiles in the cached subset compiler', async (
     page
 }) => {
     await openFustatWithReportedSubset(page);
-    await focusView(page, 'Meta+Shift+I', 'view-fontinfo');
+    await focusView(page, 'ControlOrMeta+Shift+I', 'view-fontinfo');
 
     await page.evaluate(() => {
         (window as any).fontInfoManager?.switchTab?.('features');

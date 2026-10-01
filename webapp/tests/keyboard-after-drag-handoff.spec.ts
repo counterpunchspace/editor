@@ -513,7 +513,7 @@ test.describe('Keyboard-after-drag stale editing handoff', () => {
         await waitForOpenSessionReady(page, 'Fustat.glyphs');
 
         console.log('[Test] Focusing editor view');
-        await focusView(page, 'Meta+Shift+E', 'view-editor');
+        await focusView(page, 'ControlOrMeta+Shift+E', 'view-editor');
         await page.waitForTimeout(200);
 
         // Cmd+0 framing is derived from the canvas CSS box; normalize dock layout
@@ -721,7 +721,7 @@ test.describe('Keyboard-after-drag stale editing handoff', () => {
 
         // ── 6. Undo (Cmd+Z) — should revert sidebearing drag ─────────────
         console.log('[Test] Pressing Cmd+Z for undo');
-        await page.keyboard.press('Meta+z');
+        await page.keyboard.press('ControlOrMeta+z');
         await waitForCompileSettle(page, 'undo');
 
         await revertToFramedViewport();

@@ -681,7 +681,7 @@ function expectVisualSampleChanged(
 async function openAutomaticAdieresisEditScenario(page: Page): Promise<void> {
     await page.goto('/?test=true');
     await waitForCanvasReady(page);
-    await focusView(page, 'Meta+Shift+E', 'view-editor');
+    await focusView(page, 'ControlOrMeta+Shift+E', 'view-editor');
 
     await loadTestFont(
         page,
@@ -1530,7 +1530,7 @@ async function openNonAutomaticAdieresisEditScenario(
 ): Promise<void> {
     await page.goto('/?test=true');
     await waitForCanvasReady(page);
-    await focusView(page, 'Meta+Shift+E', 'view-editor');
+    await focusView(page, 'ControlOrMeta+Shift+E', 'view-editor');
 
     await loadTestFont(
         page,

@@ -180,7 +180,7 @@ test('sparse peers hydrate a new composite, a new base, and a new GSUB alternate
         await waitForOpenSessionReady(ownerPage, assetId);
         await waitForEditingCompile(ownerPage);
         await waitForCloudLiveIdle(ownerPage);
-        await focusView(ownerPage, 'Meta+Shift+E', 'view-editor');
+        await focusView(ownerPage, 'ControlOrMeta+Shift+E', 'view-editor');
         const invitee = await openInviteeOnAsset(
             browser,
             request,

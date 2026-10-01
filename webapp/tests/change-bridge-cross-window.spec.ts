@@ -60,7 +60,7 @@ test.describe('Cross-window ChangeBridge sync', () => {
         await installFontModelSyncTracker(mainPage);
         await installEditingFontCompileTracker(mainPage);
 
-        await focusView(mainPage, 'Meta+Shift+E', 'view-editor');
+        await focusView(mainPage, 'ControlOrMeta+Shift+E', 'view-editor');
         await alignEditorCanvas(mainPage, 'a', { wght: 200 });
 
         const thinLayerId = await findThinLayerId(mainPage);

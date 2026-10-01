@@ -136,7 +136,7 @@ test.describe('Python model mapping access (live Pyodide)', () => {
     }) => {
         await page.goto('/?test=true');
         await waitForCanvasReady(page);
-        await focusView(page, 'Meta+Shift+E', 'view-editor');
+        await focusView(page, 'ControlOrMeta+Shift+E', 'view-editor');
         await openFileFromFilesView(page, 'Fustat.glyphs');
         await waitForOpenSessionReady(page, 'Fustat.glyphs');
         await waitForLivePython(page);

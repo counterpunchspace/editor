@@ -173,7 +173,7 @@ test.describe('cloud collab offline reload', () => {
             await installJsonCanonicalizer(ownerPage);
             await installFontModelSyncTracker(ownerPage);
             await installEditingFontCompileTracker(ownerPage);
-            await focusView(ownerPage, 'Meta+Shift+E', 'view-editor');
+            await focusView(ownerPage, 'ControlOrMeta+Shift+E', 'view-editor');
             await alignEditorCanvas(ownerPage, 'a', { wght: 200 });
             await waitForCloudLiveIdle(ownerPage, 120000);
 

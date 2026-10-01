@@ -88,7 +88,7 @@ export async function prepareOwnerCloudFont(
     await waitForOpenSessionReady(ownerPage, assetId);
     await waitForEditingCompile(ownerPage);
     await waitForCloudLiveIdle(ownerPage);
-    await focusView(ownerPage, 'Meta+Shift+E', 'view-editor');
+    await focusView(ownerPage, 'ControlOrMeta+Shift+E', 'view-editor');
     await alignEditorCanvas(ownerPage, 'a', { wght: 200 });
     return { emails, ownerSession, ownerContext, ownerPage, assetId };
 }

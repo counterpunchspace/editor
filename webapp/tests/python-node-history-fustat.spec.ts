@@ -25,7 +25,7 @@ async function openFustatNodeEditLayer(page: Page): Promise<void> {
     await fustatItem.waitFor({ state: 'visible' });
     await fustatItem.dblclick();
     await waitForOpenSessionReady(page, 'Fustat.glyphs');
-    await focusView(page, 'Meta+Shift+E', 'view-editor');
+    await focusView(page, 'ControlOrMeta+Shift+E', 'view-editor');
     await waitForEditingFontBytes(page);
 
     await page.evaluate(async () => {

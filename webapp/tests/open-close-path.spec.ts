@@ -699,7 +699,7 @@ test.describe('Open/Close Path across linked masters', () => {
         await page.mouse.move(-100, -100);
         await page.waitForTimeout(200);
         // Activate editor view
-        await focusView(page, 'Meta+Shift+E', 'view-editor');
+        await focusView(page, 'ControlOrMeta+Shift+E', 'view-editor');
         await page.waitForTimeout(500);
     });
 
@@ -973,7 +973,7 @@ test.describe('Open/Close Path across linked masters', () => {
         });
         expect(node2Coords).not.toBeNull();
 
-        // Convert glyph coords to page coords and cmd+click (Meta+click)
+        // Convert glyph coords to page coords and cmd+click (ControlOrMeta+click)
         const screenNode2 = await glyphToPage(
             page,
             node2Coords!.x,
@@ -1013,14 +1013,15 @@ test.describe('Open/Close Path across linked masters', () => {
             canvas.addEventListener(
                 'click',
                 (event: MouseEvent) => {
-                    (window as any).__openPathClickWasMeta = event.metaKey;
+                    (window as any).__openPathClickWasMeta =
+                        event.metaKey || event.ctrlKey;
                 },
                 { once: true, capture: true }
             );
         });
-        await page.keyboard.down('Meta');
+        await page.keyboard.down('ControlOrMeta');
         await page.mouse.click(screenNode2.x, screenNode2.y);
-        await page.keyboard.up('Meta');
+        await page.keyboard.up('ControlOrMeta');
         await page.waitForTimeout(500);
         await expect
             .poll(() =>
@@ -1371,7 +1372,7 @@ test.describe('Cut title-bar tool', () => {
         await page.goto('/?test=true');
         await waitForCanvasReady(page);
         await page.mouse.move(-100, -100);
-        await focusView(page, 'Meta+Shift+E', 'view-editor');
+        await focusView(page, 'ControlOrMeta+Shift+E', 'view-editor');
     });
 
     test('cuts a node and insert-then-cuts a segment in one transaction', async ({

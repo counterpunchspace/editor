@@ -213,7 +213,7 @@ test.describe('Boolean path subtraction', () => {
     test.beforeEach(async ({ page }) => {
         await page.goto('/?test=true');
         await waitForCanvasReady(page);
-        await focusView(page, 'Meta+Shift+E', 'view-editor');
+        await focusView(page, 'ControlOrMeta+Shift+E', 'view-editor');
     });
 
     test('marks subtraction on linked layers and keeps later shapes on top', async ({

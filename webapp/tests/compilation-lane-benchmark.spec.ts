@@ -114,7 +114,7 @@ test.describe('Compilation lane benchmark (Fustat)', () => {
         await openFileFromFilesView(page, 'Fustat.glyphs');
         await waitForFontLoaded(page);
         await waitForOpenSessionReady(page, 'Fustat.glyphs');
-        await focusView(page, 'Meta+Shift+E', 'view-editor');
+        await focusView(page, 'ControlOrMeta+Shift+E', 'view-editor');
         await page.evaluate(() => {
             (window as any).resizableViews?.applyDefaultLayout?.();
         });
@@ -1314,7 +1314,7 @@ async function benchFeatureCode(page: Page): Promise<void> {
         manager.featuresEditor.setValue(code, -1);
         manager.commitFeatureCodeChanges();
     }, original);
-    await focusView(page, 'Meta+Shift+E', 'view-editor');
+    await focusView(page, 'ControlOrMeta+Shift+E', 'view-editor');
     await setLane(page, 'idle');
 }
 

@@ -152,7 +152,7 @@ test.describe('three-window sync scenarios', () => {
             expect(compileErrors.kernGroups).toBe(false);
 
             await waitForCloudLiveIdle(mainPage);
-            await focusView(mainPage, 'Meta+Shift+E', 'view-editor');
+            await focusView(mainPage, 'ControlOrMeta+Shift+E', 'view-editor');
             await alignEditorCanvas(mainPage, 'a', { wght: 200 });
             await mainPage.waitForFunction(() => {
                 const glyph = (window as any).currentFontModel?.findGlyph?.(

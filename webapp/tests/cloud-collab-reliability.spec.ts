@@ -479,7 +479,7 @@ test('opening a composite loads its component and compiles', async ({
         await waitForOpenSessionReady(ownerPage, assetId);
         await waitForEditingCompile(ownerPage);
         await waitForCloudLiveIdle(ownerPage);
-        await focusView(ownerPage, 'Meta+Shift+E', 'view-editor');
+        await focusView(ownerPage, 'ControlOrMeta+Shift+E', 'view-editor');
         const invitee = await openInviteeOnAsset(
             browser,
             request,

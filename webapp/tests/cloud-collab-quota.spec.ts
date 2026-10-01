@@ -98,7 +98,7 @@ async function openSavedFixture(
     await waitForOpenSessionReady(ownerPage, assetId);
     await waitForEditingCompile(ownerPage);
     await waitForCloudLiveIdle(ownerPage);
-    await focusView(ownerPage, 'Meta+Shift+E', 'view-editor');
+    await focusView(ownerPage, 'ControlOrMeta+Shift+E', 'view-editor');
     return { emails, ownerContext, ownerPage, assetId };
 }
 
@@ -248,7 +248,7 @@ test('basic limits reject a second font and a font over the glyph cap, and a bas
             null,
             { timeout: 60000 }
         );
-        await focusView(ownerPage, 'Meta+Shift+E', 'view-editor');
+        await focusView(ownerPage, 'ControlOrMeta+Shift+E', 'view-editor');
         await alignEditorCanvas(ownerPage, 'A', {});
         await waitForCloudLiveIdle(ownerPage);
         await waitForCloudLiveIdle(inviteePage);

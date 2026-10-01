@@ -18,7 +18,7 @@ async function openFustat(page: Page): Promise<void> {
         .locator('.file-item[data-name="Fustat.glyphs"]')
         .dblclick();
     await waitForOpenSessionReady(page, 'Fustat.glyphs');
-    await focusView(page, 'Meta+Shift+E', 'view-editor');
+    await focusView(page, 'ControlOrMeta+Shift+E', 'view-editor');
 }
 
 test.describe('multiline text', () => {

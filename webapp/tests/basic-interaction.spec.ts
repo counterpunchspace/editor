@@ -63,7 +63,7 @@ test.describe('Font Editor Basic Workflow', () => {
         await waitForCanvasReady(page);
 
         console.log('[Test] Clicking canvas');
-        await focusView(page, 'Meta+Shift+E', 'view-editor');
+        await focusView(page, 'ControlOrMeta+Shift+E', 'view-editor');
 
         console.log('[Test] beforeEach complete');
     });
@@ -107,11 +107,11 @@ test.describe('Font Editor Basic Workflow', () => {
             return false;
         };
 
-        if (await tryDirection('Meta+ArrowLeft')) {
+        if (await tryDirection('ControlOrMeta+ArrowLeft')) {
             return;
         }
 
-        if (await tryDirection('Meta+ArrowRight')) {
+        if (await tryDirection('ControlOrMeta+ArrowRight')) {
             return;
         }
 
@@ -376,12 +376,12 @@ test.describe('Font Editor Basic Workflow', () => {
 
         // Re-activate editor view by clicking canvas
         console.log('[Test] Re-activating editor view');
-        await focusView(page, 'Meta+Shift+E', 'view-editor');
+        await focusView(page, 'ControlOrMeta+Shift+E', 'view-editor');
         await page.waitForTimeout(200);
 
         // Cmd+0
         console.log('[Test] Pressing Cmd+0');
-        await page.keyboard.press('Meta+0');
+        await page.keyboard.press('ControlOrMeta+0');
         await page.waitForTimeout(200);
         // Font-open can reshuffle subset feature membership and GIDs after the
         // initial ready signals; wait until the default subset settles (pnum/
@@ -458,7 +458,7 @@ test.describe('Font Editor Basic Workflow', () => {
 
         // Cmd+0
         console.log('[Test] Pressing Cmd+0 after text');
-        await page.keyboard.press('Meta+0');
+        await page.keyboard.press('ControlOrMeta+0');
         await page.waitForTimeout(600);
 
         await page.evaluate(() => {
@@ -521,7 +521,7 @@ test.describe('Font Editor Basic Workflow', () => {
         await page.waitForTimeout(300);
 
         console.log('[Test] Framing glyph after entering edit mode');
-        await page.keyboard.press('Meta+0');
+        await page.keyboard.press('ControlOrMeta+0');
         await page.waitForTimeout(300);
 
         // SNAPSHOT POINT 5: Edit mode entered
@@ -532,7 +532,7 @@ test.describe('Font Editor Basic Workflow', () => {
 
         // Move to fatha-tanween
         console.log('[Test] Moving to fatha-tanween');
-        await page.keyboard.press('Meta+ArrowRight');
+        await page.keyboard.press('ControlOrMeta+ArrowRight');
 
         // SNAPSHOT POINT 6: Moved to fatha-tanween
         console.log('[Test] Taking snapshot 6: moved to fatha-tanween');
@@ -545,7 +545,7 @@ test.describe('Font Editor Basic Workflow', () => {
 
         // Cmd+0
         console.log('[Test] Pressing Cmd+0 on fatha-tanween');
-        await page.keyboard.press('Meta+0');
+        await page.keyboard.press('ControlOrMeta+0');
         await page.waitForTimeout(300);
 
         // SNAPSHOT POINT 7: Cmd+0 on fatha-tanween
@@ -573,7 +573,7 @@ test.describe('Font Editor Basic Workflow', () => {
 
         // Cmd+0 on meem.init
         console.log('[Test] Pressing Cmd+0 on meem.init');
-        await page.keyboard.press('Meta+0');
+        await page.keyboard.press('ControlOrMeta+0');
         await page.waitForTimeout(300);
 
         // SNAPSHOT POINT 9: Cmd+0 on meem.init
@@ -771,7 +771,7 @@ test.describe('Font Editor Basic Workflow', () => {
 
         // Navigate to font info / features view
         console.log('[Test] Navigating to features view');
-        await focusView(page, 'Meta+Shift+I', 'view-fontinfo');
+        await focusView(page, 'ControlOrMeta+Shift+I', 'view-fontinfo');
         await page.waitForTimeout(200);
 
         // Click the Features tab
@@ -950,7 +950,7 @@ test.describe('Font Editor Basic Workflow', () => {
         );
 
         console.log('[Test] Returning to editor view for Fustat stack preview');
-        await focusView(page, 'Meta+Shift+E', 'view-editor');
+        await focusView(page, 'ControlOrMeta+Shift+E', 'view-editor');
 
         console.log('[Test] Setting text buffer to Ä');
         await page.evaluate(() => {
@@ -1003,7 +1003,7 @@ test.describe('Font Editor Basic Workflow', () => {
         );
 
         console.log('[Test] Entering stack preview');
-        await page.keyboard.press('Meta+Alt+S');
+        await page.keyboard.press('ControlOrMeta+Alt+S');
         await page.waitForFunction(
             () =>
                 !!window.glyphCanvas?.stackPreviewAnimator?.shouldRenderStackPreview?.() &&

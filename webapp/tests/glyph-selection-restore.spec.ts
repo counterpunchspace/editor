@@ -14,7 +14,7 @@ async function openYanoneFont(page: Page) {
     await openFileFromFilesView(page, 'YanoneKaffeesatz.designspace');
     await waitForFontLoaded(page);
     await waitForOpenSessionReady(page, 'YanoneKaffeesatz.designspace');
-    await focusView(page, 'Meta+Shift+E', 'view-editor');
+    await focusView(page, 'ControlOrMeta+Shift+E', 'view-editor');
     await page.waitForFunction(
         () => Number(window.fontManager?.editingFont?.length || 0) > 0,
         undefined,
