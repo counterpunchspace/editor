@@ -106,6 +106,10 @@ export default defineConfig({
 
     // Only run Playwright spec files, not Jest test files
     testMatch: '**/*.spec.ts',
+    // JSON app-state baselines are platform independent: the same files are
+    // compared on macOS (local) and Linux (CI).
+    snapshotPathTemplate:
+        '{snapshotDir}/{testFileName}-snapshots/{arg}-{projectName}{ext}',
 
     globalTeardown: './scripts/playwright-global-teardown.mjs',
     globalSetup:

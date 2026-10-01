@@ -15,7 +15,7 @@ jobs:
     # Static checks, jest, Rust and the chromium Playwright project. The
     # Playwright project is sharded; shard 1 also runs the one-off checks.
     build:
-        runs-on: macos-latest
+        runs-on: ubuntu-latest
         timeout-minutes: 60
         strategy:
             fail-fast: false
@@ -41,7 +41,7 @@ jobs:
               run: npm install --prefix webapp
 
             - name: Install Playwright Chromium
-              run: npx --prefix webapp playwright install chromium
+              run: npx --prefix webapp playwright install --with-deps chromium
 
             - name: Inject dynamic version for PWA cache busting
               id: version
@@ -111,7 +111,7 @@ jobs:
     # The only run of the cloud-collab Playwright suite. Releases do not run it
     # again; they verify the attestation uploaded by `cloud-collab-e2e-result`.
     cloud-collab-e2e:
-        runs-on: macos-latest
+        runs-on: ubuntu-latest
         timeout-minutes: 90
         strategy:
             fail-fast: false
@@ -149,7 +149,7 @@ jobs:
               run: npm run build --prefix webapp
 
             - name: Install Playwright Chromium
-              run: npx --prefix webapp playwright install chromium
+              run: npx --prefix webapp playwright install --with-deps chromium
 
             - name: Install website dependencies
               run: npm ci
