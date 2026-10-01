@@ -1,7 +1,7 @@
 #!/bin/bash
 
-# Watch GitHub CI for pushed commits, once a minute, until everything is green
-# or something is red.
+# Watch GitHub CI for pushed commits with a live overview that redraws in place
+# every minute, until everything is green or something is red.
 #
 # Exit 0: every run for every commit succeeded.
 # Exit 1: a run or job failed (failed job, step and error lines are printed).
@@ -23,114 +23,178 @@ for tool in gh jq; do
     command -v "$tool" >/dev/null 2>&1 || { echo "Error: $tool is required"; exit 2; }
 done
 
+# Colors and in-place redraw only on a terminal.
+if [ -t 1 ]; then
+    TTY=1
+    RESET=$'\033[0m'; BOLD=$'\033[1m'; DIM=$'\033[2m'
+    GREEN=$'\033[32m'; RED=$'\033[31m'; YELLOW=$'\033[33m'; GRAY=$'\033[90m'; CYAN=$'\033[36m'
+else
+    TTY=0
+    RESET=""; BOLD=""; DIM=""; GREEN=""; RED=""; YELLOW=""; GRAY=""; CYAN=""
+fi
+COLS=$(tput cols 2>/dev/null || echo 100)
+[ "$COLS" -gt 120 ] && COLS=120
+
 ARGS=("$@")
 if [ "${#ARGS[@]}" -eq 0 ]; then
     ARGS=("$WORKSPACE/collab/collab" "$WORKSPACE/website" "$EDITOR_DIR")
 fi
 
-# Parallel arrays: label, GitHub repo, commit sha.
-LABELS=()
-REPOS=()
-SHAS=()
+DIRS=(); LABELS=(); REPOS=(); SHAS=(); MSGS=()
 for arg in "${ARGS[@]}"; do
     dir="${arg%%:*}"
     sha=""
     [ "$arg" != "$dir" ] && sha="${arg#*:}"
     [ -z "$sha" ] && sha=$(git -C "$dir" rev-parse HEAD)
     repo=$(cd "$dir" && gh repo view --json nameWithOwner --jq .nameWithOwner)
+    DIRS+=("$dir")
     LABELS+=("$(basename "$repo")")
     REPOS+=("$repo")
     SHAS+=("$sha")
+    MSGS+=("$(git -C "$dir" log -1 --format=%s "$sha" 2>/dev/null)")
 done
 
-is_red() {
+cleanup() { [ "$TTY" -eq 1 ] && printf '\033[?25h'; }
+trap cleanup EXIT
+[ "$TTY" -eq 1 ] && printf '\033[?25l'
+
+icon() {
     case "$1" in
-        failure|cancelled|timed_out|startup_failure|action_required) return 0 ;;
-        *) return 1 ;;
+        success) printf '%s✓%s' "$GREEN" "$RESET" ;;
+        failure|timed_out|startup_failure) printf '%s✗%s' "$RED" "$RESET" ;;
+        cancelled) printf '%s⊘%s' "$GRAY" "$RESET" ;;
+        skipped|neutral) printf '%s–%s' "$GRAY" "$RESET" ;;
+        running|in_progress) printf '%s●%s' "$YELLOW" "$RESET" ;;
+        *) printf '%s○%s' "$GRAY" "$RESET" ;;
     esac
 }
 
-# Print what is wrong with a failed run: job, step, error lines, and the URL.
+# Pad or cut plain text to a width.
+fit() { printf '%-*.*s' "$2" "$2" "$1"; }
+
+# Normalize GitHub status+conclusion to one state word.
+STATE_JQ='(if .status=="completed" then (.conclusion // "unknown") elif .status=="in_progress" then "running" else "queued" end)'
+DUR_JQ='def dur: (if . == null or . < 0 then "" elif . >= 3600 then "\(. / 3600 | floor)h \((. % 3600) / 60 | floor)m" elif . >= 60 then "\(. / 60 | floor)m \(. % 60 | floor)s" else "\(. | floor)s" end);'
+
+PREV_LINES=0
+START=$SECONDS
+
 report_failure() {
     local repo="$1" run_id="$2" run_url="$3"
-    echo ""
-    echo "RED: $run_url"
     local jobs
     jobs=$(gh run view "$run_id" --repo "$repo" --json jobs 2>/dev/null) || jobs='{"jobs":[]}'
-    echo "$jobs" | jq -r '.jobs[] | select(.conclusion=="failure" or .conclusion=="cancelled" or .conclusion=="timed_out") | "\(.databaseId)\t\(.name)\t\(.url)"' |
+    echo ""
+    echo "${RED}${BOLD}RED${RESET} $run_url"
+    echo "$jobs" | jq -r '.jobs[] | select(.conclusion=="failure" or .conclusion=="timed_out" or .conclusion=="cancelled") | "\(.databaseId)\t\(.name)\t\(.url)"' |
         while IFS=$'\t' read -r job_id job_name job_url; do
             local step
             step=$(echo "$jobs" | jq -r --arg id "$job_id" '.jobs[] | select((.databaseId|tostring)==$id) | [.steps[] | select(.conclusion=="failure")][0].name // "unknown step"')
-            echo "  job:  $job_name"
-            echo "  step: $step"
+            echo ""
+            echo "  ${BOLD}job${RESET}   $job_name"
+            echo "  ${BOLD}step${RESET}  $step"
             local log
             log=$(gh api "repos/$repo/actions/jobs/$job_id/logs" 2>/dev/null) || log=""
             if [ -n "$log" ]; then
-                echo "  errors (last lines matching error/fail):"
+                echo "  ${BOLD}errors${RESET}"
                 echo "$log" | sed -E 's/^[0-9T:.Z-]+ //' |
                     grep -E '##\[error\]|Error:|error TS|✘|FAIL |Expected|Received|failed' |
-                    grep -v 'Node.js 20 is deprecated' | tail -n 15 | cut -c1-240 | sed 's/^/    /'
+                    grep -v 'Node.js 20 is deprecated' | tail -n 15 | cut -c1-200 | sed "s/^/    ${DIM}|${RESET} /"
             else
-                echo "  (no log available yet; check the job page)"
+                echo "  ${DIM}(no log available yet; check the job page)${RESET}"
             fi
-            echo "  link: $job_url"
+            echo "  ${BOLD}link${RESET}  ${CYAN}$job_url${RESET}"
         done
 }
 
-START=$SECONDS
-echo "Watching CI every ${INTERVAL}s:"
-for i in "${!LABELS[@]}"; do
-    echo "  ${LABELS[$i]} ${SHAS[$i]:0:8}"
-done
-
 while true; do
-    all_done=1
-    echo ""
-    echo "[$(date +%H:%M:%S)] elapsed $(((SECONDS - START) / 60))m"
+    FRAME=()
+    ALL_DONE=1
+    RED_REPO=""; RED_RUN=""; RED_URL=""
+    NO_RUN_REPO=""
+
+    FRAME+=("${BOLD}CI${RESET}  ${DIM}updated $(date +%H:%M:%S) · elapsed $(((SECONDS - START) / 60))m · every ${INTERVAL}s · Ctrl-C to stop${RESET}")
+    FRAME+=("")
 
     for i in "${!LABELS[@]}"; do
-        label="${LABELS[$i]}"
-        repo="${REPOS[$i]}"
-        sha="${SHAS[$i]}"
+        label="${LABELS[$i]}"; repo="${REPOS[$i]}"; sha="${SHAS[$i]}"; msg="${MSGS[$i]}"
+        FRAME+=("${BOLD}${label}${RESET}  ${CYAN}${sha:0:7}${RESET}  $(fit "$msg" $((COLS - ${#label} - 14)) | sed 's/ *$//')")
 
         runs=$(gh run list --repo "$repo" --commit "$sha" --limit 30 \
-            --json databaseId,workflowName,status,conclusion,url,event 2>/dev/null) || runs="[]"
-        runs=$(echo "$runs" | jq '[.[] | select(.event=="push")]')
-        count=$(echo "$runs" | jq 'length')
+            --json databaseId,workflowName,status,conclusion,url,event,createdAt,updatedAt 2>/dev/null) || runs="[]"
+        runs=$(echo "$runs" | jq '[.[] | select(.event=="push")] | sort_by(.databaseId)')
 
-        if [ "$count" -eq 0 ]; then
-            echo "  $label: no CI run for ${sha:0:8} yet"
-            all_done=0
-            if [ $((SECONDS - START)) -gt "$NO_RUN_GRACE" ]; then
-                echo "Error: $label has no CI run after $((NO_RUN_GRACE / 60)) minutes."
-                echo "Check: https://github.com/$repo/actions"
-                exit 2
-            fi
+        if [ "$(echo "$runs" | jq length)" -eq 0 ]; then
+            FRAME+=("  $(icon queued) ${GRAY}waiting for a CI run to start...${RESET}")
+            FRAME+=("")
+            ALL_DONE=0
+            NO_RUN_REPO="$label"
             continue
         fi
 
-        while IFS=$'\t' read -r run_id name status conclusion url; do
-            jobs=$(gh run view "$run_id" --repo "$repo" --json jobs 2>/dev/null) || jobs='{"jobs":[]}'
-            summary=$(echo "$jobs" | jq -r '[.jobs[] | (if .status=="completed" then .conclusion else .status end)] | group_by(.) | map("\(length) \(.[0])") | join(", ")')
-            echo "  $label / $name: $status${conclusion:+ ($conclusion)}${summary:+ [$summary]}"
+        while IFS=$'\t' read -r run_id name state dur url; do
+            [ "$state" = "running" -o "$state" = "queued" ] && ALL_DONE=0
+            FRAME+=("  $(icon "$state") ${BOLD}$(fit "$name" 28)${RESET} ${GRAY}$(fit "$state" 12)${RESET} ${dur}")
 
-            job_red=$(echo "$jobs" | jq '[.jobs[] | select(.conclusion=="failure" or .conclusion=="timed_out")] | length')
-            if is_red "$conclusion" || [ "${job_red:-0}" -gt 0 ]; then
-                report_failure "$repo" "$run_id" "$url"
-                exit 1
+            jobs=$(gh run view "$run_id" --repo "$repo" --json jobs 2>/dev/null) || jobs='{"jobs":[]}'
+            total=$(echo "$jobs" | jq '.jobs | length')
+            n=0
+            while IFS=$'\t' read -r jstate jname jdur jstep; do
+                n=$((n + 1))
+                branch="├─"; [ "$n" -eq "$total" ] && branch="└─"
+                detail=""
+                [ -n "$jstep" ] && detail="  ${DIM}$jstep${RESET}"
+                [ "$jstate" = "failure" ] && detail="  ${RED}$jstep${RESET}"
+                FRAME+=("  ${GRAY}${branch}${RESET} $(icon "$jstate") $(fit "$jname" 30) ${GRAY}$(fit "$jdur" 8)${RESET}${detail}")
+                if [ "$jstate" = "failure" -o "$jstate" = "timed_out" ] && [ -z "$RED_RUN" ]; then
+                    RED_REPO="$repo"; RED_RUN="$run_id"; RED_URL="$url"
+                fi
+            done < <(echo "$jobs" | jq -r "$DUR_JQ"'
+                .jobs[] | [
+                  '"$STATE_JQ"',
+                  .name,
+                  ((if .startedAt then ((if .completedAt and .completedAt != "0001-01-01T00:00:00Z" then (.completedAt | fromdateiso8601) else now end) - (.startedAt | fromdateiso8601)) else null end) | dur),
+                  (if .status=="in_progress" then ([.steps[] | select(.status=="in_progress")][0].name // "")
+                   elif .conclusion=="failure" then ([.steps[] | select(.conclusion=="failure")][0].name // "")
+                   else "" end)
+                ] | @tsv')
+
+            if [ "$state" = "failure" -o "$state" = "timed_out" -o "$state" = "cancelled" ] && [ -z "$RED_RUN" ]; then
+                RED_REPO="$repo"; RED_RUN="$run_id"; RED_URL="$url"
             fi
-            [ "$status" != "completed" ] && all_done=0
-        done < <(echo "$runs" | jq -r '.[] | [.databaseId, .workflowName, .status, (.conclusion // ""), .url] | @tsv')
+        done < <(echo "$runs" | jq -r "$DUR_JQ"'
+            .[] | [.databaseId, .workflowName, '"$STATE_JQ"',
+              (((if .status=="completed" then (.updatedAt | fromdateiso8601) else now end) - (.createdAt | fromdateiso8601)) | dur),
+              .url] | @tsv')
+        FRAME+=("")
     done
 
-    if [ "$all_done" -eq 1 ]; then
-        echo ""
-        echo "GREEN: all CI runs succeeded."
+    # Draw the frame in place.
+    if [ "$TTY" -eq 1 ] && [ "$PREV_LINES" -gt 0 ]; then
+        printf '\033[%dA\033[J' "$PREV_LINES"
+    fi
+    for line in "${FRAME[@]}"; do
+        printf '%s\n' "$line"
+    done
+    PREV_LINES=${#FRAME[@]}
+
+    if [ -n "$RED_RUN" ]; then
+        report_failure "$RED_REPO" "$RED_RUN" "$RED_URL"
+        exit 1
+    fi
+
+    if [ -n "$NO_RUN_REPO" ] && [ $((SECONDS - START)) -gt "$NO_RUN_GRACE" ]; then
+        echo "${RED}Error:${RESET} $NO_RUN_REPO has no CI run after $((NO_RUN_GRACE / 60)) minutes."
+        echo "Check: https://github.com/counterpunchspace/$NO_RUN_REPO/actions"
+        exit 2
+    fi
+
+    if [ "$ALL_DONE" -eq 1 ]; then
+        echo "${GREEN}${BOLD}GREEN${RESET} all CI runs succeeded."
         exit 0
     fi
 
     if [ $((SECONDS - START)) -gt "$TIMEOUT" ]; then
-        echo "Error: still running after $((TIMEOUT / 60)) minutes. Check GitHub."
+        echo "${RED}Error:${RESET} still running after $((TIMEOUT / 60)) minutes. Check GitHub."
         exit 2
     fi
     sleep "$INTERVAL"
