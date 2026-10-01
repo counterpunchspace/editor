@@ -235,7 +235,9 @@ test('glyph catch-up applies edits made while the peer was offline, including a 
         await nudgeGlyphNode(ownerPage, 'b', 5, 'Owner glyph-socket drop b');
         await releaseGlyphSockets(inviteePage);
         await expect
-            .poll(async () => glyphNodeX(inviteePage, 'b'), { timeout: 120000 })
+            .poll(async () => glyphNodeX(inviteePage, 'b'), {
+                timeout: 120000
+            })
             .toBe(bAfter + 5);
     } finally {
         await ownerContext.close();
@@ -395,7 +397,7 @@ test('catalog add, rename, and delete settle on a peer and after compaction', as
         const compacted = await requestDebugRoomControl(ownerPage, assetId, {
             action: 'debug-compact'
         });
-        expect(compacted.status).toBe(200);
+        expect(compacted.status, JSON.stringify(compacted.payload)).toBe(200);
         const lateSession = await bootstrapCloudCollabSession(
             request,
             emails.owner,

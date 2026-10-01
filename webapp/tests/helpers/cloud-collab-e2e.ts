@@ -130,7 +130,9 @@ export async function gotoEditorPage(page: Page, href: string): Promise<void> {
             if (!message.includes('ERR_SOCKET_NOT_CONNECTED')) {
                 throw error;
             }
-            await page.waitForTimeout(750 * (attempt + 1));
+            await new Promise((resolve) =>
+                setTimeout(resolve, 750 * (attempt + 1))
+            );
         }
     }
     throw lastError;

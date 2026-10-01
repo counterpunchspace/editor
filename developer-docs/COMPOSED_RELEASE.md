@@ -37,7 +37,7 @@ Or Actions → **Preview Release**. You do not need to wait for CI locally. The 
 2. Waits for a successful editor `ci.yml` **push** run on **that SHA** (up to 90 minutes). If that run fails or is cancelled, it refuses to publish.
 3. Freezes editor / website / collab SHAs (`main`, or `WEBSITE_SHA` / `COLLAB_SHA` if those repo variables are set).
 4. Waits for a successful website and collab `deploy.yml` **push** run on those frozen SHAs (up to 90 minutes each). A failed or missing sibling run refuses to publish.
-5. Runs cloud-collab Playwright e2e on the frozen trio.
+5. Verifies the cloud-collab Playwright e2e attestation. The suite runs once, sharded, in editor `ci.yml`; CI uploads `cloud-e2e-trio` (the website and collab SHAs it tested) only when all shards pass, and `scripts/verify-cloud-e2e-attestation.sh` fails the cutover if those differ from the frozen trio. If website or collab `main` moved since the editor CI ran, rerun that CI run.
 6. Deploys **validator → compactor → room → website Pages**, then a **real-email signup gate** against the live website origin, then **editor Pages**.
 7. Tags all three repos with the preview version (`v0.0.N-pre.DATE`, monotonic N; DATE is the UTC day of the cut).
 8. Publishes the GitHub prerelease with Unreleased changelog notes plus `trio.json`.

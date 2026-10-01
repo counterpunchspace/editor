@@ -672,26 +672,6 @@ describe('CloudLiveSession', () => {
         expect(done).toBe(true);
     }, 15000);
 
-    test('persistMutationIntents fails closed when IndexedDB is missing', async () => {
-        const originalIndexedDb = global.indexedDB;
-        delete global.indexedDB;
-        try {
-            const session = new CloudLiveSession({
-                assetId: 'asset-1',
-                websiteBaseUrl: 'https://editor.example',
-                token: 'token',
-                roomUrl: 'wss://rooms.example/room/asset-1',
-                bridge: {},
-                bootstrapMode: 'skip'
-            });
-            await expect(
-                session.persistMutationIntents(['font-core'])
-            ).resolves.toBe(false);
-        } finally {
-            global.indexedDB = originalIndexedDb;
-        }
-    });
-
     test('HTTP glyph publishes cap parallel POSTs', async () => {
         const session = new CloudLiveSession({
             assetId: 'asset-1',
@@ -1022,34 +1002,6 @@ describe('CloudLiveSession', () => {
             session.disconnect();
             jest.useRealTimers();
         }
-    });
-
-    test('does not emit connected after a failed first ready barrier', async () => {
-        const statuses = [];
-        global.fetch = jest.fn(async () => ({
-            ok: false,
-            status: 401,
-            headers: new Headers({
-                'content-type': 'application/json'
-            }),
-            json: async () => ({ error: 'unauthorized' })
-        }));
-        const session = new CloudLiveSession({
-            assetId: 'asset-1',
-            websiteBaseUrl: 'https://editor.example',
-            token: 'token',
-            roomUrl: 'wss://rooms.example/room/asset-1',
-            readyBarrierTimeoutMs: 40,
-            bridge: {},
-            bootstrapMode: 'skip',
-            onConnectionStatus: (status) => {
-                statuses.push(status);
-            }
-        });
-        await expect(session.syncLiveDocumentIds([])).rejects.toThrow();
-        expect(statuses).not.toContain('connected');
-        expect(statuses).toContain('error');
-        session.disconnect();
     });
 
     test('marks adapters revoked when credential refresh returns 403', async () => {

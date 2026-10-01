@@ -1,0 +1,59 @@
+/** GENERATED from collab/packages/protocol. Do not edit by hand. */
+
+export const COLLAB_PROTOCOL_VERSION = 6;
+export const FONT_CORE_SHARD = 'font-core';
+export const FONT_DEPS_SHARD = 'font-deps';
+export const GLYPH_SHARD_PREFIX = 'glyph:';
+export const MAX_SHARD_BYTES = 5242880;
+export const MAX_YJS_PACKET_BYTES = 262144;
+export const CHECKPOINT_DELTA_BYTES_THRESHOLD = 262144;
+export const CHECKPOINT_DELTA_ROWS_THRESHOLD = 64;
+export const MAX_CHECKPOINT_INTERVAL_MS = 1800000;
+export const SQLITE_BLOB_CHUNK_SIZE = 500000;
+export const SYNC_CHUNK_SIZE = 750000;
+export const MAX_SYNC_CHUNK_BASE64_BYTES = 1100000;
+export const MAX_VALIDATOR_TRANSACTION_BYTES = 262144;
+export const MAX_VALIDATOR_DECODED_STRUCTS = 280000;
+export const MAX_COMPACTION_TRANSACTION_BYTES = 262144;
+export const MAX_COMPACTION_DECODED_STRUCTS = 280000;
+export const MAX_COMPACTION_FOLD_BYTES = 262144;
+export const MAX_COMPACTION_RECOVERABLE_BYTES = 5242880;
+export const MAX_EXPORT_PAGE_BYTES = 524288;
+export const MAX_EXPORT_PAGE_ROWS = 64;
+export const MAX_STREAM_BUFFER_BYTES = 524288;
+export const MAX_MUTATION_HISTORY_PAGE_BYTES = 65536;
+export const CLIENT_LIVE_MEMORY_WARNING_STRUCTS = 80000;
+export const CLIENT_LIVE_MEMORY_WARNING_ENCODED_BYTES = 3932160;
+export const EXTERNAL_COMPACTION_RETRY_BASE_MS = 60000;
+export const EXTERNAL_COMPACTION_RETRY_MAX_MS = 1800000;
+export const MAX_SPOOL_BYTES = 524288;
+export const MAX_DIRTY_HARD_BYTES = 262893;
+export const MAX_AUTHENTICATED_PEERS = 32;
+export const MAX_UNAUTHENTICATED_SOCKETS = 8;
+export const MAX_METADATA_BYTES = 65536;
+export const SPOOL_TTL_MS = 30000;
+export const MAX_INCOMPLETE_TRANSACTIONS_PER_CLIENT = 2;
+export const MAX_TRANSACTION_CHUNKS = 32;
+export const MAX_COMPLETED_UPDATES_PER_USER = 120;
+export const COMPLETED_UPDATE_RATE_WINDOW_MS = 60000;
+export const UNAUTHENTICATED_SOCKET_IDLE_MS = 30000;
+export const VALIDATION_LEASE_MS = 15000;
+export const MAX_ATTACHMENT_BYTES = 8192;
+export const REBASELINE_REQUIRED = 'rebaseline-required';
+export const INTERNAL_CALL_HEADER = 'X-Internal-Worker-Call';
+
+export const FRAME_TYPE = {
+    CHECKPOINT: 1,
+    TAIL_CHUNK: 2,
+    TERMINAL: 3,
+    LIVE_UPDATE: 4,
+    SPOOL_CHUNK: 5,
+    HISTORY_CHUNK: 6
+};
+export const COMPACT_STATUS = {
+    OK: 'ok',
+    NEEDS_FAT_COMPACTOR: 'needs-fat-compactor',
+    TAIL_FULL: 'tail_full',
+    SHARD_TOO_LARGE: 'shard_too_large',
+    SCHEMA_RESEED_REQUIRED: 'schema-reseed-required'
+};

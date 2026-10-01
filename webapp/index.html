@@ -169,7 +169,7 @@
             href="css/file-dialog.css"
             id="file-dialog-css"
         />
-        <script src="https://cdn.jsdelivr.net/pyodide/v314.0.5/full/pyodide.js"></script>
+        <script src="<%= htmlWebpackPlugin.options.cdnBase %>/pyodide/v314.0.5/full/pyodide.js"></script>
         <script>
             window.__pyodideLoadPromise = new Promise(function (
                 resolve,
@@ -209,37 +209,37 @@
                 };
             });
         </script>
-        <script src="https://cdn.jsdelivr.net/npm/jquery"></script>
-        <script src="https://cdn.jsdelivr.net/npm/jquery.terminal@2.42.0/js/jquery.terminal.min.js"></script>
-        <script src="https://cdn.jsdelivr.net/npm/jquery.terminal@2.42.0/js/unix_formatting.min.js"></script>
+        <script src="<%= htmlWebpackPlugin.options.cdnBase %>/npm/jquery"></script>
+        <script src="<%= htmlWebpackPlugin.options.cdnBase %>/npm/jquery.terminal@2.42.0/js/jquery.terminal.min.js"></script>
+        <script src="<%= htmlWebpackPlugin.options.cdnBase %>/npm/jquery.terminal@2.42.0/js/unix_formatting.min.js"></script>
         <link
-            href="https://cdn.jsdelivr.net/npm/jquery.terminal@2.42.0/css/jquery.terminal.min.css"
+            href="<%= htmlWebpackPlugin.options.cdnBase %>/npm/jquery.terminal@2.42.0/css/jquery.terminal.min.css"
             rel="stylesheet"
         />
 
         <!-- HarfBuzz.js for text shaping (v0.8.0) -->
-        <script src="https://cdn.jsdelivr.net/npm/harfbuzzjs@0.8.0/hb.js"></script>
-        <script src="https://cdn.jsdelivr.net/npm/harfbuzzjs@0.8.0/hbjs.js"></script>
+        <script src="<%= htmlWebpackPlugin.options.cdnBase %>/npm/harfbuzzjs@0.8.0/hb.js"></script>
+        <script src="<%= htmlWebpackPlugin.options.cdnBase %>/npm/harfbuzzjs@0.8.0/hbjs.js"></script>
 
         <!-- Ace Editor for Python -->
-        <script src="https://cdn.jsdelivr.net/npm/ace-builds@1.32.2/src-min-noconflict/ace.js"></script>
-        <script src="https://cdn.jsdelivr.net/npm/ace-builds@1.32.2/src-min-noconflict/ext-language_tools.js"></script>
-        <script src="https://cdn.jsdelivr.net/npm/ace-builds@1.32.2/src-min-noconflict/mode-python.js"></script>
-        <script src="https://cdn.jsdelivr.net/npm/ace-builds@1.32.2/src-min-noconflict/theme-monokai.js"></script>
-        <script src="https://cdn.jsdelivr.net/npm/ace-builds@1.32.2/src-min-noconflict/theme-tomorrow.js"></script>
-        <script src="https://cdn.jsdelivr.net/npm/ace-builds@1.32.2/src-min-noconflict/theme-tomorrow_night.js"></script>
-        <script src="https://cdn.jsdelivr.net/npm/ace-builds@1.32.2/src-min-noconflict/ext-static_highlight.js"></script>
+        <script src="<%= htmlWebpackPlugin.options.cdnBase %>/npm/ace-builds@1.32.2/src-min-noconflict/ace.js"></script>
+        <script src="<%= htmlWebpackPlugin.options.cdnBase %>/npm/ace-builds@1.32.2/src-min-noconflict/ext-language_tools.js"></script>
+        <script src="<%= htmlWebpackPlugin.options.cdnBase %>/npm/ace-builds@1.32.2/src-min-noconflict/mode-python.js"></script>
+        <script src="<%= htmlWebpackPlugin.options.cdnBase %>/npm/ace-builds@1.32.2/src-min-noconflict/theme-monokai.js"></script>
+        <script src="<%= htmlWebpackPlugin.options.cdnBase %>/npm/ace-builds@1.32.2/src-min-noconflict/theme-tomorrow.js"></script>
+        <script src="<%= htmlWebpackPlugin.options.cdnBase %>/npm/ace-builds@1.32.2/src-min-noconflict/theme-tomorrow_night.js"></script>
+        <script src="<%= htmlWebpackPlugin.options.cdnBase %>/npm/ace-builds@1.32.2/src-min-noconflict/ext-static_highlight.js"></script>
 
         <!-- Diff libraries -->
-        <script src="https://cdn.jsdelivr.net/npm/diff@5.1.0/dist/diff.min.js"></script>
+        <script src="<%= htmlWebpackPlugin.options.cdnBase %>/npm/diff@5.1.0/dist/diff.min.js"></script>
         <link
             rel="stylesheet"
-            href="https://cdn.jsdelivr.net/npm/diff2html@3.4.47/bundles/css/diff2html.min.css"
+            href="<%= htmlWebpackPlugin.options.cdnBase %>/npm/diff2html@3.4.47/bundles/css/diff2html.min.css"
         />
-        <script src="https://cdn.jsdelivr.net/npm/diff2html@3.4.47/bundles/js/diff2html-ui.min.js"></script>
+        <script src="<%= htmlWebpackPlugin.options.cdnBase %>/npm/diff2html@3.4.47/bundles/js/diff2html-ui.min.js"></script>
 
         <!-- Markdown parser -->
-        <script src="https://cdn.jsdelivr.net/npm/marked@11.1.1/marked.min.js"></script>
+        <script src="<%= htmlWebpackPlugin.options.cdnBase %>/npm/marked@11.1.1/marked.min.js"></script>
         <script>
             performance.mark('cp:app.headCdnScriptsParsed');
         </script>

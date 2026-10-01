@@ -1,16 +1,13 @@
-/** GENERATED from collab/packages/protocol/src/capabilities.js. Do not edit by hand. */
+/** GENERATED from collab/packages/protocol. Do not edit by hand. */
 
-export const COLLAB_CAPABILITIES = Object.freeze({
-    durableWal: 1,
-    certifiedGeneration: 1,
-    packetEnvelope: 1,
-    glyphTombstones: 1,
-    glyphQuotaReservation: 1,
-    writeReceipts: 1,
-    dualDigests: 1
-});
+import { COLLAB_PROTOCOL_VERSION } from './collab-protocol-limits';
 
-export const COLLAB_CAPABILITIES_HEADER = 'X-Collab-Capabilities';
+export { COLLAB_PROTOCOL_VERSION };
+
+export const COLLAB_PROTOCOL_VERSION_HEADER = 'X-Collab-Protocol-Version';
+
+/** @deprecated Prefer COLLAB_PROTOCOL_VERSION_HEADER. */
+export const COLLAB_CAPABILITIES_HEADER = COLLAB_PROTOCOL_VERSION_HEADER;
 
 export const MIXED_VERSION_DEPLOY_ORDER = Object.freeze([
     'website',
@@ -18,18 +15,30 @@ export const MIXED_VERSION_DEPLOY_ORDER = Object.freeze([
     'compactor',
     'room',
     'editor'
-]);
+] as const);
 
+export function advertisedCollabProtocolVersion(): number {
+    return COLLAB_PROTOCOL_VERSION;
+}
+
+/** @deprecated Use advertisedCollabProtocolVersion. */
 export function advertisedCollabCapabilities() {
-    return { ...COLLAB_CAPABILITIES };
+    return { protocolVersion: COLLAB_PROTOCOL_VERSION };
 }
 
 export function missingRequiredCollabCapabilities(
-    advertised: Record<string, unknown> | null | undefined
+    advertised: Record<string, unknown> | number | null | undefined
 ): string[] {
-    const source =
-        advertised && typeof advertised === 'object' ? advertised : {};
-    return Object.entries(COLLAB_CAPABILITIES)
-        .filter(([name, version]) => Number(source[name]) !== Number(version))
-        .map(([name]) => name);
+    const peer =
+        typeof advertised === 'number'
+            ? advertised
+            : advertised && typeof advertised === 'object'
+              ? Number(
+                    (advertised as { protocolVersion?: unknown })
+                        .protocolVersion
+                )
+              : NaN;
+    return Number(peer) === Number(COLLAB_PROTOCOL_VERSION)
+        ? []
+        : ['protocolVersion'];
 }

@@ -26,7 +26,7 @@ the plan’s 8 MB placeholder).
 - Nested JSON is leaf-granular on get and set (symmetric-diff into Y.Maps;
   no whole-subtree `toYType` on dict assign). Outlines use atomic
   `geometryTopology` + packed `nodePositionsById` (see
-  `developer-docs/YDOC_SHAPE_IDENTITY_MIGRATION.md`).
+  `developer-docs/(removed: YDOC_SHAPE_IDENTITY_MIGRATION.md)`).
 - Persistent WebSockets: `font-core` + the current glyph subset only.
 - Passive glyphs catch up over HTTP `GET /shards/:path/live` → DO
   `/internal/live-state` (live vector, not stale R2). Access-epoch 403;
@@ -127,9 +127,9 @@ Worker/DO must both enforce.
 | --- | --- | --- |
 | `GET /api/cloud/eligibility` | Logged-in caller | “Can I host / first Save As?” |
 | `GET /api/cloud/assets/:id/limits` | Asset owner | Open cloud font, Save, `canAddGlyphs` |
-| `POST /api/cloud/assets/:id/can-add-glyphs` | Asset owner | Before add/duplicate/paste glyphs |
+| `POST /api/cloud/assets/:id/glyph-count` | Owner or editor | Persist `font_assets.glyph_count`, capped by glyph reservations |
+| `POST /api/cloud/assets/:id/glyph-orphans` | Owner or editor | Mark deleted glyph ids, clear them on undo, reconcile with the live list |
 | `GET /api/internal/cloud/assets/:id/limits` | Asset owner (service token) | Collab seed / catalog insert |
-| `POST /api/internal/cloud/assets/:id/glyph-count` | Service token | Persist `font_assets.glyph_count` |
 
 **Basic** (and current no-membership cloud grant) reads `maxFontsOwned`,
 `maxGlyphsPerFont`, and `maxInvitesPerAsset` from `getPricingProducts()`.
@@ -337,7 +337,7 @@ contours. Unreferenced position entries are orphans; an idempotent repair
 deletes them. Browser and Rust reconstruct ordinary `shapes` after a complete
 transaction and must fail closed without replacing the last known-good
 compiler cache. Details:
-[developer-docs/YDOC_SHAPE_IDENTITY_MIGRATION.md](../developer-docs/YDOC_SHAPE_IDENTITY_MIGRATION.md).
+[developer-docs/(removed: YDOC_SHAPE_IDENTITY_MIGRATION.md)](../developer-docs/(removed: YDOC_SHAPE_IDENTITY_MIGRATION.md)).
 
 Nested font JSON outside outlines (features, kerning, `format_specific`,
 names, …) uses the same leaf-write funnel: getters record leaf paths;
@@ -542,21 +542,30 @@ shard bytes after the user cancelled Save As.
 
 ## WAL, reconnect, and `connected`
 
-`connected` is not “a WebSocket opened.” After the first successful session
-ready barrier, later reconnects must finish live transport sync, subset
-catch-up, WAL replay, and HTTP flush. Failure of that barrier reports
-`error` (not `connected`). First connect still reports `connected` if
-catch-up times out so a large first open is not fail-closed.
+`connected` is not “a WebSocket opened.” Session ready is: live transport
+sync, subset catch-up, WAL replay, and HTTP flush.
 
-WAL keys are `(assetId, documentId, clientTransactionId)`. Mutation
-intents are not stored as empty rows. Disconnect must not zero
-`pendingSyncCount`; unsettled outbox rows keep the title-bar count.
+**Connected / degraded policy (fail-closed after first ready):**
+
+- **First open:** if the ready barrier times out, the session may still
+  report `connected` in an explicit **degraded** state so a large first
+  hydrate is not fail-closed.
+- **After the first ready:** later reconnect barriers that fail report
+  `error` (not `connected`).
+
+Reconnect sends `sync-request` with integer `checkpointLogId` and
+`appliedLogId`, then applies tail replay or `rebaseline_required`, then
+resends unacked WAL rows in `dependsOn` order. There is no
+`sync-complete` / state-vector / retarget handshake.
+
+WAL keys are `(assetId, documentId, clientTransactionId)`. Each row
+carries update bytes, optional `dependsOn`, and `documentId`. There is no
+byte-less prepared phase and no generation quarantine. One pending count
+comes from the WAL. Disconnect must not zero `pendingSyncCount`.
 `tail_full` is read-only. Save As and Open are exclusive.
 
-If published core/deps hashes do not match after retries, hydrate still
-installs the last consistent live pair from one pack fetch (same request)
-so a second client can open while the owner’s journal is ahead of the
-certified snapshot. Live catch-up then reconciles.
+Sparse open plans from live `font-deps` (not a published generation
+manifest). Live rooms are the only content truth.
 
 ## Who chooses glyphs; who computes closure
 
@@ -1052,7 +1061,7 @@ internal headers at the public edge. Canonical shard names only
 (`font-core`, `font-deps`, `glyph:<UUID>`); seed/create is checked against the
 **asset owner’s** Website D1 entitlement and a signed shard manifest.
 
-Writes (`update`, `sync-complete`) only **schedule** compact. They never
+Writes (`update`) only **schedule** compact. They never
 compact inline. Soft dirty (256 KiB or 64 rows, or 30 min
 `firstDirtyAt`) alarms the Worker; 413 is terminal (`needs-fat-compactor`);
 the hard dirty cap is `tail_full` (WS `error.code = tail_full`, read-only)
@@ -1074,8 +1083,11 @@ immutable `font_asset_manifests` row and CAS-switches `manifest_revision`.
 Failure leaves the previous pointer readable. Rollback is
 `POST .../manifests/rollback` to an earlier revision — checkpoints are not
 rewritten. Mixed v3/v4 writers are rejected at auth. Catalog deletes keep
-generation tombstones; delayed orphan shard rows use `font_shard_ops` status
-`orphan-pending`. Sparse hydrate retries until the published core/deps
+generation tombstones. A deleted glyph's shard gets a `font_shard_ops` row with
+status `orphan-pending` (via `glyph-orphans`); undo within 24 hours clears it.
+The hourly `website-cloud-cron` Worker then purges the room, its hub
+registration, the R2 prefix, the attestation and the reservation. A font delete
+is a resumable purge (rooms, R2, D1 rows) that the cron also finishes. Sparse hydrate retries until the published core/deps
 revision pair matches.
 
 Reconnect carries `checkpointLogId` and `appliedLogId`. If

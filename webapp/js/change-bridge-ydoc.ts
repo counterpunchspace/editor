@@ -591,8 +591,6 @@ export const YMAP_INFRASTRUCTURE_KEYS = new Set([
     'guideOrder',
     'featuresById',
     'featureOrder',
-    'shapesById',
-    'shapeOrder',
     LAYER_GEOMETRY_TOPOLOGY_KEY,
     LAYER_NODE_POSITIONS_KEY,
     LAYER_SHAPE_DATA_KEY
@@ -1405,7 +1403,6 @@ export function stabilizeIndexedMapPath(
  * and apply a minimal diff instead of a full replace.
  */
 const ORDER_KEYS: Record<string, string> = {
-    shapeOrder: 'shapes',
     anchorOrder: 'anchors',
     guideOrder: 'guides',
     featureOrder: 'features',

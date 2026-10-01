@@ -88,18 +88,6 @@ export function normalizeCloudShardPackUrl(
     return url.toString();
 }
 
-export function normalizeCloudShardPackDiscardUrl(
-    roomUrl: string,
-    websiteBaseUrl: string,
-    assetId: string
-): string {
-    const url = new URL(
-        normalizeCloudShardPackUrl(roomUrl, websiteBaseUrl, assetId)
-    );
-    url.pathname = `/room/${encodeURIComponent(assetId)}/pack/discard`;
-    return url.toString();
-}
-
 export function normalizeCloudShardLiveHttpUrl(
     roomUrl: string,
     websiteBaseUrl: string,

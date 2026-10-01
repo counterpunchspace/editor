@@ -75,6 +75,7 @@ import {
     isDerivedLayerChangePath
 } from './change-log';
 import { Logger } from './logger';
+import { ApplyKind } from './apply-kind';
 import { pushCollabIntegrityEvent } from './cloud-collab-integrity-debug';
 import { bytesToBase64 } from './cloud-durable-wal';
 import {
@@ -165,7 +166,9 @@ export type CommittedChangeListener = (
 
 export type GlyphRevisionSignalListener = (
     update: YjsUpdate,
-    entries: ChangeLogEntry[]
+    entries: ChangeLogEntry[],
+    /** The envelope persisted to the WAL; senders must reuse it so the ACK matches the row. */
+    collaborationMessage?: CollaborationMessageEnvelope | null
 ) => void;
 
 export class MetadataFreeRemoteUpdateError extends Error {
@@ -643,6 +646,8 @@ export class PatchSyncEngine {
     private _cloudWalCommitChain: Promise<void> = Promise.resolve();
     /** Serializes persist-then-deliver of local cloud emits after apply. */
     private _cloudEmitPersistChain: Promise<void> = Promise.resolve();
+    /** Collects glyph WAL clientTransactionIds for the next core revision row. */
+    private _revisionDependsOnSink: string[] | null = null;
     private _lastCloudCommitDebug: Record<string, unknown> | null = null;
     /** Next logical history item counter */
     private _nextHistoryItemId = 1;
@@ -658,8 +663,9 @@ export class PatchSyncEngine {
     private _txStartStateVector: Uint8Array | null = null;
     /** Buffered operations for the current outermost transaction */
     private _txBufferedOperations: TransactionBufferedOperation[] = [];
-    /** Flag: currently applying remote update (suppress outbound broadcast) */
-    private _isApplyingRemote = false;
+    /** Apply-path classification (replaces suppress-flag cluster). */
+    private _applyKind: ApplyKind = ApplyKind.Local;
+    private _applyKindStack: ApplyKind[] = [];
 
     /**
      * Optional callback that receives every Yjs binary update (local and
@@ -705,10 +711,7 @@ export class PatchSyncEngine {
     /** Nested HTTP hydrate applies one Font.fromData at the end, not per shard. */
     private _afterSyncDeferDepth = 0;
     private _afterSyncSkipped = false;
-    /** Suppress recording (used during undo/redo application) */
-    private _suppressRecording = false;
-    /** Number of active scoped recording suppressions. */
-    private _recordingSuppressionDepth = 0;
+
     /** Index into _changeLog marking the last entry broadcast to peers */
     private _lastBroadcastLogIndex = 0;
     /** Index into _changeLog marking the last entry emitted to local-update listeners */
@@ -726,8 +729,7 @@ export class PatchSyncEngine {
     >();
     /** Optional callback that can append derived operations before commit */
     private _transactionFinalizer: TransactionFinalizer | null = null;
-    /** Suppress raw yDoc.on('update') broadcasting while emitting canonical diffs manually. */
-    private _suppressAutomaticLocalUpdateEmission = false;
+
     /**
      * Compact Yjs state-vector (one clock entry per client, typically < 100 bytes)
      * captured after each local or remote Y.Doc mutation. Used to compute the
@@ -1067,18 +1069,8 @@ export class PatchSyncEngine {
                 return glyphMap;
             }
         }
-        // Sharded fonts keep leftover glyph bodies on font-core from older
-        // protocol versions. Those must not count as hydrated — only glyph
-        // documents do. Fall back to the core map only for unsharded docs.
-        if (this._glyphDocs.size > 0) {
-            return null;
-        }
-        const glyphsMap = this.fontMap.get('glyphs');
-        if (!(glyphsMap instanceof Y.Map)) {
-            return null;
-        }
-        const glyphMap = glyphsMap.get(glyphName);
-        return glyphMap instanceof Y.Map ? glyphMap : null;
+        // Sharded fonts only hydrate glyphs from glyph documents.
+        return null;
     }
 
     private _ensureGlyphDoc(
@@ -1297,7 +1289,7 @@ export class PatchSyncEngine {
             return;
         }
         let repairedGlyphName: string | null = null;
-        this._isApplyingRemote = true;
+        this._pushApplyKind(ApplyKind.Remote);
         try {
             if (!this._fontJson) this._fontJson = {};
             let doc = this._docForId(documentId);
@@ -1328,7 +1320,7 @@ export class PatchSyncEngine {
             }
             this._emitAfterSync();
         } finally {
-            this._isApplyingRemote = false;
+            this._popApplyKind();
         }
         // Glyph shards are authoritative. Once a full checkpoint has been
         // merged, repair only that source's denormalized edge map against its
@@ -1706,6 +1698,16 @@ export class PatchSyncEngine {
         return total;
     }
 
+    /** Cached encoded sizes for prepareToSave without a full re-encode. */
+    getCachedShardSizeReports(): Array<{
+        documentId: string;
+        byteLength: number;
+    }> {
+        return [...this._lastEncodedShardBytes.entries()]
+            .filter(([, byteLength]) => Number.isFinite(byteLength))
+            .map(([documentId, byteLength]) => ({ documentId, byteLength }));
+    }
+
     private _glyphHasRetainedLocalState(
         glyphId: string,
         glyphName: string | undefined
@@ -1852,7 +1854,7 @@ export class PatchSyncEngine {
     }
 
     applyDocumentSetState(shards: EncodedShard[]): void {
-        this._isApplyingRemote = true;
+        this._pushApplyKind(ApplyKind.Remote);
         try {
             if (!this._fontJson) this._fontJson = {};
             for (const shard of shards) {
@@ -1876,7 +1878,7 @@ export class PatchSyncEngine {
             this._onAfterSync?.();
             this._onRemoteChange?.([]);
         } finally {
-            this._isApplyingRemote = false;
+            this._popApplyKind();
         }
         this._repairGeometryOrphansAfterConvergedState();
     }
@@ -1890,7 +1892,7 @@ export class PatchSyncEngine {
         if (!shards.length) {
             return;
         }
-        this._isApplyingRemote = true;
+        this._pushApplyKind(ApplyKind.Remote);
         try {
             if (!this._fontJson) {
                 this._fontJson = {};
@@ -1910,7 +1912,7 @@ export class PatchSyncEngine {
                 );
             }
         } finally {
-            this._isApplyingRemote = false;
+            this._popApplyKind();
         }
     }
 
@@ -2248,7 +2250,8 @@ export class PatchSyncEngine {
     private _emitLocalUpdate(
         update: YjsUpdate,
         changeLogEntries: ChangeLogEntry[],
-        documentId: string = FONT_CORE_DOCUMENT_ID
+        documentId: string = FONT_CORE_DOCUMENT_ID,
+        options?: { dependsOn?: string[] }
     ): void {
         // Undo/redo may append a coarse control entry for history-stack state,
         // but every emitted Yjs packet must still be observed through the same
@@ -2276,6 +2279,14 @@ export class PatchSyncEngine {
                     )
                 )
             ]);
+            if (
+                this._revisionDependsOnSink &&
+                documentId.startsWith('glyph:')
+            ) {
+                this._revisionDependsOnSink.push(
+                    collaborationMessageKey(collaborationMessage)
+                );
+            }
         }
         const deliver = (): void => {
             pushCollabIntegrityEvent('emit-local', {
@@ -2294,6 +2305,16 @@ export class PatchSyncEngine {
                 cb(emissionEntries, { origin: 'local', update, documentId });
             }
         };
+        const reportPersistFailure = (id: string, reason: string): void => {
+            console.error(
+                `Cloud durability persist failed for ${id}: ${reason}; edit is not yet durable`
+            );
+            window.dispatchEvent(
+                new CustomEvent('cloud-persist-failed', {
+                    detail: { documentId: id, reason }
+                })
+            );
+        };
         const plugin = window.cloudPlugin;
         if (
             typeof plugin?.persistOutgoingCloudUpdate === 'function' &&
@@ -2306,7 +2327,8 @@ export class PatchSyncEngine {
                         plugin.persistOutgoingCloudUpdate(
                             update,
                             collaborationMessage,
-                            documentId
+                            documentId,
+                            options?.dependsOn
                         )
                     )
                 )
@@ -2317,9 +2339,12 @@ export class PatchSyncEngine {
                             bytes: update.length,
                             ok: ok !== false
                         });
-                        if (ok !== false) {
-                            deliver();
+                        if (ok === false) {
+                            reportPersistFailure(documentId, 'rejected');
                         }
+                        // Local consumers must always see the applied update;
+                        // skipping deliver() would leave the UI stale versus Yjs.
+                        deliver();
                     },
                     (error) => {
                         pushCollabIntegrityEvent('emit-persist', {
@@ -2328,6 +2353,8 @@ export class PatchSyncEngine {
                             ok: false,
                             error: String(error)
                         });
+                        reportPersistFailure(documentId, String(error));
+                        deliver();
                     }
                 )
                 .then(
@@ -2520,7 +2547,7 @@ export class PatchSyncEngine {
             applyCloudOwnedData(fontJson);
         }
         this._destroyGlyphDocs();
-        this._suppressAutomaticLocalUpdateEmission = true;
+        this._pushApplyKind(ApplyKind.ManualEmit);
         try {
             this.yDoc.transact(() => {
                 this.fontMap.forEach((_v: unknown, k: string) => {
@@ -2534,7 +2561,7 @@ export class PatchSyncEngine {
                 this._ensureGlyphDoc(glyphId, name, glyph);
             }
         } finally {
-            this._suppressAutomaticLocalUpdateEmission = false;
+            this._popApplyKind();
             this._isSyncing = false;
         }
         this._rehydrateEntireFontJsonFromYDoc();
@@ -3210,9 +3237,62 @@ export class PatchSyncEngine {
         return this._txDepth > 0;
     }
 
+    private _pushApplyKind(kind: ApplyKind): void {
+        this._applyKindStack.push(this._applyKind);
+        this._applyKind = kind;
+    }
+
+    private _popApplyKind(): void {
+        this._applyKind = this._applyKindStack.pop() ?? ApplyKind.Local;
+    }
+
+    private _runWithApplyKind<T>(kind: ApplyKind, fn: () => T): T {
+        this._pushApplyKind(kind);
+        try {
+            return fn();
+        } finally {
+            this._popApplyKind();
+        }
+    }
+
+    /** Remote or catch-up apply — suppress outbound local broadcast semantics. */
+    private get _isApplyingRemote(): boolean {
+        return (
+            this._applyKind === ApplyKind.Remote ||
+            this._applyKind === ApplyKind.CatchUp
+        );
+    }
+
+    /** Local and ManualEmit still record (or already recorded). */
+    private get _suppressRecording(): boolean {
+        return (
+            this._applyKind !== ApplyKind.Local &&
+            this._applyKind !== ApplyKind.ManualEmit
+        );
+    }
+
+    /**
+     * Local and Silent still allow automatic yDoc update emission.
+     * Remote / CatchUp / UndoRedo / ManualEmit suppress it.
+     */
+    private get _suppressAutomaticLocalUpdateEmission(): boolean {
+        return (
+            this._applyKind !== ApplyKind.Local &&
+            this._applyKind !== ApplyKind.Silent
+        );
+    }
+
     setRecordingSuppressed(suppressed: boolean): void {
-        this._recordingSuppressionDepth = suppressed ? 1 : 0;
-        this._suppressRecording = suppressed;
+        if (suppressed) {
+            if (this._applyKind === ApplyKind.Local) {
+                this._pushApplyKind(ApplyKind.Silent);
+            }
+            return;
+        }
+        while (this._applyKindStack.length > 0) {
+            this._popApplyKind();
+        }
+        this._applyKind = ApplyKind.Local;
     }
 
     /**
@@ -3220,30 +3300,19 @@ export class PatchSyncEngine {
      * Each release is idempotent so overlapping lifecycle cleanup is safe.
      */
     beginRecordingSuppression(): () => void {
-        this._recordingSuppressionDepth += 1;
-        this._suppressRecording = true;
+        this._pushApplyKind(ApplyKind.Silent);
         let released = false;
         return () => {
             if (released) {
                 return;
             }
             released = true;
-            this._recordingSuppressionDepth = Math.max(
-                0,
-                this._recordingSuppressionDepth - 1
-            );
-            this._suppressRecording = this._recordingSuppressionDepth > 0;
+            this._popApplyKind();
         };
     }
 
     runWithoutRecording<T>(fn: () => T): T {
-        const wasSuppressed = this._suppressRecording;
-        this._suppressRecording = true;
-        try {
-            return fn();
-        } finally {
-            this._suppressRecording = wasSuppressed;
-        }
+        return this._runWithApplyKind(ApplyKind.Silent, fn);
     }
 
     // ── Bulk sync (after drag / external mutation) ───────────────
@@ -4874,8 +4943,7 @@ export class PatchSyncEngine {
         );
         const localUpdateBaselines =
             this._captureDocumentBaselines(undoDocumentIds);
-        this._suppressRecording = true;
-        this._suppressAutomaticLocalUpdateEmission = true;
+        this._pushApplyKind(ApplyKind.UndoRedo);
         try {
             const targetHistoryItemId = authoritativeHistory.historyItemId;
             const semanticHistoryItem = authoritativeHistory.historyItem;
@@ -4993,8 +5061,7 @@ export class PatchSyncEngine {
                 historyItem: semanticHistoryItem
             };
         } finally {
-            this._suppressRecording = false;
-            this._suppressAutomaticLocalUpdateEmission = false;
+            this._popApplyKind();
         }
     }
 
@@ -5058,8 +5125,7 @@ export class PatchSyncEngine {
         );
         const localUpdateBaselines =
             this._captureDocumentBaselines(redoDocumentIds);
-        this._suppressRecording = true;
-        this._suppressAutomaticLocalUpdateEmission = true;
+        this._pushApplyKind(ApplyKind.UndoRedo);
         try {
             const targetHistoryItemId = authoritativeHistory.historyItemId;
             const semanticHistoryItem = authoritativeHistory.historyItem;
@@ -5176,8 +5242,7 @@ export class PatchSyncEngine {
                 historyItem: semanticHistoryItem
             };
         } finally {
-            this._suppressRecording = false;
-            this._suppressAutomaticLocalUpdateEmission = false;
+            this._popApplyKind();
         }
     }
 
@@ -5292,7 +5357,7 @@ export class PatchSyncEngine {
         options?: ApplyRemoteUpdateOptions
     ): boolean {
         const captureInUndo = options?.captureInUndo !== false;
-        this._isApplyingRemote = true;
+        this._pushApplyKind(ApplyKind.Remote);
         try {
             if (!this._fontJson) this._fontJson = {};
             const effectiveRemoteEntries = remoteEntries?.length
@@ -5413,7 +5478,7 @@ export class PatchSyncEngine {
             this._noteBroadcastStateVector(resolvedDocumentId);
             return didChange;
         } finally {
-            this._isApplyingRemote = false;
+            this._popApplyKind();
         }
     }
 
@@ -6320,7 +6385,7 @@ export class PatchSyncEngine {
      */
     applyFullState(state: YjsUpdate): void {
         let applied = false;
-        this._isApplyingRemote = true;
+        this._pushApplyKind(ApplyKind.Remote);
         try {
             if (!this._fontJson) this._fontJson = {};
             Y.applyUpdate(this.yDoc, state, SYSTEM_REMOTE_ORIGIN);
@@ -6338,7 +6403,7 @@ export class PatchSyncEngine {
             this._lastBroadcastStateVector = Y.encodeStateVector(this.yDoc);
             applied = true;
         } finally {
-            this._isApplyingRemote = false;
+            this._popApplyKind();
         }
         if (applied) {
             this._notifyCoreHydrated();
@@ -6504,7 +6569,7 @@ export class PatchSyncEngine {
         this._appendChangeLogEntries(changeLogEntries);
         const localUpdateLogIndexBeforeCommit = this._lastLocalUpdateLogIndex;
 
-        this._suppressAutomaticLocalUpdateEmission = true;
+        this._pushApplyKind(ApplyKind.ManualEmit);
         try {
             const uniqueDocumentIds = [
                 ...new Set(
@@ -6554,7 +6619,7 @@ export class PatchSyncEngine {
                 }
             }
         } finally {
-            this._suppressAutomaticLocalUpdateEmission = false;
+            this._popApplyKind();
             this._finishBatchUndoManagers(scopeInfo);
         }
 
@@ -7034,7 +7099,7 @@ export class PatchSyncEngine {
         if (!updates.length) {
             return;
         }
-        this._isApplyingRemote = true;
+        this._pushApplyKind(ApplyKind.Remote);
         try {
             for (const update of updates) {
                 if (update?.byteLength) {
@@ -7043,7 +7108,7 @@ export class PatchSyncEngine {
             }
             this._rehydrateEntireFontJsonFromYDoc();
         } finally {
-            this._isApplyingRemote = false;
+            this._popApplyKind();
         }
     }
 
@@ -7252,8 +7317,7 @@ export class PatchSyncEngine {
         changeLogEntries: ChangeLogEntry[],
         decision: CollabSubmitDecision
     ): void {
-        this._suppressAutomaticLocalUpdateEmission = true;
-        this._suppressRecording = true;
+        this._pushApplyKind(ApplyKind.UndoRedo);
         try {
             for (const mark of undoRollbackMarks) {
                 while (mark.manager.undoStack.length > mark.undo) {
@@ -7264,8 +7328,7 @@ export class PatchSyncEngine {
                 }
             }
         } finally {
-            this._suppressRecording = false;
-            this._suppressAutomaticLocalUpdateEmission = false;
+            this._popApplyKind();
         }
         if (changeLogEntries.length) {
             this._changeLog.splice(
@@ -7320,22 +7383,11 @@ export class PatchSyncEngine {
     }
 
     private _shouldPersistCloudWalBeforeApply(
-        cloudWalApplyToken?: string | null
+        _cloudWalApplyToken?: string | null
     ): boolean {
-        if (
-            cloudWalApplyToken &&
-            this._cloudWalApplyTokens.has(cloudWalApplyToken)
-        ) {
-            return false;
-        }
-        if (window.fontManager?.currentFont?.isCloudBacked?.() !== true) {
-            return false;
-        }
-        return (
-            typeof window.cloudPlugin?.persistPreparedCloudTransaction ===
-                'function' ||
-            typeof window.cloudPlugin?.persistCloudMutationIntent === 'function'
-        );
+        // Byte-less prepared WAL rows are gone; durability is one post-apply
+        // WAL row with update bytes.
+        return false;
     }
 
     private async _commitOperationsAfterCloudWal(
@@ -7761,7 +7813,18 @@ export class PatchSyncEngine {
             );
         }
 
-        this._suppressAutomaticLocalUpdateEmission = true;
+        const revisionTokensForCommit = this._isApplyingRemote
+            ? []
+            : this._allocateGlyphRevisionTokens(
+                  this._glyphIdsTouchedByOperations(effectiveOperations)
+              );
+        const revisionByGlyphId = new Map(
+            revisionTokensForCommit.map((token) => [
+                token.glyphId,
+                token.revision
+            ])
+        );
+        this._pushApplyKind(ApplyKind.ManualEmit);
         try {
             for (const documentId of docsTouched) {
                 const doc = this._docForId(documentId);
@@ -7775,17 +7838,33 @@ export class PatchSyncEngine {
                     return this.documentIdForPath(applyPath) === documentId;
                 });
                 const geometryOps = this._dropObsoletePositionWrites(opsForDoc);
+                const glyphIdForDoc = glyphIdFromDocumentId(documentId);
+                const stampRevision = glyphIdForDoc
+                    ? revisionByGlyphId.get(glyphIdForDoc)
+                    : undefined;
                 doc.transact(
                     () => {
                         for (const operation of geometryOps) {
                             this._applyBufferedOperation(operation);
+                        }
+                        if (stampRevision && glyphIdForDoc) {
+                            const sync = doc.getMap(GLYPH_SYNC_MAP_KEY);
+                            sync.set(GLYPH_SYNC_REVISION_KEY, stampRevision);
+                            const catalog = catalogFromCoreJson(
+                                this._fontJson as Record<string, unknown>
+                            )?.glyphCatalog;
+                            const generation =
+                                catalog?.[glyphIdForDoc]?.generation;
+                            if (generation != null) {
+                                sync.set('generation', generation);
+                            }
                         }
                     },
                     this._originForDocument(documentId, scopeInfo.origin)
                 );
             }
         } finally {
-            this._suppressAutomaticLocalUpdateEmission = false;
+            this._popApplyKind();
         }
 
         if (!this._isApplyingRemote) {
@@ -7997,17 +8076,18 @@ export class PatchSyncEngine {
         const byApplyPath = new Map<
             string,
             {
+                first: TransactionBufferedOperation;
+                last: TransactionBufferedOperation;
                 originalValue: unknown;
                 finalValue: unknown;
             }
         >();
 
-        operations.forEach((operation) => {
+        for (const operation of operations) {
             const applyPath = this._toYDocPath(
                 operation.applyPath ?? operation.path
             );
             const pathKey = JSON.stringify(applyPath);
-            const existing = byApplyPath.get(pathKey);
             const finalValue =
                 operation.op === 'remove'
                     ? undefined
@@ -8016,39 +8096,53 @@ export class PatchSyncEngine {
                               ? operation.newValue
                               : operation.applyNewValue
                       );
-
+            const existing = byApplyPath.get(pathKey);
             if (!existing) {
                 byApplyPath.set(pathKey, {
+                    first: operation,
+                    last: operation,
                     finalValue,
                     originalValue: cloneHistoryValue(
-                        this._getRoutedYPath(applyPath)
+                        operation.applyOldValue === undefined
+                            ? operation.oldValue
+                            : operation.applyOldValue
                     )
                 });
-                return;
+                continue;
             }
-
+            existing.last = operation;
             existing.finalValue = finalValue;
-        });
-
-        const noOpPathKeys = new Set(
-            Array.from(byApplyPath.entries())
-                .filter(([, entry]) =>
-                    this._isDeepEqual(entry.originalValue, entry.finalValue)
-                )
-                .map(([pathKey]) => pathKey)
-        );
-
-        if (!noOpPathKeys.size) {
-            return operations;
         }
 
-        return operations.filter((operation) => {
-            const applyPath = this._toYDocPath(
-                operation.applyPath ?? operation.path
-            );
-            const pathKey = JSON.stringify(applyPath);
-            return !noOpPathKeys.has(pathKey);
-        });
+        const collapsed: TransactionBufferedOperation[] = [];
+        for (const entry of byApplyPath.values()) {
+            if (this._isDeepEqual(entry.originalValue, entry.finalValue)) {
+                continue;
+            }
+            const last = entry.last;
+            const first = entry.first;
+            const collapsedOp =
+                last.op === 'remove'
+                    ? ('remove' as const)
+                    : first.op === 'add'
+                      ? ('add' as const)
+                      : last.op;
+            collapsed.push({
+                ...last,
+                op: collapsedOp,
+                oldValue: cloneHistoryValue(entry.originalValue),
+                newValue:
+                    last.op === 'remove'
+                        ? last.newValue
+                        : cloneHistoryValue(entry.finalValue),
+                applyOldValue: cloneHistoryValue(entry.originalValue),
+                applyNewValue:
+                    last.op === 'remove'
+                        ? undefined
+                        : cloneHistoryValue(entry.finalValue)
+            });
+        }
+        return collapsed;
     }
 
     private _collectRemovedNodeIds(
@@ -8457,7 +8551,8 @@ export class PatchSyncEngine {
             glyphId: string;
             revision: string;
             previous: unknown;
-        }>
+        }>,
+        dependsOn: string[] = []
     ): void {
         if (!tokens.length || this._isApplyingRemote) {
             return;
@@ -8495,8 +8590,39 @@ export class PatchSyncEngine {
             return;
         }
         this._noteBroadcastStateVector(FONT_CORE_DOCUMENT_ID);
+        // Persist as an ordinary WAL row with dependsOn, then notify the
+        // dedicated revision-signal hook (not onLocalUpdate — that would add a
+        // second packet beside the glyph edit and break single-emit contracts).
+        const collaborationMessage =
+            createCollaborationMessageEnvelopeFromChangeLogEntries(entries, {
+                localSequence: this._nextCollaborationMessageSequence++,
+                source: 'change-bridge.glyph-revision',
+                windowId: this.windowId
+            });
+        const plugin = window.cloudPlugin;
+        if (
+            collaborationMessage &&
+            typeof plugin?.persistOutgoingCloudUpdate === 'function' &&
+            window.fontManager?.currentFont?.isCloudBacked?.() === true
+        ) {
+            this._cloudEmitPersistChain = this._cloudEmitPersistChain
+                .then(() =>
+                    Promise.resolve(
+                        plugin.persistOutgoingCloudUpdate(
+                            update,
+                            collaborationMessage,
+                            FONT_CORE_DOCUMENT_ID,
+                            [...dependsOn]
+                        )
+                    )
+                )
+                .then(
+                    () => undefined,
+                    () => undefined
+                );
+        }
         for (const cb of this._glyphRevisionListeners) {
-            cb(update, entries);
+            cb(update, entries, collaborationMessage);
         }
     }
 
@@ -8505,25 +8631,20 @@ export class PatchSyncEngine {
         emitLocalGlyphUpdates: () => void
     ): void {
         const tokens = this._allocateGlyphRevisionTokens(glyphIds);
+        // Revision stamps are applied in the same glyph transactions as outline
+        // writes when possible; keep an explicit stamp for undo/redo paths.
         this._stampGlyphCatchUpRevisions(tokens);
-        emitLocalGlyphUpdates();
-        const publish = (): void => {
-            this._publishGlyphRevisionCoreSignal(tokens);
-        };
-        const plugin = window.cloudPlugin;
-        if (typeof plugin?.waitForCloudGlyphDurability === 'function') {
-            void Promise.resolve(plugin.waitForCloudGlyphDurability()).then(
-                (result) => {
-                    if (result && result.durable === false) {
-                        return;
-                    }
-                    publish();
-                },
-                () => undefined
-            );
-            return;
+        const dependsOn: string[] = [];
+        const previousSink = this._revisionDependsOnSink;
+        this._revisionDependsOnSink = dependsOn;
+        try {
+            emitLocalGlyphUpdates();
+        } finally {
+            this._revisionDependsOnSink = previousSink;
         }
-        publish();
+        // Core glyphRevisions is an ordinary WAL row with dependsOn pointing at
+        // the glyph rows emitted above. Never drop this signal.
+        this._publishGlyphRevisionCoreSignal(tokens, dependsOn);
     }
 
     private _notifyCoreHydrated(): void {

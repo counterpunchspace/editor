@@ -15,7 +15,7 @@ describe('cancellable shard transfer', () => {
 
     test('passes abort signal and progress into seedDocumentSet', async () => {
         const seeder = {
-            seedDocumentSet: jest.fn(async (_t, _u, _s, _g, _n, options) => {
+            seedDocumentSet: jest.fn(async (_t, _u, _s, _g, options) => {
                 expect(options.signal).toBeInstanceOf(AbortSignal);
                 await options.onProgress({
                     completed: 1,

@@ -71,20 +71,25 @@ describe('cloud shard pack codec', () => {
     });
 
     test('finish accepts a pack that ends with ERROR instead of END', () => {
-        const body = concatBytes([
-            PACK_MAGIC,
-            encodePackErrorFrame({
-                error: 'seed failed',
-                shardId: 'font-core'
-            })
-        ]);
+        const errorFrame = encodePackErrorFrame({
+            error: 'seed failed',
+            shardId: 'font-core'
+        });
+        expect(errorFrame[0]).toBe(PACK_FRAME_TYPE.ERROR);
+        expect(errorFrame.byteLength).toBeGreaterThan(8 + 32);
+        const body = concatBytes([PACK_MAGIC, errorFrame]);
         const parser = createPackParser();
         const frames = parser.push(body);
         parser.finish();
         expect(frames.map((frame) => frame.type)).toEqual([
             PACK_FRAME_TYPE.ERROR
         ]);
-        expect(frames[0].receipt.error).toBe('seed failed');
+        expect(frames[0].shardId).toBe('font-core');
+        expect(frames[0].payload.byteLength).toBeGreaterThan(0);
+        const errorReceipt =
+            frames[0].receipt ||
+            JSON.parse(new TextDecoder().decode(frames[0].payload));
+        expect(errorReceipt.error).toBe('seed failed');
     });
 
     test('partitionPackItems respects the item cap', () => {

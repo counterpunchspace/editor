@@ -369,57 +369,6 @@ export async function hydrateSparseGlyphsToFixedPoint(options: {
     };
 }
 
-export type PublishedManifestRevisions = {
-    coreRevision: string;
-    depsRevision: string;
-};
-
-export async function hydrateCoreDepsToPublishedPair(options: {
-    fetchCoreDeps: () => Promise<{
-        core: Uint8Array | null;
-        deps: Uint8Array | null;
-    }>;
-    hash: (bytes: Uint8Array) => Promise<string>;
-    expected: PublishedManifestRevisions;
-    maxAttempts?: number;
-}): Promise<{
-    core: Uint8Array;
-    deps: Uint8Array | null;
-    attempts: number;
-}> {
-    const maxAttempts = options.maxAttempts ?? 3;
-    let lastCore: Uint8Array | null = null;
-    let lastDeps: Uint8Array | null = null;
-    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-        const fetched = await options.fetchCoreDeps();
-        lastCore = fetched.core;
-        lastDeps = fetched.deps;
-        if (!fetched.core?.byteLength) {
-            continue;
-        }
-        const coreRevision = await options.hash(fetched.core);
-        const depsRevision = fetched.deps?.byteLength
-            ? await options.hash(fetched.deps)
-            : null;
-        if (
-            coreRevision === options.expected.coreRevision &&
-            depsRevision === options.expected.depsRevision
-        ) {
-            return {
-                core: fetched.core,
-                deps: fetched.deps,
-                attempts: attempt
-            };
-        }
-    }
-    if (!lastCore?.byteLength) {
-        throw new Error('core/deps hydrate failed: missing published shard');
-    }
-    throw new Error(
-        'core/deps hydrate failed: published generation pair did not match'
-    );
-}
-
 export type EncodedShard = {
     documentId: string;
     bytes: Uint8Array;

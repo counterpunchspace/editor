@@ -23,6 +23,12 @@ import {
     type CloudShardIoOptions,
     normalizeCloudRoomWebSocketUrl
 } from '../../cloud-adapter';
+import { cloudPluginOpenMethods } from './cloud-plugin-open';
+import { cloudPluginSaveAsMethods } from './cloud-plugin-save-as';
+import { cloudPluginLiveMethods } from './cloud-plugin-live';
+import { cloudPluginSharingMethods } from './cloud-plugin-sharing';
+import { cloudPluginMeasureMethods } from './cloud-plugin-measure';
+import { cloudPluginCatchUpMethods } from './cloud-plugin-catch-up';
 import {
     isTransferCancelled,
     loadDocumentSetWithProgress,
@@ -71,14 +77,8 @@ import {
     glyphIdsFromCatalogEntries,
     glyphIdsFromRevisionEntries,
     hydrateSparseGlyphsToFixedPoint,
-    hydrateCoreDepsToPublishedPair,
     type EncodedShard
 } from '../cloud-document-set';
-import {
-    ensureMigrationRevisionTokens,
-    hashShardBytes,
-    revisionCoverageFromDocumentSet
-} from '../cloud-asset-migration';
 import {
     evaluateShardSizes,
     evaluateCollabSubmit,
@@ -93,13 +93,111 @@ import {
     type CollabSubmitRequest
 } from '../cloud-shard-limits';
 import type { CollaborationMessageEnvelope } from '../../collaboration-message';
+import { getCloudRequestHeaders } from '../../cloud-website-api';
+import { deleteCloudAssetUntilComplete } from '../../cloud-delete-asset';
+import './cloud-plugin-open';
+import './cloud-plugin-save-as';
+import './cloud-plugin-live';
+
+import {
+    deletedGlyphIdsFromCommittedEntries,
+    catalogGlyphNameFromCommittedEntry,
+    pathFromCommittedEntry,
+    committedChangeAffectsResidentClosure,
+    decodeBase64UrlJson,
+    extractRoleFromRoomToken,
+    normalizeCloudComponentTransform,
+    formatCloudDebugTimestamp,
+    formatCloudByteCount,
+    describeCloudStoredPiece,
+    worstCloudPieceSizeReport,
+    cloudPieceSizeWarningState,
+    glyphNameForCloudDocument,
+    escapeCloudTooltipText,
+    formatCloudStatusTooltipHtml,
+    canonicalizeCloudExportFontJson,
+    validateCloudExportForFontOpen,
+    glyphIdsFromCoreJson,
+    catalogEntriesFromCoreJson,
+    glyphDocumentIdsFromCoreJson,
+    getCloudFontJsonFromBridge,
+    assertCloudBridgeStateCanBeSaved,
+    cloneCloudFontJson,
+    estimateCloudTransferTimeoutMs,
+    cloneEncodedShards,
+    encodedShardByteLength,
+    flushPendingCloudSaveMutations,
+    waitForCloudSaveBridge,
+    captureCloudSaveSeedState,
+    recaptureCloudSaveSeedIfBridgeChanged,
+    waitForCloudSaveReady,
+    waitForCloudFontJson,
+    EMPTY_CLOUD_LIVE_SHARD_STATS,
+    type CloudAssetRole,
+    type CloudLiveShardStats,
+    type CloudSaveSeedCapture,
+    type CloudAsset,
+    type CloudEligibility,
+    type CloudAssetLimits,
+    type CloudAssetMember,
+    type CloudAssetInvitation,
+    type CloudOwnershipTransfer,
+    type CloudShareState
+} from './cloud-plugin-support';
+
+export {
+    deletedGlyphIdsFromCommittedEntries,
+    catalogGlyphNameFromCommittedEntry,
+    pathFromCommittedEntry,
+    committedChangeAffectsResidentClosure,
+    decodeBase64UrlJson,
+    extractRoleFromRoomToken,
+    normalizeCloudComponentTransform,
+    formatCloudDebugTimestamp,
+    formatCloudByteCount,
+    describeCloudStoredPiece,
+    worstCloudPieceSizeReport,
+    cloudPieceSizeWarningState,
+    glyphNameForCloudDocument,
+    escapeCloudTooltipText,
+    formatCloudStatusTooltipHtml,
+    canonicalizeCloudExportFontJson,
+    validateCloudExportForFontOpen,
+    glyphIdsFromCoreJson,
+    catalogEntriesFromCoreJson,
+    glyphDocumentIdsFromCoreJson,
+    getCloudFontJsonFromBridge,
+    assertCloudBridgeStateCanBeSaved,
+    cloneCloudFontJson,
+    estimateCloudTransferTimeoutMs,
+    cloneEncodedShards,
+    encodedShardByteLength,
+    flushPendingCloudSaveMutations,
+    waitForCloudSaveBridge,
+    captureCloudSaveSeedState,
+    recaptureCloudSaveSeedIfBridgeChanged,
+    waitForCloudSaveReady,
+    waitForCloudFontJson,
+    EMPTY_CLOUD_LIVE_SHARD_STATS
+} from './cloud-plugin-support';
+
+export type {
+    CloudAssetRole,
+    CloudLiveShardStats,
+    CloudSaveSeedCapture,
+    CloudAsset,
+    CloudEligibility,
+    CloudAssetLimits,
+    CloudAssetMember,
+    CloudAssetInvitation,
+    CloudOwnershipTransfer,
+    CloudShareState
+} from './cloud-plugin-support';
 
 const console = new Logger('CloudPlugin');
 const CLOUD_PLUGIN_UI_ENABLED = true;
 const CLOUD_ASSET_DELETED_MESSAGE = 'Cloud asset was deleted';
 const CLOUD_ASSET_LOCALIZED_EVENT = 'cloudAssetLocalizedToMemory';
-
-export type CloudAssetRole = 'owner' | 'editor' | 'viewer';
 
 type CloudAssetSizeWarningState = {
     visible: boolean;
@@ -113,763 +211,7 @@ type CloudSaveSizeWarningState = CloudAssetSizeWarningState & {
     canSave: boolean;
 };
 
-function deletedGlyphIdsFromCommittedEntries(
-    entries: Array<{ op?: string; path?: string | Array<string | number> }>,
-    fontJson: Record<string, unknown>
-): string[] {
-    const owned = catalogFromCoreJson(fontJson);
-    const ids = new Set<string>();
-    for (const entry of entries) {
-        if (entry.op !== 'remove') {
-            continue;
-        }
-        const path = pathFromCommittedEntry(entry);
-        if (path[0] !== 'glyphs' || path.length !== 2 || !path[1]) {
-            continue;
-        }
-        const name = String(path[1]);
-        const fromCatalog = Object.values(owned?.glyphCatalog || {}).find(
-            (item) => item.name === name && item.deleted !== true
-        )?.glyphId;
-        const fromBody = listGlyphRecords(fontJson).find(
-            (glyph) => String(glyph.name || '') === name
-        );
-        const glyphId =
-            fromCatalog || (fromBody ? String(fromBody.id || '') : '') || name;
-        if (glyphId) {
-            ids.add(glyphId);
-        }
-    }
-    return [...ids];
-}
-
-function catalogGlyphNameFromCommittedEntry(entry: {
-    path?: string | Array<string | number>;
-    newValue?: unknown;
-}): string | null {
-    const path = pathFromCommittedEntry(entry);
-    if (
-        !catalogNeedsUpdate(path) ||
-        path[0] !== 'glyphs' ||
-        path[1] === undefined ||
-        path[1] === null ||
-        path[1] === ''
-    ) {
-        return null;
-    }
-    // A rename commits glyphs.<oldName>.name after the model already uses
-    // the new name. The catalog patch has to look the glyph up by that name.
-    if (
-        path.length >= 3 &&
-        path[2] === 'name' &&
-        typeof entry.newValue === 'string' &&
-        entry.newValue
-    ) {
-        return entry.newValue;
-    }
-    return String(path[1]);
-}
-
-function pathFromCommittedEntry(entry: {
-    path?: string | Array<string | number>;
-}): Array<string | number> {
-    const rawPath = entry.path;
-    if (Array.isArray(rawPath)) {
-        return rawPath;
-    }
-    if (typeof rawPath === 'string') {
-        return getPathSegments(rawPath);
-    }
-    return [];
-}
-
-const RESIDENT_CLOSURE_CORE_ROOTS = new Set([
-    'features',
-    'glyphs',
-    'glyphOrder',
-    'glyphCatalog'
-]);
-
-/** Remote edges, feature text, or a new catalog glyph can enlarge the resident closure. */
-function committedChangeAffectsResidentClosure(
-    entries: Array<{ path?: string | Array<string | number> }>,
-    documentId?: string
-): boolean {
-    if (documentId === FONT_DEPS_DOCUMENT_ID) {
-        return true;
-    }
-    if (documentId && documentId !== FONT_CORE_DOCUMENT_ID) {
-        return false;
-    }
-    return entries.some((entry) =>
-        RESIDENT_CLOSURE_CORE_ROOTS.has(
-            String(pathFromCommittedEntry(entry)[0] ?? '')
-        )
-    );
-}
-
-function decodeBase64UrlJson<T>(value: string): T | null {
-    try {
-        const normalized = value.replace(/-/g, '+').replace(/_/g, '/');
-        const padded = normalized.padEnd(
-            Math.ceil(normalized.length / 4) * 4,
-            '='
-        );
-        const decoded = atob(padded);
-        return JSON.parse(decoded) as T;
-    } catch {
-        return null;
-    }
-}
-
-function extractRoleFromRoomToken(token: string): CloudAssetRole | null {
-    const parts = String(token || '').split('.');
-    if (parts.length !== 3) {
-        return null;
-    }
-
-    const payload = decodeBase64UrlJson<{ role?: string }>(parts[1]);
-    if (
-        payload?.role === 'owner' ||
-        payload?.role === 'editor' ||
-        payload?.role === 'viewer'
-    ) {
-        return payload.role;
-    }
-
-    return null;
-}
-
-function normalizeCloudComponentTransform(
-    transform: unknown
-): Record<string, unknown> {
-    if (
-        !transform ||
-        typeof transform !== 'object' ||
-        Array.isArray(transform)
-    ) {
-        return {
-            translation: [0, 0],
-            rotation: 0,
-            scale: [1, 1],
-            skew: [0, 0],
-            order: 'RestOfTheWorld'
-        };
-    }
-
-    const record = transform as Record<string, unknown>;
-    const translation = Array.isArray(record.translation)
-        ? [
-              Number(record.translation[0]) || 0,
-              Number(record.translation[1]) || 0
-          ]
-        : [0, 0];
-    const scale = Array.isArray(record.scale)
-        ? [Number(record.scale[0]) || 1, Number(record.scale[1]) || 1]
-        : [1, 1];
-    const rawSkew = Array.isArray(record.skew)
-        ? record.skew
-        : [record.skew ?? 0, 0];
-
-    return {
-        translation,
-        rotation: Number(record.rotation) || 0,
-        scale,
-        skew: [Number(rawSkew[0]) || 0, Number(rawSkew[1]) || 0],
-        order:
-            record.order === 'Glyphs' || record.order === 'RestOfTheWorld'
-                ? record.order
-                : 'RestOfTheWorld'
-    };
-}
-
-function getCloudRequestHeaders(
-    extraHeaders: Record<string, string> = {}
-): Record<string, string> {
-    const headers = { ...extraHeaders };
-    const sessionToken = window.authManager?.getSessionToken?.();
-    if (sessionToken) {
-        headers.Authorization = `Bearer ${sessionToken}`;
-    }
-    return headers;
-}
-
-function formatCloudDebugTimestamp(timestamp: number): string {
-    return new Date(timestamp).toISOString();
-}
-
-export function formatCloudByteCount(bytes: number): string {
-    if (!Number.isFinite(bytes) || bytes <= 0) {
-        return '0 B';
-    }
-    if (bytes >= 1024 * 1024) {
-        return `${(bytes / (1024 * 1024)).toFixed(1)} MiB`;
-    }
-    if (bytes >= 1024) {
-        return `${(bytes / 1024).toFixed(1)} KiB`;
-    }
-    return `${Math.round(bytes)} B`;
-}
-
-export function describeCloudStoredPiece(
-    documentId: string,
-    glyphName?: string | null
-): string {
-    if (documentId === FONT_CORE_DOCUMENT_ID) {
-        return 'The shared font (core)';
-    }
-    if (documentId === FONT_DEPS_DOCUMENT_ID) {
-        return 'Shared dependencies';
-    }
-    if (documentId.startsWith('glyph:')) {
-        const name =
-            typeof glyphName === 'string' && glyphName.trim()
-                ? glyphName.trim()
-                : null;
-        return name ? `The glyph “${name}”` : 'A glyph';
-    }
-    return 'Part of this font';
-}
-
-function worstCloudPieceSizeReport(
-    gate: ShardSizeGate
-): ShardSizeReport | null {
-    const pickLargest = (reports: ShardSizeReport[]): ShardSizeReport | null =>
-        [...reports].sort((a, b) => b.byteLength - a.byteLength)[0] ?? null;
-    return pickLargest(gate.blocking) ?? pickLargest(gate.warnings);
-}
-
-function cloudPieceSizeWarningState(
-    report: ShardSizeReport,
-    options: {
-        kind: 'status' | 'save';
-        glyphName?: string | null;
-    }
-): CloudSaveSizeWarningState {
-    const piece = describeCloudStoredPiece(
-        report.documentId,
-        options.glyphName
-    );
-    const size = formatCloudByteCount(report.byteLength);
-    const cap = formatCloudByteCount(MAX_SHARD_BYTES);
-    if (report.status === 'blocked') {
-        const prefix =
-            options.kind === 'save' ? 'Cloud save blocked' : 'Cloud status';
-        return {
-            visible: true,
-            title: `${prefix}: ${piece} exceeds the 5\u202fMiB limit (${size} of ${cap}). Save As and edits for that piece are refused.`,
-            label: 'Too large',
-            icon: 'cloud_alert',
-            tone: 'error',
-            canSave: false
-        };
-    }
-    const prefix =
-        options.kind === 'save' ? 'Cloud save warning' : 'Cloud status';
-    return {
-        visible: true,
-        title: `${prefix}: ${piece} is near the 5\u202fMiB limit (${size} of ${cap}). Save As or an edit that would go over is refused.`,
-        label: 'Near limit',
-        icon: 'warning',
-        tone: 'warning',
-        canSave: true
-    };
-}
-
-function glyphNameForCloudDocument(
-    fontJson: Record<string, unknown> | null | undefined,
-    documentId: string
-): string | null {
-    if (!documentId.startsWith('glyph:') || !fontJson) {
-        return null;
-    }
-    const glyphId = documentId.slice('glyph:'.length);
-    const match = listGlyphRecords(fontJson).find(
-        (glyph) => glyph.id === glyphId || glyph.name === glyphId
-    );
-    return typeof match?.name === 'string' ? match.name : null;
-}
-
-export type CloudLiveShardStats = {
-    fontCoreBytes: number;
-    fontDepsBytes: number;
-    largestGlyphBytes: number;
-    largestGlyphName: string | null;
-    activeWebSocketCount: number;
-};
-
-export const EMPTY_CLOUD_LIVE_SHARD_STATS: CloudLiveShardStats = {
-    fontCoreBytes: 0,
-    fontDepsBytes: 0,
-    largestGlyphBytes: 0,
-    largestGlyphName: null,
-    activeWebSocketCount: 0
-};
-
-function escapeCloudTooltipText(value: string): string {
-    return value
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;');
-}
-
-export function formatCloudStatusTooltipHtml(
-    statusTitle: string,
-    stats: CloudLiveShardStats = EMPTY_CLOUD_LIVE_SHARD_STATS
-): string {
-    const largestLabel = stats.largestGlyphName
-        ? `${formatCloudByteCount(stats.largestGlyphBytes)} (${stats.largestGlyphName})`
-        : formatCloudByteCount(stats.largestGlyphBytes);
-    return `<div class="info-popup-content cloud-status-tooltip"><p class="cloud-status-tooltip-sentence">${escapeCloudTooltipText(statusTitle)}</p><ul><li>font-core: ${escapeCloudTooltipText(formatCloudByteCount(stats.fontCoreBytes))}</li><li>font-deps: ${escapeCloudTooltipText(formatCloudByteCount(stats.fontDepsBytes))}</li><li>Largest glyph shard: ${escapeCloudTooltipText(largestLabel)}</li><li>Active WebSockets: ${Math.max(0, Math.floor(stats.activeWebSocketCount) || 0)}</li></ul></div>`;
-}
-
-function canonicalizeCloudExportFontJson(
-    fontJson: Record<string, unknown>
-): Record<string, unknown> {
-    const glyphs = Array.isArray(fontJson.glyphs) ? fontJson.glyphs : [];
-    for (const glyph of glyphs) {
-        const glyphRecord =
-            glyph && typeof glyph === 'object' && !Array.isArray(glyph)
-                ? (glyph as Record<string, unknown>)
-                : null;
-        const layers = Array.isArray(glyphRecord?.layers)
-            ? (glyphRecord.layers as unknown[])
-            : [];
-        for (const layer of layers) {
-            const shapes = Array.isArray(
-                (layer as { shapes?: unknown[] }).shapes
-            )
-                ? (layer as { shapes: unknown[] }).shapes
-                : [];
-            for (const shape of shapes) {
-                if (!shape || typeof shape !== 'object') {
-                    continue;
-                }
-
-                const componentShape = shape as {
-                    reference?: unknown;
-                    transform?: unknown;
-                };
-                if (typeof componentShape.reference === 'string') {
-                    componentShape.transform = normalizeCloudComponentTransform(
-                        componentShape.transform
-                    );
-                }
-            }
-        }
-    }
-
-    return fontJson;
-}
-
-function validateCloudExportForFontOpen(
-    fontJson: Record<string, unknown>,
-    _operation: 'open' | 'save' = 'open'
-) {
-    const glyphs = Array.isArray(fontJson.glyphs) ? fontJson.glyphs : [];
-    for (const glyph of glyphs) {
-        const glyphRecord =
-            glyph && typeof glyph === 'object' && !Array.isArray(glyph)
-                ? (glyph as Record<string, unknown>)
-                : null;
-        const layers = Array.isArray(glyphRecord?.layers)
-            ? (glyphRecord.layers as unknown[])
-            : [];
-        for (const layer of layers) {
-            const shapes = Array.isArray(
-                (layer as { shapes?: unknown[] }).shapes
-            )
-                ? (layer as { shapes: unknown[] }).shapes
-                : [];
-            for (const shape of shapes) {
-                if (!shape || typeof shape !== 'object') {
-                    continue;
-                }
-
-                const shapeRecord = shape as Record<string, unknown>;
-                if (
-                    'Path' in shapeRecord &&
-                    shapeRecord.Path &&
-                    typeof shapeRecord.Path === 'object' &&
-                    !Array.isArray(shapeRecord.Path)
-                ) {
-                    throw new TypeError(
-                        'Wrapped Path shapes are not allowed in cloud-exported font data.'
-                    );
-                } else if (
-                    'Component' in shapeRecord &&
-                    shapeRecord.Component &&
-                    typeof shapeRecord.Component === 'object' &&
-                    !Array.isArray(shapeRecord.Component)
-                ) {
-                    throw new TypeError(
-                        'Wrapped Component shapes are not allowed in cloud-exported font data.'
-                    );
-                }
-
-                const pathShape = shape as {
-                    nodes?: unknown;
-                    closed?: boolean;
-                };
-                if (Array.isArray(pathShape.nodes)) {
-                    if (pathShape.closed === undefined) {
-                        throw new TypeError(
-                            'Cloud-exported path shapes must carry an explicit closed flag.'
-                        );
-                    }
-                    continue;
-                }
-
-                const componentShape = shape as {
-                    reference?: unknown;
-                    transform?: unknown;
-                };
-                if (typeof componentShape.reference === 'string') {
-                    const normalizedTransform =
-                        normalizeCloudComponentTransform(
-                            componentShape.transform
-                        );
-                    const transform = componentShape.transform;
-                    if (
-                        !transform ||
-                        typeof transform !== 'object' ||
-                        Array.isArray(transform) ||
-                        Object.keys(transform).length !==
-                            Object.keys(normalizedTransform).length ||
-                        !Object.keys(normalizedTransform).every(
-                            (key) =>
-                                JSON.stringify(
-                                    (transform as Record<string, unknown>)[key]
-                                ) === JSON.stringify(normalizedTransform[key])
-                        )
-                    ) {
-                        throw new TypeError(
-                            'Cloud-exported component shapes must carry canonical transform objects.'
-                        );
-                    }
-                }
-            }
-        }
-    }
-}
-
-function glyphIdsFromCoreJson(coreJson: Record<string, unknown>): string[] {
-    const owned = catalogFromCoreJson(coreJson);
-    if (!owned) {
-        return [];
-    }
-    return liveCatalogGlyphIds(owned.glyphCatalog);
-}
-
-function catalogEntriesFromCoreJson(
-    coreJson: Record<string, unknown>
-): Array<{ glyphId: string; name: string; componentIds?: string[] }> {
-    return catalogEntriesForDepsParse(coreJson);
-}
-
-function glyphDocumentIdsFromCoreJson(
-    coreJson: Record<string, unknown>
-): string[] {
-    return glyphIdsFromCoreJson(coreJson).map(glyphDocumentId);
-}
-
-function getCloudFontJsonFromBridge(
-    bridge: Pick<PatchSyncEngine, 'getFontJsonSnapshot'>
-): Record<string, unknown> | null {
-    if (typeof bridge.getFontJsonSnapshot !== 'function') {
-        return null;
-    }
-    const fontJson = bridge.getFontJsonSnapshot();
-    if (!fontJson || Object.keys(fontJson).length === 0) {
-        return null;
-    }
-
-    return fontJson;
-}
-
-function assertCloudBridgeStateCanBeSaved(
-    bridge: Pick<PatchSyncEngine, 'getFontJsonSnapshot'>
-): void {
-    const fontJson = getCloudFontJsonFromBridge(bridge);
-    if (!fontJson) {
-        throw new Error('No active font data to save to cloud');
-    }
-    validateCloudExportForFontOpen(fontJson, 'save');
-}
-
-function cloneCloudFontJson(
-    fontJson: Record<string, unknown>
-): Record<string, unknown> {
-    return JSON.parse(JSON.stringify(fontJson)) as Record<string, unknown>;
-}
-
-const CLOUD_TRANSFER_TIMEOUT_FLOOR_MS = 5 * 60_000;
-const CLOUD_TRANSFER_TIMEOUT_CHUNK_BYTES = 750_000;
-const CLOUD_TRANSFER_TIMEOUT_PER_CHUNK_MS = 15_000;
-
-export type CloudSaveSeedCapture = {
-    bridge: PatchSyncEngine;
-    fontJson: Record<string, unknown>;
-    shards: EncodedShard[];
-    glyphCount: number;
-    byteLength: number;
-    captureEncodeMs: number;
-};
-
-function estimateCloudTransferTimeoutMs(
-    approximateByteLength?: number | null
-): number {
-    if (
-        typeof approximateByteLength !== 'number' ||
-        !Number.isFinite(approximateByteLength) ||
-        approximateByteLength <= 0
-    ) {
-        return CLOUD_TRANSFER_TIMEOUT_FLOOR_MS;
-    }
-
-    const estimatedChunkCount = Math.max(
-        1,
-        Math.ceil(approximateByteLength / CLOUD_TRANSFER_TIMEOUT_CHUNK_BYTES)
-    );
-    return Math.max(
-        CLOUD_TRANSFER_TIMEOUT_FLOOR_MS,
-        estimatedChunkCount * CLOUD_TRANSFER_TIMEOUT_PER_CHUNK_MS
-    );
-}
-
-function cloneEncodedShards(shards: EncodedShard[]): EncodedShard[] {
-    return shards.map((shard) => ({
-        documentId: shard.documentId,
-        bytes: shard.bytes.slice()
-    }));
-}
-
-function encodedShardByteLength(shards: EncodedShard[]): number {
-    return shards.reduce((sum, shard) => sum + shard.bytes.byteLength, 0);
-}
-
-async function flushPendingCloudSaveMutations(): Promise<void> {
-    await (
-        window as Window & {
-            glyphCanvas?: {
-                outlineEditor?: {
-                    flushPendingKeyboardPreviewCommit?: () => Promise<void>;
-                };
-            };
-        }
-    ).glyphCanvas?.outlineEditor?.flushPendingKeyboardPreviewCommit?.();
-}
-
-async function waitForCloudSaveBridge(
-    timeoutMs = 15000
-): Promise<PatchSyncEngine> {
-    return await new Promise((resolve, reject) => {
-        const startedAt = Date.now();
-
-        const poll = () => {
-            const bridge = window.patchSyncEngine;
-            if (bridge) {
-                resolve(bridge);
-                return;
-            }
-
-            if (Date.now() - startedAt >= timeoutMs) {
-                reject(new Error('Cloud bridge not ready for save'));
-                return;
-            }
-
-            window.requestAnimationFrame(poll);
-        };
-
-        poll();
-    });
-}
-
-export async function captureCloudSaveSeedState(
-    preferredBridge?: PatchSyncEngine | null
-): Promise<CloudSaveSeedCapture> {
-    const captureStartedAt =
-        typeof performance !== 'undefined' && performance.now
-            ? performance.now()
-            : Date.now();
-    await flushPendingCloudSaveMutations();
-    const liveBridge = window.patchSyncEngine;
-    const bridge =
-        preferredBridge && liveBridge === preferredBridge
-            ? preferredBridge
-            : liveBridge || (await waitForCloudSaveBridge());
-    assertCloudBridgeStateCanBeSaved(bridge);
-    const snapshot = getCloudFontJsonFromBridge(bridge);
-    if (!snapshot) {
-        throw new Error('No active font data to save to cloud');
-    }
-    const fontJson = canonicalizeCloudExportFontJson(
-        cloneCloudFontJson(snapshot)
-    );
-    validateCloudExportForFontOpen(fontJson, 'save');
-    const shards = cloneEncodedShards(bridge.encodeDocumentSet?.() ?? []);
-    if (!shards.length) {
-        throw new Error('No live document set to seed to cloud');
-    }
-    const captureEncodeMs =
-        (typeof performance !== 'undefined' && performance.now
-            ? performance.now()
-            : Date.now()) - captureStartedAt;
-    return {
-        bridge,
-        fontJson,
-        shards,
-        glyphCount: listGlyphRecords(fontJson).length,
-        byteLength: encodedShardByteLength(shards),
-        captureEncodeMs
-    };
-}
-
-export async function recaptureCloudSaveSeedIfBridgeChanged(
-    capture: CloudSaveSeedCapture
-): Promise<CloudSaveSeedCapture> {
-    const liveBridge = window.patchSyncEngine;
-    if (liveBridge && liveBridge === capture.bridge) {
-        return capture;
-    }
-    return await captureCloudSaveSeedState(liveBridge);
-}
-
-export async function waitForCloudSaveReady(): Promise<PatchSyncEngine> {
-    await flushPendingCloudSaveMutations();
-    const bridge = await waitForCloudSaveBridge();
-    assertCloudBridgeStateCanBeSaved(bridge);
-    return bridge;
-}
-
-/**
- * Wait for the initial synced document to contain font data.
- * Some cloud rooms connect before their persisted snapshot has been applied.
- */
-async function waitForCloudFontJson(
-    bridge: Pick<PatchSyncEngine, 'getFontJsonSnapshot' | 'yDoc'>,
-    timeoutMs = 8000
-): Promise<Record<string, unknown> | null> {
-    const immediateFontJson = getCloudFontJsonFromBridge(bridge);
-    if (immediateFontJson) {
-        return immediateFontJson;
-    }
-
-    return await new Promise((resolve) => {
-        let settled = false;
-
-        const finish = (fontJson: Record<string, unknown> | null) => {
-            if (settled) {
-                return;
-            }
-            settled = true;
-            window.clearTimeout(timeoutId);
-            bridge.yDoc.off('update', onUpdate);
-            resolve(fontJson);
-        };
-
-        const onUpdate = () => {
-            const nextFontJson = getCloudFontJsonFromBridge(bridge);
-            if (nextFontJson) {
-                finish(nextFontJson);
-            }
-        };
-
-        const timeoutId = window.setTimeout(() => {
-            finish(getCloudFontJsonFromBridge(bridge));
-        }, timeoutMs);
-
-        bridge.yDoc.on('update', onUpdate);
-    });
-}
-
-export interface CloudAsset {
-    id: string;
-    name: string;
-    role: CloudAssetRole;
-    ownerUserId: string;
-    createdAt: number;
-    updatedAt: number;
-    connectedPeers?: number;
-    needsMigration?: boolean;
-    manifestRevision?: number;
-    ydocSchemaVersion?: number;
-    migrationStatus?: string;
-}
-
-export interface CloudEligibility {
-    cloudHostingEnabled: boolean;
-    maxFontsOwned: number | null;
-    maxGlyphsPerFont?: number | null;
-    snapshotRetentionDays: number | null;
-    fontsOwnedCount: number;
-    maxCloudAssetBytes?: number;
-    warningCloudAssetBytes?: number;
-    maxShardBytes?: number;
-    warningShardBytes?: number;
-    maxPacketBytes?: number;
-    capabilities?: Record<string, number>;
-}
-
-export interface CloudAssetLimits {
-    ownerUserId: string;
-    maxFontsOwned: number | null;
-    maxGlyphsPerFont: number | null;
-    glyphCount: number;
-    fontsOwnedCount: number;
-    remainingGlyphs: number | null;
-    maxShardBytes: number;
-    warningShardBytes: number;
-    maxPacketBytes?: number;
-}
-
-export interface CloudAssetMember {
-    userId: string;
-    email: string;
-    role: CloudAssetRole;
-    invitedByUserId: string | null;
-    invitedByEmail: string | null;
-    createdAt: number;
-    updatedAt: number;
-}
-
-export interface CloudAssetInvitation {
-    id: string;
-    email: string;
-    role: 'editor' | 'viewer';
-    targetUserId: string | null;
-    targetUserEmail: string | null;
-    createdAt: number;
-    expiresAt: number | null;
-    lastSentAt: number | null;
-    resendCount: number;
-}
-
-export interface CloudOwnershipTransfer {
-    id: string;
-    email: string;
-    targetUserId: string | null;
-    targetUserEmail: string | null;
-    previousOwnerRole: 'editor' | 'viewer' | 'remove';
-    sourceOwnerUserId: string;
-    sourceOwnerEmail: string | null;
-    createdAt: number;
-    expiresAt: number | null;
-}
-
-export interface CloudShareState {
-    asset: CloudAsset & {
-        ownerEmail?: string | null;
-        accessEpoch?: number;
-    };
-    permissions: {
-        canManage: boolean;
-    };
-    members: CloudAssetMember[];
-    invitations: CloudAssetInvitation[];
-    ownershipTransfer: CloudOwnershipTransfer | null;
-}
+const GLYPH_ORPHAN_LIVE_LIST_LIMIT = 20000;
 
 export class CloudPlugin extends FilesystemPlugin {
     private _cloudAdapter: CloudAdapter | null = null;
@@ -884,6 +226,8 @@ export class CloudPlugin extends FilesystemPlugin {
         depsGlyphs: Set<string>;
     } | null = null;
     private _activeAssetId: string | null = null;
+    private _openRetryCancel: (() => void) | null = null;
+    private _openRetryInFlight = false;
     private _relayedAssetId: string | null = null;
     private _relayedConnectionStatus: CloudConnectionStatus = 'disconnected';
     private _relayedConnectionDetail: string | undefined;
@@ -893,6 +237,14 @@ export class CloudPlugin extends FilesystemPlugin {
     private _eligibility: CloudEligibility | null = null;
     private _assetLimits: CloudAssetLimits | null = null;
     private _assetLimitsEpoch = 0;
+    private _catalogGlyphCountTarget: { assetId: string } | null = null;
+    private _catalogGlyphCountDrain: Promise<void> | null = null;
+    private _glyphOrphanState: {
+        assetId: string;
+        known: Set<string>;
+        reconciled: boolean;
+        forbidden: boolean;
+    } | null = null;
     private _documentSet: CloudDocumentSet | null = null;
     private _catalogListener: CommittedChangeListener | null = null;
     private _glyphCatchUpListener: CommittedChangeListener | null = null;
@@ -1482,7 +834,7 @@ export class CloudPlugin extends FilesystemPlugin {
         state?: string;
     }): Promise<boolean> {
         if (!this._liveSession) {
-            return true;
+            return false;
         }
         return this._liveSession.persistPreparedTransaction(
             record as Parameters<
@@ -1494,15 +846,17 @@ export class CloudPlugin extends FilesystemPlugin {
     async persistOutgoingCloudUpdate(
         update: Uint8Array,
         collaborationMessage: CollaborationMessageEnvelope | null | undefined,
-        documentId: string
+        documentId: string,
+        dependsOn?: string[]
     ): Promise<boolean> {
         if (!this._liveSession) {
-            return true;
+            return false;
         }
         return this._liveSession.persistOutgoingUpdate(
             update,
             collaborationMessage,
-            documentId
+            documentId,
+            dependsOn
         );
     }
 
@@ -1511,7 +865,7 @@ export class CloudPlugin extends FilesystemPlugin {
         intentBytes?: Uint8Array | null
     ): Promise<boolean> {
         if (!this._liveSession) {
-            return true;
+            return false;
         }
         return this._liveSession.persistMutationIntents(
             documentIds,
@@ -1529,7 +883,7 @@ export class CloudPlugin extends FilesystemPlugin {
         pendingCount?: number;
     }> {
         if (!this._liveSession) {
-            return { durable: true, pendingCount: 0 };
+            return { durable: false, reason: 'no-live-session' };
         }
         return this._liveSession.waitForGlyphAndDepsDurability();
     }
@@ -3082,139 +2436,43 @@ export class CloudPlugin extends FilesystemPlugin {
     private _syncGlyphCatchUpFromCommittedChange: CommittedChangeListener = (
         entries,
         context
-    ) => {
-        if (context.origin !== 'remote') {
-            return;
-        }
-        if (
-            context.documentId &&
-            context.documentId !== FONT_CORE_DOCUMENT_ID
-        ) {
-            return;
-        }
-        const glyphIds = [
-            ...new Set([
-                ...glyphIdsFromRevisionEntries(entries),
-                ...glyphIdsFromCatalogEntries(entries)
-            ])
-        ];
-        if (!glyphIds.length) {
-            return;
-        }
-        const bridge = this._activeAssetSizeBridge;
-        const ids = bridge?.hasSparseWorkingSet?.()
-            ? glyphIds.filter((glyphId) => {
-                  const working = new Set(
-                      bridge.listSparseWorkingGlyphIds?.() ?? []
-                  );
-                  if (working.has(glyphId)) {
-                      return true;
-                  }
-                  return this._editingSubsetGlyphIdsForCatchUp(bridge).includes(
-                      glyphId
-                  );
-              })
-            : glyphIds;
-        if (!ids.length) {
-            return;
-        }
-        // The editor may already have moved off this glyph and unloaded its
-        // shard. The revision entry is the list of glyphs that changed.
-        // Do not rebuild font-deps from the local body here: that body is
-        // still the pre-catch-up shard and would erase the peer's new edge.
-        // Sparse windows only catch up glyphs they already keep. A new glyph
-        // with no edge stays on the server until a window asks for it.
-        this._enqueueGlyphCatchUp(ids, { includeUnloaded: true });
-    };
+    ) =>
+        cloudPluginCatchUpMethods._syncGlyphCatchUpFromCommittedChange.call(
+            this,
+            entries,
+            context
+        );
 
     private _catchUpFromCoreRevisionMap(): void {
-        const bridge = this._activeAssetSizeBridge;
-        if (!bridge) {
-            return;
-        }
-        const tokens = bridge.listGlyphRevisionTokens?.() ?? [];
-        const next = new Map<string, string>();
-        for (const token of tokens) {
-            if (token?.glyphId && token.revision) {
-                next.set(token.glyphId, token.revision);
-            }
-        }
-        const previous = this._seenGlyphRevisions;
-        const snapshotReady = this._glyphRevisionSnapshotReady;
-        const changed: string[] = [];
-        if (snapshotReady) {
-            for (const [glyphId, revision] of next) {
-                if (previous.get(glyphId) !== revision) {
-                    changed.push(glyphId);
-                }
-            }
-        }
-        this._glyphRevisionSnapshotReady = true;
-        this._seenGlyphRevisions = next;
-        if (changed.length) {
-            this._enqueueGlyphCatchUp(changed, { includeUnloaded: true });
-        }
-        const subsetIds = this._editingSubsetGlyphIdsForCatchUp(bridge);
-        const staleIds = this._staleGlyphIdsForCatchUp(bridge).filter(
-            (glyphId) =>
-                this._glyphIdEligibleForCatchUp(bridge, glyphId, subsetIds)
-        );
-        this._enqueueGlyphCatchUp([...new Set([...subsetIds, ...staleIds])]);
+        cloudPluginCatchUpMethods._catchUpFromCoreRevisionMap.call(this);
     }
 
-    /**
-     * HTTP catch-up is for the live editing glyphs, not overview residency
-     * or the compile snapshot. Sparse working-set IDs and
-     * deriveSubsetGlyphsFromText(compile text) close layout/components
-     * across most of a Fustat catalog and fan GET /live after reconnect.
-     */
     private _editingSubsetGlyphIdsForCatchUp(
         bridge: PatchSyncEngine
     ): string[] {
-        const fontManager = window.fontManager;
-        const names = [
-            ...activeEditorGlyphNames(fontManager),
-            ...((window as any).glyphCanvas?.textRunEditor?.glyphNameBuffer ||
-                [])
-        ];
-        return liveGlyphDocumentIdsFromSubset(bridge, names)
-            .filter((documentId) => documentId.startsWith('glyph:'))
-            .map((documentId) => documentId.slice('glyph:'.length));
+        return cloudPluginCatchUpMethods._editingSubsetGlyphIdsForCatchUp.call(
+            this,
+            bridge
+        );
     }
 
     private _staleGlyphIdsForCatchUp(bridge: PatchSyncEngine): string[] {
-        const tokens = bridge.listGlyphRevisionTokens?.() ?? [];
-        if (typeof bridge.glyphHasCatchUpRevision !== 'function') {
-            return [];
-        }
-        return tokens
-            .filter(
-                (token) =>
-                    !!token.glyphId &&
-                    !!token.revision &&
-                    !bridge.glyphHasCatchUpRevision(
-                        glyphDocumentId(token.glyphId),
-                        token.revision
-                    )
-            )
-            .map((token) => token.glyphId);
+        return cloudPluginCatchUpMethods._staleGlyphIdsForCatchUp.call(
+            this,
+            bridge
+        );
     }
 
-    /**
-     * Live editing glyphs, plus shards this window already loaded. A core
-     * revision can arrive after the editor has moved on; those loaded glyphs
-     * still need the offline edit. Unloaded catalog glyphs stay out.
-     */
     private _glyphIdEligibleForCatchUp(
         bridge: PatchSyncEngine,
         glyphId: string,
         subsetIds: string[]
     ): boolean {
-        if (subsetIds.includes(glyphId)) {
-            return true;
-        }
-        return (
-            bridge.hasResidentGlyphDocument?.(glyphDocumentId(glyphId)) === true
+        return cloudPluginCatchUpMethods._glyphIdEligibleForCatchUp.call(
+            this,
+            bridge,
+            glyphId,
+            subsetIds
         );
     }
 
@@ -3222,154 +2480,18 @@ export class CloudPlugin extends FilesystemPlugin {
         glyphIds?: string[],
         options?: { includeUnloaded?: boolean }
     ): void {
-        const bridge = this._activeAssetSizeBridge;
-        if (!this._liveSession || !bridge) {
-            return;
-        }
-        const tokens = bridge.listGlyphRevisionTokens?.() ?? [];
-        const subsetIds = this._editingSubsetGlyphIdsForCatchUp(bridge);
-        const requestedIds = glyphIds?.length
-            ? glyphIds.filter(
-                  (glyphId) =>
-                      options?.includeUnloaded === true ||
-                      this._glyphIdEligibleForCatchUp(
-                          bridge,
-                          glyphId,
-                          subsetIds
-                      )
-              )
-            : subsetIds;
-        if (!requestedIds.length) {
-            return;
-        }
-        const selected = requestedIds.map((glyphId) => {
-            const token = tokens.find((entry) => entry.glyphId === glyphId);
-            return {
-                glyphId,
-                revision: this._glyphCatchUpForceBody.has(glyphId)
-                    ? undefined
-                    : token?.revision
-            };
-        });
-        const targets = selected
-            .map((entry) => ({
-                documentId: glyphDocumentId(entry.glyphId),
-                expectedRevision: entry.revision
-            }))
-            .filter((target) => {
-                if (this._glyphCatchUpInFlight.has(target.documentId)) {
-                    this._glyphCatchUpAgain.add(target.documentId);
-                    return false;
-                }
-                if (
-                    target.expectedRevision &&
-                    typeof bridge.glyphHasCatchUpRevision === 'function' &&
-                    bridge.glyphHasCatchUpRevision(
-                        target.documentId,
-                        target.expectedRevision
-                    )
-                ) {
-                    return false;
-                }
-                return true;
-            });
-        if (!targets.length) {
-            return;
-        }
-        for (const target of targets) {
-            this._glyphCatchUpInFlight.add(target.documentId);
-        }
-        void this._liveSession
-            .catchUpDocuments(targets, { includeLiveDocuments: true })
-            .catch((error) => {
-                console.warn(
-                    '[CloudPlugin] Failed to catch up glyphs outside the live subset:',
-                    error
-                );
-            })
-            .finally(() => {
-                const retryIds: string[] = [];
-                for (const target of targets) {
-                    this._glyphCatchUpInFlight.delete(target.documentId);
-                    const glyphId = target.documentId.startsWith('glyph:')
-                        ? target.documentId.slice('glyph:'.length)
-                        : '';
-                    const resident =
-                        typeof bridge.hasResidentGlyphDocument === 'function' &&
-                        bridge.hasResidentGlyphDocument(target.documentId) ===
-                            true;
-                    if (
-                        resident &&
-                        typeof bridge.materializeResidentCatalogGlyph ===
-                            'function'
-                    ) {
-                        bridge.materializeResidentCatalogGlyph(
-                            target.documentId
-                        );
-                    }
-                    const modeled =
-                        typeof bridge.catalogGlyphIsInModel !== 'function' ||
-                        bridge.catalogGlyphIsInModel(target.documentId) ===
-                            true;
-                    if (resident && modeled) {
-                        this._glyphCatchUpAttempts.delete(target.documentId);
-                        this._glyphCatchUpForceBody.delete(glyphId);
-                    } else if (glyphId) {
-                        if (resident && !modeled) {
-                            this._glyphCatchUpForceBody.add(glyphId);
-                        }
-                        const attempts =
-                            (this._glyphCatchUpAttempts.get(
-                                target.documentId
-                            ) ?? 0) + 1;
-                        this._glyphCatchUpAttempts.set(
-                            target.documentId,
-                            attempts
-                        );
-                        if (attempts < 8) {
-                            retryIds.push(glyphId);
-                        }
-                    }
-                }
-                for (const documentId of [...this._glyphCatchUpAgain]) {
-                    if (this._glyphCatchUpInFlight.has(documentId)) {
-                        continue;
-                    }
-                    this._glyphCatchUpAgain.delete(documentId);
-                    const glyphId = documentId.startsWith('glyph:')
-                        ? documentId.slice('glyph:'.length)
-                        : '';
-                    if (glyphId && !retryIds.includes(glyphId)) {
-                        retryIds.push(glyphId);
-                    }
-                }
-                if (bridge.hasSparseWorkingSet?.()) {
-                    this._scheduleResidentClosureHydration();
-                }
-                if (retryIds.length) {
-                    this._scheduleGlyphCatchUpRetry(retryIds);
-                }
-            });
+        cloudPluginCatchUpMethods._enqueueGlyphCatchUp.call(
+            this,
+            glyphIds,
+            options
+        );
     }
 
     private _scheduleGlyphCatchUpRetry(glyphIds: string[]): void {
-        for (const glyphId of glyphIds) {
-            if (glyphId) {
-                this._glyphCatchUpRetryIds.add(glyphId);
-            }
-        }
-        if (this._glyphCatchUpRetryTimer !== null || !this._liveSession) {
-            return;
-        }
-        this._glyphCatchUpRetryTimer = window.setTimeout(() => {
-            this._glyphCatchUpRetryTimer = null;
-            const ids = [...this._glyphCatchUpRetryIds];
-            this._glyphCatchUpRetryIds.clear();
-            if (!this._liveSession || !ids.length) {
-                return;
-            }
-            this._enqueueGlyphCatchUp(ids, { includeUnloaded: true });
-        }, 1500);
+        cloudPluginCatchUpMethods._scheduleGlyphCatchUpRetry.call(
+            this,
+            glyphIds
+        );
     }
 
     private async _refreshAssetLimitsAfterCatalogChange(): Promise<void> {
@@ -3426,40 +2548,14 @@ export class CloudPlugin extends FilesystemPlugin {
     }
 
     private _resolveShareAssetId(assetId?: string): string {
-        const resolvedAssetId = assetId || this.getCurrentAssetIdForSharing();
-        if (!resolvedAssetId) {
-            throw new Error('No cloud asset is currently open');
-        }
-        return resolvedAssetId;
+        return cloudPluginSharingMethods._resolveShareAssetId.call(
+            this,
+            assetId
+        );
     }
 
     async getShareState(assetId?: string): Promise<CloudShareState> {
-        const user = await this._ensureCloudUser({
-            allowLoginRedirect: true
-        });
-        if (!user) {
-            throw new Error('Authentication required');
-        }
-
-        const resolvedAssetId = this._resolveShareAssetId(assetId);
-        const resp = await fetch(
-            `${this._websiteBaseUrl}/api/cloud/assets/${encodeURIComponent(resolvedAssetId)}/members`,
-            {
-                credentials: 'include',
-                headers: getCloudRequestHeaders()
-            }
-        );
-
-        if (!resp.ok) {
-            const body = await resp.text().catch(() => '');
-            throw new Error(
-                `Failed to load sharing settings: ${resp.status} ${body}`
-            );
-        }
-
-        const shareState = (await resp.json()) as CloudShareState;
-        this._cacheAssetRole(resolvedAssetId, shareState.asset.role);
-        return shareState;
+        return cloudPluginSharingMethods.getShareState.call(this, assetId);
     }
 
     async inviteUser(
@@ -3470,43 +2566,12 @@ export class CloudPlugin extends FilesystemPlugin {
         invitation: CloudAssetInvitation;
         inviteUrl?: string;
     }> {
-        const user = await this._ensureCloudUser({
-            allowLoginRedirect: true
-        });
-        if (!user) {
-            throw new Error('Authentication required');
-        }
-
-        const resolvedAssetId = this._resolveShareAssetId(assetId);
-        const resp = await fetch(
-            `${this._websiteBaseUrl}/api/cloud/assets/${encodeURIComponent(resolvedAssetId)}/invitations`,
-            {
-                method: 'POST',
-                credentials: 'include',
-                headers: getCloudRequestHeaders({
-                    'Content-Type': 'application/json'
-                }),
-                body: JSON.stringify({ email, role })
-            }
+        return cloudPluginSharingMethods.inviteUser.call(
+            this,
+            email,
+            role,
+            assetId
         );
-
-        const data = (await resp.json().catch(() => ({}))) as {
-            error?: string;
-            invitation?: CloudAssetInvitation;
-            inviteUrl?: string;
-        };
-        if (!resp.ok) {
-            throw new Error(data.error || 'Failed to create invitation');
-        }
-
-        if (!data.invitation) {
-            throw new Error('Invitation response missing invitation data');
-        }
-
-        return {
-            invitation: data.invitation,
-            ...(data.inviteUrl ? { inviteUrl: data.inviteUrl } : {})
-        };
     }
 
     async createOwnershipTransfer(
@@ -3517,107 +2582,30 @@ export class CloudPlugin extends FilesystemPlugin {
         ownershipTransfer: CloudOwnershipTransfer;
         transferUrl?: string;
     }> {
-        const user = await this._ensureCloudUser({
-            allowLoginRedirect: true
-        });
-        if (!user) {
-            throw new Error('Authentication required');
-        }
-
-        const resolvedAssetId = this._resolveShareAssetId(assetId);
-        const resp = await fetch(
-            `${this._websiteBaseUrl}/api/cloud/assets/${encodeURIComponent(resolvedAssetId)}/ownership-transfer`,
-            {
-                method: 'POST',
-                credentials: 'include',
-                headers: getCloudRequestHeaders({
-                    'Content-Type': 'application/json'
-                }),
-                body: JSON.stringify({ email, previousOwnerRole })
-            }
+        return cloudPluginSharingMethods.createOwnershipTransfer.call(
+            this,
+            email,
+            previousOwnerRole,
+            assetId
         );
-
-        const data = (await resp.json().catch(() => ({}))) as {
-            error?: string;
-            ownershipTransfer?: CloudOwnershipTransfer;
-            transferUrl?: string;
-        };
-        if (!resp.ok) {
-            throw new Error(
-                data.error || 'Failed to create ownership transfer'
-            );
-        }
-
-        if (!data.ownershipTransfer) {
-            throw new Error(
-                'Ownership transfer response missing transfer data'
-            );
-        }
-
-        return {
-            ownershipTransfer: data.ownershipTransfer,
-            ...(data.transferUrl ? { transferUrl: data.transferUrl } : {})
-        };
     }
 
     async cancelOwnershipTransfer(assetId?: string): Promise<void> {
-        const user = await this._ensureCloudUser({
-            allowLoginRedirect: true
-        });
-        if (!user) {
-            throw new Error('Authentication required');
-        }
-
-        const resolvedAssetId = this._resolveShareAssetId(assetId);
-        const resp = await fetch(
-            `${this._websiteBaseUrl}/api/cloud/assets/${encodeURIComponent(resolvedAssetId)}/ownership-transfer`,
-            {
-                method: 'DELETE',
-                credentials: 'include',
-                headers: getCloudRequestHeaders({
-                    'Content-Type': 'application/json'
-                }),
-                body: '{}'
-            }
+        return cloudPluginSharingMethods.cancelOwnershipTransfer.call(
+            this,
+            assetId
         );
-
-        const data = (await resp.json().catch(() => ({}))) as {
-            error?: string;
-        };
-        if (!resp.ok) {
-            throw new Error(
-                data.error || 'Failed to cancel ownership transfer'
-            );
-        }
     }
 
     async revokeInvitation(
         invitationId: string,
         assetId?: string
     ): Promise<void> {
-        const user = await this._ensureCloudUser({
-            allowLoginRedirect: true
-        });
-        if (!user) {
-            throw new Error('Authentication required');
-        }
-
-        const resolvedAssetId = this._resolveShareAssetId(assetId);
-        const resp = await fetch(
-            `${this._websiteBaseUrl}/api/cloud/assets/${encodeURIComponent(resolvedAssetId)}/invitations/${encodeURIComponent(invitationId)}`,
-            {
-                method: 'POST',
-                credentials: 'include',
-                headers: getCloudRequestHeaders()
-            }
+        return cloudPluginSharingMethods.revokeInvitation.call(
+            this,
+            invitationId,
+            assetId
         );
-
-        const data = (await resp.json().catch(() => ({}))) as {
-            error?: string;
-        };
-        if (!resp.ok) {
-            throw new Error(data.error || 'Failed to revoke invitation');
-        }
     }
 
     async updateMemberRole(
@@ -3625,68 +2613,20 @@ export class CloudPlugin extends FilesystemPlugin {
         role: 'editor' | 'viewer',
         assetId?: string
     ): Promise<void> {
-        const user = await this._ensureCloudUser({
-            allowLoginRedirect: true
-        });
-        if (!user) {
-            throw new Error('Authentication required');
-        }
-
-        const resolvedAssetId = this._resolveShareAssetId(assetId);
-        const resp = await fetch(
-            `${this._websiteBaseUrl}/api/cloud/assets/${encodeURIComponent(resolvedAssetId)}/members/${encodeURIComponent(userId)}`,
-            {
-                method: 'PATCH',
-                credentials: 'include',
-                headers: getCloudRequestHeaders({
-                    'Content-Type': 'application/json'
-                }),
-                body: JSON.stringify({ role })
-            }
+        return cloudPluginSharingMethods.updateMemberRole.call(
+            this,
+            userId,
+            role,
+            assetId
         );
-
-        const data = (await resp.json().catch(() => ({}))) as {
-            error?: string;
-        };
-        if (!resp.ok) {
-            throw new Error(data.error || 'Failed to update member role');
-        }
     }
 
     async removeMember(userId: string, assetId?: string): Promise<void> {
-        const user = await this._ensureCloudUser({
-            allowLoginRedirect: true
-        });
-        if (!user) {
-            throw new Error('Authentication required');
-        }
-
-        const resolvedAssetId = this._resolveShareAssetId(assetId);
-        const resp = await fetch(
-            `${this._websiteBaseUrl}/api/cloud/assets/${encodeURIComponent(resolvedAssetId)}/members/${encodeURIComponent(userId)}`,
-            {
-                method: 'DELETE',
-                credentials: 'include',
-                headers: getCloudRequestHeaders({
-                    'Content-Type': 'application/json'
-                }),
-                body: '{}'
-            }
+        return cloudPluginSharingMethods.removeMember.call(
+            this,
+            userId,
+            assetId
         );
-
-        const data = (await resp.json().catch(() => ({}))) as {
-            error?: string;
-            accessChange?: { state?: string; warning?: string };
-        };
-        if (!resp.ok) {
-            throw new Error(data.error || 'Failed to remove member');
-        }
-        if (data.accessChange?.state && data.accessChange.state !== 'applied') {
-            console.warn(
-                data.accessChange.warning ||
-                    'Member removed, but room access revocation is still pending'
-            );
-        }
     }
 
     syncCatalogGlyphCount(): void {
@@ -3694,8 +2634,7 @@ export class CloudPlugin extends FilesystemPlugin {
         if (!assetId) {
             return;
         }
-        const glyphCount = this._liveGlyphCount();
-        void this._postCatalogGlyphCount(assetId, glyphCount);
+        this._postCatalogGlyphCount(assetId);
     }
 
     async deleteAsset(assetId?: string): Promise<void> {
@@ -3706,53 +2645,178 @@ export class CloudPlugin extends FilesystemPlugin {
             throw new Error('Authentication required');
         }
         const resolvedAssetId = this._resolveShareAssetId(assetId);
-        const deleteUrl = `${this._websiteBaseUrl}/api/cloud/assets/${encodeURIComponent(resolvedAssetId)}`;
-        for (let attempt = 0; attempt < 1000; attempt += 1) {
-            const resp = await fetch(deleteUrl, {
-                method: 'DELETE',
-                credentials: 'include',
-                headers: getCloudRequestHeaders({
-                    'Content-Type': 'application/json'
-                }),
-                body: '{}'
-            });
-            const data = (await resp.json().catch(() => ({}))) as {
-                error?: string;
-                complete?: boolean;
-            };
-            if (!resp.ok && resp.status !== 202) {
-                throw new Error(data.error || 'Failed to delete cloud font');
-            }
-            if (data.complete !== false) {
-                return;
-            }
+        // A live session would keep reconnecting to rooms that are being
+        // purged, and each reconnect can recreate an empty room.
+        if (this.getCurrentAssetIdForSharing() === resolvedAssetId) {
+            this.disconnectFromRoom();
         }
-        throw new Error('Cloud delete did not finish');
+        await deleteCloudAssetUntilComplete({
+            websiteBaseUrl: this._websiteBaseUrl,
+            assetId: resolvedAssetId
+        });
     }
 
-    private async _postCatalogGlyphCount(
-        assetId: string,
-        glyphCount: number
-    ): Promise<void> {
-        const resp = await fetch(
-            `${this._websiteBaseUrl}/api/cloud/assets/${encodeURIComponent(assetId)}/glyph-count`,
-            {
-                method: 'POST',
-                credentials: 'include',
-                headers: getCloudRequestHeaders({
-                    'Content-Type': 'application/json'
-                }),
-                body: JSON.stringify({ glyphCount })
+    private _postCatalogGlyphCount(assetId: string): void {
+        this._catalogGlyphCountTarget = { assetId };
+        if (this._catalogGlyphCountDrain) {
+            return;
+        }
+        this._catalogGlyphCountDrain = this._drainCatalogGlyphCount().finally(
+            () => {
+                this._catalogGlyphCountDrain = null;
+                if (this._catalogGlyphCountTarget) {
+                    this._postCatalogGlyphCount(
+                        this._catalogGlyphCountTarget.assetId
+                    );
+                }
             }
         );
-        if (!resp.ok) {
-            const data = (await resp.json().catch(() => ({}))) as {
-                error?: string;
+    }
+
+    /**
+     * Posts go out strictly one at a time and are never aborted: an aborted
+     * fetch can still commit on the server, so a stale post must never be
+     * able to land after a newer one. Each post waits until the room has
+     * confirmed every local change (a new glyph's first write is what reserves
+     * its quota), then reads the model's current count.
+     */
+    /**
+     * Tells the website which glyph rooms became orphans (deleted locally) or
+     * came back (undo), so the server can purge the room, R2 objects and rows
+     * once the 24h undo window has passed. On first sync per asset it also
+     * sends the full live list so orphans missed by a crash are reconciled.
+     * Only owners and editors may do this; after a 403 we stop trying.
+     */
+    private async _syncGlyphOrphans(assetId: string): Promise<void> {
+        let state = this._glyphOrphanState;
+        if (!state || state.assetId !== assetId) {
+            state = {
+                assetId,
+                known: new Set(),
+                reconciled: false,
+                forbidden: false
             };
-            console.warn(
-                data.error ||
-                    `Catalog glyph count update failed (${resp.status})`
+            this._glyphOrphanState = state;
+        }
+        if (state.forbidden) {
+            return;
+        }
+        const live = new Set(
+            listGlyphRecords(this._currentFontJson() || {})
+                .map((glyph) => String(glyph.id || ''))
+                .filter(Boolean)
+        );
+        const body: { mark?: string[]; clear?: string[]; live?: string[] } = {};
+        if (!state.reconciled) {
+            if (live.size > GLYPH_ORPHAN_LIVE_LIST_LIMIT) {
+                console.warn(
+                    'Font too large to reconcile deleted glyphs; skipping'
+                );
+                state.reconciled = true;
+            } else if (live.size > 0) {
+                body.live = [...live];
+            }
+        } else {
+            const removed = [...state.known].filter((id) => !live.has(id));
+            const added = [...live].filter((id) => !state.known.has(id));
+            if (removed.length) body.mark = removed;
+            if (added.length) body.clear = added;
+        }
+        if (!body.live && !body.mark && !body.clear) {
+            state.known = live;
+            return;
+        }
+        try {
+            const resp = await fetch(
+                `${this._websiteBaseUrl}/api/cloud/assets/${encodeURIComponent(assetId)}/glyph-orphans`,
+                {
+                    method: 'POST',
+                    credentials: 'include',
+                    headers: getCloudRequestHeaders({
+                        'Content-Type': 'application/json'
+                    }),
+                    body: JSON.stringify(body)
+                }
             );
+            if (resp.status === 403 || resp.status === 404) {
+                state.forbidden = true;
+                return;
+            }
+            if (!resp.ok) {
+                // Leave `known` untouched so the diff is retried next time.
+                console.warn(`Glyph orphan sync failed (${resp.status})`);
+                return;
+            }
+            if (body.live) {
+                state.reconciled = true;
+            }
+            state.known = live;
+        } catch (error) {
+            console.warn('Glyph orphan sync failed:', error);
+        }
+    }
+
+    private async _drainCatalogGlyphCount(): Promise<void> {
+        while (this._catalogGlyphCountTarget) {
+            const { assetId } = this._catalogGlyphCountTarget;
+            this._catalogGlyphCountTarget = null;
+            for (let wait = 0; wait < 120; wait += 1) {
+                const durability = await this.waitForCloudGlyphDurability();
+                if (durability.durable) {
+                    break;
+                }
+                await new Promise((resolve) => setTimeout(resolve, 250));
+            }
+            await this._syncGlyphOrphans(assetId);
+            let transportFailures = 0;
+            for (let attempt = 0; attempt < 8; attempt += 1) {
+                if (this._catalogGlyphCountTarget) {
+                    break;
+                }
+                const glyphCount = this._liveGlyphCount();
+                try {
+                    const resp = await fetch(
+                        `${this._websiteBaseUrl}/api/cloud/assets/${encodeURIComponent(assetId)}/glyph-count`,
+                        {
+                            method: 'POST',
+                            credentials: 'include',
+                            headers: getCloudRequestHeaders({
+                                'Content-Type': 'application/json'
+                            }),
+                            body: JSON.stringify({ glyphCount })
+                        }
+                    );
+                    if (!resp.ok) {
+                        const data = (await resp.json().catch(() => ({}))) as {
+                            error?: string;
+                        };
+                        console.warn(
+                            data.error ||
+                                `Catalog glyph count update failed (${resp.status})`
+                        );
+                        break;
+                    }
+                    const data = (await resp.json().catch(() => ({}))) as {
+                        glyphCount?: number;
+                    };
+                    if (Number(data.glyphCount) >= glyphCount) {
+                        break;
+                    }
+                    // Reservation not visible yet; re-read the model and retry.
+                } catch (error) {
+                    transportFailures += 1;
+                    if (transportFailures > 1) {
+                        console.warn(
+                            'Catalog glyph count update failed:',
+                            error
+                        );
+                        break;
+                    }
+                }
+                await new Promise((resolve) =>
+                    setTimeout(resolve, Math.min(1000, 250 * (attempt + 1)))
+                );
+            }
         }
     }
 
@@ -3771,512 +2835,34 @@ export class CloudPlugin extends FilesystemPlugin {
      *     `fontModelReady`, then rebind the adapter to it.
      */
     async openAsset(assetId: string): Promise<void> {
-        if (this._pendingOpenAsset?.assetId === assetId) {
-            return this._pendingOpenAsset.promise;
-        }
-
-        beginLoadingCursor();
-        const urlSparse = readUrlState().sparse === true;
-        const deferGlyphHydration =
-            window.windowRole?.isLinkedWindow?.() === true ||
-            (typeof location !== 'undefined' &&
-                new URLSearchParams(location.search).has('sync'));
-        const openPromise = this._openAssetInternal(assetId, {
-            awaitLiveBridge: true,
-            sparseHydration: this._pendingSparseHydration || urlSparse,
-            deferGlyphHydration
-        });
-        this._pendingSparseHydration = false;
-        this._pendingOpenAsset = {
-            assetId,
-            promise: openPromise
-        };
-
-        try {
-            await openPromise;
-        } catch (error) {
-            (
-                window as Window & { __cloudOpenError?: string }
-            ).__cloudOpenError =
-                error instanceof Error ? error.message : String(error);
-            throw error;
-        } finally {
-            if (this._pendingOpenAsset?.promise === openPromise) {
-                this._pendingOpenAsset = null;
-            }
-            endLoadingCursor();
-        }
+        return cloudPluginOpenMethods.openAsset.call(this, assetId);
     }
 
-    private async _openAssetInternal(
+    async saveAs(name: string): Promise<string> {
+        return cloudPluginSaveAsMethods.saveAs.call(this, name);
+    }
+
+    async connectToRoom(assetId: string): Promise<void> {
+        return cloudPluginLiveMethods.connectToRoom.call(this, assetId);
+    }
+
+    async connectToRoomWithToken(
         assetId: string,
-        options?: {
-            awaitLiveBridge?: boolean;
-            sparseHydration?: boolean;
-            deferGlyphHydration?: boolean;
-        }
+        token: string,
+        roomUrl: string
     ): Promise<void> {
-        const user = await this._ensureCloudUser({
-            allowLoginRedirect: true
-        });
-        if (!user) {
-            throw new Error('Authentication required');
-        }
-
-        void this._ensureCloudSizePolicy().then(() => {
-            void window.fontManager?.updateFontDisplay?.();
-        });
-
-        this._disconnectCurrent();
-        void this._fetchAssetLimits(assetId);
-
-        let { token, roomUrl, needsMigration } =
-            await this._fetchRoomToken(assetId);
-        if (needsMigration) {
-            await this._migrateAssetToProtocol5(assetId);
-            ({ token, roomUrl } = await this._fetchRoomToken(assetId));
-        }
-
-        const hydrator = new CloudAdapter({
+        return cloudPluginLiveMethods.connectToRoomWithToken.call(
+            this,
             assetId,
-            websiteBaseUrl: this._websiteBaseUrl
-        });
-        let hydratedShards: EncodedShard[] | null = null;
-        let hydratedFontJson: Record<string, unknown> | null = null;
-        let sparseWorkingGlyphIds: string[] = [];
-        let usedSparseHydration = options?.sparseHydration === true;
-        try {
-            await loadDocumentSetWithProgress({
-                total: 2,
-                work: async (session) => {
-                    const io = shardIoOptionsFromSession(session, {
-                        progressTotal: 2
-                    });
-                    const coreAndDeps = await this._hydrateCoreDepsConsistent(
-                        hydrator,
-                        token,
-                        roomUrl,
-                        assetId,
-                        io
-                    );
-                    const coreBytes = coreAndDeps.get(FONT_CORE_DOCUMENT_ID);
-                    if (!coreBytes?.byteLength) {
-                        return;
-                    }
-                    const documentSet = new CloudDocumentSet();
-                    documentSet.applyRemoteUpdate(
-                        FONT_CORE_DOCUMENT_ID,
-                        coreBytes
-                    );
-                    const depsBytes = coreAndDeps.get(FONT_DEPS_DOCUMENT_ID);
-                    if (depsBytes?.byteLength) {
-                        documentSet.applyRemoteUpdate(
-                            FONT_DEPS_DOCUMENT_ID,
-                            depsBytes
-                        );
-                    }
-                    const coreJson = documentSet.assembleFontJson();
-                    const catalogIds = glyphIdsFromCoreJson(coreJson);
-                    const urlText = readUrlState().text || '';
-                    const useSparse =
-                        usedSparseHydration ||
-                        shouldAutoSparseHydrate(catalogIds.length);
-                    usedSparseHydration = useSparse;
-                    let glyphBytes = new Map<string, Uint8Array>();
-                    const fetchGlyphs = (documentIds: string[]) =>
-                        hydrator.hydrateDocumentSet(
-                            token,
-                            roomUrl,
-                            documentIds,
-                            shardIoOptionsFromSession(session, {
-                                progressOffset: session.completed,
-                                progressTotal: session.total
-                            })
-                        );
-                    if (options?.deferGlyphHydration) {
-                        // Linked windows take glyph residency from the main
-                        // window snapshot. Core still carries the catalog.
-                        usedSparseHydration = false;
-                    } else if (!useSparse) {
-                        session.update({
-                            total: 2 + catalogIds.length,
-                            message: 'Loading font…'
-                        });
-                        const documentIds = catalogIds.map(glyphDocumentId);
-                        glyphBytes = await fetchGlyphs(documentIds);
-                        const missingPublished = documentIds.filter(
-                            (documentId) =>
-                                !glyphBytes.get(documentId)?.byteLength
-                        );
-                        if (missingPublished.length) {
-                            throw new Error(
-                                `Published glyph shards not found: ${missingPublished.join(', ')}`
-                            );
-                        }
-                        for (const [documentId, bytes] of glyphBytes) {
-                            documentSet.applyRemoteUpdate(documentId, bytes);
-                        }
-                    } else {
-                        const { seedIds, layoutIds } = resolveHydrationSeeds({
-                            fontJson: coreJson,
-                            text: urlText || 'Hamburgevons'
-                        });
-                        session.update({
-                            total: 2 + seedIds.length,
-                            message: 'Loading font…'
-                        });
-                        if (seedIds.length) {
-                            const hydrateResult =
-                                await hydrateSparseGlyphsToFixedPoint({
-                                    documentSet,
-                                    catalogIds,
-                                    seedIds,
-                                    layoutIds,
-                                    previousWorkingIds: [],
-                                    catalog:
-                                        catalogEntriesFromCoreJson(coreJson),
-                                    requireFetchedGlyphs: true,
-                                    fetchGlyphs
-                                });
-                            glyphBytes = hydrateResult.glyphBytes;
-                            sparseWorkingGlyphIds = hydrateResult.workingIds;
-                            this._sparsePreviewOnly =
-                                hydrateResult.previewOnly === true;
-                        }
-                    }
-                    hydratedFontJson = documentSet.assembleFontJson();
-                    hydratedShards = [
-                        {
-                            documentId: FONT_CORE_DOCUMENT_ID,
-                            bytes: coreBytes
-                        },
-                        ...(depsBytes?.byteLength
-                            ? [
-                                  {
-                                      documentId: FONT_DEPS_DOCUMENT_ID,
-                                      bytes: depsBytes
-                                  }
-                              ]
-                            : []),
-                        ...[...glyphBytes.entries()].map(
-                            ([documentId, bytes]) => ({
-                                documentId,
-                                bytes
-                            })
-                        )
-                    ];
-                    documentSet.destroy();
-                }
-            });
-        } catch (error) {
-            throw error instanceof Error ? error : new Error(String(error));
-        } finally {
-            hydrator.disconnect();
-        }
-
-        // Fail closed: HTTP hydrate either produced shards or threw. Never
-        // fall back to an unbounded full-room WebSocket bootstrap.
-        const openedShards = (hydratedShards || []) as EncodedShard[];
-        if (openedShards.length > 0 && hydratedFontJson) {
-            try {
-                validateCloudExportForFontOpen(hydratedFontJson);
-            } catch (error) {
-                throw error;
-            }
-
-            const babelfontJson = JSON.stringify(hydratedFontJson);
-            (
-                window as Window & {
-                    __pendingCloudBridgeBootstrapDocuments?: EncodedShard[];
-                    __skipCloudBridgeRebindMerge?: boolean;
-                }
-            ).__pendingCloudBridgeBootstrapDocuments = openedShards;
-            (
-                window as Window & {
-                    __skipCloudBridgeRebindMerge?: boolean;
-                }
-            ).__skipCloudBridgeRebindMerge = true;
-
-            this._activeAssetId = assetId;
-            if (usedSparseHydration) {
-                (
-                    window as Window & {
-                        __pendingSparseSession?: boolean;
-                        __pendingSparseWorkingGlyphIds?: string[];
-                    }
-                ).__pendingSparseSession = true;
-                (
-                    window as Window & {
-                        __pendingSparseWorkingGlyphIds?: string[];
-                    }
-                ).__pendingSparseWorkingGlyphIds = sparseWorkingGlyphIds;
-            }
-            const bridgeReadyPromise = new Promise<void>((resolve, reject) => {
-                const timeoutId = window.setTimeout(() => {
-                    window.removeEventListener(
-                        'fontModelReady',
-                        onFontModelReady
-                    );
-                    reject(new Error('cloud bridge bootstrap timed out'));
-                }, 30_000);
-
-                const onFontModelReady = async () => {
-                    window.clearTimeout(timeoutId);
-                    window.removeEventListener(
-                        'fontModelReady',
-                        onFontModelReady
-                    );
-                    try {
-                        const liveBridge = window.patchSyncEngine;
-                        if (!liveBridge) {
-                            throw new Error(
-                                'cloud bridge bootstrap missing live bridge'
-                            );
-                        }
-                        if (window.windowRole?.isLinkedWindow()) {
-                            resolve();
-                            return;
-                        }
-                        const liveTokenResponse =
-                            await this._fetchRoomToken(assetId);
-                        await this._attachLiveSession({
-                            assetId,
-                            token: liveTokenResponse.token,
-                            roomUrl: liveTokenResponse.roomUrl,
-                            bridge: liveBridge,
-                            bootstrapMode: 'skip',
-                            generationId: liveTokenResponse.generationId
-                        });
-                        resolve();
-                    } catch (error) {
-                        reject(
-                            error instanceof Error
-                                ? error
-                                : new Error(String(error))
-                        );
-                    }
-                };
-
-                window.addEventListener('fontModelReady', onFontModelReady);
-            });
-
-            window.dispatchEvent(
-                new CustomEvent('fontLoaded', {
-                    detail: {
-                        path: `cloud://${assetId}`,
-                        babelfontJson,
-                        sourcePlugin: this,
-                        fileHandle: undefined,
-                        directoryHandle: undefined
-                    }
-                })
-            );
-
-            if (options?.awaitLiveBridge === false) {
-                void bridgeReadyPromise.catch((error) => {
-                    this._handleBackgroundBridgeBootstrapFailure(
-                        assetId,
-                        error
-                    );
-                });
-                return;
-            }
-
-            await bridgeReadyPromise;
-            return;
-        }
-
-        throw new Error(
-            `Cloud asset ${assetId} has no published core/deps snapshot`
+            token,
+            roomUrl
         );
     }
 
-    // ── Saving a font to the cloud ───────────────────────────────
-
-    /**
-     * Mark the currently open local font as the just-created cloud asset.
-     * Save As now seeds the room with the live bridge directly, so this runs
-     * only after the owner is already attached to the new room.
-     */
-    private _finalizeCurrentFontAsSavedCloudAsset(assetId: string): void {
-        const currentFont = (window as any).fontManager?.currentFont;
-        if (!currentFont) {
-            return;
-        }
-
-        // Use the bare assetId as the path so createFileUri produces
-        // cloud:///assetId (no double-slash from a leading slash).
-        currentFont.path = assetId;
-        currentFont.sourcePlugin = this;
-        currentFont.fileHandle = undefined;
-        currentFont.directoryHandle = undefined;
-        currentFont.needsRecompile = false;
-        currentFont.hasUnsavedChanges = false;
-
-        const fileUri = `cloud:///${assetId}`;
-        if (window.stateManager) {
-            window.stateManager.editor_file = fileUri;
-        }
-        window.windowSync?.rebindChannel?.(assetId);
-
-        void (window as any).fontManager?.updateFontDisplay?.();
-        void (window as any).fontManager?.updateDirtyIndicator?.();
-        (window as any).saveButton?.updateButtonState?.();
+    disconnectFromRoom(): void {
+        cloudPluginLiveMethods.disconnectFromRoom.call(this);
     }
 
-    /**
-     * Save the current font as a new cloud asset with the given name.
-     *
-     * Flow:
-     *  1. Create a new asset via POST /api/cloud/assets.
-     *  2. Fetch room token for the new asset.
-     *  3. Connect the current live bridge to the new room.
-     *     The auto-sync protocol seeds the empty DO and attaches the owner in
-     *     the same handshake, so Save As does not need a second bridge handoff.
-     */
-    async saveAs(name: string): Promise<string> {
-        const user = await this._ensureCloudUser({
-            allowLoginRedirect: true
-        });
-        if (!user) {
-            throw new Error('Authentication required');
-        }
-
-        await this.prepareToSeed();
-        let seed = await captureCloudSaveSeedState();
-        const sizePolicy = await this._ensureCloudSizePolicy();
-        if (sizePolicy && seed.byteLength > sizePolicy.maxCloudAssetBytes) {
-            throw new Error(
-                `Cloud save blocked: font is ${formatCloudByteCount(seed.byteLength)} but the current cloud tier only supports up to ${formatCloudByteCount(sizePolicy.maxCloudAssetBytes)}.`
-            );
-        }
-        this._warnBeforeNearLimitCloudSave(seed);
-
-        const resp = await fetch(`${this._websiteBaseUrl}/api/cloud/assets`, {
-            method: 'POST',
-            credentials: 'include',
-            headers: getCloudRequestHeaders({
-                'Content-Type': 'application/json'
-            }),
-            body: JSON.stringify({
-                name,
-                estimatedSeedBytes: seed.byteLength,
-                estimatedGlyphCount: seed.glyphCount
-            })
-        });
-
-        if (!resp.ok) {
-            const err = await resp.text().catch(() => '');
-            throw new Error(
-                `Failed to create cloud asset: ${resp.status} ${err}`
-            );
-        }
-
-        const { asset } = (await resp.json()) as { asset: CloudAsset };
-        const assetId = asset.id;
-
-        const { token, roomUrl } = await this._fetchRoomToken(assetId);
-        this._disconnectCurrent();
-        seed = await recaptureCloudSaveSeedIfBridgeChanged(seed);
-        const seeder = new CloudAdapter({
-            assetId,
-            websiteBaseUrl: this._websiteBaseUrl
-        });
-        let seededCheckpointLogId: number | null = null;
-        let seedReceipts: CloudSeededShardAttestation[] = [];
-        try {
-            const seeded = await seedDocumentSetWithProgress({
-                seeder,
-                token,
-                roomUrl,
-                shards: seed.shards,
-                glyphCount: seed.glyphCount
-            });
-            seededCheckpointLogId =
-                seeded && typeof seeded === 'object'
-                    ? seeded.coreCheckpointLogId
-                    : typeof seeded === 'number'
-                      ? seeded
-                      : null;
-            if (
-                seeded &&
-                typeof seeded === 'object' &&
-                Array.isArray(seeded.attestations)
-            ) {
-                seedReceipts = seeded.attestations;
-            }
-        } catch (error) {
-            await this._abortPendingAsset(assetId).catch((abortError) => {
-                console.warn(
-                    '[CloudPlugin]',
-                    'Failed to abort pending cloud asset after seed failure:',
-                    abortError
-                );
-            });
-            throw error;
-        } finally {
-            seeder.disconnect();
-        }
-
-        this._disconnectCurrent();
-
-        let attachMs = 0;
-        let finalizeMs = 0;
-        try {
-            const attachStartedAt = performance.now();
-            await this._attachLiveSession({
-                assetId,
-                token,
-                roomUrl,
-                bridge: seed.bridge,
-                bootstrapMode: 'skip',
-                ...(seededCheckpointLogId !== null
-                    ? { checkpointLogId: seededCheckpointLogId }
-                    : {}),
-                connectedTimeoutMs: estimateCloudTransferTimeoutMs(
-                    seed.byteLength
-                )
-            });
-            attachMs = performance.now() - attachStartedAt;
-            const finalizeStartedAt = performance.now();
-            await this._finalizePendingAsset(assetId, {
-                shards: seed.shards,
-                receipts: seedReceipts,
-                glyphCount: seed.glyphCount
-            });
-            finalizeMs = performance.now() - finalizeStartedAt;
-        } catch (error) {
-            this._disconnectCurrent();
-            await this._abortPendingAsset(assetId).catch((abortError) => {
-                console.warn(
-                    '[CloudPlugin]',
-                    'Failed to abort pending cloud asset:',
-                    abortError
-                );
-            });
-            throw error;
-        }
-
-        this._activeAssetId = assetId;
-        this._cacheAssetRole(assetId, asset.role);
-        void this._fetchAssetLimits(assetId);
-        this._finalizeCurrentFontAsSavedCloudAsset(assetId);
-        console.log('[CloudPlugin] saveAs phases', {
-            captureEncodeMs: seed.captureEncodeMs,
-            attachMs,
-            finalizeMs,
-            shardCount: seed.shards.length,
-            byteLength: seed.byteLength
-        });
-
-        return assetId;
-    }
-
-    /**
-     * Seed the current in-memory font to a new pending asset using the same
-     * HTTP path as Save As, with an explicit shard POST concurrency.
-     * Does not attach a live WebSocket. Used by the shard-I/O bench.
-     */
     async measureCloudSeedBatch(
         assetName: string,
         concurrency: number,
@@ -4289,81 +2875,14 @@ export class CloudPlugin extends FilesystemPlugin {
         documentIds: string[];
         glyphCount: number;
     }> {
-        const user = await this._ensureCloudUser({
-            allowLoginRedirect: true
-        });
-        if (!user) {
-            throw new Error('Authentication required');
-        }
-
-        await this.prepareToSeed();
-        const seed = await captureCloudSaveSeedState();
-        const ioOptions: CloudShardIoOptions = {
+        return cloudPluginMeasureMethods.measureCloudSeedBatch.call(
+            this,
+            assetName,
             concurrency,
-            transport: options?.transport
-        };
-
-        const resp = await fetch(`${this._websiteBaseUrl}/api/cloud/assets`, {
-            method: 'POST',
-            credentials: 'include',
-            headers: getCloudRequestHeaders({
-                'Content-Type': 'application/json'
-            }),
-            body: JSON.stringify({
-                name: assetName,
-                estimatedSeedBytes: seed.byteLength,
-                estimatedGlyphCount: seed.glyphCount
-            })
-        });
-        if (!resp.ok) {
-            const err = await resp.text().catch(() => '');
-            throw new Error(
-                `Failed to create cloud asset: ${resp.status} ${err}`
-            );
-        }
-        const { asset } = (await resp.json()) as { asset: CloudAsset };
-        const assetId = asset.id;
-        const { token, roomUrl } = await this._fetchRoomToken(assetId);
-        const seeder = new CloudAdapter({
-            assetId,
-            websiteBaseUrl: this._websiteBaseUrl
-        });
-        const startedAt = performance.now();
-        try {
-            const seeded = await seeder.seedDocumentSet(
-                token,
-                roomUrl,
-                seed.shards,
-                seed.glyphCount,
-                undefined,
-                ioOptions
-            );
-            const seedMs = performance.now() - startedAt;
-            await this._finalizePendingAsset(assetId, {
-                shards: seed.shards,
-                receipts: seeded.attestations,
-                glyphCount: seed.glyphCount
-            });
-            return {
-                assetId,
-                seedMs,
-                shardCount: seed.shards.length,
-                byteLength: seed.byteLength,
-                documentIds: seed.shards.map((shard) => shard.documentId),
-                glyphCount: seed.glyphCount
-            };
-        } catch (error) {
-            await this._abortPendingAsset(assetId).catch(() => undefined);
-            throw error;
-        } finally {
-            seeder.disconnect();
-        }
+            options
+        );
     }
 
-    /**
-     * GET every listed shard through CloudAdapter.hydrateDocumentSet.
-     * Used by the shard-I/O bench for a full Fustat load.
-     */
     async measureCloudHydrateBatch(
         assetId: string,
         documentIds: string[],
@@ -4374,151 +2893,13 @@ export class CloudPlugin extends FilesystemPlugin {
         loaded: number;
         byteLength: number;
     }> {
-        const { token, roomUrl } = await this._fetchRoomToken(assetId);
-        const hydrator = new CloudAdapter({
+        return cloudPluginMeasureMethods.measureCloudHydrateBatch.call(
+            this,
             assetId,
-            websiteBaseUrl: this._websiteBaseUrl
-        });
-        const ioOptions: CloudShardIoOptions = {
+            documentIds,
             concurrency,
-            transport: options?.transport
-        };
-        try {
-            const startedAt = performance.now();
-            const shards = await hydrator.hydrateDocumentSet(
-                token,
-                roomUrl,
-                documentIds,
-                ioOptions
-            );
-            const hydrateMs = performance.now() - startedAt;
-            let byteLength = 0;
-            for (const bytes of shards.values()) {
-                byteLength += bytes.byteLength;
-            }
-            return {
-                hydrateMs,
-                loaded: shards.size,
-                byteLength
-            };
-        } finally {
-            hydrator.disconnect();
-        }
-    }
-
-    /**
-     * Connect to a cloud room for the currently open font.
-     * Requires a font to already be loaded (window.patchSyncEngine must exist).
-     */
-    async connectToRoom(assetId: string): Promise<void> {
-        const bridge = window.patchSyncEngine;
-        this._disconnectCurrent();
-        this._activeAssetId = assetId;
-        void this._fetchAssetLimits(assetId);
-
-        if (!bridge) {
-            console.error('No patchSyncEngine available — load a font first');
-            this._updateConnectionStatus(
-                assetId,
-                'error',
-                'Cloud bridge not ready'
-            );
-            return;
-        }
-
-        const { token, roomUrl, generationId } =
-            await this._fetchRoomToken(assetId);
-        console.log(`Connecting to room: ${assetId}`);
-        await this._attachLiveSession({
-            assetId,
-            token,
-            roomUrl,
-            bridge,
-            bootstrapMode: 'required',
-            generationId
-        });
-    }
-
-    /**
-     * Dev-only: Connect directly with a pre-built token and room URL,
-     * bypassing the website auth endpoint.
-     */
-    async connectToRoomWithToken(
-        assetId: string,
-        token: string,
-        roomUrl: string
-    ): Promise<void> {
-        const hostname =
-            typeof location !== 'undefined' ? location.hostname : '';
-        if (hostname !== 'localhost' && hostname !== '127.0.0.1') {
-            throw new Error('Direct room-token connections are disabled');
-        }
-        const bridge = window.patchSyncEngine;
-        this._disconnectCurrent();
-        this._activeAssetId = assetId;
-
-        if (!bridge) {
-            console.error('No patchSyncEngine available — load a font first');
-            this._updateConnectionStatus(
-                assetId,
-                'error',
-                'Cloud bridge not ready'
-            );
-            return;
-        }
-
-        console.log(`Connecting directly to room: ${assetId}`);
-        await this._attachLiveSession({
-            assetId,
-            token,
-            roomUrl,
-            bridge,
-            bootstrapMode: 'required'
-        });
-    }
-
-    /** Disconnect from the current room. */
-    disconnectFromRoom(): void {
-        this._disconnectCurrent();
-    }
-
-    get connectionStatus(): CloudConnectionStatus {
-        if (window.windowRole?.isLinkedWindow()) {
-            return this._relayedConnectionStatus;
-        }
-        if (this._activeAssetId) {
-            return this.getAssetConnectionStatus(this._activeAssetId);
-        }
-        return this._liveSession?.status ?? 'disconnected';
-    }
-
-    get activeAssetId(): string | null {
-        if (window.windowRole?.isLinkedWindow()) {
-            return this._relayedAssetId;
-        }
-        return this._activeAssetId;
-    }
-
-    // ── Private helpers ──────────────────────────────────────────
-
-    private async _runExclusiveCloudIo<T>(
-        op: 'save' | 'open',
-        work: () => Promise<T>
-    ): Promise<T> {
-        if (this._cloudIoInFlight) {
-            throw new Error(
-                `Cannot ${op} while another cloud transfer is in progress`
-            );
-        }
-        const run = work();
-        this._cloudIoInFlight = run;
-        try {
-            return await run;
-        } finally {
-            if (this._cloudIoInFlight === run) {
-                this._cloudIoInFlight = null;
-            }
-        }
+            options
+        );
     }
 
     private _disconnectCurrent(): void {
@@ -4736,16 +3117,6 @@ export class CloudPlugin extends FilesystemPlugin {
             .filter(([, connectionStatus]) => connectionStatus === 'connected')
             .map(([assetId]) => assetId)
             .sort();
-        const outboundSeq = (
-            window as Window & {
-                __lastCloudOutboundUpdateSeq?: number;
-            }
-        ).__lastCloudOutboundUpdateSeq;
-        const inboundCount = (
-            window as Window & {
-                __lastCloudInboundUpdateCount?: number;
-            }
-        ).__lastCloudInboundUpdateCount;
         const workerCacheReady =
             typeof fontCompilation?.hasWorkerCacheDocument === 'function'
                 ? fontCompilation.hasWorkerCacheDocument()
@@ -4775,8 +3146,6 @@ export class CloudPlugin extends FilesystemPlugin {
                     : 'idle'
             }`,
             `connectedAssetIds: ${connectedAssetIds.length ? connectedAssetIds.join(', ') : 'none'}`,
-            `lastOutboundSeq: ${outboundSeq ?? 'none'}`,
-            `lastInboundCount: ${inboundCount ?? 'none'}`,
             `wsReadyState: ${connectionHealth?.wsReadyState ?? 'none'}`,
             `lastInboundAgeMs: ${connectionHealth?.lastInboundAgeMs ?? 'none'}`,
             `livenessTimeoutCount: ${connectionHealth?.livenessTimeoutCount ?? 'none'}`,
@@ -4847,218 +3216,21 @@ export class CloudPlugin extends FilesystemPlugin {
         hydrator: CloudAdapter,
         token: string,
         roomUrl: string,
-        assetId: string,
+        _assetId: string,
         ioOptions?: CloudShardIoOptions
     ): Promise<Map<string, Uint8Array>> {
-        const published = await this._fetchPublishedManifestForAsset(assetId);
-        if (!published) {
-            return hydrator.hydrateDocumentSet(
-                token,
-                roomUrl,
-                [FONT_CORE_DOCUMENT_ID, FONT_DEPS_DOCUMENT_ID],
-                ioOptions
-            );
-        }
-        const aligned = await hydrateCoreDepsToPublishedPair({
-            expected: {
-                coreRevision: published.coreRevision,
-                depsRevision: published.depsRevision
-            },
-            hash: hashShardBytes,
-            fetchCoreDeps: async () => {
-                const fetched = await hydrator.hydrateDocumentSet(
-                    token,
-                    roomUrl,
-                    [FONT_CORE_DOCUMENT_ID, FONT_DEPS_DOCUMENT_ID],
-                    ioOptions
-                );
-                return {
-                    core: fetched.get(FONT_CORE_DOCUMENT_ID) || null,
-                    deps: fetched.get(FONT_DEPS_DOCUMENT_ID) || null
-                };
-            }
-        });
-        const result = new Map<string, Uint8Array>();
-        result.set(FONT_CORE_DOCUMENT_ID, aligned.core);
-        if (aligned.deps?.byteLength) {
-            result.set(FONT_DEPS_DOCUMENT_ID, aligned.deps);
-        }
-        return result;
-    }
-
-    private async _fetchPublishedManifestForAsset(
-        assetId: string
-    ): Promise<{ coreRevision: string; depsRevision: string } | null> {
-        const url = `${this._websiteBaseUrl}/api/cloud/assets/${encodeURIComponent(assetId)}/manifests`;
-        const resp = await fetch(url, {
-            cache: 'no-store',
-            credentials: 'include',
-            headers: getCloudRequestHeaders()
-        });
-        if (!resp) {
-            return null;
-        }
-        if (!resp.ok) {
-            if (resp.status === 404) {
-                return null;
-            }
-            throw new Error(`manifest fetch failed: ${resp.status}`);
-        }
-        const data = (await resp.json()) as {
-            current?: { coreRevision?: string; depsRevision?: string } | null;
-        };
-        if (!data.current?.coreRevision || !data.current?.depsRevision) {
-            return null;
-        }
-        return {
-            coreRevision: data.current.coreRevision,
-            depsRevision: data.current.depsRevision
-        };
-    }
-
-    private async _migrateAssetToProtocol5(assetId: string): Promise<void> {
-        const migrateUrl = `${this._websiteBaseUrl}/api/cloud/assets/${encodeURIComponent(assetId)}/migrate`;
-        const migrateResp = await fetch(migrateUrl, {
-            method: 'POST',
-            cache: 'no-store',
-            credentials: 'include',
-            headers: getCloudRequestHeaders({
-                'Content-Type': 'application/json'
-            })
-        });
-        if (!migrateResp.ok) {
-            const body = await migrateResp.text().catch(() => '');
-            throw new Error(
-                `schema migration failed: ${migrateResp.status} ${body}`
-            );
-        }
-        const migration = (await migrateResp.json()) as {
-            migrationNonce?: string;
-            nextManifestRevision?: number;
-        };
-        if (
-            !migration.migrationNonce ||
-            typeof migration.nextManifestRevision !== 'number' ||
-            !Number.isInteger(migration.nextManifestRevision) ||
-            migration.nextManifestRevision < 1
-        ) {
-            throw new Error(
-                'schema migration did not return a migration nonce'
-            );
-        }
-        const expectedCurrentRevision = migration.nextManifestRevision - 1;
-        const { token, roomUrl } = await this._fetchRoomToken(assetId);
-        const hydrator = new CloudAdapter({
-            assetId,
-            websiteBaseUrl: this._websiteBaseUrl
-        });
-        try {
-            let documentSet: CloudDocumentSet | null = null;
-            const shards = await hydrator.hydrateDocumentSet(token, roomUrl, [
-                FONT_CORE_DOCUMENT_ID,
-                FONT_DEPS_DOCUMENT_ID
-            ]);
-            const coreBytes = shards.get(FONT_CORE_DOCUMENT_ID);
-            if (coreBytes?.byteLength) {
-                documentSet = new CloudDocumentSet();
-                documentSet.applyRemoteUpdate(FONT_CORE_DOCUMENT_ID, coreBytes);
-                const depsBytes = shards.get(FONT_DEPS_DOCUMENT_ID);
-                if (depsBytes?.byteLength) {
-                    documentSet.applyRemoteUpdate(
-                        FONT_DEPS_DOCUMENT_ID,
-                        depsBytes
-                    );
-                }
-                const catalogIds = glyphIdsFromCoreJson(
-                    documentSet.assembleFontJson()
-                );
-                if (catalogIds.length) {
-                    const glyphBytes = await hydrator.hydrateDocumentSet(
-                        token,
-                        roomUrl,
-                        catalogIds.map(glyphDocumentId)
-                    );
-                    for (const [documentId, bytes] of glyphBytes) {
-                        documentSet.applyRemoteUpdate(documentId, bytes);
-                    }
-                    if (glyphBytes.size !== catalogIds.length) {
-                        throw new Error(
-                            'schema migration could not fetch every live glyph shard'
-                        );
-                    }
-                }
-            } else {
-                throw new Error(
-                    'schema migration found no checkpoint to reseed'
-                );
-            }
-            if (
-                !writeCompleteFontDepsIfLoaded(
-                    documentSet.depsDoc.getMap('deps'),
-                    documentSet.assembleFontJson()
-                )
-            ) {
-                throw new Error(
-                    'schema migration dependencies could not be rebuilt'
-                );
-            }
-            ensureMigrationRevisionTokens(documentSet);
-            const coverage = revisionCoverageFromDocumentSet(documentSet);
-            if (!coverage.ok) {
-                throw new Error(
-                    `schema migration coverage failed (${coverage.missing.join(',')})`
-                );
-            }
-            const encoded = documentSet.encodeAll();
-            await hydrator.seedDocumentSet(
-                token,
-                roomUrl,
-                encoded,
-                coverage.liveGlyphIds.length,
-                migration.migrationNonce
-            );
-            const core = encoded.find(
-                (shard) => shard.documentId === FONT_CORE_DOCUMENT_ID
-            );
-            const deps = encoded.find(
-                (shard) => shard.documentId === FONT_DEPS_DOCUMENT_ID
-            );
-            if (!core || !deps) {
-                throw new Error('schema migration missing core/deps shards');
-            }
-            const commitUrl = `${this._websiteBaseUrl}/api/cloud/assets/${encodeURIComponent(assetId)}/manifests`;
-            const commitResp = await fetch(commitUrl, {
-                method: 'POST',
-                cache: 'no-store',
-                credentials: 'include',
-                headers: getCloudRequestHeaders({
-                    'Content-Type': 'application/json'
-                }),
-                body: JSON.stringify({
-                    coreRevision: await hashShardBytes(core.bytes),
-                    depsRevision: await hashShardBytes(deps.bytes),
-                    shardIds: encoded.map((shard) => shard.documentId),
-                    coverage,
-                    migrationNonce: migration.migrationNonce,
-                    expectedCurrentRevision
-                })
-            });
-            if (!commitResp.ok) {
-                const body = await commitResp.text().catch(() => '');
-                throw new Error(
-                    `schema migration commit failed: ${commitResp.status} ${body}`
-                );
-            }
-            documentSet.destroy();
-        } finally {
-            hydrator.disconnect();
-        }
+        // Live rooms are the sole content truth — no published-pair alignment.
+        return hydrator.hydrateDocumentSet(
+            token,
+            roomUrl,
+            [FONT_CORE_DOCUMENT_ID, FONT_DEPS_DOCUMENT_ID],
+            ioOptions
+        );
     }
 
     private async _fetchRoomToken(assetId: string): Promise<{
         token: string;
         roomUrl: string;
-        needsMigration?: boolean;
         generationId?: string;
     }> {
         const url = `${this._websiteBaseUrl}/api/cloud/assets/${encodeURIComponent(assetId)}/room-token`;
@@ -5075,20 +3247,12 @@ export class CloudPlugin extends FilesystemPlugin {
             token?: string;
             roomUrl?: string;
             code?: string;
-            needsMigration?: boolean;
             generationId?: string;
         } = {};
         try {
             data = body ? JSON.parse(body) : {};
         } catch {
             data = {};
-        }
-        if (resp.status === 423 && data.code === 'schema_migration_required') {
-            return {
-                token: '',
-                roomUrl: data.roomUrl || '',
-                needsMigration: true
-            };
         }
         if (!resp.ok) {
             throw new Error(
@@ -5105,7 +3269,6 @@ export class CloudPlugin extends FilesystemPlugin {
         return {
             token: data.token,
             roomUrl: data.roomUrl,
-            needsMigration: data.needsMigration === true,
             generationId: data.generationId
         };
     }
@@ -5120,18 +3283,17 @@ export class CloudPlugin extends FilesystemPlugin {
     ): Promise<void> {
         const shards = seed?.shards ?? [];
         const receipts = seed?.receipts ?? [];
-        const core = shards.find(
-            (shard) => shard.documentId === FONT_CORE_DOCUMENT_ID
-        );
-        const deps = shards.find(
-            (shard) => shard.documentId === FONT_DEPS_DOCUMENT_ID
-        );
         const coreReceipt = receipts.find(
             (receipt) => receipt.shardId === FONT_CORE_DOCUMENT_ID
         );
         const depsReceipt = receipts.find(
             (receipt) => receipt.shardId === FONT_DEPS_DOCUMENT_ID
         );
+        if (!coreReceipt || !depsReceipt) {
+            throw new Error(
+                'Cloud seed finalize requires core and deps write receipts'
+            );
+        }
         const url = `${this._websiteBaseUrl}/api/cloud/assets/${encodeURIComponent(assetId)}/finalize`;
         const resp = await fetch(url, {
             method: 'POST',
@@ -5144,12 +3306,8 @@ export class CloudPlugin extends FilesystemPlugin {
                 glyphCount:
                     seed?.glyphCount ??
                     listGlyphRecords(this._currentFontJson() || {}).length,
-                coreRevision:
-                    coreReceipt?.checkpointSha256 ||
-                    (core ? await hashShardBytes(core.bytes) : 'bootstrap'),
-                depsRevision:
-                    depsReceipt?.checkpointSha256 ||
-                    (deps ? await hashShardBytes(deps.bytes) : 'bootstrap'),
+                coreRevision: coreReceipt.checkpointSha256,
+                depsRevision: depsReceipt.checkpointSha256,
                 shardIds: shards.length
                     ? shards.map((shard) => shard.documentId)
                     : receipts.map((receipt) => receipt.shardId),
@@ -5166,7 +3324,10 @@ export class CloudPlugin extends FilesystemPlugin {
 
     private async _abortPendingAsset(assetId: string): Promise<void> {
         const url = `${this._websiteBaseUrl}/api/cloud/assets/${encodeURIComponent(assetId)}/abort`;
-        for (let attempt = 0; attempt < 1000; attempt += 1) {
+        for (let attempt = 0; attempt < 60; attempt += 1) {
+            if (attempt > 0) {
+                await new Promise((resolve) => setTimeout(resolve, 250));
+            }
             const resp = await fetch(url, {
                 method: 'POST',
                 cache: 'no-store',
@@ -5192,4 +3353,53 @@ export class CloudPlugin extends FilesystemPlugin {
         }
         throw new Error('Cloud delete did not finish');
     }
+
+    get connectionStatus(): CloudConnectionStatus {
+        if (window.windowRole?.isLinkedWindow()) {
+            return this._relayedConnectionStatus;
+        }
+        if (this._activeAssetId) {
+            return this.getAssetConnectionStatus(this._activeAssetId);
+        }
+        return this._liveSession?.status ?? 'disconnected';
+    }
+
+    get activeAssetId(): string | null {
+        if (window.windowRole?.isLinkedWindow()) {
+            return this._relayedAssetId;
+        }
+        return this._activeAssetId;
+    }
+
+    // ── Private helpers ──────────────────────────────────────────
+
+    private async _runExclusiveCloudIo<T>(
+        op: 'save' | 'open',
+        work: () => Promise<T>
+    ): Promise<T> {
+        if (this._cloudIoInFlight) {
+            throw new Error(
+                `Cannot ${op} while another cloud transfer is in progress`
+            );
+        }
+        const run = work();
+        this._cloudIoInFlight = run;
+        try {
+            return await run;
+        } finally {
+            if (this._cloudIoInFlight === run) {
+                this._cloudIoInFlight = null;
+            }
+        }
+    }
 }
+
+Object.assign(CloudPlugin.prototype, {
+    _openAssetInternal: cloudPluginOpenMethods._openAssetInternal,
+    _scheduleOpenRetry: cloudPluginOpenMethods._scheduleOpenRetry,
+    _cancelOpenRetry: cloudPluginOpenMethods._cancelOpenRetry,
+    _authFailureIsUnreachableBackend:
+        cloudPluginOpenMethods._authFailureIsUnreachableBackend,
+    _finalizeCurrentFontAsSavedCloudAsset:
+        cloudPluginOpenMethods._finalizeCurrentFontAsSavedCloudAsset
+});

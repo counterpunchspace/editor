@@ -173,6 +173,19 @@ interface CloudConnectionStatusMsg {
     sessionId: string;
 }
 
+interface MainHeartbeatMsg {
+    type: 'main-heartbeat';
+    windowId: string;
+    sessionId: string;
+    at: number;
+}
+
+interface ClaimMainMsg {
+    type: 'claim-main';
+    windowId: string;
+    sessionId: string;
+}
+
 type SyncMessage =
     | YjsUpdateMsg
     | FullStateRequestMsg
@@ -185,7 +198,46 @@ type SyncMessage =
     | SparseResidencyMsg
     | WindowClosingMsg
     | MainWindowClosingMsg
-    | CloudConnectionStatusMsg;
+    | CloudConnectionStatusMsg
+    | MainHeartbeatMsg
+    | ClaimMainMsg;
+
+const MAIN_HEARTBEAT_INTERVAL_MS = 2000;
+const MAIN_HEARTBEAT_STALE_MS = 6000;
+
+const WINDOW_SYNC_MESSAGE_TYPES = new Set([
+    'yjs-update',
+    'full-state-request',
+    'full-state-begin',
+    'full-state-glyphs',
+    'full-state-end',
+    'full-state-abort',
+    'hydration-request',
+    'hydration-result',
+    'sparse-residency',
+    'window-closing',
+    'main-window-closing',
+    'cloud-connection-status',
+    'main-heartbeat',
+    'claim-main'
+]);
+
+export function parseWindowSyncMessage(raw: unknown): SyncMessage | null {
+    if (!raw || typeof raw !== 'object') {
+        return null;
+    }
+    const msg = raw as Record<string, unknown>;
+    if (
+        typeof msg.type !== 'string' ||
+        !WINDOW_SYNC_MESSAGE_TYPES.has(msg.type)
+    ) {
+        return null;
+    }
+    if (typeof msg.sessionId !== 'string' || typeof msg.windowId !== 'string') {
+        return null;
+    }
+    return msg as unknown as SyncMessage;
+}
 
 // ── WindowSync class ────────────────────────────────────────────────
 
@@ -233,6 +285,11 @@ export class WindowSync {
             timer: ReturnType<typeof setTimeout>;
         }
     >();
+    private _mainHeartbeatTimer: ReturnType<typeof setInterval> | null = null;
+    private _mainHeartbeatWatchTimer: ReturnType<typeof setInterval> | null =
+        null;
+    private _lastMainHeartbeatAt = 0;
+    private _mainMissingLatched = false;
 
     static enableTimingLogging(): void {
         WindowSync._timingLoggingEnabled = true;
@@ -279,10 +336,34 @@ export class WindowSync {
                 );
             });
         }
+
+        this._startMainHeartbeat();
     }
 
     /**
-     * Request the full state from an existing peer window.
+     * True when a linked window has latched read-only because main went away.
+     */
+    get mainMissingLatched(): boolean {
+        return this._mainMissingLatched;
+    }
+
+    /** Reload this window as main and replay the local WAL. */
+    claimMainWindow(): void {
+        if (window.windowRole?.isMainWindow()) {
+            return;
+        }
+        this._send({
+            type: 'claim-main',
+            windowId: this._bridge.windowId,
+            sessionId: this._sessionId
+        });
+        const url = new URL(window.location.href);
+        url.searchParams.delete('linked');
+        url.searchParams.delete('sync');
+        window.location.assign(url.toString());
+    }
+
+    /**
      * Call this when a new window opens with `sync=true`.
      *
      * Pre-registers a pending worker-document sync promise with
@@ -1043,7 +1124,14 @@ export class WindowSync {
         }
         this._channel = new BroadcastChannel(channelName);
         this._channel.onmessage = (ev: MessageEvent<SyncMessage>) => {
-            this._handleMessage(ev.data);
+            const parsed = parseWindowSyncMessage(ev.data);
+            if (!parsed) {
+                console.warn(
+                    'WindowSync: ignored malformed BroadcastChannel message'
+                );
+                return;
+            }
+            this._handleMessage(parsed);
         };
     }
 
@@ -1370,6 +1458,20 @@ export class WindowSync {
                 this._peers.delete(msg.windowId);
                 break;
 
+            case 'main-heartbeat':
+                if (msg.windowId === this._bridge.windowId) return;
+                if (window.windowRole?.isMainWindow()) return;
+                this._lastMainHeartbeatAt = Date.now();
+                if (this._mainMissingLatched) {
+                    this._mainMissingLatched = false;
+                    this._setLinkedReadOnly(false);
+                }
+                break;
+
+            case 'claim-main':
+                if (msg.windowId === this._bridge.windowId) return;
+                break;
+
             case 'main-window-closing':
                 if (msg.windowId === this._bridge.windowId) return;
                 for (const callback of this._mainWindowClosingListeners) {
@@ -1382,6 +1484,75 @@ export class WindowSync {
                 window.cloudPlugin?.applyRelayedConnectionState?.(msg.state);
                 break;
         }
+    }
+
+    private _startMainHeartbeat(): void {
+        if (this._mainHeartbeatTimer || this._mainHeartbeatWatchTimer) {
+            return;
+        }
+        // Jest (and other fake-timer hosts) must not arm intervals from construct.
+        if (
+            typeof process !== 'undefined' &&
+            process.env &&
+            process.env.NODE_ENV === 'test'
+        ) {
+            return;
+        }
+        if (window.windowRole?.isMainWindow()) {
+            this._mainHeartbeatTimer = setInterval(() => {
+                this._send({
+                    type: 'main-heartbeat',
+                    windowId: this._bridge.windowId,
+                    sessionId: this._sessionId,
+                    at: Date.now()
+                });
+            }, MAIN_HEARTBEAT_INTERVAL_MS);
+            return;
+        }
+        this._lastMainHeartbeatAt = Date.now();
+        this._mainHeartbeatWatchTimer = setInterval(() => {
+            if (
+                Date.now() - this._lastMainHeartbeatAt >
+                MAIN_HEARTBEAT_STALE_MS
+            ) {
+                this._latchMainMissing();
+            }
+        }, MAIN_HEARTBEAT_INTERVAL_MS);
+    }
+
+    private _latchMainMissing(): void {
+        if (this._mainMissingLatched || window.windowRole?.isMainWindow()) {
+            return;
+        }
+        this._mainMissingLatched = true;
+        this._setLinkedReadOnly(true);
+        this._offerMakeMainWindow();
+    }
+
+    private _setLinkedReadOnly(readOnly: boolean): void {
+        document.documentElement.classList.toggle(
+            'linked-window-read-only',
+            readOnly
+        );
+        document.documentElement.dataset.linkedReadOnly = readOnly
+            ? 'true'
+            : 'false';
+        void readOnly;
+    }
+
+    private _offerMakeMainWindow(): void {
+        if (document.getElementById('linked-make-main-banner')) {
+            return;
+        }
+        const banner = document.createElement('div');
+        banner.id = 'linked-make-main-banner';
+        banner.className = 'info-popup-overlay';
+        banner.innerHTML =
+            '<div class="info-popup confirm-dialog"><div class="info-popup-header"><h2>Main window closed</h2></div><div class="info-popup-content"><p>This linked window is read-only. Make it the main window to continue editing (reloads and replays the WAL).</p><div class="dialog-actions"><button type="button" class="dialog-button dialog-button-primary" data-action="make-main">Make this the main window</button></div></div></div>';
+        banner
+            .querySelector('[data-action="make-main"]')
+            ?.addEventListener('click', () => this.claimMainWindow());
+        document.body.appendChild(banner);
     }
 }
 

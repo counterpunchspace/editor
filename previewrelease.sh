@@ -46,7 +46,8 @@ gh workflow run preview-release.yml --ref main
 
 echo ""
 echo "Preview release workflow started."
-echo "It waits for green editor CI, runs cloud-collab e2e, then deploys"
+echo "It waits for green editor CI (which includes the cloud-collab e2e), checks that"
+echo "the e2e tested the website and collab commits being deployed, then deploys"
 echo "validator, compactor, room-preview, websitepreview, and editorpreview."
 echo ""
 echo "Watch progress: gh run watch --workflow=preview-release.yml"

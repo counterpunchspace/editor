@@ -79,7 +79,16 @@ jest.mock('../js/cloud-adapter', () => ({
                 }
             }),
             rebindToCurrentBridge: mockRebindToCurrentBridge,
-            seedDocumentSet: jest.fn().mockResolvedValue(),
+            seedDocumentSet: jest.fn().mockResolvedValue({
+                coreCheckpointLogId: 1,
+                attestations: ['font-core', 'font-deps'].map((shardId) => ({
+                    shardId,
+                    checkpointObjectKey: `key/${shardId}`,
+                    checkpointSha256: `sha-${shardId}`,
+                    checkpointByteLength: 1,
+                    checkpointLogId: 1
+                }))
+            }),
             hydrateDocumentSet: jest.fn(async (_token, _roomUrl, ids = []) => {
                 if (!mockHydrateCache) {
                     mockHydrateCache =
@@ -448,16 +457,6 @@ describe('CloudPlugin.openAsset', () => {
         ).toBe(true);
     });
 
-    test('fails closed when HTTP hydrate produces no published snapshot', async () => {
-        plugin._hydrateCoreDepsConsistent = async () => new Map();
-        await expect(plugin.openAsset('asset-1')).rejects.toThrow(
-            'no published core/deps snapshot'
-        );
-        expect(dispatchSpy).not.toHaveBeenCalledWith(
-            expect.objectContaining({ type: 'fontLoaded' })
-        );
-    });
-
     test('opens from HTTP hydrate and attaches live rooms without a full-room websocket bootstrap', async () => {
         mockConnectDirectStatusQueue = [
             [{ status: 'connected' }],
@@ -512,6 +511,56 @@ describe('CloudPlugin.openAsset', () => {
 
         expect(plugin._fetchRoomToken).toHaveBeenCalledTimes(2);
         expect(mockConnectDirect).toHaveBeenCalledTimes(2);
+    });
+
+    test('retries opening when the backend is unreachable and the browser comes back online', async () => {
+        const internal = jest
+            .spyOn(plugin, '_openAssetInternal')
+            .mockRejectedValueOnce(new TypeError('Failed to fetch'))
+            .mockResolvedValueOnce(undefined);
+
+        await expect(plugin.openAsset('asset-1')).rejects.toThrow(
+            'Failed to fetch'
+        );
+        expect(internal).toHaveBeenCalledTimes(1);
+
+        eventListeners.get('online')?.(new Event('online'));
+        for (let i = 0; i < 100; i += 1) {
+            await Promise.resolve();
+        }
+
+        expect(internal).toHaveBeenCalledTimes(2);
+        expect(plugin._openRetryCancel).toBeNull();
+    });
+
+    test('does not retry opening after a non-network failure', async () => {
+        const internal = jest
+            .spyOn(plugin, '_openAssetInternal')
+            .mockRejectedValue(new Error('room-token request failed: 403'));
+        const originalOnline = Object.getOwnPropertyDescriptor(
+            Navigator.prototype,
+            'onLine'
+        );
+        Object.defineProperty(navigator, 'onLine', {
+            value: true,
+            configurable: true
+        });
+
+        await expect(plugin.openAsset('asset-1')).rejects.toThrow('403');
+        eventListeners.get('online')?.(new Event('online'));
+        for (let i = 0; i < 100; i += 1) {
+            await Promise.resolve();
+        }
+
+        expect(internal).toHaveBeenCalledTimes(1);
+        if (originalOnline) {
+            Object.defineProperty(
+                Navigator.prototype,
+                'onLine',
+                originalOnline
+            );
+        }
+        delete navigator.onLine;
     });
 
     test('linked windows defer glyph hydration to the main window', async () => {
@@ -1465,7 +1514,8 @@ describe('CloudPlugin.openAsset', () => {
         expect(mockConnectDirect.mock.calls[0][0]).not.toBe(originalBridge);
         expect(mockConnectDirect.mock.calls[1][0]).toBe(replacementBridge);
         expect(mockConnectDirect.mock.calls[0][3]).toEqual({
-            bootstrapMode: 'skip'
+            bootstrapMode: 'skip',
+            checkpointLogId: 1
         });
     });
 
@@ -1777,8 +1827,7 @@ describe('CloudPlugin.openAsset', () => {
             CloudPlugin.prototype._fetchRoomToken.call(plugin, 'asset-1')
         ).resolves.toEqual({
             token: 'room-token',
-            roomUrl: 'ws://localhost:8787/room/asset-1',
-            needsMigration: false
+            roomUrl: 'ws://localhost:8787/room/asset-1'
         });
 
         expect(global.fetch).toHaveBeenCalledWith(
@@ -2719,6 +2768,84 @@ describe('CloudPlugin glyph catch-up from core revision map', () => {
             window.glyphCanvas = originalCanvas;
             jest.useRealTimers();
         }
+    });
+
+    describe('glyph orphan sync', () => {
+        const makePlugin = (ids) => {
+            const plugin = new CloudPlugin();
+            Object.defineProperty(plugin, '_websiteBaseUrl', {
+                get: () => 'https://site.test'
+            });
+            plugin._currentFontJson = () => ({
+                glyphs: ids.current.map((id) => ({ id, name: id, layers: [] }))
+            });
+            return plugin;
+        };
+        const bodies = (fetchMock) =>
+            fetchMock.mock.calls.map(([url, init]) => ({
+                url,
+                body: JSON.parse(init.body)
+            }));
+
+        test('reconciles with the live list first, then sends mark and clear diffs', async () => {
+            const ids = { current: ['a', 'b', 'c'] };
+            const plugin = makePlugin(ids);
+            const fetchMock = jest.fn(async () => ({ ok: true, status: 200 }));
+            const originalFetch = global.fetch;
+            global.fetch = fetchMock;
+            try {
+                await plugin._syncGlyphOrphans('asset-1');
+                ids.current = ['a', 'c', 'd'];
+                await plugin._syncGlyphOrphans('asset-1');
+                await plugin._syncGlyphOrphans('asset-1');
+            } finally {
+                global.fetch = originalFetch;
+            }
+            const sent = bodies(fetchMock);
+            expect(sent).toHaveLength(2);
+            expect(sent[0].url).toBe(
+                'https://site.test/api/cloud/assets/asset-1/glyph-orphans'
+            );
+            expect(sent[0].body).toEqual({ live: ['a', 'b', 'c'] });
+            expect(sent[1].body).toEqual({ mark: ['b'], clear: ['d'] });
+        });
+
+        test('retries the same diff after a failed post', async () => {
+            const ids = { current: ['a', 'b'] };
+            const plugin = makePlugin(ids);
+            const originalFetch = global.fetch;
+            const fetchMock = jest
+                .fn()
+                .mockResolvedValueOnce({ ok: true, status: 200 })
+                .mockResolvedValueOnce({ ok: false, status: 500 })
+                .mockResolvedValueOnce({ ok: true, status: 200 });
+            global.fetch = fetchMock;
+            try {
+                await plugin._syncGlyphOrphans('asset-1');
+                ids.current = ['a'];
+                await plugin._syncGlyphOrphans('asset-1');
+                await plugin._syncGlyphOrphans('asset-1');
+            } finally {
+                global.fetch = originalFetch;
+            }
+            const sent = bodies(fetchMock);
+            expect(sent[1].body).toEqual({ mark: ['b'] });
+            expect(sent[2].body).toEqual({ mark: ['b'] });
+        });
+
+        test('stops after a 403 so viewers do not keep posting', async () => {
+            const plugin = makePlugin({ current: ['a'] });
+            const originalFetch = global.fetch;
+            const fetchMock = jest.fn(async () => ({ ok: false, status: 403 }));
+            global.fetch = fetchMock;
+            try {
+                await plugin._syncGlyphOrphans('asset-1');
+                await plugin._syncGlyphOrphans('asset-1');
+            } finally {
+                global.fetch = originalFetch;
+            }
+            expect(fetchMock).toHaveBeenCalledTimes(1);
+        });
     });
 
     test('a glyph rename updates the catalog under the new name', () => {

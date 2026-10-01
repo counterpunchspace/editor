@@ -170,9 +170,12 @@ jobs:
                   GH_TOKEN: ${{ secrets.CLOUD_E2E_PAT }}
               run: bash scripts/wait-for-green-ci.sh "${{ vars.COLLAB_REPOSITORY || format('{0}/collab', github.repository_owner) }}" "${{ needs.freeze.outputs.collab_sha }}" deploy.yml
 
-    e2e:
+    # The cloud-collab Playwright suite already ran in editor CI on this exact
+    # editor commit. Releasing only verifies that run was green and tested the
+    # same website and collab commits that are about to be deployed.
+    verify-e2e:
         needs: [freeze, sibling-ci]
-        runs-on: macos-latest
+        runs-on: ubuntu-latest
         timeout-minutes: 90
         steps:
             - name: Checkout editor
@@ -180,120 +183,13 @@ jobs:
               with:
                   ref: ${{ needs.freeze.outputs.editor_sha }}
 
-            - name: Checkout website
-              uses: actions/checkout@v4
-              with:
-                  repository: ${{ vars.WEBSITE_REPOSITORY || format('{0}/website', github.repository_owner) }}
-                  ref: ${{ needs.freeze.outputs.website_sha }}
-                  path: _cloud_e2e/website
-                  token: ${{ secrets.CLOUD_E2E_PAT }}
-
-            - name: Checkout collab
-              uses: actions/checkout@v4
-              with:
-                  repository: ${{ vars.COLLAB_REPOSITORY || format('{0}/collab', github.repository_owner) }}
-                  ref: ${{ needs.freeze.outputs.collab_sha }}
-                  path: _cloud_e2e/collab
-                  token: ${{ secrets.CLOUD_E2E_PAT }}
-
-            - name: Set up Node.js
-              uses: actions/setup-node@v4
-              with:
-                  node-version: "24"
-
-            - name: Install editor webapp dependencies
-              run: npm install --prefix webapp
-
-            - name: Build editor production bundle
-              run: npm run build --prefix webapp
+            - name: Verify cloud-collab e2e attestation
               env:
-                  EDITOR_VERSION: ${{ needs.freeze.outputs.editor_version }}
-                  BUILD_HASH_FULL: ${{ needs.freeze.outputs.editor_sha }}
-                  BUILD_HASH_SHORT: ${{ needs.freeze.outputs.editor_sha }}
-
-            - name: Install Playwright Chromium
-              run: npx --prefix webapp playwright install chromium
-
-            - name: Install website dependencies
-              run: npm ci
-              working-directory: _cloud_e2e/website
-
-            - name: Build website static bundle
-              run: npm run rebuild
-              working-directory: _cloud_e2e/website
-              env:
-                  EDITOR_ROOT: ${{ github.workspace }}
-
-            - name: Write ephemeral website local vars
-              working-directory: _cloud_e2e/website
-              run: |
-                  printf '%s\n' \
-                    'LOCAL_DEV=true' \
-                    'LOCAL_CLOUD_DEV_ENABLED=true' \
-                    'AUTH_TOKEN_ALLOW_INSECURE_LOCAL_FALLBACK=true' \
-                    'EDITOR_ALLOWED_ORIGINS=https://localhost:8000,http://localhost:9000' \
-                    'WEBSITE_ALLOWED_ORIGINS=https://localhost:8000,http://localhost:9000,https://localhost:8788' \
-                    'MAGIC_LINK_SECRET=e2e-cloud-collab-magic' \
-                    'ROOM_WORKER_URL=http://localhost:8787' \
-                    > .dev.vars
-
-            - name: Resolve collab root
-              id: collab
-              run: |
-                  if [ -f _cloud_e2e/collab/workers/room/wrangler.toml ]; then
-                    echo "root=${GITHUB_WORKSPACE}/_cloud_e2e/collab" >> "$GITHUB_OUTPUT"
-                  elif [ -f _cloud_e2e/collab/collab/workers/room/wrangler.toml ]; then
-                    echo "root=${GITHUB_WORKSPACE}/_cloud_e2e/collab/collab" >> "$GITHUB_OUTPUT"
-                  else
-                    echo "Could not find collab workers/room/wrangler.toml"
-                    exit 1
-                  fi
-
-            - name: Install collab dependencies
-              run: npm ci
-              working-directory: ${{ steps.collab.outputs.root }}
-
-            - name: Mint website localhost certs
-              working-directory: _cloud_e2e/website
-              run: |
-                  mkdir -p .local-certs
-                  if [ -f .local-certs/localhost.pem ] && [ -f .local-certs/localhost-key.pem ]; then
-                    echo "Reusing existing .local-certs"
-                    exit 0
-                  fi
-                  openssl req -x509 -newkey rsa:2048 -sha256 -nodes -days 1 \
-                    -keyout .local-certs/localhost-key.pem \
-                    -out .local-certs/localhost.pem \
-                    -subj "/CN=localhost"
-                  ls -la .local-certs
-
-            - name: Run cloud-collab Playwright
-              run: npm run test:cloud-collab --prefix webapp
-              env:
-                  WEBSITE_ROOT: ${{ github.workspace }}/_cloud_e2e/website
-                  COLLAB_ROOT: ${{ steps.collab.outputs.root }}
-                  CLOUD_COLLAB_E2E: "1"
-                  CLOUD_COLLAB_STACK_ROOT: ${{ runner.temp }}/cloud-collab-e2e
-
-            - name: Dump cloud-collab stack logs
-              if: failure()
-              env:
-                  CLOUD_COLLAB_STACK_ROOT: ${{ runner.temp }}/cloud-collab-e2e
-              run: |
-                  echo "==== cloud-collab stack logs ===="
-                  logs=$(find "$CLOUD_COLLAB_STACK_ROOT" -name '*.log' 2>/dev/null || true)
-                  if [ -z "$logs" ]; then
-                    echo "No wrangler logs. Stack likely died before spawn (certs or wrangler missing)."
-                    ls -la _cloud_e2e/website/.local-certs 2>/dev/null || echo "No website .local-certs directory"
-                  else
-                    echo "$logs" | while read -r f; do
-                      echo "----- $f -----"
-                      tail -n 120 "$f" || true
-                    done
-                  fi
+                  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+              run: bash scripts/verify-cloud-e2e-attestation.sh "${{ needs.freeze.outputs.editor_sha }}" "${{ needs.freeze.outputs.website_sha }}" "${{ needs.freeze.outputs.collab_sha }}"
 
     deploy:
-        needs: [freeze, e2e]
+        needs: [freeze, verify-e2e]
         runs-on: ubuntu-latest
         steps:
             - name: Checkout editor
@@ -409,6 +305,20 @@ jobs:
                   trap restore_config EXIT
                   npx wrangler pages deploy dist --project-name="$project" --branch main --commit-dirty=true
                   npx wrangler pages secret list --project-name="$project" || true
+
+            # The hourly Worker finishes interrupted font deletes and purges
+            # deleted glyph rooms after the 24h undo window. It is not part
+            # of the Pages deploy, so it needs its own step. Preview has no
+            # cron Worker: its D1 database id is not in the repo, and a
+            # production-bound cron must never run against preview data.
+            - name: Deploy cloud cron Worker
+              if: ${{ inputs.target == 'production' }}
+              uses: cloudflare/wrangler-action@v3
+              with:
+                  apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+                  accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+                  workingDirectory: _cutover/website/cron-worker
+                  command: deploy
 
             - name: Real-email signup gate
               working-directory: _cutover/website

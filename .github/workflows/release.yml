@@ -7,13 +7,14 @@ on:
 
 # Sets permissions
 permissions:
+    actions: read
     contents: write
     deployments: write
 
 jobs:
     certify:
         if: ${{ !contains(github.ref, '-preview') && !contains(github.ref, '-pre.') }}
-        runs-on: macos-latest
+        runs-on: ubuntu-latest
         outputs:
             VERSION: ${{ steps.version.outputs.VERSION }}
             COMMIT_SHA: ${{ steps.commit.outputs.COMMIT_SHA }}
@@ -52,55 +53,13 @@ jobs:
                   cat release-notes.md >> $GITHUB_OUTPUT
                   echo "EOF" >> $GITHUB_OUTPUT
 
-            - name: Setup Node.js
-              uses: actions/setup-node@v4
-              with:
-                  node-version: "24"
-
-            - name: Install graph tooling
-              run: npm ci --ignore-scripts
-
-            - name: Install LadybugDB native binding
-              run: npm rebuild @ladybugdb/core --foreground-scripts
-
-            - name: Install webapp dependencies
-              run: npm install --prefix webapp
-
-            - name: Install Playwright Chromium
-              run: npx --prefix webapp playwright install chromium
-
-            - name: Enforce graph chokepoints
-              run: |
-                  npx --no-install gitnexus analyze
-                  npm run test:graph-chokepoints
-                  npm run check:graph-chokepoints
-
-            - name: Build webapp with webpack
-              run: npm run build --prefix webapp
+            # Editor CI (checks, jest, chromium Playwright, Rust, Prettier and
+            # the sharded cloud-collab e2e) already ran on this commit when main
+            # was pushed. The release does not repeat any of it.
+            - name: Wait for green CI
               env:
-                  EDITOR_VERSION: ${{ steps.version.outputs.VERSION }}
-                  BUILD_HASH_FULL: ${{ steps.commit.outputs.COMMIT_SHA }}
-                  BUILD_HASH_SHORT: ${{ steps.commit.outputs.COMMIT_SHORT }}
-
-            - name: Run full release test suite
-              run: npm test --prefix webapp
-
-            - name: Set up Rust nightly with the WASM target
-              uses: dtolnay/rust-toolchain@nightly
-              with:
-                  targets: wasm32-unknown-unknown
-
-            - name: Set up wasm-pack
-              uses: jetli/wasm-pack-action@v0.4.0
-
-            - name: Generate Rust WASM test fixture
-              run: node webapp/compilation-test/compile-test.mjs webapp/examples/Fustat.glyphs
-
-            - name: Run Rust WASM cache tests
-              run: cd babelfont-fontc-build && rustup run nightly wasm-pack test --node
-
-            - name: Check code formatting with Prettier
-              run: cd webapp && npx prettier -c .
+                  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+              run: bash scripts/wait-for-green-ci.sh "" "${{ steps.commit.outputs.COMMIT_SHA }}" ci.yml
 
             - name: Upload release notes
               uses: actions/upload-artifact@v4

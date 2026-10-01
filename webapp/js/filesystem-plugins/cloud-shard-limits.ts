@@ -1,14 +1,20 @@
 import APP_SETTINGS from '../settings';
+import {
+    MAX_SHARD_BYTES as PROTOCOL_MAX_SHARD_BYTES,
+    MAX_YJS_PACKET_BYTES as PROTOCOL_MAX_YJS_PACKET_BYTES,
+    CLIENT_LIVE_MEMORY_WARNING_STRUCTS as PROTOCOL_LIVE_MEMORY_WARNING_STRUCTS,
+    CLIENT_LIVE_MEMORY_WARNING_ENCODED_BYTES as PROTOCOL_LIVE_MEMORY_WARNING_ENCODED_BYTES
+} from '../generated/collab-protocol-limits';
 
-export const MAX_SHARD_BYTES = APP_SETTINGS.CLOUD_COLLAB.MAX_SHARD_BYTES;
-export const MAX_YJS_PACKET_BYTES =
-    APP_SETTINGS.CLOUD_COLLAB.MAX_YJS_PACKET_BYTES;
+export const MAX_SHARD_BYTES = PROTOCOL_MAX_SHARD_BYTES;
+export const MAX_YJS_PACKET_BYTES = PROTOCOL_MAX_YJS_PACKET_BYTES;
 export const WARNING_SHARD_BYTES =
     APP_SETTINGS.CLOUD_COLLAB.WARNING_SHARD_BYTES;
-/** Live `{gc:false}` warning — not the Worker compact peak. Keep in sync with collab protocol. */
+/** Live `{gc:false}` warning — not the Worker compact peak. Protocol-sourced. */
 export const CLIENT_LIVE_MEMORY_WARNING_STRUCTS =
-    APP_SETTINGS.CLOUD_COLLAB.CLIENT_LIVE_MEMORY_WARNING_STRUCTS;
-export const CLIENT_LIVE_MEMORY_WARNING_ENCODED_BYTES = WARNING_SHARD_BYTES;
+    PROTOCOL_LIVE_MEMORY_WARNING_STRUCTS;
+export const CLIENT_LIVE_MEMORY_WARNING_ENCODED_BYTES =
+    PROTOCOL_LIVE_MEMORY_WARNING_ENCODED_BYTES;
 export const HYDRATE_SHARD_CONCURRENCY =
     APP_SETTINGS.CLOUD_COLLAB.HYDRATE_SHARD_CONCURRENCY;
 export const SEED_SHARD_CONCURRENCY =
@@ -81,8 +87,8 @@ export type CollabSubmitLimits = {
 
 export function collabSubmitHardLimits(): CollabSubmitLimits {
     return {
-        maxShardBytes: APP_SETTINGS.CLOUD_COLLAB.MAX_SHARD_BYTES,
-        maxPacketBytes: APP_SETTINGS.CLOUD_COLLAB.MAX_YJS_PACKET_BYTES
+        maxShardBytes: MAX_SHARD_BYTES,
+        maxPacketBytes: MAX_YJS_PACKET_BYTES
     };
 }
 
@@ -229,8 +235,7 @@ export function measureShardBytesForSubmit(options: {
     encodeFullShard: () => number;
     maxShardBytes?: number;
 }): { shardBytes: number; encodedFull: boolean } {
-    const cap =
-        options.maxShardBytes ?? APP_SETTINGS.CLOUD_COLLAB.MAX_SHARD_BYTES;
+    const cap = options.maxShardBytes ?? MAX_SHARD_BYTES;
     const last = Math.max(0, Number(options.lastEncodedBytes) || 0);
     const packet = Math.max(0, Number(options.packetBytes) || 0);
     if (last <= 0) {
@@ -290,9 +295,7 @@ export function formatCollabSubmitRejection(
         return '';
     }
     const packetLimit =
-        decision.kind === 'packet'
-            ? APP_SETTINGS.CLOUD_COLLAB.MAX_YJS_PACKET_BYTES
-            : APP_SETTINGS.CLOUD_COLLAB.MAX_SHARD_BYTES;
+        decision.kind === 'packet' ? MAX_YJS_PACKET_BYTES : MAX_SHARD_BYTES;
     const limitLabel =
         packetLimit >= 1024 * 1024
             ? `${packetLimit / (1024 * 1024)} MB`

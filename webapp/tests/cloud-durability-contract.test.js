@@ -1,9 +1,8 @@
 const {
     allocateClientTransactionId,
-    createGenerationIdentity,
     createMutationIdentity,
     isExactDurableAck
-} = require('../js/cloud-durability-contract.ts');
+} = require('../js/generated/collab-protocol-durability-contract.ts');
 
 describe('cloud durability contract', () => {
     test('requires complete identities and rejects ambiguous ACKs', () => {
@@ -24,33 +23,18 @@ describe('cloud durability contract', () => {
                 clientTransactionId: 'tx-1'
             })
         ).toBeNull();
-        expect(
-            createGenerationIdentity({
-                generationId: 'gen-2',
-                parentGenerationId: 'gen-1',
-                schemaVersion: 6
-            })
-        ).toEqual({
-            generationId: 'gen-2',
-            parentGenerationId: 'gen-1',
-            schemaVersion: 6
-        });
         expect(allocateClientTransactionId('tx')).toMatch(/^tx:/);
         const expected = {
             clientTransactionId: 'tx-1',
-            seq: 4,
-            generationId: 'gen-1',
-            lastLogId: 12
+            seq: 4
         };
         expect(
             isExactDurableAck(
                 {
                     type: 'ack',
                     durable: true,
-                    seq: 4,
                     clientTransactionId: 'tx-1',
-                    generationId: 'gen-1',
-                    lastLogId: 12
+                    seq: 4
                 },
                 expected
             )
@@ -58,5 +42,16 @@ describe('cloud durability contract', () => {
         expect(isExactDurableAck({ type: 'ack', seq: 4 }, expected)).toBe(
             false
         );
+        expect(
+            isExactDurableAck(
+                {
+                    type: 'ack',
+                    durable: true,
+                    clientTransactionId: 'tx-other',
+                    seq: 4
+                },
+                expected
+            )
+        ).toBe(false);
     });
 });

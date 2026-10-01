@@ -248,118 +248,36 @@ describe('CloudDurableWal', () => {
         const loaded = await reader.load('asset-1');
         expect(Array.from(walUpdateBytes(loaded[0]))).toEqual([1, 2, 3, 4]);
     });
+});
 
-    test('discards WAL rows from a previous generation after confirmed rollback', async () => {
-        global.indexedDB = createIndexedDbMock();
-        const wal = new CloudDurableWal();
-        await wal.load('asset-1');
-        await wal.append({
-            ...sampleRecord('old-gen'),
-            generationId: 'gen-1'
-        });
-        await wal.append({
-            ...sampleRecord('new-gen'),
-            generationId: 'gen-2'
-        });
-        const removed = await wal.discardOtherGenerations('asset-1', 'gen-2');
-        expect(removed).toBe(1);
-        expect(wal.pendingCount).toBe(1);
-        expect(wal.recordsFor('font-core')[0].clientTransactionId).toBe(
-            'new-gen'
-        );
+test('orders replayableRecords by dependsOn', async () => {
+    global.indexedDB = createIndexedDbMock();
+    const wal = new CloudDurableWal();
+    await wal.load('asset-1');
+    await wal.append({
+        ...sampleRecord('core-rev'),
+        dependsOn: ['glyph-a'],
+        updateBytes: new Uint8Array([2])
     });
-
-    test('quarantines generation-less WAL rows during rollback', async () => {
-        global.indexedDB = createIndexedDbMock();
-        const wal = new CloudDurableWal();
-        await wal.load('asset-1');
-        await wal.append({
-            ...sampleRecord('legacy-row'),
-            generationId: undefined,
-            updateBytes: new Uint8Array([9, 8, 7])
-        });
-        await wal.append({
-            ...sampleRecord('current-row'),
-            generationId: 'gen-2',
-            updateBytes: new Uint8Array([1, 2, 3])
-        });
-        const removed = await wal.discardOtherGenerations('asset-1', 'gen-2');
-        expect(removed).toBe(1);
-        expect(wal.replayableRecords('gen-2')).toHaveLength(1);
-        expect(wal.replayableRecords('gen-2')[0].clientTransactionId).toBe(
-            'current-row'
-        );
+    await wal.append({
+        ...sampleRecord('glyph-a'),
+        documentId: 'glyph:a',
+        updateBytes: new Uint8Array([1])
     });
+    const ordered = wal.replayableRecords().map((r) => r.clientTransactionId);
+    expect(ordered.indexOf('glyph-a')).toBeLessThan(
+        ordered.indexOf('core-rev')
+    );
+});
 
-    test('quarantines v1 Base64 WAL rows instead of replaying them', async () => {
-        const mock = createIndexedDbMock();
-        global.indexedDB = mock;
-        mock.records.set('asset-1:font-core:legacy-v1', {
-            key: 'asset-1:font-core:legacy-v1',
-            assetId: 'asset-1',
-            documentId: 'font-core',
-            clientTransactionId: 'legacy-v1',
-            schemaVersion: 1,
-            updateBase64: 'YQ==',
-            collaborationMessage: sampleRecord().collaborationMessage,
-            createdAt: 1,
-            attempts: 2
-        });
-        const wal = new CloudDurableWal();
-        const loaded = await wal.load('asset-1');
-        expect(loaded).toHaveLength(0);
-        expect(wal.pendingCount).toBe(0);
-    });
-
-    test('survives crash between prepared, applied, sent, and acknowledged', async () => {
-        global.indexedDB = createIndexedDbMock();
-        const writer = new CloudDurableWal();
-        await writer.load('asset-1');
-        const prepared = {
-            ...sampleRecord('crash-txn'),
-            schemaVersion: 2,
-            transactionId: 'crash-txn',
-            updateBytes: new Uint8Array(),
-            operations: [
-                { op: 'set', path: ['glyphs', 'A', 'width'], newValue: 600 }
-            ],
-            documentUpdates: [
-                {
-                    documentId: 'font-core',
-                    baseStateVectorBase64: ''
-                }
-            ],
-            state: 'prepared',
-            revisionObligations: [
-                {
-                    kind: 'glyph-revision-publication',
-                    glyphIds: ['aaa'],
-                    published: false
-                }
-            ]
-        };
-        await writer.append(prepared);
-        expect(writer.recordsFor('font-core')).toHaveLength(0);
-        const afterPrepare = new CloudDurableWal();
-        expect(await afterPrepare.load('asset-1')).toEqual([]);
-
-        await writer.append({
-            ...prepared,
-            state: 'applied',
-            updateBytes: new Uint8Array([1, 2, 3])
-        });
-        const afterApply = new CloudDurableWal();
-        expect((await afterApply.load('asset-1'))[0].state).toBe('applied');
-
-        await afterApply.append({
-            ...(await afterApply.load('asset-1'))[0],
-            state: 'sent'
-        });
-        const afterSend = new CloudDurableWal();
-        expect((await afterSend.load('asset-1'))[0].state).toBe('sent');
-
-        await afterSend.acknowledge((await afterSend.load('asset-1'))[0]);
-        const afterAck = new CloudDurableWal();
-        expect(await afterAck.load('asset-1')).toEqual([]);
-    });
+test('rejects byte-less appends', async () => {
+    global.indexedDB = createIndexedDbMock();
+    const wal = new CloudDurableWal();
+    await wal.load('asset-1');
+    await expect(
+        wal.append({
+            ...sampleRecord('empty'),
+            updateBytes: new Uint8Array()
+        })
+    ).rejects.toThrow(/update bytes/i);
 });

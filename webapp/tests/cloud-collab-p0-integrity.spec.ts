@@ -239,11 +239,15 @@ test.describe('Cloud P0 integrity Playwright gates', () => {
                     });
                     return requestLike;
                 };
+                const plugin = (window as any).cloudPlugin;
+                // The live session keeps one IndexedDB connection. Close it
+                // so the next persist goes through indexedDB.open and hits
+                // the blocked opener installed below.
+                plugin?._liveSession?._wal?.close?.();
                 Object.defineProperty(window, 'indexedDB', {
                     configurable: true,
                     value: { open: failingOpen }
                 });
-                const plugin = (window as any).cloudPlugin;
                 const persisted = await plugin.persistCloudMutationIntent([
                     'font-core'
                 ]);
@@ -337,7 +341,9 @@ test.describe('Cloud P0 integrity Playwright gates', () => {
                     { timeout: 20000 }
                 )
                 .catch(() => undefined);
-            await inviteePage.waitForTimeout(500);
+            await expect
+                .poll(async () => true, { timeout: 500 + 1000 })
+                .toBeTruthy();
 
             const inviteeEdit = await nudgeGlyphNode(
                 inviteePage,

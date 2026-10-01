@@ -3174,13 +3174,7 @@ describe('catalog tombstones and published hydrate pair', () => {
         isCatalogTombstone,
         catalogAcceptsGlyphWrite
     } = require('../js/filesystem-plugins/cloud-glyph-catalog');
-    const {
-        hydrateCoreDepsToPublishedPair
-    } = require('../js/filesystem-plugins/cloud-document-set');
-    const {
-        ensureMigrationRevisionTokens,
-        revisionCoverageFromDocumentSet
-    } = require('../js/filesystem-plugins/cloud-asset-migration');
+    // Published-pair / migration helpers removed in Phase 2.
 
     it('keeps a generation tombstone only when deletion is explicit', () => {
         const fontJson = {
@@ -3339,73 +3333,6 @@ describe('catalog tombstones and published hydrate pair', () => {
                 ''
             ].join('\n')
         );
-    });
-
-    it('retries core/deps hydrate until the published revision pair matches', async () => {
-        const coreA = new Uint8Array([1]);
-        const coreB = new Uint8Array([2]);
-        const depsA = new Uint8Array([3]);
-        const hashes = new Map([
-            ['1', 'core-a'],
-            ['2', 'core-b'],
-            ['3', 'deps-a']
-        ]);
-        let calls = 0;
-        const result = await hydrateCoreDepsToPublishedPair({
-            expected: { coreRevision: 'core-b', depsRevision: 'deps-a' },
-            hash: async (bytes) => hashes.get(String(bytes[0])),
-            fetchCoreDeps: async () => {
-                calls += 1;
-                return {
-                    core: calls === 1 ? coreA : coreB,
-                    deps: depsA
-                };
-            }
-        });
-        expect(calls).toBe(2);
-        expect(result.core).toBe(coreB);
-        expect(result.attempts).toBe(2);
-    });
-
-    it('rejects a missing published core shard', async () => {
-        await expect(
-            hydrateCoreDepsToPublishedPair({
-                expected: { coreRevision: 'core', depsRevision: 'deps' },
-                hash: async () => 'wrong',
-                fetchCoreDeps: async () => ({
-                    core: null,
-                    deps: null
-                }),
-                maxAttempts: 1
-            })
-        ).rejects.toThrow('missing published shard');
-    });
-
-    it('rejects a mismatched published core/deps pair instead of installing it', async () => {
-        await expect(
-            hydrateCoreDepsToPublishedPair({
-                expected: { coreRevision: 'core', depsRevision: 'deps' },
-                hash: async () => 'wrong',
-                fetchCoreDeps: async () => ({
-                    core: new Uint8Array([1]),
-                    deps: new Uint8Array([2])
-                }),
-                maxAttempts: 2
-            })
-        ).rejects.toThrow('published generation pair did not match');
-    });
-
-    it('stamps matching revision tokens across core, deps, and glyph shards', () => {
-        const migrated = new CloudDocumentSet();
-        migrated.initFromFontJson({
-            upm: 1000,
-            glyphs: [{ name: 'A', id: 'id-a', layers: [] }]
-        });
-        ensureMigrationRevisionTokens(migrated);
-        const coverage = revisionCoverageFromDocumentSet(migrated);
-        expect(coverage.ok).toBe(true);
-        expect(coverage.liveGlyphIds).toEqual(['id-a']);
-        migrated.destroy();
     });
 });
 

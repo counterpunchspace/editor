@@ -24,7 +24,6 @@ type ShardSeeder = {
         roomUrl: string,
         shards: EncodedShard[],
         glyphCount: number,
-        migrationNonce?: string,
         options?: CloudShardIoOptions
     ) => Promise<CloudSeedDocumentSetResult>;
 };
@@ -50,7 +49,6 @@ export async function seedDocumentSetWithProgress(params: {
     roomUrl: string;
     shards: EncodedShard[];
     glyphCount: number;
-    migrationNonce?: string;
     ioOptions?: CloudShardIoOptions;
 }): Promise<CloudSeedDocumentSetResult> {
     const bytesTotal = params.shards.reduce(
@@ -69,7 +67,6 @@ export async function seedDocumentSetWithProgress(params: {
                 params.roomUrl,
                 params.shards,
                 params.glyphCount,
-                params.migrationNonce,
                 {
                     ...params.ioOptions,
                     signal: session.signal,

@@ -20,12 +20,10 @@ import {
 } from './cloud-adapter';
 import {
     CloudDurableWal,
-    serializeWalOperations,
     walUpdateBytes,
     type CloudWalHealth,
     type CloudWalRecord,
-    type CloudWalRevisionObligation,
-    type CloudWalState
+    type CloudWalRevisionObligation
 } from './cloud-durable-wal';
 import {
     FONT_CORE_DOCUMENT_ID,
@@ -40,7 +38,7 @@ import {
 } from './collaboration-message';
 import { Logger } from './logger';
 import { pushCollabIntegrityEvent } from './cloud-collab-integrity-debug';
-import { allocateClientTransactionId } from './cloud-durability-contract';
+import { allocateClientTransactionId } from './generated/collab-protocol-durability-contract';
 
 const console = new Logger('CloudLiveSession');
 
@@ -577,58 +575,27 @@ export class CloudLiveSession {
         });
     }
 
-    async persistPreparedTransaction(record: {
+    async persistPreparedTransaction(_record: {
         transactionId: string;
         documentId?: string;
         operations: unknown[];
-        documentUpdates?: CloudWalRecord['documentUpdates'];
         collaborationMessage: CollaborationMessageEnvelope;
         revisionObligations?: CloudWalRevisionObligation[];
         generationId?: string | null;
-        state?: CloudWalState;
+        state?: string;
+        dependsOn?: string[];
+        updateBytes?: Uint8Array;
     }): Promise<boolean> {
-        if (this._disconnected) {
-            return false;
-        }
-        await this._ensureWalLoaded();
-        if (this._wal.health !== 'ready') {
-            return false;
-        }
-        try {
-            await this._wal.append({
-                schemaVersion: 2,
-                transactionId: record.transactionId,
-                assetId: this._options.assetId,
-                documentId: record.documentId || FONT_CORE_DOCUMENT_ID,
-                clientTransactionId: record.transactionId,
-                operations: serializeWalOperations(record.operations),
-                documentUpdates: record.documentUpdates || [],
-                collaborationMessage: record.collaborationMessage,
-                collaborationMetadata: record.collaborationMessage.metadata,
-                revisionObligations: record.revisionObligations || [],
-                state: record.state || 'prepared',
-                createdAt: Date.now(),
-                attempts: 0,
-                generationId:
-                    record.generationId ||
-                    this._options.generationId ||
-                    undefined
-            });
-            this._emitPendingSyncCount();
-            return true;
-        } catch (error) {
-            console.warn(
-                'CloudLiveSession: prepared transaction persist failed:',
-                error
-            );
-            return false;
-        }
+        // Prepared (byte-less) WAL rows are gone; bytes are written via
+        // persistOutgoingUpdate after local apply.
+        return true;
     }
 
     async persistOutgoingUpdate(
         update: Uint8Array,
         collaborationMessage?: CollaborationMessageEnvelope | null,
-        documentId?: string
+        documentId?: string,
+        dependsOn?: string[]
     ): Promise<boolean> {
         if (this._disconnected) {
             return false;
@@ -651,26 +618,11 @@ export class CloudLiveSession {
             );
             const clientTransactionId =
                 existing?.clientTransactionId || messageKey;
-            const previousUpdates = existing?.documentUpdates || [];
-            const documentUpdates = [
-                ...previousUpdates.filter(
-                    (entry) => entry.documentId !== resolvedDocumentId
-                ),
-                {
-                    documentId: resolvedDocumentId,
-                    baseStateVectorBase64: previousUpdates.find(
-                        (entry) => entry.documentId === resolvedDocumentId
-                    )?.baseStateVectorBase64
-                }
-            ];
             await this._wal.append({
-                schemaVersion: 2,
-                transactionId: existing?.transactionId || clientTransactionId,
                 assetId: this._options.assetId,
                 documentId: existing?.documentId || resolvedDocumentId,
                 clientTransactionId,
-                operations: existing?.operations || [],
-                documentUpdates,
+                dependsOn: dependsOn || existing?.dependsOn || [],
                 updateBytes: update,
                 collaborationMessage:
                     collaborationMessage || existing?.collaborationMessage,
@@ -680,18 +632,15 @@ export class CloudLiveSession {
                 revisionObligations: existing?.revisionObligations || [],
                 state: 'applied',
                 createdAt: existing?.createdAt || Date.now(),
-                attempts: existing?.attempts || 0,
-                receipts: existing?.receipts || [],
-                generationId:
-                    existing?.generationId ||
-                    this._options.generationId ||
-                    undefined
+                attempts: existing?.attempts || 0
             });
             this._emitPendingSyncCount();
+            this._adapters.get(resolvedDocumentId)?.noteOutboundWalReady?.();
             pushCollabIntegrityEvent('persist-outgoing', {
                 documentId: documentId || FONT_CORE_DOCUMENT_ID,
                 bytes: update.length,
-                clientTransactionId
+                clientTransactionId,
+                dependsOn: dependsOn || []
             });
             return true;
         } catch (error) {
@@ -705,43 +654,27 @@ export class CloudLiveSession {
 
     async persistMutationIntents(
         documentIds: string[],
-        intentBytes?: Uint8Array | null
+        _intentBytes?: Uint8Array | null
     ): Promise<boolean> {
-        const ids = (documentIds || []).filter(Boolean);
-        if (!ids.length) {
+        if (!documentIds.length) {
+            return false;
+        }
+        try {
+            await this._wal.verifyWritable();
             return true;
+        } catch (error) {
+            console.warn(
+                'CloudLiveSession: mutation intent WAL probe failed:',
+                error
+            );
+            return false;
         }
-        let operations: unknown[] = [{ documentIds: ids }];
-        if (intentBytes && intentBytes.length) {
-            try {
-                operations = JSON.parse(new TextDecoder().decode(intentBytes));
-                if (!Array.isArray(operations)) {
-                    operations = [operations];
-                }
-            } catch {
-                operations = [{ documentIds: ids }];
-            }
-        }
-        return this.persistPreparedTransaction({
-            transactionId: `prepared:${ids[0]}:${Date.now()}`,
-            documentId: ids[0],
-            operations,
-            collaborationMessage: createLinkedWindowCatchUpEnvelope(
-                ids[0],
-                null
-            ),
-            state: 'prepared'
-        });
     }
 
-    async applyConfirmedGeneration(generationId: string | null): Promise<void> {
-        await this._ensureWalLoaded();
-        const next = String(generationId || '');
-        if (!next || this._wal.health !== 'ready') {
-            return;
-        }
-        await this._wal.quarantineOtherGenerations(this._options.assetId, next);
-        this._options.generationId = next;
+    async applyConfirmedGeneration(
+        _generationId: string | null
+    ): Promise<void> {
+        // Generation quarantine removed; live rooms are the sole content truth.
     }
 
     async waitForGlyphAndDepsDurability(): Promise<{
@@ -902,15 +835,7 @@ export class CloudLiveSession {
         if (!this._walLoad) {
             this._walLoad = this._wal
                 .load(this._options.assetId)
-                .then(async () => {
-                    const generationId = this._options.generationId;
-                    if (generationId) {
-                        await this._wal.quarantineOtherGenerations(
-                            this._options.assetId,
-                            generationId
-                        );
-                    }
-                })
+                .then(async () => undefined)
                 .catch((error) => {
                     console.warn(
                         'CloudLiveSession: write-ahead log is unavailable:',
@@ -978,7 +903,6 @@ export class CloudLiveSession {
                 collaborationMessage: collaborationMessage || undefined,
                 createdAt: Date.now(),
                 attempts: 0,
-                generationId: this._options.generationId || undefined,
                 state: 'applied'
             };
             try {
@@ -1328,6 +1252,20 @@ export class CloudLiveSession {
         } catch (error) {
             const detail =
                 error instanceof Error ? error.message : String(error);
+            if (!this._readyOnce) {
+                // First open may stay degraded so a large hydrate is not
+                // fail-closed. After the first ready, reconnect barriers fail closed.
+                console.warn(
+                    `CloudLiveSession: first-open ready barrier degraded (${detail})`
+                );
+                this._reportedConnected = true;
+                this._readyOnce = true;
+                this._options.onConnectionStatus?.(
+                    'connected',
+                    `Degraded: ${detail}`
+                );
+                return;
+            }
             this._options.onConnectionStatus?.('error', detail);
             throw error;
         }
@@ -1341,17 +1279,9 @@ export class CloudLiveSession {
             return;
         }
         const includeLiveAdapters = options?.includeLiveAdapters !== false;
-        const generationId = this._options.generationId || null;
-        if (generationId) {
-            await this._wal.quarantineOtherGenerations(
-                this._options.assetId,
-                generationId
-            );
-        }
-        const records = this._wal.replayableRecords(generationId);
+        const records = this._wal.replayableRecords();
         pushCollabIntegrityEvent('replay-http-wal', {
             includeLiveAdapters,
-            generationId,
             records: records.map((record) => ({
                 documentId: record.documentId,
                 hasUpdate: walUpdateBytes(record).byteLength > 0,

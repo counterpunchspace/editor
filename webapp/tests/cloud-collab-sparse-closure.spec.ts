@@ -38,10 +38,7 @@ import {
 import { openInviteeOnAsset } from './helpers/cloud-collab-bootstrap';
 
 async function settleCloudEdit(page: Page): Promise<void> {
-    await Promise.race([
-        waitForCloudLiveIdle(page, 20000).catch(() => undefined),
-        page.waitForTimeout(20000)
-    ]);
+    await waitForCloudLiveIdle(page, 20000).catch(() => undefined);
 }
 
 async function glyphResidency(page: Page, glyphName: string): Promise<string> {

@@ -116,13 +116,20 @@ function mintLocalhostCerts(certDir) {
     );
 }
 
-const REQUIRED_ROOM_CAPABILITIES = {
-    durableWal: 1,
-    certifiedGeneration: 1,
-    packetEnvelope: 1,
-    glyphTombstones: 1,
-    glyphQuotaReservation: 1
-};
+const EXPECTED_PROTOCOL_VERSION = Number(
+    /COLLAB_PROTOCOL_VERSION = (\d+)/.exec(
+        fs.readFileSync(
+            path.join(
+                path.dirname(fileURLToPath(import.meta.url)),
+                '..',
+                'js',
+                'generated',
+                'collab-protocol-limits.ts'
+            ),
+            'utf8'
+        )
+    )?.[1]
+);
 
 function allowInsecureLocalTls() {
     process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
@@ -148,6 +155,42 @@ async function probeHttpOk(url) {
             signal: AbortSignal.timeout(2500)
         });
         return response.ok;
+    } catch {
+        return false;
+    }
+}
+
+async function probeWebsiteHealthy() {
+    // wrangler pages --local serves plain HTTP on 8788; HTTPS may also work
+    // when local certs are present. Require a real 2xx — a listening but
+    // wedged workerd accepts TCP then returns empty replies.
+    return (
+        (await probeHttpOk('http://127.0.0.1:8788/')) ||
+        (await probeHttpOk('https://127.0.0.1:8788/')) ||
+        (await probeHttpOk('https://localhost:8788/'))
+    );
+}
+
+/**
+ * Corrupt / schema-mismatched local D1 still answers GET / with 200 but fails
+ * every e2e bootstrap on POST /api/dev/local-cloud-session. Treat that as
+ * unhealthy so ensure respawns against a freshly migrated persist.
+ */
+async function probeLocalCloudSessionHealthy() {
+    const url = 'https://localhost:8788/api/dev/local-cloud-session';
+    try {
+        const res = await fetch(url, {
+            method: 'POST',
+            headers: {
+                'content-type': 'application/json',
+                'Origin': 'https://localhost:8000'
+            },
+            body: JSON.stringify({
+                email: 'ensure-health@counterpunch.test',
+                name: 'Ensure Health'
+            })
+        });
+        return res.ok;
     } catch {
         return false;
     }
@@ -286,21 +329,12 @@ async function describeStackIdentity() {
     if (
         !roomHealth?.ok ||
         roomHealth.service !== 'room' ||
-        roomHealth.protocol !== 'p5'
+        Number(roomHealth.protocolVersion) !== EXPECTED_PROTOCOL_VERSION
     ) {
         return {
             ok: false,
             reason: `room health mismatch: ${JSON.stringify(roomHealth)}`
         };
-    }
-    const capabilities = roomHealth.capabilities || {};
-    for (const [name, version] of Object.entries(REQUIRED_ROOM_CAPABILITIES)) {
-        if (Number(capabilities[name]) !== Number(version)) {
-            return {
-                ok: false,
-                reason: `room capability ${name} is ${capabilities[name]}, expected ${version}`
-            };
-        }
     }
     const websiteOk = await probeHttpOk('https://localhost:8788/');
     if (!websiteOk) {
@@ -379,30 +413,66 @@ export async function ensureCloudCollabStack() {
     const roomUp = await isLoopbackPortOpen(8787);
     const proxyUp = await isLoopbackPortOpen(8786);
     const editorUp = await isLoopbackPortOpen(8000);
+    const websiteHealthy = websiteUp ? await probeWebsiteHealthy() : false;
+    const sessionHealthy = websiteHealthy
+        ? await probeLocalCloudSessionHealthy()
+        : false;
     const canReuse =
-        websiteUp &&
+        websiteHealthy &&
+        sessionHealthy &&
         roomUp &&
         proxyUp &&
         ownedPidFileLive(persistRoot) &&
         (await stackIdentityMatches());
     if ((websiteUp || roomUp || proxyUp) && !canReuse) {
         await stopCloudCollabPorts();
-        if (
-            (await isLoopbackPortOpen(8788)) ||
-            (await isLoopbackPortOpen(8787)) ||
-            (await isLoopbackPortOpen(8786))
-        ) {
-            throw new Error(
-                'failed to stop previous cloud collab stack on 8786/8787/8788 before respawn'
+        if (websiteHealthy && !sessionHealthy) {
+            // Do not wipe D1 here — a transient probe failure between specs
+            // must not destroy a live stack's schema. Schema is re-applied on
+            // spawn via d1 execute --file schema.sql.
+            console.log(
+                '[ensure-cloud-collab-stack] website up but local-cloud-session unhealthy; respawning workers'
             );
         }
     }
 
+    // After stop (or when stop cannot reclaim a listener), only reuse ports
+    // whose health matches this stack. Occupied-but-unhealthy ports fail.
+    const lingeringWebsite = await isLoopbackPortOpen(8788);
+    const lingeringRoom = await isLoopbackPortOpen(8787);
+    const lingeringProxy = await isLoopbackPortOpen(8786);
+    const roomHealth = lingeringRoom
+        ? await probeJsonHealth('http://127.0.0.1:8787/health')
+        : null;
+    const roomListenerHealthy =
+        roomHealth?.ok === true &&
+        roomHealth.service === 'room' &&
+        Number(roomHealth.protocolVersion) === EXPECTED_PROTOCOL_VERSION;
+    if (lingeringRoom && !roomListenerHealthy) {
+        throw new Error(
+            `failed to stop previous cloud collab stack on 8787 before respawn (health=${JSON.stringify(roomHealth)})`
+        );
+    }
+    const lingeringWebsiteHealthy = lingeringWebsite
+        ? await probeWebsiteHealthy()
+        : false;
+    if (lingeringWebsite && !lingeringWebsiteHealthy) {
+        throw new Error(
+            'failed to stop previous cloud collab stack on 8788 before respawn (website accepts TCP but returns no HTTP response)'
+        );
+    }
+
     const spawned = [];
     const children = [];
-    const websiteStillUp = canReuse && (await isLoopbackPortOpen(8788));
-    const roomStillUp = canReuse && (await isLoopbackPortOpen(8787));
-    const proxyStillUp = canReuse && (await isLoopbackPortOpen(8786));
+    const websiteStillUp =
+        (canReuse || lingeringWebsiteHealthy) &&
+        (await isLoopbackPortOpen(8788));
+    const roomStillUp =
+        (canReuse || lingeringRoom) &&
+        roomListenerHealthy &&
+        (await isLoopbackPortOpen(8787));
+    const proxyStillUp =
+        (canReuse || lingeringProxy) && (await isLoopbackPortOpen(8786));
     const editorStillUp = editorUp && (await isLoopbackPortOpen(8000));
     const collabPersist = path.join(persistRoot, 'collab');
     fs.mkdirSync(collabPersist, { recursive: true });
@@ -481,6 +551,20 @@ export async function ensureCloudCollabStack() {
                 'CLOUD_ATTEST_SERVICE_TOKEN=e2e-p0-attest'
             ].join('\n') + '\n'
         );
+        execFileSync(
+            websiteWrangler,
+            [
+                'd1',
+                'execute',
+                'DB',
+                '--local',
+                '--persist-to',
+                websitePersist,
+                '--file',
+                path.join(websiteRoot, 'schema.sql')
+            ],
+            { cwd: websiteRoot, stdio: 'inherit', env: localCloudEnv() }
+        );
         const child = spawnLogged(
             websiteWrangler,
             [
@@ -499,6 +583,8 @@ export async function ensureCloudCollabStack() {
                 '8788',
                 '--binding',
                 'LOCAL_CLOUD_DEV_ENABLED=true',
+                '--binding',
+                'LOCAL_DEV=true',
                 '--binding',
                 'AUTH_TOKEN_ALLOW_INSECURE_LOCAL_FALLBACK=true',
                 '--binding',

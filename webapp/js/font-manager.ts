@@ -727,6 +727,7 @@ class FontManager {
     private workerYjsSendQueue: Promise<unknown>;
     private workerPreviewSendQueue: Promise<unknown>;
     private pendingCloudBadgeVisibleAtByAssetId: Map<string, number>;
+    private cloudPersistFailed = false;
     private pendingCloudBadgeDelayTimer: ReturnType<typeof setTimeout> | null;
     private pendingCloudBadgeDelayAssetId: string | null;
     private cloudStatusTippy: TippyInstance | null;
@@ -822,9 +823,27 @@ class FontManager {
             this.fontDisplay?.querySelector('.font-window-role-badge') || null;
         this.dirtyIndicator = document.getElementById('file-dirty-indicator');
 
-        // Listen for cloud sync status changes to update dirty indicator
+        window.addEventListener('cloud-persist-failed', () => {
+            this.cloudPersistFailed = true;
+            this.updateFontDisplay();
+        });
         window.addEventListener('cloudConnectionStatusChanged', () => {
             void this.updateDirtyIndicator();
+            const font = this.currentFontId
+                ? (this.openedFonts.get(this.currentFontId) ?? null)
+                : null;
+            const assetId = this.normalizeCloudAssetId(font);
+            if (
+                this.cloudPersistFailed &&
+                assetId &&
+                (window.cloudPlugin?.getAssetPendingSyncCount?.(assetId) ??
+                    -1) === 0 &&
+                window.cloudPlugin?.getAssetConnectionStatus?.(assetId) ===
+                    'connected'
+            ) {
+                this.cloudPersistFailed = false;
+                this.updateFontDisplay();
+            }
         });
     }
 
@@ -1034,6 +1053,15 @@ class FontManager {
                 title: sizeWarningState.title,
                 icon: sizeWarningState.icon,
                 tone: sizeWarningState.tone
+            };
+        }
+
+        if (this.cloudPersistFailed) {
+            return {
+                visible: true,
+                title: 'Cloud status: Not saving — local durability persist failed',
+                icon: 'cloud_off',
+                tone: 'error' as const
             };
         }
 

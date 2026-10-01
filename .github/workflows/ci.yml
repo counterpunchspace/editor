@@ -12,8 +12,15 @@ permissions:
     contents: read
 
 jobs:
+    # Static checks, jest, Rust and the chromium Playwright project. The
+    # Playwright project is sharded; shard 1 also runs the one-off checks.
     build:
         runs-on: macos-latest
+        timeout-minutes: 60
+        strategy:
+            fail-fast: false
+            matrix:
+                shard: [1, 2, 3]
 
         steps:
             - name: Checkout repository
@@ -35,12 +42,6 @@ jobs:
 
             - name: Install Playwright Chromium
               run: npx --prefix webapp playwright install chromium
-
-            - name: Enforce graph chokepoints
-              run: |
-                  npx --no-install gitnexus analyze
-                  npm run test:graph-chokepoints
-                  npm run check:graph-chokepoints
 
             - name: Inject dynamic version for PWA cache busting
               id: version
@@ -64,29 +65,46 @@ jobs:
                   BUILD_HASH_FULL: ${{ steps.version.outputs.commit_full }}
                   BUILD_HASH_SHORT: ${{ steps.version.outputs.commit_short }}
 
-            - name: Run full webapp test suite
-              run: npm test --prefix webapp
+            # Graph chokepoints, type drift, protocol bindings, tsc and jest.
+            - name: Run static checks and jest
+              if: matrix.shard == 1
+              run: npm run test:checks --prefix webapp
+
+            - name: Run chromium Playwright shard
+              run: npx playwright test --project=chromium --shard=${{ matrix.shard }}/3
+              working-directory: webapp
 
             - name: Set up Rust nightly with the WASM target
+              if: matrix.shard == 1
               uses: dtolnay/rust-toolchain@nightly
               with:
                   targets: wasm32-unknown-unknown
 
             - name: Set up wasm-pack
+              if: matrix.shard == 1
               uses: jetli/wasm-pack-action@v0.4.0
 
             - name: Generate Rust WASM test fixture
+              if: matrix.shard == 1
               run: node webapp/compilation-test/compile-test.mjs webapp/examples/Fustat.glyphs
 
             - name: Run Rust WASM cache tests
+              if: matrix.shard == 1
               run: cd babelfont-fontc-build && rustup run nightly wasm-pack test --node
 
             - name: Check code formatting with Prettier
+              if: matrix.shard == 1
               run: cd webapp && npx prettier -c .
 
+    # The only run of the cloud-collab Playwright suite. Releases do not run it
+    # again; they verify the attestation uploaded by `cloud-collab-e2e-result`.
     cloud-collab-e2e:
         runs-on: macos-latest
         timeout-minutes: 90
+        strategy:
+            fail-fast: false
+            matrix:
+                shard: [1, 2, 3, 4]
         steps:
             - name: Checkout editor
               uses: actions/checkout@v4
@@ -176,12 +194,31 @@ jobs:
                   ls -la .local-certs
 
             - name: Run cloud-collab Playwright
-              run: npm run test:cloud-collab --prefix webapp
+              run: npm run test:cloud-collab --prefix webapp -- --shard=${{ matrix.shard }}/4
               env:
                   WEBSITE_ROOT: ${{ github.workspace }}/_cloud_e2e/website
                   COLLAB_ROOT: ${{ steps.collab.outputs.root }}
                   CLOUD_COLLAB_E2E: "1"
                   CLOUD_COLLAB_STACK_ROOT: ${{ runner.temp }}/cloud-collab-e2e
+
+            - name: Upload shard trio
+              if: matrix.shard == 1
+              run: |
+                  mkdir -p attestation
+                  jq -n \
+                    --arg editor "$GITHUB_SHA" \
+                    --arg website "$(git -C _cloud_e2e/website rev-parse HEAD)" \
+                    --arg collab "$(git -C _cloud_e2e/collab rev-parse HEAD)" \
+                    '{editor:$editor,website:$website,collab:$collab}' \
+                    > attestation/cloud-e2e-trio.json
+                  cat attestation/cloud-e2e-trio.json
+
+            - name: Upload shard trio artifact
+              if: matrix.shard == 1
+              uses: actions/upload-artifact@v4
+              with:
+                  name: cloud-e2e-trio-shard
+                  path: attestation/cloud-e2e-trio.json
 
             - name: Dump cloud-collab stack logs
               if: failure()
@@ -199,3 +236,19 @@ jobs:
                       tail -n 120 "$f" || true
                     done
                   fi
+
+    # Publishes the attestation only when every e2e shard passed.
+    cloud-collab-e2e-result:
+        needs: cloud-collab-e2e
+        runs-on: ubuntu-latest
+        steps:
+            - name: Download shard trio
+              uses: actions/download-artifact@v4
+              with:
+                  name: cloud-e2e-trio-shard
+
+            - name: Publish attestation
+              uses: actions/upload-artifact@v4
+              with:
+                  name: cloud-e2e-trio
+                  path: cloud-e2e-trio.json

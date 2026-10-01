@@ -1,44 +1,18 @@
 /**
- * CloudAdapter — WebSocket-based adapter that syncs a local PatchSyncEngine
- * with a remote FontRoomDO Durable Object.
- *
- * Sync protocol (all frames are JSON, binary data as base64 strings):
+ * CloudAdapter — WebSocket transport + WAL outbox for one shard Durable Object.
  *
  * Client → Server:
- *   { type: 'auth',          token: string }
- *   { type: 'sync-request',  stateVector: string }   ← base64(Y.encodeStateVector)
- *   { type: 'sync-complete', update: string [, chunkIndex, totalChunks] }   ← base64(diff for server, last or only chunk)
- *   { type: 'sync-chunk',    update: string, chunkIndex, totalChunks }       ← preceding chunk(s) for large diff
- *   { type: 'update-chunk',  update: string, clientId: string, seq: number,
- *                            clientTransactionId?: string,
- *                            chunkIndex, totalChunks }                       ← preceding chunk(s) for large live edits
- *   { type: 'update',        update: string, clientId: string, seq: number,
- *                            clientTransactionId?: string,
- *                            collaborationMessages?: CollaborationMessageEnvelope[]
- *                            [, chunkIndex, totalChunks] }                   ← last or only chunk
+ *   { type: 'auth', token }
+ *   { type: 'sync-request', checkpointLogId, appliedLogId }  // integers
+ *   binary LIVE_UPDATE payload (update keyed by clientTransactionId)
  *
  * Server → Client:
- *   { type: 'auth-ok',       clientId: string }
- *   { type: 'auth-error',    message: string }
- *   { type: 'sync-response', update?: string, serverStateVector: string,
- *                            collaborationMessageHistory?: CollaborationMessageEnvelope[] [, chunked: true, totalChunks] }
- *   { type: 'sync-chunk',    update: string, chunkIndex, totalChunks, direction: 'response' }
- *   { type: 'ack',           seq: -1, durable: boolean, phase: 'sync-complete' }
- *   { type: 'update-chunk',  update: string, clientId: string, seq: number,
- *                            clientTransactionId?: string,
- *                            chunkIndex, totalChunks }                       ← preceding chunk(s) for large live edits
- *   { type: 'update',        update: string, clientId: string, seq: number,
- *                            clientTransactionId?: string,
- *                            collaborationMessages?: CollaborationMessageEnvelope[]
- *                            [, chunkIndex, totalChunks] }                   ← last or only chunk
- *   { type: 'ack',           seq: number, durable: boolean }
- *   { type: 'error',         message: string }
+ *   { type: 'auth-ok' | 'auth-error' | 'ack' | 'error' | 'rebaseline-required' | ... }
+ *   binary framed checkpoint / tail / live fan-out
  *
- * The state-vector exchange (sync-request / sync-response / sync-complete)
- * follows the standard y-websocket two-phase sync protocol so that each side
- * only transmits what the other is missing, keeping initial payloads minimal.
- * Ordinary live room updates stay incremental; full-state transfer is reserved
- * for bootstrap and explicit re-sync after reconnect.
+ * Reconnect: sync-request with checkpointLogId+appliedLogId → tail replay or
+ * rebaseline → resend unacked WAL rows in dependsOn order. No sync-complete,
+ * sync-chunk, update-chunk, or state-vector exchange.
  */
 
 import * as Y from 'yjs';
@@ -46,14 +20,14 @@ import {
     MetadataFreeRemoteUpdateError,
     type PatchSyncEngine
 } from './patch-sync-engine';
-import type { ChangeLogEntry } from './change-log';
 import { Logger } from './logger';
+import { isProduction } from './settings';
+import type { ChangeLogEntry } from './change-log';
 import type { FileInfo, FileSystemAdapter } from './file-system-adapter';
 import type { EncodedShard } from './filesystem-plugins/cloud-document-set';
 import {
     FONT_CORE_DOCUMENT_ID,
-    FONT_DEPS_DOCUMENT_ID,
-    glyphIdFromDocumentId
+    FONT_DEPS_DOCUMENT_ID
 } from './filesystem-plugins/cloud-document-set';
 import {
     mapPool,
@@ -64,54 +38,54 @@ import {
     assertSafeRebaseline,
     assertHydrateBatchBudget,
     HYDRATE_BATCH_MAX_BYTES,
-    HYDRATE_BATCH_MAX_REQUESTS
+    HYDRATE_BATCH_MAX_REQUESTS,
+    SPARSE_ESTIMATED_BYTES_PER_GLYPH
 } from './filesystem-plugins/cloud-shard-limits';
 import {
     createPackParser,
     encodePackBody,
     encodePackShardFrame,
     PACK_FRAME_TYPE,
-    PACK_MAX_SHARDS,
     partitionPackItems,
     type PackFrame
 } from './filesystem-plugins/cloud-shard-pack';
 import { missingRequiredCloudCapabilities } from './filesystem-plugins/cloud-collab-capabilities';
-import { COLLAB_PROTOCOL_VERSION as YDOC_SCHEMA_VERSION } from './generated/collab-protocol-constants';
+import { COLLAB_PROTOCOL_VERSION as YDOC_SCHEMA_VERSION } from './generated/collab-protocol-limits';
 import { throwIfAborted, yieldToUi } from './yield-to-ui';
 import {
     collaborationMessageKey,
-    createChangeLogEntriesFromCollaborationMessageEnvelope,
     createCollaborationMessageEnvelopesFromChangeLogEntries,
-    createLinkedWindowCatchUpEnvelope,
     type CollaborationMessageEnvelope
 } from './collaboration-message';
-import { isProduction } from './settings';
-import { resolveWebsiteURL } from './website-url';
 import {
     CloudDurableWal,
     walUpdateBytes,
     type CloudWalHealth,
     type CloudWalRecord
 } from './cloud-durable-wal';
+import { allocateClientTransactionId } from './generated/collab-protocol-durability-contract';
 import {
-    allocateClientTransactionId,
-    isExactDurableAck
-} from './cloud-durability-contract';
+    decodeCollabLiveFrames,
+    decodeCheckpointMeta,
+    assembleTailTransactionsFromFrames,
+    decodeLiveUpdatePayload,
+    encodeLiveUpdateFrame
+} from './cloud-adapter-frames';
 import {
-    acceptChunk,
-    createChunkAccumulator,
-    type CloudChunkAccumulator
-} from './cloud-chunk-accumulator';
+    type CloudOutboundUpdatePacket,
+    getCloudClientTransactionId,
+    enqueueOutboundPacket as enqueueOutboundPacketShared,
+    buildLiveUpdateBinaryFrame,
+    filterSendableOutboxPackets,
+    walRecordsReadyToRestore
+} from './cloud-adapter-outbox';
 import { pushCollabIntegrityEvent } from './cloud-collab-integrity-debug';
-import { ackIsDurable } from './cloud-adapter-outbox';
-import { createReconnectBootstrapState } from './cloud-adapter-reconnect';
 import {
     withCloudAccessToken,
     normalizeCloudRoomWebSocketUrl,
     normalizeCloudRoomHttpUrl,
     normalizeCloudShardHttpUrl,
     normalizeCloudShardPackUrl,
-    normalizeCloudShardPackDiscardUrl,
     normalizeCloudShardLiveHttpUrl,
     normalizeCloudShardStatusHttpUrl,
     normalizeCloudShardWebSocketUrl
@@ -123,1153 +97,111 @@ export {
     normalizeCloudRoomHttpUrl,
     normalizeCloudShardHttpUrl,
     normalizeCloudShardPackUrl,
-    normalizeCloudShardPackDiscardUrl,
     normalizeCloudShardLiveHttpUrl,
     normalizeCloudShardStatusHttpUrl,
     normalizeCloudShardWebSocketUrl
 };
 
+export {
+    cloudReconnectDelayMs,
+    isForbiddenCloudCredentialError,
+    refreshEditorAfterGlyphDocumentCatchUp,
+    catchUpCloudDocument,
+    publishCloudDocumentUpdate,
+    runCloudVisibleReconnectRebaseline,
+    CLOUD_GLYPH_CATCH_UP_MAX_ATTEMPTS,
+    CLOUD_GLYPH_CATCH_UP_RETRY_MS,
+    CLOUD_GLYPH_CATCH_UP_CONCURRENCY,
+    CLOUD_GLYPH_PUBLISH_CONCURRENCY,
+    CLOUD_PING_INTERVAL_MS,
+    CLOUD_LIVENESS_STALE_MS,
+    CLOUD_RECONNECT_BASE_MS,
+    CLOUD_RECONNECT_MAX_MS
+} from './cloud-adapter-support';
+import { cloudAdapterShardIoMethods } from './cloud-adapter-shard-io';
+import { cloudAdapterFsMethods } from './cloud-adapter-fs';
+import { cloudAdapterLivenessMethods } from './cloud-adapter-liveness';
+import { cloudAdapterTimeoutMethods } from './cloud-adapter-timeouts';
+export type {
+    CloudAccessCloseEvent,
+    CloudAccessServerError,
+    CloudAdapterAccessSnapshot,
+    CloudAdapterOptions,
+    CloudAssetRole,
+    CloudConnectionHealth,
+    CloudConnectionStatus,
+    CloudLiveDocumentState,
+    CloudLiveUpdateMessage,
+    CloudSeedDocumentSetResult,
+    CloudSeededShardAttestation,
+    CloudShardIoOptions,
+    CloudShardIoProgress,
+    CloudTransferActivity
+} from './cloud-adapter-support';
+
+import {
+    AUTHENTICATION_MAX_WAIT_MS,
+    AUTHENTICATION_TIMEOUT_MS,
+    CLIENT_RECONNECT_CLOSE_CODE,
+    CLOUD_ASSET_DELETED_MESSAGE,
+    CLOUD_COLLAB_FORMAT_CHANGED_MESSAGE,
+    CLOUD_COLLAB_RELOAD_MESSAGE,
+    CLOUD_COLLAB_SERVICE_UPDATING_MESSAGE,
+    CLOUD_GLYPH_CATCH_UP_CONCURRENCY,
+    CLOUD_GLYPH_CATCH_UP_MAX_ATTEMPTS,
+    CLOUD_GLYPH_CATCH_UP_RETRY_MS,
+    CLOUD_GLYPH_PUBLISH_CONCURRENCY,
+    CLOUD_LIVENESS_STALE_MS,
+    CLOUD_PING_INTERVAL_MS,
+    CLOUD_RECONNECT_BASE_MS,
+    CLOUD_RECONNECT_MAX_MS,
+    DEFAULT_WEBSITE_BASE_URL,
+    HYDRATE_PACK_FETCH_TIMEOUT_MS,
+    INITIAL_SYNC_MAX_WAIT_MS,
+    INITIAL_SYNC_TIMEOUT_MS,
+    OUTBOUND_ACK_MAX_WAIT_MS,
+    OUTBOUND_ACK_TIMEOUT_MS,
+    TRANSFER_ACTIVITY_HOLD_MS,
+    abortSignalWithTimeout,
+    ackIsDurable,
+    base64ToU8,
+    catchUpCloudDocument,
+    cloudReconnectDelayMs,
+    dedupeCollaborationMessages,
+    emitShardIoProgress,
+    formatPackHttpError,
+    getCloudRequestHeaders,
+    getDefaultRoomWorkerUrl,
+    getLiveUpdateChunkKey,
+    importCollaborationMessageHistory,
+    isForbiddenCloudCredentialError,
+    isPackUnsupportedStatus,
+    parseRequiredJsonResponse,
+    publishCloudDocumentUpdate,
+    refreshEditorAfterGlyphDocumentCatchUp,
+    runCloudVisibleReconnectRebaseline,
+    sha256Digest,
+    sha256Hex,
+    shardIoConcurrency,
+    shardIoTotals,
+    u8ToBase64,
+    type CloudAccessCloseEvent,
+    type CloudAccessServerError,
+    type CloudAdapterAccessSnapshot,
+    type CloudAdapterOptions,
+    type CloudAssetRole,
+    type CloudConnectionHealth,
+    type CloudConnectionStatus,
+    type CloudLiveDocumentState,
+    type CloudLiveUpdateMessage,
+    type CloudSeedDocumentSetResult,
+    type CloudSeededShardAttestation,
+    type CloudShardIoOptions,
+    type CloudShardIoProgress,
+    type CloudTransferActivity
+} from './cloud-adapter-support';
+
 const console = new Logger('CloudAdapter');
-
-/** Default room-worker URLs for production and local development. */
-const DEFAULT_PRODUCTION_ROOM_WORKER_URL =
-    'https://room.fonteditor.workers.dev';
-const DEFAULT_LOCAL_ROOM_WORKER_URL = 'ws://localhost:8787';
-const CLOUD_ASSET_DELETED_MESSAGE = 'Cloud asset was deleted';
-export const CLOUD_GLYPH_CATCH_UP_MAX_ATTEMPTS = 8;
-export const CLOUD_GLYPH_CATCH_UP_RETRY_MS = 50;
-export const CLOUD_GLYPH_CATCH_UP_CONCURRENCY = 4;
-export const CLOUD_GLYPH_PUBLISH_CONCURRENCY = 2;
-export const CLOUD_PING_INTERVAL_MS = 10_000;
-export const CLOUD_LIVENESS_STALE_MS = 25_000;
-export const CLOUD_RECONNECT_BASE_MS = 1_000;
-export const CLOUD_RECONNECT_MAX_MS = 30_000;
-
-export function cloudReconnectDelayMs(attempt: number): number {
-    const bounded = Math.max(0, attempt);
-    const exponential = Math.min(
-        CLOUD_RECONNECT_BASE_MS * 2 ** bounded,
-        CLOUD_RECONNECT_MAX_MS
-    );
-    const jitter = 0.8 + Math.random() * 0.4;
-    return Math.round(exponential * jitter);
-}
-
-export function isForbiddenCloudCredentialError(error: unknown): boolean {
-    const message = error instanceof Error ? error.message : String(error);
-    return /room-token request failed: 40[13]\b/.test(message);
-}
-const CLOUD_COLLAB_RELOAD_MESSAGE =
-    'Please reload the editor to continue collaborating.';
-const CLOUD_COLLAB_FORMAT_CHANGED_MESSAGE =
-    'The collaboration format changed. Please reload the editor to continue collaborating.';
-const CLOUD_COLLAB_SERVICE_UPDATING_MESSAGE =
-    'The collaboration service is updating. Please try again in a moment.';
-
-function getDefaultRoomWorkerUrl(): string {
-    return isProduction()
-        ? DEFAULT_PRODUCTION_ROOM_WORKER_URL
-        : DEFAULT_LOCAL_ROOM_WORKER_URL;
-}
-
-/** Default website base URL for the room-token endpoint. */
-const DEFAULT_WEBSITE_BASE_URL = resolveWebsiteURL();
-
-type CloudAssetRole = 'owner' | 'editor' | 'viewer';
-
-export type CloudSeededShardAttestation = {
-    shardId: string;
-    checkpointObjectKey: string;
-    checkpointSha256: string;
-    checkpointByteLength: number;
-    checkpointLogId: number;
-    checkpointAt?: number;
-};
-
-export type CloudSeedDocumentSetResult = {
-    coreCheckpointLogId: number | null;
-    attestations: CloudSeededShardAttestation[];
-};
-
-export type CloudShardIoProgress = {
-    completed: number;
-    total: number;
-    bytesCompleted: number;
-    bytesTotal: number;
-    shardId?: string;
-};
-
-/** Overrides for bounded shard HTTP. Production callers omit this. */
-export type CloudShardIoOptions = {
-    concurrency?: number;
-    maxRequests?: number;
-    maxBytes?: number;
-    transport?: 'auto' | 'pack' | 'per-shard';
-    signal?: AbortSignal;
-    progressOffset?: number;
-    progressTotal?: number;
-    progressBytesOffset?: number;
-    progressBytesTotal?: number;
-    onProgress?: (progress: CloudShardIoProgress) => void | Promise<void>;
-    onShardLanded?: (
-        attestation: CloudSeededShardAttestation
-    ) => void | Promise<void>;
-};
-
-function shardIoConcurrency(
-    options: CloudShardIoOptions | undefined,
-    fallback: number
-): number {
-    return Math.max(1, options?.concurrency ?? fallback);
-}
-
-function shardIoTotals(
-    options: CloudShardIoOptions | undefined,
-    itemCount: number,
-    byteLength: number
-): {
-    completed: number;
-    total: number;
-    bytesCompleted: number;
-    bytesTotal: number;
-} {
-    return {
-        completed: options?.progressOffset ?? 0,
-        total: options?.progressTotal ?? itemCount,
-        bytesCompleted: options?.progressBytesOffset ?? 0,
-        bytesTotal: options?.progressBytesTotal ?? byteLength
-    };
-}
-
-async function emitShardIoProgress(
-    options: CloudShardIoOptions | undefined,
-    progress: CloudShardIoProgress
-): Promise<void> {
-    throwIfAborted(options?.signal);
-    await options?.onProgress?.(progress);
-    await yieldToUi();
-    throwIfAborted(options?.signal);
-}
-
-function getCloudRequestHeaders(
-    extraHeaders: Record<string, string> = {}
-): Record<string, string> {
-    const headers = { ...extraHeaders };
-    const sessionToken = window.authManager?.getSessionToken?.();
-    if (sessionToken) {
-        headers.Authorization = `Bearer ${sessionToken}`;
-    }
-    return headers;
-}
-
-const HYDRATE_PACK_FETCH_TIMEOUT_MS = 90_000;
-
-function abortSignalWithTimeout(
-    signal: AbortSignal | undefined,
-    timeoutMs: number
-): AbortSignal {
-    const timeout = AbortSignal.timeout(timeoutMs);
-    if (!signal) {
-        return timeout;
-    }
-    if (typeof AbortSignal.any === 'function') {
-        return AbortSignal.any([signal, timeout]);
-    }
-    return timeout;
-}
-
-async function parseRequiredJsonResponse<T>(
-    response: Response,
-    errorPrefix: string
-): Promise<T> {
-    const contentType = response.headers.get('content-type') || '';
-    if (!contentType.toLowerCase().includes('application/json')) {
-        const body = await response.text().catch(() => '');
-        const bodyPreview = body.trim().slice(0, 160);
-        throw new Error(
-            `${errorPrefix}: expected JSON response but received ${contentType || 'unknown content type'}${bodyPreview ? ` (${bodyPreview})` : ''}`
-        );
-    }
-
-    return (await response.json()) as T;
-}
-
-export type CloudLiveDocumentState = {
-    update: string;
-    serverStateVector?: string;
-    collaborationMessageHistory?: CollaborationMessageEnvelope[];
-};
-
-function decodeCollabLiveFrames(bytes: Uint8Array): Array<{
-    type: number;
-    logId: number;
-    payload: Uint8Array;
-}> {
-    const frames: Array<{
-        type: number;
-        logId: number;
-        payload: Uint8Array;
-    }> = [];
-    let offset = 0;
-    while (offset + 16 <= bytes.byteLength) {
-        const view = new DataView(bytes.buffer, bytes.byteOffset + offset, 16);
-        const type = view.getUint32(0, false);
-        const logHi = view.getUint32(4, false);
-        const logLo = view.getUint32(8, false);
-        const payloadLen = view.getUint32(12, false);
-        const start = offset + 16;
-        const end = start + payloadLen;
-        if (end > bytes.byteLength) {
-            break;
-        }
-        frames.push({
-            type,
-            logId: logHi * 0x100000000 + logLo,
-            payload: bytes.subarray(start, end)
-        });
-        offset = end;
-        if (type === 3) {
-            break;
-        }
-    }
-    return frames;
-}
-
-function utf8Decode(bytes: Uint8Array): string {
-    if (typeof TextDecoder === 'function') {
-        try {
-            return new TextDecoder().decode(bytes);
-        } catch {
-            /* fall through */
-        }
-    }
-    return Array.from(bytes, (byte) => String.fromCharCode(byte)).join('');
-}
-
-function decodeCheckpointMeta(payload: Uint8Array): {
-    hasMore: boolean;
-    throughLogId: number;
-    lastLogId: number;
-    collaborationMessageHistory: CollaborationMessageEnvelope[];
-} {
-    if (!payload.byteLength) {
-        return {
-            hasMore: false,
-            throughLogId: 0,
-            lastLogId: 0,
-            collaborationMessageHistory: []
-        };
-    }
-    try {
-        const parsed = JSON.parse(utf8Decode(payload)) as {
-            hasMore?: boolean;
-            throughLogId?: number;
-            lastLogId?: number;
-            collaborationMessageHistory?: CollaborationMessageEnvelope[];
-        };
-        return {
-            hasMore: parsed.hasMore === true,
-            throughLogId: Number(parsed.throughLogId || 0),
-            lastLogId: Number(parsed.lastLogId || 0),
-            collaborationMessageHistory: Array.isArray(
-                parsed.collaborationMessageHistory
-            )
-                ? parsed.collaborationMessageHistory
-                : []
-        };
-    } catch {
-        return {
-            hasMore: false,
-            throughLogId: 0,
-            lastLogId: 0,
-            collaborationMessageHistory: []
-        };
-    }
-}
-
-function assembleTailTransactionsFromFrames(
-    frames: Array<{ type: number; logId: number; payload: Uint8Array }>
-): Uint8Array[] {
-    const pending = new Map<
-        string,
-        { chunks: Array<Uint8Array | null>; received: number; total: number }
-    >();
-    const updates: Uint8Array[] = [];
-    for (const frame of frames) {
-        if (frame.type !== 2) {
-            continue;
-        }
-        const view = new DataView(
-            frame.payload.buffer,
-            frame.payload.byteOffset,
-            frame.payload.byteLength
-        );
-        if (frame.payload.byteLength < 12) {
-            continue;
-        }
-        const chunkIndex = view.getUint32(0, false);
-        const totalChunks = Math.max(1, view.getUint32(4, false));
-        const txnLen = view.getUint32(8, false);
-        const transactionId = utf8Decode(
-            frame.payload.subarray(12, 12 + txnLen)
-        );
-        const blob = frame.payload.subarray(12 + txnLen);
-        if (totalChunks <= 1) {
-            updates.push(blob);
-            continue;
-        }
-        const key = transactionId || String(frame.logId);
-        let state = pending.get(key);
-        if (!state) {
-            state = {
-                chunks: new Array(totalChunks).fill(null),
-                received: 0,
-                total: totalChunks
-            };
-            pending.set(key, state);
-        }
-        if (!state.chunks[chunkIndex]) {
-            state.chunks[chunkIndex] = blob;
-            state.received++;
-        }
-        if (state.received === state.total) {
-            const totalLen = state.chunks.reduce(
-                (sum, chunk) => sum + (chunk ? chunk.byteLength : 0),
-                0
-            );
-            const combined = new Uint8Array(totalLen);
-            let offset = 0;
-            for (const chunk of state.chunks) {
-                combined.set(chunk as Uint8Array, offset);
-                offset += (chunk as Uint8Array).byteLength;
-            }
-            updates.push(combined);
-            pending.delete(key);
-        }
-    }
-    return updates;
-}
-
-async function sha256Digest(bytes: Uint8Array): Promise<Uint8Array> {
-    const subtle = globalThis.crypto?.subtle;
-    if (!subtle?.digest) {
-        throw new Error('SHA-256 is unavailable in this environment');
-    }
-    const buffer = new ArrayBuffer(bytes.byteLength);
-    new Uint8Array(buffer).set(bytes);
-    return new Uint8Array(await subtle.digest('SHA-256', buffer));
-}
-
-async function sha256Hex(bytes: Uint8Array): Promise<string> {
-    const digest = await sha256Digest(bytes);
-    return Array.from(digest, (byte) =>
-        byte.toString(16).padStart(2, '0')
-    ).join('');
-}
-
-function isPackUnsupportedStatus(status: number): boolean {
-    return status === 404 || status === 405;
-}
-
-async function formatPackHttpError(
-    response: Response,
-    prefix = 'shard pack seed failed'
-): Promise<string> {
-    const detail = (await response.text().catch(() => '')).trim();
-    const clipped = detail.slice(0, 500);
-    return clipped
-        ? `${prefix}: ${response.status} ${clipped}`
-        : `${prefix}: ${response.status}`;
-}
-
-function decodeLiveUpdatePayload(payload: Uint8Array): {
-    type: 'update' | 'update-chunk';
-    clientId: string;
-    seq: number;
-    update: Uint8Array;
-    clientTransactionId: string | null;
-    collaborationMessages: CollaborationMessageEnvelope[] | undefined;
-    chunkIndex: number;
-    totalChunks: number;
-} {
-    const view = new DataView(
-        payload.buffer,
-        payload.byteOffset,
-        payload.byteLength
-    );
-    const seq = view.getInt32(0, false);
-    const clientIdLen = view.getUint32(4, false);
-    const clientId = new TextDecoder().decode(
-        payload.subarray(8, 8 + clientIdLen)
-    );
-    const updateLenOff = 8 + clientIdLen;
-    const updateLen = view.getUint32(updateLenOff, false);
-    const updateStart = updateLenOff + 4;
-    const update = payload.subarray(updateStart, updateStart + updateLen);
-    const extraLenOff = updateStart + updateLen;
-    const extraLen = view.getUint32(extraLenOff, false);
-    const extraBytes = payload.subarray(
-        extraLenOff + 4,
-        extraLenOff + 4 + extraLen
-    );
-    const extra = extraLen
-        ? (JSON.parse(new TextDecoder().decode(extraBytes)) as Record<
-              string,
-              unknown
-          >)
-        : {};
-    const totalChunks = Number(extra.totalChunks || 1);
-    const chunkIndex = Number(extra.chunkIndex || 0);
-    const isLast = totalChunks <= 1 || chunkIndex >= totalChunks - 1;
-    return {
-        type: isLast ? 'update' : 'update-chunk',
-        clientId,
-        seq,
-        update,
-        clientTransactionId:
-            typeof extra.clientTransactionId === 'string'
-                ? extra.clientTransactionId
-                : null,
-        collaborationMessages: Array.isArray(extra.collaborationMessages)
-            ? (extra.collaborationMessages as CollaborationMessageEnvelope[])
-            : undefined,
-        chunkIndex,
-        totalChunks
-    };
-}
-
-function defaultGlyphCatchUpWait(attempt: number): Promise<void> {
-    const delayMs = CLOUD_GLYPH_CATCH_UP_RETRY_MS * 2 ** attempt;
-    return new Promise((resolve) => {
-        window.setTimeout(resolve, delayMs);
-    });
-}
-
-function resolvedCatchUpRevision(options: {
-    expectedRevision?: string;
-    resolveExpectedRevision?: () => string | undefined;
-}): string | undefined {
-    const live = options.resolveExpectedRevision?.();
-    if (typeof live === 'string' && live) {
-        return live;
-    }
-    if (
-        typeof options.expectedRevision === 'string' &&
-        options.expectedRevision
-    ) {
-        return options.expectedRevision;
-    }
-    return undefined;
-}
-
-function editorGlyphNamesShowingCloudDocument(documentId: string): string[] {
-    const glyphId = glyphIdFromDocumentId(documentId);
-    if (!glyphId) {
-        return [];
-    }
-    const outlineEditor = window.glyphCanvas?.outlineEditor;
-    if (!outlineEditor?.active) {
-        return [];
-    }
-    const parsed = outlineEditor.parseGlyphStack?.() ?? [];
-    const names = [
-        ...parsed.map((item: { glyphName?: string }) => item.glyphName),
-        window.glyphCanvas?.getCurrentGlyphName?.()
-    ].filter((name): name is string => Boolean(name));
-    const bridge = window.changeBridge ?? window.patchSyncEngine;
-    const matching: string[] = [];
-    for (const name of names) {
-        if (bridge?.glyphDocumentIdForName?.(name) === documentId) {
-            matching.push(name);
-            continue;
-        }
-        const glyph = window.currentFontModel?.resolveGlyphView?.(name);
-        if (glyph && 'id' in glyph && glyph.id === glyphId) {
-            matching.push(name);
-        }
-    }
-    return matching;
-}
-
-/**
- * Glyph catch-up patches the Y.Doc and overview tiles, but the outline
- * editor keeps the layer snapshot loaded at restore. Reload that snapshot
- * the same way a layer switch does.
- */
-export function refreshEditorAfterGlyphDocumentCatchUp(
-    documentId: string
-): void {
-    const showing = editorGlyphNamesShowingCloudDocument(documentId);
-    if (!showing.length) {
-        return;
-    }
-    const refresh = window.syncRustCacheAndRefreshCanvas;
-    if (typeof refresh === 'function') {
-        void refresh(showing[0], showing[0], {
-            allowSelectedLayerFallback: true
-        });
-        return;
-    }
-    const outlineEditor = window.glyphCanvas?.outlineEditor;
-    if (outlineEditor?.selectedLayerId) {
-        void outlineEditor.fetchLayerData?.(true, showing[0]);
-        return;
-    }
-    void outlineEditor?.interpolateCurrentGlyph?.(true);
-}
-
-export async function catchUpCloudDocument(options: {
-    bridge: PatchSyncEngine;
-    token: string;
-    roomUrl: string;
-    websiteBaseUrl: string;
-    assetId: string;
-    documentId: string;
-    expectedRevision?: string;
-    resolveExpectedRevision?: () => string | undefined;
-    maxAttempts?: number;
-    wait?: (attempt: number) => Promise<void>;
-}): Promise<boolean> {
-    const liveUrl = new URL(
-        normalizeCloudShardLiveHttpUrl(
-            options.roomUrl,
-            options.websiteBaseUrl,
-            options.assetId,
-            options.documentId
-        )
-    );
-    let afterLogId = 0;
-    const setAfterLogId = (cursor: number): void => {
-        afterLogId = cursor;
-        liveUrl.searchParams.set('afterLogId', String(cursor));
-    };
-    setAfterLogId(0);
-    const maxAttempts = Math.max(
-        1,
-        options.maxAttempts ?? CLOUD_GLYPH_CATCH_UP_MAX_ATTEMPTS
-    );
-    const wait = options.wait ?? defaultGlyphCatchUpWait;
-    let lastError: Error | null = null;
-    let fetchedCertifiedCheckpoint = false;
-
-    const revisionSatisfied = (): boolean => {
-        const expectedRevision = resolvedCatchUpRevision(options);
-        if (
-            !expectedRevision ||
-            typeof options.bridge.glyphHasCatchUpRevision !== 'function'
-        ) {
-            return true;
-        }
-        return options.bridge.glyphHasCatchUpRevision(
-            options.documentId,
-            expectedRevision
-        );
-    };
-
-    const applyCatchUpBytes = (bytes: Uint8Array): boolean => {
-        if (!bytes.byteLength) {
-            return false;
-        }
-        let applied = false;
-        if (typeof options.bridge.applyDocumentCatchUp === 'function') {
-            applied = options.bridge.applyDocumentCatchUp(
-                options.documentId,
-                bytes,
-                undefined,
-                undefined,
-                resolvedCatchUpRevision(options)
-            );
-        } else {
-            options.bridge.applyDocumentCheckpoint?.(options.documentId, bytes);
-            applied = true;
-        }
-        if (applied && !revisionSatisfied()) {
-            applied = false;
-        }
-        if (applied && window.windowRole?.isMainWindow()) {
-            window.windowSync?.broadcastCloudRelayUpdate?.(
-                bytes,
-                createLinkedWindowCatchUpEnvelope(
-                    options.documentId,
-                    window.windowRole?.instanceId ?? null
-                ),
-                options.documentId
-            );
-        }
-        return applied;
-    };
-
-    const applyCertifiedCheckpoint = async (): Promise<boolean> => {
-        const stateUrl = normalizeCloudShardHttpUrl(
-            options.roomUrl,
-            options.websiteBaseUrl,
-            options.assetId,
-            options.documentId
-        );
-        const response = await fetch(stateUrl, {
-            method: 'GET',
-            headers: {
-                Authorization: `Bearer ${options.token}`,
-                Accept: 'application/octet-stream'
-            }
-        });
-        if (!response.ok) {
-            return false;
-        }
-        return applyCatchUpBytes(new Uint8Array(await response.arrayBuffer()));
-    };
-
-    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
-        if (attempt > 0) {
-            await wait(attempt - 1);
-        }
-        const expectedRevision = resolvedCatchUpRevision(options);
-        if (
-            expectedRevision &&
-            typeof options.bridge.glyphHasCatchUpRevision === 'function' &&
-            options.bridge.glyphHasCatchUpRevision(
-                options.documentId,
-                expectedRevision
-            )
-        ) {
-            return true;
-        }
-        try {
-            const response = await fetch(liveUrl.toString(), {
-                method: 'GET',
-                headers: {
-                    Authorization: `Bearer ${options.token}`,
-                    Accept: 'application/octet-stream, application/json'
-                }
-            });
-            if (response.status === 401 || response.status === 403) {
-                throw new Error(
-                    `Live glyph catch-up failed (${response.status}) for ${options.documentId}`
-                );
-            }
-            if (response.status === 404) {
-                lastError = new Error(
-                    `Live glyph catch-up not found for ${options.documentId}`
-                );
-                if (!expectedRevision) {
-                    return false;
-                }
-                continue;
-            }
-            if (response.status === 409) {
-                const body = (await response.json().catch(() => null)) as {
-                    code?: string;
-                    lastCheckpointLogId?: number;
-                } | null;
-                const nextCursor = Number(body?.lastCheckpointLogId);
-                if (
-                    body?.code === 'rebaseline_required' &&
-                    Number.isInteger(nextCursor) &&
-                    nextCursor > afterLogId
-                ) {
-                    setAfterLogId(nextCursor);
-                }
-                if (
-                    body?.code === 'rebaseline_required' &&
-                    !fetchedCertifiedCheckpoint
-                ) {
-                    // Log zero is behind the retained checkpoint. The shard
-                    // state response is the checkpoint folded with the live
-                    // tail, which is the outline the room will serve.
-                    fetchedCertifiedCheckpoint = true;
-                    if (await applyCertifiedCheckpoint()) {
-                        refreshEditorAfterGlyphDocumentCatchUp(
-                            options.documentId
-                        );
-                        return true;
-                    }
-                }
-                lastError = new Error(
-                    `Live glyph catch-up failed (409) for ${options.documentId}`
-                );
-                continue;
-            }
-            if (!response.ok) {
-                lastError = new Error(
-                    `Live glyph catch-up failed (${response.status}) for ${options.documentId}`
-                );
-                continue;
-            }
-            const contentType = response.headers.get('content-type') || '';
-            let update: Uint8Array = new Uint8Array();
-            let collaborationMessageHistory:
-                CollaborationMessageEnvelope[] | undefined;
-            let payloadsToApply: Uint8Array[] = [];
-            if (
-                contentType.toLowerCase().includes('application/octet-stream')
-            ) {
-                const bytes = new Uint8Array(await response.arrayBuffer());
-                const frames = decodeCollabLiveFrames(bytes);
-                const hasTerminal = frames.some((frame) => frame.type === 3);
-                if (!hasTerminal) {
-                    lastError = new Error(
-                        `Live glyph catch-up missing terminal frame for ${options.documentId}`
-                    );
-                    continue;
-                }
-                const checkpoint = frames.find((frame) => frame.type === 1);
-                if (checkpoint) {
-                    collaborationMessageHistory = decodeCheckpointMeta(
-                        checkpoint.payload
-                    ).collaborationMessageHistory;
-                }
-                payloadsToApply = assembleTailTransactionsFromFrames(frames);
-                update = payloadsToApply[0] || new Uint8Array();
-            } else {
-                const payload =
-                    await parseRequiredJsonResponse<CloudLiveDocumentState>(
-                        response,
-                        'Live glyph catch-up'
-                    );
-                collaborationMessageHistory =
-                    payload.collaborationMessageHistory;
-                update =
-                    typeof payload.update === 'string' &&
-                    payload.update.length > 0
-                        ? base64ToU8(payload.update)
-                        : new Uint8Array();
-            }
-            if (!update.length && !payloadsToApply.length) {
-                lastError = new Error(
-                    `Live glyph catch-up returned empty state for ${options.documentId}`
-                );
-                if (!expectedRevision) {
-                    return false;
-                }
-                continue;
-            }
-            let applied = false;
-            const updatesToApply = payloadsToApply.length
-                ? payloadsToApply
-                : [update];
-            for (const part of updatesToApply) {
-                if (!part.byteLength) {
-                    continue;
-                }
-                if (typeof options.bridge.applyDocumentCatchUp === 'function') {
-                    applied = options.bridge.applyDocumentCatchUp(
-                        options.documentId,
-                        part,
-                        collaborationMessageHistory
-                    );
-                } else {
-                    options.bridge.applyDocumentCheckpoint?.(
-                        options.documentId,
-                        part
-                    );
-                    applied = true;
-                }
-            }
-            if (
-                applied &&
-                expectedRevision &&
-                typeof options.bridge.glyphHasCatchUpRevision === 'function' &&
-                !options.bridge.glyphHasCatchUpRevision(
-                    options.documentId,
-                    expectedRevision
-                )
-            ) {
-                applied = false;
-            }
-            if (!applied) {
-                lastError = new Error(
-                    `Live glyph catch-up revision mismatch for ${options.documentId}`
-                );
-                continue;
-            }
-            if (window.windowRole?.isMainWindow()) {
-                for (const part of updatesToApply) {
-                    if (part.byteLength) {
-                        window.windowSync?.broadcastCloudRelayUpdate?.(
-                            part,
-                            createLinkedWindowCatchUpEnvelope(
-                                options.documentId,
-                                window.windowRole?.instanceId ?? null
-                            ),
-                            options.documentId
-                        );
-                    }
-                }
-            }
-            refreshEditorAfterGlyphDocumentCatchUp(options.documentId);
-            return true;
-        } catch (error) {
-            if (
-                error instanceof Error &&
-                /Live glyph catch-up failed \(40[13]\)/.test(error.message)
-            ) {
-                throw error;
-            }
-            lastError =
-                error instanceof Error
-                    ? error
-                    : new Error(
-                          `Live glyph catch-up failed for ${options.documentId}`
-                      );
-        }
-    }
-
-    if (lastError) {
-        throw lastError;
-    }
-    return false;
-}
-
-export async function publishCloudDocumentUpdate(options: {
-    token: string;
-    roomUrl: string;
-    websiteBaseUrl: string;
-    assetId: string;
-    documentId: string;
-    update: Uint8Array;
-    collaborationMessage?: CollaborationMessageEnvelope | null;
-    clientId?: string;
-    seq: number;
-    clientTransactionId?: string | null;
-    signal?: AbortSignal;
-}): Promise<boolean> {
-    if (
-        !options.documentId ||
-        options.documentId === FONT_CORE_DOCUMENT_ID ||
-        options.documentId === FONT_DEPS_DOCUMENT_ID ||
-        !options.update?.length
-    ) {
-        return false;
-    }
-    const liveUrl = normalizeCloudShardLiveHttpUrl(
-        options.roomUrl,
-        options.websiteBaseUrl,
-        options.assetId,
-        options.documentId
-    );
-    const clientTransactionId =
-        options.clientTransactionId || allocateClientTransactionId('http');
-    const body: Record<string, unknown> = {
-        type: 'update',
-        update: u8ToBase64(options.update),
-        seq: options.seq,
-        clientId: options.clientId || `http:${options.assetId}`,
-        clientTransactionId
-    };
-    if (options.collaborationMessage) {
-        body.collaborationMessages = [options.collaborationMessage];
-    }
-    const response = await fetch(liveUrl, {
-        method: 'POST',
-        headers: {
-            'Authorization': `Bearer ${options.token}`,
-            'Accept': 'application/json',
-            'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(body),
-        signal: options.signal
-    });
-    if (response.status === 401 || response.status === 403) {
-        const error = new Error(
-            `Live glyph publish failed (${response.status}) for ${options.documentId}`
-        ) as Error & { status?: number };
-        error.status = response.status;
-        throw error;
-    }
-    if (!response.ok) {
-        const error = new Error(
-            `Live glyph publish failed (${response.status}) for ${options.documentId}`
-        ) as Error & { status?: number };
-        error.status = response.status;
-        throw error;
-    }
-    const payload = (await response.json().catch(() => null)) as Record<
-        string,
-        unknown
-    > | null;
-    return isExactDurableAck(
-        payload
-            ? {
-                  type: 'ack',
-                  ...payload
-              }
-            : null,
-        {
-            clientTransactionId,
-            seq: options.seq
-        }
-    );
-}
-
-/**
- * Maximum bytes per WebSocket message (Cloudflare Workers limit: 1 MB).
- * We target 750 KB per chunk to leave headroom for JSON framing.
- */
-const SYNC_CHUNK_SIZE = 750_000;
-const CLIENT_RECONNECT_CLOSE_CODE = 4000;
-const AUTHENTICATION_TIMEOUT_MS = 10000;
-const AUTHENTICATION_MAX_WAIT_MS = 30000;
-const OUTBOUND_ACK_TIMEOUT_MS = 10000;
-const OUTBOUND_ACK_MAX_WAIT_MS = 30000;
-const INITIAL_SYNC_TIMEOUT_MS = 10000;
-const INITIAL_SYNC_MAX_WAIT_MS = 30000;
-const TRANSFER_ACTIVITY_HOLD_MS = 450;
-
-export type CloudConnectionStatus =
-    | 'disconnected'
-    | 'connecting'
-    | 'authenticating'
-    | 'syncing'
-    | 'connected'
-    | 'error';
-
-export type CloudTransferActivity = 'idle' | 'sending' | 'receiving';
-
-export type CloudAdapterOptions = {
-    assetId: string;
-    websiteBaseUrl?: string;
-    roomWorkerBaseUrl?: string;
-    documentId?: string;
-    suppressSyncComplete?: boolean;
-    onConnectionStatus?: (
-        status: CloudConnectionStatus,
-        detail?: string
-    ) => void;
-    onPendingSyncCountChange?: (count: number) => void;
-    onTransferActivityChange?: (activity: CloudTransferActivity) => void;
-    /** Session owns the one reconnect rebaseline after every live shard is fresh. */
-    deferVisibleRebaseline?: boolean;
-    wal?: CloudDurableWal;
-    refreshCredentials?: () => Promise<{ token: string; roomUrl: string }>;
-};
-
-export type CloudConnectionHealth = {
-    wsReadyState: number | null;
-    lastInboundMessageAt: number;
-    lastInboundAgeMs: number | null;
-    livenessTimeoutCount: number;
-    lastReconnectReason: string | null;
-};
-
-export type CloudAccessCloseEvent = {
-    code: number;
-    reason: string;
-};
-
-export type CloudAccessServerError = {
-    message: string;
-    code?: string;
-};
-
-export type CloudAdapterAccessSnapshot = {
-    documentId: string;
-    status: CloudConnectionStatus;
-    statusDetail?: string;
-    wsReadyState: number | null;
-    lastClose: CloudAccessCloseEvent | null;
-    lastServerError: CloudAccessServerError | null;
-    accessRevoked: boolean;
-    reconnectForbidden: boolean;
-    roomToken?: string | null;
-    roomUrl: string | null;
-    role: CloudAssetRole | null;
-};
-
-type CloudLiveUpdateMessage = {
-    update: Uint8Array;
-    collaborationMessages?: CollaborationMessageEnvelope[];
-    logId?: number;
-};
-
-type CloudOutboundUpdatePacket = {
-    update: Uint8Array;
-    collaborationMessage?: CollaborationMessageEnvelope;
-    clientTransactionId?: string;
-};
-
-type CloudVisibleRebaselineTargets = {
-    editingFontRecompiled: boolean;
-    textPreviewReshaped: boolean;
-    canvasRefreshed: boolean;
-    overviewRefreshed: boolean;
-    fontInfoRefreshed: boolean;
-};
-
-export async function runCloudVisibleReconnectRebaseline(): Promise<CloudVisibleRebaselineTargets> {
-    const refreshed: CloudVisibleRebaselineTargets = {
-        editingFontRecompiled: false,
-        textPreviewReshaped: false,
-        canvasRefreshed: false,
-        overviewRefreshed: false,
-        fontInfoRefreshed: false
-    };
-
-    if (typeof window.syncRustCacheAndRefreshCanvas === 'function') {
-        await window.syncRustCacheAndRefreshCanvas(undefined, undefined, {
-            allowSelectedLayerFallback: true
-        });
-        refreshed.canvasRefreshed = true;
-    }
-
-    if (typeof window.fontManager?.recompileEditingFont === 'function') {
-        await window.fontManager.recompileEditingFont();
-        refreshed.editingFontRecompiled = true;
-    }
-
-    const textRunEditor = window.glyphCanvas?.textRunEditor as
-        | {
-              shapeText?: (skipRender?: boolean) => void;
-          }
-        | undefined;
-    if (typeof textRunEditor?.shapeText === 'function') {
-        textRunEditor.shapeText();
-        refreshed.textPreviewReshaped = true;
-    }
-
-    const glyphOverview = window.glyphOverviewInstance as
-        | {
-              renderGlyphOutlines?: (
-                  location?: Record<string, number>
-              ) => Promise<void>;
-              syncActiveGlyphFocus?: () => void;
-              currentLocation?: Record<string, number>;
-          }
-        | null
-        | undefined;
-    if (typeof glyphOverview?.renderGlyphOutlines === 'function') {
-        await glyphOverview.renderGlyphOutlines(
-            glyphOverview.currentLocation ?? {}
-        );
-        glyphOverview.syncActiveGlyphFocus?.();
-        refreshed.overviewRefreshed = true;
-    }
-
-    if (
-        typeof window.fontInfoManager?.refreshVisibleContentForExternalSync ===
-        'function'
-    ) {
-        window.fontInfoManager.refreshVisibleContentForExternalSync();
-        refreshed.fontInfoRefreshed = true;
-    }
-
-    return refreshed;
-}
-
-function getCloudClientTransactionId(
-    collaborationMessage?: CollaborationMessageEnvelope | null
-): string {
-    return (
-        (collaborationMessage &&
-            collaborationMessageKey(collaborationMessage)) ||
-        allocateClientTransactionId('live')
-    );
-}
-
-function dedupeCollaborationMessages(
-    envelopes: CollaborationMessageEnvelope[]
-): CollaborationMessageEnvelope[] {
-    const seenEnvelopeKeys = new Set<string>();
-    const deduped: CollaborationMessageEnvelope[] = [];
-
-    for (const envelope of envelopes) {
-        const envelopeKey = collaborationMessageKey(envelope);
-        if (seenEnvelopeKeys.has(envelopeKey)) {
-            continue;
-        }
-        seenEnvelopeKeys.add(envelopeKey);
-        deduped.push(envelope);
-    }
-
-    return deduped;
-}
-
-function importCollaborationMessageHistory(
-    bridge: PatchSyncEngine,
-    collaborationMessageHistory?: CollaborationMessageEnvelope[],
-    pendingCollaborationMessages: CollaborationMessageEnvelope[] = []
-): void {
-    const envelopes = dedupeCollaborationMessages([
-        ...(collaborationMessageHistory ?? []),
-        ...pendingCollaborationMessages
-    ]);
-
-    if (!envelopes.length) {
-        return;
-    }
-
-    bridge.mergeImportedChangeLog(
-        envelopes.flatMap((message) =>
-            createChangeLogEntriesFromCollaborationMessageEnvelope(message, {
-                windowRoleLabel: window.windowRole?.getRoleLabel?.() ?? 'main'
-            })
-        )
-    );
-    bridge.mergeImportedCollaborationMessages(
-        envelopes.map((message) => ({
-            id: collaborationMessageKey(message),
-            direction: 'remote',
-            timestamp: message.timestamp,
-            transactionDurationMs:
-                message.metadata.transactionDurationMs ?? null,
-            summary: message.summary,
-            label: message.label,
-            source: message.source,
-            editSource: message.metadata.editSource ?? null,
-            windowId: message.windowId,
-            windowRoleLabel:
-                message.metadata.sourceWindowRoleLabel ??
-                window.windowRole?.getRoleLabel?.() ??
-                'main',
-            historyItemId: message.metadata.historyItemId,
-            promptGroupId: message.metadata.promptGroupId ?? null,
-            historyAction: message.metadata.historyAction,
-            targetHistoryItemId: message.metadata.targetHistoryItemId ?? null,
-            undoScope: message.metadata.undoScope,
-            undoSurfaceAffinity: message.metadata.undoSurfaceAffinity ?? null,
-            historyTargetKey: message.metadata.historyTargetKey ?? null,
-            historyTargetLabel: message.metadata.historyTargetLabel ?? null,
-            originatingGlyphName: message.metadata.originatingGlyphName ?? null,
-            originatingLayerId: message.metadata.originatingLayerId ?? null,
-            updateByteLength: 0,
-            updateBase64Preview: '',
-            changedGlyphNames: [...message.metadata.changedGlyphNames],
-            changedLayerIds: [...message.metadata.changedLayerIds],
-            workerReplayTargets: [...message.metadata.workerReplayTargets],
-            changes: message.changes,
-            derivedForwardChanges: []
-        }))
-    );
-}
-
-// ── Binary ↔ base64 helpers ──────────────────────────────────────────────────
-
-function u8ToBase64(u8: Uint8Array): string {
-    let binary = '';
-    for (let i = 0; i < u8.length; i++) {
-        binary += String.fromCharCode(u8[i]);
-    }
-    return btoa(binary);
-}
-
-function base64ToU8(b64: string): Uint8Array {
-    const binary = atob(b64);
-    const u8 = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i++) {
-        u8[i] = binary.charCodeAt(i);
-    }
-    return u8;
-}
-
-function getLiveUpdateChunkKey(
-    clientId: string | null | undefined,
-    seq: number | null | undefined
-): string | null {
-    if (!clientId || typeof seq !== 'number' || !Number.isFinite(seq)) {
-        return null;
-    }
-
-    return `${clientId}:${seq}`;
-}
 
 // ── CloudAdapter ─────────────────────────────────────────────────────────────
 
@@ -1293,7 +225,6 @@ export class CloudAdapter implements FileSystemAdapter {
     private _lastNotedTransfer: 'sending' | 'receiving' | null = null;
     private _lastEmittedTransferActivity: CloudTransferActivity = 'idle';
     private _transferIdleTimer: ReturnType<typeof setTimeout> | null = null;
-    private _suppressSyncComplete: boolean;
     private _deferVisibleRebaseline: boolean;
 
     private _bridge: PatchSyncEngine | null = null;
@@ -1335,13 +266,8 @@ export class CloudAdapter implements FileSystemAdapter {
     private _outboundPendingTransactionIds = new Map<number, string[]>();
     private _outboundAckSentAtBySeq = new Map<number, number>();
     private _pendingDurabilityMessages: CollaborationMessageEnvelope[] = [];
-    private _durableOutboxEntries = new Map<string, CloudWalRecord>();
     private _durableWaiters: Array<() => void> = [];
     private _wal: CloudDurableWal;
-    private _pendingSyncCompleteTransactionIds: string[] = [];
-    private _pendingSyncCompleteOutboundPackets =
-        new Set<CloudOutboundUpdatePacket>();
-    private _pendingSyncCompleteBroadcastEntryCount = 0;
     private _pendingInboundUpdates: CloudLiveUpdateMessage[] = [];
     private _inboundFlushScheduled = false;
     private _resyncRequestedAfterNoopUpdate = false;
@@ -1352,8 +278,6 @@ export class CloudAdapter implements FileSystemAdapter {
     private _visibleRebaselinePromise: Promise<void> | null = null;
     private _workerBridgeSyncPromise: Promise<void> | null = null;
     private _syncGeneration = 0;
-    /** Accumulates incoming sync-response chunks from the server. */
-    private _incomingResponseChunks: CloudChunkAccumulator | null = null;
     /** Tracks paging metadata for a chunked sync-response page. */
     private _pendingSyncPageMeta: {
         hasMore: boolean;
@@ -1365,19 +289,12 @@ export class CloudAdapter implements FileSystemAdapter {
         logId: number;
         payload: Uint8Array;
     }> | null = null;
-    /** Accumulates incoming chunked live updates from the server. */
-    private _incomingLiveUpdateChunks = new Map<
-        string,
-        CloudChunkAccumulator
-    >();
     private _directConnection: { token: string; roomUrl: string } | null = null;
-    private _outboxNeedsServerRetarget = false;
     private _lastAppliedServerUpdate: Uint8Array | null = null;
     private _refreshCredentials:
         (() => Promise<{ token: string; roomUrl: string }>) | null = null;
     private _terminalCloseDetail: string | null = null;
     private _documentId: string;
-    private _skipWorkerReseed = false;
     private _lastSyncCollaborationMessages:
         CollaborationMessageEnvelope[] | undefined;
 
@@ -1388,7 +305,6 @@ export class CloudAdapter implements FileSystemAdapter {
         this._roomWorkerBaseUrl =
             options.roomWorkerBaseUrl ?? getDefaultRoomWorkerUrl();
         this._documentId = options.documentId || FONT_CORE_DOCUMENT_ID;
-        this._suppressSyncComplete = options.suppressSyncComplete ?? false;
         this._deferVisibleRebaseline = options.deferVisibleRebaseline ?? false;
         this._onConnectionStatus = options.onConnectionStatus ?? null;
         this._onPendingSyncCountChange =
@@ -1424,11 +340,11 @@ export class CloudAdapter implements FileSystemAdapter {
     }
 
     get pendingSyncCount(): number {
-        return this._durableOutboxEntries.size;
+        return this._wal.pendingCount;
     }
 
     waitUntilDurable(): Promise<void> {
-        if (this._durableOutboxEntries.size === 0) {
+        if (this.pendingSyncCount === 0) {
             return Promise.resolve();
         }
         return new Promise((resolve) => {
@@ -1436,8 +352,25 @@ export class CloudAdapter implements FileSystemAdapter {
         });
     }
 
+    /**
+     * A glyph-revision packet is queued before its WAL row exists. The first
+     * flush leaves it queued; this runs again once the row is durable so the
+     * core socket actually sends it.
+     */
+    noteOutboundWalReady(): void {
+        if (
+            this._destroyed ||
+            this._outboundFlushScheduled ||
+            !this._pendingOutboundPackets.length
+        ) {
+            return;
+        }
+        this._outboundFlushScheduled = true;
+        queueMicrotask(() => this._flushPendingOutboundUpdates());
+    }
+
     private _flushDurableWaiters(): void {
-        if (this._durableOutboxEntries.size > 0) {
+        if (this.pendingSyncCount > 0) {
             return;
         }
         const waiters = this._durableWaiters;
@@ -1494,7 +427,7 @@ export class CloudAdapter implements FileSystemAdapter {
             lastReconnectReason: this._lastReconnectReason,
             lastOutboundSeq: this._seq,
             pendingOutbound: this._pendingOutboundPackets.length,
-            durableOutbox: this._durableOutboxEntries.size,
+            durableOutbox: this._wal.pendingCount,
             pendingSyncCount: this.pendingSyncCount,
             transportSynced: this.isTransportSynced(),
             browserOnline:
@@ -1540,11 +473,11 @@ export class CloudAdapter implements FileSystemAdapter {
         }
         this._seq += 1;
         ws.send(
-            JSON.stringify({
-                type: 'update',
-                update: '',
+            encodeLiveUpdateFrame({
                 clientId,
-                seq: this._seq
+                seq: this._seq,
+                update: new Uint8Array([0]),
+                clientTransactionId: `probe:${this._seq}`
             })
         );
         return true;
@@ -1558,8 +491,6 @@ export class CloudAdapter implements FileSystemAdapter {
             return;
         }
         this._hasSynced = false;
-        this._incomingResponseChunks = null;
-        this._incomingLiveUpdateChunks.clear();
         this._initialServerStateApplied = false;
         this._initialSyncDurable = false;
         this._canSkipBootstrapOnReconnect = false;
@@ -1570,7 +501,6 @@ export class CloudAdapter implements FileSystemAdapter {
         this._clearInitialSyncTimeout();
         this._bridge = bridge;
         this._directConnection = null;
-        this._skipWorkerReseed = false;
         await this._restorePersistentOutboxIntoBridge();
         this._registerOutboundHook();
         this._subscribeFontModelReady();
@@ -1602,8 +532,6 @@ export class CloudAdapter implements FileSystemAdapter {
             return;
         }
         this._hasSynced = false;
-        this._incomingResponseChunks = null;
-        this._incomingLiveUpdateChunks.clear();
         this._initialServerStateApplied = false;
         this._initialSyncDurable = false;
         this._canSkipBootstrapOnReconnect = false;
@@ -1627,7 +555,6 @@ export class CloudAdapter implements FileSystemAdapter {
         this._checkpointLogId = Number.isInteger(options?.checkpointLogId)
             ? (options?.checkpointLogId as number)
             : null;
-        this._skipWorkerReseed = options?.bootstrapMode === 'skip';
         if (options?.bootstrapMode !== 'skip') {
             await this._bootstrapFromR2(token, roomUrl);
         }
@@ -1661,7 +588,6 @@ export class CloudAdapter implements FileSystemAdapter {
         this._clearAuthenticationTimeout();
         this._clearInitialSyncTimeout();
         this._resetLiveAckTracking();
-        this._clearPendingSyncCompleteTracking();
         this._unsubscribeFontModelReady();
         this._unsubscribeBrowserNetworkEvents();
         this._localUpdateUnsubscribe?.();
@@ -1683,7 +609,6 @@ export class CloudAdapter implements FileSystemAdapter {
         this._needsVisibleRebaseline = false;
         this._visibleRebaselinePromise = null;
         this._resetWorkerBridgeSyncState();
-        this._incomingLiveUpdateChunks.clear();
         this._clearTransferIdleTimer();
         this._sendingUntil = 0;
         this._receivingUntil = 0;
@@ -1812,14 +737,11 @@ export class CloudAdapter implements FileSystemAdapter {
     }
 
     private _resetBootstrapStateForReconnect(): void {
-        const reconnect = createReconnectBootstrapState();
-        this._hasSynced = reconnect.hasSynced;
-        this._incomingResponseChunks = null;
-        this._initialServerStateApplied = reconnect.initialServerStateApplied;
-        this._initialSyncDurable = reconnect.initialSyncDurable;
-        this._lastInboundMessageAt = reconnect.lastInboundMessageAt;
+        this._hasSynced = false;
+        this._initialServerStateApplied = false;
+        this._initialSyncDurable = false;
+        this._lastInboundMessageAt = 0;
         this._resetWorkerBridgeSyncState();
-        this._outboxNeedsServerRetarget = reconnect.outboxNeedsServerRetarget;
     }
 
     private _resetWorkerBridgeSyncState(): void {
@@ -1839,7 +761,6 @@ export class CloudAdapter implements FileSystemAdapter {
         this._clearInitialSyncTimeout();
         this._clearOutboundAckTimeout();
         this._resetLiveAckTracking();
-        this._clearPendingSyncCompleteTracking();
         this._markVisibleRebaselineNeeded();
         this._resetBootstrapStateForReconnect();
         this._pendingInboundUpdates = [];
@@ -1887,53 +808,45 @@ export class CloudAdapter implements FileSystemAdapter {
         update: Uint8Array,
         collaborationMessage?: CollaborationMessageEnvelope | null
     ): void {
-        if (!update.length) {
-            return;
-        }
-        if (
-            this._accessRevoked ||
-            this.getCachedAssetRole(this._assetId) === 'viewer'
-        ) {
-            this._noteServerError({ message: 'Cloud asset is read-only' });
-            return;
-        }
-
-        const clientTransactionId = collaborationMessage
-            ? getCloudClientTransactionId(collaborationMessage)
-            : null;
-        const packet: CloudOutboundUpdatePacket = {
+        const pendingBefore = this._pendingOutboundPackets.length;
+        enqueueOutboundPacketShared(
+            {
+                documentId: this._documentId,
+                assetId: this._assetId,
+                wal: this._wal,
+                getPendingPackets: () => this._pendingOutboundPackets,
+                setPendingPackets: (packets) => {
+                    this._pendingOutboundPackets = packets;
+                },
+                noteTransferActivity: (activity) =>
+                    this._noteTransferActivity(activity),
+                emitPendingSyncCountChange: () =>
+                    this._emitPendingSyncCountChange(),
+                noteServerError: (error) => this._noteServerError(error),
+                getCachedAssetRole: (assetId) =>
+                    this.getCachedAssetRole(assetId),
+                accessRevoked: this._accessRevoked,
+                hasSynced: this._hasSynced,
+                isBrowserOffline: () => this._isBrowserOffline(),
+                getWebSocket: () => this._ws,
+                getBridge: () => this._bridge,
+                clientId: this._clientId,
+                nextSeq: () => ++this._seq,
+                peekSeq: () => this._seq,
+                armOutboundAckTimeout: () => this._armOutboundAckTimeout(),
+                recordOutboundAckSent: (seq, ids) => {
+                    this._outboundPendingTransactionIds.set(seq, ids);
+                    this._outboundAckSentAtBySeq.set(seq, Date.now());
+                },
+                enqueuePendingDurabilityMessages: (messages) =>
+                    this._enqueuePendingDurabilityMessages(messages)
+            },
             update,
-            ...(collaborationMessage ? { collaborationMessage } : undefined),
-            ...(clientTransactionId ? { clientTransactionId } : undefined)
-        };
-
-        this._pendingOutboundPackets.push(packet);
-        if (!this._hasSynced) {
-            this._outboxNeedsServerRetarget = true;
+            collaborationMessage
+        );
+        if (this._pendingOutboundPackets.length === pendingBefore) {
+            return;
         }
-        pushCollabIntegrityEvent('enqueue-outbound', {
-            documentId: this._documentId,
-            bytes: update.length,
-            hasTx: Boolean(clientTransactionId),
-            pending: this._pendingOutboundPackets.length
-        });
-        if (collaborationMessage) {
-            this._enqueuePendingDurabilityMessages([collaborationMessage]);
-            if (packet.clientTransactionId) {
-                this._durableOutboxEntries.set(packet.clientTransactionId, {
-                    assetId: this._assetId,
-                    documentId: this._documentId,
-                    clientTransactionId: packet.clientTransactionId,
-                    updateBytes: packet.update,
-                    collaborationMessage,
-                    createdAt: Date.now(),
-                    attempts: 0,
-                    state: 'sent'
-                });
-                this._emitPendingSyncCountChange();
-            }
-        }
-        this._noteTransferActivity('sending');
         if (this._outboundFlushScheduled) {
             return;
         }
@@ -1966,10 +879,6 @@ export class CloudAdapter implements FileSystemAdapter {
         if (!records.length) {
             this._emitPendingSyncCountChange();
             return;
-        }
-
-        for (const record of records) {
-            this._durableOutboxEntries.set(record.clientTransactionId, record);
         }
 
         this._enqueuePendingDurabilityMessages(
@@ -2039,64 +948,6 @@ export class CloudAdapter implements FileSystemAdapter {
      * Compact (and other server-side rebases) invalidate queued incremental
      * bytes. Replace them with a diff against the server state we just synced.
      */
-    private _retargetOutboxToServerState(serverStateVector: Uint8Array): void {
-        if (!this._bridge || !this._pendingOutboundPackets.length) {
-            this._outboxNeedsServerRetarget = false;
-            return;
-        }
-        let peerStateVector = serverStateVector;
-        if (!peerStateVector?.byteLength && this._lastAppliedServerUpdate) {
-            peerStateVector = this._encodeStateVectorFromUpdate(
-                this._lastAppliedServerUpdate
-            );
-            pushCollabIntegrityEvent('retarget-sv-from-checkpoint', {
-                documentId: this._documentId,
-                bytes: peerStateVector.byteLength
-            });
-        }
-        if (!peerStateVector?.byteLength) {
-            pushCollabIntegrityEvent('retarget-hold-empty-sv', {
-                documentId: this._documentId,
-                pending: this._pendingOutboundPackets.length
-            });
-            this._outboxNeedsServerRetarget = true;
-            return;
-        }
-        const fresh = this._bridge.encodeStateDiff(
-            peerStateVector,
-            this._documentId
-        );
-        if (!fresh.length) {
-            pushCollabIntegrityEvent('retarget-empty-diff', {
-                documentId: this._documentId,
-                dropped: this._pendingOutboundPackets.length
-            });
-            this._pendingOutboundPackets = [];
-            this._outboxNeedsServerRetarget = false;
-            return;
-        }
-        const identified = this._pendingOutboundPackets.filter(
-            (packet) => packet.collaborationMessage
-        );
-        this._pendingOutboundPackets = (
-            identified.length ? identified : this._pendingOutboundPackets
-        ).map((packet) => ({
-            ...packet,
-            update: fresh
-        }));
-        this._outboxNeedsServerRetarget = false;
-        pushCollabIntegrityEvent('retarget-outbox', {
-            documentId: this._documentId,
-            bytes: fresh.length,
-            packets: this._pendingOutboundPackets.length
-        });
-    }
-
-    /**
-     * Rebuild live send queue from WAL rows that have not been ACKed.
-     * Needed after a reconnect when a zombie OPEN socket already dequeued
-     * packets, or after crash restore which previously only reapplied locally.
-     */
     private _requeueUnackedOutboxPackets(): void {
         const queuedIds = new Set(
             this._pendingOutboundPackets
@@ -2110,8 +961,11 @@ export class CloudAdapter implements FileSystemAdapter {
             }
         }
 
-        for (const [clientTransactionId, record] of this
-            ._durableOutboxEntries) {
+        for (const record of this._wal.replayableRecords()) {
+            if (record.documentId !== this._documentId) {
+                continue;
+            }
+            const clientTransactionId = record.clientTransactionId;
             if (
                 queuedIds.has(clientTransactionId) ||
                 inFlightIds.has(clientTransactionId)
@@ -2143,8 +997,6 @@ export class CloudAdapter implements FileSystemAdapter {
         const receiving =
             this._pendingInboundUpdates.length > 0 ||
             this._inboundFlushScheduled ||
-            this._incomingLiveUpdateChunks.size > 0 ||
-            this._incomingResponseChunks !== null ||
             this._receivingUntil > now;
         if (sending && receiving) {
             return this._lastNotedTransfer ?? 'receiving';
@@ -2239,21 +1091,18 @@ export class CloudAdapter implements FileSystemAdapter {
                 (message) =>
                     !durableTransactionIds.has(collaborationMessageKey(message))
             );
-        for (const clientTransactionId of durableTransactionIds) {
-            this._durableOutboxEntries.delete(clientTransactionId);
-        }
+        void this._wal
+            .acknowledgeMany(this._assetId, this._documentId, [
+                ...durableTransactionIds
+            ])
+            .catch((error) => {
+                console.warn(
+                    'CloudAdapter: failed to acknowledge WAL rows:',
+                    error
+                );
+            });
         this._flushDurableWaiters();
         this._emitPendingSyncCountChange();
-    }
-
-    private _dropSyncCompleteCoveredOutboundPackets(): void {
-        if (this._pendingSyncCompleteOutboundPackets.size === 0) {
-            return;
-        }
-
-        this._pendingOutboundPackets = this._pendingOutboundPackets.filter(
-            (packet) => !this._pendingSyncCompleteOutboundPackets.has(packet)
-        );
     }
 
     // ── WebSocket lifecycle ───────────────────────────────────────
@@ -2320,17 +1169,11 @@ export class CloudAdapter implements FileSystemAdapter {
             return;
         }
 
-        const sv = this._encodeLocalStateVector();
         const syncRequest: Record<string, unknown> = {
             type: 'sync-request',
-            stateVector: u8ToBase64(sv)
+            checkpointLogId: this._checkpointLogId ?? 0,
+            appliedLogId: this._appliedLogId ?? this._checkpointLogId ?? 0
         };
-        if (this._checkpointLogId !== null) {
-            syncRequest.checkpointLogId = this._checkpointLogId;
-        }
-        if (this._appliedLogId !== null) {
-            syncRequest.appliedLogId = this._appliedLogId;
-        }
         ws.send(JSON.stringify(syncRequest));
         this._noteTransferActivity('sending');
     }
@@ -2340,17 +1183,11 @@ export class CloudAdapter implements FileSystemAdapter {
             return;
         }
 
-        const sv = this._encodeLocalStateVector();
         const syncRequest: Record<string, unknown> = {
             type: 'sync-request',
-            stateVector: u8ToBase64(sv)
+            checkpointLogId: this._checkpointLogId ?? 0,
+            appliedLogId: this._appliedLogId ?? this._checkpointLogId ?? 0
         };
-        if (this._checkpointLogId !== null) {
-            syncRequest.checkpointLogId = this._checkpointLogId;
-        }
-        if (this._appliedLogId !== null) {
-            syncRequest.appliedLogId = this._appliedLogId;
-        }
         this._ws.send(JSON.stringify(syncRequest));
         this._noteTransferActivity('sending');
     }
@@ -2371,15 +1208,17 @@ export class CloudAdapter implements FileSystemAdapter {
         }
     }
 
-    private _finishInitialSyncAfterPages(serverStateVector: Uint8Array): void {
+    private _finishInitialSyncAfterPages(
+        _serverStateVector?: Uint8Array
+    ): void {
         if (!this._initialServerStateApplied) {
             this._initialServerStateApplied = true;
         }
         this._hasSynced = true;
         this._registerOutboundHook();
         this._requeueUnackedOutboxPackets();
-        this._retargetOutboxToServerState(serverStateVector);
-        this._initialSyncDurable = !this._sendSyncComplete(serverStateVector);
+        // Tail replay already applied; resend unacked WAL rows in order.
+        this._initialSyncDurable = true;
         if (
             this._pendingOutboundPackets.length &&
             !this._outboundFlushScheduled
@@ -2536,481 +1375,16 @@ export class CloudAdapter implements FileSystemAdapter {
         roomUrl: string,
         shards: EncodedShard[],
         glyphCount: number,
-        migrationNonce?: string,
         options?: CloudShardIoOptions
     ): Promise<CloudSeedDocumentSetResult> {
-        const batches = partitionPackItems(
-            shards,
-            (shard) => shard.bytes.byteLength,
-            Math.min(options?.maxRequests ?? PACK_MAX_SHARDS, PACK_MAX_SHARDS),
-            options?.maxBytes ?? HYDRATE_BATCH_MAX_BYTES
-        );
-        for (const batch of batches) {
-            assertHydrateBatchBudget({
-                requestCount: batch.length,
-                byteLength: batch.reduce(
-                    (sum, shard) => sum + shard.bytes.byteLength,
-                    0
-                ),
-                maxRequests: options?.maxRequests,
-                maxBytes: options?.maxBytes
-            });
-        }
-        const usePack = options?.transport !== 'per-shard';
-        const rows: Array<{
-            coreCheckpointLogId: number | null;
-            attestation: CloudSeededShardAttestation | null;
-        }> = [];
-        const bytesTotal = shards.reduce(
-            (sum, shard) => sum + shard.bytes.byteLength,
-            0
-        );
-        const cursor = shardIoTotals(options, shards.length, bytesTotal);
-        await emitShardIoProgress(options, {
-            completed: cursor.completed,
-            total: cursor.total,
-            bytesCompleted: cursor.bytesCompleted,
-            bytesTotal: cursor.bytesTotal
-        });
-        for (const batch of batches) {
-            throwIfAborted(options?.signal);
-            if (usePack) {
-                rows.push(
-                    ...(await this._seedPack(
-                        token,
-                        roomUrl,
-                        batch,
-                        glyphCount,
-                        migrationNonce,
-                        options,
-                        cursor
-                    ))
-                );
-                continue;
-            }
-            rows.push(
-                ...(await mapPool(
-                    batch,
-                    shardIoConcurrency(options, SEED_SHARD_CONCURRENCY),
-                    async (shard) =>
-                        this._seedOneShard(
-                            token,
-                            roomUrl,
-                            shard,
-                            glyphCount,
-                            migrationNonce,
-                            options,
-                            cursor
-                        )
-                ))
-            );
-        }
-        let coreCheckpointLogId: number | null = null;
-        const attestations: CloudSeededShardAttestation[] = [];
-        for (const row of rows) {
-            if (row.coreCheckpointLogId !== null) {
-                coreCheckpointLogId = row.coreCheckpointLogId;
-            }
-            if (row.attestation) {
-                attestations.push(row.attestation);
-            }
-        }
-        return { coreCheckpointLogId, attestations };
-    }
-
-    private _isTransientPackHydrateError(error: unknown): boolean {
-        if (error instanceof Error && error.name === 'AbortError') {
-            return true;
-        }
-        const message = error instanceof Error ? error.message : String(error);
-        return /503|Failed to fetch|ERR_ABORTED|ERR_FAILED|NETWORK_CHANGED|unavailable|do_timeout|incomplete|aborted|shard pack hydrate failed: 5\d\d/i.test(
-            message
-        );
-    }
-
-    private async _seedPack(
-        token: string,
-        roomUrl: string,
-        shards: EncodedShard[],
-        glyphCount: number,
-        migrationNonce: string | undefined,
-        options: CloudShardIoOptions | undefined,
-        cursor: CloudShardIoProgress
-    ): Promise<
-        Array<{
-            coreCheckpointLogId: number | null;
-            attestation: CloudSeededShardAttestation | null;
-        }>
-    > {
-        const bytesById = new Map(
-            shards.map((shard) => [shard.documentId, shard.bytes.byteLength])
-        );
-        const completedBefore = cursor.completed;
-        const bytesBefore = cursor.bytesCompleted;
-        const idempotencyKey =
-            globalThis.crypto?.randomUUID?.() ||
-            `seed-${Date.now()}-${Math.random().toString(16).slice(2)}`;
-        let lastError: unknown = null;
-        let remaining = shards.slice();
-        const allRows: Array<{
-            coreCheckpointLogId: number | null;
-            attestation: CloudSeededShardAttestation | null;
-        }> = [];
-        for (let attempt = 0; attempt < 4; attempt += 1) {
-            throwIfAborted(options?.signal);
-            cursor.completed =
-                completedBefore +
-                allRows.filter((row) => row.attestation).length;
-            cursor.bytesCompleted =
-                bytesBefore +
-                allRows.reduce(
-                    (sum, row) =>
-                        sum +
-                        (row.attestation
-                            ? bytesById.get(row.attestation.shardId) ||
-                              row.attestation.checkpointByteLength ||
-                              0
-                            : 0),
-                    0
-                );
-            try {
-                this._noteTransferActivity('sending');
-                const remainingFrames: Uint8Array[] = [];
-                const assemblyStartedAt = performance.now();
-                for (const shard of remaining) {
-                    throwIfAborted(options?.signal);
-                    remainingFrames.push(
-                        encodePackShardFrame(
-                            shard.documentId,
-                            shard.bytes,
-                            await sha256Digest(shard.bytes)
-                        )
-                    );
-                    await yieldToUi();
-                }
-                const remainingBody = encodePackBody(remainingFrames);
-                console.log('[CloudAdapter] pack seed assembly', {
-                    packAssemblyMs: performance.now() - assemblyStartedAt,
-                    shardCount: remaining.length
-                });
-                const response = await fetch(
-                    normalizeCloudShardPackUrl(
-                        roomUrl,
-                        this._websiteBaseUrl,
-                        this._assetId
-                    ),
-                    {
-                        method: 'POST',
-                        headers: {
-                            'Authorization': `Bearer ${token}`,
-                            'Content-Type': 'application/octet-stream',
-                            'X-Glyph-Count': String(glyphCount),
-                            'X-Collab-Idempotency-Key': idempotencyKey,
-                            ...(migrationNonce
-                                ? { 'X-Cloud-Migration-Nonce': migrationNonce }
-                                : {})
-                        },
-                        body: remainingBody as unknown as BodyInit,
-                        signal: options?.signal
-                    }
-                );
-                if (isPackUnsupportedStatus(response.status)) {
-                    throw new Error('pack unsupported');
-                }
-                if (!response.ok) {
-                    throw new Error(await formatPackHttpError(response));
-                }
-                if (!response.body) {
-                    throw new Error(
-                        `shard pack seed failed: ${response.status} empty body`
-                    );
-                }
-                const rows: Array<{
-                    coreCheckpointLogId: number | null;
-                    attestation: CloudSeededShardAttestation | null;
-                }> = [];
-                let packError: string | null = null;
-                const parser = createPackParser();
-                const reader = response.body.getReader();
-                try {
-                    while (true) {
-                        const { done, value } = await reader.read();
-                        if (value) {
-                            for (const frame of parser.push(value)) {
-                                const before = rows.length;
-                                this._collectPackSeedFrame(
-                                    frame,
-                                    rows,
-                                    (message) => {
-                                        packError = message;
-                                    }
-                                );
-                                if (rows.length > before) {
-                                    const row = rows[rows.length - 1];
-                                    if (row?.attestation) {
-                                        await options?.onShardLanded?.(
-                                            row.attestation
-                                        );
-                                        cursor.completed += 1;
-                                        cursor.bytesCompleted +=
-                                            bytesById.get(
-                                                row.attestation.shardId
-                                            ) ||
-                                            row.attestation
-                                                .checkpointByteLength ||
-                                            0;
-                                        await emitShardIoProgress(options, {
-                                            ...cursor,
-                                            shardId: row.attestation.shardId
-                                        });
-                                    }
-                                }
-                            }
-                        }
-                        if (done) {
-                            break;
-                        }
-                    }
-                    parser.finish();
-                } finally {
-                    reader.releaseLock();
-                }
-                if (packError) {
-                    throw new Error(
-                        packError ||
-                            `shard pack seed failed: ${response.status}`
-                    );
-                }
-                allRows.push(...rows);
-                const landed = new Set(
-                    allRows
-                        .map((row) => row.attestation?.shardId)
-                        .filter((shardId): shardId is string => !!shardId)
-                );
-                remaining = remaining.filter(
-                    (shard) => !landed.has(shard.documentId)
-                );
-                if (!remaining.length) {
-                    return allRows;
-                }
-                throw new Error('shard pack seed incomplete');
-            } catch (error) {
-                lastError = error;
-                const message =
-                    error instanceof Error ? error.message : String(error);
-                const retryable =
-                    !options?.signal?.aborted &&
-                    /503|Failed to fetch|ERR_ABORTED|ERR_FAILED|NETWORK_CHANGED|unavailable|do_timeout|incomplete/i.test(
-                        message
-                    );
-                if (!retryable || attempt === 3) {
-                    throw error;
-                }
-                await new Promise((resolve) =>
-                    setTimeout(resolve, 800 * 2 ** attempt)
-                );
-            }
-        }
-        throw lastError instanceof Error
-            ? lastError
-            : new Error(String(lastError));
-    }
-
-    private _collectPackSeedFrame(
-        frame: PackFrame,
-        rows: Array<{
-            coreCheckpointLogId: number | null;
-            attestation: CloudSeededShardAttestation | null;
-        }>,
-        onError: (message: string) => void
-    ): void {
-        if (frame.type === PACK_FRAME_TYPE.ERROR) {
-            const message =
-                typeof frame.receipt?.error === 'string'
-                    ? frame.receipt.error
-                    : 'shard pack seed failed';
-            onError(message);
-            return;
-        }
-        if (frame.type !== PACK_FRAME_TYPE.RECEIPT || !frame.receipt) {
-            return;
-        }
-        const receipt = frame.receipt;
-        const shardId = String(receipt.shardId || frame.shardId || '');
-        const attestation =
-            typeof receipt.checkpointObjectKey === 'string' &&
-            typeof (receipt.checkpointSha256 || receipt.snapshotSha256) ===
-                'string' &&
-            typeof (receipt.checkpointByteLength || receipt.snapshotBytes) ===
-                'number'
-                ? {
-                      shardId,
-                      checkpointObjectKey: String(receipt.checkpointObjectKey),
-                      checkpointSha256: String(
-                          receipt.checkpointSha256 || receipt.snapshotSha256
-                      ),
-                      checkpointByteLength: Number(
-                          receipt.checkpointByteLength || receipt.snapshotBytes
-                      ),
-                      checkpointLogId:
-                          typeof receipt.checkpointLogId === 'number'
-                              ? receipt.checkpointLogId
-                              : 0,
-                      checkpointAt:
-                          typeof receipt.checkpointAt === 'number'
-                              ? receipt.checkpointAt
-                              : undefined
-                  }
-                : null;
-        rows.push({
-            coreCheckpointLogId:
-                attestation && shardId === FONT_CORE_DOCUMENT_ID
-                    ? attestation.checkpointLogId
-                    : null,
-            attestation
-        });
-    }
-
-    private async _seedOneShard(
-        token: string,
-        roomUrl: string,
-        shard: EncodedShard,
-        glyphCount: number,
-        migrationNonce: string | undefined,
-        options: CloudShardIoOptions | undefined,
-        cursor: CloudShardIoProgress
-    ): Promise<{
-        coreCheckpointLogId: number | null;
-        attestation: CloudSeededShardAttestation | null;
-    }> {
-        throwIfAborted(options?.signal);
-        const httpUrl = normalizeCloudShardHttpUrl(
+        return cloudAdapterShardIoMethods.seedDocumentSet.call(
+            this,
+            token,
             roomUrl,
-            this._websiteBaseUrl,
-            this._assetId,
-            shard.documentId
+            shards,
+            glyphCount,
+            options
         );
-        this._noteTransferActivity('sending');
-        let response: Response | null = null;
-        let lastError: unknown = null;
-        // Initial seeding is idempotent: a successful first attempt makes
-        // a retry return 409. Retrying transient browser/workerd transport
-        // failures prevents a single dropped glyph upload from abandoning
-        // the entire Save As operation.
-        for (let attempt = 0; attempt < 3; attempt += 1) {
-            throwIfAborted(options?.signal);
-            const controller = new AbortController();
-            const onUserAbort = () => controller.abort();
-            options?.signal?.addEventListener('abort', onUserAbort);
-            const timeoutId = window.setTimeout(
-                () => controller.abort(),
-                15_000
-            );
-            try {
-                response = await fetch(httpUrl, {
-                    method: 'POST',
-                    headers: {
-                        'Authorization': `Bearer ${token}`,
-                        'Content-Type': 'application/octet-stream',
-                        'X-Glyph-Count': String(glyphCount),
-                        ...(migrationNonce
-                            ? { 'X-Cloud-Migration-Nonce': migrationNonce }
-                            : {})
-                    },
-                    body: shard.bytes as unknown as BodyInit,
-                    signal: controller.signal
-                });
-                break;
-            } catch (error) {
-                lastError = error;
-                throwIfAborted(options?.signal);
-                if (attempt < 2) {
-                    await new Promise<void>((resolve) => {
-                        window.setTimeout(resolve, 100 * (attempt + 1));
-                    });
-                }
-            } finally {
-                options?.signal?.removeEventListener('abort', onUserAbort);
-                window.clearTimeout(timeoutId);
-            }
-        }
-        if (!response) {
-            const detail =
-                lastError instanceof Error
-                    ? lastError.message
-                    : String(lastError ?? 'unknown transport error');
-            throw new Error(
-                `shard seed request failed (${shard.documentId}): ${detail}`
-            );
-        }
-        if (response.status === 409) {
-            const conflictBody = await response.text().catch(() => '');
-            let code = '';
-            try {
-                code = String(JSON.parse(conflictBody)?.code || '');
-            } catch {
-                /* not JSON */
-            }
-            if (code === 'seed_digest_conflict') {
-                throw new Error(
-                    `shard seed digest conflict (${shard.documentId})`
-                );
-            }
-            throw new Error(
-                `shard seed failed (${shard.documentId}): 409 ${conflictBody.slice(0, 160)}`
-            );
-        }
-        if (!response.ok) {
-            const body = await response.text().catch(() => '');
-            throw new Error(
-                `shard seed failed (${shard.documentId}): ${response.status} ${body.slice(0, 160)}`
-            );
-        }
-        try {
-            const result = (await response.json()) as {
-                checkpointLogId?: unknown;
-                checkpointObjectKey?: unknown;
-                snapshotSha256?: unknown;
-                snapshotBytes?: unknown;
-                checkpointAt?: unknown;
-            };
-            const coreCheckpointLogId =
-                typeof result.checkpointLogId === 'number' &&
-                shard.documentId === FONT_CORE_DOCUMENT_ID
-                    ? result.checkpointLogId
-                    : null;
-            const attestation =
-                typeof result.checkpointObjectKey === 'string' &&
-                typeof result.snapshotSha256 === 'string' &&
-                typeof result.snapshotBytes === 'number'
-                    ? {
-                          shardId: shard.documentId,
-                          checkpointObjectKey: result.checkpointObjectKey,
-                          checkpointSha256: result.snapshotSha256,
-                          checkpointByteLength: result.snapshotBytes,
-                          checkpointLogId:
-                              typeof result.checkpointLogId === 'number'
-                                  ? result.checkpointLogId
-                                  : 0,
-                          checkpointAt:
-                              typeof result.checkpointAt === 'number'
-                                  ? result.checkpointAt
-                                  : undefined
-                      }
-                    : null;
-            if (attestation) {
-                await options?.onShardLanded?.(attestation);
-                cursor.completed += 1;
-                cursor.bytesCompleted += shard.bytes.byteLength;
-                await emitShardIoProgress(options, {
-                    ...cursor,
-                    shardId: attestation.shardId
-                });
-            }
-            return { coreCheckpointLogId, attestation };
-        } catch {
-            return { coreCheckpointLogId: null, attestation: null };
-        }
     }
 
     async hydrateDocumentSet(
@@ -3019,233 +1393,13 @@ export class CloudAdapter implements FileSystemAdapter {
         documentIds: string[],
         options?: CloudShardIoOptions
     ): Promise<Map<string, Uint8Array>> {
-        const batches = partitionPackItems(
+        return cloudAdapterShardIoMethods.hydrateDocumentSet.call(
+            this,
+            token,
+            roomUrl,
             documentIds,
-            () => 0,
-            Math.min(options?.maxRequests ?? PACK_MAX_SHARDS, PACK_MAX_SHARDS),
-            options?.maxBytes ?? HYDRATE_BATCH_MAX_BYTES
+            options
         );
-        for (const batch of batches) {
-            assertHydrateBatchBudget({
-                requestCount: batch.length,
-                byteLength: 0,
-                maxRequests: options?.maxRequests,
-                maxBytes: options?.maxBytes
-            });
-        }
-        const result = new Map<string, Uint8Array>();
-        const usePack = options?.transport !== 'per-shard';
-        const cursor = shardIoTotals(options, documentIds.length, 0);
-        await emitShardIoProgress(options, {
-            completed: cursor.completed,
-            total: cursor.total,
-            bytesCompleted: cursor.bytesCompleted,
-            bytesTotal: cursor.bytesTotal
-        });
-        for (const batch of batches) {
-            throwIfAborted(options?.signal);
-            const batchResult = usePack
-                ? await this._hydratePack(
-                      token,
-                      roomUrl,
-                      batch,
-                      options,
-                      cursor
-                  )
-                : await this._hydratePerShard(
-                      token,
-                      roomUrl,
-                      batch,
-                      options,
-                      cursor
-                  );
-            for (const [documentId, bytes] of batchResult) {
-                result.set(documentId, bytes);
-            }
-        }
-        return result;
-    }
-
-    private async _hydratePack(
-        token: string,
-        roomUrl: string,
-        documentIds: string[],
-        options: CloudShardIoOptions | undefined,
-        cursor: CloudShardIoProgress
-    ): Promise<Map<string, Uint8Array>> {
-        let lastError: unknown = null;
-        for (let attempt = 0; attempt < 4; attempt += 1) {
-            try {
-                return await this._hydratePackOnce(
-                    token,
-                    roomUrl,
-                    documentIds,
-                    options,
-                    cursor
-                );
-            } catch (error) {
-                lastError = error;
-                const packTimedOut =
-                    error instanceof Error && error.name === 'AbortError';
-                if (
-                    options?.signal?.aborted ||
-                    packTimedOut ||
-                    !this._isTransientPackHydrateError(error) ||
-                    attempt === 3
-                ) {
-                    throw error;
-                }
-                await new Promise((resolve) =>
-                    setTimeout(resolve, 100 * 2 ** attempt)
-                );
-            }
-        }
-        throw lastError instanceof Error
-            ? lastError
-            : new Error(String(lastError));
-    }
-
-    private async _hydratePackOnce(
-        token: string,
-        roomUrl: string,
-        documentIds: string[],
-        options: CloudShardIoOptions | undefined,
-        cursor: CloudShardIoProgress
-    ): Promise<Map<string, Uint8Array>> {
-        this._noteTransferActivity('receiving');
-        const response = await fetch(
-            normalizeCloudShardPackUrl(
-                roomUrl,
-                this._websiteBaseUrl,
-                this._assetId
-            ),
-            {
-                method: 'POST',
-                headers: {
-                    'Authorization': `Bearer ${token}`,
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({ ids: documentIds }),
-                signal: abortSignalWithTimeout(
-                    options?.signal,
-                    HYDRATE_PACK_FETCH_TIMEOUT_MS
-                )
-            }
-        );
-        if (isPackUnsupportedStatus(response.status)) {
-            throw new Error('pack unsupported');
-        }
-        if (!response.ok) {
-            throw new Error(`shard pack hydrate failed: ${response.status}`);
-        }
-        if (!response.body) {
-            throw new Error(
-                `shard pack hydrate failed: ${response.status} empty body`
-            );
-        }
-        const result = new Map<string, Uint8Array>();
-        let packError: string | null = null;
-        const parser = createPackParser();
-        const reader = response.body.getReader();
-        try {
-            while (true) {
-                throwIfAborted(options?.signal);
-                const { done, value } = await reader.read();
-                if (value) {
-                    for (const frame of parser.push(value)) {
-                        if (frame.type === PACK_FRAME_TYPE.ERROR) {
-                            packError =
-                                typeof frame.receipt?.error === 'string'
-                                    ? frame.receipt.error
-                                    : 'shard pack hydrate failed';
-                        } else if (
-                            frame.type === PACK_FRAME_TYPE.SHARD &&
-                            !frame.missing
-                        ) {
-                            if (frame.payload.byteLength) {
-                                result.set(
-                                    frame.shardId,
-                                    frame.payload.slice()
-                                );
-                            }
-                            cursor.completed += 1;
-                            cursor.bytesCompleted += frame.payload.byteLength;
-                            await emitShardIoProgress(options, {
-                                ...cursor,
-                                shardId: frame.shardId
-                            });
-                        }
-                    }
-                }
-                if (done) {
-                    break;
-                }
-            }
-            parser.finish();
-        } finally {
-            reader.releaseLock();
-        }
-        if (!response.ok || packError) {
-            throw new Error(
-                packError || `shard pack hydrate failed: ${response.status}`
-            );
-        }
-        return result;
-    }
-
-    private async _hydratePerShard(
-        token: string,
-        roomUrl: string,
-        documentIds: string[],
-        options: CloudShardIoOptions | undefined,
-        cursor: CloudShardIoProgress
-    ): Promise<Map<string, Uint8Array>> {
-        const result = new Map<string, Uint8Array>();
-        const rows = await mapPool(
-            documentIds,
-            shardIoConcurrency(options, HYDRATE_SHARD_CONCURRENCY),
-            async (documentId) => {
-                throwIfAborted(options?.signal);
-                const httpUrl = normalizeCloudShardHttpUrl(
-                    roomUrl,
-                    this._websiteBaseUrl,
-                    this._assetId,
-                    documentId
-                );
-                this._noteTransferActivity('receiving');
-                const response = await fetch(httpUrl, {
-                    headers: { Authorization: `Bearer ${token}` },
-                    signal: options?.signal
-                });
-                if (response.status === 404) {
-                    cursor.completed += 1;
-                    await emitShardIoProgress(options, {
-                        ...cursor,
-                        shardId: documentId
-                    });
-                    return { documentId, bytes: null as Uint8Array | null };
-                }
-                if (!response.ok) {
-                    throw new Error(
-                        `shard hydrate failed (${documentId}): ${response.status}`
-                    );
-                }
-                const bytes = new Uint8Array(await response.arrayBuffer());
-                cursor.completed += 1;
-                cursor.bytesCompleted += bytes.byteLength;
-                await emitShardIoProgress(options, {
-                    ...cursor,
-                    shardId: documentId
-                });
-                return { documentId, bytes };
-            }
-        );
-        for (const row of rows) {
-            if (row.bytes) {
-                result.set(row.documentId, row.bytes);
-            }
-        }
-        return result;
     }
 
     private async _openWebSocket(token: string, wsUrl: string): Promise<void> {
@@ -3323,8 +1477,11 @@ export class CloudAdapter implements FileSystemAdapter {
                 this._clientId = null;
                 this._markVisibleRebaselineNeeded();
                 this._hasSynced = false;
+                // A dropped glyph socket must bootstrap checkpoint plus tail.
+                // Skipping bootstrap replays from a cursor that never saw the
+                // edits made while the socket was closed.
+                this._canSkipBootstrapOnReconnect = false;
                 this._lastInboundMessageAt = 0;
-                this._incomingResponseChunks = null;
                 this._pendingTailFrames = null;
                 this._pendingSyncPageMeta = null;
                 this._initialServerStateApplied = false;
@@ -3395,25 +1552,18 @@ export class CloudAdapter implements FileSystemAdapter {
             }
             if (frame.type === 4) {
                 const live = decodeLiveUpdatePayload(frame.payload);
-                const encoded = u8ToBase64(live.update);
-                const message: Record<string, unknown> = {
-                    type: live.type,
-                    update: encoded,
-                    clientId: live.clientId,
-                    seq: live.seq,
+                if (
+                    typeof live.clientId === 'string' &&
+                    this._clientId &&
+                    live.clientId === this._clientId
+                ) {
+                    continue;
+                }
+                this._queueInboundUpdate({
+                    update: live.update,
+                    collaborationMessages: live.collaborationMessages,
                     logId: frame.logId
-                };
-                if (live.clientTransactionId) {
-                    message.clientTransactionId = live.clientTransactionId;
-                }
-                if (live.collaborationMessages) {
-                    message.collaborationMessages = live.collaborationMessages;
-                }
-                if (live.totalChunks > 1) {
-                    message.chunkIndex = live.chunkIndex;
-                    message.totalChunks = live.totalChunks;
-                }
-                this._handleMessage(JSON.stringify(message));
+                });
                 continue;
             }
             if (frame.type === 2) {
@@ -3432,15 +1582,42 @@ export class CloudAdapter implements FileSystemAdapter {
         this._pendingTailFrames = null;
         const updates = assembleTailTransactionsFromFrames(frames);
         let applied = true;
+        let appliedBytes = 0;
         for (const update of updates) {
-            if (!this._applyServerState(update)) {
+            if (!update.length) {
+                continue;
+            }
+            if (!this._bridge) {
                 applied = false;
+                break;
+            }
+            try {
+                // Journal tails are incremental Yjs updates. Apply them to the
+                // bridge without a per-update Rust worker reseed — reseeding
+                // once per row hung saveAs attach ("cloud sync timed out").
+                this._applyServerStateToBridge(update);
+                this._lastAppliedServerUpdate = update;
+                appliedBytes += update.length;
+            } catch (err) {
+                console.error(
+                    'CloudAdapter: failed to apply sync-page tail update:',
+                    err
+                );
+                applied = false;
+                break;
             }
         }
         const pageMeta = this._pendingSyncPageMeta;
         this._pendingSyncPageMeta = null;
         if (!applied) {
             return;
+        }
+        this._resyncRequestedAfterNoopUpdate = false;
+        this._initialServerStateApplied = true;
+        if (appliedBytes > 0 && this._documentId === FONT_CORE_DOCUMENT_ID) {
+            if (!this._scheduleWorkerBridgeSyncAfterServerState()) {
+                return;
+            }
         }
         if (pageMeta?.hasMore) {
             this._appliedLogId = Math.max(
@@ -3450,8 +1627,9 @@ export class CloudAdapter implements FileSystemAdapter {
             this._sendFollowupSyncRequest();
         } else if (pageMeta) {
             this._finishInitialSyncAfterPages(pageMeta.serverStateVector);
-        } else if (updates.length) {
-            void this._maybeMarkInitialSyncConnected().catch(() => {});
+        } else {
+            // Terminal without checkpoint meta must still complete sync.
+            this._finishInitialSyncAfterPages();
         }
     }
 
@@ -3652,117 +1830,32 @@ export class CloudAdapter implements FileSystemAdapter {
                     break;
                 }
 
-                if (msg.chunked) {
-                    this._armInitialSyncTimeout();
-                    this._pendingSyncPageMeta = {
-                        hasMore: this._syncPageHasMore(msg),
-                        throughLogId:
-                            typeof msg.throughLogId === 'number'
-                                ? (msg.throughLogId as number)
-                                : null,
-                        serverStateVector: serverSV
-                    };
-                    this._incomingResponseChunks = this._createChunkAccumulator(
-                        msg.totalChunks
-                    );
-                    if (!this._incomingResponseChunks) {
-                        this._incomingResponseChunks = null;
-                        break;
+                this._armInitialSyncTimeout();
+                const encodedUpdates = Array.isArray(msg.updates)
+                    ? (msg.updates as string[])
+                    : typeof msg.update === 'string' &&
+                        (msg.update as string).length > 0
+                      ? [msg.update as string]
+                      : [];
+                let applied = true;
+                if (encodedUpdates.length) {
+                    for (const encoded of encodedUpdates) {
+                        if (!this._applyServerState(base64ToU8(encoded))) {
+                            applied = false;
+                        }
                     }
-                    if (!this._pendingSyncPageMeta.hasMore) {
-                        this._finishInitialSyncAfterPages(serverSV);
-                    }
+                } else if (!this._applyServerState(new Uint8Array())) {
+                    applied = false;
+                }
+                if (!applied) {
+                    break;
+                }
+                if (this._syncPageHasMore(msg)) {
+                    this._advanceAppliedLogIdFromPage(msg);
+                    this._sendFollowupSyncRequest();
                 } else {
-                    this._armInitialSyncTimeout();
-                    const encodedUpdates = Array.isArray(msg.updates)
-                        ? (msg.updates as string[])
-                        : typeof msg.update === 'string' &&
-                            (msg.update as string).length > 0
-                          ? [msg.update as string]
-                          : [];
-                    let applied = true;
-                    if (encodedUpdates.length) {
-                        for (const encoded of encodedUpdates) {
-                            if (!this._applyServerState(base64ToU8(encoded))) {
-                                applied = false;
-                            }
-                        }
-                    } else if (!this._applyServerState(new Uint8Array())) {
-                        applied = false;
-                    }
-                    if (!applied) {
-                        break;
-                    }
-                    if (this._syncPageHasMore(msg)) {
-                        this._advanceAppliedLogIdFromPage(msg);
-                        this._sendFollowupSyncRequest();
-                    } else {
-                        this._finishInitialSyncAfterPages(serverSV);
-                    }
+                    this._finishInitialSyncAfterPages(serverSV);
                 }
-                break;
-            }
-
-            case 'sync-chunk': {
-                // Chunk of a large server→client sync-response.
-                if (
-                    msg.direction === 'response' &&
-                    this._incomingResponseChunks &&
-                    typeof msg.update === 'string'
-                ) {
-                    this._noteTransferActivity('receiving');
-                    this._armInitialSyncTimeout();
-                    const state = this._incomingResponseChunks;
-                    const bytes = base64ToU8(msg.update as string);
-                    if (
-                        !this._acceptChunk(
-                            state,
-                            msg.chunkIndex as number,
-                            bytes
-                        )
-                    ) {
-                        this._incomingResponseChunks = null;
-                        break;
-                    }
-                    if (
-                        state.received === state.total &&
-                        state.chunks.every((chunk) => chunk)
-                    ) {
-                        const combined = this._mergeChunks(
-                            state.chunks as Uint8Array[]
-                        );
-                        this._incomingResponseChunks = null;
-                        const applied = this._applyServerState(combined);
-                        const pageMeta = this._pendingSyncPageMeta;
-                        this._pendingSyncPageMeta = null;
-                        if (!applied) {
-                            break;
-                        }
-                        if (pageMeta?.hasMore) {
-                            if (pageMeta.throughLogId !== null) {
-                                this._appliedLogId = Math.max(
-                                    this._appliedLogId ?? 0,
-                                    pageMeta.throughLogId
-                                );
-                            }
-                            this._sendFollowupSyncRequest();
-                        } else if (pageMeta) {
-                            this._finishInitialSyncAfterPages(
-                                pageMeta.serverStateVector
-                            );
-                        } else {
-                            void this._maybeMarkInitialSyncConnected().catch(
-                                () => {}
-                            );
-                        }
-                    }
-                }
-                break;
-            }
-
-            case 'update-chunk': {
-                this._noteTransferActivity('receiving');
-                this._accumulateIncomingLiveUpdateChunk(msg);
                 break;
             }
 
@@ -3775,14 +1868,8 @@ export class CloudAdapter implements FileSystemAdapter {
                     ) {
                         break;
                     }
-
-                    const update = this._consumeIncomingLiveUpdate(msg);
-                    if (!update) {
-                        break;
-                    }
-
                     this._queueInboundUpdate({
-                        update,
+                        update: base64ToU8(msg.update),
                         collaborationMessages: Array.isArray(
                             msg.collaborationMessages
                         )
@@ -3798,33 +1885,29 @@ export class CloudAdapter implements FileSystemAdapter {
                 break;
 
             case 'ack':
-                if (msg.seq === -1 && msg.phase === 'sync-complete') {
-                    const pendingSyncIds =
-                        this._pendingSyncCompleteTransactionIds;
-                    if (!this._ackIsDurable(msg, pendingSyncIds, -1)) {
-                        const detail = 'Initial cloud sync was not durable';
+                if (typeof msg.clientTransactionId === 'string') {
+                    const txId = msg.clientTransactionId;
+                    if (msg.durable !== true) {
+                        const detail = `Cloud update ${txId} was not durable`;
                         console.warn(`CloudAdapter: ${detail}`);
                         this._setStatus('error', detail);
                         this._ws?.close(
                             CLIENT_RECONNECT_CLOSE_CODE,
-                            'undurable-sync-complete'
+                            'undurable-update'
                         );
                         return;
                     }
-
-                    this._initialSyncDurable = true;
-                    if (pendingSyncIds.length > 0) {
-                        this._dropDurableTransactions(pendingSyncIds);
-                        if (this._pendingSyncCompleteBroadcastEntryCount > 0) {
-                            this._bridge?.advanceBroadcastLogCursor(
-                                this._pendingSyncCompleteBroadcastEntryCount
-                            );
+                    this._dropDurableTransactions([txId]);
+                    // Also clear seq-tracked waiters that match this tx.
+                    for (const [seq, ids] of [
+                        ...this._outboundPendingTransactionIds
+                    ]) {
+                        if (ids.includes(txId)) {
+                            this._recordDurableAck(seq);
                         }
                     }
-                    this._dropSyncCompleteCoveredOutboundPackets();
-                    this._clearPendingSyncCompleteTracking();
                     void this._maybeMarkInitialSyncConnected().catch(() => {});
-                    return;
+                    break;
                 }
 
                 if (typeof msg.seq === 'number') {
@@ -3914,13 +1997,47 @@ export class CloudAdapter implements FileSystemAdapter {
         );
     }
 
+    /** Single inbound apply for WS replay, /live, and packs. */
+    applyShardState(
+        documentId: string,
+        bytes: Uint8Array,
+        logIds?: {
+            checkpointLogId?: number | null;
+            appliedLogId?: number | null;
+        }
+    ): boolean {
+        if (documentId && documentId !== this._documentId) {
+            return false;
+        }
+        if (
+            logIds &&
+            typeof logIds.checkpointLogId === 'number' &&
+            Number.isInteger(logIds.checkpointLogId)
+        ) {
+            this._checkpointLogId = logIds.checkpointLogId;
+        }
+        const applied = this._applyServerState(bytes);
+        if (
+            applied &&
+            logIds &&
+            typeof logIds.appliedLogId === 'number' &&
+            Number.isInteger(logIds.appliedLogId)
+        ) {
+            this._appliedLogId = Math.max(
+                this._appliedLogId ?? 0,
+                logIds.appliedLogId
+            );
+        }
+        return applied;
+    }
+
     private _applyServerStateToBridge(update: Uint8Array): void {
         if (!this._bridge) {
             return;
         }
-        const unsent = this._outboxNeedsServerRetarget
-            ? []
-            : this._pendingOutboundPackets.map((packet) => packet.update);
+        const unsent = this._pendingOutboundPackets.map(
+            (packet) => packet.update
+        );
         assertSafeRebaseline({
             pendingUnsentBytes: unsent.reduce(
                 (sum, bytes) => sum + bytes.byteLength,
@@ -3962,10 +2079,10 @@ export class CloudAdapter implements FileSystemAdapter {
     }
 
     private _shouldReseedWorkerAfterServerState(update: Uint8Array): boolean {
+        // Framed sync pages apply tails via `_finishFramedSyncPage` and reseed
+        // at most once per page. Empty JSON sync-response still reseeds so the
+        // Rust worker matches the bridge before we mark connected.
         if (this._documentId !== FONT_CORE_DOCUMENT_ID) {
-            return false;
-        }
-        if (this._skipWorkerReseed) {
             return false;
         }
         return true;
@@ -4330,118 +2447,6 @@ export class CloudAdapter implements FileSystemAdapter {
         }
     }
 
-    /**
-     * Phase 2 of Yjs sync: send our local state diff to the server so other
-     * peers can receive the full history.
-     *
-     * If the diff exceeds SYNC_CHUNK_SIZE it is split into multiple messages:
-     * N-1 `sync-chunk` messages followed by a final `sync-complete` message
-     * that carries the last chunk and signals the server to commit.
-     */
-    private _sendSyncComplete(serverStateVector: Uint8Array): boolean {
-        if (
-            !this._bridge ||
-            !this._ws ||
-            this._ws.readyState !== WebSocket.OPEN
-        )
-            return false;
-        if (this._suppressSyncComplete) {
-            return false;
-        }
-        try {
-            // The room journal has no Y.Doc state vector. After an R2
-            // checkpoint bootstrap, uploading encodeStateDiff(empty) resends
-            // the whole shard, which is larger than the ingress spool. The
-            // tail was already applied from the sync response, and unacked
-            // local edits leave through the outbox.
-            const checkpointAlreadyOnServer =
-                this._skipWorkerReseed || this._checkpointLogId !== null;
-            let diff =
-                serverStateVector?.byteLength > 0
-                    ? this._bridge.encodeStateDiff(
-                          serverStateVector,
-                          this._documentId
-                      )
-                    : checkpointAlreadyOnServer
-                      ? new Uint8Array()
-                      : this._bridge.encodeStateDiff(
-                            new Uint8Array(),
-                            this._documentId
-                        );
-            if (diff.length === 0) return false;
-            pushCollabIntegrityEvent('sync-complete', {
-                documentId: this._documentId,
-                bytes: diff.length,
-                reconnect: this._lastReconnectReason
-            });
-            const collaborationMessages =
-                createCollaborationMessageEnvelopesFromChangeLogEntries(
-                    this._bridge.getNewChangeLogEntries(),
-                    {
-                        startingLocalSequence: this._seq + 1,
-                        source: 'cloud-adapter.sync-complete',
-                        windowId: this._bridge.windowId
-                    }
-                );
-            this._enqueuePendingDurabilityMessages(collaborationMessages);
-            const pendingCollaborationMessages = dedupeCollaborationMessages(
-                this._pendingDurabilityMessages
-            );
-            this._pendingSyncCompleteOutboundPackets = new Set(
-                this._pendingOutboundPackets
-            );
-            this._pendingSyncCompleteTransactionIds =
-                pendingCollaborationMessages
-                    .map((message) => collaborationMessageKey(message))
-                    .filter(
-                        (value): value is string => typeof value === 'string'
-                    );
-            this._pendingSyncCompleteBroadcastEntryCount =
-                pendingCollaborationMessages.reduce(
-                    (count, message) => count + message.changes.length,
-                    0
-                );
-
-            const totalChunks = Math.ceil(diff.length / SYNC_CHUNK_SIZE);
-            console.log(
-                `CloudAdapter: sending sync-complete ` +
-                    `(${diff.length} bytes, ${totalChunks} chunk(s))`
-            );
-
-            for (let i = 0; i < totalChunks; i++) {
-                const isLast = i === totalChunks - 1;
-                const chunk = diff.slice(
-                    i * SYNC_CHUNK_SIZE,
-                    (i + 1) * SYNC_CHUNK_SIZE
-                );
-                const frame: Record<string, unknown> = {
-                    type: isLast ? 'sync-complete' : 'sync-chunk',
-                    update: u8ToBase64(chunk)
-                };
-                if (totalChunks > 1) {
-                    frame.chunkIndex = i;
-                    frame.totalChunks = totalChunks;
-                }
-                if (isLast) {
-                    frame.collaborationMessages =
-                        pendingCollaborationMessages.length
-                            ? pendingCollaborationMessages
-                            : undefined;
-                    if (this._pendingSyncCompleteTransactionIds[0]) {
-                        frame.clientTransactionId =
-                            this._pendingSyncCompleteTransactionIds[0];
-                    }
-                }
-                this._ws.send(JSON.stringify(frame));
-            }
-            this._noteTransferActivity('sending');
-            return true;
-        } catch (err) {
-            console.warn('CloudAdapter: failed to send sync-complete:', err);
-            return false;
-        }
-    }
-
     /** Concatenate an ordered array of Uint8Array chunks into one buffer. */
     private _mergeChunks(chunks: Uint8Array[]): Uint8Array {
         const totalLen = chunks.reduce((a, c) => a + c.length, 0);
@@ -4460,109 +2465,6 @@ export class CloudAdapter implements FileSystemAdapter {
         seq: number
     ): boolean {
         return ackIsDurable(msg, pendingIds, seq);
-    }
-
-    private _createChunkAccumulator(
-        totalChunks: unknown
-    ): CloudChunkAccumulator | null {
-        return createChunkAccumulator(totalChunks);
-    }
-
-    private _acceptChunk(
-        state: CloudChunkAccumulator,
-        chunkIndex: unknown,
-        bytes: Uint8Array
-    ): boolean {
-        return acceptChunk(state, chunkIndex, bytes);
-    }
-
-    private _accumulateIncomingLiveUpdateChunk(
-        msg: Record<string, unknown>
-    ): void {
-        const chunkKey = getLiveUpdateChunkKey(
-            typeof msg.clientId === 'string' ? msg.clientId : null,
-            typeof msg.seq === 'number' ? msg.seq : null
-        );
-        if (
-            !chunkKey ||
-            typeof msg.update !== 'string' ||
-            !Number.isInteger(msg.chunkIndex) ||
-            !Number.isInteger(msg.totalChunks) ||
-            (msg.totalChunks as number) <= 1 ||
-            (msg.chunkIndex as number) < 0 ||
-            (msg.chunkIndex as number) >= (msg.totalChunks as number)
-        ) {
-            return;
-        }
-
-        let state = this._incomingLiveUpdateChunks.get(chunkKey);
-        if (!state) {
-            const created = this._createChunkAccumulator(msg.totalChunks);
-            if (!created) {
-                return;
-            }
-            state = created;
-            this._incomingLiveUpdateChunks.set(chunkKey, state);
-        }
-
-        const chunkIndex = msg.chunkIndex as number;
-        const bytes = base64ToU8(msg.update);
-        if (!this._acceptChunk(state, chunkIndex, bytes)) {
-            return;
-        }
-    }
-
-    private _consumeIncomingLiveUpdate(
-        msg: Record<string, unknown>
-    ): Uint8Array | null {
-        if (typeof msg.update !== 'string') {
-            return null;
-        }
-
-        if (
-            !Number.isInteger(msg.chunkIndex) ||
-            !Number.isInteger(msg.totalChunks) ||
-            (msg.totalChunks as number) <= 1 ||
-            (msg.chunkIndex as number) < 0 ||
-            (msg.chunkIndex as number) >= (msg.totalChunks as number)
-        ) {
-            return base64ToU8(msg.update);
-        }
-
-        const chunkKey = getLiveUpdateChunkKey(
-            typeof msg.clientId === 'string' ? msg.clientId : null,
-            typeof msg.seq === 'number' ? msg.seq : null
-        );
-        if (!chunkKey) {
-            return null;
-        }
-
-        let state = this._incomingLiveUpdateChunks.get(chunkKey);
-        if (!state) {
-            const created = this._createChunkAccumulator(msg.totalChunks);
-            if (!created) {
-                return null;
-            }
-            state = created;
-            this._incomingLiveUpdateChunks.set(chunkKey, state);
-        }
-
-        const chunkIndex = msg.chunkIndex as number;
-        const bytes = base64ToU8(msg.update);
-        if (!this._acceptChunk(state, chunkIndex, bytes)) {
-            return null;
-        }
-
-        if (
-            state.received !== state.total ||
-            state.chunks.some((chunk) => !chunk)
-        ) {
-            this._incomingLiveUpdateChunks.set(chunkKey, state);
-            return null;
-        }
-
-        this._incomingLiveUpdateChunks.delete(chunkKey);
-        return this._mergeChunks(state.chunks as Uint8Array[]);
     }
 
     /**
@@ -4588,9 +2490,14 @@ export class CloudAdapter implements FileSystemAdapter {
         this._bridge.onLocalUpdate(sendUpdate);
         const sendRevisionSignal = (
             update: Uint8Array,
-            entries: ChangeLogEntry[]
+            entries: ChangeLogEntry[],
+            persistedMessage?: CollaborationMessageEnvelope | null
         ): void => {
             if (this._documentId !== FONT_CORE_DOCUMENT_ID) {
+                return;
+            }
+            if (persistedMessage) {
+                this._enqueueOutboundPacket(update, persistedMessage);
                 return;
             }
             const collaborationMessages =
@@ -4620,14 +2527,6 @@ export class CloudAdapter implements FileSystemAdapter {
         }
         this._outboundFlushScheduled = false;
 
-        if (this._outboxNeedsServerRetarget) {
-            pushCollabIntegrityEvent('flush-hold-retarget', {
-                documentId: this._documentId,
-                pending: this._pendingOutboundPackets.length
-            });
-            return;
-        }
-
         if (this._isBrowserOffline()) {
             pushCollabIntegrityEvent('flush-skip-offline', {
                 documentId: this._documentId,
@@ -4653,7 +2552,13 @@ export class CloudAdapter implements FileSystemAdapter {
             if (!packet.clientTransactionId) {
                 return true;
             }
-            return this._durableOutboxEntries.has(packet.clientTransactionId);
+            return this._wal
+                .recordsFor(this._documentId)
+                .some(
+                    (record) =>
+                        record.clientTransactionId ===
+                        packet.clientTransactionId
+                );
         });
         this._pendingOutboundPackets = this._pendingOutboundPackets.filter(
             (packet) => !packets.includes(packet)
@@ -4698,57 +2603,27 @@ export class CloudAdapter implements FileSystemAdapter {
                 this._armOutboundAckTimeout();
             }
 
-            (
-                window as Window & {
-                    __lastCloudOutboundUpdateBase64?: string;
-                    __lastCloudOutboundUpdateSeq?: number;
-                }
-            ).__lastCloudOutboundUpdateBase64 = u8ToBase64(packet.update);
-            (
-                window as Window & {
-                    __lastCloudOutboundUpdateBase64?: string;
-                    __lastCloudOutboundUpdateSeq?: number;
-                }
-            ).__lastCloudOutboundUpdateSeq = seq;
-
-            const totalChunks = Math.ceil(
-                packet.update.length / SYNC_CHUNK_SIZE
-            );
-            for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex++) {
-                const isLast = chunkIndex === totalChunks - 1;
-                const chunk = packet.update.slice(
-                    chunkIndex * SYNC_CHUNK_SIZE,
-                    (chunkIndex + 1) * SYNC_CHUNK_SIZE
-                );
-                const frame: Record<string, unknown> = {
-                    type: isLast ? 'update' : 'update-chunk',
-                    update: u8ToBase64(chunk),
+            try {
+                const payload = encodeLiveUpdateFrame({
                     clientId: this._clientId ?? '',
-                    seq
-                };
-                if (packet.clientTransactionId) {
-                    frame.clientTransactionId = packet.clientTransactionId;
-                }
-                if (totalChunks > 1) {
-                    frame.chunkIndex = chunkIndex;
-                    frame.totalChunks = totalChunks;
-                }
-                if (isLast && collaborationMessages.length) {
-                    frame.collaborationMessages = collaborationMessages;
-                }
-                try {
-                    this._ws.send(JSON.stringify(frame));
-                } catch (error) {
-                    console.warn(
-                        'CloudAdapter: failed to send outbound update; will retry after reconnect:',
-                        error
-                    );
-                    this._outboundPendingTransactionIds.delete(seq);
-                    this._outboundBroadcastEntryCounts.delete(seq);
-                    this._outboundAckSentAtBySeq.delete(seq);
-                    restoreUnsent(packetIndex);
-                    return;
-                }
+                    seq,
+                    update: packet.update,
+                    clientTransactionId: packet.clientTransactionId,
+                    collaborationMessages: collaborationMessages.length
+                        ? collaborationMessages
+                        : null
+                });
+                this._ws.send(payload);
+            } catch (error) {
+                console.warn(
+                    'CloudAdapter: failed to send outbound update; will retry after reconnect:',
+                    error
+                );
+                this._outboundPendingTransactionIds.delete(seq);
+                this._outboundBroadcastEntryCounts.delete(seq);
+                this._outboundAckSentAtBySeq.delete(seq);
+                restoreUnsent(packetIndex);
+                return;
             }
         }
         pushCollabIntegrityEvent('flush-sent', {
@@ -4827,23 +2702,6 @@ export class CloudAdapter implements FileSystemAdapter {
         }
 
         for (const message of messages) {
-            (
-                window as Window & {
-                    __lastCloudInboundUpdateBase64?: string;
-                    __lastCloudInboundUpdateCount?: number;
-                }
-            ).__lastCloudInboundUpdateBase64 = u8ToBase64(message.update);
-            (
-                window as Window & {
-                    __lastCloudInboundUpdateBase64?: string;
-                    __lastCloudInboundUpdateCount?: number;
-                }
-            ).__lastCloudInboundUpdateCount =
-                ((
-                    window as Window & {
-                        __lastCloudInboundUpdateCount?: number;
-                    }
-                ).__lastCloudInboundUpdateCount ?? 0) + 1;
             const applied = this._applyRemoteUpdate(
                 message.update,
                 message.collaborationMessages?.length
@@ -4967,181 +2825,34 @@ export class CloudAdapter implements FileSystemAdapter {
         startedAt = Date.now(),
         delayOverrideMs = INITIAL_SYNC_TIMEOUT_MS
     ): void {
-        this._clearInitialSyncTimeout();
-        this._initialSyncTimer = setTimeout(() => {
-            this._initialSyncTimer = null;
-
-            if (
-                this._destroyed ||
-                this._status !== 'syncing' ||
-                !this._ws ||
-                this._ws.readyState !== WebSocket.OPEN
-            ) {
-                return;
-            }
-
-            if (
-                this._hasSynced &&
-                this._initialServerStateApplied &&
-                this._initialSyncDurable
-            ) {
-                return;
-            }
-
-            const syncAgeMs = Date.now() - startedAt;
-            if (syncAgeMs < INITIAL_SYNC_MAX_WAIT_MS) {
-                console.warn(
-                    `CloudAdapter: initial sync still pending after ${syncAgeMs}ms; waiting before reconnect`
-                );
-                this._armInitialSyncTimeout(
-                    startedAt,
-                    INITIAL_SYNC_MAX_WAIT_MS - syncAgeMs
-                );
-                return;
-            }
-
-            this._handleInitialSyncTimeout();
-        }, delayOverrideMs);
+        cloudAdapterTimeoutMethods._armInitialSyncTimeout.call(
+            this,
+            startedAt,
+            delayOverrideMs
+        );
     }
 
     private _clearInitialSyncTimeout(): void {
-        if (this._initialSyncTimer !== null) {
-            clearTimeout(this._initialSyncTimer);
-            this._initialSyncTimer = null;
-        }
-    }
-
-    private _clearPendingSyncCompleteTracking(): void {
-        this._pendingSyncCompleteTransactionIds = [];
-        this._pendingSyncCompleteOutboundPackets.clear();
-        this._pendingSyncCompleteBroadcastEntryCount = 0;
+        cloudAdapterTimeoutMethods._clearInitialSyncTimeout.call(this);
     }
 
     private _armOutboundAckTimeout(delayOverrideMs?: number): void {
-        this._clearOutboundAckTimeout();
-        const oldestPendingEntry = this._outboundAckSentAtBySeq
-            .entries()
-            .next().value;
-        if (!oldestPendingEntry) {
-            return;
-        }
-
-        const [seq, sentAt] = oldestPendingEntry as [number, number];
-        const delayMs = Math.max(
-            0,
-            delayOverrideMs ?? OUTBOUND_ACK_TIMEOUT_MS - (Date.now() - sentAt)
+        cloudAdapterTimeoutMethods._armOutboundAckTimeout.call(
+            this,
+            delayOverrideMs
         );
-        this._outboundAckTimer = setTimeout(() => {
-            this._outboundAckTimer = null;
-            if (!this._outboundAckSentAtBySeq.has(seq)) {
-                this._armOutboundAckTimeout();
-                return;
-            }
-            this._handleOutboundAckTimeout(seq);
-        }, delayMs);
     }
 
     private _clearOutboundAckTimeout(): void {
-        if (this._outboundAckTimer !== null) {
-            clearTimeout(this._outboundAckTimer);
-            this._outboundAckTimer = null;
-        }
+        cloudAdapterTimeoutMethods._clearOutboundAckTimeout.call(this);
     }
 
     private _handleInitialSyncTimeout(): void {
-        if (
-            this._destroyed ||
-            this._status !== 'syncing' ||
-            !this._ws ||
-            this._ws.readyState !== WebSocket.OPEN
-        ) {
-            return;
-        }
-
-        if (
-            this._hasSynced &&
-            this._initialServerStateApplied &&
-            this._initialSyncDurable
-        ) {
-            return;
-        }
-
-        const detail = !this._hasSynced
-            ? 'Cloud initial sync timed out before server response'
-            : !this._initialServerStateApplied
-              ? 'Cloud initial sync timed out before applying server state'
-              : 'Cloud initial sync durability ack timed out';
-        console.warn(`CloudAdapter: ${detail}`);
-        this._lastReconnectReason = 'sync-timeout';
-        this._clearAuthenticationTimeout();
-        this._clearInitialSyncTimeout();
-        this._setStatus('connecting', detail);
-        this._markVisibleRebaselineNeeded();
-        this._resetBootstrapStateForReconnect();
-
-        const ws = this._ws;
-        if (ws) {
-            this._ws = null;
-            this._clientId = null;
-            ws.close(CLIENT_RECONNECT_CLOSE_CODE, 'sync-timeout');
-        }
-        this._scheduleReconnect();
+        cloudAdapterTimeoutMethods._handleInitialSyncTimeout.call(this);
     }
 
     private _handleOutboundAckTimeout(seq: number): void {
-        if (
-            this._destroyed ||
-            !this._outboundAckSentAtBySeq.has(seq) ||
-            (this._status !== 'connected' && this._status !== 'syncing')
-        ) {
-            this._armOutboundAckTimeout();
-            return;
-        }
-
-        const sentAt = this._outboundAckSentAtBySeq.get(seq);
-        if (typeof sentAt !== 'number') {
-            this._armOutboundAckTimeout();
-            return;
-        }
-
-        const ackAgeMs = Date.now() - sentAt;
-        const inboundActivitySeen = this._lastInboundMessageAt > sentAt;
-        const inboundQuietMs = inboundActivitySeen
-            ? Date.now() - this._lastInboundMessageAt
-            : Number.POSITIVE_INFINITY;
-        if (
-            inboundActivitySeen &&
-            inboundQuietMs < OUTBOUND_ACK_TIMEOUT_MS &&
-            ackAgeMs < OUTBOUND_ACK_MAX_WAIT_MS
-        ) {
-            const nextCheckDelayMs = Math.min(
-                OUTBOUND_ACK_TIMEOUT_MS - inboundQuietMs,
-                OUTBOUND_ACK_MAX_WAIT_MS - ackAgeMs
-            );
-            this._armOutboundAckTimeout(nextCheckDelayMs);
-            return;
-        }
-
-        const detail = 'Cloud update acknowledgement timed out';
-        console.warn(`CloudAdapter: ${detail}`);
-        this._lastReconnectReason = 'ack-timeout';
-        this._clearAuthenticationTimeout();
-        this._clearOutboundAckTimeout();
-        this._resetLiveAckTracking();
-        this._requeueUnackedOutboxPackets();
-        this._setStatus('connecting', detail);
-        this._markVisibleRebaselineNeeded();
-        this._resetBootstrapStateForReconnect();
-        this._pendingInboundUpdates = [];
-        this._inboundFlushScheduled = false;
-
-        const ws = this._ws;
-        if (ws) {
-            this._ws = null;
-            this._clientId = null;
-            ws.close(CLIENT_RECONNECT_CLOSE_CODE, 'ack-timeout');
-        }
-        this._scheduleReconnect();
+        cloudAdapterTimeoutMethods._handleOutboundAckTimeout.call(this, seq);
     }
 
     private _armAuthenticationTimeout(
@@ -5149,53 +2860,16 @@ export class CloudAdapter implements FileSystemAdapter {
         startedAt = Date.now(),
         delayOverrideMs = AUTHENTICATION_TIMEOUT_MS
     ): void {
-        this._clearAuthenticationTimeout();
-        this._authenticationStartedAt = startedAt;
-        this._authenticationTimer = setTimeout(() => {
-            if (
-                this._destroyed ||
-                this._ws !== ws ||
-                this._status !== 'authenticating'
-            ) {
-                return;
-            }
-
-            const authAgeMs = Date.now() - startedAt;
-            if (authAgeMs < AUTHENTICATION_MAX_WAIT_MS) {
-                console.warn(
-                    `CloudAdapter: authentication still pending after ${authAgeMs}ms; waiting before reconnect`
-                );
-                this._armAuthenticationTimeout(
-                    ws,
-                    startedAt,
-                    AUTHENTICATION_MAX_WAIT_MS - authAgeMs
-                );
-                return;
-            }
-
-            const detail = 'Cloud room authentication timed out';
-            console.warn(`CloudAdapter: ${detail}`);
-            this._lastReconnectReason = 'auth-timeout';
-            this._setStatus('connecting', detail);
-            this._markVisibleRebaselineNeeded();
-            this._resetBootstrapStateForReconnect();
-            if (this._ws === ws) {
-                // Do not wait for a possibly delayed close event before retrying.
-                // Once auth has stalled, this socket is no longer the active path.
-                this._ws = null;
-                this._clientId = null;
-            }
-            ws.close(CLIENT_RECONNECT_CLOSE_CODE, 'auth-timeout');
-            this._scheduleReconnect();
-        }, delayOverrideMs);
+        cloudAdapterTimeoutMethods._armAuthenticationTimeout.call(
+            this,
+            ws,
+            startedAt,
+            delayOverrideMs
+        );
     }
 
     private _clearAuthenticationTimeout(): void {
-        if (this._authenticationTimer !== null) {
-            clearTimeout(this._authenticationTimer);
-            this._authenticationTimer = null;
-        }
-        this._authenticationStartedAt = 0;
+        cloudAdapterTimeoutMethods._clearAuthenticationTimeout.call(this);
     }
 
     private _getTerminalCloseDetail(
@@ -5260,9 +2934,7 @@ export class CloudAdapter implements FileSystemAdapter {
         if (!bridge) {
             return;
         }
-        const skipBootstrap =
-            this._canSkipBootstrapOnReconnect &&
-            !this._outboxNeedsServerRetarget;
+        const skipBootstrap = this._canSkipBootstrapOnReconnect;
         try {
             await this.connectWithCredentials(bridge, token, roomUrl, {
                 bootstrapMode: skipBootstrap ? 'skip' : 'required',
@@ -5301,124 +2973,7 @@ export class CloudAdapter implements FileSystemAdapter {
         }, delayMs);
     }
 
-    private _startLiveness(): void {
-        this._stopLiveness();
-        if (this._destroyed || !this._ws) {
-            return;
-        }
-        this._pingTimer = setInterval(() => {
-            this._sendPing();
-        }, CLOUD_PING_INTERVAL_MS);
-        this._livenessTimer = setInterval(() => {
-            this._checkLiveness();
-        }, CLOUD_PING_INTERVAL_MS);
-    }
-
-    private _stopLiveness(): void {
-        if (this._pingTimer !== null) {
-            clearInterval(this._pingTimer);
-            this._pingTimer = null;
-        }
-        if (this._livenessTimer !== null) {
-            clearInterval(this._livenessTimer);
-            this._livenessTimer = null;
-        }
-    }
-
-    private _sendPing(): void {
-        const ws = this._ws;
-        const openReadyState =
-            typeof WebSocket !== 'undefined' &&
-            typeof WebSocket.OPEN === 'number'
-                ? WebSocket.OPEN
-                : 1;
-        if (!ws || ws.readyState !== openReadyState) {
-            return;
-        }
-        try {
-            ws.send(JSON.stringify({ type: 'ping', sentAt: Date.now() }));
-        } catch (error) {
-            console.warn('CloudAdapter: ping failed', error);
-        }
-    }
-
-    private _checkLiveness(): void {
-        if (this._destroyed || !this._ws || !this._lastInboundMessageAt) {
-            return;
-        }
-        const inboundAgeMs = Date.now() - this._lastInboundMessageAt;
-        if (inboundAgeMs < CLOUD_LIVENESS_STALE_MS) {
-            return;
-        }
-        this._livenessTimeoutCount += 1;
-        this._lastReconnectReason = 'liveness-timeout';
-        console.warn(
-            `CloudAdapter: liveness timeout after ${inboundAgeMs}ms without inbound traffic`
-        );
-        const ws = this._ws;
-        this._ws = null;
-        this._clientId = null;
-        this._markVisibleRebaselineNeeded();
-        this._resetBootstrapStateForReconnect();
-        this._setStatus('connecting', 'Cloud connection timed out');
-        ws.close(CLIENT_RECONNECT_CLOSE_CODE, 'liveness-timeout');
-        this._scheduleReconnect();
-    }
-
-    private _clearReconnectTimer(): void {
-        if (this._reconnectTimer !== null) {
-            clearTimeout(this._reconnectTimer);
-            this._reconnectTimer = null;
-        }
-    }
-
     // ── FileSystemAdapter stubs ───────────────────────────────────
-
-    async scanDirectory(_path: string): Promise<Record<string, FileInfo>> {
-        try {
-            const resp = await fetch(
-                `${this._websiteBaseUrl}/api/cloud/assets`,
-                {
-                    credentials: 'include',
-                    headers: getCloudRequestHeaders()
-                }
-            );
-            if (!resp.ok) {
-                return {};
-            }
-            const data = (await resp.json()) as {
-                assets: Array<{
-                    id: string;
-                    name: string;
-                    updatedAt: number;
-                    role?: CloudAssetRole;
-                    connectedPeers?: number;
-                }>;
-            };
-            const items: Record<string, FileInfo> = {};
-            this._assetRoles.clear();
-            for (const asset of data.assets ?? []) {
-                if (asset.role) {
-                    this._assetRoles.set(asset.id, asset.role);
-                }
-                const displayName = asset.name.endsWith('.babelfont')
-                    ? asset.name
-                    : `${asset.name}.babelfont`;
-                items[displayName] = {
-                    path: `cloud://${asset.id}`,
-                    is_dir: false,
-                    mtime: new Date(asset.updatedAt).toISOString(),
-                    ...(asset.role ? { cloudRole: asset.role } : {}),
-                    ...(typeof asset.connectedPeers === 'number'
-                        ? { cloudConnectedPeers: asset.connectedPeers }
-                        : {})
-                };
-            }
-            return items;
-        } catch {
-            return {};
-        }
-    }
 
     getCachedAssetRole(assetId: string): CloudAssetRole | null {
         return this._assetRoles.get(assetId) ?? null;
@@ -5435,77 +2990,71 @@ export class CloudAdapter implements FileSystemAdapter {
         this._assetRoles.set(assetId, role);
     }
 
-    async readFile(_path: string): Promise<string | Uint8Array> {
-        throw new Error('CloudAdapter.readFile not implemented in Phase 0');
+    async scanDirectory(path: string): Promise<Record<string, FileInfo>> {
+        return cloudAdapterFsMethods.scanDirectory.call(this, path);
     }
 
-    async writeFile(
-        _path: string,
-        _content: string | Uint8Array
-    ): Promise<void> {
-        throw new Error('CloudAdapter.writeFile not implemented in Phase 0');
+    async readFile(path: string): Promise<string | Uint8Array> {
+        return cloudAdapterFsMethods.readFile.call(this, path);
     }
 
-    async createFolder(_path: string): Promise<void> {
-        throw new Error('CloudAdapter.createFolder not implemented in Phase 0');
+    async writeFile(path: string, content: string | Uint8Array): Promise<void> {
+        return cloudAdapterFsMethods.writeFile.call(this, path, content);
+    }
+
+    async createFolder(path: string): Promise<void> {
+        return cloudAdapterFsMethods.createFolder.call(this, path);
     }
 
     async deleteItem(path: string, isDir: boolean): Promise<void> {
-        if (isDir) {
-            throw new Error('Cloud folders are not supported');
-        }
-
-        const assetId = path.replace(/^cloud:\/\//, '').trim();
-        if (!assetId) {
-            throw new Error('Missing cloud asset id');
-        }
-
-        const deleteUrl = `${this._websiteBaseUrl}/api/cloud/assets/${encodeURIComponent(assetId)}`;
-        for (let attempt = 0; attempt < 1000; attempt += 1) {
-            const resp = await fetch(deleteUrl, {
-                method: 'DELETE',
-                credentials: 'include',
-                headers: getCloudRequestHeaders({
-                    'Content-Type': 'application/json'
-                })
-            });
-
-            if (!resp.ok) {
-                const body = await resp.text().catch(() => '');
-                throw new Error(
-                    `Failed to delete cloud asset: ${resp.status} ${body}`
-                );
-            }
-            const data = (await resp.json().catch(() => ({}))) as {
-                complete?: boolean;
-                success?: boolean;
-                error?: string;
-            };
-            if (data.complete !== false) {
-                if (data.success !== true) {
-                    throw new Error(
-                        data.error ||
-                            'Cloud delete response did not confirm success'
-                    );
-                }
-                if (this._assetId === assetId) {
-                    this.disconnect();
-                }
-                return;
-            }
-        }
-        throw new Error('Cloud delete did not finish');
+        return cloudAdapterFsMethods.deleteItem.call(this, path, isDir);
     }
 
     async renameItem(
-        _oldPath: string,
-        _newName: string,
-        _isDir: boolean
+        oldPath: string,
+        newName: string,
+        isDir: boolean
     ): Promise<void> {
-        throw new Error('CloudAdapter.renameItem not implemented in Phase 0');
+        return cloudAdapterFsMethods.renameItem.call(
+            this,
+            oldPath,
+            newName,
+            isDir
+        );
     }
 
-    async fileExists(_path: string): Promise<boolean> {
-        return false;
+    async fileExists(path: string): Promise<boolean> {
+        return cloudAdapterFsMethods.fileExists.call(this, path);
+    }
+
+    private _startLiveness(): void {
+        cloudAdapterLivenessMethods._startLiveness.call(this);
+    }
+
+    private _stopLiveness(): void {
+        cloudAdapterLivenessMethods._stopLiveness.call(this);
+    }
+
+    private _sendPing(): void {
+        cloudAdapterLivenessMethods._sendPing.call(this);
+    }
+
+    private _checkLiveness(): void {
+        cloudAdapterLivenessMethods._checkLiveness.call(this);
+    }
+
+    private _clearReconnectTimer(): void {
+        cloudAdapterLivenessMethods._clearReconnectTimer.call(this);
     }
 }
+
+Object.assign(CloudAdapter.prototype, {
+    _isTransientPackHydrateError:
+        cloudAdapterShardIoMethods._isTransientPackHydrateError,
+    _seedPack: cloudAdapterShardIoMethods._seedPack,
+    _collectPackSeedFrame: cloudAdapterShardIoMethods._collectPackSeedFrame,
+    _seedOneShard: cloudAdapterShardIoMethods._seedOneShard,
+    _hydratePack: cloudAdapterShardIoMethods._hydratePack,
+    _hydratePackOnce: cloudAdapterShardIoMethods._hydratePackOnce,
+    _hydratePerShard: cloudAdapterShardIoMethods._hydratePerShard
+});

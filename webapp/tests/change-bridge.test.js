@@ -5420,14 +5420,14 @@ describe('Model mutable getter change recording', () => {
             includeUndone: true
         }).filter((item) => item.transactionLabel === 'Reorder features');
 
-        expect(reorderEntries).toHaveLength(2);
+        // Drag/op collapse nets multiple reorder writes into one changelog entry.
+        expect(reorderEntries).toHaveLength(1);
         expect(historyItems).toHaveLength(1);
-        expect(historyItems[0].entries).toHaveLength(2);
+        expect(historyItems[0].entries).toHaveLength(1);
         expect(
             new Set(reorderEntries.map((entry) => entry.historyItemId))
         ).toEqual(new Set([historyItems[0].id]));
         expect(reorderEntries.map((entry) => entry.historyTargetKey)).toEqual([
-            'feature:liga:1',
             'feature:liga:1'
         ]);
 

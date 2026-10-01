@@ -134,6 +134,8 @@ module.exports = {
             exclude: [
                 '*.test.js',
                 '*.d.ts',
+                // Generated protocol bindings include server-only helpers.
+                'generated/*.ts',
                 'change-bridge*.ts',
                 'change-log.ts',
                 'window-sync.ts',
@@ -147,7 +149,13 @@ module.exports = {
             template: './index.html',
             inject: 'body',
             scriptLoading: 'blocking',
-            chunks: ['bootstrap']
+            chunks: ['bootstrap'],
+            // webpack-dev-server proxies /cdn-jsdelivr → jsDelivr so the
+            // editor loads CDN scripts same-origin (COEP-safe) even when the
+            // browser binary cannot reach the public CDN directly.
+            cdnBase: process.argv.includes('serve')
+                ? '/cdn-jsdelivr'
+                : 'https://cdn.jsdelivr.net'
         }),
         new webpack.DefinePlugin({
             'process.env.EDITOR_VERSION': JSON.stringify(EDITOR_VERSION),
@@ -245,6 +253,15 @@ module.exports = {
                 protocol: 'wss'
             }
         },
+        proxy: [
+            {
+                context: ['/cdn-jsdelivr'],
+                target: 'https://cdn.jsdelivr.net',
+                pathRewrite: { '^/cdn-jsdelivr': '' },
+                changeOrigin: true,
+                secure: true
+            }
+        ],
         headers: {
             'Cross-Origin-Embedder-Policy': 'require-corp',
             'Cross-Origin-Opener-Policy': 'same-origin',

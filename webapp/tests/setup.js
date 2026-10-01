@@ -1,3 +1,11 @@
+const { TextDecoder, TextEncoder } = require('util');
+if (typeof globalThis.TextEncoder === 'undefined') {
+    globalThis.TextEncoder = TextEncoder;
+}
+if (typeof globalThis.TextDecoder === 'undefined') {
+    globalThis.TextDecoder = TextDecoder;
+}
+
 const hasWindow = typeof window !== 'undefined';
 
 // GlyphCanvas (required below) loads window-ui-state, which caches layout on

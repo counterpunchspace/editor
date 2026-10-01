@@ -183,7 +183,7 @@ Cut a preview release (GitHub prerelease + matching trio deploy) with:
 ./previewrelease.sh
 ```
 
-You do not need to wait for CI first. The workflow waits for a green `ci.yml` push run on that SHA, freezes editor/website/collab SHAs, runs cloud-collab e2e, then deploys preview hosts and tags all three repos (`v0.0.N-pre.DATE`). Notes are the Unreleased changelog diff since the previous preview. It does not rewrite `CHANGELOG.md`.
+You do not need to wait for CI first. The workflow waits for a green `ci.yml` push run on that SHA, freezes editor/website/collab SHAs, verifies the cloud-collab e2e attestation from that CI run (it does not rerun the suite), then deploys preview hosts and tags all three repos (`v0.0.N-pre.DATE`). Notes are the Unreleased changelog diff since the previous preview. It does not rewrite `CHANGELOG.md`.
 
 Users will see an orange notification on the Preferences gear within about 10 minutes. Preferences shows the current version, Check for updates, and an Update control with a changelog link when a new build is ready.
 

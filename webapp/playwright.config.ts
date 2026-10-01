@@ -1,11 +1,101 @@
 /// <reference types="node" />
 
 import { defineConfig, devices } from '@playwright/test';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 
 const { getWorktreeAppUrl } = require('./scripts/worktree-config.cjs');
 
 const LOCAL_APP_URL = getWorktreeAppUrl();
 
+/**
+ * Cloud-collab launch browser selection.
+ *
+ * Prefer the installed Google Chrome channel when present: Playwright's
+ * bundled Chrome-for-Testing often cannot reach public CDNs (jsDelivr) in
+ * nested agent / filtered network environments, which leaves `page.goto`
+ * waiting forever on `load` while blocking `<script src="https://cdn…">`
+ * tags never finish. System Chrome reaches those hosts normally.
+ *
+ * Fall back to full Chromium-for-Testing (not chrome-headless-shell): nested
+ * macOS seatbelt SIGSEGVs headless_shell on launch (SEGV_ACCERR); the full
+ * browser still works with chromiumSandbox:false. Override with
+ * PLAYWRIGHT_CHROMIUM_EXECUTABLE if needed.
+ */
+function resolveCloudCollabChromiumExecutable(): string | undefined {
+    if (process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE) {
+        return process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE;
+    }
+    const browsersRoot =
+        process.env.PLAYWRIGHT_BROWSERS_PATH ||
+        path.join(os.homedir(), 'Library', 'Caches', 'ms-playwright');
+    const candidates: string[] = [];
+    try {
+        for (const entry of fs.readdirSync(browsersRoot)) {
+            if (!entry.startsWith('chromium-') || entry.includes('headless')) {
+                continue;
+            }
+            const base = path.join(browsersRoot, entry);
+            candidates.push(
+                path.join(
+                    base,
+                    'chrome-mac-arm64',
+                    'Google Chrome for Testing.app',
+                    'Contents',
+                    'MacOS',
+                    'Google Chrome for Testing'
+                ),
+                path.join(
+                    base,
+                    'chrome-mac-x64',
+                    'Google Chrome for Testing.app',
+                    'Contents',
+                    'MacOS',
+                    'Google Chrome for Testing'
+                ),
+                path.join(base, 'chrome-linux', 'chrome'),
+                path.join(base, 'chrome-win64', 'chrome.exe')
+            );
+        }
+    } catch {
+        /* browsers path missing */
+    }
+    return candidates.find((candidate) => {
+        try {
+            return fs.existsSync(candidate);
+        } catch {
+            return false;
+        }
+    });
+}
+
+function systemChromeAvailable(): boolean {
+    return (
+        fs.existsSync(
+            '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
+        ) ||
+        fs.existsSync('/usr/bin/google-chrome') ||
+        fs.existsSync('/usr/bin/google-chrome-stable')
+    );
+}
+
+const CLOUD_COLLAB_USE_SYSTEM_CHROME = process.env
+    .PLAYWRIGHT_CHROMIUM_EXECUTABLE
+    ? false
+    : process.env.CLOUD_COLLAB_USE_SYSTEM_CHROME === '0'
+      ? false
+      : systemChromeAvailable();
+
+const CLOUD_COLLAB_CHROMIUM_EXECUTABLE = CLOUD_COLLAB_USE_SYSTEM_CHROME
+    ? undefined
+    : resolveCloudCollabChromiumExecutable();
+
+const CLOUD_COLLAB_LAUNCH_BROWSER = CLOUD_COLLAB_USE_SYSTEM_CHROME
+    ? { channel: 'chrome' as const }
+    : CLOUD_COLLAB_CHROMIUM_EXECUTABLE
+      ? { executablePath: CLOUD_COLLAB_CHROMIUM_EXECUTABLE }
+      : {};
 /**
  * Playwright Configuration for Context Font Editor
  *
@@ -118,6 +208,7 @@ export default defineConfig({
             use: {
                 ...devices['Desktop Chrome'],
                 launchOptions: {
+                    ...CLOUD_COLLAB_LAUNCH_BROWSER,
                     args: [
                         '--enable-features=SharedArrayBuffer',
                         '--disable-http2',
@@ -128,7 +219,9 @@ export default defineConfig({
                         '--no-default-browser-check',
                         '--no-first-run'
                     ],
-                    chromiumSandbox: true
+                    // Nested seatbelt (Cursor agent / some CI hosts) SIGSEGVs
+                    // headless shell when Chrome's own sandbox is enabled.
+                    chromiumSandbox: false
                 },
                 contextOptions: {}
             }
@@ -142,6 +235,7 @@ export default defineConfig({
                       use: {
                           ...devices['Desktop Chrome'],
                           launchOptions: {
+                              ...CLOUD_COLLAB_LAUNCH_BROWSER,
                               args: [
                                   '--enable-features=SharedArrayBuffer',
                                   '--disable-extensions',
@@ -151,13 +245,12 @@ export default defineConfig({
                                   '--no-default-browser-check',
                                   '--no-first-run'
                               ],
-                              chromiumSandbox: true
+                              chromiumSandbox: false
                           }
                       }
                   }
               ]
             : [])
-
         // {
         //     name: 'webkit',
         //     use: {
