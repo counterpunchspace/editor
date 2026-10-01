@@ -13,3 +13,5 @@ test-results/
 playwright-report/
 # Local cloud-collab wrangler state (can include multi-gigabyte sqlite files)
 .cloud-collab-e2e-wrangler/
+# Generated from collab; must stay byte-identical to codegen output
+js/generated/

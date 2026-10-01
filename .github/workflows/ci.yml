@@ -65,10 +65,22 @@ jobs:
                   BUILD_HASH_FULL: ${{ steps.version.outputs.commit_full }}
                   BUILD_HASH_SHORT: ${{ steps.version.outputs.commit_short }}
 
+            # The protocol bindings check generates the expected files from collab.
+            - name: Checkout collab for protocol bindings check
+              if: matrix.shard == 1
+              uses: actions/checkout@v4
+              with:
+                  repository: ${{ vars.COLLAB_REPOSITORY || format('{0}/collab', github.repository_owner) }}
+                  ref: ${{ vars.COLLAB_SHA != '' && vars.COLLAB_SHA || 'main' }}
+                  path: _collab
+                  token: ${{ secrets.CLOUD_E2E_PAT || github.token }}
+
             # Graph chokepoints, type drift, protocol bindings, tsc and jest.
             - name: Run static checks and jest
               if: matrix.shard == 1
               run: npm run test:checks --prefix webapp
+              env:
+                  COLLAB_ROOT: ${{ github.workspace }}/_collab
 
             - name: Run chromium Playwright shard
               run: npx playwright test --project=chromium --shard=${{ matrix.shard }}/3

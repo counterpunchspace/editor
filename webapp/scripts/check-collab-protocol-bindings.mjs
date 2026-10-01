@@ -14,9 +14,12 @@ import { fileURLToPath } from 'node:url';
 const here = path.dirname(fileURLToPath(import.meta.url));
 const editorRoot = path.resolve(here, '../..');
 const workspaceRoot = path.resolve(editorRoot, '..');
+// CI checks the collab repo out elsewhere and passes its root here.
+const collabRoot =
+    process.env.COLLAB_ROOT || path.join(workspaceRoot, 'collab/collab');
 const checkBindings = path.join(
-    workspaceRoot,
-    'collab/collab/packages/protocol/scripts/check-bindings.mjs'
+    collabRoot,
+    'packages/protocol/scripts/check-bindings.mjs'
 );
 const editorOut = path.join(editorRoot, 'webapp/js/generated');
 
