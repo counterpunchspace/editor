@@ -197,8 +197,10 @@ export default defineConfig({
                         '--no-default-browser-check',
                         '--no-first-run'
                     ],
-                    // Force clean browser context (no user data)
-                    chromiumSandbox: true
+                    // Force clean browser context (no user data). GitHub's
+                    // Ubuntu runners disallow unprivileged user namespaces,
+                    // so the Chromium sandbox cannot start there.
+                    chromiumSandbox: !process.env.CI
                 },
                 // Each Playwright test gets a fresh browser context.
                 contextOptions: {}
