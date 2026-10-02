@@ -170,7 +170,7 @@ npm run test:snapshots
 4. Creates and pushes git tag `vX.Y.Z`
 5. Triggers GitHub Actions **Release**, which certifies the editor then runs composed cutover (production workers + Pages) and tags website + collab with the same version. `trio.json` is attached to the GitHub release.
 
-`previewrelease.sh` pushes unpushed `main` commits and starts **Preview Release**. You do not need to wait for CI locally: the workflow waits for a green `ci.yml` push run on that SHA, freezes the editor/website/collab trio, runs cloud-collab e2e, deploys preview Cloudflare (validator → compactor → room-preview → websitepreview → editorpreview), tags all three repos, and publishes the GitHub prerelease (`v0.0.N-pre.DATE`). Notes are the Unreleased changelog diff. It does not rewrite `CHANGELOG.md`. Canonical write-up: `developer-docs/COMPOSED_RELEASE.md`.
+`previewrelease.sh` pushes unpushed `main` commits and starts **Preview Release**. You do not need to wait for CI locally: the workflow waits for a green `ci.yml` push run on that SHA, freezes the editor/website/collab trio, runs cloud-collab e2e, deploys preview Cloudflare (validator → compactor → room-preview, applies `schema.sql` to shared D1, then websitepreview → editorpreview), tags all three repos, and publishes the GitHub prerelease (`v0.0.N-pre.DATE`). Notes are the Unreleased changelog diff. It does not rewrite `CHANGELOG.md`. Canonical write-up: `developer-docs/COMPOSED_RELEASE.md`.
 
 ### Pushing the trio (`push.sh`)
 

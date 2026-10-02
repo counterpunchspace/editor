@@ -38,7 +38,7 @@ Or Actions → **Preview Release**. You do not need to wait for CI locally. The 
 3. Freezes editor / website / collab SHAs (`main`, or `WEBSITE_SHA` / `COLLAB_SHA` if those repo variables are set).
 4. Waits for a successful website and collab `deploy.yml` **push** run on those frozen SHAs (up to 90 minutes each). A failed or missing sibling run refuses to publish.
 5. Verifies the cloud-collab Playwright e2e attestation. The suite runs once, sharded, in editor `ci.yml`; CI uploads `cloud-e2e-trio` (the website and collab SHAs it tested) only when all shards pass, and `scripts/verify-cloud-e2e-attestation.sh` fails the cutover if those differ from the frozen trio. If website or collab `main` moved since the editor CI ran, rerun that CI run.
-6. Deploys **validator → compactor → room → website Pages**, then a **real-email signup gate** against the live website origin, then **editor Pages**.
+6. Deploys **validator → compactor → room**, applies `schema.sql` to shared D1 `context_users`, deploys **website Pages**, then a **real-email signup gate** against the live website origin, then **editor Pages**.
 7. Tags all three repos with the preview version (`v0.0.N-pre.DATE`, monotonic N; DATE is the UTC day of the cut).
 8. Publishes the GitHub prerelease with Unreleased changelog notes plus `trio.json`.
 
@@ -72,7 +72,7 @@ Composed cutover deploys Pages with `cloudflare/wrangler-action` (`pages deploy 
 
 - `CLOUD_E2E_PAT` — GitHub PAT with contents **read + write** on private `website` and `collab` (checkout + sibling tags), and **Actions: Read** on those repos so cutover can require a green push run on the frozen SHAs. Contents read-only is not enough.
 - `CLOUDFLARE_API_TOKEN` — one token Wrangler uses for Workers **and** Pages on both preview and production. It must include:
-  - Account: Workers Scripts Edit, Workers R2 Storage Edit, Cloudflare Pages Edit, **D1 Edit** (signup gate deletes the plus-address user from `context_users`)
+  - Account: Workers Scripts Edit, Workers R2 Storage Edit, Cloudflare Pages Edit, **D1 Edit** (cutover applies `schema.sql` to `context_users`, and the signup gate deletes the plus-address user from that database)
   - Zone `counterpunch.space`: Workers Routes Edit (needed to attach `preview.rooms.counterpunch.space` / production room hostname). Account-only Workers Scripts is enough for `*.workers.dev` (validator/compactor) and fails on zone Worker routes with `No access to the specified resource`. DNS Edit is not required for that routes call.
 - `CLOUDFLARE_ACCOUNT_ID`
 - `SIGNUP_E2E_IMAP_USER` — Gmail address used only for the cutover magic-link gate (`…@gmail.com`)
