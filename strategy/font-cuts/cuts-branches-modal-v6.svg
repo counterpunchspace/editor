@@ -1,0 +1,83 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="780" viewBox="0 0 1000 780" font-family="Inter, Helvetica Neue, Helvetica, Arial, sans-serif">
+<rect width="1000" height="780" fill="#181818"/><rect x="20" y="20" width="960" height="740" rx="12" fill="#2a2a2a" stroke="#555555"/>
+<text x="52" y="72" fill="#e0e0e0" font-size="22" font-weight="600">Cuts · Fustat</text>
+<text x="928" y="73" fill="#b0b0b0" font-size="24" text-anchor="middle">✕</text><line x1="20" y1="104" x2="980" y2="104" stroke="#555555"/>
+<line x1="60" y1="154" x2="930" y2="154" stroke="#555555" stroke-width="1.5"/><path d="M 930,149 L 940,154 L 930,159 Z" fill="#555555"/>
+<text x="60" y="140" fill="#b0b0b0" font-size="12" letter-spacing="1.5">TIME</text><text x="940" y="140" fill="#b0b0b0" font-size="12" text-anchor="end">now</text>
+<text x="160" y="140" fill="#e0e0e0" font-size="14" font-weight="600" text-anchor="middle">12 Aug</text>
+<line x1="160" y1="154" x2="160" y2="164" stroke="#555555" stroke-width="1.5"/>
+<text x="384" y="140" fill="#e0e0e0" font-size="14" font-weight="600" text-anchor="middle">3 Sep</text>
+<line x1="384" y1="154" x2="384" y2="164" stroke="#555555" stroke-width="1.5"/>
+<text x="444" y="140" fill="#e0e0e0" font-size="14" font-weight="600" text-anchor="middle">20 Sep</text>
+<line x1="444" y1="154" x2="444" y2="164" stroke="#555555" stroke-width="1.5"/>
+<text x="668" y="140" fill="#e0e0e0" font-size="14" font-weight="600" text-anchor="middle">5 Oct</text>
+<line x1="668" y1="154" x2="668" y2="164" stroke="#555555" stroke-width="1.5"/>
+<line x1="80" y1="205" x2="920" y2="205" stroke="#e0e0e0" stroke-width="5" stroke-linecap="round"/><path d="M 918,197 L 934,205 L 918,213 Z" fill="#e0e0e0"/>
+<circle cx="100" cy="205" r="10" fill="#2a2a2a" stroke="#e0e0e0" stroke-width="5"/>
+<text x="135" y="183" fill="#e0e0e0" font-size="17" font-weight="700">RETAIL</text><text x="202" y="183" fill="#b0b0b0" font-size="13">baseline · compared against</text>
+<path d="M 160,205 V 345 Q 160,367 182,367 H 194" fill="none" stroke="#c08ee3" stroke-width="3.5" stroke-linecap="round"/><circle cx="160" cy="205" r="6" fill="#c08ee3"/>
+<path d="M 384,205 V 243 Q 384,265 406,265 H 418" fill="none" stroke="#54a3dc" stroke-width="3.5" stroke-linecap="round"/><circle cx="384" cy="205" r="6" fill="#54a3dc"/>
+<path d="M 444,367 V 405 Q 444,427 466,427 H 478" fill="none" stroke="#00c4e8" stroke-width="5.5" stroke-linecap="round"/><circle cx="444" cy="367" r="6" fill="#00c4e8"/>
+<path d="M 668,427 V 465 Q 668,487 690,487 H 702" fill="none" stroke="#c08ee3" stroke-width="3.5" stroke-linecap="round"/><circle cx="668" cy="427" r="6" fill="#c08ee3"/>
+<line x1="418" y1="265" x2="920" y2="265" stroke="#54a3dc" stroke-width="3.5" stroke-linecap="round"/><path d="M 918,257 L 934,265 L 918,273 Z" fill="#54a3dc"/>
+<circle cx="418" cy="265" r="10" fill="#2a2a2a" stroke="#54a3dc" stroke-width="3.5"/>
+<text x="412" y="243" fill="#e0e0e0" font-size="17" font-weight="700">ArabicDisplay</text>
+<text x="544.2" y="243" fill="#b0b0b0" font-size="13">3 Sep</text>
+<rect x="400" y="283.0" width="32" height="32" rx="6" fill="#e3b341" fill-opacity="0.28" stroke="#e3b341" stroke-width="2"/>
+<text x="416" y="306" fill="#f3f4f6" fill-opacity="1" font-size="19" text-anchor="middle">ب</text>
+<rect x="438" y="283.0" width="32" height="32" rx="6" fill="#3fb950" fill-opacity="0.28" stroke="#3fb950" stroke-width="2"/>
+<text x="454" y="306" fill="#f3f4f6" fill-opacity="1" font-size="19" text-anchor="middle">ه</text>
+<rect x="476" y="283.0" width="32" height="32" rx="6" fill="#f85149" fill-opacity="0.28" stroke="#f85149" stroke-width="2"/>
+<text x="492" y="306" fill="#f3f4f6" fill-opacity="0.55" font-size="19" text-anchor="middle" text-decoration="line-through">لا</text>
+<rect x="402" y="327" width="56" height="22" rx="11" fill="#3a3a3a"/><text x="430" y="342" fill="#b0b0b0" font-size="13" text-anchor="middle">⇄ RTL</text>
+<rect x="464" y="327" width="40" height="22" rx="11" fill="#3a3a3a"/><text x="484" y="342" fill="#b0b0b0" font-size="13" text-anchor="middle">{ }</text>
+<line x1="194" y1="367" x2="920" y2="367" stroke="#c08ee3" stroke-width="3.5" stroke-linecap="round"/><path d="M 918,359 L 934,367 L 918,375 Z" fill="#c08ee3"/>
+<circle cx="194" cy="367" r="10" fill="#2a2a2a" stroke="#c08ee3" stroke-width="3.5"/>
+<text x="188" y="345" fill="#e0e0e0" font-size="17" font-weight="700">Magazine</text>
+<text x="273.2" y="345" fill="#b0b0b0" font-size="13">12 Aug</text>
+<rect x="176" y="385.0" width="32" height="32" rx="6" fill="#e3b341" fill-opacity="0.28" stroke="#e3b341" stroke-width="2"/>
+<text x="192" y="408" fill="#f3f4f6" fill-opacity="1" font-size="19" text-anchor="middle">R</text>
+<rect x="214" y="385.0" width="32" height="32" rx="6" fill="#e3b341" fill-opacity="0.28" stroke="#e3b341" stroke-width="2"/>
+<text x="230" y="408" fill="#f3f4f6" fill-opacity="1" font-size="19" text-anchor="middle">a</text>
+<rect x="252" y="385.0" width="32" height="32" rx="6" fill="#e3b341" fill-opacity="0.28" stroke="#e3b341" stroke-width="2"/>
+<text x="268" y="408" fill="#f3f4f6" fill-opacity="1" font-size="19" text-anchor="middle">g</text>
+<rect x="290" y="385.0" width="32" height="32" rx="6" fill="#3fb950" fill-opacity="0.28" stroke="#3fb950" stroke-width="2"/>
+<text x="306" y="408" fill="#f3f4f6" fill-opacity="1" font-size="19" text-anchor="middle">&amp;</text>
+<text x="344" y="407" fill="#b0b0b0" font-size="15" font-weight="700" text-anchor="middle">+2</text>
+<rect x="178" y="429" width="24" height="22" rx="11" fill="#3a3a3a"/><text x="190" y="444" fill="#b0b0b0" font-size="13" text-anchor="middle">↔</text>
+<rect x="208" y="429" width="24" height="22" rx="11" fill="#3a3a3a"/><text x="220" y="444" fill="#b0b0b0" font-size="13" text-anchor="middle">⇄</text>
+<rect x="238" y="429" width="32" height="22" rx="11" fill="#3a3a3a"/><text x="254" y="444" fill="#b0b0b0" font-size="13" text-anchor="middle">Aa</text>
+<rect x="276" y="429" width="40" height="22" rx="11" fill="#3a3a3a"/><text x="296" y="444" fill="#b0b0b0" font-size="13" text-anchor="middle">{ }</text>
+<line x1="478" y1="427" x2="920" y2="427" stroke="#00c4e8" stroke-width="5.5" stroke-linecap="round"/><path d="M 918,419 L 934,427 L 918,435 Z" fill="#00c4e8"/>
+<circle cx="478" cy="427" r="15" fill="#2a2a2a" stroke="#00c4e8" stroke-width="5.5"/><circle cx="478" cy="427" r="5" fill="#00c4e8"/>
+<text x="472" y="405" fill="#00c4e8" font-size="17" font-weight="700">MagazineTight</text>
+<text x="604.2" y="405" fill="#b0b0b0" font-size="13">20 Sep</text>
+<rect x="656.2" y="390" width="52" height="19" rx="9.5" fill="#00c4e8"/><text x="682.2" y="404" fill="#1a1a1a" font-size="11" font-weight="800" text-anchor="middle">ACTIVE</text>
+<rect x="460" y="445.0" width="32" height="32" rx="6" fill="#e3b341" fill-opacity="0.28" stroke="#e3b341" stroke-width="2"/>
+<text x="476" y="468" fill="#f3f4f6" fill-opacity="1" font-size="19" text-anchor="middle">a</text>
+<rect x="498" y="445.0" width="32" height="32" rx="6" fill="#3fb950" fill-opacity="0.28" stroke="#3fb950" stroke-width="2"/>
+<text x="514" y="468" fill="#f3f4f6" fill-opacity="1" font-size="19" text-anchor="middle">ﬃ</text>
+<rect x="536" y="445.0" width="32" height="32" rx="6" fill="#f85149" fill-opacity="0.28" stroke="#f85149" stroke-width="2"/>
+<text x="552" y="468" fill="#f3f4f6" fill-opacity="0.55" font-size="19" text-anchor="middle" text-decoration="line-through">ß</text>
+<rect x="462" y="489" width="24" height="22" rx="11" fill="#3a3a3a"/><text x="474" y="504" fill="#b0b0b0" font-size="13" text-anchor="middle">↔</text>
+<rect x="492" y="489" width="24" height="22" rx="11" fill="#3a3a3a"/><text x="504" y="504" fill="#b0b0b0" font-size="13" text-anchor="middle">⇄</text>
+<line x1="702" y1="487" x2="920" y2="487" stroke="#c08ee3" stroke-width="3.5" stroke-linecap="round"/><path d="M 918,479 L 934,487 L 918,495 Z" fill="#c08ee3"/>
+<circle cx="702" cy="487" r="10" fill="#2a2a2a" stroke="#c08ee3" stroke-width="3.5"/>
+<text x="696" y="465" fill="#e0e0e0" font-size="17" font-weight="700">TightBold</text>
+<text x="790.6" y="465" fill="#b0b0b0" font-size="13">5 Oct</text>
+<rect x="684" y="505.0" width="32" height="32" rx="6" fill="#e3b341" fill-opacity="0.28" stroke="#e3b341" stroke-width="2"/>
+<text x="700" y="528" fill="#f3f4f6" fill-opacity="1" font-size="19" text-anchor="middle">b</text>
+<rect x="722" y="505.0" width="32" height="32" rx="6" fill="#e3b341" fill-opacity="0.28" stroke="#e3b341" stroke-width="2"/>
+<text x="738" y="528" fill="#f3f4f6" fill-opacity="1" font-size="19" text-anchor="middle">c</text>
+<rect x="686" y="549" width="24" height="22" rx="11" fill="#3a3a3a"/><text x="698" y="564" fill="#b0b0b0" font-size="13" text-anchor="middle">⇄</text>
+<rect x="60" y="615" width="880" height="8" rx="4" fill="#1f1f1f"/><rect x="60" y="615" width="480" height="8" rx="4" fill="#555555"/>
+<line x1="20" y1="670" x2="980" y2="670" stroke="#555555"/>
+<circle cx="56" cy="710" r="6" fill="#00c4e8"/><text x="72" y="715" fill="#e0e0e0" font-size="16">Selected: <tspan font-weight="700">MagazineTight</tspan></text>
+<rect x="460" y="688" width="120" height="38" rx="8" fill="#00c4e8" stroke="#555555"/><text x="520" y="712" fill="#1a1a1a" font-size="15" font-weight="600" text-anchor="middle">Switch to →</text>
+<rect x="592" y="688" width="138" height="38" rx="8" fill="#252525" stroke="#555555"/><text x="661" y="712" fill="#e0e0e0" font-size="15" font-weight="600" text-anchor="middle">New cut from…</text>
+<rect x="742" y="688" width="112" height="38" rx="8" fill="#252525" stroke="#555555"/><text x="798" y="712" fill="#e0e0e0" font-size="15" font-weight="600" text-anchor="middle">Rename key</text>
+<rect x="866" y="688" width="84" height="38" rx="8" fill="#252525" stroke="#555555"/><text x="908" y="712" fill="#e0e0e0" font-size="15" font-weight="600" text-anchor="middle">Delete</text>
+<rect x="56" y="736" width="14" height="14" rx="3" fill="#e3b341" fill-opacity="0.35" stroke="#e3b341" stroke-width="2"/><text x="78" y="748" fill="#b0b0b0" font-size="13">= changed  (vs parent)</text>
+<rect x="226" y="736" width="14" height="14" rx="3" fill="#3fb950" fill-opacity="0.35" stroke="#3fb950" stroke-width="2"/><text x="248" y="748" fill="#b0b0b0" font-size="13">= added  (vs parent)</text>
+<rect x="396" y="736" width="14" height="14" rx="3" fill="#f85149" fill-opacity="0.35" stroke="#f85149" stroke-width="2"/><text x="418" y="748" fill="#b0b0b0" font-size="13">= deleted  (vs parent)</text>
+</svg>
