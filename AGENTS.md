@@ -168,9 +168,9 @@ npm run test:snapshots
 2. Extracts release notes from `CHANGELOG.md`
 3. Commits version changes
 4. Creates and pushes git tag `vX.Y.Z`
-5. Triggers GitHub Actions **Release**, which certifies the editor then runs composed cutover (production workers + Pages) and tags website + collab with the same version. `trio.json` is attached to the GitHub release.
+5. Triggers GitHub Actions **Release**, which certifies the editor then runs composed cutover (production workers + Pages) and tags website + collab with the same version. `trio.json` is attached to the GitHub release. The script then runs `ci-watch.sh` and stays in the terminal until the CI run and the Release workflow finish (exit 0 green, 1 red with the failed job and error lines).
 
-`previewrelease.sh` pushes unpushed `main` commits and starts **Preview Release**. You do not need to wait for CI locally: the workflow waits for a green `ci.yml` push run on that SHA, freezes the editor/website/collab trio, runs cloud-collab e2e, deploys preview Cloudflare (validator → compactor → room-preview, applies `schema.sql` to shared D1, then websitepreview → editorpreview), tags all three repos, and publishes the GitHub prerelease (`v0.0.N-pre.DATE`). Notes are the Unreleased changelog diff. It does not rewrite `CHANGELOG.md`. Canonical write-up: `developer-docs/COMPOSED_RELEASE.md`.
+`previewrelease.sh` pushes unpushed `main` commits and starts **Preview Release**, then watches that run the same way. You can start it before editor CI is green: the workflow waits for a green `ci.yml` push run on that SHA, freezes the editor/website/collab trio, verifies the cloud-collab e2e attestation, deploys preview Cloudflare (validator → compactor → room-preview, applies `schema.sql` to shared D1, then websitepreview → editorpreview), tags all three repos, and publishes the GitHub prerelease (`v0.0.N-pre.DATE`). Notes are the Unreleased changelog diff. It does not rewrite `CHANGELOG.md`. Canonical write-up: `developer-docs/COMPOSED_RELEASE.md`.
 
 ### Pushing the trio (`push.sh`)
 
@@ -178,7 +178,7 @@ npm run test:snapshots
 
 - It refuses to run if any of the three repos is not on `main`, is behind `origin/main`, or has uncommitted changes (unstaged, staged or untracked). The human commits first.
 - After pushing it runs `ci-watch.sh`, which shows a colored in-place overview of the CI runs for the pushed commits (refreshing every 20 seconds, `CI_WATCH_INTERVAL` to change). It exits 0 when every run and job is green, 1 on the first red (with the failed job, step, last error lines and links), and 2 on timeout or when no run appears. The run URLs are printed at the end.
-- `./ci-watch.sh [dir[:sha] ...]` can be run alone to watch existing commits.
+- `./ci-watch.sh [dir[:sha] ...]` can be run alone to watch existing commits. `--since <epoch>` ignores runs created before that time and includes `workflow_dispatch` as well as `push`. `previewrelease.sh` and `release.sh` use that so a rerun does not stick on an older failed run for the same commit. Their watch waits up to 6 hours (`CI_WATCH_TIMEOUT`) because sibling CI waits inside the release workflow.
 
 **Agents:** only push or wait for CI when the human explicitly instructs you to, never on your own initiative. When told to, run `./push.sh` in the background and wait for its exit; on exit 1, debug from the printed error output, fix, and report. Commits and pushes still need the explicit request described under "Git and Commits".
 

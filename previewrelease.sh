@@ -1,9 +1,10 @@
 #!/bin/bash
 
-# Push main and start the preview-release workflow.
-# That workflow waits for green editor CI on HEAD, then composed-cutover
-# (preview workers + websitepreview + editorpreview), tags the trio, and
-# attaches trio.json to the GitHub prerelease. See developer-docs/COMPOSED_RELEASE.md.
+# Push main and start the preview-release workflow, then watch it with
+# ci-watch.sh until it finishes. The workflow itself waits for green editor CI
+# on HEAD, then composed-cutover (preview workers + websitepreview +
+# editorpreview), tags the trio, and attaches trio.json to the GitHub
+# prerelease. See developer-docs/COMPOSED_RELEASE.md.
 # Usage: ./previewrelease.sh
 
 set -e
@@ -26,6 +27,10 @@ if ! git diff --quiet --exit-code || ! git diff --cached --quiet --exit-code; th
     exit 1
 fi
 
+EDITOR_DIR="$(pwd)"
+# Runs created before this are an earlier attempt on the same SHA.
+WATCH_SINCE=$(date +%s)
+
 echo "Fetching origin/main and tags..."
 git fetch origin main --tags
 
@@ -45,10 +50,8 @@ echo "Starting Preview Release workflow on main..."
 gh workflow run preview-release.yml --ref main
 
 echo ""
-echo "Preview release workflow started."
-echo "It waits for green editor CI (which includes the cloud-collab e2e), checks that"
-echo "the e2e tested the website and collab commits being deployed, then deploys"
-echo "validator, compactor, room-preview, websitepreview, and editorpreview."
-echo ""
-echo "Watch progress: gh run watch --workflow=preview-release.yml"
-echo "Or: https://github.com/counterpunchspace/editor/actions/workflows/preview-release.yml"
+echo "Preview Release started. Watching until it finishes..."
+# Sibling CI waits inside the workflow can run 90 minutes each.
+: "${CI_WATCH_TIMEOUT:=21600}"
+export CI_WATCH_TIMEOUT
+exec "$EDITOR_DIR/ci-watch.sh" --since "$WATCH_SINCE" "$EDITOR_DIR"

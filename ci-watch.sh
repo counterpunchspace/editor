@@ -9,6 +9,8 @@
 #
 # Usage: ./ci-watch.sh                     # HEAD of collab, website and editor
 #        ./ci-watch.sh <dir>[:<sha>] ...   # specific repos (sha defaults to HEAD)
+#        ./ci-watch.sh --since <epoch> …   # ignore runs created before that time,
+#                                          # and include workflow_dispatch as well as push
 # Env:   CI_WATCH_INTERVAL (seconds, default 20), CI_WATCH_TIMEOUT (default 10800)
 
 set -uo pipefail
@@ -35,7 +37,24 @@ fi
 COLS=$(tput cols 2>/dev/null || echo 100)
 [ "$COLS" -gt 120 ] && COLS=120
 
-ARGS=("$@")
+SINCE=0
+ARGS=()
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --since)
+            SINCE="${2:-}"
+            if ! [[ "$SINCE" =~ ^[0-9]+$ ]]; then
+                echo "Error: --since needs a unix epoch"
+                exit 2
+            fi
+            shift 2
+            ;;
+        *)
+            ARGS+=("$1")
+            shift
+            ;;
+    esac
+done
 if [ "${#ARGS[@]}" -eq 0 ]; then
     ARGS=("$WORKSPACE/collab/collab" "$WORKSPACE/website" "$EDITOR_DIR")
 fi
@@ -132,7 +151,11 @@ while true; do
 
         runs=$(gh run list --repo "$repo" --commit "$sha" --limit 30 \
             --json databaseId,workflowName,status,conclusion,url,event,createdAt,updatedAt 2>/dev/null) || runs="[]"
-        runs=$(echo "$runs" | jq '[.[] | select(.event=="push")] | sort_by(.databaseId)')
+        if [ "$SINCE" -gt 0 ]; then
+            runs=$(echo "$runs" | jq --argjson since "$SINCE" '[.[] | select((.createdAt | fromdateiso8601) >= ($since - 30))] | sort_by(.databaseId)')
+        else
+            runs=$(echo "$runs" | jq '[.[] | select(.event=="push")] | sort_by(.databaseId)')
+        fi
 
         if [ "$(echo "$runs" | jq length)" -eq 0 ]; then
             FRAME+=("  $(icon queued) ${GRAY}waiting for a CI run to start...${RESET}")

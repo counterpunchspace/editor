@@ -183,19 +183,18 @@ git tag "$VERSION_TAG"
 
 echo ""
 echo "Pushing to GitHub..."
+EDITOR_DIR="$(cd "$(dirname "$0")" && pwd)"
+# Ignore any earlier run on this commit (for example a deleted tag).
+WATCH_SINCE=$(date +%s)
 git push origin main
 git push origin "$VERSION_TAG" --force
 
-echo ""
-echo "✅ Release $VERSION_TAG complete!"
-echo "🚀 GitHub Actions will now:"
-echo "   - Wait for green CI on this commit (includes the cloud-collab e2e)"
-echo "   - Verify the e2e tested the website and collab commits being deployed"
-echo "   - Create a GitHub Release with changelog"
-echo "   - Deploy to Cloudflare Pages"
-echo "   - Users will see update notification within 10 minutes"
-echo ""
-echo "View your release at: https://github.com/counterpunchspace/editor/releases/tag/$VERSION_TAG"
-
-# Clean up release notes file
 rm -f "$RELEASE_NOTES_FILE"
+
+echo ""
+echo "Release $VERSION_TAG pushed. Watching CI and the Release workflow until they finish..."
+echo "The release will be at: https://github.com/counterpunchspace/editor/releases/tag/$VERSION_TAG"
+# Sibling CI waits inside the workflow can run 90 minutes each.
+: "${CI_WATCH_TIMEOUT:=21600}"
+export CI_WATCH_TIMEOUT
+exec "$EDITOR_DIR/ci-watch.sh" --since "$WATCH_SINCE" "$EDITOR_DIR"

@@ -31,7 +31,7 @@ From a clean editor `main` (no uncommitted files):
 ./previewrelease.sh
 ```
 
-Or Actions → **Preview Release**. You do not need to wait for CI locally. The workflow:
+Or Actions → **Preview Release**. The local script returns to a live `ci-watch.sh` view and stays there until the workflow finishes. You can start it before editor CI is green. The workflow:
 
 1. Checks out the `main` SHA it was dispatched on.
 2. Waits for a successful editor `ci.yml` **push** run on **that SHA** (up to 90 minutes). If that run fails or is cancelled, it refuses to publish.
@@ -50,7 +50,7 @@ It does not rewrite `CHANGELOG.md`. Push website and collab `main` first if thos
 ./release.sh vX.Y.Z
 ```
 
-That still bumps the editor version, extracts notes from `CHANGELOG.md`, commits, and pushes tag `vX.Y.Z`. The **Release** workflow certifies that editor tag (not a `-pre.` tag), then the same composed cutover deploys **production** workers and Pages and tags website + collab with `vX.Y.Z`.
+That still bumps the editor version, extracts notes from `CHANGELOG.md`, commits, and pushes tag `vX.Y.Z`. The script then watches with `ci-watch.sh` until the editor CI run and the **Release** workflow finish. That workflow certifies the editor tag (not a `-pre.` tag), then the same composed cutover deploys **production** workers and Pages and tags website + collab with `vX.Y.Z`.
 
 ## Preview vs production hosts
 
