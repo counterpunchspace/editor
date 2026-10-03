@@ -127,6 +127,10 @@ import {
     renderAutoQaWidget
 } from './auto-qa/auto-qa-widget';
 import { PATH_FILL_OPACITY_CHANGED_EVENT } from './path-fill-opacity-pref';
+import {
+    PATH_BOOLEAN_OPERATIONS,
+    shouldShowPathBooleanButtons
+} from './path-boolean';
 
 let console: Logger = new Logger('GlyphCanvas');
 let latestOpenSessionId: string | null = null;
@@ -10227,6 +10231,45 @@ class GlyphCanvas {
                 subtractControl.appendChild(subtractLabel);
                 subtractControl.appendChild(subtractInput);
                 content.appendChild(subtractControl);
+
+                const allClosed = selectedPathIndexes.every(
+                    (index) =>
+                        currentLayer.shapes?.[index]?.asPath?.().closed !==
+                        false
+                );
+                if (
+                    shouldShowPathBooleanButtons({
+                        selectedPathCount: selectedPathIndexes.length,
+                        allSelectedPathsClosed: allClosed,
+                        isInterpolated: false
+                    })
+                ) {
+                    const actions = document.createElement('div');
+                    actions.className = 'glyph-path-boolean-actions';
+                    for (const operation of PATH_BOOLEAN_OPERATIONS) {
+                        const button = document.createElement('button');
+                        button.type = 'button';
+                        button.className = 'glyph-path-boolean-button';
+                        if (operation.fill) {
+                            button.classList.add('is-filled');
+                        }
+                        button.dataset.propertyField = `path-boolean-${operation.op}`;
+                        button.title = operation.label;
+                        button.setAttribute('aria-label', operation.label);
+                        const icon = document.createElement('span');
+                        icon.className = 'material-symbols-outlined';
+                        icon.textContent = operation.icon;
+                        button.appendChild(icon);
+                        button.addEventListener('click', () => {
+                            void this.outlineEditor.applySelectedPathBoolean(
+                                operation.op
+                            );
+                            this.canvas?.focus();
+                        });
+                        actions.appendChild(button);
+                    }
+                    content.appendChild(actions);
+                }
             }
 
             if (content.childNodes.length === 0) {

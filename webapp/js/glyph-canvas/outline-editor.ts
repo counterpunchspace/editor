@@ -18,6 +18,7 @@ import {
     Glyph,
     Path,
     DecomposedAffineTransform,
+    generateStableId,
     applyWorkerGeneratedYjsUpdate,
     buildInterpolationRustBatchOperations,
     withSuppressedModelRecording,
@@ -25,6 +26,13 @@ import {
     type ShapeZOrderCommand
 } from '../babelfont-model';
 import { beginLoadingCursor, endLoadingCursor } from '../loading-cursor';
+import {
+    booleanResultsMatch,
+    pathBooleanLabel,
+    type BooleanPathJson,
+    type PathBooleanOp
+} from '../path-boolean';
+import { showProceedDialog } from '../ui/confirm-dialog';
 import {
     chooseDefaultStickyEditTool,
     ensureStickyEditToolAvailable,
@@ -1580,6 +1588,7 @@ export class OutlineEditor {
 
     selectedAnchors: number[] = [];
     selectedPoints: Point[] = [];
+    private pathBooleanInFlight = false;
     selectedComponents: number[] = [];
     selectedSidebearingHandle: SidebearingHandle | null = null;
     selectedGuideHandle: GuideHandle | null = null;
@@ -2563,6 +2572,178 @@ export class OutlineEditor {
         this.glyphCanvas.updatePropertyPanel();
         this.glyphCanvas.render();
         return true;
+    }
+
+    /**
+     * Replace the selected closed paths with a linesweeper boolean.
+     * Runs on the active layer and every linked sibling. Asks first when the
+     * results would not share a contour structure.
+     */
+    async applySelectedPathBoolean(op: PathBooleanOp): Promise<boolean> {
+        if (this.pathBooleanInFlight || !this.active) {
+            return false;
+        }
+        const currentLayer = this.getCurrentLayerModel();
+        const currentGlyph = this.getCurrentGlyphModel();
+        const layerData = this.getCurrentLayerDataFromStack();
+        if (!currentLayer || !currentGlyph?.name || layerData?.isInterpolated) {
+            return false;
+        }
+
+        const pathShapeIndexes = [
+            ...new Set(
+                this.selectedPoints
+                    .map((point) => point.contourIndex)
+                    .filter((index) => {
+                        const shape = currentLayer.shapes?.[index];
+                        return !!shape?.isPath?.();
+                    })
+            )
+        ].sort((a, b) => a - b);
+        if (pathShapeIndexes.length < 2) {
+            return false;
+        }
+        if (
+            pathShapeIndexes.some(
+                (index) =>
+                    currentLayer.shapes?.[index]?.asPath?.().closed === false
+            )
+        ) {
+            return false;
+        }
+
+        const linkedLayers = currentLayer._getLinkedLayers?.() || [];
+        const layers = [currentLayer, ...linkedLayers];
+        const serialized = layers.map((layer) =>
+            this.serializeBooleanPaths(layer, pathShapeIndexes)
+        );
+        if (serialized.some((paths) => paths === null)) {
+            window.alert?.(
+                'A linked layer does not have closed paths at the same indexes.'
+            );
+            return false;
+        }
+        const pathSets = serialized as BooleanPathJson[][];
+
+        this.pathBooleanInFlight = true;
+        try {
+            let results: BooleanPathJson[][];
+            try {
+                results = await window.fontCompilation.requestBooleanOpPaths(
+                    op,
+                    pathSets
+                );
+            } catch (error) {
+                const message =
+                    error instanceof Error ? error.message : String(error);
+                window.alert?.(message);
+                return false;
+            }
+
+            if (!booleanResultsMatch(results)) {
+                const proceed = await showProceedDialog(
+                    'Incompatible outlines',
+                    'This boolean will make the linked layers incompatible, so they will no longer interpolate.'
+                );
+                if (!proceed) {
+                    return false;
+                }
+            }
+
+            const label = pathBooleanLabel(op);
+            const bridge = window.patchSyncEngine;
+            const insertAt = pathShapeIndexes[0];
+            bridge?.beginTransaction(label, null, {
+                compileChangeSource: 'keyboard-outline',
+                compileEditType: null
+            });
+            try {
+                withSuppressedModelRecording(() => {
+                    layers.forEach((layer, layerIndex) => {
+                        const produced = results[layerIndex] || [];
+                        for (const shapeIndex of [
+                            ...pathShapeIndexes
+                        ].reverse()) {
+                            layer.removeShape(shapeIndex);
+                        }
+                        produced.forEach((path, offset) => {
+                            layer.insertShapeAt(
+                                insertAt + offset,
+                                this.booleanPathToShape(path)
+                            );
+                        });
+                    });
+                });
+                this.syncCurrentExactLayerDataFromModel();
+                this.selectedPoints = [];
+                const activeResult = results[0] || [];
+                activeResult.forEach((path, offset) => {
+                    const contourIndex = insertAt + offset;
+                    path.nodes.forEach((_node, nodeIndex) => {
+                        this.selectedPoints.push({ contourIndex, nodeIndex });
+                    });
+                });
+                this.commitStructuralOutlineChange(label, {
+                    reuseTransaction: true,
+                    layerTargets: normalizeWorkerReplayTargets(
+                        layers.map((layer) => ({
+                            glyphName: currentGlyph.name,
+                            layerId: String(layer?.id || '')
+                        }))
+                    )
+                });
+            } finally {
+                bridge?.endTransaction();
+            }
+            this.performHitDetection(null);
+            this.glyphCanvas.updatePropertyPanel();
+            this.glyphCanvas.render();
+            return true;
+        } finally {
+            this.pathBooleanInFlight = false;
+        }
+    }
+
+    private booleanPathToShape(path: BooleanPathJson): Babelfont.Path {
+        return {
+            id: generateStableId(),
+            closed: path.closed !== false,
+            nodes: path.nodes.map((node) => ({
+                id: generateStableId(),
+                x: node.x,
+                y: node.y,
+                nodetype: node.nodetype as Babelfont.NodeType
+            }))
+        } as Babelfont.Path;
+    }
+
+    private serializeBooleanPaths(
+        layer: Layer,
+        shapeIndexes: number[]
+    ): BooleanPathJson[] | null {
+        const paths: BooleanPathJson[] = [];
+        for (const shapeIndex of shapeIndexes) {
+            const shape = layer.shapes?.[shapeIndex];
+            if (!shape?.isPath?.()) {
+                return null;
+            }
+            const path = shape.asPath();
+            if (path.closed === false) {
+                return null;
+            }
+            const nodes = [];
+            const nodeCount = path.nodes?.length || 0;
+            for (let nodeIndex = 0; nodeIndex < nodeCount; nodeIndex++) {
+                const node = path.nodes[nodeIndex];
+                nodes.push({
+                    x: node.x,
+                    y: node.y,
+                    nodetype: String(node.nodetype || 'Line')
+                });
+            }
+            paths.push({ closed: true, nodes });
+        }
+        return paths;
     }
 
     /**

@@ -23,6 +23,8 @@ Right-click a component and choose **Decompose** to replace it with the transfor
 
 **Subtract** in the property panel marks selected paths as cutters (`fip001-boolean`). They punch a hole in everything below them in shape order; paths drawn later sit on top. Nodes stay editable. Cutter strokes are dashed. Cutter fill uses the same transparency as path fill (**Fill** in Editing View → View) and covers the whole cutter except where a later solid covers it. Solids below a cutter drop fill in the overlap, matching the compiled hole. Glyph overview tiles punch the same holes. Compile flattens any glyph that uses a cutter (including through components) and runs the same boolean. Linked layers get the flag at the same shape indexes.
 
+With two or more closed paths selected, the same panel shows Union, Difference, Intersection, and Exclusion. Those rewrite the selected paths. Difference keeps the lowest path in shape order and subtracts the others. Linked layers get the same operation. If the results would no longer match across those layers, the editor asks before applying.
+
 Right-click selected shapes and open **Arrange** for **Bring Forward**, **Send Backward**, **Bring to Front**, and **Send to Back**. The same actions move mixed path and component selections together, including on linked layers.
 
 Hold Tab in outline mode, then drag, to measure a custom distance.

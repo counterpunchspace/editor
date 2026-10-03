@@ -420,6 +420,8 @@ Closed paths may be marked `format_specific["fip001-boolean"] = "subtraction"` (
 
 Selected shapes (paths and components, including mixed selections) move in z-order as a unit: canvas context menu **Arrange** (Bring Forward / Send Backward / Bring to Front / Send to Back). Linked layers receive the same shape-index permutation. Subtract writes the flag on every selected path at those shape indexes on linked layers.
 
+When two or more closed paths are selected, the property panel also offers destructive booleans: Union, Difference, Intersection, and Exclusion. They rewrite those paths with linesweeper (NonZero), in ascending shape-index order. Difference keeps the lowest selected path and subtracts the later ones. The same operation runs on every linked layer. If the resulting contour structures differ, the editor asks before applying; matching structures apply immediately. An error on any layer applies nothing.
+
 `Glyph.isCompatible` requires matching source fingerprints (including the subtraction flag) **and**, once the compile worker has returned it, matching post-boolean fingerprints for that glyph. Until that cache arrives, the layer list uses source fingerprints only.
 
 When an automatically aligned component has more than one eligible target anchor in the current composition, the property panel must offer an anchor override control backed by `Component.anchor`. Leaving that control unset keeps the component on the default automatic target selection for its anchor family.

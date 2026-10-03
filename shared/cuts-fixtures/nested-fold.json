@@ -1,0 +1,36 @@
+{
+  "cuts": [
+    {
+      "id": "parent",
+      "key": "Magazine",
+      "parentId": null,
+      "createdAt": "2026-07-01T00:00:00.000Z",
+      "colorSlot": 0,
+      "glyphs": {
+        "add": [{ "storage": "ampersand.__Magazine", "after": "R" }],
+        "replace": { "R": "R.__Magazine" },
+        "delete": ["space"],
+        "restore": []
+      },
+      "spacing": {},
+      "kerning": { "master-regular": { "A:V": -40 } },
+      "kerning_rtl": {}
+    },
+    {
+      "id": "child",
+      "key": "MagazineTight",
+      "parentId": "parent",
+      "createdAt": "2026-07-02T00:00:00.000Z",
+      "colorSlot": 1,
+      "glyphs": {
+        "add": [],
+        "replace": { "A": "A.__MagazineTight" },
+        "delete": [],
+        "restore": ["space"]
+      },
+      "spacing": {},
+      "kerning": { "master-regular": { "A:V": null } },
+      "kerning_rtl": {}
+    }
+  ]
+}

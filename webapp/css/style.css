@@ -6738,6 +6738,43 @@ select.glyph-property-input {
     gap: 2px;
 }
 
+.glyph-path-boolean-actions {
+    display: grid;
+    grid-template-columns: repeat(2, 24px);
+    gap: 2px;
+    align-self: center;
+}
+
+.glyph-path-boolean-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    padding: 0;
+    border: 1px solid var(--border-primary);
+    border-radius: 4px;
+    background: var(--background-secondary);
+    color: var(--text-primary);
+    cursor: pointer;
+}
+
+.glyph-path-boolean-button:hover {
+    background: var(--background-hover);
+}
+
+.glyph-path-boolean-button .material-symbols-outlined {
+    font-size: 16px;
+}
+
+.glyph-path-boolean-button.is-filled .material-symbols-outlined {
+    font-variation-settings:
+        'FILL' 1,
+        'wght' 400,
+        'GRAD' 0,
+        'opsz' 24;
+}
+
 .glyph-component-property-grid {
     display: flex;
     flex-wrap: wrap;

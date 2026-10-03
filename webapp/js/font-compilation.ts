@@ -1431,6 +1431,60 @@ export class FontCompilation {
     }
 
     /**
+     * Destructive linesweeper boolean on closed path JSON.
+     * One worker turn evaluates every layer. Throws when any set fails.
+     */
+    async requestBooleanOpPaths(
+        op: string,
+        pathSets: Array<
+            Array<{
+                closed: boolean;
+                nodes: Array<{ x: number; y: number; nodetype: string }>;
+            }>
+        >
+    ): Promise<
+        Array<
+            Array<{
+                closed: boolean;
+                nodes: Array<{ x: number; y: number; nodetype: string }>;
+            }>
+        >
+    > {
+        if (!this.isInitialized) {
+            const initialized = await this.initialize();
+            if (!initialized) {
+                throw new Error('Font compilation worker is not initialized');
+            }
+        }
+        const result = await this.sendMessage({
+            type: 'booleanOpPaths',
+            op,
+            pathsJson: JSON.stringify(pathSets)
+        });
+        if (result?.error) {
+            throw new Error(String(result.error));
+        }
+        const raw = result?.paths;
+        if (typeof raw !== 'string') {
+            throw new Error('Boolean operation returned no paths');
+        }
+        const parsed = JSON.parse(raw) as Array<
+            Array<{
+                closed: boolean;
+                nodes: Array<{ x: number; y: number; nodetype: string }>;
+            }>
+        >;
+        if (
+            !Array.isArray(parsed) ||
+            parsed.length !== pathSets.length ||
+            parsed.some((paths) => !Array.isArray(paths))
+        ) {
+            throw new Error('Boolean operation returned invalid paths');
+        }
+        return parsed;
+    }
+
+    /**
      * Compile font directly from .babelfont JSON string
      * This is the NEW direct path: Python → JSON → JavaScript → WASM
      * NO FILE SYSTEM OPERATIONS!

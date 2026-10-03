@@ -187,6 +187,7 @@ dependencies = [
  "js-sys",
  "json-patch",
  "kurbo 0.13.1",
+ "linesweeper",
  "read-fonts 0.43.3",
  "serde",
  "serde_json",

@@ -1,0 +1,435 @@
+{
+  "upm": 1000,
+  "version": [
+    1,
+    0
+  ],
+  "note": "",
+  "date": "2026-01-01T00:00:00.000Z",
+  "names": {
+    "family_name": {
+      "dflt": "TestFont"
+    }
+  },
+  "features": {
+    "classes": {},
+    "prefixes": {},
+    "features": []
+  },
+  "first_kern_groups": {},
+  "second_kern_groups": {},
+  "format_specific": {
+    "com.counterpunch.cuts": {
+      "cuts": [
+        {
+          "id": "parent",
+          "key": "Magazine",
+          "parentId": null,
+          "createdAt": "2026-07-01T00:00:00.000Z",
+          "colorSlot": 0,
+          "glyphs": {
+            "add": [
+              {
+                "storage": "ampersand.__Magazine",
+                "after": "R"
+              }
+            ],
+            "replace": {
+              "R": "R.__Magazine"
+            },
+            "delete": [
+              "space"
+            ],
+            "restore": []
+          },
+          "spacing": {
+            "V": {
+              "master-regular": {
+                "width": 100
+              }
+            }
+          },
+          "kerning": {
+            "master-regular": {
+              "A:V": -40
+            }
+          },
+          "kerning_rtl": {}
+        },
+        {
+          "id": "child",
+          "key": "MagazineTight",
+          "parentId": "parent",
+          "createdAt": "2026-07-02T00:00:00.000Z",
+          "colorSlot": 1,
+          "glyphs": {
+            "add": [],
+            "replace": {
+              "A": "A.__MagazineTight"
+            },
+            "delete": [],
+            "restore": [
+              "space"
+            ]
+          },
+          "spacing": {
+            "V": {
+              "master-regular": {
+                "width": -25
+              }
+            }
+          },
+          "kerning": {
+            "master-regular": {
+              "A:V": null
+            }
+          },
+          "kerning_rtl": {}
+        }
+      ]
+    }
+  },
+  "axes": [],
+  "instances": [],
+  "masters": [
+    {
+      "name": {
+        "dflt": "Regular"
+      },
+      "id": "master-regular",
+      "location": {},
+      "guides": [],
+      "metrics": {},
+      "kerning": {
+        "A:V": -40
+      },
+      "custom_ot_values": {},
+      "format_specific": {}
+    }
+  ],
+  "glyphs": [
+    {
+      "name": "A",
+      "codepoints": [
+        65
+      ],
+      "category": "Base",
+      "exported": true,
+      "layers": [
+        {
+          "id": "layer-1",
+          "master": {
+            "type": "DefaultForMaster",
+            "master": "master-regular"
+          },
+          "width": 600,
+          "shapes": [
+            {
+              "nodes": [
+                {
+                  "x": 50,
+                  "y": 0,
+                  "nodetype": "Line"
+                },
+                {
+                  "x": 450,
+                  "y": 0,
+                  "nodetype": "Line"
+                },
+                {
+                  "x": 450,
+                  "y": 700,
+                  "nodetype": "Line"
+                },
+                {
+                  "x": 50,
+                  "y": 700,
+                  "nodetype": "Line"
+                }
+              ],
+              "closed": true
+            }
+          ],
+          "anchors": [],
+          "guides": [],
+          "format_specific": {}
+        }
+      ],
+      "format_specific": {}
+    },
+    {
+      "name": "V",
+      "codepoints": [
+        86
+      ],
+      "category": "Base",
+      "exported": true,
+      "layers": [
+        {
+          "id": "layer-1",
+          "master": {
+            "type": "DefaultForMaster",
+            "master": "master-regular"
+          },
+          "width": 600,
+          "shapes": [
+            {
+              "nodes": [
+                {
+                  "x": 100,
+                  "y": 0,
+                  "nodetype": "Line"
+                },
+                {
+                  "x": 250,
+                  "y": 700,
+                  "nodetype": "Line"
+                },
+                {
+                  "x": 400,
+                  "y": 0,
+                  "nodetype": "Line"
+                }
+              ],
+              "closed": true
+            }
+          ],
+          "anchors": [],
+          "guides": [],
+          "format_specific": {}
+        }
+      ],
+      "format_specific": {}
+    },
+    {
+      "name": "R",
+      "codepoints": [
+        82
+      ],
+      "category": "Base",
+      "exported": true,
+      "layers": [
+        {
+          "id": "layer-1",
+          "master": {
+            "type": "DefaultForMaster",
+            "master": "master-regular"
+          },
+          "width": 600,
+          "shapes": [
+            {
+              "nodes": [
+                {
+                  "x": 50,
+                  "y": 0,
+                  "nodetype": "Line"
+                },
+                {
+                  "x": 350,
+                  "y": 0,
+                  "nodetype": "Line"
+                },
+                {
+                  "x": 350,
+                  "y": 700,
+                  "nodetype": "Line"
+                },
+                {
+                  "x": 50,
+                  "y": 700,
+                  "nodetype": "Line"
+                }
+              ],
+              "closed": true
+            }
+          ],
+          "anchors": [],
+          "guides": [],
+          "format_specific": {}
+        }
+      ],
+      "format_specific": {}
+    },
+    {
+      "name": "space",
+      "codepoints": [
+        32
+      ],
+      "category": "Base",
+      "exported": true,
+      "layers": [
+        {
+          "id": "layer-1",
+          "master": {
+            "type": "DefaultForMaster",
+            "master": "master-regular"
+          },
+          "width": 250,
+          "shapes": [],
+          "anchors": [],
+          "guides": [],
+          "format_specific": {}
+        }
+      ],
+      "format_specific": {}
+    },
+    {
+      "name": "R.__Magazine",
+      "codepoints": [],
+      "category": "Base",
+      "exported": false,
+      "layers": [
+        {
+          "id": "layer-1",
+          "master": {
+            "type": "DefaultForMaster",
+            "master": "master-regular"
+          },
+          "width": 720,
+          "shapes": [
+            {
+              "nodes": [
+                {
+                  "x": 50,
+                  "y": 0,
+                  "nodetype": "Line"
+                },
+                {
+                  "x": 470,
+                  "y": 0,
+                  "nodetype": "Line"
+                },
+                {
+                  "x": 470,
+                  "y": 700,
+                  "nodetype": "Line"
+                },
+                {
+                  "x": 50,
+                  "y": 700,
+                  "nodetype": "Line"
+                }
+              ],
+              "closed": true
+            }
+          ],
+          "anchors": [],
+          "guides": [],
+          "format_specific": {}
+        }
+      ],
+      "format_specific": {
+        "com.counterpunch.cut": {
+          "cutId": "parent",
+          "publicName": "R"
+        }
+      }
+    },
+    {
+      "name": "A.__MagazineTight",
+      "codepoints": [],
+      "category": "Base",
+      "exported": false,
+      "layers": [
+        {
+          "id": "layer-1",
+          "master": {
+            "type": "DefaultForMaster",
+            "master": "master-regular"
+          },
+          "width": 500,
+          "shapes": [
+            {
+              "nodes": [
+                {
+                  "x": 30,
+                  "y": 0,
+                  "nodetype": "Line"
+                },
+                {
+                  "x": 430,
+                  "y": 0,
+                  "nodetype": "Line"
+                },
+                {
+                  "x": 430,
+                  "y": 700,
+                  "nodetype": "Line"
+                },
+                {
+                  "x": 30,
+                  "y": 700,
+                  "nodetype": "Line"
+                }
+              ],
+              "closed": true
+            }
+          ],
+          "anchors": [],
+          "guides": [],
+          "format_specific": {}
+        }
+      ],
+      "format_specific": {
+        "com.counterpunch.cut": {
+          "cutId": "child",
+          "publicName": "A"
+        }
+      }
+    },
+    {
+      "name": "ampersand.__Magazine",
+      "codepoints": [
+        38
+      ],
+      "category": "Base",
+      "exported": false,
+      "layers": [
+        {
+          "id": "layer-1",
+          "master": {
+            "type": "DefaultForMaster",
+            "master": "master-regular"
+          },
+          "width": 650,
+          "shapes": [
+            {
+              "nodes": [
+                {
+                  "x": 40,
+                  "y": 0,
+                  "nodetype": "Line"
+                },
+                {
+                  "x": 440,
+                  "y": 0,
+                  "nodetype": "Line"
+                },
+                {
+                  "x": 440,
+                  "y": 700,
+                  "nodetype": "Line"
+                },
+                {
+                  "x": 40,
+                  "y": 700,
+                  "nodetype": "Line"
+                }
+              ],
+              "closed": true
+            }
+          ],
+          "anchors": [],
+          "guides": [],
+          "format_specific": {}
+        }
+      ],
+      "format_specific": {
+        "com.counterpunch.cut": {
+          "cutId": "parent",
+          "publicName": "ampersand"
+        }
+      }
+    }
+  ]
+}

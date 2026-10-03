@@ -53,6 +53,8 @@ pub use batch_yjs_ops::{
 // Glyph outlines module
 mod glyph_outlines;
 
+mod path_boolean;
+
 mod cache_memory;
 
 // Global storage for cached fonts
@@ -2774,6 +2776,12 @@ fn layer_outline_fingerprint(layer: &babelfont::Layer) -> String {
         path_signatures.join("|"),
         anchor_signatures.join("|")
     )
+}
+
+/// Destructive linesweeper boolean on closed path JSON. Independent of Fip001Boolean.
+#[wasm_bindgen]
+pub fn boolean_op_paths(op: &str, paths_json: &str) -> Result<String, JsValue> {
+    path_boolean::apply_path_boolean(op, paths_json).map_err(|err| JsValue::from_str(&err))
 }
 
 /// Run FIP001 boolean subtraction on the cached font and return per-layer

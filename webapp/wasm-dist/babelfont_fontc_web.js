@@ -5,11 +5,7 @@
  * @returns {any}
  */
 export function add_master_with_interpolated_layers_yjs(master_json) {
-    const ptr0 = passStringToWasm0(
-        master_json,
-        wasm.__wbindgen_malloc,
-        wasm.__wbindgen_realloc
-    );
+    const ptr0 = passStringToWasm0(master_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
     const len0 = WASM_VECTOR_LEN;
     const ret = wasm.add_master_with_interpolated_layers_yjs(ptr0, len0);
     if (ret[2]) {
@@ -38,31 +34,19 @@ export function adopt_preview_layout_closure_from_last() {
  * @param {string} update_metadata_json
  * @returns {string}
  */
-export function apply_preview_layer_overlay(
-    layer_updates_json,
-    update_metadata_json
-) {
+export function apply_preview_layer_overlay(layer_updates_json, update_metadata_json) {
     let deferred4_0;
     let deferred4_1;
     try {
-        const ptr0 = passStringToWasm0(
-            layer_updates_json,
-            wasm.__wbindgen_malloc,
-            wasm.__wbindgen_realloc
-        );
+        const ptr0 = passStringToWasm0(layer_updates_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len0 = WASM_VECTOR_LEN;
-        const ptr1 = passStringToWasm0(
-            update_metadata_json,
-            wasm.__wbindgen_malloc,
-            wasm.__wbindgen_realloc
-        );
+        const ptr1 = passStringToWasm0(update_metadata_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len1 = WASM_VECTOR_LEN;
         const ret = wasm.apply_preview_layer_overlay(ptr0, len0, ptr1, len1);
         var ptr3 = ret[0];
         var len3 = ret[1];
         if (ret[3]) {
-            ptr3 = 0;
-            len3 = 0;
+            ptr3 = 0; len3 = 0;
             throw takeFromExternrefTable0(ret[2]);
         }
         deferred4_0 = ptr3;
@@ -97,18 +81,42 @@ export function apply_yjs_update(update, update_metadata_json) {
     try {
         const ptr0 = passArray8ToWasm0(update, wasm.__wbindgen_malloc);
         const len0 = WASM_VECTOR_LEN;
-        const ptr1 = passStringToWasm0(
-            update_metadata_json,
-            wasm.__wbindgen_malloc,
-            wasm.__wbindgen_realloc
-        );
+        const ptr1 = passStringToWasm0(update_metadata_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len1 = WASM_VECTOR_LEN;
         const ret = wasm.apply_yjs_update(ptr0, len0, ptr1, len1);
         var ptr3 = ret[0];
         var len3 = ret[1];
         if (ret[3]) {
-            ptr3 = 0;
-            len3 = 0;
+            ptr3 = 0; len3 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred4_0 = ptr3;
+        deferred4_1 = len3;
+        return getStringFromWasm0(ptr3, len3);
+    } finally {
+        wasm.__wbindgen_free(deferred4_0, deferred4_1, 1);
+    }
+}
+
+/**
+ * Destructive linesweeper boolean on closed path JSON. Independent of Fip001Boolean.
+ * @param {string} op
+ * @param {string} paths_json
+ * @returns {string}
+ */
+export function boolean_op_paths(op, paths_json) {
+    let deferred4_0;
+    let deferred4_1;
+    try {
+        const ptr0 = passStringToWasm0(op, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(paths_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ret = wasm.boolean_op_paths(ptr0, len0, ptr1, len1);
+        var ptr3 = ret[0];
+        var len3 = ret[1];
+        if (ret[3]) {
+            ptr3 = 0; len3 = 0;
             throw takeFromExternrefTable0(ret[2]);
         }
         deferred4_0 = ptr3;
@@ -141,45 +149,21 @@ export function clear_preview_layer_overlay() {
  * @param {string} seed_names_json
  * @returns {string}
  */
-export function close_layout_from_fea(
-    feature_code,
-    glyph_names_json,
-    seed_names_json
-) {
+export function close_layout_from_fea(feature_code, glyph_names_json, seed_names_json) {
     let deferred5_0;
     let deferred5_1;
     try {
-        const ptr0 = passStringToWasm0(
-            feature_code,
-            wasm.__wbindgen_malloc,
-            wasm.__wbindgen_realloc
-        );
+        const ptr0 = passStringToWasm0(feature_code, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len0 = WASM_VECTOR_LEN;
-        const ptr1 = passStringToWasm0(
-            glyph_names_json,
-            wasm.__wbindgen_malloc,
-            wasm.__wbindgen_realloc
-        );
+        const ptr1 = passStringToWasm0(glyph_names_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len1 = WASM_VECTOR_LEN;
-        const ptr2 = passStringToWasm0(
-            seed_names_json,
-            wasm.__wbindgen_malloc,
-            wasm.__wbindgen_realloc
-        );
+        const ptr2 = passStringToWasm0(seed_names_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len2 = WASM_VECTOR_LEN;
-        const ret = wasm.close_layout_from_fea(
-            ptr0,
-            len0,
-            ptr1,
-            len1,
-            ptr2,
-            len2
-        );
+        const ret = wasm.close_layout_from_fea(ptr0, len0, ptr1, len1, ptr2, len2);
         var ptr4 = ret[0];
         var len4 = ret[1];
         if (ret[3]) {
-            ptr4 = 0;
-            len4 = 0;
+            ptr4 = 0; len4 = 0;
             throw takeFromExternrefTable0(ret[2]);
         }
         deferred5_0 = ptr4;
@@ -215,11 +199,7 @@ export function close_layout_from_fea(
  * @returns {Uint8Array}
  */
 export function compile_babelfont(babelfont_json, options) {
-    const ptr0 = passStringToWasm0(
-        babelfont_json,
-        wasm.__wbindgen_malloc,
-        wasm.__wbindgen_realloc
-    );
+    const ptr0 = passStringToWasm0(babelfont_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
     const len0 = WASM_VECTOR_LEN;
     const ret = wasm.compile_babelfont(ptr0, len0, options);
     if (ret[3]) {
@@ -283,8 +263,7 @@ export function compile_cached_font_to_debug_hash(options) {
         var ptr1 = ret[0];
         var len1 = ret[1];
         if (ret[3]) {
-            ptr1 = 0;
-            len1 = 0;
+            ptr1 = 0; len1 = 0;
             throw takeFromExternrefTable0(ret[2]);
         }
         deferred2_0 = ptr1;
@@ -306,13 +285,11 @@ export function compile_debug_cached_font_from_last_layout_closure(options) {
     let deferred2_0;
     let deferred2_1;
     try {
-        const ret =
-            wasm.compile_debug_cached_font_from_last_layout_closure(options);
+        const ret = wasm.compile_debug_cached_font_from_last_layout_closure(options);
         var ptr1 = ret[0];
         var len1 = ret[1];
         if (ret[3]) {
-            ptr1 = 0;
-            len1 = 0;
+            ptr1 = 0; len1 = 0;
             throw takeFromExternrefTable0(ret[2]);
         }
         deferred2_0 = ptr1;
@@ -329,11 +306,7 @@ export function compile_debug_cached_font_from_last_layout_closure(options) {
  * @returns {Uint8Array}
  */
 export function compile_glyphs(_glyphs_json) {
-    const ptr0 = passStringToWasm0(
-        _glyphs_json,
-        wasm.__wbindgen_malloc,
-        wasm.__wbindgen_realloc
-    );
+    const ptr0 = passStringToWasm0(_glyphs_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
     const len0 = WASM_VECTOR_LEN;
     const ret = wasm.compile_glyphs(ptr0, len0);
     if (ret[3]) {
@@ -351,8 +324,7 @@ export function compile_glyphs(_glyphs_json) {
  * @returns {Uint8Array}
  */
 export function compile_preview_cached_font_from_last_layout_closure(options) {
-    const ret =
-        wasm.compile_preview_cached_font_from_last_layout_closure(options);
+    const ret = wasm.compile_preview_cached_font_from_last_layout_closure(options);
     if (ret[3]) {
         throw takeFromExternrefTable0(ret[2]);
     }
@@ -380,18 +352,13 @@ export function dump_layer_state_json(layer_targets_json) {
     let deferred3_0;
     let deferred3_1;
     try {
-        const ptr0 = passStringToWasm0(
-            layer_targets_json,
-            wasm.__wbindgen_malloc,
-            wasm.__wbindgen_realloc
-        );
+        const ptr0 = passStringToWasm0(layer_targets_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len0 = WASM_VECTOR_LEN;
         const ret = wasm.dump_layer_state_json(ptr0, len0);
         var ptr2 = ret[0];
         var len2 = ret[1];
         if (ret[3]) {
-            ptr2 = 0;
-            len2 = 0;
+            ptr2 = 0; len2 = 0;
             throw takeFromExternrefTable0(ret[2]);
         }
         deferred3_0 = ptr2;
@@ -418,8 +385,7 @@ export function dump_worker_cache_state_json() {
         var ptr1 = ret[0];
         var len1 = ret[1];
         if (ret[3]) {
-            ptr1 = 0;
-            len1 = 0;
+            ptr1 = 0; len1 = 0;
             throw takeFromExternrefTable0(ret[2]);
         }
         deferred2_0 = ptr1;
@@ -437,11 +403,7 @@ export function dump_worker_cache_state_json() {
  * @returns {any}
  */
 export function filtered_boolean_fingerprints(glyph_name) {
-    const ptr0 = passStringToWasm0(
-        glyph_name,
-        wasm.__wbindgen_malloc,
-        wasm.__wbindgen_realloc
-    );
+    const ptr0 = passStringToWasm0(glyph_name, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
     const len0 = WASM_VECTOR_LEN;
     const ret = wasm.filtered_boolean_fingerprints(ptr0, len0);
     if (ret[2]) {
@@ -463,8 +425,7 @@ export function get_cache_memory_stats() {
         var ptr1 = ret[0];
         var len1 = ret[1];
         if (ret[3]) {
-            ptr1 = 0;
-            len1 = 0;
+            ptr1 = 0; len1 = 0;
             throw takeFromExternrefTable0(ret[2]);
         }
         deferred2_0 = ptr1;
@@ -481,11 +442,7 @@ export function get_cache_memory_stats() {
  * @returns {Uint8Array}
  */
 export function get_debug_cached_font_bytes(font_hash) {
-    const ptr0 = passStringToWasm0(
-        font_hash,
-        wasm.__wbindgen_malloc,
-        wasm.__wbindgen_realloc
-    );
+    const ptr0 = passStringToWasm0(font_hash, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
     const len0 = WASM_VECTOR_LEN;
     const ret = wasm.get_debug_cached_font_bytes(ptr0, len0);
     if (ret[3]) {
@@ -525,8 +482,7 @@ export function get_font_axes(font_bytes) {
         var ptr2 = ret[0];
         var len2 = ret[1];
         if (ret[3]) {
-            ptr2 = 0;
-            len2 = 0;
+            ptr2 = 0; len2 = 0;
             throw takeFromExternrefTable0(ret[2]);
         }
         deferred3_0 = ptr2;
@@ -563,8 +519,7 @@ export function get_font_features(font_bytes) {
         var ptr2 = ret[0];
         var len2 = ret[1];
         if (ret[3]) {
-            ptr2 = 0;
-            len2 = 0;
+            ptr2 = 0; len2 = 0;
             throw takeFromExternrefTable0(ret[2]);
         }
         deferred3_0 = ptr2;
@@ -605,8 +560,7 @@ export function get_font_features_with_tables(font_bytes) {
         var ptr2 = ret[0];
         var len2 = ret[1];
         if (ret[3]) {
-            ptr2 = 0;
-            len2 = 0;
+            ptr2 = 0; len2 = 0;
             throw takeFromExternrefTable0(ret[2]);
         }
         deferred3_0 = ptr2;
@@ -640,8 +594,7 @@ export function get_glyph_name(font_bytes, glyph_id) {
         var ptr2 = ret[0];
         var len2 = ret[1];
         if (ret[3]) {
-            ptr2 = 0;
-            len2 = 0;
+            ptr2 = 0; len2 = 0;
             throw takeFromExternrefTable0(ret[2]);
         }
         deferred3_0 = ptr2;
@@ -692,38 +645,19 @@ export function get_glyph_order(font_bytes) {
  * @param {boolean} flatten_components
  * @returns {string}
  */
-export function get_glyphs_outlines(
-    glyph_names_json,
-    location_json,
-    flatten_components
-) {
+export function get_glyphs_outlines(glyph_names_json, location_json, flatten_components) {
     let deferred4_0;
     let deferred4_1;
     try {
-        const ptr0 = passStringToWasm0(
-            glyph_names_json,
-            wasm.__wbindgen_malloc,
-            wasm.__wbindgen_realloc
-        );
+        const ptr0 = passStringToWasm0(glyph_names_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len0 = WASM_VECTOR_LEN;
-        const ptr1 = passStringToWasm0(
-            location_json,
-            wasm.__wbindgen_malloc,
-            wasm.__wbindgen_realloc
-        );
+        const ptr1 = passStringToWasm0(location_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len1 = WASM_VECTOR_LEN;
-        const ret = wasm.get_glyphs_outlines(
-            ptr0,
-            len0,
-            ptr1,
-            len1,
-            flatten_components
-        );
+        const ret = wasm.get_glyphs_outlines(ptr0, len0, ptr1, len1, flatten_components);
         var ptr3 = ret[0];
         var len3 = ret[1];
         if (ret[3]) {
-            ptr3 = 0;
-            len3 = 0;
+            ptr3 = 0; len3 = 0;
             throw takeFromExternrefTable0(ret[2]);
         }
         deferred4_0 = ptr3;
@@ -763,18 +697,13 @@ export function get_layout_closure(glyph_names_json) {
     let deferred3_0;
     let deferred3_1;
     try {
-        const ptr0 = passStringToWasm0(
-            glyph_names_json,
-            wasm.__wbindgen_malloc,
-            wasm.__wbindgen_realloc
-        );
+        const ptr0 = passStringToWasm0(glyph_names_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len0 = WASM_VECTOR_LEN;
         const ret = wasm.get_layout_closure(ptr0, len0);
         var ptr2 = ret[0];
         var len2 = ret[1];
         if (ret[3]) {
-            ptr2 = 0;
-            len2 = 0;
+            ptr2 = 0; len2 = 0;
             throw takeFromExternrefTable0(ret[2]);
         }
         deferred3_0 = ptr2;
@@ -798,24 +727,15 @@ export function get_layout_closure_cached(font_revision, glyph_names_json) {
     let deferred4_0;
     let deferred4_1;
     try {
-        const ptr0 = passStringToWasm0(
-            font_revision,
-            wasm.__wbindgen_malloc,
-            wasm.__wbindgen_realloc
-        );
+        const ptr0 = passStringToWasm0(font_revision, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len0 = WASM_VECTOR_LEN;
-        const ptr1 = passStringToWasm0(
-            glyph_names_json,
-            wasm.__wbindgen_malloc,
-            wasm.__wbindgen_realloc
-        );
+        const ptr1 = passStringToWasm0(glyph_names_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len1 = WASM_VECTOR_LEN;
         const ret = wasm.get_layout_closure_cached(ptr0, len0, ptr1, len1);
         var ptr3 = ret[0];
         var len3 = ret[1];
         if (ret[3]) {
-            ptr3 = 0;
-            len3 = 0;
+            ptr3 = 0; len3 = 0;
             throw takeFromExternrefTable0(ret[2]);
         }
         deferred4_0 = ptr3;
@@ -856,8 +776,7 @@ export function get_stylistic_set_names(font_bytes) {
         var ptr2 = ret[0];
         var len2 = ret[1];
         if (ret[3]) {
-            ptr2 = 0;
-            len2 = 0;
+            ptr2 = 0; len2 = 0;
             throw takeFromExternrefTable0(ret[2]);
         }
         deferred3_0 = ptr2;
@@ -905,24 +824,15 @@ export function inspect_debug_cached_font(font_hash, request_json) {
     let deferred4_0;
     let deferred4_1;
     try {
-        const ptr0 = passStringToWasm0(
-            font_hash,
-            wasm.__wbindgen_malloc,
-            wasm.__wbindgen_realloc
-        );
+        const ptr0 = passStringToWasm0(font_hash, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len0 = WASM_VECTOR_LEN;
-        const ptr1 = passStringToWasm0(
-            request_json,
-            wasm.__wbindgen_malloc,
-            wasm.__wbindgen_realloc
-        );
+        const ptr1 = passStringToWasm0(request_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len1 = WASM_VECTOR_LEN;
         const ret = wasm.inspect_debug_cached_font(ptr0, len0, ptr1, len1);
         var ptr3 = ret[0];
         var len3 = ret[1];
         if (ret[3]) {
-            ptr3 = 0;
-            len3 = 0;
+            ptr3 = 0; len3 = 0;
             throw takeFromExternrefTable0(ret[2]);
         }
         deferred4_0 = ptr3;
@@ -950,47 +860,21 @@ export function inspect_debug_cached_font(font_hash, request_json) {
  * @param {string} root_layer_ids_json
  * @returns {string}
  */
-export function interpolate_glyph(
-    glyph_name,
-    location_json,
-    extrapolate,
-    root_layer_ids_json
-) {
+export function interpolate_glyph(glyph_name, location_json, extrapolate, root_layer_ids_json) {
     let deferred5_0;
     let deferred5_1;
     try {
-        const ptr0 = passStringToWasm0(
-            glyph_name,
-            wasm.__wbindgen_malloc,
-            wasm.__wbindgen_realloc
-        );
+        const ptr0 = passStringToWasm0(glyph_name, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len0 = WASM_VECTOR_LEN;
-        const ptr1 = passStringToWasm0(
-            location_json,
-            wasm.__wbindgen_malloc,
-            wasm.__wbindgen_realloc
-        );
+        const ptr1 = passStringToWasm0(location_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len1 = WASM_VECTOR_LEN;
-        const ptr2 = passStringToWasm0(
-            root_layer_ids_json,
-            wasm.__wbindgen_malloc,
-            wasm.__wbindgen_realloc
-        );
+        const ptr2 = passStringToWasm0(root_layer_ids_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len2 = WASM_VECTOR_LEN;
-        const ret = wasm.interpolate_glyph(
-            ptr0,
-            len0,
-            ptr1,
-            len1,
-            extrapolate,
-            ptr2,
-            len2
-        );
+        const ret = wasm.interpolate_glyph(ptr0, len0, ptr1, len1, extrapolate, ptr2, len2);
         var ptr4 = ret[0];
         var len4 = ret[1];
         if (ret[3]) {
-            ptr4 = 0;
-            len4 = 0;
+            ptr4 = 0; len4 = 0;
             throw takeFromExternrefTable0(ret[2]);
         }
         deferred5_0 = ptr4;
@@ -1011,29 +895,15 @@ export function list_debug_cached_font_children(font_hash, request_json) {
     let deferred4_0;
     let deferred4_1;
     try {
-        const ptr0 = passStringToWasm0(
-            font_hash,
-            wasm.__wbindgen_malloc,
-            wasm.__wbindgen_realloc
-        );
+        const ptr0 = passStringToWasm0(font_hash, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len0 = WASM_VECTOR_LEN;
-        const ptr1 = passStringToWasm0(
-            request_json,
-            wasm.__wbindgen_malloc,
-            wasm.__wbindgen_realloc
-        );
+        const ptr1 = passStringToWasm0(request_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len1 = WASM_VECTOR_LEN;
-        const ret = wasm.list_debug_cached_font_children(
-            ptr0,
-            len0,
-            ptr1,
-            len1
-        );
+        const ret = wasm.list_debug_cached_font_children(ptr0, len0, ptr1, len1);
         var ptr3 = ret[0];
         var len3 = ret[1];
         if (ret[3]) {
-            ptr3 = 0;
-            len3 = 0;
+            ptr3 = 0; len3 = 0;
             throw takeFromExternrefTable0(ret[2]);
         }
         deferred4_0 = ptr3;
@@ -1064,18 +934,13 @@ export function open_font_file(filename, contents) {
     let deferred3_0;
     let deferred3_1;
     try {
-        const ptr0 = passStringToWasm0(
-            filename,
-            wasm.__wbindgen_malloc,
-            wasm.__wbindgen_realloc
-        );
+        const ptr0 = passStringToWasm0(filename, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len0 = WASM_VECTOR_LEN;
         const ret = wasm.open_font_file(ptr0, len0, contents);
         var ptr2 = ret[0];
         var len2 = ret[1];
         if (ret[3]) {
-            ptr2 = 0;
-            len2 = 0;
+            ptr2 = 0; len2 = 0;
             throw takeFromExternrefTable0(ret[2]);
         }
         deferred3_0 = ptr2;
@@ -1093,11 +958,7 @@ export function open_font_file(filename, contents) {
  * @returns {number}
  */
 export function prime_debug_layout_closure_cache(glyph_names_json) {
-    const ptr0 = passStringToWasm0(
-        glyph_names_json,
-        wasm.__wbindgen_malloc,
-        wasm.__wbindgen_realloc
-    );
+    const ptr0 = passStringToWasm0(glyph_names_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
     const len0 = WASM_VECTOR_LEN;
     const ret = wasm.prime_debug_layout_closure_cache(ptr0, len0);
     if (ret[2]) {
@@ -1114,17 +975,9 @@ export function prime_debug_layout_closure_cache(glyph_names_json) {
  * @returns {number}
  */
 export function prime_layout_closure_cache(font_revision, glyph_names_json) {
-    const ptr0 = passStringToWasm0(
-        font_revision,
-        wasm.__wbindgen_malloc,
-        wasm.__wbindgen_realloc
-    );
+    const ptr0 = passStringToWasm0(font_revision, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
     const len0 = WASM_VECTOR_LEN;
-    const ptr1 = passStringToWasm0(
-        glyph_names_json,
-        wasm.__wbindgen_malloc,
-        wasm.__wbindgen_realloc
-    );
+    const ptr1 = passStringToWasm0(glyph_names_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
     const len1 = WASM_VECTOR_LEN;
     const ret = wasm.prime_layout_closure_cache(ptr0, len0, ptr1, len1);
     if (ret[2]) {
@@ -1139,21 +992,10 @@ export function prime_layout_closure_cache(font_revision, glyph_names_json) {
  * @param {string} glyph_names_json
  * @returns {number}
  */
-export function prime_preview_layout_closure_cache(
-    font_revision,
-    glyph_names_json
-) {
-    const ptr0 = passStringToWasm0(
-        font_revision,
-        wasm.__wbindgen_malloc,
-        wasm.__wbindgen_realloc
-    );
+export function prime_preview_layout_closure_cache(font_revision, glyph_names_json) {
+    const ptr0 = passStringToWasm0(font_revision, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
     const len0 = WASM_VECTOR_LEN;
-    const ptr1 = passStringToWasm0(
-        glyph_names_json,
-        wasm.__wbindgen_malloc,
-        wasm.__wbindgen_realloc
-    );
+    const ptr1 = passStringToWasm0(glyph_names_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
     const len1 = WASM_VECTOR_LEN;
     const ret = wasm.prime_preview_layout_closure_cache(ptr0, len0, ptr1, len1);
     if (ret[2]) {
@@ -1177,11 +1019,7 @@ export function rebuild_caches_from_ydoc_set() {
 export function refine_layer_snapshots_yjs(base_update, overrides_json) {
     const ptr0 = passArray8ToWasm0(base_update, wasm.__wbindgen_malloc);
     const len0 = WASM_VECTOR_LEN;
-    const ptr1 = passStringToWasm0(
-        overrides_json,
-        wasm.__wbindgen_malloc,
-        wasm.__wbindgen_realloc
-    );
+    const ptr1 = passStringToWasm0(overrides_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
     const len1 = WASM_VECTOR_LEN;
     const ret = wasm.refine_layer_snapshots_yjs(ptr0, len0, ptr1, len1);
     if (ret[2]) {
@@ -1196,17 +1034,9 @@ export function refine_layer_snapshots_yjs(base_update, overrides_json) {
  * @returns {any}
  */
 export function reinterpolate_layer_yjs(glyph_name, layer_id) {
-    const ptr0 = passStringToWasm0(
-        glyph_name,
-        wasm.__wbindgen_malloc,
-        wasm.__wbindgen_realloc
-    );
+    const ptr0 = passStringToWasm0(glyph_name, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
     const len0 = WASM_VECTOR_LEN;
-    const ptr1 = passStringToWasm0(
-        layer_id,
-        wasm.__wbindgen_malloc,
-        wasm.__wbindgen_realloc
-    );
+    const ptr1 = passStringToWasm0(layer_id, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
     const len1 = WASM_VECTOR_LEN;
     const ret = wasm.reinterpolate_layer_yjs(ptr0, len0, ptr1, len1);
     if (ret[2]) {
@@ -1220,11 +1050,7 @@ export function reinterpolate_layer_yjs(glyph_name, layer_id) {
  * @returns {any}
  */
 export function reinterpolate_master_layers_yjs(master_id) {
-    const ptr0 = passStringToWasm0(
-        master_id,
-        wasm.__wbindgen_malloc,
-        wasm.__wbindgen_realloc
-    );
+    const ptr0 = passStringToWasm0(master_id, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
     const len0 = WASM_VECTOR_LEN;
     const ret = wasm.reinterpolate_master_layers_yjs(ptr0, len0);
     if (ret[2]) {
@@ -1238,11 +1064,7 @@ export function reinterpolate_master_layers_yjs(master_id) {
  * @returns {any}
  */
 export function remove_masters_yjs(master_ids_json) {
-    const ptr0 = passStringToWasm0(
-        master_ids_json,
-        wasm.__wbindgen_malloc,
-        wasm.__wbindgen_realloc
-    );
+    const ptr0 = passStringToWasm0(master_ids_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
     const len0 = WASM_VECTOR_LEN;
     const ret = wasm.remove_masters_yjs(ptr0, len0);
     if (ret[2]) {
@@ -1267,18 +1089,13 @@ export function save_font_as_glyphs(babelfont_json) {
     let deferred3_0;
     let deferred3_1;
     try {
-        const ptr0 = passStringToWasm0(
-            babelfont_json,
-            wasm.__wbindgen_malloc,
-            wasm.__wbindgen_realloc
-        );
+        const ptr0 = passStringToWasm0(babelfont_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len0 = WASM_VECTOR_LEN;
         const ret = wasm.save_font_as_glyphs(ptr0, len0);
         var ptr2 = ret[0];
         var len2 = ret[1];
         if (ret[3]) {
-            ptr2 = 0;
-            len2 = 0;
+            ptr2 = 0; len2 = 0;
             throw takeFromExternrefTable0(ret[2]);
         }
         deferred3_0 = ptr2;
@@ -1304,18 +1121,13 @@ export function save_font_as_ufo_entries(babelfont_json) {
     let deferred3_0;
     let deferred3_1;
     try {
-        const ptr0 = passStringToWasm0(
-            babelfont_json,
-            wasm.__wbindgen_malloc,
-            wasm.__wbindgen_realloc
-        );
+        const ptr0 = passStringToWasm0(babelfont_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len0 = WASM_VECTOR_LEN;
         const ret = wasm.save_font_as_ufo_entries(ptr0, len0);
         var ptr2 = ret[0];
         var len2 = ret[1];
         if (ret[3]) {
-            ptr2 = 0;
-            len2 = 0;
+            ptr2 = 0; len2 = 0;
             throw takeFromExternrefTable0(ret[2]);
         }
         deferred3_0 = ptr2;
@@ -1348,11 +1160,7 @@ export function seed_ydoc(state_update) {
  * @param {Uint8Array} state_update
  */
 export function seed_ydoc_document(document_id, state_update) {
-    const ptr0 = passStringToWasm0(
-        document_id,
-        wasm.__wbindgen_malloc,
-        wasm.__wbindgen_realloc
-    );
+    const ptr0 = passStringToWasm0(document_id, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
     const len0 = WASM_VECTOR_LEN;
     const ptr1 = passArray8ToWasm0(state_update, wasm.__wbindgen_malloc);
     const len1 = WASM_VECTOR_LEN;
@@ -1385,11 +1193,7 @@ export function set_debug_font_cache_max_bytes(max_bytes) {
  * @param {string} babelfont_json
  */
 export function store_font(babelfont_json) {
-    const ptr0 = passStringToWasm0(
-        babelfont_json,
-        wasm.__wbindgen_malloc,
-        wasm.__wbindgen_realloc
-    );
+    const ptr0 = passStringToWasm0(babelfont_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
     const len0 = WASM_VECTOR_LEN;
     const ret = wasm.store_font(ptr0, len0);
     if (ret[1]) {
@@ -1427,64 +1231,50 @@ export function version() {
 function __wbg_get_imports() {
     const import0 = {
         __proto__: null,
-        __wbg___wbindgen_boolean_get_7f1c4dd217655ab6: function (arg0) {
+        __wbg___wbindgen_boolean_get_7f1c4dd217655ab6: function(arg0) {
             const v = arg0;
-            const ret = typeof v === 'boolean' ? v : undefined;
-            return isLikeNone(ret) ? 0xffffff : ret ? 1 : 0;
+            const ret = typeof(v) === 'boolean' ? v : undefined;
+            return isLikeNone(ret) ? 0xFFFFFF : ret ? 1 : 0;
         },
-        __wbg___wbindgen_debug_string_6cf0badf0b90f6ef: function (arg0, arg1) {
+        __wbg___wbindgen_debug_string_6cf0badf0b90f6ef: function(arg0, arg1) {
             const ret = debugString(arg1);
-            const ptr1 = passStringToWasm0(
-                ret,
-                wasm.__wbindgen_malloc,
-                wasm.__wbindgen_realloc
-            );
+            const ptr1 = passStringToWasm0(ret, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
             const len1 = WASM_VECTOR_LEN;
             getDataViewMemory0().setInt32(arg0 + 4 * 1, len1, true);
             getDataViewMemory0().setInt32(arg0 + 4 * 0, ptr1, true);
         },
-        __wbg___wbindgen_is_function_4500d4795b15e70b: function (arg0) {
-            const ret = typeof arg0 === 'function';
+        __wbg___wbindgen_is_function_4500d4795b15e70b: function(arg0) {
+            const ret = typeof(arg0) === 'function';
             return ret;
         },
-        __wbg___wbindgen_is_null_5467e07e008308e7: function (arg0) {
+        __wbg___wbindgen_is_null_5467e07e008308e7: function(arg0) {
             const ret = arg0 === null;
             return ret;
         },
-        __wbg___wbindgen_is_undefined_1296fcc83c2da07a: function (arg0) {
+        __wbg___wbindgen_is_undefined_1296fcc83c2da07a: function(arg0) {
             const ret = arg0 === undefined;
             return ret;
         },
-        __wbg___wbindgen_string_get_7b8bc463f6cbeefe: function (arg0, arg1) {
+        __wbg___wbindgen_string_get_7b8bc463f6cbeefe: function(arg0, arg1) {
             const obj = arg1;
-            const ret = typeof obj === 'string' ? obj : undefined;
-            var ptr1 = isLikeNone(ret)
-                ? 0
-                : passStringToWasm0(
-                      ret,
-                      wasm.__wbindgen_malloc,
-                      wasm.__wbindgen_realloc
-                  );
+            const ret = typeof(obj) === 'string' ? obj : undefined;
+            var ptr1 = isLikeNone(ret) ? 0 : passStringToWasm0(ret, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
             var len1 = WASM_VECTOR_LEN;
             getDataViewMemory0().setInt32(arg0 + 4 * 1, len1, true);
             getDataViewMemory0().setInt32(arg0 + 4 * 0, ptr1, true);
         },
-        __wbg___wbindgen_throw_89ca9e2c67795ec1: function (arg0, arg1) {
+        __wbg___wbindgen_throw_89ca9e2c67795ec1: function(arg0, arg1) {
             throw new Error(getStringFromWasm0(arg0, arg1));
         },
-        __wbg_call_3eadb5cea0462653: function () {
-            return handleError(function (arg0, arg1, arg2) {
-                const ret = arg0.call(arg1, arg2);
-                return ret;
-            }, arguments);
-        },
-        __wbg_call_dcf4c86f489d6628: function () {
-            return handleError(function (arg0, arg1, arg2, arg3, arg4) {
-                const ret = arg0.call(arg1, arg2, arg3, arg4);
-                return ret;
-            }, arguments);
-        },
-        __wbg_error_a6fa202b58aa1cd3: function (arg0, arg1) {
+        __wbg_call_3eadb5cea0462653: function() { return handleError(function (arg0, arg1, arg2) {
+            const ret = arg0.call(arg1, arg2);
+            return ret;
+        }, arguments); },
+        __wbg_call_dcf4c86f489d6628: function() { return handleError(function (arg0, arg1, arg2, arg3, arg4) {
+            const ret = arg0.call(arg1, arg2, arg3, arg4);
+            return ret;
+        }, arguments); },
+        __wbg_error_a6fa202b58aa1cd3: function(arg0, arg1) {
             let deferred0_0;
             let deferred0_1;
             try {
@@ -1495,38 +1285,28 @@ function __wbg_get_imports() {
                 wasm.__wbindgen_free(deferred0_0, deferred0_1, 1);
             }
         },
-        __wbg_error_d0b9fd88b7a19297: function (arg0) {
+        __wbg_error_d0b9fd88b7a19297: function(arg0) {
             console.error(arg0);
         },
-        __wbg_getRandomValues_696b3d8d7a0bb3f9: function () {
-            return handleError(function (arg0, arg1) {
-                globalThis.crypto.getRandomValues(
-                    getArrayU8FromWasm0(arg0, arg1)
-                );
-            }, arguments);
-        },
-        __wbg_getRandomValues_cc7f052a444bb2ce: function () {
-            return handleError(function (arg0, arg1) {
-                globalThis.crypto.getRandomValues(
-                    getArrayU8FromWasm0(arg0, arg1)
-                );
-            }, arguments);
-        },
-        __wbg_getTime_4b23931c93d819bb: function (arg0) {
+        __wbg_getRandomValues_696b3d8d7a0bb3f9: function() { return handleError(function (arg0, arg1) {
+            globalThis.crypto.getRandomValues(getArrayU8FromWasm0(arg0, arg1));
+        }, arguments); },
+        __wbg_getRandomValues_cc7f052a444bb2ce: function() { return handleError(function (arg0, arg1) {
+            globalThis.crypto.getRandomValues(getArrayU8FromWasm0(arg0, arg1));
+        }, arguments); },
+        __wbg_getTime_4b23931c93d819bb: function(arg0) {
             const ret = arg0.getTime();
             return ret;
         },
-        __wbg_get_89f3a4c398b4872e: function () {
-            return handleError(function (arg0, arg1) {
-                const ret = Reflect.get(arg0, arg1);
-                return ret;
-            }, arguments);
-        },
-        __wbg_get_unchecked_ae4d1600970be7c3: function (arg0, arg1) {
+        __wbg_get_89f3a4c398b4872e: function() { return handleError(function (arg0, arg1) {
+            const ret = Reflect.get(arg0, arg1);
+            return ret;
+        }, arguments); },
+        __wbg_get_unchecked_ae4d1600970be7c3: function(arg0, arg1) {
             const ret = arg0[arg1 >>> 0];
             return ret;
         },
-        __wbg_instanceof_Uint8Array_6482c66fce35827d: function (arg0) {
+        __wbg_instanceof_Uint8Array_6482c66fce35827d: function(arg0) {
             let result;
             try {
                 result = arg0 instanceof Uint8Array;
@@ -1536,93 +1316,84 @@ function __wbg_get_imports() {
             const ret = result;
             return ret;
         },
-        __wbg_isArray_fe5201bfdab7e39d: function (arg0) {
+        __wbg_isArray_fe5201bfdab7e39d: function(arg0) {
             const ret = Array.isArray(arg0);
             return ret;
         },
-        __wbg_length_f875d3a041bab91a: function (arg0) {
+        __wbg_length_f875d3a041bab91a: function(arg0) {
             const ret = arg0.length;
             return ret;
         },
-        __wbg_length_feaf2a40e5f9755a: function (arg0) {
+        __wbg_length_feaf2a40e5f9755a: function(arg0) {
             const ret = arg0.length;
             return ret;
         },
-        __wbg_log_240aa86e7eb48d31: function (arg0) {
+        __wbg_log_240aa86e7eb48d31: function(arg0) {
             console.log(arg0);
         },
-        __wbg_new_0_e8782c8df6122565: function () {
+        __wbg_new_0_e8782c8df6122565: function() {
             const ret = new Date();
             return ret;
         },
-        __wbg_new_227d7c05414eb861: function () {
+        __wbg_new_227d7c05414eb861: function() {
             const ret = new Error();
             return ret;
         },
-        __wbg_new_6feff3e11e4d0799: function () {
+        __wbg_new_6feff3e11e4d0799: function() {
             const ret = new Object();
             return ret;
         },
-        __wbg_new_ff7f9cc4c9a4a0cf: function () {
+        __wbg_new_ff7f9cc4c9a4a0cf: function() {
             const ret = new Array();
             return ret;
         },
-        __wbg_new_from_slice_a5be53238f31f9f7: function (arg0, arg1) {
+        __wbg_new_from_slice_a5be53238f31f9f7: function(arg0, arg1) {
             const ret = new Uint8Array(getArrayU8FromWasm0(arg0, arg1));
             return ret;
         },
-        __wbg_prototypesetcall_37f00e1be5c4015a: function (arg0, arg1, arg2) {
-            Uint8Array.prototype.set.call(
-                getArrayU8FromWasm0(arg0, arg1),
-                arg2
-            );
+        __wbg_prototypesetcall_37f00e1be5c4015a: function(arg0, arg1, arg2) {
+            Uint8Array.prototype.set.call(getArrayU8FromWasm0(arg0, arg1), arg2);
         },
-        __wbg_push_3584053bd77475ee: function (arg0, arg1) {
+        __wbg_push_3584053bd77475ee: function(arg0, arg1) {
             const ret = arg0.push(arg1);
             return ret;
         },
-        __wbg_set_409333732b484ee7: function () {
-            return handleError(function (arg0, arg1, arg2) {
-                const ret = Reflect.set(arg0, arg1, arg2);
-                return ret;
-            }, arguments);
-        },
-        __wbg_stack_3b0d974bbf31e44f: function (arg0, arg1) {
+        __wbg_set_409333732b484ee7: function() { return handleError(function (arg0, arg1, arg2) {
+            const ret = Reflect.set(arg0, arg1, arg2);
+            return ret;
+        }, arguments); },
+        __wbg_stack_3b0d974bbf31e44f: function(arg0, arg1) {
             const ret = arg1.stack;
-            const ptr1 = passStringToWasm0(
-                ret,
-                wasm.__wbindgen_malloc,
-                wasm.__wbindgen_realloc
-            );
+            const ptr1 = passStringToWasm0(ret, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
             const len1 = WASM_VECTOR_LEN;
             getDataViewMemory0().setInt32(arg0 + 4 * 1, len1, true);
             getDataViewMemory0().setInt32(arg0 + 4 * 0, ptr1, true);
         },
-        __wbg_static_accessor_GLOBAL_280fe6a619bbfbf6: function () {
+        __wbg_static_accessor_GLOBAL_280fe6a619bbfbf6: function() {
             const ret = typeof global === 'undefined' ? null : global;
             return isLikeNone(ret) ? 0 : addToExternrefTable0(ret);
         },
-        __wbg_static_accessor_GLOBAL_THIS_12c1f4811ec605d1: function () {
+        __wbg_static_accessor_GLOBAL_THIS_12c1f4811ec605d1: function() {
             const ret = typeof globalThis === 'undefined' ? null : globalThis;
             return isLikeNone(ret) ? 0 : addToExternrefTable0(ret);
         },
-        __wbg_static_accessor_SELF_3a156961626f54d9: function () {
+        __wbg_static_accessor_SELF_3a156961626f54d9: function() {
             const ret = typeof self === 'undefined' ? null : self;
             return isLikeNone(ret) ? 0 : addToExternrefTable0(ret);
         },
-        __wbg_static_accessor_WINDOW_210015b3eb6018a4: function () {
+        __wbg_static_accessor_WINDOW_210015b3eb6018a4: function() {
             const ret = typeof window === 'undefined' ? null : window;
             return isLikeNone(ret) ? 0 : addToExternrefTable0(ret);
         },
-        __wbg_warn_998077100f0e7387: function (arg0) {
+        __wbg_warn_998077100f0e7387: function(arg0) {
             console.warn(arg0);
         },
-        __wbindgen_cast_0000000000000001: function (arg0, arg1) {
+        __wbindgen_cast_0000000000000001: function(arg0, arg1) {
             // Cast intrinsic for `Ref(String) -> Externref`.
             const ret = getStringFromWasm0(arg0, arg1);
             return ret;
         },
-        __wbindgen_init_externref_table: function () {
+        __wbindgen_init_externref_table: function() {
             const table = wasm.__wbindgen_externrefs;
             const offset = table.grow(4);
             table.set(0, undefined);
@@ -1630,11 +1401,11 @@ function __wbg_get_imports() {
             table.set(offset + 1, null);
             table.set(offset + 2, true);
             table.set(offset + 3, false);
-        }
+        },
     };
     return {
-        '__proto__': null,
-        './babelfont_fontc_web_bg.js': import0
+        __proto__: null,
+        "./babelfont_fontc_web_bg.js": import0,
     };
 }
 
@@ -1648,7 +1419,7 @@ function debugString(val) {
     // primitive types
     const type = typeof val;
     if (type == 'number' || type == 'boolean' || val == null) {
-        return `${val}`;
+        return  `${val}`;
     }
     if (type == 'string') {
         return `"${val}"`;
@@ -1676,7 +1447,7 @@ function debugString(val) {
         if (length > 0) {
             debug += debugString(val[0]);
         }
-        for (let i = 1; i < length; i++) {
+        for(let i = 1; i < length; i++) {
             debug += ', ' + debugString(val[i]);
         }
         debug += ']';
@@ -1727,12 +1498,7 @@ function getArrayU8FromWasm0(ptr, len) {
 
 let cachedDataViewMemory0 = null;
 function getDataViewMemory0() {
-    if (
-        cachedDataViewMemory0 === null ||
-        cachedDataViewMemory0.buffer.detached === true ||
-        (cachedDataViewMemory0.buffer.detached === undefined &&
-            cachedDataViewMemory0.buffer !== wasm.memory.buffer)
-    ) {
+    if (cachedDataViewMemory0 === null || cachedDataViewMemory0.buffer.detached === true || (cachedDataViewMemory0.buffer.detached === undefined && cachedDataViewMemory0.buffer !== wasm.memory.buffer)) {
         cachedDataViewMemory0 = new DataView(wasm.memory.buffer);
     }
     return cachedDataViewMemory0;
@@ -1745,10 +1511,7 @@ function getStringFromWasm0(ptr, len) {
 
 let cachedUint8ArrayMemory0 = null;
 function getUint8ArrayMemory0() {
-    if (
-        cachedUint8ArrayMemory0 === null ||
-        cachedUint8ArrayMemory0.byteLength === 0
-    ) {
+    if (cachedUint8ArrayMemory0 === null || cachedUint8ArrayMemory0.byteLength === 0) {
         cachedUint8ArrayMemory0 = new Uint8Array(wasm.memory.buffer);
     }
     return cachedUint8ArrayMemory0;
@@ -1778,9 +1541,7 @@ function passStringToWasm0(arg, malloc, realloc) {
     if (realloc === undefined) {
         const buf = cachedTextEncoder.encode(arg);
         const ptr = malloc(buf.length, 1) >>> 0;
-        getUint8ArrayMemory0()
-            .subarray(ptr, ptr + buf.length)
-            .set(buf);
+        getUint8ArrayMemory0().subarray(ptr, ptr + buf.length).set(buf);
         WASM_VECTOR_LEN = buf.length;
         return ptr;
     }
@@ -1794,14 +1555,14 @@ function passStringToWasm0(arg, malloc, realloc) {
 
     for (; offset < len; offset++) {
         const code = arg.charCodeAt(offset);
-        if (code > 0x7f) break;
+        if (code > 0x7F) break;
         mem[ptr + offset] = code;
     }
     if (offset !== len) {
         if (offset !== 0) {
             arg = arg.slice(offset);
         }
-        ptr = realloc(ptr, len, (len = offset + arg.length * 3), 1) >>> 0;
+        ptr = realloc(ptr, len, len = offset + arg.length * 3, 1) >>> 0;
         const view = getUint8ArrayMemory0().subarray(ptr + offset, ptr + len);
         const ret = cachedTextEncoder.encodeInto(arg, view);
 
@@ -1819,26 +1580,18 @@ function takeFromExternrefTable0(idx) {
     return value;
 }
 
-let cachedTextDecoder = new TextDecoder('utf-8', {
-    ignoreBOM: true,
-    fatal: true
-});
+let cachedTextDecoder = new TextDecoder('utf-8', { ignoreBOM: true, fatal: true });
 cachedTextDecoder.decode();
 const MAX_SAFARI_DECODE_BYTES = 2146435072;
 let numBytesDecoded = 0;
 function decodeText(ptr, len) {
     numBytesDecoded += len;
     if (numBytesDecoded >= MAX_SAFARI_DECODE_BYTES) {
-        cachedTextDecoder = new TextDecoder('utf-8', {
-            ignoreBOM: true,
-            fatal: true
-        });
+        cachedTextDecoder = new TextDecoder('utf-8', { ignoreBOM: true, fatal: true });
         cachedTextDecoder.decode();
         numBytesDecoded = len;
     }
-    return cachedTextDecoder.decode(
-        getUint8ArrayMemory0().subarray(ptr, ptr + len)
-    );
+    return cachedTextDecoder.decode(getUint8ArrayMemory0().subarray(ptr, ptr + len));
 }
 
 const cachedTextEncoder = new TextEncoder();
@@ -1872,20 +1625,12 @@ async function __wbg_load(module, imports) {
             try {
                 return await WebAssembly.instantiateStreaming(module, imports);
             } catch (e) {
-                const validResponse =
-                    module.ok && expectedResponseType(module.type);
+                const validResponse = module.ok && expectedResponseType(module.type);
 
-                if (
-                    validResponse &&
-                    module.headers.get('Content-Type') !== 'application/wasm'
-                ) {
-                    console.warn(
-                        '`WebAssembly.instantiateStreaming` failed because your server does not serve Wasm with `application/wasm` MIME type. Falling back to `WebAssembly.instantiate` which is slower. Original error:\n',
-                        e
-                    );
-                } else {
-                    throw e;
-                }
+                if (validResponse && module.headers.get('Content-Type') !== 'application/wasm') {
+                    console.warn("`WebAssembly.instantiateStreaming` failed because your server does not serve Wasm with `application/wasm` MIME type. Falling back to `WebAssembly.instantiate` which is slower. Original error:\n", e);
+
+                } else { throw e; }
             }
         }
 
@@ -1903,10 +1648,7 @@ async function __wbg_load(module, imports) {
 
     function expectedResponseType(type) {
         switch (type) {
-            case 'basic':
-            case 'cors':
-            case 'default':
-                return true;
+            case 'basic': case 'cors': case 'default': return true;
         }
         return false;
     }
@@ -1915,13 +1657,12 @@ async function __wbg_load(module, imports) {
 function initSync(module) {
     if (wasm !== undefined) return wasm;
 
+
     if (module !== undefined) {
         if (Object.getPrototypeOf(module) === Object.prototype) {
-            ({ module } = module);
+            ({module} = module)
         } else {
-            console.warn(
-                'using deprecated parameters for `initSync()`; pass a single object instead'
-            );
+            console.warn('using deprecated parameters for `initSync()`; pass a single object instead')
         }
     }
 
@@ -1936,36 +1677,25 @@ function initSync(module) {
 async function __wbg_init(module_or_path) {
     if (wasm !== undefined) return wasm;
 
+
     if (module_or_path !== undefined) {
         if (Object.getPrototypeOf(module_or_path) === Object.prototype) {
-            ({ module_or_path } = module_or_path);
+            ({module_or_path} = module_or_path)
         } else {
-            console.warn(
-                'using deprecated parameters for the initialization function; pass a single object instead'
-            );
+            console.warn('using deprecated parameters for the initialization function; pass a single object instead')
         }
     }
 
     if (module_or_path === undefined) {
-        module_or_path = new URL(
-            'babelfont_fontc_web_bg.wasm',
-            import.meta.url
-        );
+        module_or_path = new URL('babelfont_fontc_web_bg.wasm', import.meta.url);
     }
     const imports = __wbg_get_imports();
 
-    if (
-        typeof module_or_path === 'string' ||
-        (typeof Request === 'function' && module_or_path instanceof Request) ||
-        (typeof URL === 'function' && module_or_path instanceof URL)
-    ) {
+    if (typeof module_or_path === 'string' || (typeof Request === 'function' && module_or_path instanceof Request) || (typeof URL === 'function' && module_or_path instanceof URL)) {
         module_or_path = fetch(module_or_path);
     }
 
-    const { instance, module } = await __wbg_load(
-        await module_or_path,
-        imports
-    );
+    const { instance, module } = await __wbg_load(await module_or_path, imports);
 
     return __wbg_finalize_init(instance, module);
 }

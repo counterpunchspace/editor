@@ -40,6 +40,7 @@ import init, {
     set_debug_font_cache_max_bytes,
     validate_feature_source_with_full_filter_pipeline,
     filtered_boolean_fingerprints,
+    boolean_op_paths,
     version
 } from '../wasm-dist/babelfont_fontc_web.js';
 import {
@@ -2491,6 +2492,37 @@ self.onmessage = async (event) => {
                 });
             } finally {
                 timelineSpanEnd(dumpSpanId);
+            }
+            return;
+        }
+
+        if (data.type === 'booleanOpPaths') {
+            const { id, op, pathsJson } = data;
+            try {
+                if (!initialized) {
+                    await initializeWasm();
+                }
+                const pathSets = JSON.parse(pathsJson);
+                if (!Array.isArray(pathSets)) {
+                    throw new Error(
+                        'Boolean operation expected a path-set list'
+                    );
+                }
+                const results = pathSets.map((paths) =>
+                    JSON.parse(boolean_op_paths(op, JSON.stringify(paths)))
+                );
+                self.postMessage({
+                    id,
+                    type: 'booleanOpPaths',
+                    paths: JSON.stringify(results)
+                });
+            } catch (e: any) {
+                console.error('[Fontc Worker] booleanOpPaths error:', e);
+                self.postMessage({
+                    id,
+                    type: 'booleanOpPaths',
+                    error: e?.toString?.() || String(e)
+                });
             }
             return;
         }

@@ -21,6 +21,68 @@ function escapeHtml(value: string): string {
         .replace(/>/g, '&gt;');
 }
 
+/**
+ * Two-choice confirm. Escape, close, and the backdrop cancel.
+ */
+export function showProceedDialog(
+    title: string,
+    message: string
+): Promise<boolean> {
+    return new Promise((resolve) => {
+        const overlay = document.createElement('div');
+        overlay.className = 'info-popup-overlay';
+        overlay.style.display = 'flex';
+        overlay.style.zIndex = '10002';
+
+        overlay.innerHTML = `
+            <div class="info-popup confirm-dialog">
+                <div class="info-popup-header">
+                    <h3>${escapeHtml(title)}</h3>
+                    <button type="button" class="info-popup-close confirm-dialog-close-btn" aria-label="Cancel">
+                        <span class="material-symbols-outlined">close</span>
+                    </button>
+                </div>
+                <div class="info-popup-content confirm-dialog-content">
+                    <p>${escapeHtml(message)}</p>
+                    <div class="confirm-dialog-actions">
+                        <button type="button" class="dialog-button" data-action="cancel">Cancel</button>
+                        <button type="button" class="dialog-button dialog-button-primary" data-action="proceed">Proceed</button>
+                    </div>
+                </div>
+            </div>
+        `;
+
+        document.body.appendChild(overlay);
+
+        let escapeBinding: ReturnType<typeof bindModalEscape> | null = null;
+
+        function finish(proceed: boolean) {
+            escapeBinding?.release();
+            escapeBinding = null;
+            overlay.remove();
+            resolve(proceed);
+        }
+
+        escapeBinding = bindModalEscape(() => finish(false), {
+            isOpen: () => overlay.isConnected
+        });
+
+        overlay.addEventListener('click', (event) => {
+            if (event.target === overlay) {
+                finish(false);
+            }
+        });
+        overlay
+            .querySelector('.confirm-dialog-close-btn')
+            ?.addEventListener('click', () => finish(false));
+        overlay.querySelectorAll('[data-action]').forEach((button) => {
+            button.addEventListener('click', () => {
+                finish((button as HTMLElement).dataset.action === 'proceed');
+            });
+        });
+    });
+}
+
 export function showNamedUnsavedChangesDialog({
     subjectType,
     subjectName
