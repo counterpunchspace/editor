@@ -9,7 +9,7 @@ The first slice ships inside the editor, not as an external download.
 | Composition provider | `counterpunch_composition_plugins` | `space.counterpunch.latin` |
 | Feature generator | `counterpunch_feature_plugins` | `space.counterpunch.ccmp` (`feature:ccmp`) |
 
-`LatinCompositionProvider.recipe(codepoint, lookup)` returns a Unicode component recipe, or an `overrides.json` recipe when one exists. `anchors(codepoint)` and `anchor_positions(requests)` supply creation anchors. `CcmpFeatureGenerator` declares `EVENT_TYPES = ["glyph.unicode.changed"]` plus the `ccmp` intent, and `SETTINGS` for `composition_output` (`target: font-info.features`). Glyph creation, deletion, and renaming always re-run generators. See `developer-docs/PLUGIN_SETTINGS.md`.
+`LatinCompositionProvider.recipe(codepoint, lookup)` returns a Unicode component recipe, or an `overrides.json` recipe when one exists. `anchors(codepoint)` and `anchor_positions(requests)` supply creation anchors. `CcmpFeatureGenerator` declares `EVENT_TYPES = ["glyph.unicode.changed"]` plus the `ccmp` intent, and `SETTINGS` for `composition_output` (`target: add-glyphs`). Glyph creation, deletion, and renaming always re-run generators. See `developer-docs/PLUGIN_SETTINGS.md`.
 
 ## Purpose
 

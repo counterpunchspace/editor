@@ -23,6 +23,11 @@ export const PLUGIN_SETTING_TARGETS: Record<string, PluginSettingTarget> = {
         id: 'font-info.language-packs',
         scope: 'font',
         implemented: true
+    },
+    'add-glyphs': {
+        id: 'add-glyphs',
+        scope: 'font',
+        implemented: true
     }
 };
 
@@ -30,8 +35,7 @@ export const PLUGIN_SETTING_FALLBACK = 'font-info.language-packs';
 
 export const RESERVED_PLUGIN_SETTING_TARGETS = [
     'font-info.general',
-    'glyph-overview.filters',
-    'add-glyphs'
+    'glyph-overview.filters'
 ];
 
 export function resolvePluginSettingTarget(target: string | undefined): string {

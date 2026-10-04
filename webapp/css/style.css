@@ -313,6 +313,54 @@
     padding: 5px 8px;
 }
 
+.add-glyphs-composition {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-top: 12px;
+}
+
+.add-glyphs-composition[hidden] {
+    display: none;
+}
+
+.add-glyphs-composition .plugin-ui-radio {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 6px;
+    margin: 0;
+}
+
+.add-glyphs-composition .plugin-ui-label {
+    color: var(--text-secondary);
+    font-family: var(--font-families-sans);
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+}
+
+.add-glyphs-composition .plugin-setting-help {
+    margin: 0;
+    color: var(--text-tertiary);
+    font-family: var(--font-families-sans);
+    font-size: 12px;
+    line-height: 1.4;
+}
+
+.add-glyphs-composition .plugin-ui-radio-options {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 16px;
+}
+
+.add-glyphs-composition .plugin-ui-radio-label {
+    color: var(--text-primary);
+    font-family: var(--font-families-sans);
+    font-size: 13px;
+}
+
 .add-glyph-body {
     margin-top: 12px;
 }
@@ -7887,6 +7935,11 @@ select.glyph-property-input {
     flex-direction: column;
     gap: 0;
     margin: 0 calc(var(--top-row-sidebar-list-bleed, 12px) * -1);
+}
+
+.features-list[hidden],
+.sidebar-section-title[hidden] {
+    display: none;
 }
 
 .features-list + .editor-section-title {

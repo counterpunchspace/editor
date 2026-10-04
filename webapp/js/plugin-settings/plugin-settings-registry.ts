@@ -73,15 +73,18 @@ class PluginSettingsRegistry {
         if (!plugin || !font) {
             return null;
         }
-        const settings = plugin.settings.map((setting) => {
-            const raw =
-                font.getPluginSetting(pluginId, setting.id) ?? setting.default;
-            return {
-                label: setting.label || setting.id,
-                value: displaySettingValue(setting, raw),
-                help: setting.help
-            };
-        });
+        const settings = plugin.settings
+            .filter((setting) => setting.target !== 'add-glyphs')
+            .map((setting) => {
+                const raw =
+                    font.getPluginSetting(pluginId, setting.id) ??
+                    setting.default;
+                return {
+                    label: setting.label || setting.id,
+                    value: displaySettingValue(setting, raw),
+                    help: setting.help
+                };
+            });
         const summary = [
             plugin.title,
             ...settings.map((setting) => setting.value).filter(Boolean)
@@ -95,18 +98,49 @@ class PluginSettingsRegistry {
         };
     }
 
+    renderTarget(container: HTMLElement, target: string): void {
+        container.replaceChildren();
+        for (const plugin of this.pluginsForTarget(target)) {
+            this.appendSettings(
+                container,
+                plugin,
+                plugin.settings.filter((setting) => setting.target === target)
+            );
+        }
+    }
+
     render(
         container: HTMLElement,
         pluginId: string,
         onChange?: () => void
     ): void {
         const plugin = this.plugins.get(pluginId);
-        const font = window.currentFontModel;
         container.replaceChildren();
-        if (!plugin || !font) {
+        if (!plugin) {
             return;
         }
-        for (const setting of plugin.settings) {
+        this.appendSettings(
+            container,
+            plugin,
+            plugin.settings.filter(
+                (setting) => setting.target !== 'add-glyphs'
+            ),
+            onChange
+        );
+    }
+
+    private appendSettings(
+        container: HTMLElement,
+        plugin: RegisteredPluginSettings,
+        settings: PluginSetting[],
+        onChange?: () => void
+    ): void {
+        const font = window.currentFontModel;
+        if (!font) {
+            return;
+        }
+        const pluginId = plugin.pluginId;
+        for (const setting of settings) {
             container.appendChild(
                 createPluginSettingControl(setting, {
                     get: (id) =>

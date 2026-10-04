@@ -83,6 +83,14 @@ test('adding a composed glyph stays responsive', async ({ page }) => {
         ) as HTMLInputElement | null;
         return Boolean(input && !input.disabled);
     });
+    await expect(
+        page.locator('#add-glyphs-modal .add-glyphs-composition')
+    ).toContainText('Composition output for new glyphs');
+    await expect(
+        page.locator(
+            '#add-glyphs-modal input[type="radio"][name="composition_output"][value="ccmp"]'
+        )
+    ).toBeChecked();
     await search.fill('U+1EAC');
     const row = page
         .locator('#add-glyphs-modal .add-glyph-row')
@@ -125,18 +133,4 @@ test('adding a composed glyph stays responsive', async ({ page }) => {
         .slice(before)
         .filter((text) => text.includes('beforePythonExecution hook returned'));
     expect(nestedScriptWarnings).toEqual([]);
-    await page.evaluate(() => window.focusView('view-fontinfo'));
-    await page.locator('.fontinfo-section-button').click();
-    await page.locator('[data-section="features"]').click();
-    await page.locator('#plugin-settings-list .feature-list-item').click();
-    await page.screenshot({
-        path: 'test-results/composition-settings.png',
-        fullPage: false
-    });
-    await page.getByRole('button', { name: 'Rebuild Composition…' }).click();
-    await page.locator('.rebuild-composition-dialog').waitFor();
-    await page.screenshot({
-        path: 'test-results/rebuild-composition.png',
-        fullPage: false
-    });
 });

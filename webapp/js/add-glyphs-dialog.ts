@@ -60,6 +60,7 @@ export class AddGlyphsDialog {
     private setTree: HTMLElement | null = null;
     private setPanel: HTMLElement | null = null;
     private coverageControls: HTMLElement | null = null;
+    private compositionSettings: HTMLElement | null = null;
     private list: HTMLElement | null = null;
     private confirmButton: HTMLButtonElement | null = null;
     private quotaError: HTMLParagraphElement | null = null;
@@ -94,7 +95,8 @@ export class AddGlyphsDialog {
         try {
             await Promise.all([
                 glyphDataIndex.ensureReady(),
-                characterSetPluginManager.ensureReady()
+                characterSetPluginManager.ensureReady(),
+                this.refreshCompositionSettings()
             ]);
             this.renderProviderOptions();
             this.updateProviderLayout();
@@ -121,6 +123,28 @@ export class AddGlyphsDialog {
         if (this.modal) {
             this.modal.style.display = 'none';
         }
+    }
+
+    private async refreshCompositionSettings(): Promise<void> {
+        if (!this.compositionSettings) {
+            return;
+        }
+        try {
+            const { featureGeneratorEngine } =
+                await import('./language-packs/feature-generator-engine');
+            await featureGeneratorEngine.ensureReady();
+            const { pluginSettingsRegistry } =
+                await import('./plugin-settings/plugin-settings-registry');
+            pluginSettingsRegistry.renderTarget(
+                this.compositionSettings,
+                'add-glyphs'
+            );
+        } catch (error) {
+            console.error('Could not load composition settings', error);
+            this.compositionSettings.replaceChildren();
+        }
+        this.compositionSettings.hidden =
+            this.compositionSettings.childElementCount === 0;
     }
 
     private clearQuotaError(): void {
@@ -161,6 +185,10 @@ export class AddGlyphsDialog {
             'Character Set Provider'
         );
         providerBar.appendChild(this.providerSelect);
+
+        this.compositionSettings = document.createElement('div');
+        this.compositionSettings.className = 'add-glyphs-composition';
+        this.compositionSettings.hidden = true;
 
         const search = document.createElement('div');
         search.className = 'find-glyph-search overview-search-control';
@@ -232,7 +260,12 @@ export class AddGlyphsDialog {
         resultsPanel.className = 'add-glyph-results-panel';
         resultsPanel.append(search, this.coverageControls, this.list);
         body.append(this.setPanel, resultsPanel);
-        this.content.replaceChildren(providerBar, body, actions);
+        this.content.replaceChildren(
+            providerBar,
+            this.compositionSettings,
+            body,
+            actions
+        );
         this.updateProviderLayout();
         this.syncConfirmButton();
     }
@@ -243,6 +276,11 @@ export class AddGlyphsDialog {
         this.modal?.addEventListener('click', (event) => {
             if (event.target === this.modal) {
                 this.close();
+            }
+        });
+        window.addEventListener('pluginSettingsRegistered', () => {
+            if (this.isOpen()) {
+                void this.refreshCompositionSettings();
             }
         });
         this.searchInput?.addEventListener('input', () => {

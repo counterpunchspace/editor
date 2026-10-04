@@ -21,16 +21,13 @@ class CcmpFeatureGenerator:
             "type": "radio",
             "label": "Composition output for new glyphs",
             "help": "Materialized writes component glyphs. ccmp writes empty shells decomposed by the shaper.",
-            "target": "font-info.features",
+            "target": "add-glyphs",
             "options": [
                 {"value": "materialized", "label": "Materialized components"},
                 {"value": "ccmp", "label": "Shaper-composed (ccmp)"},
             ],
             "default": "materialized",
             "regenerates": False,
-            "actions": [
-                {"id": "host:rebuild-composition", "label": "Rebuild Composition…"}
-            ],
         }
     ]
 

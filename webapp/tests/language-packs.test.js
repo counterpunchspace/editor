@@ -226,6 +226,7 @@ describe('language packs', () => {
         expect(resolvePluginSettingTarget('not-a-target')).toBe(
             'font-info.language-packs'
         );
+        expect(resolvePluginSettingTarget('add-glyphs')).toBe('add-glyphs');
     });
 
     test('ccmp shells are the glyphs a managed decomposition replaces', () => {

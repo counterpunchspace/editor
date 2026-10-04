@@ -874,8 +874,22 @@ class FontInfoManager {
         // list is often painted before that, so refresh it when they arrive.
         window.addEventListener('pluginSettingsRegistered', () => {
             this.loadPluginSettingsList();
-            if (this.pluginSettingsOpenId) {
-                this.showPluginSettings(this.pluginSettingsOpenId);
+            const openId = this.pluginSettingsOpenId;
+            if (!openId) {
+                return;
+            }
+            const stillShown = [
+                ...pluginSettingsRegistry.pluginsForTarget(
+                    'font-info.features'
+                ),
+                ...pluginSettingsRegistry.pluginsForTarget(
+                    'font-info.language-packs'
+                )
+            ].some((plugin) => plugin.pluginId === openId);
+            if (stillShown) {
+                this.showPluginSettings(openId);
+            } else {
+                this.closePluginSettingsForm();
             }
         });
 
@@ -2488,7 +2502,7 @@ class FontInfoManager {
         this.featuresTab.innerHTML = `
             <div class="features-container">
                 <div class="features-sidebar view-sidebar view-sidebar-left">
-                    <div class="sidebar-section-title">Settings</div>
+                    <div class="sidebar-section-title" id="plugin-settings-heading">Settings</div>
                     <div class="features-list sidebar-list" id="plugin-settings-list"></div>
                     <div class="sidebar-section-title">Prefixes</div>
                     <div class="features-list sidebar-list" id="prefixes-list"></div>
@@ -8048,8 +8062,16 @@ class FontInfoManager {
                 'font-info.language-packs'
             )
         ];
-        if (!plugins.length) {
-            list.innerHTML = '<div class="features-empty">No settings</div>';
+        const heading = document.getElementById('plugin-settings-heading');
+        const visible = plugins.length > 0;
+        list.hidden = !visible;
+        if (heading) {
+            heading.hidden = !visible;
+        }
+        if (!visible) {
+            if (this.pluginSettingsOpenId) {
+                this.closePluginSettingsForm();
+            }
             return;
         }
         for (const plugin of plugins) {
