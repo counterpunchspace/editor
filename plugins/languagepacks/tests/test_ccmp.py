@@ -60,6 +60,40 @@ def test_needs_rebuild_skips_unrelated_glyph():
     ) is False
 
 
+def test_existing_line_keeps_designer_components():
+    result = GENERATOR.generate(
+        {"lifecycle": [], "changes": [], "intents": {}},
+        {
+            "managed_code": "sub aDiaeresis-lat by a-lat acutecomb.alt;",
+            "font_glyphs": ["aDiaeresis-lat", "a-lat", "acutecomb.alt", "diaeresisCombining"],
+            "recipes": {"aDiaeresis-lat": ["a-lat", "diaeresisCombining"]},
+        },
+    )
+    assert result["blocks"][0]["code"] == "sub aDiaeresis-lat by a-lat acutecomb.alt;"
+
+
+def test_intent_components_override_recipe_for_new_rules():
+    result = GENERATOR.generate(
+        {
+            "lifecycle": [],
+            "changes": [],
+            "intents": {
+                "ccmp": {
+                    "add": ["aDiaeresis-lat"],
+                    "remove": [],
+                    "components": {"aDiaeresis-lat": ["a-lat", "acutecomb.alt"]},
+                }
+            },
+        },
+        {
+            "managed_code": "",
+            "font_glyphs": ["aDiaeresis-lat", "a-lat", "acutecomb.alt", "diaeresisCombining"],
+            "recipes": {"aDiaeresis-lat": ["a-lat", "diaeresisCombining"]},
+        },
+    )
+    assert result["blocks"][0]["code"] == "sub aDiaeresis-lat by a-lat acutecomb.alt;"
+
+
 def test_rename_follows_rule():
     result = GENERATOR.generate(
         {

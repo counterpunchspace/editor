@@ -1,16 +1,11 @@
 /** Classify a glyph selection and convert it to components or ccmp. */
 
-import { glyphDataIndex } from '../glyph-data';
-import { languagePackManager } from './language-pack-manager';
 import { applyCompositionPlan } from './composition-applicator';
-import { ccmpShellNames } from './ccmp-shells';
+import { ccmpDecomposition, ccmpShellNames } from './ccmp-shells';
 import {
-    planRebuild,
-    type CompositionOutput,
-    type GlyphRecord,
-    type PlanFont
+    planExistingConversion,
+    type CompositionOutput
 } from './composition-planner';
-import { managedInputs } from './managed-features';
 
 export interface CompositionGlyphView {
     codepoints?: number[];
@@ -31,7 +26,8 @@ export function classifyComposition(
     lookup: {
         glyph(name: string): CompositionGlyphView | undefined;
         isCcmp(name: string): boolean;
-        hasRecipe(codepoint: number): boolean;
+        components(name: string): readonly string[];
+        decomposition(name: string): readonly string[];
     }
 ): CompositionOffer {
     const offer: CompositionOffer = {
@@ -44,16 +40,17 @@ export function classifyComposition(
     };
     for (const name of names) {
         const glyph = lookup.glyph(name);
-        const codepoint = glyph?.codepoints?.[0];
         const outlined = hasOutlines(glyph);
         if (lookup.isCcmp(name)) {
-            offer.toComponents.push(name);
-            if (outlined) {
-                offer.outlinesLostByComponents.push(name);
+            if (lookup.decomposition(name).length) {
+                offer.toComponents.push(name);
+                if (outlined) {
+                    offer.outlinesLostByComponents.push(name);
+                }
             }
             continue;
         }
-        if (typeof codepoint === 'number' && lookup.hasRecipe(codepoint)) {
+        if (lookup.components(name).length) {
             offer.toCcmp.push(name);
             if (outlined) {
                 offer.outlinesLostByCcmp.push(name);
@@ -61,12 +58,14 @@ export function classifyComposition(
         }
     }
     if (!offer.toCcmp.length) {
-        offer.ccmpReason = offer.toComponents.length
+        offer.ccmpReason = names.every((name) => lookup.isCcmp(name))
             ? 'Already ccmp'
-            : 'No recipe';
+            : 'No components';
     }
     if (!offer.toComponents.length) {
-        offer.componentsReason = 'Not ccmp';
+        offer.componentsReason = names.some((name) => lookup.isCcmp(name))
+            ? 'No components'
+            : 'Not ccmp';
     }
     return offer;
 }
@@ -82,6 +81,24 @@ export function conversionMenuLabel(
     return `Convert to ${target}`;
 }
 
+export function glyphComponentNames(
+    glyph: CompositionGlyphView | undefined
+): string[] {
+    const names: string[] = [];
+    for (const layer of glyph?.layers || []) {
+        for (const shape of layer.shapes || []) {
+            const name = componentReference(shape);
+            if (name && !names.includes(name)) {
+                names.push(name);
+            }
+        }
+        if (names.length) {
+            return names;
+        }
+    }
+    return names;
+}
+
 export async function loadCompositionOffer(
     names: readonly string[]
 ): Promise<CompositionOffer> {
@@ -90,26 +107,17 @@ export async function loadCompositionOffer(
         return classifyComposition(names, {
             glyph: () => undefined,
             isCcmp: () => false,
-            hasRecipe: () => false
+            components: () => [],
+            decomposition: () => []
         });
     }
-    await languagePackManager.ensureReady();
     const shells = ccmpShellNames(font.features);
-    const recipes = new Map<number, boolean>();
-    for (const name of names) {
-        const codepoint = font.findGlyph(name)?.codepoints?.[0];
-        if (typeof codepoint !== 'number' || recipes.has(codepoint)) {
-            continue;
-        }
-        recipes.set(
-            codepoint,
-            Boolean(await languagePackManager.recipe(codepoint))
-        );
-    }
+    const rules = ccmpDecomposition(font.features);
     return classifyComposition(names, {
         glyph: (name) => font.findGlyph(name),
         isCcmp: (name) => shells.has(name),
-        hasRecipe: (codepoint) => recipes.get(codepoint) === true
+        components: (name) => glyphComponentNames(font.findGlyph(name)),
+        decomposition: (name) => rules.get(name) || []
     });
 }
 
@@ -121,23 +129,15 @@ export async function convertSelectedGlyphs(
     if (!font || !names.length) {
         return;
     }
-    const records = glyphRecords(names);
-    const plan = await planRebuild(
-        records,
-        output,
-        fontView(),
-        {
-            recipe: (codepoint) => languagePackManager.recipe(codepoint),
-            anchors: (codepoint) => languagePackManager.anchors(codepoint),
-            anchorPositions: (requests) =>
-                languagePackManager.anchorPositions(requests),
-            glyphNameForCodepoint: (codepoint) =>
-                languagePackManager.glyphNameForCodepoint(codepoint),
-            categoryForCodepoint: (codepoint) =>
-                languagePackManager.categoryForCodepoint(codepoint)
-        },
-        managedInputs(font.features, 'space.counterpunch.ccmp', 'decomposition')
-    );
+    const rules = ccmpDecomposition(font.features);
+    const items = names.map((name) => ({
+        name,
+        components:
+            output === 'ccmp'
+                ? glyphComponentNames(font.findGlyph(name))
+                : rules.get(name) || []
+    }));
+    const plan = planExistingConversion(items, output);
     window.glyphCanvas?.textRunEditor?.holdSelectionForComposition(names);
     applyCompositionPlan(
         font,
@@ -149,12 +149,7 @@ export async function convertSelectedGlyphs(
 function hasOutlines(glyph: CompositionGlyphView | undefined): boolean {
     for (const layer of glyph?.layers || []) {
         for (const shape of layer.shapes || []) {
-            if (
-                !shape ||
-                typeof shape !== 'object' ||
-                !('reference' in shape) ||
-                typeof shape.reference !== 'string'
-            ) {
+            if (isOutlineShape(shape)) {
                 return true;
             }
         }
@@ -162,50 +157,40 @@ function hasOutlines(glyph: CompositionGlyphView | undefined): boolean {
     return false;
 }
 
-function glyphRecords(names: readonly string[]): GlyphRecord[] {
-    const font = window.currentFontModel!;
-    const records: GlyphRecord[] = [];
-    for (const name of names) {
-        const glyph = font.findGlyph(name);
-        const codepoint = glyph?.codepoints?.[0];
-        if (!glyph || typeof codepoint !== 'number') {
-            continue;
-        }
-        const data = glyphDataIndex.getGlyphDataForUnicode([codepoint]);
-        records.push({
-            codepoint,
-            glyph_name: data?.glyph_name || glyph.name,
-            general_category: data?.general_category || 'Lu'
-        });
+function isOutlineShape(shape: unknown): boolean {
+    if (!shape || typeof shape !== 'object') {
+        return true;
     }
-    return records;
+    const candidate = shape as {
+        isComponent?: () => boolean;
+        reference?: unknown;
+    };
+    if (typeof candidate.isComponent === 'function') {
+        return !candidate.isComponent();
+    }
+    return typeof candidate.reference !== 'string';
 }
 
-function fontView(): PlanFont {
-    const font = window.currentFontModel!;
-    return {
-        glyphNameForCodepoint: (codepoint) =>
-            font.findGlyphByCodepoint(codepoint)?.name,
-        hasGlyph: (name) => Boolean(font.findGlyph(name)),
-        masters: (font.masters || []).map((master) => ({
-            id: master.id,
-            metrics: masterMetrics(
-                master.metrics as unknown as Record<string, number> | undefined
-            )
-        }))
+function componentReference(shape: unknown): string | null {
+    if (!shape || typeof shape !== 'object') {
+        return null;
+    }
+    const candidate = shape as {
+        isComponent?: () => boolean;
+        asComponent?: () => { reference?: string };
+        reference?: unknown;
     };
-}
-
-function masterMetrics(
-    metrics: Record<string, number> | undefined
-): Record<string, number> {
-    const value = metrics || {};
-    return {
-        xheight: value.XHeight ?? value.xheight ?? 500,
-        capheight: value.CapHeight ?? value.capheight ?? 700,
-        ascender: value.Ascender ?? value.ascender ?? 800,
-        descender: value.Descender ?? value.descender ?? -200,
-        upm: value.upm ?? 1000,
-        italic_angle: value.ItalicAngle ?? value.italic_angle ?? 0
-    };
+    if (typeof candidate.isComponent === 'function') {
+        if (
+            !candidate.isComponent() ||
+            typeof candidate.asComponent !== 'function'
+        ) {
+            return null;
+        }
+        const reference = candidate.asComponent().reference;
+        return typeof reference === 'string' && reference ? reference : null;
+    }
+    return typeof candidate.reference === 'string' && candidate.reference
+        ? candidate.reference
+        : null;
 }

@@ -21,7 +21,8 @@ export function applyCompositionPlan(
     const run = () => {
         bridge?.setTransactionIntent?.('ccmp', {
             add: plan.ccmpAdd,
-            remove: plan.ccmpRemove
+            remove: plan.ccmpRemove,
+            components: plan.ccmpComponents
         });
         for (const glyph of plan.create) {
             if (font.findGlyph(glyph.name)) {

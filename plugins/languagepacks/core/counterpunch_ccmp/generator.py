@@ -1,4 +1,4 @@
-"""Write the managed ``ccmp`` block from composition recipes and intents."""
+"""Write the managed ``ccmp`` block from existing lines, conversion components, or recipes."""
 
 from __future__ import annotations
 
@@ -76,14 +76,21 @@ class CcmpFeatureGenerator:
             rules.setdefault(glyph, [])
         present = set(context.get("font_glyphs") or [])
         recipes = context.get("recipes") or {}
+        # Existing lines win, so a designer's components survive later rebuilds.
+        # Intent components are the conversion source. Recipes fill new glyphs only.
+        supplied = intent.get("components") or {}
         kept: dict[str, list[str]] = {}
         for glyph in sorted(rules):
             if glyph not in present:
                 diagnostics.append(f"Dropped {glyph}: glyph is not in the font.")
                 continue
-            components = recipes.get(glyph)
+            components = (
+                list(rules[glyph])
+                if rules[glyph]
+                else list(supplied.get(glyph) or []) or recipes.get(glyph)
+            )
             if not components:
-                diagnostics.append(f"Dropped {glyph}: no composition recipe.")
+                diagnostics.append(f"Dropped {glyph}: no components.")
                 continue
             missing = [name for name in components if name not in present]
             if missing:

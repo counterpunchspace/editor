@@ -6,11 +6,13 @@ const { ccmpShellNames } = require('../js/language-packs/ccmp-shells.ts');
 const {
     planGlyphAdditions,
     planRebuild,
+    planExistingConversion,
     compositionOutputSetting
 } = require('../js/language-packs/composition-planner.ts');
 const {
     classifyComposition,
-    conversionMenuLabel
+    conversionMenuLabel,
+    glyphComponentNames
 } = require('../js/language-packs/composition-conversion.ts');
 const {
     remapSelectionAcrossComposition
@@ -147,7 +149,13 @@ describe('language packs', () => {
             },
             composite: {
                 codepoints: [0xe1],
-                layers: [{ shapes: [{ reference: 'a' }] }]
+                layers: [
+                    { shapes: [{ reference: 'a' }, { reference: 'acute' }] }
+                ]
+            },
+            mixed: {
+                codepoints: [0xe9],
+                layers: [{ shapes: [{ reference: 'e' }, { nodes: [] }] }]
             },
             drawn: {
                 codepoints: [0xe9],
@@ -158,29 +166,32 @@ describe('language packs', () => {
                 layers: [{ shapes: [{ nodes: [] }] }]
             }
         };
+        const decomposition = { shell: ['a', 'diaeresis'] };
         const offer = classifyComposition(
-            ['shell', 'composite', 'drawn', 'plain'],
+            ['shell', 'composite', 'mixed', 'drawn', 'plain'],
             {
                 glyph: (name) => glyphs[name],
                 isCcmp: (name) => name === 'shell',
-                hasRecipe: (codepoint) => codepoint !== 0x62
+                components: (name) => glyphComponentNames(glyphs[name]),
+                decomposition: (name) => decomposition[name] || []
             }
         );
         expect(offer.toComponents).toEqual(['shell']);
-        expect(offer.toCcmp).toEqual(['composite', 'drawn']);
-        expect(offer.outlinesLostByCcmp).toEqual(['drawn']);
+        expect(offer.toCcmp).toEqual(['composite', 'mixed']);
+        expect(offer.outlinesLostByCcmp).toEqual(['mixed']);
         expect(offer.outlinesLostByComponents).toEqual([]);
         expect(offer.ccmpReason).toBeNull();
         expect(offer.componentsReason).toBeNull();
-        expect(conversionMenuLabel('ccmp', 2, 4)).toBe('Convert 2 to ccmp');
-        expect(conversionMenuLabel('Components', 1, 4)).toBe(
+        expect(conversionMenuLabel('ccmp', 2, 5)).toBe('Convert 2 to ccmp');
+        expect(conversionMenuLabel('Components', 1, 5)).toBe(
             'Convert 1 to Components'
         );
 
         const already = classifyComposition(['shell'], {
             glyph: (name) => glyphs[name],
             isCcmp: () => true,
-            hasRecipe: () => true
+            components: () => [],
+            decomposition: () => ['a', 'diaeresis']
         });
         expect(already.ccmpReason).toBe('Already ccmp');
         expect(already.componentsReason).toBeNull();
@@ -188,10 +199,50 @@ describe('language packs', () => {
         const none = classifyComposition(['plain'], {
             glyph: (name) => glyphs[name],
             isCcmp: () => false,
-            hasRecipe: () => false
+            components: () => [],
+            decomposition: () => []
         });
-        expect(none.ccmpReason).toBe('No recipe');
+        expect(none.ccmpReason).toBe('No components');
         expect(none.componentsReason).toBe('Not ccmp');
+
+        const wrapped = {
+            isComponent: () => true,
+            asComponent: () => ({ reference: 'a.custom' })
+        };
+        expect(
+            glyphComponentNames({ layers: [{ shapes: [wrapped] }] })
+        ).toEqual(['a.custom']);
+        expect(
+            classifyComposition(['wrapped'], {
+                glyph: () => ({ layers: [{ shapes: [wrapped] }] }),
+                isCcmp: () => false,
+                components: () => ['a.custom'],
+                decomposition: () => []
+            }).outlinesLostByCcmp
+        ).toEqual([]);
+    });
+
+    test('conversion keeps the components already in the glyph or ccmp line', () => {
+        const toCcmp = planExistingConversion(
+            [{ name: 'Aacute', components: ['A', 'acutecomb.alt'] }],
+            'ccmp'
+        );
+        expect(toCcmp.ccmpAdd).toEqual(['Aacute']);
+        expect(toCcmp.clearShells).toEqual(['Aacute']);
+        expect(toCcmp.ccmpComponents).toEqual({
+            Aacute: ['A', 'acutecomb.alt']
+        });
+        expect(toCcmp.composites).toEqual([]);
+
+        const toComponents = planExistingConversion(
+            [{ name: 'Aacute', components: ['A', 'acutecomb.alt'] }],
+            'materialized'
+        );
+        expect(toComponents.composites).toEqual([
+            { name: 'Aacute', components: ['A', 'acutecomb.alt'] }
+        ]);
+        expect(toComponents.ccmpRemove).toEqual(['Aacute']);
+        expect(toComponents.ccmpAdd).toEqual([]);
     });
 
     test('composition conversion keeps the active glyph', () => {

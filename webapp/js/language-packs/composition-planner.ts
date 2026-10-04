@@ -63,6 +63,8 @@ export interface CompositionPlan {
     clearShells: string[];
     ccmpAdd: string[];
     ccmpRemove: string[];
+    /** Component lists for glyphs newly added to ccmp. Existing lines keep their own. */
+    ccmpComponents: Record<string, string[]>;
     supportingCount: number;
     skipped: string[];
 }
@@ -89,6 +91,39 @@ export async function planGlyphAdditions(
     return planRecords(records, output, font, provider, managedInputs, false);
 }
 
+/** Convert glyphs that already have components, without consulting a recipe. */
+export function planExistingConversion(
+    items: ReadonlyArray<{ name: string; components: string[] }>,
+    output: CompositionOutput
+): CompositionPlan {
+    const plan: CompositionPlan = {
+        create: [],
+        composites: [],
+        clearShells: [],
+        ccmpAdd: [],
+        ccmpRemove: [],
+        ccmpComponents: {},
+        supportingCount: 0,
+        skipped: []
+    };
+    for (const item of items) {
+        if (!item.components.length) {
+            plan.skipped.push(item.name);
+            continue;
+        }
+        const components = [...item.components];
+        if (output === 'ccmp') {
+            plan.ccmpAdd.push(item.name);
+            plan.clearShells.push(item.name);
+            plan.ccmpComponents[item.name] = components;
+        } else {
+            plan.composites.push({ name: item.name, components });
+            plan.ccmpRemove.push(item.name);
+        }
+    }
+    return plan;
+}
+
 export async function planRebuild(
     records: readonly GlyphRecord[],
     output: CompositionOutput,
@@ -113,6 +148,7 @@ async function planRecords(
         clearShells: [],
         ccmpAdd: [],
         ccmpRemove: [],
+        ccmpComponents: {},
         supportingCount: 0,
         skipped: []
     };
