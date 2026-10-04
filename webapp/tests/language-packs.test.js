@@ -5,6 +5,7 @@ const {
 const { ccmpShellNames } = require('../js/language-packs/ccmp-shells.ts');
 const {
     planGlyphAdditions,
+    planRebuild,
     compositionOutputSetting
 } = require('../js/language-packs/composition-planner.ts');
 const {
@@ -104,6 +105,31 @@ describe('language packs', () => {
         );
         expect(plan.composites).toEqual([]);
         expect(plan.ccmpAdd).toEqual(['aDiaeresis-lat']);
+        expect(plan.clearShells).toEqual([]);
+    });
+
+    test('ccmp rebuild always clears outlines from an existing shell', async () => {
+        const plan = await planRebuild(
+            [
+                {
+                    codepoint: 0xe4,
+                    glyph_name: 'aDiaeresis-lat',
+                    general_category: 'Ll'
+                }
+            ],
+            'ccmp',
+            {
+                ...font,
+                hasGlyph(name) {
+                    return name === 'aDiaeresis-lat';
+                }
+            },
+            provider,
+            []
+        );
+        expect(plan.ccmpAdd).toEqual(['aDiaeresis-lat']);
+        expect(plan.clearShells).toEqual(['aDiaeresis-lat']);
+        expect(plan.composites).toEqual([]);
     });
 
     test('managed block replacement keeps manual ccmp', () => {

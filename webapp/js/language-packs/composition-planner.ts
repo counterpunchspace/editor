@@ -94,17 +94,9 @@ export async function planRebuild(
     output: CompositionOutput,
     font: PlanFont,
     provider: CompositionProvider,
-    managedInputs: readonly string[],
-    clearShells: boolean
+    managedInputs: readonly string[]
 ): Promise<CompositionPlan> {
-    return planRecords(
-        records,
-        output,
-        font,
-        provider,
-        managedInputs,
-        clearShells
-    );
+    return planRecords(records, output, font, provider, managedInputs, true);
 }
 
 async function planRecords(

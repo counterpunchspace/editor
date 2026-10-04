@@ -47,10 +47,6 @@ export async function openRebuildCompositionDialog(options?: {
                             <option value="ccmp">ccmp shells</option>
                         </select>
                     </label>
-                    <label class="confirm-dialog-option">
-                        <input type="checkbox" data-clear checked />
-                        Clear outlines from ccmp shells
-                    </label>
                 </div>
                 <ul class="confirm-dialog-report rebuild-composition-preview" data-preview></ul>
                 <div class="confirm-dialog-actions">
@@ -64,7 +60,6 @@ export async function openRebuildCompositionDialog(options?: {
     const outputSelect = overlay.querySelector(
         '[data-output]'
     ) as HTMLSelectElement;
-    const clear = overlay.querySelector('[data-clear]') as HTMLInputElement;
     const preview = overlay.querySelector('[data-preview]') as HTMLElement;
     scope.value = options?.scope || 'selected';
     outputSelect.value = output;
@@ -93,8 +88,7 @@ export async function openRebuildCompositionDialog(options?: {
                 font.features,
                 'space.counterpunch.ccmp',
                 'decomposition'
-            ),
-            clear.checked
+            )
         );
         preview.replaceChildren();
         const lines = [
@@ -127,7 +121,6 @@ export async function openRebuildCompositionDialog(options?: {
     };
     scope.addEventListener('change', () => void refresh());
     outputSelect.addEventListener('change', () => void refresh());
-    clear.addEventListener('change', () => void refresh());
     overlay
         .querySelector('[data-apply]')
         ?.addEventListener('click', async () => {
@@ -144,8 +137,7 @@ export async function openRebuildCompositionDialog(options?: {
                     font.features,
                     'space.counterpunch.ccmp',
                     'decomposition'
-                ),
-                clear.checked
+                )
             );
             applyCompositionPlan(font, plan, 'Rebuild composition');
             close();
