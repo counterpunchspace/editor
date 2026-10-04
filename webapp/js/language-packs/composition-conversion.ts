@@ -138,6 +138,7 @@ export async function convertSelectedGlyphs(
         },
         managedInputs(font.features, 'space.counterpunch.ccmp', 'decomposition')
     );
+    window.glyphCanvas?.textRunEditor?.holdSelectionForComposition(names);
     applyCompositionPlan(
         font,
         plan,

@@ -13,6 +13,10 @@ import APP_SETTINGS from '../settings';
 import { recordLiveTextDiagnostic } from '../live-text-diagnostics';
 import { isCcmpShellGlyph } from '../language-packs/ccmp-shells';
 import {
+    remapSelectionAcrossComposition,
+    type CompositionShapedGlyph
+} from './composition-selection';
+import {
     parseClipboardPayloads,
     readClipboardPayloadsAsync
 } from '../clipboard';
@@ -115,6 +119,11 @@ export class TextRunEditor {
     bidi: any;
     bidiRuns: any[];
     selectedGlyphIndex: number;
+    compositionSelectionHold: {
+        before: CompositionShapedGlyph[];
+        selectedIndex: number;
+        convertedNames: Set<string>;
+    } | null;
     cursorPosition: number;
     cursorVisible: boolean;
     cursorBlinkInterval: any;
@@ -175,6 +184,7 @@ export class TextRunEditor {
 
         // Selected glyph (glyph after cursor in logical order)
         this.selectedGlyphIndex = -1;
+        this.compositionSelectionHold = null;
 
         // Cursor state
         this.cursorPosition = 0; // Logical position in textBuffer (0 = before first char)
@@ -477,6 +487,7 @@ export class TextRunEditor {
     }
 
     setTextBuffer(text: string) {
+        this.compositionSelectionHold = null;
         this.textBuffer = normalizeTextNewlines(text || '');
         this.textBufferWriteGeneration += 1;
         markUserTextBufferWritten();
@@ -505,6 +516,7 @@ export class TextRunEditor {
     }
 
     setTextBufferForNavigation(text: string) {
+        this.compositionSelectionHold = null;
         this.textBuffer = text || '';
         this.textBufferWriteGeneration += 1;
         markUserTextBufferWritten();
@@ -513,6 +525,79 @@ export class TextRunEditor {
         // Shape immediately for visual update but do not persist to font/localStorage
         // and do not trigger textchanged (which can cascade into full compile dirtying).
         this.shapeText();
+    }
+
+    /**
+     * Remember the active glyph so the next reshape can keep it selected
+     * after a composition conversion changes cluster lengths.
+     */
+    holdSelectionForComposition(convertedNames: readonly string[]): void {
+        const index = this.selectedGlyphIndex;
+        if (
+            index < 0 ||
+            index >= this.shapedGlyphs.length ||
+            !window.glyphCanvas?.outlineEditor?.active
+        ) {
+            this.compositionSelectionHold = null;
+            return;
+        }
+        this.compositionSelectionHold = {
+            before: this.shapedGlyphs.map((glyph) => ({
+                cluster: glyph.cl || 0,
+                sourceName: this.sourceNameForShapedGlyph(glyph)
+            })),
+            selectedIndex: index,
+            convertedNames: new Set(convertedNames)
+        };
+    }
+
+    private sourceNameForShapedGlyph(glyph: ShapedGlyph): string | null {
+        if (glyph.explicitGlyphName) {
+            return glyph.explicitGlyphName;
+        }
+        const cluster = glyph.cl || 0;
+        const codepoint = this.textBuffer?.codePointAt(cluster);
+        if (codepoint === undefined) {
+            return null;
+        }
+        return (
+            window.currentFontModel?.findGlyphByCodepoint(codepoint)?.name ??
+            null
+        );
+    }
+
+    private applyCompositionSelectionHold(): void {
+        const hold = this.compositionSelectionHold;
+        if (!hold || this.shapedGlyphs.length === 0) {
+            return;
+        }
+        if (this.selectedGlyphIndex !== hold.selectedIndex) {
+            this.compositionSelectionHold = null;
+            return;
+        }
+        const result = remapSelectionAcrossComposition({
+            before: hold.before,
+            afterClusters: this.shapedGlyphs.map((glyph) => glyph.cl || 0),
+            selectedIndex: hold.selectedIndex,
+            convertedNames: hold.convertedNames
+        });
+        if (!result.applies) {
+            this.compositionSelectionHold = null;
+            return;
+        }
+        if (!result.changed) {
+            return;
+        }
+        this.compositionSelectionHold = null;
+        this.selectedGlyphIndex = result.index;
+        const glyph = this.shapedGlyphs[result.index];
+        if (glyph) {
+            this.cursorPosition = glyph.cl || 0;
+            this.updateCursorVisualPosition();
+        }
+        if (window.glyphCanvas?.outlineEditor?.active && window.stateManager) {
+            window.stateManager.editor_cursor_position = result.index;
+        }
     }
 
     async selectGlyphByIndex(glyphIndex: number, fromKeyboard = false) {
@@ -2424,6 +2509,8 @@ export class TextRunEditor {
                 variationLocation: variationLocation || null
             });
 
+            this.applyCompositionSelectionHold();
+
             console.log('Shaped glyphs:', this.shapedGlyphs);
             if (this.bidiRuns.length > 0) {
                 console.log('BiDi runs:', this.bidiRuns);
@@ -2852,6 +2939,7 @@ export class TextRunEditor {
 
         this.buildDisplayTextMapping();
         this.shapeLines(this.hbFont);
+        this.applyCompositionSelectionHold();
         console.log('Stage 2 shaped glyphs:', this.shapedGlyphs.length);
     }
 

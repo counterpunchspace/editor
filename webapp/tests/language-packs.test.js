@@ -13,6 +13,9 @@ const {
     conversionMenuLabel
 } = require('../js/language-packs/composition-conversion.ts');
 const {
+    remapSelectionAcrossComposition
+} = require('../js/glyph-canvas/composition-selection.ts');
+const {
     generatorMatches,
     operationsToBatch
 } = require('../js/language-packs/feature-generator-engine.ts');
@@ -189,6 +192,78 @@ describe('language packs', () => {
         });
         expect(none.ccmpReason).toBe('No recipe');
         expect(none.componentsReason).toBe('Not ccmp');
+    });
+
+    test('composition conversion keeps the active glyph', () => {
+        const converted = new Set(['aDiaeresis-lat', 'oDiaeresis-lat']);
+        const before = [
+            { cluster: 0, sourceName: 'a-lat' },
+            { cluster: 1, sourceName: 'aDiaeresis-lat' },
+            { cluster: 2, sourceName: 'oDiaeresis-lat' },
+            { cluster: 3, sourceName: 'n' }
+        ];
+        const afterCcmp = [0, 1, 1, 2, 2, 3];
+
+        const afterBoth = remapSelectionAcrossComposition({
+            before,
+            afterClusters: afterCcmp,
+            selectedIndex: 3,
+            convertedNames: converted
+        });
+        expect(afterBoth).toMatchObject({
+            index: 5,
+            applies: true,
+            changed: true
+        });
+
+        const beforeDiaeresis = remapSelectionAcrossComposition({
+            before,
+            afterClusters: afterCcmp,
+            selectedIndex: 0,
+            convertedNames: converted
+        });
+        expect(beforeDiaeresis.index).toBe(0);
+
+        const onDiaeresis = remapSelectionAcrossComposition({
+            before,
+            afterClusters: afterCcmp,
+            selectedIndex: 1,
+            convertedNames: converted
+        });
+        expect(onDiaeresis.index).toBe(1);
+
+        const mark = remapSelectionAcrossComposition({
+            before: [
+                { cluster: 0, sourceName: 'a-lat' },
+                { cluster: 1, sourceName: 'aDiaeresis-lat' },
+                { cluster: 1, sourceName: 'aDiaeresis-lat' },
+                { cluster: 2, sourceName: 'o-lat' }
+            ],
+            afterClusters: [0, 1, 2],
+            selectedIndex: 2,
+            convertedNames: converted
+        });
+        expect(mark.index).toBe(1);
+
+        const absent = remapSelectionAcrossComposition({
+            before: [
+                { cluster: 0, sourceName: 'a-lat' },
+                { cluster: 1, sourceName: 'b' }
+            ],
+            afterClusters: [0, 1],
+            selectedIndex: 1,
+            convertedNames: converted
+        });
+        expect(absent.applies).toBe(false);
+
+        const pending = remapSelectionAcrossComposition({
+            before,
+            afterClusters: [0, 1, 2, 3],
+            selectedIndex: 3,
+            convertedNames: converted
+        });
+        expect(pending.changed).toBe(false);
+        expect(pending.index).toBe(3);
     });
 
     test('managed block replacement keeps manual ccmp', () => {
