@@ -4075,6 +4075,31 @@ describe('FontManager boundary-crossing budget', () => {
         );
     });
 
+    test('forwardWorkerYjsUpdate reseeds the worker after a feature-code commit', async () => {
+        const originalPatchSyncEngine = window.patchSyncEngine;
+        const documentSet = [
+            { documentId: 'font-core', bytes: new Uint8Array([7, 7]) }
+        ];
+        window.patchSyncEngine = {
+            encodeDocumentSet: jest.fn(() => documentSet)
+        };
+        const seedWorkerDocumentSetSpy = jest
+            .spyOn(fontCompilation, 'seedWorkerDocumentSet')
+            .mockResolvedValue();
+
+        await expect(
+            fontManager.forwardWorkerYjsUpdate(new Uint8Array([1, 2, 3]), [], {
+                nonGlyphChangeHints: ['feature-code'],
+                documentId: 'font-core'
+            })
+        ).resolves.toBe(true);
+
+        expect(seedWorkerDocumentSetSpy).toHaveBeenCalledWith(documentSet);
+        expect(fontCompilation.hasWorkerCacheDocument()).toBe(true);
+        seedWorkerDocumentSetSpy.mockRestore();
+        window.patchSyncEngine = originalPatchSyncEngine;
+    });
+
     test('forwardWorkerYjsUpdate reseeds from bridge after applyYjsUpdate failure and does not resend the failed update', async () => {
         const originalPatchSyncEngine = window.patchSyncEngine;
         const rawUpdate = fontManager.buildWorkerSeedYjsState();

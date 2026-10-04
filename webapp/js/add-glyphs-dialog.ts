@@ -732,15 +732,66 @@ export class AddGlyphsDialog {
             }
         }
         try {
-            font.addGlyphs(
+            const { languagePackManager } =
+                await import('./language-packs/language-pack-manager');
+            const { planGlyphAdditions } =
+                await import('./language-packs/composition-planner');
+            const { applyCompositionPlan } =
+                await import('./language-packs/composition-applicator');
+            const { managedInputs } =
+                await import('./language-packs/managed-features');
+            const output =
+                font.getPluginSetting(
+                    'space.counterpunch.ccmp',
+                    'composition_output'
+                ) === 'ccmp'
+                    ? 'ccmp'
+                    : 'materialized';
+            const plan = await planGlyphAdditions(
                 additions.map((record) => ({
-                    name: record.glyph_name,
-                    codepoints: [record.codepoint],
-                    category: record.general_category.startsWith('M')
-                        ? 'Mark'
-                        : 'Base'
-                }))
+                    codepoint: record.codepoint,
+                    glyph_name: record.glyph_name,
+                    general_category: record.general_category
+                })),
+                output,
+                {
+                    glyphNameForCodepoint: (codepoint) =>
+                        font.findGlyphByCodepoint(codepoint)?.name,
+                    hasGlyph: (name) => Boolean(font.findGlyph(name)),
+                    masters: (font.masters || []).map((master) => ({
+                        id: master.id,
+                        metrics: {
+                            xheight: master.metrics?.XHeight ?? 500,
+                            capheight: master.metrics?.CapHeight ?? 700,
+                            ascender: master.metrics?.Ascender ?? 800,
+                            descender: master.metrics?.Descender ?? -200,
+                            upm: font.upm ?? 1000,
+                            italic_angle: master.metrics?.ItalicAngle ?? 0
+                        }
+                    }))
+                },
+                languagePackManager,
+                managedInputs(
+                    font.features,
+                    'space.counterpunch.ccmp',
+                    'decomposition'
+                )
             );
+            if (plan.supportingCount && this.confirmButton) {
+                this.confirmButton.textContent = `Add ${additions.length} Glyphs + ${plan.supportingCount} supporting`;
+            }
+            const gateCount = plan.create.length || additions.length;
+            if (plugin) {
+                const supportGate = await plugin.canAddGlyphs(gateCount);
+                if (!supportGate.allowed) {
+                    this.showQuotaError(
+                        supportGate.reason ||
+                            'Glyph limit reached for this font.'
+                    );
+                    return;
+                }
+            }
+            applyCompositionPlan(font, plan, 'Add glyphs');
             this.close();
         } catch (error) {
             this.showQuotaError(

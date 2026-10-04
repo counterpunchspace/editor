@@ -3240,14 +3240,22 @@ fn reconstruct_true_map_to_array(value: serde_json::Value, numeric: bool) -> ser
     serde_json::Value::Array(keys.into_iter().map(serde_json::Value::String).collect())
 }
 
+fn reconstruct_kern_group_value(value: serde_json::Value) -> serde_json::Value {
+    let serde_json::Value::Object(mut groups) = value else {
+        return value;
+    };
+    for (_, members) in groups.iter_mut() {
+        *members = reconstruct_true_map_to_array(std::mem::take(members), false);
+    }
+    serde_json::Value::Object(groups)
+}
+
 fn reconstruct_kern_group_dicts(obj: &mut serde_json::Map<String, serde_json::Value>) {
     for key in ["first_kern_groups", "second_kern_groups"] {
-        let Some(serde_json::Value::Object(groups)) = obj.get_mut(key) else {
+        let Some(value) = obj.remove(key) else {
             continue;
         };
-        for (_, members) in groups.iter_mut() {
-            *members = reconstruct_true_map_to_array(std::mem::take(members), false);
-        }
+        obj.insert(key.to_string(), reconstruct_kern_group_value(value));
     }
 }
 
@@ -3405,7 +3413,13 @@ fn cached_layer_json_from_font_json(
 fn ydoc_get_top_level_json_with_txn<T: ReadTxn>(key: &str, txn: &T) -> Option<serde_json::Value> {
     let font_map = txn.get_map("font")?;
     let value = font_map.get(txn, key)?;
-    Some(yrs_value_to_json(value, txn))
+    let json = yrs_value_to_json(value, txn);
+    // Incremental kern-group refreshes read this helper directly. Membership is
+    // stored as `{ glyph: true }` maps; babelfont deserializes `Vec<SmolStr>`.
+    if key == "first_kern_groups" || key == "second_kern_groups" {
+        return Some(reconstruct_kern_group_value(json));
+    }
+    Some(json)
 }
 
 fn extract_string_array(value: &serde_json::Value) -> Vec<String> {
@@ -4475,11 +4489,22 @@ pub fn apply_yjs_update(update: &[u8], update_metadata_json: &str) -> Result<Str
                 .iter()
                 .map(|(target, _)| target.glyph_name.clone())
                 .collect();
+            // A brand-new glyph can arrive with both a glyph-root add and layer
+            // targets (anchors on a supporting glyph). Layer-only patching then
+            // skips the snapshot, so the glyph never enters the font the feature
+            // parser sees. Names such as a-lat fail with "neither a known glyph".
+            let known_glyph_names: HashSet<String> = CANONICAL_GLYPH_INDEX_CACHE
+                .lock()
+                .unwrap()
+                .as_ref()
+                .map(|index| index.keys().cloned().collect())
+                .unwrap_or_default();
             let changed_glyph_snapshots: Vec<(String, Option<serde_json::Value>)> = changed_glyphs
                 .iter()
                 .filter(|glyph_name| {
-                    !layer_target_glyphs.contains(*glyph_name)
-                        && !renamed_glyph_names.contains(*glyph_name)
+                    !renamed_glyph_names.contains(*glyph_name)
+                        && (!layer_target_glyphs.contains(*glyph_name)
+                            || !known_glyph_names.contains(*glyph_name))
                 })
                 .map(|glyph_name| {
                     (
@@ -4758,7 +4783,12 @@ pub fn apply_yjs_update(update: &[u8], update_metadata_json: &str) -> Result<Str
                                 replace_axes_in_font_cache(font_cache, axes_json.as_ref())?;
                             }
                             for (glyph_name, glyph_json) in &changed_glyph_snapshots {
-                                if layer_target_glyphs.contains(glyph_name) {
+                                // Existing glyphs keep the sparse layer patch below.
+                                // Glyphs absent from the cache must be inserted whole,
+                                // even when this packet also carries layer targets.
+                                if layer_target_glyphs.contains(glyph_name)
+                                    && known_glyph_names.contains(glyph_name)
+                                {
                                     continue;
                                 }
                                 replace_glyph_in_font_cache(
@@ -4821,7 +4851,9 @@ pub fn apply_yjs_update(update: &[u8], update_metadata_json: &str) -> Result<Str
                                         )?;
                                     }
                                     for glyph_name in subset_glyphs {
-                                        if layer_target_glyphs.contains(glyph_name) {
+                                        if layer_target_glyphs.contains(glyph_name)
+                                            && known_glyph_names.contains(glyph_name)
+                                        {
                                             continue;
                                         }
                                         let Some((_, glyph_json)) = changed_glyph_snapshots
@@ -7549,6 +7581,27 @@ mod tests {
 
         let json = ydoc_to_babelfont_json_with_txn(&doc.transact());
         assert_eq!(json["first_kern_groups"]["A"], json!(["A", "B"]));
+    }
+
+    #[test]
+    fn ydoc_kern_group_top_level_fetch_converts_true_maps() {
+        let doc = Doc::new();
+        {
+            let font_map = doc.get_or_insert_map("font");
+            let mut txn = doc.transact_mut();
+            let groups: yrs::MapRef =
+                font_map.insert(&mut txn, "first_kern_groups", MapPrelim::<Any>::new());
+            let group: yrs::MapRef = groups.insert(&mut txn, "a-lat", MapPrelim::<Any>::new());
+            group.insert(&mut txn, "aDiaeresis-lat", true);
+            group.insert(&mut txn, "a-lat", true);
+        }
+
+        let json =
+            ydoc_get_top_level_json_with_txn("first_kern_groups", &doc.transact()).unwrap();
+        assert_eq!(
+            json["a-lat"],
+            json!(["a-lat", "aDiaeresis-lat"])
+        );
     }
 
     #[test]

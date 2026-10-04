@@ -222,6 +222,13 @@ recomposition closure uses this to close its allowed mutation set before
 running the same work queue as the all-scope commit path.
 
 #### `recomputeMetricsKeys(changedGlyphNames: Set<string> | None = None, options: { allowedGlyphNames?: Set<string>; skipAutomaticCompositeRebuild?: boolean; /** The caller already rebuilt automatic composites for the initial * sources | None = None, but metric-induced changes must still rebuild their * own automatic dependents. */ skipInitialAutomaticCompositeRebuild?: boolean; }) -> Set<string>`
+#### `getPluginSetting(pluginId: str, settingId: str) -> unknown`
+Read one font-scoped plugin setting. Missing and invalid values return
+`undefined` so the caller can use the plugin default.
+
+#### `setPluginSetting(pluginId: str, settingId: str, value: unknown) -> None`
+Write one font-scoped plugin setting as its own undoable edit.
+
 #### `findGlyph(name: str) -> [Glyph](#glyph) | None`
 Find a glyph by name
 
@@ -416,6 +423,7 @@ glyph = font.findGlyph("A")
 
 - **`featureVariations`** (list[FeatureVariationGlyph]): Synthetic, authorable views over this glyph's raw Glyphs feature-variation layers.
 - **`BUILTIN_CATEGORIES`** (Any)
+- **`id`** (str)
 - **`glyphData`** (dict | None): Read-only Unicode metadata from the bundled Glyph Data catalog.
 Encoded base glyphs win over editable glyph names; dotted glyphs inherit
 the identity of their base glyph before a name fallback is attempted.

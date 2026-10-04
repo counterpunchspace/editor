@@ -11,6 +11,7 @@ import type { AxesManager } from './variations';
 import type { UserspaceLocation } from '../locations';
 import APP_SETTINGS from '../settings';
 import { recordLiveTextDiagnostic } from '../live-text-diagnostics';
+import { isCcmpShellGlyph } from '../language-packs/ccmp-shells';
 import {
     parseClipboardPayloads,
     readClipboardPayloadsAsync
@@ -527,6 +528,22 @@ export class TextRunEditor {
         const previousIndex = this.selectedGlyphIndex;
 
         if (glyphIndex >= 0 && glyphIndex < this.shapedGlyphs.length) {
+            const glyph = this.shapedGlyphs[glyphIndex];
+            if (
+                glyph?.explicitGlyphName &&
+                isCcmpShellGlyph(glyph.explicitGlyphName)
+            ) {
+                const canvas = window.glyphCanvas;
+                if (canvas?.outlineEditor?.active) {
+                    canvas.exitGlyphEditMode();
+                }
+                this.cursorPosition =
+                    glyph.explicitTokenStart ?? glyph.cl ?? this.cursorPosition;
+                this.updateCursorVisualPosition();
+                this.call('render');
+                return;
+            }
+
             // Update selected glyph index
             this.selectedGlyphIndex = glyphIndex;
 
@@ -539,7 +556,6 @@ export class TextRunEditor {
             this.selectedGlyphIndex = glyphIndex;
 
             // Set logical cursor position to the start of this glyph's cluster
-            const glyph = this.shapedGlyphs[glyphIndex];
             const clusterPos = glyph.cl || 0;
             this.cursorPosition = clusterPos;
             this.updateCursorVisualPosition();

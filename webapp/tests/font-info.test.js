@@ -432,6 +432,101 @@ describe('FontInfo feature code compilation scheduling', () => {
         expect(fontInfoManager.pendingModelSyncRefresh).toBe(true);
     });
 
+    test('replaces a removed feature with its neighbor and clears the editor when none remain', () => {
+        const fontInfoManager = loadFontInfoManager();
+        document.body.innerHTML = `
+            <div id="features-list"></div>
+            <div id="feature-code-editor"></div>
+            <input type="checkbox" id="feature-automatic-checkbox" />
+        `;
+        const setValue = jest.fn();
+        const editor = {
+            isFocused: jest.fn(() => false),
+            setValue,
+            session: {
+                setUseWrapMode: jest.fn(),
+                removeMarker: jest.fn()
+            }
+        };
+        fontInfoManager.featuresEditor = editor;
+        fontInfoManager.currentTab = 'features';
+        window.currentFontModel = {
+            features: {
+                features: [
+                    ['liga', { code: 'sub f i by fi;', automatic: false }],
+                    ['ccmp', { code: 'sub a by a;', automatic: true }]
+                ]
+            },
+            analyzeFeatureTables: jest.fn(() => ({
+                hasGSUB: true,
+                hasGPOS: false
+            }))
+        };
+        fontInfoManager.selectedItem = { type: 'feature', key: 1 };
+        fontInfoManager.selectedFeatureTag = 'ccmp';
+        fontInfoManager.featureCodeDirty = true;
+
+        window.currentFontModel.features.features = [
+            ['liga', { code: 'sub f i by fi;', automatic: false }]
+        ];
+        fontInfoManager.loadFeaturesList();
+
+        expect(fontInfoManager.selectedFeatureTag).toBe('liga');
+        expect(fontInfoManager.selectedItem).toEqual({
+            type: 'feature',
+            key: 0
+        });
+        expect(setValue).toHaveBeenCalledWith('sub f i by fi;', -1);
+        expect(
+            document.querySelector(
+                '#features-list .feature-list-item.selected .feature-tag'
+            ).textContent
+        ).toBe('liga');
+
+        setValue.mockClear();
+        window.currentFontModel.features.features = [];
+        fontInfoManager.loadFeaturesList();
+
+        expect(fontInfoManager.selectedItem).toBeNull();
+        expect(fontInfoManager.selectedFeatureTag).toBeNull();
+        expect(setValue).toHaveBeenCalledWith('', -1);
+        expect(document.getElementById('feature-code-editor')).not.toBeNull();
+        expect(
+            document.getElementById('feature-automatic-checkbox').disabled
+        ).toBe(true);
+    });
+
+    test('replaces a removed class with its neighbor', () => {
+        const fontInfoManager = loadFontInfoManager();
+        document.body.innerHTML = '<div id="classes-list"></div>';
+        const setValue = jest.fn();
+        fontInfoManager.featuresEditor = {
+            setValue,
+            session: { setUseWrapMode: jest.fn(), removeMarker: jest.fn() }
+        };
+        window.currentFontModel = {
+            features: {
+                classes: {
+                    vowels: { code: '[a e i];', automatic: false },
+                    consonants: { code: '[b c d];', automatic: false }
+                }
+            }
+        };
+        fontInfoManager.loadClassesList();
+        fontInfoManager.selectedItem = { type: 'class', key: 'vowels' };
+
+        window.currentFontModel.features.classes = {
+            consonants: { code: '[b c d];', automatic: false }
+        };
+        fontInfoManager.loadClassesList();
+
+        expect(fontInfoManager.selectedItem).toEqual({
+            type: 'class',
+            key: 'consonants'
+        });
+        expect(setValue).toHaveBeenCalledWith('[b c d];', -1);
+    });
+
     test('automatic checkbox changes go through the patch funnel', () => {
         const fontInfoManager = loadFontInfoManager();
         const codeData = { code: 'sub f i by fi;', automatic: false };

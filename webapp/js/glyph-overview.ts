@@ -26,6 +26,7 @@ import {
     setupMenuKeyboardNav
 } from './tippy-utils';
 import { isOverviewFollowStackScrollEnabled } from './glyph-overview-follow-stack-pref';
+import { isCcmpShellGlyph } from './language-packs/ccmp-shells';
 import {
     getOverviewDisplayMode,
     getOverviewSize,
@@ -322,6 +323,7 @@ class GlyphOverview {
             return;
         }
         this.reconcileTileHydration();
+        this.refreshCcmpTiles();
         this.updatePropertyPanel();
     };
     private lastOverviewFontKey = '';
@@ -423,6 +425,9 @@ class GlyphOverview {
         // Listen for glyph changes to update tiles
         window.addEventListener('glyphChanged', this.onGlyphChanged.bind(this));
         window.addEventListener('fontModelSync', this.onFontModelSyncBound);
+        window.addEventListener('generatedFeaturesChanged', () =>
+            this.refreshCcmpTiles()
+        );
 
         // Listen for glyph stack changes to update highlight immediately
         window.addEventListener(
@@ -1132,6 +1137,11 @@ class GlyphOverview {
             }
 
             this.touchTileViewed(tile);
+
+            if (isCcmpShellGlyph(tile.glyphName)) {
+                this.syncCcmpTile(tile);
+                continue;
+            }
 
             if (tile.cachedData || this.pendingGlyphIds.has(tile.glyphId)) {
                 continue;
@@ -2404,6 +2414,11 @@ class GlyphOverview {
         const dims =
             width && height ? { width, height } : this.getTileDimensions();
 
+        if (isCcmpShellGlyph(tile.glyphName)) {
+            this.syncCcmpTile(tile);
+            return true;
+        }
+
         // Render directly to the tile's pre-existing canvas
         if (tile.canvas) {
             try {
@@ -3338,6 +3353,17 @@ class GlyphOverview {
         canvas.height = 0;
         tileElement.appendChild(canvas);
 
+        const ccmpStandIn = document.createElement('div');
+        ccmpStandIn.className = 'glyph-tile-ccmp';
+        ccmpStandIn.hidden = true;
+        const ccmpChar = document.createElement('span');
+        ccmpChar.className = 'glyph-tile-ccmp-char';
+        const ccmpBadge = document.createElement('span');
+        ccmpBadge.className = 'glyph-tile-ccmp-badge';
+        ccmpBadge.textContent = 'ccmp';
+        ccmpStandIn.append(ccmpChar, ccmpBadge);
+        tileElement.appendChild(ccmpStandIn);
+
         const cloudIcon = document.createElement('span');
         cloudIcon.className = 'glyph-tile-cloud-icon material-symbols-outlined';
         cloudIcon.textContent = 'cloud';
@@ -3415,7 +3441,62 @@ class GlyphOverview {
         } else {
             this.applyUnhydratedTileAppearance(tile);
         }
+        this.syncCcmpTile(tile);
         return tile;
+    }
+
+    private refreshCcmpTiles(): void {
+        for (const tile of this.tiles.values()) {
+            this.syncCcmpTile(tile);
+        }
+        if (!this.outlinePaintAllowed) {
+            return;
+        }
+        if (this.queueVisibleUncachedTiles() > 0) {
+            this.scheduleBatchRender();
+        }
+    }
+
+    private syncCcmpTile(tile: GlyphTile): void {
+        const standIn = tile.element.querySelector(
+            '.glyph-tile-ccmp'
+        ) as HTMLElement | null;
+        if (!standIn) {
+            return;
+        }
+        const shell = isCcmpShellGlyph(tile.glyphName);
+        const wasShell = tile.element.classList.contains(
+            'glyph-tile-ccmp-shell'
+        );
+        standIn.hidden = !shell;
+        tile.element.classList.toggle('glyph-tile-ccmp-shell', shell);
+        if (!shell) {
+            if (wasShell) {
+                tile.cachedData = undefined;
+                this.pendingGlyphIds.delete(tile.glyphId);
+            }
+            return;
+        }
+        const character = standIn.querySelector('.glyph-tile-ccmp-char');
+        const codepoint = this.getOverviewCodepoints(tile.glyphName).find(
+            (value) =>
+                Number.isInteger(value) &&
+                value >= 0 &&
+                value <= 0x10ffff &&
+                (value < 0xd800 || value > 0xdfff)
+        );
+        if (character) {
+            character.textContent =
+                codepoint == null ? '' : String.fromCodePoint(codepoint);
+        }
+        if (
+            tile.canvas &&
+            (tile.canvas.width !== 0 || tile.canvas.height !== 0)
+        ) {
+            tile.canvas.width = 0;
+            tile.canvas.height = 0;
+        }
+        tile.cachedData = undefined;
     }
 
     private overviewFontIdentityKey(): string {
@@ -3635,6 +3716,21 @@ class GlyphOverview {
                         window.deleteGlyphsDialog?.open();
                     } else if (action === 'duplicate-glyphs') {
                         this.duplicateSelectedGlyphs();
+                    } else if (action === 'rebuild-composition') {
+                        const names = this.getSelectedGlyphs()
+                            .map(
+                                (glyphId) =>
+                                    window.currentFontModel?.findGlyph(glyphId)
+                                        ?.name || glyphId
+                            )
+                            .filter((name): name is string => Boolean(name));
+                        void import('./language-packs/rebuild-composition-dialog').then(
+                            ({ openRebuildCompositionDialog }) =>
+                                openRebuildCompositionDialog({
+                                    scope: 'selected',
+                                    glyphNames: names
+                                })
+                        );
                     }
                 });
             }
@@ -3743,6 +3839,10 @@ class GlyphOverview {
             <div class="plugin-menu">
                 ${hydrateItem}
                 ${insertAsUnicodeItem}
+                <div class="plugin-menu-item${disabledClass}" data-action="rebuild-composition"${disabledAttr}>
+                    <span class="material-symbols-outlined">account_tree</span>
+                    <span>Rebuild Composition…</span>
+                </div>
                 <div class="plugin-menu-item${disabledClass}" data-action="duplicate-glyphs"${disabledAttr}>
                     <span class="material-symbols-outlined">content_copy</span>
                     <span>Duplicate Glyph(s)</span>

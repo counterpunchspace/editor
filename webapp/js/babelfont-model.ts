@@ -14166,6 +14166,55 @@ export class Font extends ModelBase {
         recordAndMarkDirty(this, 'format_specific', old, value);
     }
 
+    /**
+     * Read one font-scoped plugin setting. Missing and invalid values return
+     * `undefined` so the caller can use the plugin default.
+     */
+    getPluginSetting(pluginId: string, settingId: string): unknown {
+        const stored = this.format_specific?.[
+            'com.counterpunch.plugin-settings'
+        ] as Record<string, { values?: Record<string, unknown> }> | undefined;
+        return stored?.[pluginId]?.values?.[settingId];
+    }
+
+    /**
+     * Write one font-scoped plugin setting as its own undoable edit.
+     */
+    setPluginSetting(
+        pluginId: string,
+        settingId: string,
+        value: unknown
+    ): void {
+        withBridgeTransaction(
+            'Change plugin setting',
+            'model-edit',
+            null,
+            () => {
+                const current = {
+                    ...(this._data.format_specific || {})
+                } as Record<string, Unsafe>;
+                const all = {
+                    ...((current['com.counterpunch.plugin-settings'] ||
+                        {}) as Record<string, Unsafe>)
+                };
+                const entry = {
+                    ...((all[pluginId] || {}) as Record<string, Unsafe>),
+                    values: {
+                        ...((
+                            (all[pluginId] || {}) as {
+                                values?: Record<string, unknown>;
+                            }
+                        ).values || {}),
+                        [settingId]: value
+                    }
+                };
+                all[pluginId] = entry;
+                current['com.counterpunch.plugin-settings'] = all;
+                this.format_specific = current;
+            }
+        );
+    }
+
     get source(): string | null {
         return this._data.source;
     }

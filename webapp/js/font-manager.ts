@@ -5152,6 +5152,18 @@ class FontManager {
                     ? workerCacheStatus.fontCacheEpoch
                     : this.lastWorkerFontCacheEpoch;
 
+                // Layout closure walks ccmp multiple-substitutions only from
+                // the worker's feature list. The incremental core packet can
+                // leave that list empty while the bridge already has the
+                // rule, so a typed ccmp shell stays the unfilled glyph.
+                // Rebuild the worker from the bridge before compile.
+                if (nonGlyphChangeHints.includes('feature-code')) {
+                    return this.recoverWorkerCacheFromAuthoritativeState(
+                        'feature-code commit',
+                        { quiet: true }
+                    );
+                }
+
                 return true;
             } catch (error) {
                 this.invalidateWorkerCacheMirror();
@@ -5243,7 +5255,8 @@ class FontManager {
     }
 
     private async recoverWorkerCacheFromAuthoritativeState(
-        reason: string
+        reason: string,
+        options?: { quiet?: boolean }
     ): Promise<boolean> {
         const documentSet = window.patchSyncEngine?.encodeDocumentSet?.();
         const bridgeState = window.patchSyncEngine?.encodeBridgeState?.();
@@ -5268,10 +5281,12 @@ class FontManager {
                   );
             await fontCompilation.trackWorkerDocumentSync(recovery);
             this.acknowledgeWorkerBridgeReseed();
-            console.warn(
-                '[FontManager] Re-seeded worker cache from authoritative bridge state:',
-                reason
-            );
+            if (!options?.quiet) {
+                console.warn(
+                    '[FontManager] Re-seeded worker cache from authoritative bridge state:',
+                    reason
+                );
+            }
             return true;
         } catch (error) {
             this.workerMirrorQuarantined = true;

@@ -255,6 +255,7 @@ type TransactionFinalizer = (
         transactionId: number | null;
         historyItemId: string | null;
         historyTarget: TransactionHistoryTarget | null;
+        intents: Record<string, unknown>;
     }
 ) => TransactionBufferedOperation[] | null | undefined;
 
@@ -659,6 +660,7 @@ export class PatchSyncEngine {
     private _txPromptGroupId: string | null = null;
     /** Optional explicit history target for the current transaction */
     private _txHistoryTarget: TransactionHistoryTarget | null = null;
+    private _txIntents: Record<string, unknown> = {};
     /** Compact state-vector captured at the start of the outermost transaction. */
     private _txStartStateVector: Uint8Array | null = null;
     /** Buffered operations for the current outermost transaction */
@@ -2681,6 +2683,13 @@ export class PatchSyncEngine {
         this._transactionFinalizer = cb;
     }
 
+    /** Attach a value the feature-generator finalizer can read for this transaction. */
+    setTransactionIntent(key: string, value: unknown): void {
+        if (this._txDepth > 0) {
+            this._txIntents[key] = value;
+        }
+    }
+
     /** Clean up resources. */
     destroy(): void {
         for (const entry of this._layerUndoManagers.values()) {
@@ -3206,7 +3215,13 @@ export class PatchSyncEngine {
         this._txDepth--;
         let commitResult: TransactionCommitResult | null = null;
         if (this._txDepth === 0) {
-            if (this._txBufferedOperations.length) {
+            // A composition rebuild can carry a ccmp intent and no model
+            // edits, when the shells are already empty. That intent still
+            // has to reach the feature-generator finalizer.
+            if (
+                this._txBufferedOperations.length ||
+                Object.keys(this._txIntents).length
+            ) {
                 commitResult = this._commitOperations(
                     this._txBufferedOperations,
                     this._txLabel,
@@ -3228,6 +3243,7 @@ export class PatchSyncEngine {
             this._txHistorySummary = null;
             this._txHistoryTarget = null;
             this._txStartStateVector = null;
+            this._txIntents = {};
         }
         return commitResult;
     }
@@ -7602,7 +7618,8 @@ export class PatchSyncEngine {
         const normalizedOperations = operations.filter(
             (operation) => operation.path.length > 0
         );
-        if (!normalizedOperations.length) {
+        const hasIntents = Object.keys(this._txIntents).length > 0;
+        if (!normalizedOperations.length && !hasIntents) {
             return null;
         }
 
@@ -7616,7 +7633,8 @@ export class PatchSyncEngine {
                     label,
                     transactionId,
                     historyItemId: historyItemId ?? this._txHistoryItemId,
-                    historyTarget: historyTarget ?? this._txHistoryTarget
+                    historyTarget: historyTarget ?? this._txHistoryTarget,
+                    intents: this._txIntents
                 }
             );
             if (derivedOperations?.length) {

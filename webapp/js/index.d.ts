@@ -382,6 +382,15 @@ declare global {
         glyphDataIndex: GlyphDataIndex;
         qaCorpusIndex: QaCorpusIndex;
         addGlyphsDialog: AddGlyphsDialog;
+        __featureGeneratorDiagnostics?: {
+            entries: Array<{
+                trigger: string;
+                ran: string[];
+                skipped: string[];
+                error?: string;
+                durationMs: number;
+            }>;
+        };
         renameGlyphsDialog: RenameGlyphsDialog;
         deleteGlyphsDialog: DeleteGlyphsDialog;
         kerningEditorDialog: KerningEditorDialog;

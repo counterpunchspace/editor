@@ -266,6 +266,20 @@ async function initFontEditor() {
                 );
             }
         }
+        try {
+            const { languagePackManager } =
+                await import('./language-packs/language-pack-manager');
+            const { featureGeneratorEngine } =
+                await import('./language-packs/feature-generator-engine');
+            await languagePackManager.ensureReady();
+            await featureGeneratorEngine.ensureReady();
+        } catch (error) {
+            console.error(
+                '[FontEditor]',
+                'Failed to load language pack plugins:',
+                error
+            );
+        }
         if (window.glyphOverviewFilterManager) {
             try {
                 await window.glyphOverviewFilterManager.discoverPlugins();

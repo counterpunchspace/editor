@@ -8,6 +8,95 @@
     overflow: hidden;
 }
 
+#fontinfo-features-content .glyph-filter-legend.feature-editor-header {
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px 12px;
+    padding: 6px 12px;
+}
+
+#fontinfo-features-content .feature-source-summary {
+    flex: 1 1 180px;
+    min-width: 0;
+    max-width: 100%;
+    padding: 2px 0;
+    border: 0;
+    background: none;
+    color: var(--text-secondary);
+    font-family: var(--font-families-sans);
+    font-size: 11px;
+    line-height: 1.4;
+    text-align: left;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    cursor: pointer;
+}
+
+#fontinfo-features-content .feature-source-summary:hover {
+    color: var(--text-primary);
+}
+
+#fontinfo-features-content .feature-editor-header-actions {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-left: auto;
+    flex-shrink: 0;
+}
+
+#fontinfo-features-content .feature-regenerate-button {
+    padding: 3px 10px;
+    font-size: 11px;
+}
+
+.feature-source-popup {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    max-width: 320px;
+    padding: 4px 2px;
+    font-family: var(--font-families-sans);
+    color: var(--text-primary);
+}
+
+.feature-source-popup-title {
+    font-size: 13px;
+    font-weight: 600;
+}
+
+.feature-source-popup-id {
+    margin-top: -6px;
+    font-size: 11px;
+    color: var(--text-tertiary);
+}
+
+.feature-source-setting {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.feature-source-setting-label {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--text-secondary);
+}
+
+.feature-source-setting-value {
+    font-size: 12px;
+}
+
+.feature-source-setting-help {
+    margin: 0;
+    font-size: 12px;
+    line-height: 1.45;
+    color: var(--text-tertiary);
+}
+
 .feature-auto-checkbox {
     display: inline-flex;
     align-items: center;
@@ -80,6 +169,86 @@
     text-decoration-thickness: 1.5px;
     text-underline-offset: 2px;
     z-index: 21;
+}
+
+/* Plugin settings replace the feature editor. Canvas plugins keep .plugin-ui-* compact. */
+.plugin-settings-form {
+    display: none;
+    flex: 1;
+    flex-direction: column;
+    gap: 14px;
+    overflow: auto;
+    padding: 16px 20px 24px;
+    background-color: var(--background-primary);
+    font-family: var(--font-families-sans);
+}
+
+.plugin-settings-form.is-open {
+    display: flex;
+}
+
+.plugin-settings-form .plugin-ui-radio,
+.plugin-settings-form .plugin-ui-checkbox,
+.plugin-settings-form .plugin-ui-textfield,
+.plugin-settings-form .plugin-ui-slider,
+.plugin-settings-form .plugin-ui-color,
+.plugin-settings-form .plugin-ui-select {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 6px;
+    margin: 0;
+}
+
+.plugin-settings-form .plugin-ui-label {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--text-secondary);
+}
+
+.plugin-settings-form .plugin-setting-help,
+.plugin-settings-form .plugin-setting-status {
+    margin: 0;
+    max-width: 520px;
+    font-family: var(--font-families-sans);
+    font-size: 13px;
+    line-height: 1.5;
+    color: var(--text-tertiary);
+}
+
+.plugin-settings-form .plugin-ui-radio-options {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+}
+
+.plugin-settings-form .plugin-ui-radio-label {
+    font-family: var(--font-families-sans);
+    font-size: 13px;
+    line-height: 1.4;
+    color: var(--text-primary);
+}
+
+.plugin-settings-form .plugin-ui-value,
+.plugin-settings-form select.plugin-ui-value {
+    width: min(100%, 320px);
+    box-sizing: border-box;
+    padding: 6px 8px;
+    border: 1px solid var(--border-primary);
+    border-radius: 4px;
+    background-color: var(--input-bg);
+    color: var(--text-primary);
+    font-family: var(--font-families-sans);
+    font-size: 12px;
+    text-align: left;
+}
+
+.plugin-settings-form .plugin-setting-actions {
+    display: flex;
+    gap: 8px;
 }
 
 .feature-error-line-widget {

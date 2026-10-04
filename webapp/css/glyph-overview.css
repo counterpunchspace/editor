@@ -166,6 +166,43 @@
     font-weight: bold;
 }
 
+.glyph-tile-ccmp {
+    position: absolute;
+    top: 0;
+    right: 0;
+    left: 0;
+    bottom: max(14px, calc(var(--tile-height) * 0.2));
+    display: grid;
+    place-items: center;
+    pointer-events: none;
+    z-index: 1;
+}
+
+.glyph-tile-ccmp[hidden] {
+    display: none;
+}
+
+.glyph-tile-ccmp-char {
+    font-family: ui-sans-serif, system-ui, sans-serif;
+    font-size: max(18px, calc(var(--tile-height) * 0.42));
+    line-height: 1;
+    color: color-mix(in srgb, var(--text-primary) 38%, transparent);
+}
+
+.glyph-tile-ccmp-badge {
+    position: absolute;
+    top: 4px;
+    left: 4px;
+    padding: 1px 4px;
+    border-radius: 3px;
+    font-family: Inter, sans-serif;
+    font-size: 9px;
+    line-height: 1.3;
+    letter-spacing: 0.04em;
+    color: var(--text-secondary);
+    background: color-mix(in srgb, var(--text-primary) 10%, transparent);
+}
+
 .glyph-tile-cloud-icon.material-symbols-outlined {
     display: none;
 }

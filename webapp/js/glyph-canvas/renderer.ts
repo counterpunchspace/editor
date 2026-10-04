@@ -9,6 +9,7 @@ import { fillPunchFillContoursOnContext } from '../punch-fill-contours';
 import { Logger } from '../logger';
 import { getPathFillOpacity } from '../path-fill-opacity-pref';
 import { get_glyph_name } from '../../wasm-dist/babelfont_fontc_web';
+import { isCcmpShellGlyph } from '../language-packs/ccmp-shells';
 import {
     normalizeAffineTransform,
     transformPointWithAffine as applyAffineToPoint,
@@ -955,12 +956,52 @@ export class GlyphCanvasRenderer {
                         paintFill(fillColor, fillAlpha);
                     }
                 }
+
+                if (explicitGlyphName && isCcmpShellGlyph(explicitGlyphName)) {
+                    this.drawCcmpShellNotice(x, xAdvance, y);
+                }
             }
         );
 
         if (featureChangeDraw) {
             this.drawAnimatedFeatureChangeGlyphs(featureChangeDraw, colors);
         }
+    }
+
+    private drawCcmpShellNotice(
+        glyphX: number,
+        advance: number,
+        glyphY: number
+    ): void {
+        const band = this.glyphCanvas.getTextModeVerticalMetricsBand();
+        const invScale = 1 / this.viewportManager.scale;
+        const centerX = glyphX + Math.max(advance, 1) / 2;
+        const centerY = glyphY + (band.lowest + band.highest) / 2;
+        const color =
+            getComputedStyle(document.documentElement)
+                .getPropertyValue('--text-muted')
+                .trim() || 'rgba(128, 128, 128, 0.9)';
+
+        this.ctx.save();
+        this.ctx.translate(centerX, centerY);
+        this.ctx.scale(invScale, -invScale);
+        this.ctx.textAlign = 'center';
+        this.ctx.textBaseline = 'middle';
+        this.ctx.fillStyle = color;
+        this.ctx.font = '600 15px Inter, sans-serif';
+        const badge = 'ccmp';
+        const badgeWidth = this.ctx.measureText(badge).width + 14;
+        const badgeHeight = 20;
+        this.ctx.beginPath();
+        this.ctx.roundRect(-badgeWidth / 2, -28, badgeWidth, badgeHeight, 4);
+        this.ctx.save();
+        this.ctx.globalAlpha *= 0.16;
+        this.ctx.fill();
+        this.ctx.restore();
+        this.ctx.fillText(badge, 0, -18);
+        this.ctx.font = '12px Inter, sans-serif';
+        this.ctx.fillText('Composed by ccmp', 0, 8);
+        this.ctx.restore();
     }
 
     private drawAnimatedFeatureChangeGlyphs(

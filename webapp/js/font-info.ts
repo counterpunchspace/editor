@@ -21,6 +21,9 @@ import {
     SCRIPT_TO_SHAPER
 } from './opentype-features';
 import { extractPrimaryFeatureIssue } from './feature-error-parser';
+import { pluginSettingsRegistry } from './plugin-settings/plugin-settings-registry';
+import { featureGeneratorEngine } from './language-packs/feature-generator-engine';
+import { generatorStamp } from './language-packs/managed-features';
 import { beginLoadingCursor, endLoadingCursor } from './loading-cursor';
 import {
     addTippyBackdropSupport,
@@ -47,6 +50,14 @@ import './mode-fea';
 const console = new Logger('FontInfo');
 
 const FEATURE_CODE_COMPILE_DEBOUNCE_MS = 5000;
+
+function escapeFeatureHtml(value: string): string {
+    return value
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+}
 
 type FontInfoTab =
     | 'general'
@@ -800,6 +811,11 @@ class FontInfoManager {
     private featureDropTargetIndex: number | null = null;
     private featureDropTargetPlacement: 'before' | 'after' | null = null;
     private featureCodeDirty = false;
+    private pluginSettingsOpenId: string | null = null;
+    private pendingGeneratedFeatureReveal = false;
+    private featureContextMenu: TippyInstance | null = null;
+    private featureContextGeneratorId: string | null = null;
+    private featureSourcePopup: TippyInstance | null = null;
 
     // Search-related properties
     private searchInput: HTMLInputElement | null = null;
@@ -850,6 +866,18 @@ class FontInfoManager {
         window.addEventListener('fontModelSync', () =>
             this.onFontModelSynced()
         );
+        window.addEventListener('generatedFeaturesChanged', () => {
+            this.pendingGeneratedFeatureReveal = true;
+            this.onFontModelSynced();
+        });
+        // Plugin settings are discovered after Pyodide starts. The features
+        // list is often painted before that, so refresh it when they arrive.
+        window.addEventListener('pluginSettingsRegistered', () => {
+            this.loadPluginSettingsList();
+            if (this.pluginSettingsOpenId) {
+                this.showPluginSettings(this.pluginSettingsOpenId);
+            }
+        });
 
         // Set up ResizeObserver to resize the Ace editor continuously during dragging
         this.setupResizeObserver();
@@ -2460,6 +2488,8 @@ class FontInfoManager {
         this.featuresTab.innerHTML = `
             <div class="features-container">
                 <div class="features-sidebar view-sidebar view-sidebar-left">
+                    <div class="sidebar-section-title">Settings</div>
+                    <div class="features-list sidebar-list" id="plugin-settings-list"></div>
                     <div class="sidebar-section-title">Prefixes</div>
                     <div class="features-list sidebar-list" id="prefixes-list"></div>
                     <div class="sidebar-section-title">Classes</div>
@@ -2468,13 +2498,18 @@ class FontInfoManager {
                     <div class="features-list sidebar-list" id="features-list"></div>
                 </div>
                 <div class="features-editor-container">
-                    <div class="glyph-filter-legend">
-                        <label class="feature-auto-checkbox">
-                            <input type="checkbox" id="feature-automatic-checkbox" />
-                            <span>Automatically Generated</span>
-                        </label>
+                    <div class="glyph-filter-legend feature-editor-header">
+                        <button type="button" class="feature-source-summary" id="feature-source-summary" hidden></button>
+                        <div class="feature-editor-header-actions">
+                            <button type="button" class="dialog-button feature-regenerate-button" id="feature-regenerate-button" hidden>Regenerate</button>
+                            <label class="feature-auto-checkbox">
+                                <input type="checkbox" id="feature-automatic-checkbox" />
+                                <span>Automatically Generated</span>
+                            </label>
+                        </div>
                     </div>
                     <div class="features-editor" id="features-editor"></div>
+                    <div class="plugin-settings-form" id="plugin-settings-form"></div>
                 </div>
             </div>
         `;
@@ -2496,6 +2531,16 @@ class FontInfoManager {
                 this.onAutomaticCheckboxChanged()
             );
         }
+        this.featuresTab
+            .querySelector('#feature-regenerate-button')
+            ?.addEventListener('click', () => {
+                const stamp = this.selectedGeneratorStamp();
+                if (stamp) {
+                    featureGeneratorEngine.regenerate(stamp.generator);
+                }
+            });
+        this.initFeatureSourcePopup();
+        this.initFeatureContextMenu();
     }
 
     private initializeFeaturesEditor() {
@@ -2735,6 +2780,7 @@ class FontInfoManager {
         this.fontDataLoaded = false;
         this.pendingModelSyncRefresh = false;
         this.featureCodeDirty = false;
+        this.pendingGeneratedFeatureReveal = false;
         this.clearFeatureCodeCommitDebounce();
         // Clear Ace feature editor + selection so a new/empty font does not
         // keep showing the previous font's feature code via selectedFeatureTag.
@@ -2776,6 +2822,11 @@ class FontInfoManager {
                 if (window.currentFontModel) {
                     this.loadAllLists();
                     this.fontDataLoaded = true;
+                    // A new font has no stored composition setting. Re-render
+                    // the open form so the radio returns to its default.
+                    if (this.pluginSettingsOpenId) {
+                        this.showPluginSettings(this.pluginSettingsOpenId);
+                    }
                 }
             });
         }
@@ -7752,6 +7803,12 @@ class FontInfoManager {
         this.loadAllLists();
         this.fontDataLoaded = true;
         this.pendingModelSyncRefresh = false;
+        if (this.pendingGeneratedFeatureReveal) {
+            this.pendingGeneratedFeatureReveal = false;
+            if (this.pluginSettingsOpenId) {
+                this.revealGeneratedFeature();
+            }
+        }
 
         if (
             previousSelection &&
@@ -7789,9 +7846,12 @@ class FontInfoManager {
         if (!listContainer) return;
 
         const font = window.currentFontModel;
+        const previousPrefixKeys = [...this.prefixListItems.keys()];
         if (!font || !font.features || !font.features.prefixes) {
             listContainer.innerHTML =
                 '<div class="features-empty">No prefixes</div>';
+            this.prefixListItems.clear();
+            this.settleRemovedKeyedSelection('prefix', previousPrefixKeys, []);
             return;
         }
 
@@ -7802,6 +7862,8 @@ class FontInfoManager {
         if (prefixKeys.length === 0) {
             listContainer.innerHTML =
                 '<div class="features-empty">No prefixes</div>';
+            this.prefixListItems.clear();
+            this.settleRemovedKeyedSelection('prefix', previousPrefixKeys, []);
             return;
         }
 
@@ -7820,6 +7882,11 @@ class FontInfoManager {
         if (this.searchTerms.length > 0) {
             this.applyFeaturesSearch();
         }
+        this.settleRemovedKeyedSelection(
+            'prefix',
+            previousPrefixKeys,
+            prefixKeys
+        );
     }
 
     private parseClassGlyphMembers(classCode: string): Set<string> {
@@ -7889,9 +7956,12 @@ class FontInfoManager {
         if (!listContainer) return;
 
         const font = window.currentFontModel;
+        const previousClassKeys = [...this.classListItems.keys()];
         if (!font || !font.features || !font.features.classes) {
             listContainer.innerHTML =
                 '<div class="features-empty">No classes</div>';
+            this.classListItems.clear();
+            this.settleRemovedKeyedSelection('class', previousClassKeys, []);
             return;
         }
 
@@ -7901,6 +7971,8 @@ class FontInfoManager {
         if (classKeys.length === 0) {
             listContainer.innerHTML =
                 '<div class="features-empty">No classes</div>';
+            this.classListItems.clear();
+            this.settleRemovedKeyedSelection('class', previousClassKeys, []);
             return;
         }
 
@@ -7925,6 +7997,7 @@ class FontInfoManager {
         if (this.searchTerms.length > 0) {
             this.applyFeaturesSearch();
         }
+        this.settleRemovedKeyedSelection('class', previousClassKeys, classKeys);
     }
 
     private extractLanguageSystems(): string[] {
@@ -7963,9 +8036,108 @@ class FontInfoManager {
         return Array.from(scripts).sort();
     }
 
+    private loadPluginSettingsList(): void {
+        const list = document.getElementById('plugin-settings-list');
+        if (!list) {
+            return;
+        }
+        list.replaceChildren();
+        const plugins = [
+            ...pluginSettingsRegistry.pluginsForTarget('font-info.features'),
+            ...pluginSettingsRegistry.pluginsForTarget(
+                'font-info.language-packs'
+            )
+        ];
+        if (!plugins.length) {
+            list.innerHTML = '<div class="features-empty">No settings</div>';
+            return;
+        }
+        for (const plugin of plugins) {
+            const item = document.createElement('div');
+            item.className = 'feature-list-item sidebar-item';
+            item.dataset.pluginId = plugin.pluginId;
+            const name = document.createElement('span');
+            name.className = 'feature-name';
+            name.textContent = plugin.title;
+            item.appendChild(name);
+            item.addEventListener('click', () =>
+                this.showPluginSettings(plugin.pluginId)
+            );
+            list.appendChild(item);
+        }
+    }
+
+    private closePluginSettingsForm(): void {
+        const form = document.getElementById('plugin-settings-form');
+        const editor = document.getElementById('features-editor');
+        const legend = document.querySelector(
+            '#fontinfo-features-content .glyph-filter-legend'
+        ) as HTMLElement | null;
+        if (form) form.classList.remove('is-open');
+        document
+            .querySelectorAll(
+                '#plugin-settings-list .feature-list-item.selected'
+            )
+            .forEach((item) => item.classList.remove('selected'));
+        if (editor) editor.style.display = '';
+        if (legend) legend.style.display = '';
+        this.pluginSettingsOpenId = null;
+    }
+
+    private revealGeneratedFeature(): void {
+        const features = window.currentFontModel?.features?.features || [];
+        const selectedIndex =
+            this.selectedItem?.type === 'feature' &&
+            typeof this.selectedItem.key === 'number'
+                ? this.selectedItem.key
+                : -1;
+        const generatedIndex = features.findIndex(([, code]) => {
+            const stamp = (
+                code?.format_specific as
+                    { 'com.counterpunch.generator'?: unknown } | undefined
+            )?.['com.counterpunch.generator'];
+            return !!stamp && code?.automatic !== false;
+        });
+        const index = selectedIndex >= 0 ? selectedIndex : generatedIndex;
+        this.closePluginSettingsForm();
+        if (index >= 0) {
+            this.selectItem('feature', index);
+        }
+    }
+
+    private showPluginSettings(pluginId: string): void {
+        const editor = document.getElementById('features-editor');
+        const form = document.getElementById('plugin-settings-form');
+        const legend = document.querySelector(
+            '#fontinfo-features-content .glyph-filter-legend'
+        ) as HTMLElement | null;
+        if (editor) editor.style.display = 'none';
+        if (legend) legend.style.display = 'none';
+        if (!form) return;
+        this.pluginSettingsOpenId = pluginId;
+        form.classList.add('is-open');
+        document
+            .querySelectorAll('#plugin-settings-list .feature-list-item')
+            .forEach((item) => {
+                item.classList.toggle(
+                    'selected',
+                    (item as HTMLElement).dataset.pluginId === pluginId
+                );
+            });
+        document
+            .querySelectorAll(
+                '#prefixes-list .feature-list-item.selected, #classes-list .feature-list-item.selected, #features-list .feature-list-item.selected'
+            )
+            .forEach((item) => item.classList.remove('selected'));
+        pluginSettingsRegistry.render(form, pluginId, () =>
+            this.showPluginSettings(pluginId)
+        );
+    }
+
     private loadFeaturesList(options?: {
         preserveFeatureEditorDraft?: boolean;
     }) {
+        this.loadPluginSettingsList();
         const listContainer = document.getElementById('features-list');
         console.log('[FontInfo] loadFeaturesList - container:', listContainer);
         if (!listContainer) return;
@@ -7976,6 +8148,8 @@ class FontInfoManager {
         if (!font || !font.features) {
             listContainer.innerHTML =
                 '<div class="features-empty">No features</div>';
+            this.featureListItems.clear();
+            this.settleFeatureEditorSelection([], options);
             return;
         }
 
@@ -7985,6 +8159,8 @@ class FontInfoManager {
         if (features.length === 0) {
             listContainer.innerHTML =
                 '<div class="features-empty">No features</div>';
+            this.featureListItems.clear();
+            this.settleFeatureEditorSelection([], options);
             return;
         }
 
@@ -8252,11 +8428,36 @@ class FontInfoManager {
 
         // Keep a focused dirty editor draft intact while its sidebar is rebuilt
         // for an external model sync. The selected feature may have a new index.
-        if (options?.preserveFeatureEditorDraft && this.selectedFeatureTag) {
-            const matchingFeatureIndex = features.findIndex(
-                ([tag]) => tag === this.selectedFeatureTag
-            );
-            if (matchingFeatureIndex >= 0) {
+        // A feature that disappeared is replaced by a neighbor, or the editor
+        // is cleared when the list is empty.
+        this.settleFeatureEditorSelection(features, options);
+
+        // Restore scroll position if was at bottom
+        if (wasAtBottom && sidebar) {
+            sidebar.scrollTop = sidebar.scrollHeight;
+        }
+    }
+
+    private settleFeatureEditorSelection(
+        features: Array<[string, Babelfont.PossiblyAutomaticCode]>,
+        options?: { preserveFeatureEditorDraft?: boolean }
+    ): void {
+        if (this.selectedItem?.type !== 'feature') {
+            if (
+                !options?.preserveFeatureEditorDraft &&
+                !this.selectedItem &&
+                features.length > 0
+            ) {
+                this.selectItem('feature', 0);
+            }
+            return;
+        }
+
+        const matchingFeatureIndex = this.selectedFeatureTag
+            ? features.findIndex(([tag]) => tag === this.selectedFeatureTag)
+            : -1;
+        if (matchingFeatureIndex >= 0) {
+            if (options?.preserveFeatureEditorDraft) {
                 this.selectedItem = {
                     type: 'feature',
                     key: matchingFeatureIndex
@@ -8265,48 +8466,53 @@ class FontInfoManager {
                     .get(matchingFeatureIndex)
                     ?.classList.add('selected');
                 this.notifyHistoryScopeChange();
+                return;
             }
-            // Restore selection by feature tag when possible (stable across fonts/index changes)
-        } else if (this.selectedFeatureTag) {
-            const matchingFeatureIndex = features.findIndex(
-                ([tag]) => tag === this.selectedFeatureTag
-            );
-            if (matchingFeatureIndex >= 0) {
-                this.selectItem('feature', matchingFeatureIndex);
-            } else if (!this.selectedItem && features.length > 0) {
-                this.selectItem('feature', 0);
-            } else if (
-                this.selectedItem?.type === 'feature' &&
-                typeof this.selectedItem.key === 'number' &&
-                this.selectedItem.key >= features.length
-            ) {
-                this.selectItem('feature', features.length - 1);
-            } else if (this.selectedItem) {
-                // Re-select current item to refresh
-                this.selectItem(this.selectedItem.type, this.selectedItem.key);
-            }
-        } else if (
-            !options?.preserveFeatureEditorDraft &&
-            !this.selectedItem &&
-            features.length > 0
-        ) {
-            this.selectItem('feature', 0);
-        } else if (
-            !options?.preserveFeatureEditorDraft &&
-            this.selectedItem?.type === 'feature' &&
-            typeof this.selectedItem.key === 'number' &&
-            this.selectedItem.key >= features.length
-        ) {
-            this.selectItem('feature', features.length - 1);
-        } else if (!options?.preserveFeatureEditorDraft && this.selectedItem) {
-            // Re-select current item to refresh
-            this.selectItem(this.selectedItem.type, this.selectedItem.key);
+            this.selectItem('feature', matchingFeatureIndex);
+            return;
         }
 
-        // Restore scroll position if was at bottom
-        if (wasAtBottom && sidebar) {
-            sidebar.scrollTop = sidebar.scrollHeight;
+        if (features.length === 0) {
+            this.clearEditor();
+            return;
         }
+
+        const previousIndex =
+            typeof this.selectedItem.key === 'number'
+                ? this.selectedItem.key
+                : 0;
+        const nextIndex = Math.min(
+            Math.max(previousIndex, 0),
+            features.length - 1
+        );
+        this.selectItem('feature', nextIndex);
+    }
+
+    private settleRemovedKeyedSelection(
+        type: 'prefix' | 'class',
+        previousKeys: string[],
+        nextKeys: string[]
+    ): void {
+        if (this.selectedItem?.type !== type) {
+            return;
+        }
+        const key = String(this.selectedItem.key);
+        if (nextKeys.includes(key)) {
+            const items =
+                type === 'prefix' ? this.prefixListItems : this.classListItems;
+            items.get(key)?.classList.add('selected');
+            return;
+        }
+        if (nextKeys.length === 0) {
+            this.clearEditor();
+            return;
+        }
+        const previousIndex = previousKeys.indexOf(key);
+        const nextIndex = Math.min(
+            previousIndex < 0 ? 0 : previousIndex,
+            nextKeys.length - 1
+        );
+        this.selectItem(type, nextKeys[nextIndex]);
     }
 
     private categorizeFeaturesByScript(
@@ -8440,6 +8646,197 @@ class FontInfoManager {
         };
     }
 
+    private selectedGeneratorStamp() {
+        const font = window.currentFontModel;
+        const selected = this.selectedItem;
+        if (!font?.features || selected?.type !== 'feature') {
+            return null;
+        }
+        if (typeof selected.key !== 'number') {
+            return null;
+        }
+        const code = font.features.features?.[selected.key]?.[1];
+        if (!code?.automatic) {
+            return null;
+        }
+        return generatorStamp(code);
+    }
+
+    private updateFeatureSourceHeader(
+        codeData?: Babelfont.PossiblyAutomaticCode
+    ) {
+        const summary = document.getElementById('feature-source-summary');
+        const regenerate = document.getElementById('feature-regenerate-button');
+        const stamp =
+            codeData?.automatic === true ? generatorStamp(codeData) : null;
+        const described = stamp
+            ? pluginSettingsRegistry.describe(stamp.generator)
+            : null;
+        const visible = Boolean(stamp);
+        if (summary) {
+            summary.hidden = !visible;
+            summary.textContent = described?.summary || stamp?.generator || '';
+        }
+        if (regenerate) {
+            regenerate.hidden = !visible;
+        }
+        if (this.featureSourcePopup?.state.isVisible) {
+            this.featureSourcePopup.setContent(this.featureSourcePopupHtml());
+        }
+    }
+
+    private featureSourcePopupHtml(): string {
+        const stamp = this.selectedGeneratorStamp();
+        const described = stamp
+            ? pluginSettingsRegistry.describe(stamp.generator)
+            : null;
+        if (!stamp || !described) {
+            return '';
+        }
+        const settings = described.settings
+            .map(
+                (setting) => `
+                <section class="feature-source-setting">
+                    <div class="feature-source-setting-label">${escapeFeatureHtml(setting.label)}</div>
+                    <div class="feature-source-setting-value">${escapeFeatureHtml(setting.value)}</div>
+                    ${
+                        setting.help
+                            ? `<p class="feature-source-setting-help">${escapeFeatureHtml(setting.help)}</p>`
+                            : ''
+                    }
+                </section>`
+            )
+            .join('');
+        return `
+            <div class="feature-source-popup">
+                <div class="feature-source-popup-title">${escapeFeatureHtml(described.title)}</div>
+                <div class="feature-source-popup-id">${escapeFeatureHtml(described.pluginId)} · ${escapeFeatureHtml(described.version)}</div>
+                ${settings}
+            </div>`;
+    }
+
+    private initFeatureSourcePopup() {
+        const summary = document.getElementById('feature-source-summary');
+        if (!summary || this.featureSourcePopup) {
+            return;
+        }
+        const tippyResult = tippy(summary, {
+            content: '',
+            allowHTML: true,
+            interactive: true,
+            trigger: 'click',
+            theme: getTheme(),
+            placement: 'bottom-start',
+            arrow: false,
+            offset: [0, 6],
+            maxWidth: 360,
+            appendTo: document.body,
+            zIndex: 9999,
+            onShow: (instance) => {
+                const html = this.featureSourcePopupHtml();
+                if (!html) {
+                    return false;
+                }
+                instance.setContent(html);
+            }
+        });
+        this.featureSourcePopup = Array.isArray(tippyResult)
+            ? (tippyResult[0] ?? null)
+            : tippyResult;
+    }
+
+    private initFeatureContextMenu() {
+        const list = document.getElementById('features-list');
+        if (!list || this.featureContextMenu) {
+            return;
+        }
+        const backdrop = getOrCreateBackdrop('feature-context-menu-backdrop');
+        const tippyResult = tippy(list, {
+            content: `
+                <div class="plugin-menu" tabindex="0" role="menu" aria-label="Feature">
+                    <div class="plugin-menu-item" data-action="regenerate" role="menuitem">
+                        <span class="material-symbols-outlined">refresh</span>
+                        <span>Regenerate</span>
+                    </div>
+                </div>`,
+            allowHTML: true,
+            trigger: 'manual',
+            interactive: true,
+            placement: 'right-start',
+            theme: getTheme(),
+            arrow: false,
+            offset: [0, 0],
+            appendTo: document.body,
+            hideOnClick: false,
+            zIndex: 9999,
+            getReferenceClientRect: null as unknown as () => DOMRect,
+            onShown: (instance) => {
+                const menu = instance.popper.querySelector('.plugin-menu');
+                if (!menu) {
+                    return;
+                }
+                setupMenuKeyboardNav(menu);
+                if (
+                    (menu as HTMLElement & { _handlersSetup?: boolean })
+                        ._handlersSetup
+                ) {
+                    return;
+                }
+                (
+                    menu as HTMLElement & { _handlersSetup?: boolean }
+                )._handlersSetup = true;
+                menu.addEventListener('click', (event) => {
+                    const action = (event.target as HTMLElement | null)
+                        ?.closest('.plugin-menu-item')
+                        ?.getAttribute('data-action');
+                    if (action !== 'regenerate') {
+                        return;
+                    }
+                    const generatorId = this.featureContextGeneratorId;
+                    instance.hide();
+                    if (generatorId) {
+                        featureGeneratorEngine.regenerate(generatorId);
+                    }
+                });
+            }
+        });
+        this.featureContextMenu = Array.isArray(tippyResult)
+            ? (tippyResult[0] ?? null)
+            : tippyResult;
+        if (this.featureContextMenu) {
+            addTippyBackdropSupport(this.featureContextMenu, backdrop, {
+                targetElement: list
+            });
+        }
+        list.addEventListener('contextmenu', (event) => {
+            const row = (event.target as HTMLElement | null)?.closest(
+                '.feature-list-item'
+            );
+            const generatorId = row?.getAttribute('data-generator');
+            if (!row || !generatorId || !this.featureContextMenu) {
+                return;
+            }
+            event.preventDefault();
+            event.stopPropagation();
+            this.featureContextGeneratorId = generatorId;
+            this.featureContextMenu.setProps({
+                getReferenceClientRect: () =>
+                    ({
+                        width: 0,
+                        height: 0,
+                        top: event.clientY,
+                        bottom: event.clientY,
+                        left: event.clientX,
+                        right: event.clientX,
+                        x: event.clientX,
+                        y: event.clientY,
+                        toJSON: () => ({})
+                    }) as DOMRect
+            });
+            this.featureContextMenu.show();
+        });
+    }
+
     private createListItem(
         type: FeatureItemType,
         key: string | number,
@@ -8545,15 +8942,27 @@ class FontInfoManager {
             const autoIcon = document.createElement('span');
             autoIcon.className = 'material-symbols-outlined feature-auto-icon';
             autoIcon.textContent = 'manufacturing';
-            autoIcon.title = 'Automatically generated';
+            const stamp = type === 'feature' ? generatorStamp(codeData) : null;
+            const described = stamp
+                ? pluginSettingsRegistry.describe(stamp.generator)
+                : null;
+            autoIcon.title = described
+                ? `Generated by ${described.title}`
+                : 'Automatically generated';
             item.appendChild(autoIcon);
+            if (stamp) {
+                item.dataset.generator = stamp.generator;
+            }
         }
 
         if (this.isFeatureErrorTarget(type, key)) {
             this.addFeatureErrorIcon(item, this.featureErrorTarget!.message);
         }
 
-        item.addEventListener('click', () => this.selectItem(type, key));
+        item.addEventListener('click', () => {
+            this.closePluginSettingsForm();
+            this.selectItem(type, key);
+        });
 
         return item;
     }
@@ -8640,7 +9049,9 @@ class FontInfoManager {
         ) as HTMLInputElement;
         if (autoCheckbox) {
             autoCheckbox.checked = codeData.automatic || false;
+            autoCheckbox.disabled = false;
         }
+        this.updateFeatureSourceHeader(codeData);
 
         this.updateFeatureErrorDisplayForSelection();
         this.notifyHistoryScopeChange();
@@ -8673,6 +9084,7 @@ class FontInfoManager {
             autoCheckbox.checked = false;
             autoCheckbox.disabled = true;
         }
+        this.updateFeatureSourceHeader();
     }
 
     /**
@@ -9001,6 +9413,10 @@ class FontInfoManager {
 
             // Update the indicator in the list
             this.loadAllLists();
+            this.updateFeatureSourceHeader({
+                ...codeData,
+                automatic: nextAutomatic
+            });
         }
     }
 

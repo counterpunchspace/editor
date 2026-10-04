@@ -1,0 +1,642 @@
+{
+  "uni0041": [
+    "bottom",
+    "ogonek",
+    "top"
+  ],
+  "uni0042": [
+    "bottom",
+    "top"
+  ],
+  "uni0043": [
+    "bottom",
+    "top"
+  ],
+  "uni0044": [
+    "bottom",
+    "center",
+    "top"
+  ],
+  "uni0045": [
+    "bottom",
+    "ogonek",
+    "top"
+  ],
+  "uni0046": [
+    "top"
+  ],
+  "uni0047": [
+    "bottom",
+    "top"
+  ],
+  "uni0048": [
+    "bottom",
+    "center",
+    "top"
+  ],
+  "uni0049": [
+    "bottom",
+    "ogonek",
+    "top"
+  ],
+  "uni004A": [
+    "bottom",
+    "top"
+  ],
+  "uni004B": [
+    "bottom",
+    "top"
+  ],
+  "uni004C": [
+    "bottom",
+    "center",
+    "top",
+    "topright"
+  ],
+  "uni004D": [
+    "bottom",
+    "top"
+  ],
+  "uni004E": [
+    "bottom",
+    "top"
+  ],
+  "uni004F": [
+    "bottom",
+    "center",
+    "ogonek",
+    "top",
+    "topright"
+  ],
+  "uni0050": [
+    "top"
+  ],
+  "uni0052": [
+    "bottom",
+    "top"
+  ],
+  "uni0053": [
+    "bottom",
+    "top"
+  ],
+  "uni0054": [
+    "bottom",
+    "center",
+    "top"
+  ],
+  "uni0055": [
+    "bottom",
+    "ogonek",
+    "top",
+    "topright"
+  ],
+  "uni0056": [
+    "bottom",
+    "top"
+  ],
+  "uni0057": [
+    "bottom",
+    "top"
+  ],
+  "uni0058": [
+    "top"
+  ],
+  "uni0059": [
+    "bottom",
+    "top"
+  ],
+  "uni005A": [
+    "bottom",
+    "top"
+  ],
+  "uni0061": [
+    "bottom",
+    "ogonek",
+    "top"
+  ],
+  "uni0062": [
+    "bottom",
+    "top"
+  ],
+  "uni0063": [
+    "bottom",
+    "top"
+  ],
+  "uni0064": [
+    "bottom",
+    "center",
+    "top",
+    "topright"
+  ],
+  "uni0065": [
+    "bottom",
+    "ogonek",
+    "top"
+  ],
+  "uni0066": [
+    "top"
+  ],
+  "uni0067": [
+    "bottom",
+    "top"
+  ],
+  "uni0068": [
+    "bottom",
+    "center",
+    "top"
+  ],
+  "uni0069": [
+    "bottom",
+    "ogonek",
+    "top"
+  ],
+  "uni006A": [
+    "top"
+  ],
+  "uni006B": [
+    "bottom",
+    "top"
+  ],
+  "uni006C": [
+    "bottom",
+    "center",
+    "top",
+    "topright"
+  ],
+  "uni006D": [
+    "bottom",
+    "top"
+  ],
+  "uni006E": [
+    "bottom",
+    "top"
+  ],
+  "uni006F": [
+    "bottom",
+    "center",
+    "ogonek",
+    "top",
+    "topright"
+  ],
+  "uni0070": [
+    "top"
+  ],
+  "uni0072": [
+    "bottom",
+    "top"
+  ],
+  "uni0073": [
+    "bottom",
+    "top"
+  ],
+  "uni0074": [
+    "bottom",
+    "center",
+    "top",
+    "topright"
+  ],
+  "uni0075": [
+    "bottom",
+    "ogonek",
+    "top",
+    "topright"
+  ],
+  "uni0076": [
+    "bottom",
+    "top"
+  ],
+  "uni0077": [
+    "bottom",
+    "top"
+  ],
+  "uni0078": [
+    "top"
+  ],
+  "uni0079": [
+    "bottom",
+    "top"
+  ],
+  "uni007A": [
+    "bottom",
+    "top"
+  ],
+  "uni00C6": [
+    "top"
+  ],
+  "uni00D8": [
+    "top"
+  ],
+  "uni00E6": [
+    "top"
+  ],
+  "uni00F8": [
+    "top"
+  ],
+  "uni0131": [
+    "bottom",
+    "ogonek",
+    "top"
+  ],
+  "uni017F": [
+    "top"
+  ],
+  "uni0186": [
+    "bottom",
+    "top"
+  ],
+  "uni018E": [
+    "bottom",
+    "top"
+  ],
+  "uni0190": [
+    "bottom",
+    "top"
+  ],
+  "uni0196": [
+    "bottom",
+    "top"
+  ],
+  "uni0198": [
+    "bottom",
+    "top"
+  ],
+  "uni0199": [
+    "bottom",
+    "top"
+  ],
+  "uni019C": [
+    "top"
+  ],
+  "uni01A5": [
+    "bottom",
+    "top"
+  ],
+  "uni01AC": [
+    "bottom",
+    "top"
+  ],
+  "uni01AD": [
+    "bottom",
+    "top"
+  ],
+  "uni01B1": [
+    "bottom",
+    "top"
+  ],
+  "uni01B2": [
+    "bottom",
+    "top"
+  ],
+  "uni01B3": [
+    "bottom",
+    "top"
+  ],
+  "uni01B4": [
+    "bottom",
+    "top"
+  ],
+  "uni01B7": [
+    "bottom",
+    "top"
+  ],
+  "uni01B8": [
+    "top"
+  ],
+  "uni0237": [
+    "top"
+  ],
+  "uni0250": [
+    "bottom",
+    "top"
+  ],
+  "uni0253": [
+    "bottom",
+    "top"
+  ],
+  "uni0254": [
+    "bottom",
+    "top"
+  ],
+  "uni0257": [
+    "bottom",
+    "top"
+  ],
+  "uni0258": [
+    "bottom",
+    "top"
+  ],
+  "uni025B": [
+    "bottom",
+    "top"
+  ],
+  "uni0264": [
+    "top"
+  ],
+  "uni0265": [
+    "top"
+  ],
+  "uni0266": [
+    "bottom",
+    "top"
+  ],
+  "uni026A": [
+    "top"
+  ],
+  "uni026F": [
+    "top"
+  ],
+  "uni0270": [
+    "bottom"
+  ],
+  "uni0271": [
+    "bottom"
+  ],
+  "uni027A": [
+    "bottom",
+    "top"
+  ],
+  "uni027E": [
+    "bottom",
+    "top"
+  ],
+  "uni0280": [
+    "bottom",
+    "top"
+  ],
+  "uni0288": [
+    "bottom",
+    "top"
+  ],
+  "uni028A": [
+    "bottom",
+    "top"
+  ],
+  "uni028B": [
+    "bottom",
+    "top"
+  ],
+  "uni0292": [
+    "bottom",
+    "top"
+  ],
+  "uni029E": [
+    "bottom",
+    "top"
+  ],
+  "uni02A0": [
+    "bottom",
+    "top"
+  ],
+  "uni02A5": [
+    "top"
+  ],
+  "uni02A6": [
+    "bottom",
+    "top"
+  ],
+  "uni0300": [
+    "_top",
+    "top"
+  ],
+  "uni0301": [
+    "_top",
+    "top"
+  ],
+  "uni0302": [
+    "_top",
+    "top"
+  ],
+  "uni0303": [
+    "_top",
+    "top"
+  ],
+  "uni0304": [
+    "_top",
+    "top"
+  ],
+  "uni0306": [
+    "_top",
+    "top"
+  ],
+  "uni0307": [
+    "_top",
+    "top"
+  ],
+  "uni0308": [
+    "_top",
+    "top"
+  ],
+  "uni0309": [
+    "_top",
+    "top"
+  ],
+  "uni030A": [
+    "_top",
+    "top"
+  ],
+  "uni030B": [
+    "_top",
+    "top"
+  ],
+  "uni030C": [
+    "_top",
+    "top"
+  ],
+  "uni030D": [
+    "_top",
+    "top"
+  ],
+  "uni030F": [
+    "_top",
+    "top"
+  ],
+  "uni0311": [
+    "_top",
+    "top"
+  ],
+  "uni0312": [
+    "_top",
+    "top"
+  ],
+  "uni0313": [
+    "_top"
+  ],
+  "uni0318": [
+    "_bottom"
+  ],
+  "uni0319": [
+    "_bottom"
+  ],
+  "uni031B": [
+    "_topright"
+  ],
+  "uni031C": [
+    "_bottom"
+  ],
+  "uni031D": [
+    "_bottom"
+  ],
+  "uni031E": [
+    "_bottom"
+  ],
+  "uni031F": [
+    "_bottom"
+  ],
+  "uni0320": [
+    "_bottom"
+  ],
+  "uni0323": [
+    "_bottom",
+    "bottom"
+  ],
+  "uni0324": [
+    "_bottom",
+    "bottom"
+  ],
+  "uni0325": [
+    "_bottom"
+  ],
+  "uni0326": [
+    "_bottom",
+    "bottom"
+  ],
+  "uni0327": [
+    "_bottom",
+    "bottom"
+  ],
+  "uni0328": [
+    "_ogonek"
+  ],
+  "uni0329": [
+    "_bottom"
+  ],
+  "uni032A": [
+    "_bottom"
+  ],
+  "uni032C": [
+    "_bottom"
+  ],
+  "uni032D": [
+    "_bottom",
+    "bottom"
+  ],
+  "uni032E": [
+    "_bottom",
+    "bottom"
+  ],
+  "uni032F": [
+    "_bottom",
+    "bottom"
+  ],
+  "uni0330": [
+    "_bottom",
+    "bottom"
+  ],
+  "uni0331": [
+    "_bottom",
+    "bottom"
+  ],
+  "uni0332": [
+    "_bottom",
+    "bottom"
+  ],
+  "uni0334": [
+    "_center"
+  ],
+  "uni0335": [
+    "_center"
+  ],
+  "uni0336": [
+    "_center"
+  ],
+  "uni0337": [
+    "_center"
+  ],
+  "uni0338": [
+    "_center"
+  ],
+  "uni0339": [
+    "_bottom"
+  ],
+  "uni033A": [
+    "_bottom"
+  ],
+  "uni033D": [
+    "_top"
+  ],
+  "uni0346": [
+    "_top"
+  ],
+  "uni0347": [
+    "_bottom"
+  ],
+  "uni0349": [
+    "_bottom"
+  ],
+  "uni034A": [
+    "_top"
+  ],
+  "uni034B": [
+    "_top"
+  ],
+  "uni034C": [
+    "_top"
+  ],
+  "uni034D": [
+    "_bottom"
+  ],
+  "uni034E": [
+    "_bottom"
+  ],
+  "uni1DC4": [
+    "_top"
+  ],
+  "uni1DC5": [
+    "_top"
+  ],
+  "uni1DC6": [
+    "_top"
+  ],
+  "uni1DC7": [
+    "_top",
+    "top"
+  ],
+  "uni1DE7": [
+    "_top"
+  ],
+  "uni1DE9": [
+    "_top"
+  ],
+  "uni1DEB": [
+    "_top"
+  ],
+  "uni1DEC": [
+    "_top"
+  ],
+  "uni1DF2": [
+    "_top"
+  ],
+  "uni20F0": [
+    "_top"
+  ],
+  "uni2C6D": [
+    "bottom",
+    "top"
+  ],
+  "uni2C6E": [
+    "bottom",
+    "top"
+  ],
+  "uni2C72": [
+    "bottom",
+    "top"
+  ],
+  "uni2C73": [
+    "bottom",
+    "top"
+  ],
+  "uniA7CB": [
+    "bottom",
+    "top"
+  ]
+}

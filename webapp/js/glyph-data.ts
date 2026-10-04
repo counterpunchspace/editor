@@ -202,13 +202,24 @@ async function decompressGzipResponse(response: Response): Promise<string> {
     return new Response(stream).text();
 }
 
-export const glyphDataIndex = new GlyphDataIndex();
-(globalThis as { glyphDataIndex?: GlyphDataIndex }).glyphDataIndex =
-    glyphDataIndex;
+// Bootstrap and the rebuild-composition chunk each evaluate this module.
+// Reuse the first index so a second copy does not replace a loaded catalog
+// with an empty one and report "no recipe".
+const glyphDataHolder = globalThis as { glyphDataIndex?: GlyphDataIndex };
+const createdGlyphDataIndex = !glyphDataHolder.glyphDataIndex;
+if (createdGlyphDataIndex) {
+    glyphDataHolder.glyphDataIndex = new GlyphDataIndex();
+}
+export const glyphDataIndex = glyphDataHolder.glyphDataIndex!;
 
 // Static catalog — safe to warm during boot (no Pyodide). Skip in Jest
-// where `fetch` is unset unless a test mocks it.
-if (typeof window !== 'undefined' && typeof fetch === 'function') {
+// where `fetch` is unset unless a test mocks it. Only the first copy starts
+// the fetch; later copies share that index.
+if (
+    createdGlyphDataIndex &&
+    typeof window !== 'undefined' &&
+    typeof fetch === 'function'
+) {
     void glyphDataIndex
         .ensureReady()
         .catch((error) =>

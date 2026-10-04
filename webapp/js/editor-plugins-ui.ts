@@ -20,6 +20,10 @@
  */
 
 import { bindModalEscape, type ModalEscapeBinding } from './ui/modal-escape';
+import {
+    createPluginSettingControl,
+    type PluginSetting
+} from './plugin-settings/plugin-settings-controls';
 
 type PluginOption = {
     label?: string;
@@ -275,18 +279,25 @@ class EditorPluginsUI {
     }
 
     createUIElement(element: PluginUIElement, plugin: CanvasPluginEntry) {
-        if (element.type === 'slider') {
-            return this.createSlider(element, plugin);
-        } else if (element.type === 'textfield') {
-            return this.createTextField(element, plugin);
-        } else if (element.type === 'checkbox') {
-            return this.createCheckbox(element, plugin);
-        } else if (element.type === 'radio') {
-            return this.createRadioGroup(element, plugin);
-        } else if (element.type === 'color') {
-            return this.createColorPicker(element, plugin);
-        }
-        return null;
+        return createPluginSettingControl(
+            { ...element, target: 'canvas.plugins' } as PluginSetting,
+            {
+                get: (id) =>
+                    window.canvasPluginManager.getPluginParameter(
+                        plugin.entry_point,
+                        id
+                    ),
+                set: (id, value) => {
+                    window.canvasPluginManager.setPluginParameter(
+                        plugin.entry_point,
+                        id,
+                        value
+                    );
+                    window.glyphCanvas?.renderer?.render();
+                    this.restoreFocusToCanvas();
+                }
+            }
+        );
     }
 
     createSlider(element: PluginUIElement, plugin: CanvasPluginEntry) {

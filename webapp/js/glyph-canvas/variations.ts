@@ -419,6 +419,19 @@ export class AxesManager {
             return modelAxes;
         }
 
+        // A loaded static font has no axes. Do not ask the compiled bytes for
+        // fvar; a static font has no fvar table, and a failed compile would
+        // otherwise log that absence as an error.
+        const fontModel = window.currentFontModel as
+            { axes?: unknown[] } | null | undefined;
+        if (
+            fontModel &&
+            Array.isArray(fontModel.axes) &&
+            fontModel.axes.length === 0
+        ) {
+            return [];
+        }
+
         if (!this.fontBytes) {
             console.log('[AxesManager]', 'No fontBytes available');
             return [];

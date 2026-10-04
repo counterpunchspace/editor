@@ -212,6 +212,10 @@ Here, undo, redo, and remote Yjs packets converge with forward GUI edits to be p
 
 ## Glyphs
 
+### Latin composition and ccmp
+
+Add Glyphs asks the bundled Latin composition plugin for a Unicode recipe. A new character such as `aDiaeresis-lat` also adds its base and mark when they are missing. The Font Info Features sidebar Settings section holds the plugin setting **Composition output for new glyphs**. Materialized output writes automatic components. `ccmp` output writes an empty shell and a managed `ccmp` rule in the same undo step. Changing the setting does not convert glyphs that already exist. Rebuild Composition, from the glyph overview context menu or the button under that setting, previews and converts the chosen glyphs. The managed `ccmp` block is the one marked automatic and owned by `space.counterpunch.ccmp`. Manual `ccmp` code is left alone. Feature generators run on local commits only: every glyph add, delete, or rename, plus the events a generator lists (for `ccmp`, Unicode changes and an explicit `ccmp` intent). Undo restores the stored feature code and does not run the generators again.
+
 ### Auto QA
 
 Auto QA labels likely missing components and missing anchors on an identifiable glyph using a bundled corpus table (per-identity counts from Google Fonts `.babelfont` sources). It is not a neural net and it never writes components or anchors.

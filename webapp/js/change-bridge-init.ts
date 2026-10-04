@@ -22,6 +22,7 @@ import type { FilesystemPlugin } from './filesystem-plugins';
 import { fontCompilation, fullFontCompilation } from './font-compilation';
 import { timelineSpanEnd, timelineSpanStart } from './perf-timeline';
 import { Logger } from './logger';
+import { featureGeneratorEngine } from './language-packs/feature-generator-engine';
 import { processCommittedEdit } from './compiled-edit-funnel';
 import {
     readCommittedCompileStamp,
@@ -255,7 +256,7 @@ export function shouldInvalidateLayoutClosureForCommittedEntries(
             continue;
         }
 
-        if (path.startsWith('features.')) {
+        if (path === 'features' || path.startsWith('features.')) {
             return true;
         }
 
@@ -1022,6 +1023,13 @@ function readStampForOrigin(
             'Committed packet has an unknown compileEditType; compiling full',
             { origin, changeSource: stamp.changeSource }
         );
+    }
+    const touchesFeatures = entries.some((entry) => {
+        const path = entry.path ?? '';
+        return path === 'features' || path.startsWith('features.');
+    });
+    if (touchesFeatures) {
+        return { editType: null, changeSource: 'feature-code' };
     }
     const editType = packetMixesKerningAndGlyphEdits(entries)
         ? null
@@ -2805,9 +2813,17 @@ function initializeBridge(detail: {
     destroyExisting();
 
     const bridge = new PatchSyncEngine(window.windowRole?.instanceId);
-    bridge.setTransactionFinalizer((operations) =>
-        buildCascadingRecompositionOperations(bridge, operations)
-    );
+    bridge.setTransactionFinalizer((operations, context) => {
+        const recomposition = buildCascadingRecompositionOperations(
+            bridge,
+            operations
+        );
+        const features = featureGeneratorEngine.buildDerivedOperations(
+            [...operations, ...recomposition],
+            { label: context.label, intents: context.intents }
+        );
+        return [...recomposition, ...features];
+    });
     window.patchSyncEngine = bridge;
     window.changeBridge = bridge;
     const bootstrapDocuments = (

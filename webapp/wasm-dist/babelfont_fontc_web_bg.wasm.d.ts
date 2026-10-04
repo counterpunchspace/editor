@@ -1,12 +1,6 @@
 /* tslint:disable */
 /* eslint-disable */
 export const memory: WebAssembly.Memory;
-export const get_font_axes: (a: number, b: number) => [number, number, number, number];
-export const get_font_features: (a: number, b: number) => [number, number, number, number];
-export const get_font_features_with_tables: (a: number, b: number) => [number, number, number, number];
-export const get_glyph_name: (a: number, b: number, c: number) => [number, number, number, number];
-export const get_glyph_order: (a: number, b: number) => [number, number, number, number];
-export const get_stylistic_set_names: (a: number, b: number) => [number, number, number, number];
 export const adopt_preview_layout_closure_from_last: () => number;
 export const apply_preview_layer_overlay: (a: number, b: number, c: number, d: number) => [number, number, number, number];
 export const apply_yjs_update: (a: number, b: number, c: number, d: number) => [number, number, number, number];
@@ -53,6 +47,12 @@ export const refine_layer_snapshots_yjs: (a: number, b: number, c: number, d: nu
 export const reinterpolate_layer_yjs: (a: number, b: number, c: number, d: number) => [number, number, number];
 export const reinterpolate_master_layers_yjs: (a: number, b: number) => [number, number, number];
 export const remove_masters_yjs: (a: number, b: number) => [number, number, number];
+export const get_font_axes: (a: number, b: number) => [number, number, number, number];
+export const get_font_features: (a: number, b: number) => [number, number, number, number];
+export const get_font_features_with_tables: (a: number, b: number) => [number, number, number, number];
+export const get_glyph_name: (a: number, b: number, c: number) => [number, number, number, number];
+export const get_glyph_order: (a: number, b: number) => [number, number, number, number];
+export const get_stylistic_set_names: (a: number, b: number) => [number, number, number, number];
 export const __wbindgen_malloc: (a: number, b: number) => number;
 export const __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;
 export const __wbindgen_exn_store: (a: number) => void;
