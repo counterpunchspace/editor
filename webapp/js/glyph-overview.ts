@@ -28,6 +28,10 @@ import {
 import { isOverviewFollowStackScrollEnabled } from './glyph-overview-follow-stack-pref';
 import { isCcmpShellGlyph } from './language-packs/ccmp-shells';
 import {
+    conversionMenuLabel,
+    type CompositionOffer
+} from './language-packs/composition-conversion';
+import {
     getOverviewDisplayMode,
     getOverviewSize,
     setOverviewDisplayMode,
@@ -270,6 +274,38 @@ function locationsMatchWithinTolerance(
     return true;
 }
 
+function conversionMenuItem(
+    action: string,
+    target: 'ccmp' | 'Components',
+    count: number,
+    reason: string | null,
+    canMutate: boolean,
+    selectedCount: number
+): string {
+    const enabled = canMutate && count > 0;
+    const disabledClass = enabled ? '' : ' disabled plugin-menu-item-disabled';
+    const disabledAttr = enabled ? '' : ' aria-disabled="true"';
+    const note = !enabled && canMutate && reason ? reason : '';
+    return `
+                <div class="plugin-menu-item${disabledClass}" data-action="${action}"${disabledAttr}>
+                    <span class="material-symbols-outlined">account_tree</span>
+                    <span>${conversionMenuLabel(target, count, selectedCount)}</span>
+                    ${note ? `<span class="plugin-menu-shortcut">${note}</span>` : ''}
+                </div>`;
+}
+
+function formatNameList(names: readonly string[]): string {
+    const shown = names.slice(0, 6);
+    const extra = names.length - shown.length;
+    const body =
+        shown.length <= 1
+            ? shown[0] || ''
+            : shown.length === 2
+              ? `${shown[0]} and ${shown[1]}`
+              : `${shown.slice(0, -1).join(', ')}, and ${shown[shown.length - 1]}`;
+    return extra > 0 ? `${body}, and ${extra} more` : body;
+}
+
 class GlyphOverview {
     private container: HTMLDivElement | null = null;
     private propertyPanel: HTMLElement | null = null;
@@ -316,6 +352,7 @@ class GlyphOverview {
     private readonly tileCacheViewportMarginPx = 100;
     private tileViewClock = 0;
     private tileContextMenu: TippyInstance | null = null;
+    private contextMenuRequest = 0;
     private onContainerScrollBound = this.onContainerScroll.bind(this);
     private onCapturedScrollBound = this.onCapturedScroll.bind(this);
     private onFontModelSyncBound = (): void => {
@@ -3684,15 +3721,8 @@ class GlyphOverview {
             hideOnClick: false,
             zIndex: 9999,
             getReferenceClientRect: null as any,
-            onShown: (instance) => {
-                const menu = instance.popper.querySelector('.plugin-menu');
-                if (!menu) return;
-                setupMenuKeyboardNav(menu);
-                if ((menu as { _handlersSetup?: boolean })._handlersSetup) {
-                    return;
-                }
-                (menu as { _handlersSetup?: boolean })._handlersSetup = true;
-                menu.addEventListener('click', (event) => {
+            onCreate: (instance) => {
+                instance.popper.addEventListener('click', (event) => {
                     const menuItem = (
                         event.target as HTMLElement | null
                     )?.closest('.plugin-menu-item');
@@ -3716,23 +3746,17 @@ class GlyphOverview {
                         window.deleteGlyphsDialog?.open();
                     } else if (action === 'duplicate-glyphs') {
                         this.duplicateSelectedGlyphs();
-                    } else if (action === 'rebuild-composition') {
-                        const names = this.getSelectedGlyphs()
-                            .map(
-                                (glyphId) =>
-                                    window.currentFontModel?.findGlyph(glyphId)
-                                        ?.name || glyphId
-                            )
-                            .filter((name): name is string => Boolean(name));
-                        void import('./language-packs/rebuild-composition-dialog').then(
-                            ({ openRebuildCompositionDialog }) =>
-                                openRebuildCompositionDialog({
-                                    scope: 'selected',
-                                    glyphNames: names
-                                })
-                        );
+                    } else if (action === 'convert-to-ccmp') {
+                        void this.convertSelection('ccmp');
+                    } else if (action === 'convert-to-components') {
+                        void this.convertSelection('materialized');
                     }
                 });
+            },
+            onShown: (instance) => {
+                const menu = instance.popper.querySelector('.plugin-menu');
+                if (!menu) return;
+                setupMenuKeyboardNav(menu);
             }
         });
 
@@ -3780,35 +3804,98 @@ class GlyphOverview {
                 selectedNames.some((name) => this.needsSparseDownload(name)) &&
                 window.fontManager?.currentFont?.sourcePlugin?.getId?.() ===
                     'cloud';
-            this.tileContextMenu.hide();
-            this.tileContextMenu.setContent(
-                this.createTileContextMenuHtml(
-                    canAct,
-                    canHydrate,
-                    hasUnhydrated
-                )
+            const point = { x: event.clientX, y: event.clientY };
+            void this.presentTileContextMenu(
+                canAct,
+                canHydrate,
+                hasUnhydrated,
+                selectedNames,
+                point
             );
-            this.tileContextMenu.setProps({
-                getReferenceClientRect: () => ({
-                    width: 0,
-                    height: 0,
-                    top: event.clientY,
-                    bottom: event.clientY,
-                    left: event.clientX,
-                    right: event.clientX,
-                    x: event.clientX,
-                    y: event.clientY,
-                    toJSON: () => ({})
-                })
-            });
-            this.tileContextMenu.show();
         });
+    }
+
+    private async presentTileContextMenu(
+        canAct: boolean,
+        canHydrate: boolean,
+        hasUnhydrated: boolean,
+        selectedNames: string[],
+        point: { x: number; y: number }
+    ): Promise<void> {
+        if (!this.tileContextMenu) {
+            return;
+        }
+        const request = ++this.contextMenuRequest;
+        const canMutate = canAct && !hasUnhydrated;
+        let offer: CompositionOffer | null = null;
+        if (canMutate) {
+            const { loadCompositionOffer } =
+                await import('./language-packs/composition-conversion');
+            offer = await loadCompositionOffer(selectedNames);
+        }
+        if (request !== this.contextMenuRequest || !this.tileContextMenu) {
+            return;
+        }
+        this.tileContextMenu.hide();
+        this.tileContextMenu.setContent(
+            this.createTileContextMenuHtml(
+                canAct,
+                canHydrate,
+                hasUnhydrated,
+                offer,
+                selectedNames.length
+            )
+        );
+        this.tileContextMenu.setProps({
+            getReferenceClientRect: () => ({
+                width: 0,
+                height: 0,
+                top: point.y,
+                bottom: point.y,
+                left: point.x,
+                right: point.x,
+                x: point.x,
+                y: point.y,
+                toJSON: () => ({})
+            })
+        });
+        this.tileContextMenu.show();
+    }
+
+    private async convertSelection(
+        output: 'ccmp' | 'materialized'
+    ): Promise<void> {
+        const names = this.getSelectedGlyphNames();
+        const { loadCompositionOffer, convertSelectedGlyphs } =
+            await import('./language-packs/composition-conversion');
+        const offer = await loadCompositionOffer(names);
+        const targets = output === 'ccmp' ? offer.toCcmp : offer.toComponents;
+        const drawn =
+            output === 'ccmp'
+                ? offer.outlinesLostByCcmp
+                : offer.outlinesLostByComponents;
+        if (!targets.length) {
+            return;
+        }
+        if (drawn.length) {
+            const { showProceedDialog } = await import('./ui/confirm-dialog');
+            const proceed = await showProceedDialog(
+                output === 'ccmp' ? 'Convert to ccmp' : 'Convert to Components',
+                `Replace the outlines of ${formatNameList(drawn)}?`
+            );
+            if (!proceed) {
+                return;
+            }
+        }
+        await convertSelectedGlyphs(targets, output);
     }
 
     private createTileContextMenuHtml(
         canAct = true,
         canHydrate = false,
-        hasUnhydrated = false
+        hasUnhydrated = false,
+        offer: CompositionOffer | null = null,
+        selectedCount = 0
     ): string {
         const canMutate = canAct && !hasUnhydrated;
         const disabledClass = canMutate
@@ -3839,10 +3926,22 @@ class GlyphOverview {
             <div class="plugin-menu">
                 ${hydrateItem}
                 ${insertAsUnicodeItem}
-                <div class="plugin-menu-item${disabledClass}" data-action="rebuild-composition"${disabledAttr}>
-                    <span class="material-symbols-outlined">account_tree</span>
-                    <span>Rebuild Composition…</span>
-                </div>
+                ${conversionMenuItem(
+                    'convert-to-ccmp',
+                    'ccmp',
+                    offer?.toCcmp.length || 0,
+                    offer?.ccmpReason || null,
+                    canMutate,
+                    selectedCount
+                )}
+                ${conversionMenuItem(
+                    'convert-to-components',
+                    'Components',
+                    offer?.toComponents.length || 0,
+                    offer?.componentsReason || null,
+                    canMutate,
+                    selectedCount
+                )}
                 <div class="plugin-menu-item${disabledClass}" data-action="duplicate-glyphs"${disabledAttr}>
                     <span class="material-symbols-outlined">content_copy</span>
                     <span>Duplicate Glyph(s)</span>

@@ -279,42 +279,6 @@
     margin: 0;
 }
 
-.rebuild-composition-dialog {
-    max-width: 440px;
-}
-
-.rebuild-composition-fields {
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-}
-
-.rebuild-composition-field {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-    color: var(--text-secondary);
-    font-size: 10px;
-    font-weight: 700;
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
-}
-
-.rebuild-composition-field .dialog-input {
-    width: 100%;
-    color: var(--text-primary);
-    font-size: 12px;
-    font-weight: 400;
-    letter-spacing: normal;
-    text-transform: none;
-}
-
-.rebuild-composition-preview {
-    max-height: 160px;
-    margin-top: 12px;
-    overflow: auto;
-}
-
 /* ── Dialog action buttons (Unsaved Changes baseline) ──────────────────────── */
 
 /* Bottom action rows: keep buttons separated from content above. */

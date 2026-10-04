@@ -9,6 +9,10 @@ const {
     compositionOutputSetting
 } = require('../js/language-packs/composition-planner.ts');
 const {
+    classifyComposition,
+    conversionMenuLabel
+} = require('../js/language-packs/composition-conversion.ts');
+const {
     generatorMatches,
     operationsToBatch
 } = require('../js/language-packs/feature-generator-engine.ts');
@@ -130,6 +134,61 @@ describe('language packs', () => {
         expect(plan.ccmpAdd).toEqual(['aDiaeresis-lat']);
         expect(plan.clearShells).toEqual(['aDiaeresis-lat']);
         expect(plan.composites).toEqual([]);
+    });
+
+    test('selection converts only the glyphs that can change', () => {
+        const glyphs = {
+            shell: {
+                codepoints: [0xe4],
+                layers: [{ shapes: [] }]
+            },
+            composite: {
+                codepoints: [0xe1],
+                layers: [{ shapes: [{ reference: 'a' }] }]
+            },
+            drawn: {
+                codepoints: [0xe9],
+                layers: [{ shapes: [{ nodes: [] }] }]
+            },
+            plain: {
+                codepoints: [0x62],
+                layers: [{ shapes: [{ nodes: [] }] }]
+            }
+        };
+        const offer = classifyComposition(
+            ['shell', 'composite', 'drawn', 'plain'],
+            {
+                glyph: (name) => glyphs[name],
+                isCcmp: (name) => name === 'shell',
+                hasRecipe: (codepoint) => codepoint !== 0x62
+            }
+        );
+        expect(offer.toComponents).toEqual(['shell']);
+        expect(offer.toCcmp).toEqual(['composite', 'drawn']);
+        expect(offer.outlinesLostByCcmp).toEqual(['drawn']);
+        expect(offer.outlinesLostByComponents).toEqual([]);
+        expect(offer.ccmpReason).toBeNull();
+        expect(offer.componentsReason).toBeNull();
+        expect(conversionMenuLabel('ccmp', 2, 4)).toBe('Convert 2 to ccmp');
+        expect(conversionMenuLabel('Components', 1, 4)).toBe(
+            'Convert 1 to Components'
+        );
+
+        const already = classifyComposition(['shell'], {
+            glyph: (name) => glyphs[name],
+            isCcmp: () => true,
+            hasRecipe: () => true
+        });
+        expect(already.ccmpReason).toBe('Already ccmp');
+        expect(already.componentsReason).toBeNull();
+
+        const none = classifyComposition(['plain'], {
+            glyph: (name) => glyphs[name],
+            isCcmp: () => false,
+            hasRecipe: () => false
+        });
+        expect(none.ccmpReason).toBe('No recipe');
+        expect(none.componentsReason).toBe('Not ccmp');
     });
 
     test('managed block replacement keeps manual ccmp', () => {
