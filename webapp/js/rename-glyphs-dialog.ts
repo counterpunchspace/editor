@@ -6,18 +6,31 @@ import { bindModalEscape, type ModalEscapeBinding } from './ui/modal-escape';
 
 const console = new Logger('RenameGlyphsDialog');
 
-function commonSubstring(names: string[]): string {
+/**
+ * Shared dot-endings of the selected names, matched from the last token.
+ * The part before the first dot is the glyph name and is not compared.
+ * `a-lat.sc` and `aDieresis-lat.sc` share `.sc`.
+ * `a.alt.sc` and `b.alt.sc` share `.alt.sc`.
+ */
+export function commonSuffix(names: string[]): string {
     if (names.length === 0) return '';
-    const [first, ...rest] = names;
-    let best = '';
-    for (let start = 0; start < first.length; start++) {
-        for (let end = first.length; end > start + best.length; end--) {
-            const candidate = first.slice(start, end);
-            if (rest.every((name) => name.includes(candidate)))
-                return candidate;
+    const endings = names.map((name) => name.split('.').slice(1));
+    let matched = 0;
+    const limit = Math.min(...endings.map((tokens) => tokens.length));
+    while (matched < limit) {
+        const token = endings[0][endings[0].length - 1 - matched];
+        if (
+            !token ||
+            endings.some(
+                (tokens) => tokens[tokens.length - 1 - matched] !== token
+            )
+        ) {
+            break;
         }
+        matched++;
     }
-    return best;
+    if (matched === 0) return '';
+    return `.${endings[0].slice(endings[0].length - matched).join('.')}`;
 }
 
 /** Append `text` with each occurrence of `term` wrapped in a colored mark span. */
@@ -123,7 +136,7 @@ export class RenameGlyphsDialog {
         const glyphOverview = window.glyphOverviewInstance;
         this.selectedNames = glyphOverview?.getSelectedGlyphNames?.() || [];
         if (!this.modal || this.selectedNames.length === 0) return;
-        this.searchInput!.value = commonSubstring(this.selectedNames);
+        this.searchInput!.value = commonSuffix(this.selectedNames);
         this.replaceInput!.value = '';
         if (this.rewireInput) {
             this.rewireInput.checked = true;

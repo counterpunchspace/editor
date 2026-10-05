@@ -1,7 +1,26 @@
+const { commonSuffix } = require('../js/rename-glyphs-dialog');
 const {
     planRenameRewires,
     proposeRewiredReference
 } = require('../js/rename-glyphs-rewire');
+
+describe('rename dialog common suffix', () => {
+    test('prefills shared dot-endings from the last token', () => {
+        expect(commonSuffix(['a-lat.sc', 'aDieresis-lat.sc'])).toBe('.sc');
+        expect(commonSuffix(['a.001', 'aDieresis.001'])).toBe('.001');
+        expect(commonSuffix(['A.alt', 'B.alt', 'C.alt'])).toBe('.alt');
+        expect(commonSuffix(['a.alt.sc', 'b.alt.sc'])).toBe('.alt.sc');
+        expect(commonSuffix(['a.alt.sc', 'b.sc'])).toBe('.sc');
+    });
+
+    test('ignores the glyph name and mismatched endings', () => {
+        expect(commonSuffix(['a.sc'])).toBe('.sc');
+        expect(commonSuffix(['a-lat', 'b-lat'])).toBe('');
+        expect(commonSuffix(['a.sc', 'b.ss01'])).toBe('');
+        expect(commonSuffix(['a', 'b'])).toBe('');
+        expect(commonSuffix([])).toBe('');
+    });
+});
 
 function plan(search, replace, renames, references, components, names) {
     return planRenameRewires(search, replace, renames, {
