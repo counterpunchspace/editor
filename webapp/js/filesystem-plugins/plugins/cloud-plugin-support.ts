@@ -163,6 +163,41 @@ export function catalogGlyphNameFromCommittedEntry(entry: {
     return String(path[1]);
 }
 
+/**
+ * Glyph names whose font-deps row should be rewritten for this commit.
+ * A rename records the reference edit under the old name and the new name
+ * on `glyphRenames` in the same glyph packet. Deps are keyed by the name
+ * the model already uses.
+ */
+export function depsGlyphNamesFromCommittedEntries(
+    entries: Array<{
+        path?: string | Array<string | number>;
+        glyphRenames?: Array<{ oldName?: string; newName?: string }>;
+    }>
+): string[] {
+    const renamedTo = new Map<string, string>();
+    for (const entry of entries) {
+        for (const rename of entry.glyphRenames || []) {
+            if (
+                rename.oldName &&
+                rename.newName &&
+                rename.oldName !== rename.newName
+            ) {
+                renamedTo.set(rename.oldName, rename.newName);
+            }
+        }
+    }
+    const names = new Set<string>();
+    for (const entry of entries) {
+        const path = pathFromCommittedEntry(entry);
+        if (depsNeedUpdate(path) && path[0] === 'glyphs' && path[1]) {
+            const name = String(path[1]);
+            names.add(renamedTo.get(name) || name);
+        }
+    }
+    return [...names];
+}
+
 export function pathFromCommittedEntry(entry: {
     path?: string | Array<string | number>;
 }): Array<string | number> {

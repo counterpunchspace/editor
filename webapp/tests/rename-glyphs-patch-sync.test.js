@@ -1,6 +1,13 @@
 const { Font } = require('../js/babelfont-model');
 const { PatchSyncEngine } = require('../js/patch-sync-engine');
 const {
+    CloudPlugin
+} = require('../js/filesystem-plugins/plugins/cloud-plugin');
+const {
+    computeSparseHydrationPartition,
+    readFontDepsIndex
+} = require('../js/filesystem-plugins/cloud-font-deps');
+const {
     deriveGlyphNamesFromPaths,
     glyphRenamesForHistoryAction,
     joinPathWithGlyphSeparator
@@ -276,6 +283,26 @@ describe('glyph rename change-path encoding', () => {
             expect(deriveGlyphNamesFromPaths([path])).toEqual([name]);
         }
     });
+
+    test('round-trips glyph metrics keys and dotted layer metrics-key names', () => {
+        const { getPathSegments } = require('../js/change-log');
+        const cases = [
+            ['glyphs', 'aDieresis.001', 'format_specific', 'metric_left'],
+            [
+                'glyphs',
+                'aDieresis.001',
+                'layers',
+                'layer-ad',
+                'format_specific',
+                'com.schriftgestalt.Glyphs.metricLeft'
+            ],
+            ['glyphs', 'A', 'layers', 'layer-1', 'shapes', 0, 'nodes', 2, 'x']
+        ];
+        for (const segments of cases) {
+            const joined = joinPathWithGlyphSeparator(segments);
+            expect(getPathSegments(joined)).toEqual(segments.map(String));
+        }
+    });
 });
 
 describe('glyphRenamesForHistoryAction', () => {
@@ -485,6 +512,137 @@ describe('PatchSyncEngine.renameGlyphs integrity', () => {
             expect(font.findGlyph('B').layers[0].width).toBe(600);
         } finally {
             window.patchSyncEngine = previousBridge;
+            bridge.destroy();
+        }
+    });
+});
+
+describe('glyph rename rewire font-deps', () => {
+    test('committed rename rewires the composite edge through the cloud listener', () => {
+        const fontData = {
+            upm: 1000,
+            version: [1, 0],
+            axes: [],
+            cross_axis_mappings: [],
+            instances: [],
+            masters: [
+                {
+                    name: { dflt: 'Regular' },
+                    id: 'master-1',
+                    location: {},
+                    guides: [],
+                    metrics: {},
+                    kerning: {}
+                }
+            ],
+            glyphs: [
+                {
+                    name: 'a',
+                    id: 'id-a',
+                    category: 'Base',
+                    exported: true,
+                    layers: [
+                        {
+                            id: 'layer-a',
+                            master: {
+                                type: 'DefaultForMaster',
+                                master: 'master-1'
+                            },
+                            width: 500,
+                            shapes: [],
+                            anchors: []
+                        }
+                    ]
+                },
+                {
+                    name: 'a.001',
+                    id: 'id-a-001',
+                    category: 'Base',
+                    exported: true,
+                    layers: [
+                        {
+                            id: 'layer-a-001',
+                            master: {
+                                type: 'DefaultForMaster',
+                                master: 'master-1'
+                            },
+                            width: 500,
+                            shapes: [],
+                            anchors: []
+                        }
+                    ]
+                },
+                {
+                    name: 'aDieresis.001',
+                    id: 'id-ad',
+                    category: 'Mark',
+                    exported: true,
+                    layers: [
+                        {
+                            id: 'layer-ad',
+                            master: {
+                                type: 'DefaultForMaster',
+                                master: 'master-1'
+                            },
+                            width: 500,
+                            shapes: [
+                                {
+                                    reference: 'a',
+                                    transform: [1, 0, 0, 1, 0, 0]
+                                }
+                            ],
+                            anchors: []
+                        }
+                    ]
+                }
+            ],
+            note: '',
+            date: new Date('2020-01-01T00:00:00.000Z'),
+            names: {},
+            features: { classes: {}, prefixes: {}, features: [] }
+        };
+        const font = Font.fromData(fontData);
+        font.findGlyph('aDieresis.001').leftMetricsKey = '=a';
+        const bridge = new PatchSyncEngine('rewire-deps');
+        const previousBridge = window.patchSyncEngine;
+        const previousFontManager = window.fontManager;
+        bridge.initFromJson(fontData);
+        bridge.syncFontDepsFromFontJson(fontData);
+        window.patchSyncEngine = bridge;
+        window.fontManager = { currentFont: { fontModel: font } };
+        const plugin = new CloudPlugin();
+        bridge.onCommittedChange(plugin._syncCatalogFromCommittedChange);
+
+        try {
+            font.renameGlyphs(
+                new Map([
+                    ['a.001', 'a.sc'],
+                    ['aDieresis.001', 'aDieresis.sc']
+                ]),
+                {
+                    referenceRewires: new Map([
+                        ['aDieresis.001', new Map([['a', 'a.sc']])]
+                    ])
+                }
+            );
+
+            const { edges } = readFontDepsIndex(bridge.depsDoc.getMap('deps'));
+            expect(edges['id-ad']['id-a-001']).toBe('both');
+            expect(edges['id-ad']['id-a']).toBeUndefined();
+            const partition = computeSparseHydrationPartition({
+                seedIds: ['id-ad'],
+                edges,
+                catalog: [
+                    { glyphId: 'id-a', name: 'a' },
+                    { glyphId: 'id-a-001', name: 'a.sc' },
+                    { glyphId: 'id-ad', name: 'aDieresis.sc' }
+                ]
+            });
+            expect(partition.loadIds).toContain('id-a-001');
+            expect(partition.loadIds).not.toContain('id-a');
+        } finally {
+            window.patchSyncEngine = previousBridge;
+            window.fontManager = previousFontManager;
             bridge.destroy();
         }
     });

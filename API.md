@@ -239,9 +239,12 @@ if glyph:
     print(glyph.name)
 ```
 
-#### `renameGlyphs(renameMap: ReadonlyMap<string, string>) -> None`
+#### `renameGlyphs(renameMap: GlyphRenameMap, options: GlyphRenameOptions | None = None) -> None`
 Rename glyphs and every font-owned reference to them in one undoable
 transaction. The mapping is simultaneous, so swaps are safe.
+`referenceRewires` is the Rename Glyph(s) dialog's optional plan:
+for glyphs in the rename set, component bases and metrics keys that
+are not themselves being renamed are rewritten to those targets.
 
 #### `resolveGlyphView(name: str) -> [Glyph](#glyph) | FeatureVariationGlyph | None`
 Resolve an editor glyph token to an authorable layer view. A literal glyph

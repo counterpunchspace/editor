@@ -701,6 +701,39 @@ function getLayerScopeKey(
  * Only applies ':' when path[0] is 'glyphs' — all other path roots
  * (axes, masters, features, etc.) use plain dot-joining.
  */
+function encodePathSegment(segment: string | number): string {
+    return String(segment).replace(/\\/g, '\\\\').replace(/\./g, '\\.');
+}
+
+function encodePathTail(segments: (string | number)[]): string {
+    return segments.map(encodePathSegment).join('.');
+}
+
+/** Split on dots that are not escaped by a preceding backslash. */
+function decodePathTail(tail: string): string[] {
+    if (!tail) {
+        return [];
+    }
+    const segments: string[] = [];
+    let current = '';
+    for (let index = 0; index < tail.length; index++) {
+        const char = tail[index];
+        if (char === '\\' && index + 1 < tail.length) {
+            current += tail[index + 1];
+            index++;
+            continue;
+        }
+        if (char === '.') {
+            segments.push(current);
+            current = '';
+            continue;
+        }
+        current += char;
+    }
+    segments.push(current);
+    return segments;
+}
+
 export function joinPathWithGlyphSeparator(path: (string | number)[]): string {
     if (path.length === 0) return '';
     if (path[0] !== 'glyphs') return path.join('.');
@@ -710,11 +743,17 @@ export function joinPathWithGlyphSeparator(path: (string | number)[]): string {
     if (path.length === 2) {
         return `${path[0]}.${path[1]}:`;
     }
+    // Glyph-level fields are not layer ids. A trailing colon here makes
+    // format_specific.metric_left look like a layer named metric_left.
+    if (path[2] !== 'layers') {
+        return `${path[0]}.${path[1]}:${encodePathTail(path.slice(2))}`;
+    }
     // Separator after glyph name
     let result = path[0] + '.' + path[1] + ':' + path[2];
     if (path.length <= 3) return result;
-    // Separator after layer ID (path[3])
-    result += '.' + path[3] + ':' + path.slice(4).join('.');
+    // Separator after layer ID (path[3]). Later segments may contain dots
+    // (Glyphs metrics-key names), so those dots are escaped.
+    result += '.' + path[3] + ':' + encodePathTail(path.slice(4));
     return result;
 }
 
@@ -744,8 +783,8 @@ function splitGlyphPath(path: string): string[] | null {
     // Split layer-id boundary: layers.{layerId}:rest
     const secondColonIdx = afterGlyph.indexOf(':');
     if (secondColonIdx < 0) {
-        // No layer separator — remainder is all dot-delimited
-        return ['glyphs', glyphName, ...afterGlyph.split('.')];
+        // No layer separator — remainder is a glyph-level field path.
+        return ['glyphs', glyphName, ...decodePathTail(afterGlyph)];
     }
 
     const layerPart = afterGlyph.slice(0, secondColonIdx); // "layers.layer.regular.v1"
@@ -758,7 +797,7 @@ function splitGlyphPath(path: string): string[] | null {
     const segments = ['glyphs', glyphName, 'layers', layerId];
     if (!afterLayer) return segments;
 
-    return [...segments, ...afterLayer.split('.')];
+    return [...segments, ...decodePathTail(afterLayer)];
 }
 
 export function getPathSegments(path: string): string[] {

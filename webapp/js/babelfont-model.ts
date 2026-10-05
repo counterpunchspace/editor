@@ -11788,6 +11788,64 @@ export class Glyph extends ArrayElementBase {
      * Rewrite metrics keys and component refs on every stored layer, including
      * backgrounds filtered out of the public `layers` view.
      */
+    /**
+     * Component bases and metrics-key names on every stored layer,
+     * including backgrounds. The rename dialog plans rewires from this.
+     */
+    _collectRenameReferences(): {
+        references: string[];
+        components: string[];
+    } {
+        const font = this.parent() as Font | null;
+        const references: string[] = [];
+        const components: string[] = [];
+        if (!font) {
+            return { references, components };
+        }
+        const pushReference = (name: string | null | undefined): void => {
+            if (!name || references.includes(name)) {
+                return;
+            }
+            references.push(name);
+        };
+        const pushMetrics = (raw: string | undefined): void => {
+            if (!raw) {
+                return;
+            }
+            const parsed = parseMetricsKey(font, raw);
+            if (
+                'error' in parsed ||
+                parsed.kind !== 'reference' ||
+                !parsed.glyphName
+            ) {
+                return;
+            }
+            pushReference(parsed.glyphName);
+        };
+        pushMetrics(this.leftMetricsKey);
+        pushMetrics(this.rightMetricsKey);
+        const layers = this.data.layers;
+        if (!Array.isArray(layers)) {
+            return { references, components };
+        }
+        for (let index = 0; index < layers.length; index++) {
+            const layer = new Layer(layers, index, this);
+            pushMetrics(layer.leftMetricsKey);
+            pushMetrics(layer.rightMetricsKey);
+            for (const component of layer.components) {
+                const reference = component.reference;
+                if (!reference) {
+                    continue;
+                }
+                if (!components.includes(reference)) {
+                    components.push(reference);
+                }
+                pushReference(reference);
+            }
+        }
+        return { references, components };
+    }
+
     _rewriteStoredLayerNameReferences(
         replaceName: (value: string) => string,
         replaceMetricsKey: (value: string | undefined) => string | undefined
@@ -13005,6 +13063,18 @@ export function normalizeLegacyGlyphsRtlKerning(
 
     return data;
 }
+
+/** Simultaneous old-name to new-name mapping for Font.renameGlyphs. */
+export type GlyphRenameMap = ReadonlyMap<string, string>;
+
+/**
+ * Optional rewires supplied by the Rename Glyph(s) dialog.
+ * Outer key: glyph being renamed. Inner key: component or metrics-key
+ * glyph name. Inner value: the reference to write.
+ */
+export type GlyphRenameOptions = {
+    referenceRewires?: ReadonlyMap<string, GlyphRenameMap>;
+};
 
 export class Font extends ModelBase {
     private _glyphWrappers: Glyph[] | null = null;
@@ -14243,8 +14313,14 @@ export class Font extends ModelBase {
     /**
      * Rename glyphs and every font-owned reference to them in one undoable
      * transaction. The mapping is simultaneous, so swaps are safe.
+     * `referenceRewires` is the Rename Glyph(s) dialog's optional plan:
+     * for glyphs in the rename set, component bases and metrics keys that
+     * are not themselves being renamed are rewritten to those targets.
      */
-    renameGlyphs(renameMap: ReadonlyMap<string, string>): void {
+    renameGlyphs(
+        renameMap: GlyphRenameMap,
+        options?: GlyphRenameOptions
+    ): void {
         assertModelMutationAllowed();
         const renames = new Map(
             Array.from(renameMap).filter(
@@ -14261,7 +14337,8 @@ export class Font extends ModelBase {
         const replaceName = (value: string): string =>
             renames.get(value) || value;
         const replaceMetricsKey = (
-            value: string | undefined
+            value: string | undefined,
+            lookup: (glyphName: string) => string | undefined
         ): string | undefined => {
             if (!value) return value;
             const parsed = parseMetricsKey(this, value);
@@ -14272,8 +14349,8 @@ export class Font extends ModelBase {
             ) {
                 return value;
             }
-            const newName = renames.get(parsed.glyphName);
-            if (!newName) return value;
+            const newName = lookup(parsed.glyphName);
+            if (!newName || newName === parsed.glyphName) return value;
             // Rewrite only the parsed glyph-name segment so prefixes like AA
             // are never disturbed when renaming A.
             let body = value.trim();
@@ -14333,8 +14410,20 @@ export class Font extends ModelBase {
             }
 
             for (const glyph of this.glyphs) {
-                const leftMetricsKey = replaceMetricsKey(glyph.leftMetricsKey);
-                const rightMetricsKey = replaceMetricsKey(
+                const rewire = renames.has(glyph.name)
+                    ? options?.referenceRewires?.get(glyph.name)
+                    : undefined;
+                const lookup = (name: string): string | undefined =>
+                    rewire?.get(name) ?? renames.get(name);
+                const replaceGlyphRef = (value: string): string =>
+                    lookup(value) || value;
+                const replaceGlyphMetricsKey = (
+                    value: string | undefined
+                ): string | undefined => replaceMetricsKey(value, lookup);
+                const leftMetricsKey = replaceGlyphMetricsKey(
+                    glyph.leftMetricsKey
+                );
+                const rightMetricsKey = replaceGlyphMetricsKey(
                     glyph.rightMetricsKey
                 );
                 if (leftMetricsKey !== glyph.leftMetricsKey) {
@@ -14346,8 +14435,8 @@ export class Font extends ModelBase {
                 // Glyph.layers hides backgrounds; Glyphs fonts often keep
                 // composite refs only there (e.g. Fustat ae → a).
                 glyph._rewriteStoredLayerNameReferences(
-                    replaceName,
-                    replaceMetricsKey
+                    replaceGlyphRef,
+                    replaceGlyphMetricsKey
                 );
             }
 
@@ -16437,4 +16526,20 @@ export class Font extends ModelBase {
 
         return { hasGSUB: false, hasGPOS: false };
     }
+}
+
+/**
+ * Component bases and metrics-key glyph names stored on a glyph, including
+ * background layers. Used by the Rename Glyph(s) dialog to plan rewires.
+ */
+export function collectGlyphRenameReferences(
+    font: Font,
+    glyphName: string
+): { references: string[]; components: string[] } {
+    return (
+        font.findGlyph(glyphName)?._collectRenameReferences() ?? {
+            references: [],
+            components: []
+        }
+    );
 }

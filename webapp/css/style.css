@@ -192,8 +192,8 @@
 }
 
 .rename-glyphs-popup {
-    width: min(620px, calc(100vw - 32px));
-    max-width: 620px;
+    width: min(960px, calc(100vw - 32px));
+    max-width: 960px;
 }
 
 .info-popup-content.rename-glyphs-content {
@@ -228,10 +228,28 @@
     padding: 7px 8px;
 }
 
+.rename-glyphs-rewire {
+    align-items: center;
+    color: var(--text-primary);
+    display: flex;
+    flex-shrink: 0;
+    font-size: 12px;
+    gap: 8px;
+}
+
+.rename-glyphs-rewire[hidden] {
+    display: none;
+}
+
+.rename-glyphs-rewire-input {
+    accent-color: var(--accent-cyan);
+    margin: 0;
+}
+
 .rename-glyphs-preview-wrap {
     flex: 1;
     min-height: 0;
-    max-height: min(50vh, 420px);
+    max-height: min(65vh, 640px);
     overflow-y: auto;
 }
 
@@ -243,6 +261,15 @@
 
 .rename-glyphs-preview col {
     width: 50%;
+}
+
+.rename-glyphs-preview.has-references col:nth-child(1),
+.rename-glyphs-preview.has-references col:nth-child(2) {
+    width: 28%;
+}
+
+.rename-glyphs-preview.has-references col:nth-child(3) {
+    width: 44%;
 }
 
 .rename-glyphs-preview th,
@@ -290,6 +317,15 @@
     font-size: 10px;
     font-weight: 400;
     margin-left: 8px;
+}
+
+.rename-glyphs-rewire-entry {
+    display: block;
+}
+
+.rename-glyphs-rewire-entry.is-inactive {
+    color: var(--text-secondary);
+    text-decoration: line-through;
 }
 
 .rename-glyphs-content .find-glyph-actions {

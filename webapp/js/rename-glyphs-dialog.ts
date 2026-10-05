@@ -1,5 +1,7 @@
+import { collectGlyphRenameReferences } from './babelfont-model';
 import { Logger } from './logger';
 import { getGlyphRenamePreflightErrors } from './rename-glyphs-preflight';
+import { planRenameRewires } from './rename-glyphs-rewire';
 import { bindModalEscape, type ModalEscapeBinding } from './ui/modal-escape';
 
 const console = new Logger('RenameGlyphsDialog');
@@ -69,6 +71,34 @@ function appendReplacedMarkedText(
     });
 }
 
+function appendRewiredReference(
+    parent: HTMLElement,
+    ref: string,
+    candidate: string,
+    search: string,
+    replace: string
+): void {
+    parent.appendChild(document.createTextNode(ref));
+    parent.appendChild(document.createTextNode(' -> '));
+    if (
+        search &&
+        ref.includes(search) &&
+        ref.split(search).join(replace) === candidate
+    ) {
+        appendReplacedMarkedText(parent, ref, search, replace);
+        return;
+    }
+    if (replace && candidate === ref + replace) {
+        parent.appendChild(document.createTextNode(ref));
+        const mark = document.createElement('span');
+        mark.className = 'rename-glyphs-replace-mark';
+        mark.textContent = replace;
+        parent.appendChild(mark);
+        return;
+    }
+    parent.appendChild(document.createTextNode(candidate));
+}
+
 export class RenameGlyphsDialog {
     private readonly modal = document.getElementById('rename-glyphs-modal');
     private readonly content = document.getElementById(
@@ -76,6 +106,9 @@ export class RenameGlyphsDialog {
     );
     private searchInput: HTMLInputElement | null = null;
     private replaceInput: HTMLInputElement | null = null;
+    private rewireRow: HTMLLabelElement | null = null;
+    private rewireInput: HTMLInputElement | null = null;
+    private previewTable: HTMLTableElement | null = null;
     private preview: HTMLTableSectionElement | null = null;
     private confirmButton: HTMLButtonElement | null = null;
     private selectedNames: string[] = [];
@@ -92,6 +125,9 @@ export class RenameGlyphsDialog {
         if (!this.modal || this.selectedNames.length === 0) return;
         this.searchInput!.value = commonSubstring(this.selectedNames);
         this.replaceInput!.value = '';
+        if (this.rewireInput) {
+            this.rewireInput.checked = true;
+        }
         this.updatePreview();
         this.modal.style.display = 'flex';
         this.escapeBinding?.release();
@@ -123,12 +159,26 @@ export class RenameGlyphsDialog {
         };
         this.searchInput = addField('Search');
         this.replaceInput = addField('Replace');
+        this.rewireRow = document.createElement('label');
+        this.rewireRow.className = 'rename-glyphs-rewire';
+        this.rewireRow.hidden = true;
+        this.rewireInput = document.createElement('input');
+        this.rewireInput.type = 'checkbox';
+        this.rewireInput.className = 'rename-glyphs-rewire-input';
+        this.rewireInput.checked = true;
+        this.rewireRow.append(
+            this.rewireInput,
+            document.createTextNode(
+                'Re-wire components and metrics keys to renamed counterparts'
+            )
+        );
         const previewWrap = document.createElement('div');
         previewWrap.className = 'rename-glyphs-preview-wrap';
         const table = document.createElement('table');
         table.className = 'rename-glyphs-preview';
         table.innerHTML =
             '<colgroup><col><col></colgroup><thead><tr><th>Before</th><th>After</th></tr></thead>';
+        this.previewTable = table;
         this.preview = document.createElement('tbody');
         table.appendChild(this.preview);
         previewWrap.appendChild(table);
@@ -145,7 +195,12 @@ export class RenameGlyphsDialog {
         this.confirmButton.disabled = true;
         this.confirmButton.addEventListener('click', () => this.rename());
         actions.append(cancel, this.confirmButton);
-        this.content.replaceChildren(fields, previewWrap, actions);
+        this.content.replaceChildren(
+            fields,
+            this.rewireRow,
+            previewWrap,
+            actions
+        );
     }
 
     private registerEvents(): void {
@@ -157,6 +212,9 @@ export class RenameGlyphsDialog {
         });
         this.searchInput?.addEventListener('input', () => this.updatePreview());
         this.replaceInput?.addEventListener('input', () =>
+            this.updatePreview()
+        );
+        this.rewireInput?.addEventListener('change', () =>
             this.updatePreview()
         );
     }
@@ -199,11 +257,93 @@ export class RenameGlyphsDialog {
         return renames.size > 0 && errors.size === 0;
     }
 
+    private getReferenceRewires(
+        renames: Map<string, string>
+    ): Map<string, Map<string, string>> {
+        const font = window.currentFontModel;
+        const search = this.searchInput?.value || '';
+        const replace = this.replaceInput?.value || '';
+        if (!font || !search || renames.size === 0) {
+            return new Map();
+        }
+        const postRenameNames = new Set(font.glyphs.map((glyph) => glyph.name));
+        for (const [oldName, newName] of renames) {
+            postRenameNames.delete(oldName);
+            postRenameNames.add(newName);
+        }
+        const cache = new Map<
+            string,
+            { references: string[]; components: string[] }
+        >();
+        const load = (glyphName: string) => {
+            let found = cache.get(glyphName);
+            if (!found) {
+                found = collectGlyphRenameReferences(font, glyphName);
+                cache.set(glyphName, found);
+            }
+            return found;
+        };
+        return planRenameRewires(search, replace, renames, {
+            postRenameNames,
+            referencesOf: (glyphName) => load(glyphName).references,
+            componentsOf: (glyphName) => load(glyphName).components
+        });
+    }
+
+    private showReferenceColumn(
+        rewires: Map<string, Map<string, string>>,
+        errors: Map<string, string>
+    ): boolean {
+        if (errors.size > 0) {
+            return false;
+        }
+        for (const refs of rewires.values()) {
+            if (refs.size > 0) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private updatePreview(): void {
         const renames = this.getRenames();
         const errors = this.getPreflightErrors(renames);
+        const rewires = this.getReferenceRewires(renames);
+        const showReferences = this.showReferenceColumn(rewires, errors);
         const search = this.searchInput?.value || '';
         const replace = this.replaceInput?.value || '';
+        const rewireActive = this.rewireInput?.checked === true;
+        if (this.rewireRow) {
+            this.rewireRow.hidden = !showReferences;
+        }
+        if (this.previewTable) {
+            this.previewTable.classList.toggle(
+                'has-references',
+                showReferences
+            );
+            const colgroup = this.previewTable.querySelector('colgroup');
+            if (colgroup) {
+                colgroup.replaceChildren(
+                    ...Array.from({ length: showReferences ? 3 : 2 }, () =>
+                        document.createElement('col')
+                    )
+                );
+            }
+            const headRow = this.previewTable.querySelector('thead tr');
+            if (headRow) {
+                headRow.replaceChildren(
+                    ...[
+                        'Before',
+                        'After',
+                        ...(showReferences ? ['References'] : [])
+                    ].map((label) => {
+                        const cell = document.createElement('th');
+                        cell.textContent = label;
+                        return cell;
+                    })
+                );
+            }
+        }
         this.preview?.replaceChildren(
             ...this.selectedNames.map((name) => {
                 const row = document.createElement('tr');
@@ -233,6 +373,28 @@ export class RenameGlyphsDialog {
                     after.appendChild(glyphName);
                 }
                 row.append(before, after);
+                if (showReferences) {
+                    const refsCell = document.createElement('td');
+                    const glyphRewires = rewires.get(name);
+                    if (glyphRewires) {
+                        for (const [ref, candidate] of glyphRewires) {
+                            const entry = document.createElement('span');
+                            entry.className = 'rename-glyphs-rewire-entry';
+                            if (!rewireActive) {
+                                entry.classList.add('is-inactive');
+                            }
+                            appendRewiredReference(
+                                entry,
+                                ref,
+                                candidate,
+                                search,
+                                replace
+                            );
+                            refsCell.appendChild(entry);
+                        }
+                    }
+                    row.appendChild(refsCell);
+                }
                 return row;
             })
         );
@@ -247,8 +409,16 @@ export class RenameGlyphsDialog {
         const errors = this.getPreflightErrors(renames);
         if (!this.canConfirm(renames, errors) || !window.currentFontModel)
             return;
+        const rewires = this.getReferenceRewires(renames);
+        const applyRewires =
+            this.rewireRow?.hidden === false &&
+            this.rewireInput?.checked === true &&
+            this.showReferenceColumn(rewires, errors);
         try {
-            window.currentFontModel.renameGlyphs(renames);
+            window.currentFontModel.renameGlyphs(
+                renames,
+                applyRewires ? { referenceRewires: rewires } : undefined
+            );
             this.close();
         } catch (error) {
             console.error('Could not rename glyphs', error);

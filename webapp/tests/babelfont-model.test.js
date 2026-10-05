@@ -6,6 +6,7 @@ const {
     Layer,
     pathHasSubtractionFlag
 } = require('../js/babelfont-model');
+const { PatchSyncEngine } = require('../js/patch-sync-engine');
 const fontManager = require('../js/font-manager').default;
 const {
     open_font_file,
@@ -6560,6 +6561,213 @@ describe('Babelfont Object Model', () => {
             expect(aa.rightMetricsKey).toBe('=AA');
             expect(renameFont.findGlyph('A.alt')).toBeDefined();
             expect(renameFont.findGlyph('A')).toBeUndefined();
+        });
+
+        function rewireRenameFont() {
+            return Font.fromData({
+                upm: 1000,
+                version: [1, 0],
+                axes: [],
+                cross_axis_mappings: [],
+                instances: [],
+                masters: [
+                    {
+                        name: { dflt: 'Regular' },
+                        id: 'master-1',
+                        location: {},
+                        guides: [],
+                        metrics: {},
+                        kerning: {}
+                    }
+                ],
+                glyphs: [
+                    {
+                        name: 'a',
+                        id: 'id-a',
+                        category: 'Base',
+                        exported: true,
+                        layers: [
+                            {
+                                width: 500,
+                                id: 'layer-a',
+                                master: {
+                                    type: 'DefaultForMaster',
+                                    master: 'master-1'
+                                },
+                                shapes: [],
+                                anchors: []
+                            }
+                        ]
+                    },
+                    {
+                        name: 'a.001',
+                        id: 'id-a-001',
+                        category: 'Base',
+                        exported: true,
+                        layers: [
+                            {
+                                width: 500,
+                                id: 'layer-a-001',
+                                master: {
+                                    type: 'DefaultForMaster',
+                                    master: 'master-1'
+                                },
+                                shapes: [],
+                                anchors: []
+                            }
+                        ]
+                    },
+                    {
+                        name: 'aDieresis.001',
+                        id: 'id-ad',
+                        category: 'Mark',
+                        exported: true,
+                        layers: [
+                            {
+                                width: 500,
+                                id: 'layer-ad',
+                                master: {
+                                    type: 'DefaultForMaster',
+                                    master: 'master-1'
+                                },
+                                background_layer_id: 'layer-ad-bg',
+                                shapes: [
+                                    {
+                                        reference: 'a',
+                                        transform: [1, 0, 0, 1, 0, 0]
+                                    },
+                                    {
+                                        reference: 'a.001',
+                                        transform: [1, 0, 0, 1, 20, 0]
+                                    }
+                                ],
+                                anchors: []
+                            },
+                            {
+                                width: 500,
+                                id: 'layer-ad-bg',
+                                is_background: true,
+                                background_layer_id: 'layer-ad',
+                                shapes: [
+                                    {
+                                        reference: 'a',
+                                        transform: [1, 0, 0, 1, 0, 0]
+                                    }
+                                ],
+                                anchors: []
+                            }
+                        ]
+                    }
+                ],
+                note: '',
+                date: new Date('2020-01-01T00:00:00.000Z'),
+                names: {},
+                features: { classes: {}, prefixes: {}, features: [] }
+            });
+        }
+
+        function prepareRewireMetrics(font) {
+            const glyph = font.findGlyph('aDieresis.001');
+            glyph.leftMetricsKey = '=a+10';
+            glyph.layers[0].leftMetricsKey = '=a';
+            glyph.findLayerById('layer-ad-bg').leftMetricsKey = '=a';
+            return glyph;
+        }
+
+        const rewireRenames = new Map([
+            ['a.001', 'a.sc'],
+            ['aDieresis.001', 'aDieresis.sc']
+        ]);
+        const rewireMap = new Map([
+            ['aDieresis.001', new Map([['a', 'a.sc']])]
+        ]);
+
+        test('referenceRewires updates components and metrics keys, including backgrounds', () => {
+            const font = rewireRenameFont();
+            prepareRewireMetrics(font);
+            font.renameGlyphs(rewireRenames, {
+                referenceRewires: rewireMap
+            });
+
+            const glyph = font.findGlyph('aDieresis.sc');
+            expect(
+                glyph.layers[0].components.map(
+                    (component) => component.reference
+                )
+            ).toEqual(['a.sc', 'a.sc']);
+            expect(
+                glyph
+                    .findLayerById('layer-ad-bg')
+                    .components.map((component) => component.reference)
+            ).toEqual(['a.sc']);
+            expect(glyph.leftMetricsKey).toBe('=a.sc+10');
+            expect(glyph.layers[0].leftMetricsKey).toBe('==a.sc');
+            expect(glyph.findLayerById('layer-ad-bg').leftMetricsKey).toBe(
+                '==a.sc'
+            );
+        });
+
+        test('omitting referenceRewires leaves unrelated references in place', () => {
+            const font = rewireRenameFont();
+            prepareRewireMetrics(font);
+            font.renameGlyphs(rewireRenames);
+
+            const glyph = font.findGlyph('aDieresis.sc');
+            expect(
+                glyph.layers[0].components.map(
+                    (component) => component.reference
+                )
+            ).toEqual(['a', 'a.sc']);
+            expect(
+                glyph
+                    .findLayerById('layer-ad-bg')
+                    .components.map((component) => component.reference)
+            ).toEqual(['a']);
+            expect(glyph.leftMetricsKey).toBe('=a+10');
+            expect(glyph.layers[0].leftMetricsKey).toBe('==a');
+            expect(glyph.findLayerById('layer-ad-bg').leftMetricsKey).toBe(
+                '==a'
+            );
+        });
+
+        test('one undo restores rewired references and names', () => {
+            const font = rewireRenameFont();
+            prepareRewireMetrics(font);
+            const bridge = new PatchSyncEngine('rewire-undo');
+            const previousBridge = window.patchSyncEngine;
+            bridge.initFromJson(font._data || font.toJSON());
+            window.patchSyncEngine = bridge;
+            try {
+                font.renameGlyphs(rewireRenames, {
+                    referenceRewires: rewireMap
+                });
+                expect(font.findGlyph('aDieresis.sc').leftMetricsKey).toBe(
+                    '=a.sc+10'
+                );
+                expect(bridge.undo()).not.toBeNull();
+                const glyph = font.findGlyph('aDieresis.001');
+                expect(glyph).toBeDefined();
+                expect(font.findGlyph('a.001')).toBeDefined();
+                expect(font.findGlyph('a.sc')).toBeUndefined();
+                expect(
+                    glyph.layers[0].components.map(
+                        (component) => component.reference
+                    )
+                ).toEqual(['a', 'a.001']);
+                expect(
+                    glyph
+                        .findLayerById('layer-ad-bg')
+                        .components.map((component) => component.reference)
+                ).toEqual(['a']);
+                expect(glyph.leftMetricsKey).toBe('=a+10');
+                expect(glyph.layers[0].leftMetricsKey).toBe('==a');
+                expect(glyph.findLayerById('layer-ad-bg').leftMetricsKey).toBe(
+                    '==a'
+                );
+            } finally {
+                window.patchSyncEngine = previousBridge;
+                bridge.destroy();
+            }
         });
     });
 

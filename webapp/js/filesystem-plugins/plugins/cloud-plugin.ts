@@ -64,7 +64,6 @@ import {
 import { missingRequiredCloudCapabilities } from '../cloud-collab-capabilities';
 import {
     catalogEntriesForDepsParse,
-    depsNeedUpdate,
     readFontDepsIndex,
     resolveHydrationSeeds,
     writeCompleteFontDepsIfLoaded
@@ -102,6 +101,7 @@ import './cloud-plugin-live';
 import {
     deletedGlyphIdsFromCommittedEntries,
     catalogGlyphNameFromCommittedEntry,
+    depsGlyphNamesFromCommittedEntries,
     pathFromCommittedEntry,
     committedChangeAffectsResidentClosure,
     decodeBase64UrlJson,
@@ -148,6 +148,7 @@ import {
 export {
     deletedGlyphIdsFromCommittedEntries,
     catalogGlyphNameFromCommittedEntry,
+    depsGlyphNamesFromCommittedEntries,
     pathFromCommittedEntry,
     committedChangeAffectsResidentClosure,
     decodeBase64UrlJson,
@@ -2339,13 +2340,7 @@ export class CloudPlugin extends FilesystemPlugin {
             entries,
             fontJson
         );
-        const depsGlyphs = new Set<string>();
-        for (const entry of entries) {
-            const path = pathFromCommittedEntry(entry);
-            if (depsNeedUpdate(path) && path[0] === 'glyphs' && path[1]) {
-                depsGlyphs.add(String(path[1]));
-            }
-        }
+        const depsGlyphs = new Set(depsGlyphNamesFromCommittedEntries(entries));
         if (!catalogDirty && depsGlyphs.size === 0) {
             return;
         }
