@@ -59,6 +59,19 @@ function escapeFeatureHtml(value: string): string {
         .replace(/"/g, '&quot;');
 }
 
+function featureSourceHeaderText(
+    stamp: { generator: string; capability: string },
+    summary?: string
+): string {
+    const identity = [stamp.generator, stamp.capability]
+        .filter(Boolean)
+        .join(' · ');
+    if (summary && summary !== stamp.generator) {
+        return `${summary} · ${identity}`;
+    }
+    return identity;
+}
+
 type FontInfoTab =
     | 'general'
     | 'names'
@@ -8697,7 +8710,9 @@ class FontInfoManager {
         const visible = Boolean(stamp);
         if (summary) {
             summary.hidden = !visible;
-            summary.textContent = described?.summary || stamp?.generator || '';
+            summary.textContent = stamp
+                ? featureSourceHeaderText(stamp, described?.summary)
+                : '';
         }
         if (regenerate) {
             regenerate.hidden = !visible;
@@ -8732,7 +8747,7 @@ class FontInfoManager {
         return `
             <div class="feature-source-popup">
                 <div class="feature-source-popup-title">${escapeFeatureHtml(described.title)}</div>
-                <div class="feature-source-popup-id">${escapeFeatureHtml(described.pluginId)} · ${escapeFeatureHtml(described.version)}</div>
+                <div class="feature-source-popup-id">${escapeFeatureHtml([described.pluginId, stamp.capability, described.version].filter(Boolean).join(' · '))}</div>
                 ${settings}
             </div>`;
     }

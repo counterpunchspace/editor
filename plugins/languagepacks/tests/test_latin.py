@@ -5,6 +5,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "latin"))
 
 from counterpunch_latin.anchor_definitions import evaluate_expression, position_anchor
 from counterpunch_latin.composition import LatinCompositionProvider
+from counterpunch_latin.generator import LatinSmallCapsGenerator
 
 LOOKUP = {
     0xE4: {
@@ -115,3 +116,88 @@ def test_ascender_uses_drawn_top():
         (20, 0, 380, 780),
     )
     assert point[1] == 780
+
+
+class Glyph:
+    def __init__(self, name, codepoints=None, script="Latin", category="Ll", lowercase=""):
+        self.name = name
+        self.codepoints = codepoints or []
+        self.glyphData = {
+            "script": script,
+            "general_category": category,
+            "lowercase": lowercase,
+        }
+
+
+class Font:
+    def __init__(self, glyphs, prefixes=None):
+        self.glyphs = glyphs
+        self.features = type("Features", (), {"features": [], "prefixes": prefixes or {}})()
+
+
+SMALLCAPS = LatinSmallCapsGenerator()
+
+
+def _blocks(result):
+    return {block["tag"]: block for block in result["blocks"]}
+
+
+def test_smcp_substitutes_lowercase_when_small_cap_exists():
+    result = SMALLCAPS.generate(
+        {"lifecycle": [{"kind": "created", "glyphName": "a.sc"}], "changes": [], "intents": {}},
+        Font(
+            [
+                Glyph("a-lat", [0x61], category="Ll"),
+                Glyph("a-lat.sc", category="So"),
+                Glyph("b-lat", [0x62], category="Ll"),
+            ]
+        ),
+        {"managed_blocks": {}, "languagesystem_text": ""},
+    )
+    blocks = _blocks(result)
+    assert blocks["smcp"]["code"] == "sub a-lat by a-lat.sc;"
+    assert blocks["c2sc"]["code"] == ""
+
+
+def test_c2sc_follows_unicode_lowercase_to_its_small_cap():
+    result = SMALLCAPS.generate(
+        {"lifecycle": [], "changes": [{"type": "glyph.unicode.changed"}], "intents": {}},
+        Font(
+            [
+                Glyph("A-lat", [0x41], category="Lu", lowercase="0061"),
+                Glyph("a-lat", [0x61], category="Ll"),
+                Glyph("a-lat.sc"),
+            ]
+        ),
+        {"managed_blocks": {}, "languagesystem_text": ""},
+    )
+    assert _blocks(result)["c2sc"]["code"] == "sub A-lat by a-lat.sc;"
+
+
+def test_small_caps_skip_missing_multicode_and_non_latin():
+    result = SMALLCAPS.generate(
+        {"lifecycle": [], "changes": [], "intents": {}},
+        Font(
+            [
+                Glyph("A-lat", [0x41], category="Lu", lowercase="0061"),
+                Glyph("I.dot", [0x130], category="Lu", lowercase="0069 0307"),
+                Glyph("a-cy", [0x430], script="Cyrillic", category="Ll"),
+                Glyph("a-cy.sc"),
+                Glyph("b-lat", [0x62], category="Ll"),
+            ]
+        ),
+        {"managed_blocks": {}, "languagesystem_text": "languagesystem DFLT dflt;\nlanguagesystem latn dflt;"},
+    )
+    blocks = _blocks(result)
+    assert blocks["smcp"]["code"] == ""
+    assert blocks["c2sc"]["code"] == ""
+    assert "languagesystems" not in blocks
+
+
+def test_small_caps_clear_a_stale_line():
+    result = SMALLCAPS.generate(
+        {"lifecycle": [{"kind": "deleted", "glyphName": "a-lat.sc"}], "changes": [], "intents": {}},
+        Font([Glyph("a-lat", [0x61], category="Ll")]),
+        {"managed_blocks": {"smcp": "sub a-lat by a-lat.sc;"}, "languagesystem_text": ""},
+    )
+    assert _blocks(result)["smcp"]["code"] == ""

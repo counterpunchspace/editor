@@ -148,7 +148,7 @@ export function designerLanguageSystems(
     const parts: string[] = [];
     for (const [name, code] of Object.entries(features?.prefixes || {})) {
         const stamp = generatorStamp(code);
-        if (stamp?.generator === ARABIC_GENERATOR || !code.code) {
+        if (stamp?.generator || !code.code) {
             continue;
         }
         if (

@@ -14,6 +14,66 @@ from counterpunch_arabic.charset import ArabicCharacterSetProvider
 from counterpunch_arabic.composition import ArabicCompositionProvider
 from counterpunch_arabic.generator import ArabicFormsGenerator
 
+class Component:
+    def __init__(self, reference):
+        self.reference = reference
+
+
+class Layer:
+    def __init__(self, components):
+        self.is_background = False
+        self.components = [Component(name) for name in components]
+
+
+class Glyph:
+    def __init__(self, name, codepoints=None, components=None):
+        self.name = name
+        self.codepoints = list(codepoints or [])
+        self.layers = [] if components is None else [Layer(components)]
+
+
+class Font:
+    def __init__(self, glyphs, features=None):
+        self.glyphs = glyphs
+        self.features = type("Features", (), {"features": features or [], "prefixes": {}})()
+
+
+def _ccmp(code):
+    return [
+        [
+            "ccmp",
+            {
+                "code": code,
+                "automatic": True,
+                "format_specific": {
+                    "com.counterpunch.generator": {
+                        "generator": "space.counterpunch.ccmp",
+                        "block": "decomposition",
+                    }
+                },
+            },
+        ]
+    ]
+
+
+def generate(batch, names, codepoints=None, components=None, managed=None, ccmp="", languages=""):
+    codepoints = codepoints or {}
+    components = components or {}
+    glyphs = [
+        Glyph(
+            name,
+            [codepoints[name]] if name in codepoints else [],
+            components.get(name),
+        )
+        for name in names
+    ]
+    return GENERATOR.generate(
+        batch,
+        Font(glyphs, _ccmp(ccmp) if ccmp else []),
+        {"managed_blocks": managed or {}, "languagesystem_text": languages},
+    )
+
+
 DATA = json.loads(
     (ARABIC / "counterpunch_arabic" / "data" / "arabic.json").read_text(encoding="utf-8")
 )
@@ -66,52 +126,34 @@ def test_alt_rule_is_rejected():
 
 
 def test_generator_substitutes_font_names_and_skips_missing():
-    result = GENERATOR.generate(
+    points = { "teh-ar": 0x062A, "behDotless-ar": 0x066E }
+    result = generate(
         {
             "lifecycle": [],
             "changes": [],
             "intents": {"arabic": {"add": {"teh-ar": {}}, "remove": []}},
         },
-        {
-            "font_glyphs": ["teh-ar", "behDotless-ar", "behDotless-ar.init", "twoDotsHorizontalAbove-ar"],
-            "identity_names": {
-                "uni062A": "teh-ar",
-                "uni066E": "behDotless-ar",
-                "uni066E.init": "behDotless-ar.init",
-            },
-            "managed_blocks": {},
-            "ccmp_inputs": [],
-        },
+        ["teh-ar", "behDotless-ar", "behDotless-ar.init", "twoDotsHorizontalAbove-ar"],
+        points,
     )
     init = next(block["code"] for block in result["blocks"] if block["tag"] == "init")
     assert "sub teh-ar by behDotless-ar.init twoDotsHorizontalAbove-ar;" in init
     assert "sub behDotless-ar by behDotless-ar.init;" in init
-    skipped = GENERATOR.generate(
+    skipped = generate(
         {"lifecycle": [], "changes": [], "intents": {}},
-        {
-            "font_glyphs": ["teh-ar"],
-            "identity_names": {"uni062A": "teh-ar"},
-            "managed_blocks": {},
-            "ccmp_inputs": [],
-        },
+        ["teh-ar"],
+        {"teh-ar": 0x062A},
     )
     init = next(block["code"] for block in skipped["blocks"] if block["tag"] == "init")
     assert "teh-ar" not in init
 
 
 def test_ccmp_letter_is_skipped():
-    result = GENERATOR.generate(
+    result = generate(
         {"lifecycle": [], "changes": [], "intents": {}},
-        {
-            "font_glyphs": ["teh-ar", "behDotless-ar", "behDotless-ar.init"],
-            "identity_names": {
-                "uni062A": "teh-ar",
-                "uni066E": "behDotless-ar",
-                "uni066E.init": "behDotless-ar.init",
-            },
-            "managed_blocks": {},
-            "ccmp_inputs": ["teh-ar"],
-        },
+        ["teh-ar", "behDotless-ar", "behDotless-ar.init"],
+        {"teh-ar": 0x062A, "behDotless-ar": 0x066E},
+        ccmp="sub teh-ar by behDotless-ar twoDotsHorizontalAbove-ar;",
     )
     code = "\n".join(block["code"] for block in result["blocks"])
     assert "teh-ar" not in code
@@ -119,7 +161,7 @@ def test_ccmp_letter_is_skipped():
 
 
 def test_existing_line_wins_over_intent_and_recipe():
-    result = GENERATOR.generate(
+    result = generate(
         {
             "lifecycle": [],
             "changes": [],
@@ -130,18 +172,15 @@ def test_existing_line_wins_over_intent_and_recipe():
                 }
             },
         },
-        {
-            "font_glyphs": [
-                "yehFarsi-ar",
-                "kept-ar",
-                "custom-ar",
-                "twoDotsHorizontalBelow-ar",
-                "behDotless-ar.init",
-            ],
-            "identity_names": {"uni06CC": "yehFarsi-ar", "uni066E.init": "behDotless-ar.init"},
-            "managed_blocks": {"init": "sub yehFarsi-ar by kept-ar;"},
-            "ccmp_inputs": [],
-        },
+        [
+            "yehFarsi-ar",
+            "kept-ar",
+            "custom-ar",
+            "twoDotsHorizontalBelow-ar",
+            "behDotless-ar.init",
+        ],
+        {"yehFarsi-ar": 0x06CC, "behDotless-ar.init": 0x066E},
+        managed={"init": "sub yehFarsi-ar by kept-ar;"},
     )
     init = next(block["code"] for block in result["blocks"] if block["tag"] == "init")
     assert "sub yehFarsi-ar by kept-ar;" in init
@@ -149,148 +188,102 @@ def test_existing_line_wins_over_intent_and_recipe():
 
 
 def test_intent_remove_drops_positional_lines():
-    result = GENERATOR.generate(
+    result = generate(
         {
             "lifecycle": [],
             "changes": [],
             "intents": {"arabic": {"add": {}, "remove": ["yehFarsi-ar"]}},
         },
-        {
-            "font_glyphs": ["yehFarsi-ar", "behDotless-ar.init", "twoDotsHorizontalBelow-ar"],
-            "identity_names": {
-                "uni06CC": "yehFarsi-ar",
-                "uni066E.init": "behDotless-ar.init",
-            },
-            "managed_blocks": {
-                "init": "sub yehFarsi-ar by behDotless-ar.init twoDotsHorizontalBelow-ar;"
-            },
-            "ccmp_inputs": [],
-        },
+        ["yehFarsi-ar", "behDotless-ar.init", "twoDotsHorizontalBelow-ar"],
+        {"yehFarsi-ar": 0x06CC},
+        managed={"init": "sub yehFarsi-ar by behDotless-ar.init twoDotsHorizontalBelow-ar;"},
     )
     init = next(block["code"] for block in result["blocks"] if block["tag"] == "init")
     assert "twoDotsHorizontalBelow-ar" not in init
 
 
 def test_mark_variant_and_rename():
-    result = GENERATOR.generate(
+    result = generate(
         {
             "lifecycle": [{"kind": "renamed", "previousGlyphName": "dotCenter-ar", "glyphName": "dot.center"}],
             "changes": [],
             "intents": {},
         },
-        {
-            "font_glyphs": ["dot.center", "dotBelow-ar"],
-            "identity_names": {},
-            "managed_blocks": {"init": "sub dotCenter-ar by dotBelow-ar;"},
-            "ccmp_inputs": [],
-        },
+        ["dot.center", "dotBelow-ar"],
+        managed={"init": "sub dotCenter-ar by dotBelow-ar;"},
     )
     init = next(block["code"] for block in result["blocks"] if block["tag"] == "init")
     assert "sub dot.center by dotBelow-ar;" in init
 
 
 def test_lam_alef_from_pack_names_or_encoded_forms():
-    context = {
-        "font_glyphs": ["lam-ar.init", "lam-ar.medi", "alef-ar.fina", "lam_alef-ar", "lam_alef-ar.fina"],
-        "identity_names": {
-            "uni0644.init": "lam-ar.init",
-            "uni0644.medi": "lam-ar.medi",
-            "uni0627.fina": "alef-ar.fina",
-        },
-        "managed_blocks": {},
-        "ccmp_inputs": [],
-        "vowel_ligatures": [],
-        "alef_composites": [],
-    }
-    code = GENERATOR.generate({"lifecycle": [], "changes": [], "intents": {}}, context)
+    names = ["lam-ar.init", "lam-ar.medi", "alef-ar.fina", "lam_alef-ar", "lam_alef-ar.fina"]
+    points = {"lam-ar.init": 0x0644, "lam-ar.medi": 0x0644, "alef-ar.fina": 0x0627}
+    code = generate({"lifecycle": [], "changes": [], "intents": {}}, names, points)
     rlig = next(block["code"] for block in code["blocks"] if block["tag"] == "rlig")
     assert "sub lam-ar.init alef-ar.fina by lam_alef-ar;" in rlig
     assert "sub lam-ar.medi alef-ar.fina by lam_alef-ar.fina;" in rlig
 
-    encoded = dict(context)
-    encoded["font_glyphs"] = ["lam-ar.init", "lam-ar.medi", "alef-ar.fina", "lamAlefIsol-ar", "lamAlefFina-ar"]
-    encoded["identity_names"] = {
-        **context["identity_names"],
-        "uniFEFB": "lamAlefIsol-ar",
-        "uniFEFC": "lamAlefFina-ar",
-    }
-    code = GENERATOR.generate({"lifecycle": [], "changes": [], "intents": {}}, encoded)
+    code = generate(
+        {"lifecycle": [], "changes": [], "intents": {}},
+        ["lam-ar.init", "lam-ar.medi", "alef-ar.fina", "lamAlefIsol-ar", "lamAlefFina-ar"],
+        {**points, "lamAlefIsol-ar": 0xFEFB, "lamAlefFina-ar": 0xFEFC},
+    )
     rlig = next(block["code"] for block in code["blocks"] if block["tag"] == "rlig")
     assert "by lamAlefIsol-ar;" in rlig
     assert "by lamAlefFina-ar;" in rlig
 
-    missing = dict(context)
-    missing["font_glyphs"] = ["lam-ar.init", "lam-ar.medi", "alef-ar.fina"]
-    code = GENERATOR.generate({"lifecycle": [], "changes": [], "intents": {}}, missing)
+    code = generate(
+        {"lifecycle": [], "changes": [], "intents": {}},
+        ["lam-ar.init", "lam-ar.medi", "alef-ar.fina"],
+        points,
+    )
     rlig = next(block["code"] for block in code["blocks"] if block["tag"] == "rlig")
     assert "lam_alef" not in rlig
 
 
 def test_lam_alef_decompose_uses_composite_components():
-    present = {
-        "font_glyphs": ["lam-ar.init", "lam-ar.medi", "alefHamza-ar.fina", "alef-ar.fina", "hamzaabove-ar", "lam_alef-ar", "lam_alef-ar.fina"],
-        "identity_names": {
-            "uni0644.init": "lam-ar.init",
-            "uni0644.medi": "lam-ar.medi",
-            "uni0627.fina": "alef-ar.fina",
-            "uni0623.fina": "alefHamza-ar.fina",
-        },
-        "managed_blocks": {},
-        "ccmp_inputs": [],
-        "alef_composites": [
-            {"identity": "uni0623.fina", "components": ["alef-ar.fina", "hamzaabove-ar"]}
-        ],
-        "vowel_ligatures": [],
+    names = [
+        "lam-ar.init",
+        "lam-ar.medi",
+        "alefHamza-ar.fina",
+        "alef-ar.fina",
+        "hamzaabove-ar",
+        "lam_alef-ar",
+        "lam_alef-ar.fina",
+    ]
+    points = {
+        "lam-ar.init": 0x0644,
+        "lam-ar.medi": 0x0644,
+        "alef-ar.fina": 0x0627,
+        "alefHamza-ar.fina": 0x0623,
     }
-    code = GENERATOR.generate({"lifecycle": [], "changes": [], "intents": {}}, present)
+    code = generate(
+        {"lifecycle": [], "changes": [], "intents": {}},
+        names,
+        points,
+        components={"alefHamza-ar.fina": ["alef-ar.fina", "hamzaabove-ar"]},
+    )
     rlig = next(block["code"] for block in code["blocks"] if block["tag"] == "rlig")
     assert "lookup lam_alef_decompose" in rlig
     assert "alefHamza-ar.fina' by alef-ar.fina hamzaabove-ar;" in rlig
-    absent = dict(present)
-    absent["alef_composites"] = []
-    code = GENERATOR.generate({"lifecycle": [], "changes": [], "intents": {}}, absent)
+    code = generate({"lifecycle": [], "changes": [], "intents": {}}, names, points)
     rlig = next(block["code"] for block in code["blocks"] if block["tag"] == "rlig")
     assert "lam_alef_decompose" not in rlig
 
 
-def test_languagesystem_only_when_arab_is_missing():
-    base = {
-        "font_glyphs": [],
-        "identity_names": {},
-        "managed_blocks": {},
-        "ccmp_inputs": [],
-    }
-    none = GENERATOR.generate(
-        {"lifecycle": [], "changes": [], "intents": {}},
-        {**base, "languagesystem_text": ""},
-    )
-    assert all(block["tag"] != "languagesystems" for block in none["blocks"])
-    added = GENERATOR.generate(
-        {"lifecycle": [], "changes": [], "intents": {}},
-        {**base, "languagesystem_text": "languagesystem latn dflt;"},
-    )
-    prefix = next(block for block in added["blocks"] if block["tag"] == "languagesystems")
-    assert prefix["code"] == "languagesystem arab dflt;"
-    assert prefix["placement"] == "prefix"
-    present = GENERATOR.generate(
-        {"lifecycle": [], "changes": [], "intents": {}},
-        {**base, "languagesystem_text": "languagesystem arab dflt;"},
-    )
-    assert all(block["tag"] != "languagesystems" for block in present["blocks"])
+def test_arabic_does_not_write_languagesystems():
+    batch = {"lifecycle": [], "changes": [], "intents": {}}
+    added = generate(batch, [], languages="languagesystem latn dflt;")
+    assert all(block["tag"] != "languagesystems" for block in added["blocks"])
 
 
 def test_vowel_ligature_orders_and_encoded_tanween_is_not_one():
-    result = GENERATOR.generate(
+    result = generate(
         {"lifecycle": [], "changes": [], "intents": {}},
-        {
-            "font_glyphs": ["shadda-ar", "fatha-ar", "shaddaFatha-ar", "fathatan-ar"],
-            "identity_names": {"uni0651": "shadda-ar", "uni064E": "fatha-ar", "uni064B": "fathatan-ar"},
-            "managed_blocks": {},
-            "ccmp_inputs": [],
-            "vowel_ligatures": [
-                {"glyph": "shaddaFatha-ar", "components": ["uni0651", "uni064E"]}
-            ],
-        },
+        ["shadda-ar", "fatha-ar", "shaddaFatha-ar", "fathatan-ar"],
+        {"shadda-ar": 0x0651, "fatha-ar": 0x064E, "fathatan-ar": 0x064B},
+        components={"shaddaFatha-ar": ["shadda-ar", "fatha-ar"]},
     )
     rlig = next(block["code"] for block in result["blocks"] if block["tag"] == "rlig")
     assert "sub shadda-ar fatha-ar by shaddaFatha-ar;" in rlig

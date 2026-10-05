@@ -15,20 +15,10 @@ import { withSuppressedModelRecording } from '../babelfont-model';
 import {
     applyGeneratorBlocks,
     generatorStamp,
-    managedInputs,
     type FeaturesDocument,
     type GeneratedBlock
 } from './managed-features';
-import {
-    discoverAlefComposites,
-    discoverVowelLigatures,
-    designerLanguageSystems
-} from './arabic-forms';
-import {
-    glyphsByNameMap,
-    localNamesByIdentity
-} from '../auto-qa/auto-qa-identity';
-import { languagePackManager } from './language-pack-manager';
+import { designerLanguageSystems } from './arabic-forms';
 import { runHostPython, runHostPythonAsync } from './host-python';
 
 const console = new Logger('FeatureGenerators');
@@ -43,6 +33,8 @@ export interface FeatureGeneratorInfo {
     intentKeys: string[];
     entryPoint: string;
     regenerates: Record<string, boolean>;
+    followsFeatures?: boolean;
+    followRank?: number;
 }
 
 export interface FeatureBatch {
@@ -51,6 +43,7 @@ export interface FeatureBatch {
     intents: Record<string, unknown>;
     trigger: string;
     settingPluginId?: string;
+    featureListChanged?: boolean;
 }
 
 interface DiagnosticEntry {
@@ -91,14 +84,81 @@ export function operationsToBatch(
         changes: dedupeGlyphFilterChanges(changes),
         lifecycle,
         intents,
-        trigger: Object.keys(intents).length ? 'intent' : 'event'
+        trigger: Object.keys(intents).length ? 'intent' : 'event',
+        featureListChanged: featureTagsChanged(operations)
     };
+}
+
+function featureTags(value: unknown): string {
+    const list = Array.isArray(value)
+        ? value
+        : (value as { features?: unknown } | null)?.features;
+    if (!Array.isArray(list)) {
+        return '';
+    }
+    return list
+        .map((entry) => (Array.isArray(entry) ? String(entry[0] ?? '') : ''))
+        .join('\0');
+}
+
+/** True when a commit adds, removes, or retags a feature block. */
+export function featureTagsChanged(
+    operations: readonly TransactionBufferedOperation[]
+): boolean {
+    for (const operation of operations) {
+        if (operation.path[0] !== 'features') {
+            continue;
+        }
+        if (operation.path.length === 1) {
+            if (
+                featureTags(operation.oldValue) !==
+                featureTags(operation.newValue)
+            ) {
+                return true;
+            }
+            continue;
+        }
+        if (operation.path[1] !== 'features') {
+            continue;
+        }
+        if (operation.path.length === 2) {
+            if (
+                featureTags(operation.oldValue) !==
+                featureTags(operation.newValue)
+            ) {
+                return true;
+            }
+            continue;
+        }
+        if (operation.op === 'add' || operation.op === 'remove') {
+            return true;
+        }
+        if (operation.path.length === 3 && operation.op === 'set') {
+            const oldTag = Array.isArray(operation.oldValue)
+                ? operation.oldValue[0]
+                : undefined;
+            const newTag = Array.isArray(operation.newValue)
+                ? operation.newValue[0]
+                : undefined;
+            if (
+                oldTag !== newTag ||
+                operation.oldValue == null ||
+                operation.newValue == null
+            ) {
+                return true;
+            }
+        }
+    }
+    return false;
 }
 
 export function generatorMatches(
     generator: FeatureGeneratorInfo,
     batch: FeatureBatch
 ): boolean {
+    if (generator.followsFeatures && batch.featureListChanged) {
+        return true;
+    }
     if (batch.lifecycle.length) {
         return true;
     }
@@ -228,11 +288,27 @@ class FeatureGeneratorEngine {
             JSON.stringify(sourceFeatures)
         ) as FeaturesDocument;
         let changed = false;
-        for (const generator of this.generators) {
+        const ordered = [...this.generators].sort(
+            (left, right) =>
+                Number(Boolean(left.followsFeatures)) -
+                    Number(Boolean(right.followsFeatures)) ||
+                (left.followRank || 0) - (right.followRank || 0)
+        );
+        const primaryWillRun = ordered.some(
+            (generator) =>
+                !generator.followsFeatures &&
+                (!onlyGeneratorId ||
+                    generator.generatorId === onlyGeneratorId) &&
+                generatorMatches(generator, batch)
+        );
+        for (const generator of ordered) {
             if (onlyGeneratorId && generator.generatorId !== onlyGeneratorId) {
                 continue;
             }
-            if (!generatorMatches(generator, batch)) {
+            const selected =
+                generatorMatches(generator, batch) ||
+                (generator.followsFeatures && primaryWillRun);
+            if (!selected) {
                 skipped.push(generator.generatorId);
                 continue;
             }
@@ -304,47 +380,31 @@ class FeatureGeneratorEngine {
         needsRebuild: boolean;
     } | null {
         const font = window.currentFontModel;
-        const inputs = managedInputs(
-            features,
-            'space.counterpunch.ccmp',
-            'decomposition'
-        );
         const managedBlocks: Record<string, string> = {};
-        let managedCode = '';
         for (const [tag, code] of features.features || []) {
             const stamp = generatorStamp(code);
             if (stamp?.generator !== generator.generatorId) {
                 continue;
             }
             managedBlocks[tag] = code.code || '';
-            if (stamp.block === 'decomposition' || !managedCode) {
-                managedCode = code.code || '';
-            }
         }
-        const identityNames = font
-            ? Object.fromEntries(
-                  localNamesByIdentity(glyphsByNameMap(font)).entries()
-              )
-            : {};
         const context = {
-            managed_code: managedCode,
-            managed_inputs: inputs,
             managed_blocks: managedBlocks,
-            managed_components: [],
-            font_glyphs: font?.glyphs.map((glyph) => glyph.name) || [],
-            identity_names: identityNames,
-            ccmp_inputs: inputs,
-            languagesystem_text: designerLanguageSystems(features),
-            vowel_ligatures: font ? discoverVowelLigatures(font) : [],
-            alef_composites: font ? discoverAlefComposites(font) : [],
-            recipes: this.recipesFor(batch, inputs),
-            settings: {}
+            languagesystem_text: designerLanguageSystems(features)
         };
-        const result = runHostPython(`
-import json, builtins
+        const liveFeatures = font?.features;
+        if (font) {
+            withSuppressedModelRecording(() => {
+                font.features = features as typeof font.features;
+            });
+        }
+        try {
+            const result = runHostPython(`
+import json, builtins, js
 ${ENSURE_FEATURE_GENERATORS}
 batch = json.loads(${JSON.stringify(JSON.stringify(batch))})
 context = json.loads(${JSON.stringify(JSON.stringify(context))})
+font = js.window.currentFontModel
 generator = builtins._cp_feature_generators.get(${JSON.stringify(generator.generatorId)})
 if generator is None:
     raise RuntimeError('generator missing')
@@ -360,64 +420,18 @@ for key in list(getattr(generator, 'INTENT_KEYS', []) or []):
     if added or removed:
         forced = True
 if not forced and hasattr(generator, 'needs_rebuild') and batch.get('trigger') != 'manual':
-    needs = bool(generator.needs_rebuild(batch, context))
-produced = generator.generate(batch, context) if needs else {'blocks': [], 'diagnostics': []}
+    needs = bool(generator.needs_rebuild(batch, font, context))
+produced = generator.generate(batch, font, context) if needs else {'blocks': [], 'diagnostics': []}
 json.dumps({'needsRebuild': needs, 'blocks': produced.get('blocks') or [], 'diagnostics': produced.get('diagnostics') or []})
 `);
-        return JSON.parse(String(result));
-    }
-
-    private recipesFor(
-        batch: FeatureBatch,
-        inputs: readonly string[]
-    ): Record<string, string[] | null> {
-        const names = new Set(inputs);
-        const intent = batch.intents.ccmp as { add?: string[] } | undefined;
-        for (const name of intent?.add || []) {
-            names.add(name);
-        }
-        for (const change of batch.lifecycle) {
-            if (change.kind !== 'deleted') {
-                names.add(change.glyphName);
+            return JSON.parse(String(result));
+        } finally {
+            if (font) {
+                withSuppressedModelRecording(() => {
+                    font.features = liveFeatures as typeof font.features;
+                });
             }
         }
-        const recipes: Record<string, string[] | null> = {};
-        const font = window.currentFontModel;
-        for (const name of names) {
-            if (name === '*') {
-                continue;
-            }
-            const glyph = font?.findGlyph(name);
-            const codepoint = glyph?.codepoints?.[0];
-            recipes[name] = null;
-            if (typeof codepoint !== 'number') {
-                continue;
-            }
-            const recipe = languagePackManager.recipeSync(codepoint);
-            if (!recipe?.components) {
-                continue;
-            }
-            const componentNames = recipe.components.map((component) => {
-                if (component.name && component.codepoint == null) {
-                    return component.name;
-                }
-                if (component.codepoint == null) {
-                    return '';
-                }
-                return (
-                    font?.findGlyphByCodepoint(component.codepoint)?.name ||
-                    languagePackManager.glyphNameForCodepoint(
-                        component.codepoint
-                    ) ||
-                    component.name ||
-                    ''
-                );
-            });
-            recipes[name] = componentNames.every(Boolean)
-                ? componentNames
-                : null;
-        }
-        return recipes;
     }
 
     private noteSettingTrigger(
@@ -492,6 +506,8 @@ for plugin in builtins._cp_feature_generators.values():
         'intentKeys': list(getattr(plugin, 'INTENT_KEYS', [])),
         'entryPoint': plugin.generator_id,
         'settings': list(getattr(plugin, 'SETTINGS', [])),
+        'followsFeatures': bool(getattr(plugin, 'follows_features', False)),
+        'followRank': int(getattr(plugin, 'follow_rank', 0) or 0),
     })
 json.dumps(found)
 `);

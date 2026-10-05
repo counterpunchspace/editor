@@ -20,6 +20,7 @@ PACKAGES = (
         "files": [
             "__init__.py",
             "composition.py",
+            "generator.py",
             "anchor_definitions.py",
             "data/anchors.json",
             "data/overrides.json",
@@ -27,6 +28,9 @@ PACKAGES = (
         "entry_points": (
             "[counterpunch_composition_plugins]\n"
             "latin = counterpunch_latin:LatinCompositionProvider\n"
+            "\n"
+            "[counterpunch_feature_plugins]\n"
+            "smallcaps = counterpunch_latin:LatinSmallCapsGenerator\n"
         ),
     },
     {
@@ -38,6 +42,18 @@ PACKAGES = (
         "entry_points": (
             "[counterpunch_feature_plugins]\n"
             "ccmp = counterpunch_ccmp:CcmpFeatureGenerator\n"
+        ),
+    },
+    {
+        "name": "counterpunch_features",
+        "distribution": "counterpunch-features",
+        "version": "1.0.0",
+        "root": EDITOR / "plugins" / "languagepacks" / "core" / "counterpunch_features",
+        "files": ["__init__.py", "generator.py"],
+        "entry_points": (
+            "[counterpunch_feature_plugins]\n"
+            "languagesystems = counterpunch_features:LanguageSystemGenerator\n"
+            "aalt = counterpunch_features:AccessAllAlternatesGenerator\n"
         ),
     },
     {

@@ -13,7 +13,9 @@ from typing import Any
 
 _RULE = re.compile(r"^\s*sub\s+(\S+)\s+by\s+(.+?)\s*;\s*$")
 _POSITIONS = ("init", "medi", "fina")
-_FORM_SUFFIX = {"init", "medi", "fina"}
+_VOWELS = {0x064B, 0x064C, 0x064D, 0x064E, 0x064F, 0x0650, 0x0651, 0x0652, 0x0670}
+_ALEF = ("uni0622", "uni0623", "uni0625", "uni0671")
+_CCMP = "space.counterpunch.ccmp"
 
 
 def _load() -> dict[str, Any]:
@@ -36,7 +38,8 @@ class ArabicFormsGenerator:
         self._rlig = data["rlig"]
         self._lam_alef_alefs = data["lamAlefAlefs"]
 
-    def needs_rebuild(self, batch: dict[str, Any], context: dict[str, Any]) -> bool:
+    def needs_rebuild(self, batch: dict[str, Any], font: Any, context: dict[str, Any]) -> bool:
+        del font, context
         intent = (batch.get("intents") or {}).get("arabic") or {}
         if intent.get("add") or intent.get("remove"):
             return True
@@ -47,9 +50,11 @@ class ArabicFormsGenerator:
                 return True
         return False
 
-    def generate(self, batch: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
-        present = set(context.get("font_glyphs") or [])
-        names = dict(context.get("identity_names") or {})
+    def generate(self, batch: dict[str, Any], font: Any, context: dict[str, Any]) -> dict[str, Any]:
+        glyphs = _index(font)
+        present = set(glyphs)
+        names = _identity_names(glyphs)
+        ccmp_inputs = _ccmp_inputs(font)
         diagnostics: list[str] = []
         intent = (batch.get("intents") or {}).get("arabic") or {}
         removed = set(intent.get("remove") or [])
@@ -71,7 +76,6 @@ class ArabicFormsGenerator:
             for rules in existing.values():
                 _rename(rules, previous, current)
 
-        ccmp_inputs = set(context.get("ccmp_inputs") or [])
         decomposed = set()
         for tag, rules in existing.items():
             for glyph, rhs in rules.items():
@@ -172,25 +176,15 @@ class ArabicFormsGenerator:
             {
                 "block": "required",
                 "tag": "rlig",
-                "code": self._rlig_code(context, names, present),
+                "code": self._rlig_code(glyphs, names, present),
                 "placement": "first",
             }
         )
-        languages = _languagesystem_block(context.get("languagesystem_text") or "")
-        if languages:
-            blocks_out.append(
-                {
-                    "block": "languagesystems",
-                    "tag": "languagesystems",
-                    "code": languages,
-                    "placement": "prefix",
-                }
-            )
         return {"blocks": blocks_out, "diagnostics": diagnostics}
 
     def _rlig_code(
         self,
-        context: dict[str, Any],
+        glyphs: dict[str, Any],
         names: dict[str, str],
         present: set[str],
     ) -> str:
@@ -199,20 +193,12 @@ class ArabicFormsGenerator:
         lam_init = names.get("uni0644.init")
         lam_medi = names.get("uni0644.medi")
         lam_class = [name for name in (lam_init, lam_medi) if name and name in present]
-        for composite in context.get("alef_composites") or []:
-            identity = composite.get("identity")
-            if identity not in set(self._lam_alef_alefs) and not str(identity).endswith(".fina"):
-                continue
-            if not str(identity).startswith("uni") or not str(identity).endswith(".fina"):
-                continue
-            # Only alef variants listed in the pack.
-            root = str(identity).split(".")[0]
+        for identity, parts in _alef_composites(glyphs, names):
+            root = identity.split(".")[0]
             if root not in self._lam_alef_alefs:
                 continue
             target = names.get(identity)
-            components = [
-                name for name in composite.get("components") or [] if name in present
-            ]
+            components = [name for name in parts if name in present]
             if not target or target not in present or len(components) < 2 or not lam_class:
                 continue
             group = " ".join(lam_class) if len(lam_class) == 1 else f"[{' '.join(lam_class)}]"
@@ -233,9 +219,7 @@ class ArabicFormsGenerator:
             lookups.append(_lookup("lam_alef", "IgnoreMarks", ligature_lines))
 
         mark_lines = []
-        for ligature in context.get("vowel_ligatures") or []:
-            glyph = ligature.get("glyph")
-            components = ligature.get("components") or []
+        for glyph, components in _vowel_ligatures(glyphs):
             if glyph not in present or len(components) != 2:
                 continue
             left = _resolve(components[0], names, present)
@@ -279,9 +263,166 @@ def _lookup(name: str, flag: str, lines: list[str]) -> str:
     return f"lookup {name} {{\n  lookupflag {flag};\n{body}\n}} {name};"
 
 
-def _languagesystem_block(text: str) -> str:
-    if "languagesystem" not in text:
+def _index(font: Any) -> dict[str, Any]:
+    glyphs: dict[str, Any] = {}
+    values = getattr(font, "glyphs", None) if font is not None else None
+    for glyph in list(values or []):
+        name = getattr(glyph, "name", None)
+        if isinstance(name, str) and name and name not in glyphs:
+            glyphs[name] = glyph
+    return glyphs
+
+
+def _identity_names(glyphs: dict[str, Any]) -> dict[str, str]:
+    names: dict[str, str] = {}
+    for name, glyph in glyphs.items():
+        keyed = _glyph_identity(name, glyphs)
+        if keyed:
+            _prefer(names, keyed[0], name)
+            continue
+        codepoint = _first_codepoint(glyph)
+        if codepoint is None:
+            continue
+        _prefer(names, _uni(codepoint) + _suffix(name), name)
+    return names
+
+
+def _glyph_identity(name: str, glyphs: dict[str, Any]) -> tuple[str, int] | None:
+    root, suffix = _split(name)
+    root_glyph = glyphs.get(root)
+    if root_glyph is None:
+        return None
+    codepoint = _first_codepoint(root_glyph)
+    if codepoint is None:
+        return None
+    return _uni(codepoint) + suffix, codepoint
+
+
+def _prefer(names: dict[str, str], identity: str, candidate: str) -> None:
+    current = names.get(identity)
+    if not current:
+        names[identity] = candidate
+        return
+    candidate_is_identity = candidate == identity
+    current_is_identity = current == identity
+    if candidate_is_identity != current_is_identity:
+        if current_is_identity:
+            names[identity] = candidate
+        return
+    if candidate < current:
+        names[identity] = candidate
+
+
+def _ccmp_inputs(font: Any) -> set[str]:
+    features = getattr(font, "features", None) if font is not None else None
+    for entry in list(getattr(features, "features", None) or []):
+        tag = entry[0]
+        code = entry[1]
+        if str(tag) != "ccmp":
+            continue
+        stamp = _field(_field(code, "format_specific"), "com.counterpunch.generator")
+        if _text(_field(stamp, "generator")) != _CCMP:
+            continue
+        if _text(_field(stamp, "block")) != "decomposition":
+            continue
+        if _field(code, "automatic") is False:
+            continue
+        return {glyph for glyph, _rhs in _parse(_text(_field(code, "code"))).items()}
+    return set()
+
+
+def _vowel_ligatures(glyphs: dict[str, Any]) -> list[tuple[str, tuple[str, str]]]:
+    found = []
+    for name, glyph in glyphs.items():
+        if _first_codepoint(glyph) is not None or not name:
+            continue
+        components = _component_names(glyph)
+        if len(components) != 2:
+            continue
+        identities = [_glyph_identity(component, glyphs) for component in components]
+        if any(item is None or item[1] not in _VOWELS for item in identities):
+            continue
+        found.append((name, (identities[0][0], identities[1][0])))  # type: ignore[index]
+    return found
+
+
+def _alef_composites(
+    glyphs: dict[str, Any], names: dict[str, str]
+) -> list[tuple[str, list[str]]]:
+    found = []
+    for root in _ALEF:
+        identity = f"{root}.fina"
+        glyph = glyphs.get(names.get(identity) or "")
+        components = _component_names(glyph) if glyph is not None else []
+        if len(components) >= 2:
+            found.append((identity, components))
+    return found
+
+
+def _component_names(glyph: Any) -> list[str]:
+    for layer in list(getattr(glyph, "layers", None) or []):
+        if _field(layer, "is_background"):
+            continue
+        names = []
+        for component in list(_field(layer, "components") or []):
+            reference = _field(component, "reference")
+            if isinstance(reference, str) and reference:
+                names.append(reference)
+        return names
+    return []
+
+
+def _split(name: str) -> tuple[str, str]:
+    if name.startswith("."):
+        return name, ""
+    dot = name.find(".")
+    if dot <= 0:
+        return name, ""
+    return name[:dot], name[dot:]
+
+
+def _suffix(name: str) -> str:
+    return _split(name)[1]
+
+
+def _uni(codepoint: int) -> str:
+    if codepoint <= 0xFFFF:
+        return f"uni{codepoint:04X}"
+    return f"uni{codepoint:X}"
+
+
+def _first_codepoint(glyph: Any) -> int | None:
+    values = getattr(glyph, "codepoints", None)
+    if not values:
+        return None
+    for value in list(values):
+        if isinstance(value, bool) or isinstance(value, str):
+            continue
+        try:
+            number = int(value)
+        except (TypeError, ValueError):
+            continue
+        if number >= 0:
+            return number
+    return None
+
+
+def _field(obj: Any, key: str) -> Any:
+    if obj is None:
+        return None
+    if isinstance(obj, dict):
+        return obj.get(key)
+    try:
+        value = obj[key]
+    except Exception:
+        try:
+            value = getattr(obj, key)
+        except Exception:
+            return None
+    return None if value is None else value
+
+
+def _text(value: Any) -> str:
+    if value is None:
         return ""
-    if re.search(r"languagesystem\s+arab\b", text):
-        return ""
-    return "languagesystem arab dflt;"
+    return str(value)

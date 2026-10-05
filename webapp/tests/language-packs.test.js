@@ -497,6 +497,39 @@ describe('language packs', () => {
             {}
         );
         expect(generatorMatches(generator, anchors)).toBe(false);
+        const added = operationsToBatch(
+            [
+                {
+                    op: 'set',
+                    path: ['features'],
+                    oldValue: { features: [['smcp', { code: '' }]] },
+                    newValue: {
+                        features: [
+                            ['smcp', { code: '' }],
+                            ['c2sc', { code: '' }]
+                        ]
+                    }
+                }
+            ],
+            {}
+        );
+        expect(added.featureListChanged).toBe(true);
+        expect(
+            generatorMatches({ ...generator, followsFeatures: true }, added)
+        ).toBe(true);
+        expect(generatorMatches(generator, added)).toBe(false);
+        const edited = operationsToBatch(
+            [
+                {
+                    op: 'set',
+                    path: ['features', 'features', 0, 'code'],
+                    oldValue: 'sub a by a.sc;',
+                    newValue: 'sub b by b.sc;'
+                }
+            ],
+            {}
+        );
+        expect(edited.featureListChanged).toBe(false);
     });
 
     test('unknown settings fall back and invalid settings are rejected', () => {
