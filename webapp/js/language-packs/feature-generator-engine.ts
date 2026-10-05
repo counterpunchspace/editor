@@ -14,10 +14,20 @@ import type { TransactionBufferedOperation } from '../patch-sync-engine';
 import { withSuppressedModelRecording } from '../babelfont-model';
 import {
     applyGeneratorBlocks,
+    generatorStamp,
     managedInputs,
     type FeaturesDocument,
     type GeneratedBlock
 } from './managed-features';
+import {
+    discoverAlefComposites,
+    discoverVowelLigatures,
+    designerLanguageSystems
+} from './arabic-forms';
+import {
+    glyphsByNameMap,
+    localNamesByIdentity
+} from '../auto-qa/auto-qa-identity';
 import { languagePackManager } from './language-pack-manager';
 import { runHostPython, runHostPythonAsync } from './host-python';
 
@@ -293,32 +303,40 @@ class FeatureGeneratorEngine {
         diagnostics: string[];
         needsRebuild: boolean;
     } | null {
+        const font = window.currentFontModel;
         const inputs = managedInputs(
             features,
-            generator.generatorId,
+            'space.counterpunch.ccmp',
             'decomposition'
         );
+        const managedBlocks: Record<string, string> = {};
+        let managedCode = '';
+        for (const [tag, code] of features.features || []) {
+            const stamp = generatorStamp(code);
+            if (stamp?.generator !== generator.generatorId) {
+                continue;
+            }
+            managedBlocks[tag] = code.code || '';
+            if (stamp.block === 'decomposition' || !managedCode) {
+                managedCode = code.code || '';
+            }
+        }
+        const identityNames = font
+            ? Object.fromEntries(
+                  localNamesByIdentity(glyphsByNameMap(font)).entries()
+              )
+            : {};
         const context = {
-            managed_code:
-                (features.features || []).find(
-                    ([, code]) =>
-                        String(
-                            (
-                                code.format_specific as
-                                    | {
-                                          'com.counterpunch.generator'?: {
-                                              generator?: string;
-                                          };
-                                      }
-                                    | undefined
-                            )?.['com.counterpunch.generator']?.generator
-                        ) === generator.generatorId
-                )?.[1].code || '',
+            managed_code: managedCode,
             managed_inputs: inputs,
+            managed_blocks: managedBlocks,
             managed_components: [],
-            font_glyphs:
-                window.currentFontModel?.glyphs.map((glyph) => glyph.name) ||
-                [],
+            font_glyphs: font?.glyphs.map((glyph) => glyph.name) || [],
+            identity_names: identityNames,
+            ccmp_inputs: inputs,
+            languagesystem_text: designerLanguageSystems(features),
+            vowel_ligatures: font ? discoverVowelLigatures(font) : [],
+            alef_composites: font ? discoverAlefComposites(font) : [],
             recipes: this.recipesFor(batch, inputs),
             settings: {}
         };
@@ -331,10 +349,16 @@ generator = builtins._cp_feature_generators.get(${JSON.stringify(generator.gener
 if generator is None:
     raise RuntimeError('generator missing')
 needs = True
-ccmp_intent = (batch.get('intents') or {}).get('ccmp') or {}
+intents = batch.get('intents') or {}
 # An intent is enough. needs_rebuild used to require a glyph edit, so
 # recomposing an already-empty shell never wrote the feature.
-forced = bool(ccmp_intent.get('add') or ccmp_intent.get('remove'))
+forced = False
+for key in list(getattr(generator, 'INTENT_KEYS', []) or []):
+    intent = intents.get(key) or {}
+    added = intent.get('add') or []
+    removed = intent.get('remove') or []
+    if added or removed:
+        forced = True
 if not forced and hasattr(generator, 'needs_rebuild') and batch.get('trigger') != 'manual':
     needs = bool(generator.needs_rebuild(batch, context))
 produced = generator.generate(batch, context) if needs else {'blocks': [], 'diagnostics': []}
@@ -370,15 +394,22 @@ json.dumps({'needsRebuild': needs, 'blocks': produced.get('blocks') or [], 'diag
                 continue;
             }
             const recipe = languagePackManager.recipeSync(codepoint);
-            if (!recipe) {
+            if (!recipe?.components) {
                 continue;
             }
             const componentNames = recipe.components.map((component) => {
+                if (component.name && component.codepoint == null) {
+                    return component.name;
+                }
+                if (component.codepoint == null) {
+                    return '';
+                }
                 return (
                     font?.findGlyphByCodepoint(component.codepoint)?.name ||
                     languagePackManager.glyphNameForCodepoint(
                         component.codepoint
                     ) ||
+                    component.name ||
                     ''
                 );
             });

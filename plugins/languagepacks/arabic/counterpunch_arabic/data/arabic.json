@@ -1,0 +1,7348 @@
+{
+  "characters": {
+    "uni0620": {
+      "positions": {
+        "isol": [
+          "uni0649",
+          "ringBelow-ar"
+        ],
+        "init": [
+          "uni066E.init",
+          "ringBelow-ar"
+        ],
+        "medi": [
+          "uni066E.medi",
+          "ringBelow-ar"
+        ],
+        "fina": [
+          "uni0649.fina",
+          "ringBelow-ar"
+        ]
+      },
+      "decompose": [
+        "uni0649",
+        "ringBelow-ar"
+      ]
+    },
+    "uni0621": {
+      "positions": {
+        "isol": [
+          "uni0621"
+        ]
+      }
+    },
+    "uni0622": {
+      "positions": {
+        "isol": [
+          "uni0627",
+          "uni0653"
+        ],
+        "fina": [
+          "uni0627.fina",
+          "uni0653"
+        ]
+      },
+      "decompose": [
+        "uni0627",
+        "uni0653"
+      ]
+    },
+    "uni0623": {
+      "positions": {
+        "isol": [
+          "uni0627",
+          "uni0654"
+        ],
+        "fina": [
+          "uni0627.fina",
+          "uni0654"
+        ]
+      },
+      "decompose": [
+        "uni0627",
+        "uni0654"
+      ]
+    },
+    "uni0624": {
+      "positions": {
+        "isol": [
+          "uni0648",
+          "uni0654"
+        ],
+        "fina": [
+          "uni0648.fina",
+          "uni0654"
+        ]
+      },
+      "decompose": [
+        "uni0648",
+        "uni0654"
+      ]
+    },
+    "uni0625": {
+      "positions": {
+        "isol": [
+          "uni0627",
+          "uni0655"
+        ],
+        "fina": [
+          "uni0627.fina",
+          "uni0655"
+        ]
+      },
+      "decompose": [
+        "uni0627",
+        "uni0655"
+      ]
+    },
+    "uni0626": {
+      "positions": {
+        "isol": [
+          "uni0649",
+          "uni0654"
+        ],
+        "init": [
+          "uni066E.init",
+          "uni0654"
+        ],
+        "medi": [
+          "uni066E.medi",
+          "uni0654"
+        ],
+        "fina": [
+          "uni0649.fina",
+          "uni0654"
+        ]
+      },
+      "decompose": [
+        "uni0649",
+        "uni0654"
+      ]
+    },
+    "uni0627": {
+      "positions": {
+        "isol": [
+          "uni0627"
+        ],
+        "fina": [
+          "uni0627.fina"
+        ]
+      }
+    },
+    "uni0628": {
+      "positions": {
+        "isol": [
+          "uni066E",
+          "dotBelow-ar"
+        ],
+        "init": [
+          "uni066E.init",
+          "dotBelow-ar"
+        ],
+        "medi": [
+          "uni066E.medi",
+          "dotBelow-ar"
+        ],
+        "fina": [
+          "uni066E.fina",
+          "dotBelow-ar"
+        ]
+      },
+      "decompose": [
+        "uni066E",
+        "dotBelow-ar"
+      ]
+    },
+    "uni0629": {
+      "positions": {
+        "isol": [
+          "uni06D5",
+          "twoDotsHorizontalAbove-ar"
+        ],
+        "fina": [
+          "uni0647.fina",
+          "twoDotsHorizontalAbove-ar"
+        ]
+      },
+      "decompose": [
+        "uni06D5",
+        "twoDotsHorizontalAbove-ar"
+      ]
+    },
+    "uni062A": {
+      "positions": {
+        "isol": [
+          "uni066E",
+          "twoDotsHorizontalAbove-ar"
+        ],
+        "init": [
+          "uni066E.init",
+          "twoDotsHorizontalAbove-ar"
+        ],
+        "medi": [
+          "uni066E.medi",
+          "twoDotsHorizontalAbove-ar"
+        ],
+        "fina": [
+          "uni066E.fina",
+          "twoDotsHorizontalAbove-ar"
+        ]
+      },
+      "decompose": [
+        "uni066E",
+        "twoDotsHorizontalAbove-ar"
+      ]
+    },
+    "uni062B": {
+      "positions": {
+        "isol": [
+          "uni066E",
+          "threeDotsUpAbove-ar"
+        ],
+        "init": [
+          "uni066E.init",
+          "threeDotsUpAbove-ar"
+        ],
+        "medi": [
+          "uni066E.medi",
+          "threeDotsUpAbove-ar"
+        ],
+        "fina": [
+          "uni066E.fina",
+          "threeDotsUpAbove-ar"
+        ]
+      },
+      "decompose": [
+        "uni066E",
+        "threeDotsUpAbove-ar"
+      ]
+    },
+    "uni062C": {
+      "positions": {
+        "isol": [
+          "uni062D",
+          "dotCenter-ar"
+        ],
+        "init": [
+          "uni062D.init",
+          "dotBelow-ar"
+        ],
+        "medi": [
+          "uni062D.medi",
+          "dotBelow-ar"
+        ],
+        "fina": [
+          "uni062D.fina",
+          "dotCenter-ar"
+        ]
+      }
+    },
+    "uni062D": {
+      "positions": {
+        "isol": [
+          "uni062D"
+        ],
+        "init": [
+          "uni062D.init"
+        ],
+        "medi": [
+          "uni062D.medi"
+        ],
+        "fina": [
+          "uni062D.fina"
+        ]
+      }
+    },
+    "uni062E": {
+      "positions": {
+        "isol": [
+          "uni062D",
+          "dotAbove-ar"
+        ],
+        "init": [
+          "uni062D.init",
+          "dotAbove-ar"
+        ],
+        "medi": [
+          "uni062D.medi",
+          "dotAbove-ar"
+        ],
+        "fina": [
+          "uni062D.fina",
+          "dotAbove-ar"
+        ]
+      },
+      "decompose": [
+        "uni062D",
+        "dotAbove-ar"
+      ]
+    },
+    "uni062F": {
+      "positions": {
+        "isol": [
+          "uni062F"
+        ],
+        "fina": [
+          "uni062F.fina"
+        ]
+      }
+    },
+    "uni0630": {
+      "positions": {
+        "isol": [
+          "uni062F",
+          "dotAbove-ar"
+        ],
+        "fina": [
+          "uni062F.fina",
+          "dotAbove-ar"
+        ]
+      },
+      "decompose": [
+        "uni062F",
+        "dotAbove-ar"
+      ]
+    },
+    "uni0631": {
+      "positions": {
+        "isol": [
+          "uni0631"
+        ],
+        "fina": [
+          "uni0631.fina"
+        ]
+      }
+    },
+    "uni0632": {
+      "positions": {
+        "isol": [
+          "uni0631",
+          "dotAbove-ar"
+        ],
+        "fina": [
+          "uni0631.fina",
+          "dotAbove-ar"
+        ]
+      },
+      "decompose": [
+        "uni0631",
+        "dotAbove-ar"
+      ]
+    },
+    "uni0633": {
+      "positions": {
+        "isol": [
+          "uni0633"
+        ],
+        "init": [
+          "uni0633.init"
+        ],
+        "medi": [
+          "uni0633.medi"
+        ],
+        "fina": [
+          "uni0633.fina"
+        ]
+      }
+    },
+    "uni0634": {
+      "positions": {
+        "isol": [
+          "uni0633",
+          "threeDotsUpAbove-ar"
+        ],
+        "init": [
+          "uni0633.init",
+          "threeDotsUpAbove-ar"
+        ],
+        "medi": [
+          "uni0633.medi",
+          "threeDotsUpAbove-ar"
+        ],
+        "fina": [
+          "uni0633.fina",
+          "threeDotsUpAbove-ar"
+        ]
+      },
+      "decompose": [
+        "uni0633",
+        "threeDotsUpAbove-ar"
+      ]
+    },
+    "uni0635": {
+      "positions": {
+        "isol": [
+          "uni0635"
+        ],
+        "init": [
+          "uni0635.init"
+        ],
+        "medi": [
+          "uni0635.medi"
+        ],
+        "fina": [
+          "uni0635.fina"
+        ]
+      }
+    },
+    "uni0636": {
+      "positions": {
+        "isol": [
+          "uni0635",
+          "dotAbove-ar"
+        ],
+        "init": [
+          "uni0635.init",
+          "dotAbove-ar"
+        ],
+        "medi": [
+          "uni0635.medi",
+          "dotAbove-ar"
+        ],
+        "fina": [
+          "uni0635.fina",
+          "dotAbove-ar"
+        ]
+      },
+      "decompose": [
+        "uni0635",
+        "dotAbove-ar"
+      ]
+    },
+    "uni0637": {
+      "positions": {
+        "isol": [
+          "uni0637"
+        ],
+        "init": [
+          "uni0637.init"
+        ],
+        "medi": [
+          "uni0637.medi"
+        ],
+        "fina": [
+          "uni0637.fina"
+        ]
+      }
+    },
+    "uni0638": {
+      "positions": {
+        "isol": [
+          "uni0637",
+          "dotAbove-ar"
+        ],
+        "init": [
+          "uni0637.init",
+          "dotAbove-ar"
+        ],
+        "medi": [
+          "uni0637.medi",
+          "dotAbove-ar"
+        ],
+        "fina": [
+          "uni0637.fina",
+          "dotAbove-ar"
+        ]
+      },
+      "decompose": [
+        "uni0637",
+        "dotAbove-ar"
+      ]
+    },
+    "uni0639": {
+      "positions": {
+        "isol": [
+          "uni0639"
+        ],
+        "init": [
+          "uni0639.init"
+        ],
+        "medi": [
+          "uni0639.medi"
+        ],
+        "fina": [
+          "uni0639.fina"
+        ]
+      }
+    },
+    "uni063A": {
+      "positions": {
+        "isol": [
+          "uni0639",
+          "dotAbove-ar"
+        ],
+        "init": [
+          "uni0639.init",
+          "dotAbove-ar"
+        ],
+        "medi": [
+          "uni0639.medi",
+          "dotAbove-ar"
+        ],
+        "fina": [
+          "uni0639.fina",
+          "dotAbove-ar"
+        ]
+      },
+      "decompose": [
+        "uni0639",
+        "dotAbove-ar"
+      ]
+    },
+    "uni063B": {
+      "positions": {
+        "isol": [
+          "uni06A9",
+          "twoDotsHorizontalAbove-ar"
+        ],
+        "init": [
+          "uni06A9.init",
+          "twoDotsHorizontalAbove-ar"
+        ],
+        "medi": [
+          "uni06A9.medi",
+          "twoDotsHorizontalAbove-ar"
+        ],
+        "fina": [
+          "uni06A9.fina",
+          "twoDotsHorizontalAbove-ar"
+        ]
+      },
+      "decompose": [
+        "uni06A9",
+        "twoDotsHorizontalAbove-ar"
+      ]
+    },
+    "uni063C": {
+      "positions": {
+        "isol": [
+          "uni06A9",
+          "threeDotsDownBelow-ar"
+        ],
+        "init": [
+          "uni06A9.init",
+          "threeDotsDownBelow-ar"
+        ],
+        "medi": [
+          "uni06A9.medi",
+          "threeDotsDownBelow-ar"
+        ],
+        "fina": [
+          "uni06A9.fina",
+          "threeDotsDownBelow-ar"
+        ]
+      },
+      "decompose": [
+        "uni06A9",
+        "threeDotsDownBelow-ar"
+      ]
+    },
+    "uni063D": {
+      "positions": {
+        "isol": [
+          "uni0649",
+          "uni065B"
+        ],
+        "init": [
+          "uni066E.init",
+          "twoDotsHorizontalBelow-ar",
+          "uni065B"
+        ],
+        "medi": [
+          "uni066E.medi",
+          "twoDotsHorizontalBelow-ar",
+          "uni065B"
+        ],
+        "fina": [
+          "uni0649.fina",
+          "uni065B"
+        ]
+      }
+    },
+    "uni063E": {
+      "positions": {
+        "isol": [
+          "uni0649",
+          "twoDotsHorizontalAbove-ar"
+        ],
+        "init": [
+          "uni066E.init",
+          "twoDotsHorizontalBelow-ar",
+          "twoDotsHorizontalAbove-ar"
+        ],
+        "medi": [
+          "uni066E.medi",
+          "twoDotsHorizontalBelow-ar",
+          "twoDotsHorizontalAbove-ar"
+        ],
+        "fina": [
+          "uni0649.fina",
+          "twoDotsHorizontalAbove-ar"
+        ]
+      }
+    },
+    "uni063F": {
+      "positions": {
+        "isol": [
+          "uni0649",
+          "threeDotsUpAbove-ar"
+        ],
+        "init": [
+          "uni066E.init",
+          "twoDotsHorizontalBelow-ar",
+          "threeDotsUpAbove-ar"
+        ],
+        "medi": [
+          "uni066E.medi",
+          "twoDotsHorizontalBelow-ar",
+          "threeDotsUpAbove-ar"
+        ],
+        "fina": [
+          "uni0649.fina",
+          "threeDotsUpAbove-ar"
+        ]
+      }
+    },
+    "uni0641": {
+      "positions": {
+        "isol": [
+          "uni06A1",
+          "dotAbove-ar"
+        ],
+        "init": [
+          "uni06A1.init",
+          "dotAbove-ar"
+        ],
+        "medi": [
+          "uni06A1.medi",
+          "dotAbove-ar"
+        ],
+        "fina": [
+          "uni06A1.fina",
+          "dotAbove-ar"
+        ]
+      },
+      "decompose": [
+        "uni06A1",
+        "dotAbove-ar"
+      ]
+    },
+    "uni0642": {
+      "positions": {
+        "isol": [
+          "uni066F",
+          "twoDotsHorizontalAbove-ar"
+        ],
+        "init": [
+          "uni06A1.init",
+          "twoDotsHorizontalAbove-ar"
+        ],
+        "medi": [
+          "uni06A1.medi",
+          "twoDotsHorizontalAbove-ar"
+        ],
+        "fina": [
+          "uni066F.fina",
+          "twoDotsHorizontalAbove-ar"
+        ]
+      },
+      "decompose": [
+        "uni066F",
+        "twoDotsHorizontalAbove-ar"
+      ]
+    },
+    "uni0643": {
+      "positions": {
+        "isol": [
+          "kafDotless-ar",
+          "miniKeheh-ar"
+        ],
+        "init": [
+          "uni06A9.init"
+        ],
+        "medi": [
+          "uni06A9.medi"
+        ],
+        "fina": [
+          "kafDotless-ar.fina",
+          "miniKeheh-ar"
+        ]
+      }
+    },
+    "uni0644": {
+      "positions": {
+        "isol": [
+          "uni0644"
+        ],
+        "init": [
+          "uni0644.init"
+        ],
+        "medi": [
+          "uni0644.medi"
+        ],
+        "fina": [
+          "uni0644.fina"
+        ]
+      }
+    },
+    "uni0645": {
+      "positions": {
+        "isol": [
+          "uni0645"
+        ],
+        "init": [
+          "uni0645.init"
+        ],
+        "medi": [
+          "uni0645.medi"
+        ],
+        "fina": [
+          "uni0645.fina"
+        ]
+      }
+    },
+    "uni0646": {
+      "positions": {
+        "isol": [
+          "uni06BA",
+          "dotAbove-ar"
+        ],
+        "init": [
+          "uni066E.init",
+          "dotAbove-ar"
+        ],
+        "medi": [
+          "uni066E.medi",
+          "dotAbove-ar"
+        ],
+        "fina": [
+          "uni06BA.fina",
+          "dotAbove-ar"
+        ]
+      },
+      "decompose": [
+        "uni06BA",
+        "dotAbove-ar"
+      ]
+    },
+    "uni0647": {
+      "positions": {
+        "isol": [
+          "uni0647"
+        ],
+        "init": [
+          "uni0647.init"
+        ],
+        "medi": [
+          "uni0647.medi"
+        ],
+        "fina": [
+          "uni0647.fina"
+        ]
+      }
+    },
+    "uni0648": {
+      "positions": {
+        "isol": [
+          "uni0648"
+        ],
+        "fina": [
+          "uni0648.fina"
+        ]
+      }
+    },
+    "uni0649": {
+      "positions": {
+        "isol": [
+          "uni0649"
+        ],
+        "init": [
+          "uni066E.init"
+        ],
+        "medi": [
+          "uni066E.medi"
+        ],
+        "fina": [
+          "uni0649.fina"
+        ]
+      }
+    },
+    "uni064A": {
+      "positions": {
+        "isol": [
+          "uni0649",
+          "twoDotsHorizontalBelow-ar"
+        ],
+        "init": [
+          "uni066E.init",
+          "twoDotsHorizontalBelow-ar"
+        ],
+        "medi": [
+          "uni066E.medi",
+          "twoDotsHorizontalBelow-ar"
+        ],
+        "fina": [
+          "uni0649.fina",
+          "twoDotsHorizontalBelow-ar"
+        ]
+      },
+      "decompose": [
+        "uni0649",
+        "twoDotsHorizontalBelow-ar"
+      ]
+    },
+    "uni066E": {
+      "positions": {
+        "isol": [
+          "uni066E"
+        ],
+        "init": [
+          "uni066E.init"
+        ],
+        "medi": [
+          "uni066E.medi"
+        ],
+        "fina": [
+          "uni066E.fina"
+        ]
+      }
+    },
+    "uni066F": {
+      "positions": {
+        "isol": [
+          "uni066F"
+        ],
+        "init": [
+          "uni06A1.init"
+        ],
+        "medi": [
+          "uni06A1.medi"
+        ],
+        "fina": [
+          "uni066F.fina"
+        ]
+      }
+    },
+    "uni0671": {
+      "positions": {
+        "isol": [
+          "uni0627",
+          "wasla-ar"
+        ],
+        "fina": [
+          "uni0627.fina",
+          "wasla-ar"
+        ]
+      },
+      "decompose": [
+        "uni0627",
+        "wasla-ar"
+      ]
+    },
+    "uni0679": {
+      "positions": {
+        "isol": [
+          "uni066E",
+          "tahAbove-ar"
+        ],
+        "init": [
+          "uni066E.init",
+          "tahAbove-ar"
+        ],
+        "medi": [
+          "uni066E.medi",
+          "tahAbove-ar"
+        ],
+        "fina": [
+          "uni066E.fina",
+          "tahAbove-ar"
+        ]
+      },
+      "decompose": [
+        "uni066E",
+        "tahAbove-ar"
+      ]
+    },
+    "uni067A": {
+      "positions": {
+        "isol": [
+          "uni066E",
+          "twoDotsVerticalAbove-ar"
+        ],
+        "init": [
+          "uni066E.init",
+          "twoDotsVerticalAbove-ar"
+        ],
+        "medi": [
+          "uni066E.medi",
+          "twoDotsVerticalAbove-ar"
+        ],
+        "fina": [
+          "uni066E.fina",
+          "twoDotsVerticalAbove-ar"
+        ]
+      },
+      "decompose": [
+        "uni066E",
+        "twoDotsVerticalAbove-ar"
+      ]
+    },
+    "uni067B": {
+      "positions": {
+        "isol": [
+          "uni066E",
+          "twoDotsVerticalBelow-ar"
+        ],
+        "init": [
+          "uni066E.init",
+          "twoDotsVerticalBelow-ar"
+        ],
+        "medi": [
+          "uni066E.medi",
+          "twoDotsVerticalBelow-ar"
+        ],
+        "fina": [
+          "uni066E.fina",
+          "twoDotsVerticalBelow-ar"
+        ]
+      },
+      "decompose": [
+        "uni066E",
+        "twoDotsVerticalBelow-ar"
+      ]
+    },
+    "uni067C": {
+      "positions": {
+        "isol": [
+          "uni066E",
+          "ringCenter-ar",
+          "twoDotsHorizontalAbove-ar"
+        ],
+        "init": [
+          "uni066E.init",
+          "ringCenter-ar",
+          "twoDotsHorizontalAbove-ar"
+        ],
+        "medi": [
+          "uni066E.medi",
+          "ringCenter-ar",
+          "twoDotsHorizontalAbove-ar"
+        ],
+        "fina": [
+          "uni066E.fina",
+          "ringCenter-ar",
+          "twoDotsHorizontalAbove-ar"
+        ]
+      },
+      "decompose": [
+        "uni066E",
+        "ringCenter-ar",
+        "twoDotsHorizontalAbove-ar"
+      ]
+    },
+    "uni067D": {
+      "positions": {
+        "isol": [
+          "uni066E",
+          "threeDotsDownAbove-ar"
+        ],
+        "init": [
+          "uni066E.init",
+          "threeDotsDownAbove-ar"
+        ],
+        "medi": [
+          "uni066E.medi",
+          "threeDotsDownAbove-ar"
+        ],
+        "fina": [
+          "uni066E.fina",
+          "threeDotsDownAbove-ar"
+        ]
+      },
+      "decompose": [
+        "uni066E",
+        "threeDotsDownAbove-ar"
+      ]
+    },
+    "uni067E": {
+      "positions": {
+        "isol": [
+          "uni066E",
+          "threeDotsDownBelow-ar"
+        ],
+        "init": [
+          "uni066E.init",
+          "threeDotsDownBelow-ar"
+        ],
+        "medi": [
+          "uni066E.medi",
+          "threeDotsDownBelow-ar"
+        ],
+        "fina": [
+          "uni066E.fina",
+          "threeDotsDownBelow-ar"
+        ]
+      },
+      "decompose": [
+        "uni066E",
+        "threeDotsDownBelow-ar"
+      ]
+    },
+    "uni067F": {
+      "positions": {
+        "isol": [
+          "uni066E",
+          "fourDotsAbove-ar"
+        ],
+        "init": [
+          "uni066E.init",
+          "fourDotsAbove-ar"
+        ],
+        "medi": [
+          "uni066E.medi",
+          "fourDotsAbove-ar"
+        ],
+        "fina": [
+          "uni066E.fina",
+          "fourDotsAbove-ar"
+        ]
+      },
+      "decompose": [
+        "uni066E",
+        "fourDotsAbove-ar"
+      ]
+    },
+    "uni0680": {
+      "positions": {
+        "isol": [
+          "uni066E",
+          "fourDotsBelow-ar"
+        ],
+        "init": [
+          "uni066E.init",
+          "fourDotsBelow-ar"
+        ],
+        "medi": [
+          "uni066E.medi",
+          "fourDotsBelow-ar"
+        ],
+        "fina": [
+          "uni066E.fina",
+          "fourDotsBelow-ar"
+        ]
+      },
+      "decompose": [
+        "uni066E",
+        "fourDotsBelow-ar"
+      ]
+    },
+    "uni0681": {
+      "positions": {
+        "isol": [
+          "uni062D",
+          "uni0654"
+        ],
+        "init": [
+          "uni062D.init",
+          "uni0654"
+        ],
+        "medi": [
+          "uni062D.medi",
+          "uni0654"
+        ],
+        "fina": [
+          "uni062D.fina",
+          "uni0654"
+        ]
+      },
+      "decompose": [
+        "uni062D",
+        "uni0654"
+      ]
+    },
+    "uni0682": {
+      "positions": {
+        "isol": [
+          "uni062D",
+          "twoDotsVerticalAbove-ar"
+        ],
+        "init": [
+          "uni062D.init",
+          "twoDotsVerticalAbove-ar"
+        ],
+        "medi": [
+          "uni062D.medi",
+          "twoDotsVerticalAbove-ar"
+        ],
+        "fina": [
+          "uni062D.fina",
+          "twoDotsVerticalAbove-ar"
+        ]
+      },
+      "decompose": [
+        "uni062D",
+        "twoDotsVerticalAbove-ar"
+      ]
+    },
+    "uni0683": {
+      "positions": {
+        "isol": [
+          "uni062D",
+          "twoDotsHorizontalCenter-ar"
+        ],
+        "init": [
+          "uni062D.init",
+          "twoDotsHorizontalBelow-ar"
+        ],
+        "medi": [
+          "uni062D.medi",
+          "twoDotsHorizontalBelow-ar"
+        ],
+        "fina": [
+          "uni062D.fina",
+          "twoDotsHorizontalCenter-ar"
+        ]
+      }
+    },
+    "uni0684": {
+      "positions": {
+        "isol": [
+          "uni062D",
+          "twoDotsVerticalCenter-ar"
+        ],
+        "init": [
+          "uni062D.init",
+          "twoDotsVerticalBelow-ar"
+        ],
+        "medi": [
+          "uni062D.medi",
+          "twoDotsVerticalBelow-ar"
+        ],
+        "fina": [
+          "uni062D.fina",
+          "twoDotsVerticalCenter-ar"
+        ]
+      }
+    },
+    "uni0685": {
+      "positions": {
+        "isol": [
+          "uni062D",
+          "threeDotsUpAbove-ar"
+        ],
+        "init": [
+          "uni062D.init",
+          "threeDotsUpAbove-ar"
+        ],
+        "medi": [
+          "uni062D.medi",
+          "threeDotsUpAbove-ar"
+        ],
+        "fina": [
+          "uni062D.fina",
+          "threeDotsUpAbove-ar"
+        ]
+      },
+      "decompose": [
+        "uni062D",
+        "threeDotsUpAbove-ar"
+      ]
+    },
+    "uni0686": {
+      "positions": {
+        "isol": [
+          "uni062D",
+          "threeDotsDownCenter-ar"
+        ],
+        "init": [
+          "uni062D.init",
+          "threeDotsDownBelow-ar"
+        ],
+        "medi": [
+          "uni062D.medi",
+          "threeDotsDownBelow-ar"
+        ],
+        "fina": [
+          "uni062D.fina",
+          "threeDotsDownCenter-ar"
+        ]
+      }
+    },
+    "uni0687": {
+      "positions": {
+        "isol": [
+          "uni062D",
+          "fourDotsCenter-ar"
+        ],
+        "init": [
+          "uni062D.init",
+          "fourDotsBelow-ar"
+        ],
+        "medi": [
+          "uni062D.medi",
+          "fourDotsBelow-ar"
+        ],
+        "fina": [
+          "uni062D.fina",
+          "fourDotsCenter-ar"
+        ]
+      }
+    },
+    "uni0688": {
+      "positions": {
+        "isol": [
+          "uni062F",
+          "tahAbove-ar"
+        ],
+        "fina": [
+          "uni062F.fina",
+          "tahAbove-ar"
+        ]
+      },
+      "decompose": [
+        "uni062F",
+        "tahAbove-ar"
+      ]
+    },
+    "uni0689": {
+      "positions": {
+        "isol": [
+          "uni062F",
+          "ringCenter-ar"
+        ],
+        "fina": [
+          "uni062F.fina",
+          "ringCenter-ar"
+        ]
+      },
+      "decompose": [
+        "uni062F",
+        "ringCenter-ar"
+      ]
+    },
+    "uni068A": {
+      "positions": {
+        "isol": [
+          "uni062F",
+          "dotBelow-ar"
+        ],
+        "fina": [
+          "uni062F.fina",
+          "dotBelow-ar"
+        ]
+      },
+      "decompose": [
+        "uni062F",
+        "dotBelow-ar"
+      ]
+    },
+    "uni068B": {
+      "positions": {
+        "isol": [
+          "uni062F",
+          "dotBelow-ar",
+          "tahAbove-ar"
+        ],
+        "fina": [
+          "uni062F.fina",
+          "dotBelow-ar",
+          "tahAbove-ar"
+        ]
+      },
+      "decompose": [
+        "uni062F",
+        "dotBelow-ar",
+        "tahAbove-ar"
+      ]
+    },
+    "uni068C": {
+      "positions": {
+        "isol": [
+          "uni062F",
+          "twoDotsHorizontalAbove-ar"
+        ],
+        "fina": [
+          "uni062F.fina",
+          "twoDotsHorizontalAbove-ar"
+        ]
+      },
+      "decompose": [
+        "uni062F",
+        "twoDotsHorizontalAbove-ar"
+      ]
+    },
+    "uni068D": {
+      "positions": {
+        "isol": [
+          "uni062F",
+          "twoDotsHorizontalBelow-ar"
+        ],
+        "fina": [
+          "uni062F.fina",
+          "twoDotsHorizontalBelow-ar"
+        ]
+      },
+      "decompose": [
+        "uni062F",
+        "twoDotsHorizontalBelow-ar"
+      ]
+    },
+    "uni068E": {
+      "positions": {
+        "isol": [
+          "uni062F",
+          "threeDotsUpAbove-ar"
+        ],
+        "fina": [
+          "uni062F.fina",
+          "threeDotsUpAbove-ar"
+        ]
+      },
+      "decompose": [
+        "uni062F",
+        "threeDotsUpAbove-ar"
+      ]
+    },
+    "uni068F": {
+      "positions": {
+        "isol": [
+          "uni062F",
+          "threeDotsDownAbove-ar"
+        ],
+        "fina": [
+          "uni062F.fina",
+          "threeDotsDownAbove-ar"
+        ]
+      },
+      "decompose": [
+        "uni062F",
+        "threeDotsDownAbove-ar"
+      ]
+    },
+    "uni0690": {
+      "positions": {
+        "isol": [
+          "uni062F",
+          "fourDotsAbove-ar"
+        ],
+        "fina": [
+          "uni062F.fina",
+          "fourDotsAbove-ar"
+        ]
+      },
+      "decompose": [
+        "uni062F",
+        "fourDotsAbove-ar"
+      ]
+    },
+    "uni0691": {
+      "positions": {
+        "isol": [
+          "uni0631",
+          "tahAbove-ar"
+        ],
+        "fina": [
+          "uni0631.fina",
+          "tahAbove-ar"
+        ]
+      },
+      "decompose": [
+        "uni0631",
+        "tahAbove-ar"
+      ]
+    },
+    "uni0692": {
+      "positions": {
+        "isol": [
+          "uni0631",
+          "uni065A"
+        ],
+        "fina": [
+          "uni0631.fina",
+          "uni065A"
+        ]
+      },
+      "decompose": [
+        "uni0631",
+        "uni065A"
+      ]
+    },
+    "uni0693": {
+      "positions": {
+        "isol": [
+          "uni0631",
+          "ringCenter-ar"
+        ],
+        "fina": [
+          "uni0631.fina",
+          "ringCenter-ar"
+        ]
+      },
+      "decompose": [
+        "uni0631",
+        "ringCenter-ar"
+      ]
+    },
+    "uni0694": {
+      "positions": {
+        "isol": [
+          "uni0631",
+          "dotBelow-ar"
+        ],
+        "fina": [
+          "uni0631.fina",
+          "dotBelow-ar"
+        ]
+      },
+      "decompose": [
+        "uni0631",
+        "dotBelow-ar"
+      ]
+    },
+    "uni0695": {
+      "positions": {
+        "isol": [
+          "uni0631",
+          "vBelow-ar"
+        ],
+        "fina": [
+          "uni0631.fina",
+          "vBelow-ar"
+        ]
+      },
+      "decompose": [
+        "uni0631",
+        "vBelow-ar"
+      ]
+    },
+    "uni0696": {
+      "positions": {
+        "isol": [
+          "uni0631",
+          "dotBelow-ar",
+          "dotCenter-ar"
+        ],
+        "fina": [
+          "uni0631.fina",
+          "dotBelow-ar",
+          "dotCenter-ar"
+        ]
+      },
+      "decompose": [
+        "uni0631",
+        "dotBelow-ar",
+        "dotCenter-ar"
+      ]
+    },
+    "uni0697": {
+      "positions": {
+        "isol": [
+          "uni0631",
+          "twoDotsHorizontalAbove-ar"
+        ],
+        "fina": [
+          "uni0631.fina",
+          "twoDotsHorizontalAbove-ar"
+        ]
+      },
+      "decompose": [
+        "uni0631",
+        "twoDotsHorizontalAbove-ar"
+      ]
+    },
+    "uni0698": {
+      "positions": {
+        "isol": [
+          "uni0631",
+          "threeDotsUpAbove-ar"
+        ],
+        "fina": [
+          "uni0631.fina",
+          "threeDotsUpAbove-ar"
+        ]
+      },
+      "decompose": [
+        "uni0631",
+        "threeDotsUpAbove-ar"
+      ]
+    },
+    "uni0699": {
+      "positions": {
+        "isol": [
+          "uni0631",
+          "fourDotsAbove-ar"
+        ],
+        "fina": [
+          "uni0631.fina",
+          "fourDotsAbove-ar"
+        ]
+      },
+      "decompose": [
+        "uni0631",
+        "fourDotsAbove-ar"
+      ]
+    },
+    "uni069A": {
+      "positions": {
+        "isol": [
+          "uni0633",
+          "dotBelow-ar",
+          "dotAbove-ar"
+        ],
+        "init": [
+          "uni0633.init",
+          "dotBelow-ar",
+          "dotAbove-ar"
+        ],
+        "medi": [
+          "uni0633.medi",
+          "dotBelow-ar",
+          "dotAbove-ar"
+        ],
+        "fina": [
+          "uni0633.fina",
+          "dotBelow-ar",
+          "dotAbove-ar"
+        ]
+      },
+      "decompose": [
+        "uni0633",
+        "dotBelow-ar",
+        "dotAbove-ar"
+      ]
+    },
+    "uni069B": {
+      "positions": {
+        "isol": [
+          "uni0633",
+          "threeDotsDownBelow-ar"
+        ],
+        "init": [
+          "uni0633.init",
+          "threeDotsDownBelow-ar"
+        ],
+        "medi": [
+          "uni0633.medi",
+          "threeDotsDownBelow-ar"
+        ],
+        "fina": [
+          "uni0633.fina",
+          "threeDotsDownBelow-ar"
+        ]
+      },
+      "decompose": [
+        "uni0633",
+        "threeDotsDownBelow-ar"
+      ]
+    },
+    "uni069C": {
+      "positions": {
+        "isol": [
+          "uni0633",
+          "threeDotsDownBelow-ar",
+          "threeDotsUpAbove-ar"
+        ],
+        "init": [
+          "uni0633.init",
+          "threeDotsDownBelow-ar",
+          "threeDotsUpAbove-ar"
+        ],
+        "medi": [
+          "uni0633.medi",
+          "threeDotsDownBelow-ar",
+          "threeDotsUpAbove-ar"
+        ],
+        "fina": [
+          "uni0633.fina",
+          "threeDotsDownBelow-ar",
+          "threeDotsUpAbove-ar"
+        ]
+      },
+      "decompose": [
+        "uni0633",
+        "threeDotsDownBelow-ar",
+        "threeDotsUpAbove-ar"
+      ]
+    },
+    "uni069D": {
+      "positions": {
+        "isol": [
+          "uni0635",
+          "twoDotsHorizontalBelow-ar"
+        ],
+        "init": [
+          "uni0635.init",
+          "twoDotsHorizontalBelow-ar"
+        ],
+        "medi": [
+          "uni0635.medi",
+          "twoDotsHorizontalBelow-ar"
+        ],
+        "fina": [
+          "uni0635.fina",
+          "twoDotsHorizontalBelow-ar"
+        ]
+      },
+      "decompose": [
+        "uni0635",
+        "twoDotsHorizontalBelow-ar"
+      ]
+    },
+    "uni069E": {
+      "positions": {
+        "isol": [
+          "uni0635",
+          "threeDotsUpAbove-ar"
+        ],
+        "init": [
+          "uni0635.init",
+          "threeDotsUpAbove-ar"
+        ],
+        "medi": [
+          "uni0635.medi",
+          "threeDotsUpAbove-ar"
+        ],
+        "fina": [
+          "uni0635.fina",
+          "threeDotsUpAbove-ar"
+        ]
+      },
+      "decompose": [
+        "uni0635",
+        "threeDotsUpAbove-ar"
+      ]
+    },
+    "uni069F": {
+      "positions": {
+        "isol": [
+          "uni0637",
+          "threeDotsUpAbove-ar"
+        ],
+        "init": [
+          "uni0637.init",
+          "threeDotsUpAbove-ar"
+        ],
+        "medi": [
+          "uni0637.medi",
+          "threeDotsUpAbove-ar"
+        ],
+        "fina": [
+          "uni0637.fina",
+          "threeDotsUpAbove-ar"
+        ]
+      },
+      "decompose": [
+        "uni0637",
+        "threeDotsUpAbove-ar"
+      ]
+    },
+    "uni06A0": {
+      "positions": {
+        "isol": [
+          "uni0639",
+          "threeDotsUpAbove-ar"
+        ],
+        "init": [
+          "uni0639.init",
+          "threeDotsUpAbove-ar"
+        ],
+        "medi": [
+          "uni0639.medi",
+          "threeDotsUpAbove-ar"
+        ],
+        "fina": [
+          "uni0639.fina",
+          "threeDotsUpAbove-ar"
+        ]
+      },
+      "decompose": [
+        "uni0639",
+        "threeDotsUpAbove-ar"
+      ]
+    },
+    "uni06A1": {
+      "positions": {
+        "isol": [
+          "uni06A1"
+        ],
+        "init": [
+          "uni06A1.init"
+        ],
+        "medi": [
+          "uni06A1.medi"
+        ],
+        "fina": [
+          "uni06A1.fina"
+        ]
+      }
+    },
+    "uni06A2": {
+      "positions": {
+        "isol": [
+          "uni06A1",
+          "dotBelow-ar"
+        ],
+        "init": [
+          "uni06A1.init",
+          "dotBelow-ar"
+        ],
+        "medi": [
+          "uni06A1.medi",
+          "dotBelow-ar"
+        ],
+        "fina": [
+          "uni06A1.fina",
+          "dotBelow-ar"
+        ]
+      },
+      "decompose": [
+        "uni06A1",
+        "dotBelow-ar"
+      ]
+    },
+    "uni06A3": {
+      "positions": {
+        "isol": [
+          "uni06A1",
+          "dotBelow-ar",
+          "dotAbove-ar"
+        ],
+        "init": [
+          "uni06A1.init",
+          "dotBelow-ar",
+          "dotAbove-ar"
+        ],
+        "medi": [
+          "uni06A1.medi",
+          "dotBelow-ar",
+          "dotAbove-ar"
+        ],
+        "fina": [
+          "uni06A1.fina",
+          "dotBelow-ar",
+          "dotAbove-ar"
+        ]
+      },
+      "decompose": [
+        "uni06A1",
+        "dotBelow-ar",
+        "dotAbove-ar"
+      ]
+    },
+    "uni06A4": {
+      "positions": {
+        "isol": [
+          "uni06A1",
+          "threeDotsUpAbove-ar"
+        ],
+        "init": [
+          "uni06A1.init",
+          "threeDotsUpAbove-ar"
+        ],
+        "medi": [
+          "uni06A1.medi",
+          "threeDotsUpAbove-ar"
+        ],
+        "fina": [
+          "uni06A1.fina",
+          "threeDotsUpAbove-ar"
+        ]
+      },
+      "decompose": [
+        "uni06A1",
+        "threeDotsUpAbove-ar"
+      ]
+    },
+    "uni06A5": {
+      "positions": {
+        "isol": [
+          "uni06A1",
+          "threeDotsDownBelow-ar"
+        ],
+        "init": [
+          "uni06A1.init",
+          "threeDotsDownBelow-ar"
+        ],
+        "medi": [
+          "uni06A1.medi",
+          "threeDotsDownBelow-ar"
+        ],
+        "fina": [
+          "uni06A1.fina",
+          "threeDotsDownBelow-ar"
+        ]
+      },
+      "decompose": [
+        "uni06A1",
+        "threeDotsDownBelow-ar"
+      ]
+    },
+    "uni06A6": {
+      "positions": {
+        "isol": [
+          "uni06A1",
+          "fourDotsAbove-ar"
+        ],
+        "init": [
+          "uni06A1.init",
+          "fourDotsAbove-ar"
+        ],
+        "medi": [
+          "uni06A1.medi",
+          "fourDotsAbove-ar"
+        ],
+        "fina": [
+          "uni06A1.fina",
+          "fourDotsAbove-ar"
+        ]
+      },
+      "decompose": [
+        "uni06A1",
+        "fourDotsAbove-ar"
+      ]
+    },
+    "uni06A7": {
+      "positions": {
+        "isol": [
+          "uni066F",
+          "dotAbove-ar"
+        ],
+        "init": [
+          "uni06A1.init",
+          "dotAbove-ar"
+        ],
+        "medi": [
+          "uni06A1.medi",
+          "dotAbove-ar"
+        ],
+        "fina": [
+          "uni066F.fina",
+          "dotAbove-ar"
+        ]
+      },
+      "decompose": [
+        "uni066F",
+        "dotAbove-ar"
+      ]
+    },
+    "uni06A8": {
+      "positions": {
+        "isol": [
+          "uni066F",
+          "threeDotsUpAbove-ar"
+        ],
+        "init": [
+          "uni06A1.init",
+          "threeDotsUpAbove-ar"
+        ],
+        "medi": [
+          "uni06A1.medi",
+          "threeDotsUpAbove-ar"
+        ],
+        "fina": [
+          "uni066F.fina",
+          "threeDotsUpAbove-ar"
+        ]
+      },
+      "decompose": [
+        "uni066F",
+        "threeDotsUpAbove-ar"
+      ]
+    },
+    "uni06A9": {
+      "positions": {
+        "isol": [
+          "uni06A9"
+        ],
+        "init": [
+          "uni06A9.init"
+        ],
+        "medi": [
+          "uni06A9.medi"
+        ],
+        "fina": [
+          "uni06A9.fina"
+        ]
+      }
+    },
+    "uni06AA": {
+      "positions": {
+        "isol": [
+          "uni06AA"
+        ],
+        "init": [
+          "uni06AA.init"
+        ],
+        "medi": [
+          "uni06AA.medi"
+        ],
+        "fina": [
+          "uni06AA.fina"
+        ]
+      }
+    },
+    "uni06AB": {
+      "positions": {
+        "isol": [
+          "uni06A9",
+          "ringCenter-ar"
+        ],
+        "init": [
+          "uni06A9.init",
+          "ringCenter-ar"
+        ],
+        "medi": [
+          "uni06A9.medi",
+          "ringCenter-ar"
+        ],
+        "fina": [
+          "uni06A9.fina",
+          "ringCenter-ar"
+        ]
+      },
+      "decompose": [
+        "uni06A9",
+        "ringCenter-ar"
+      ]
+    },
+    "uni06AC": {
+      "positions": {
+        "isol": [
+          "kafDotless-ar",
+          "dotAbove-ar",
+          "miniKeheh-ar"
+        ],
+        "init": [
+          "uni06A9.init",
+          "dotAbove-ar"
+        ],
+        "medi": [
+          "uni06A9.medi",
+          "dotAbove-ar"
+        ],
+        "fina": [
+          "kafDotless-ar.fina",
+          "dotAbove-ar",
+          "miniKeheh-ar"
+        ]
+      }
+    },
+    "uni06AD": {
+      "positions": {
+        "isol": [
+          "kafDotless-ar",
+          "threeDotsUpAbove-ar",
+          "miniKeheh-ar"
+        ],
+        "init": [
+          "uni06A9.init",
+          "threeDotsUpAbove-ar"
+        ],
+        "medi": [
+          "uni06A9.medi",
+          "threeDotsUpAbove-ar"
+        ],
+        "fina": [
+          "kafDotless-ar.fina",
+          "threeDotsUpAbove-ar",
+          "miniKeheh-ar"
+        ]
+      }
+    },
+    "uni06AE": {
+      "positions": {
+        "isol": [
+          "kafDotless-ar",
+          "threeDotsDownBelow-ar",
+          "miniKeheh-ar"
+        ],
+        "init": [
+          "uni06A9.init",
+          "threeDotsDownBelow-ar"
+        ],
+        "medi": [
+          "uni06A9.medi",
+          "threeDotsDownBelow-ar"
+        ],
+        "fina": [
+          "kafDotless-ar.fina",
+          "threeDotsDownBelow-ar",
+          "miniKeheh-ar"
+        ]
+      }
+    },
+    "uni06AF": {
+      "positions": {
+        "isol": [
+          "uni06A9",
+          "gafSarkash-ar"
+        ],
+        "init": [
+          "uni06A9.init",
+          "gafSarkash-ar"
+        ],
+        "medi": [
+          "uni06A9.medi",
+          "gafSarkash-ar"
+        ],
+        "fina": [
+          "uni06A9.fina",
+          "gafSarkash-ar"
+        ]
+      },
+      "decompose": [
+        "uni06A9",
+        "gafSarkash-ar"
+      ]
+    },
+    "uni06B0": {
+      "positions": {
+        "isol": [
+          "uni06A9",
+          "ringCenter-ar",
+          "gafSarkash-ar"
+        ],
+        "init": [
+          "uni06A9.init",
+          "ringCenter-ar",
+          "gafSarkash-ar"
+        ],
+        "medi": [
+          "uni06A9.medi",
+          "ringCenter-ar",
+          "gafSarkash-ar"
+        ],
+        "fina": [
+          "uni06A9.fina",
+          "ringCenter-ar",
+          "gafSarkash-ar"
+        ]
+      },
+      "decompose": [
+        "uni06A9",
+        "ringCenter-ar",
+        "gafSarkash-ar"
+      ]
+    },
+    "uni06B1": {
+      "positions": {
+        "isol": [
+          "uni06A9",
+          "gafSarkash-ar",
+          "twoDotsHorizontalAbove-ar"
+        ],
+        "init": [
+          "uni06A9.init",
+          "gafSarkash-ar",
+          "twoDotsHorizontalAbove-ar"
+        ],
+        "medi": [
+          "uni06A9.medi",
+          "gafSarkash-ar",
+          "twoDotsHorizontalAbove-ar"
+        ],
+        "fina": [
+          "uni06A9.fina",
+          "gafSarkash-ar",
+          "twoDotsHorizontalAbove-ar"
+        ]
+      },
+      "decompose": [
+        "uni06A9",
+        "gafSarkash-ar",
+        "twoDotsHorizontalAbove-ar"
+      ]
+    },
+    "uni06B2": {
+      "positions": {
+        "isol": [
+          "uni06A9",
+          "twoDotsHorizontalBelow-ar",
+          "gafSarkash-ar"
+        ],
+        "init": [
+          "uni06A9.init",
+          "twoDotsHorizontalBelow-ar",
+          "gafSarkash-ar"
+        ],
+        "medi": [
+          "uni06A9.medi",
+          "twoDotsHorizontalBelow-ar",
+          "gafSarkash-ar"
+        ],
+        "fina": [
+          "uni06A9.fina",
+          "twoDotsHorizontalBelow-ar",
+          "gafSarkash-ar"
+        ]
+      },
+      "decompose": [
+        "uni06A9",
+        "twoDotsHorizontalBelow-ar",
+        "gafSarkash-ar"
+      ]
+    },
+    "uni06B3": {
+      "positions": {
+        "isol": [
+          "uni06A9",
+          "twoDotsVerticalBelow-ar",
+          "gafSarkash-ar"
+        ],
+        "init": [
+          "uni06A9.init",
+          "twoDotsVerticalBelow-ar",
+          "gafSarkash-ar"
+        ],
+        "medi": [
+          "uni06A9.medi",
+          "twoDotsVerticalBelow-ar",
+          "gafSarkash-ar"
+        ],
+        "fina": [
+          "uni06A9.fina",
+          "twoDotsVerticalBelow-ar",
+          "gafSarkash-ar"
+        ]
+      },
+      "decompose": [
+        "uni06A9",
+        "twoDotsVerticalBelow-ar",
+        "gafSarkash-ar"
+      ]
+    },
+    "uni06B4": {
+      "positions": {
+        "isol": [
+          "uni06A9",
+          "gafSarkash-ar",
+          "threeDotsUpAbove-ar"
+        ],
+        "init": [
+          "uni06A9.init",
+          "gafSarkash-ar",
+          "threeDotsUpAbove-ar"
+        ],
+        "medi": [
+          "uni06A9.medi",
+          "gafSarkash-ar",
+          "threeDotsUpAbove-ar"
+        ],
+        "fina": [
+          "uni06A9.fina",
+          "gafSarkash-ar",
+          "threeDotsUpAbove-ar"
+        ]
+      },
+      "decompose": [
+        "uni06A9",
+        "gafSarkash-ar",
+        "threeDotsUpAbove-ar"
+      ]
+    },
+    "uni06B5": {
+      "positions": {
+        "isol": [
+          "uni0644",
+          "uni065A"
+        ],
+        "init": [
+          "uni0644.init",
+          "uni065A"
+        ],
+        "medi": [
+          "uni0644.medi",
+          "uni065A"
+        ],
+        "fina": [
+          "uni0644.fina",
+          "uni065A"
+        ]
+      },
+      "decompose": [
+        "uni0644",
+        "uni065A"
+      ]
+    },
+    "uni06B6": {
+      "positions": {
+        "isol": [
+          "uni0644",
+          "dotAbove-ar"
+        ],
+        "init": [
+          "uni0644.init",
+          "dotAbove-ar"
+        ],
+        "medi": [
+          "uni0644.medi",
+          "dotAbove-ar"
+        ],
+        "fina": [
+          "uni0644.fina",
+          "dotAbove-ar"
+        ]
+      },
+      "decompose": [
+        "uni0644",
+        "dotAbove-ar"
+      ]
+    },
+    "uni06B7": {
+      "positions": {
+        "isol": [
+          "uni0644",
+          "threeDotsUpAbove-ar"
+        ],
+        "init": [
+          "uni0644.init",
+          "threeDotsUpAbove-ar"
+        ],
+        "medi": [
+          "uni0644.medi",
+          "threeDotsUpAbove-ar"
+        ],
+        "fina": [
+          "uni0644.fina",
+          "threeDotsUpAbove-ar"
+        ]
+      },
+      "decompose": [
+        "uni0644",
+        "threeDotsUpAbove-ar"
+      ]
+    },
+    "uni06B8": {
+      "positions": {
+        "isol": [
+          "uni0644",
+          "threeDotsDownBelow-ar"
+        ],
+        "init": [
+          "uni0644.init",
+          "threeDotsDownBelow-ar"
+        ],
+        "medi": [
+          "uni0644.medi",
+          "threeDotsDownBelow-ar"
+        ],
+        "fina": [
+          "uni0644.fina",
+          "threeDotsDownBelow-ar"
+        ]
+      },
+      "decompose": [
+        "uni0644",
+        "threeDotsDownBelow-ar"
+      ]
+    },
+    "uni06B9": {
+      "positions": {
+        "isol": [
+          "uni06BA",
+          "dotBelow-ar",
+          "dotAbove-ar"
+        ],
+        "init": [
+          "uni066E.init",
+          "dotBelow-ar",
+          "dotAbove-ar"
+        ],
+        "medi": [
+          "uni066E.medi",
+          "dotBelow-ar",
+          "dotAbove-ar"
+        ],
+        "fina": [
+          "uni06BA.fina",
+          "dotBelow-ar",
+          "dotAbove-ar"
+        ]
+      },
+      "decompose": [
+        "uni06BA",
+        "dotBelow-ar",
+        "dotAbove-ar"
+      ]
+    },
+    "uni06BA": {
+      "positions": {
+        "isol": [
+          "uni06BA"
+        ],
+        "init": [
+          "uni066E.init"
+        ],
+        "medi": [
+          "uni066E.medi"
+        ],
+        "fina": [
+          "uni06BA.fina"
+        ]
+      }
+    },
+    "uni06BB": {
+      "positions": {
+        "isol": [
+          "uni06BA",
+          "tahAbove-ar"
+        ],
+        "init": [
+          "uni066E.init",
+          "tahAbove-ar"
+        ],
+        "medi": [
+          "uni066E.medi",
+          "tahAbove-ar"
+        ],
+        "fina": [
+          "uni06BA.fina",
+          "tahAbove-ar"
+        ]
+      },
+      "decompose": [
+        "uni06BA",
+        "tahAbove-ar"
+      ]
+    },
+    "uni06BC": {
+      "positions": {
+        "isol": [
+          "uni06BA",
+          "ringCenter-ar",
+          "dotAbove-ar"
+        ],
+        "init": [
+          "uni066E.init",
+          "ringCenter-ar",
+          "dotAbove-ar"
+        ],
+        "medi": [
+          "uni066E.medi",
+          "ringCenter-ar",
+          "dotAbove-ar"
+        ],
+        "fina": [
+          "uni06BA.fina",
+          "ringCenter-ar",
+          "dotAbove-ar"
+        ]
+      },
+      "decompose": [
+        "uni06BA",
+        "ringCenter-ar",
+        "dotAbove-ar"
+      ]
+    },
+    "uni06BD": {
+      "positions": {
+        "isol": [
+          "uni06BA",
+          "threeDotsUpAbove-ar"
+        ],
+        "init": [
+          "uni066E.init",
+          "threeDotsDownBelow-ar"
+        ],
+        "medi": [
+          "uni066E.medi",
+          "threeDotsDownBelow-ar"
+        ],
+        "fina": [
+          "uni06BA.fina",
+          "threeDotsUpAbove-ar"
+        ]
+      }
+    },
+    "uni06BE": {
+      "positions": {
+        "isol": [
+          "uni06BE"
+        ],
+        "init": [
+          "uni0647.init"
+        ],
+        "medi": [
+          "uni06BE.medi"
+        ],
+        "fina": [
+          "uni06BE.fina"
+        ]
+      }
+    },
+    "uni06BF": {
+      "positions": {
+        "isol": [
+          "uni062D",
+          "threeDotsDownCenter-ar",
+          "dotAbove-ar"
+        ],
+        "init": [
+          "uni062D.init",
+          "threeDotsDownBelow-ar",
+          "dotAbove-ar"
+        ],
+        "medi": [
+          "uni062D.medi",
+          "threeDotsDownBelow-ar",
+          "dotAbove-ar"
+        ],
+        "fina": [
+          "uni062D.fina",
+          "threeDotsDownCenter-ar",
+          "dotAbove-ar"
+        ]
+      }
+    },
+    "uni06C0": {
+      "positions": {
+        "isol": [
+          "uni06D5",
+          "uni0654"
+        ],
+        "fina": [
+          "uni0647.fina",
+          "uni0654"
+        ]
+      },
+      "decompose": [
+        "uni06D5",
+        "uni0654"
+      ]
+    },
+    "uni06C1": {
+      "positions": {
+        "isol": [
+          "uni06C1"
+        ],
+        "init": [
+          "uni066E.init",
+          "hehGoalMark-ar"
+        ],
+        "medi": [
+          "uni06C1.medi"
+        ],
+        "fina": [
+          "uni06C1.fina"
+        ]
+      }
+    },
+    "uni06C2": {
+      "positions": {
+        "isol": [
+          "uni06C1",
+          "uni0654"
+        ],
+        "init": [
+          "uni066E.init",
+          "uni0654",
+          "hehGoalMark-ar"
+        ],
+        "medi": [
+          "uni06C1.medi",
+          "uni0654"
+        ],
+        "fina": [
+          "uni06C1.fina",
+          "uni0654"
+        ]
+      }
+    },
+    "uni06C3": {
+      "positions": {
+        "isol": [
+          "uni06C1",
+          "twoDotsHorizontalAbove-ar"
+        ],
+        "fina": [
+          "uni06C1.fina",
+          "twoDotsHorizontalAbove-ar"
+        ]
+      },
+      "decompose": [
+        "uni06C1",
+        "twoDotsHorizontalAbove-ar"
+      ]
+    },
+    "uni06C4": {
+      "positions": {
+        "isol": [
+          "uni0648",
+          "ringCenter-ar"
+        ],
+        "fina": [
+          "uni0648.fina",
+          "ringCenter-ar"
+        ]
+      },
+      "decompose": [
+        "uni0648",
+        "ringCenter-ar"
+      ]
+    },
+    "uni06C6": {
+      "positions": {
+        "isol": [
+          "uni0648",
+          "uni065A"
+        ],
+        "fina": [
+          "uni0648.fina",
+          "uni065A"
+        ]
+      },
+      "decompose": [
+        "uni0648",
+        "uni065A"
+      ]
+    },
+    "uni06C7": {
+      "positions": {
+        "isol": [
+          "uni0648",
+          "commaAbove-ar"
+        ],
+        "fina": [
+          "uni0648.fina",
+          "commaAbove-ar"
+        ]
+      },
+      "decompose": [
+        "uni0648",
+        "commaAbove-ar"
+      ]
+    },
+    "uni06C8": {
+      "positions": {
+        "isol": [
+          "uni0648",
+          "uni0670"
+        ],
+        "fina": [
+          "uni0648.fina",
+          "uni0670"
+        ]
+      },
+      "decompose": [
+        "uni0648",
+        "uni0670"
+      ]
+    },
+    "uni06C9": {
+      "positions": {
+        "isol": [
+          "uni0648",
+          "uni065B"
+        ],
+        "fina": [
+          "uni0648.fina",
+          "uni065B"
+        ]
+      },
+      "decompose": [
+        "uni0648",
+        "uni065B"
+      ]
+    },
+    "uni06CA": {
+      "positions": {
+        "isol": [
+          "uni0648",
+          "twoDotsHorizontalAbove-ar"
+        ],
+        "fina": [
+          "uni0648.fina",
+          "twoDotsHorizontalAbove-ar"
+        ]
+      },
+      "decompose": [
+        "uni0648",
+        "twoDotsHorizontalAbove-ar"
+      ]
+    },
+    "uni06CB": {
+      "positions": {
+        "isol": [
+          "uni0648",
+          "threeDotsUpAbove-ar"
+        ],
+        "fina": [
+          "uni0648.fina",
+          "threeDotsUpAbove-ar"
+        ]
+      },
+      "decompose": [
+        "uni0648",
+        "threeDotsUpAbove-ar"
+      ]
+    },
+    "uni06CC": {
+      "positions": {
+        "isol": [
+          "uni0649"
+        ],
+        "init": [
+          "uni066E.init",
+          "twoDotsHorizontalBelow-ar"
+        ],
+        "medi": [
+          "uni066E.medi",
+          "twoDotsHorizontalBelow-ar"
+        ],
+        "fina": [
+          "uni0649.fina"
+        ]
+      }
+    },
+    "uni06CD": {
+      "positions": {
+        "isol": [
+          "uni0649",
+          "tail-ar"
+        ],
+        "fina": [
+          "uni0649.fina",
+          "tail-ar"
+        ]
+      },
+      "decompose": [
+        "uni0649",
+        "tail-ar"
+      ]
+    },
+    "uni06CE": {
+      "positions": {
+        "isol": [
+          "uni0649",
+          "uni065A"
+        ],
+        "init": [
+          "uni066E.init",
+          "twoDotsHorizontalBelow-ar",
+          "uni065A"
+        ],
+        "medi": [
+          "uni066E.medi",
+          "twoDotsHorizontalBelow-ar",
+          "uni065A"
+        ],
+        "fina": [
+          "uni0649.fina",
+          "uni065A"
+        ]
+      }
+    },
+    "uni06CF": {
+      "positions": {
+        "isol": [
+          "uni0648",
+          "dotAbove-ar"
+        ],
+        "fina": [
+          "uni0648.fina",
+          "dotAbove-ar"
+        ]
+      },
+      "decompose": [
+        "uni0648",
+        "dotAbove-ar"
+      ]
+    },
+    "uni06D0": {
+      "positions": {
+        "isol": [
+          "uni0649",
+          "twoDotsVerticalBelow-ar"
+        ],
+        "init": [
+          "uni066E.init",
+          "twoDotsVerticalBelow-ar"
+        ],
+        "medi": [
+          "uni066E.medi",
+          "twoDotsVerticalBelow-ar"
+        ],
+        "fina": [
+          "uni0649.fina",
+          "twoDotsVerticalBelow-ar"
+        ]
+      },
+      "decompose": [
+        "uni0649",
+        "twoDotsVerticalBelow-ar"
+      ]
+    },
+    "uni06D2": {
+      "positions": {
+        "isol": [
+          "uni06D2"
+        ],
+        "fina": [
+          "uni06D2.fina"
+        ]
+      }
+    },
+    "uni06D3": {
+      "positions": {
+        "isol": [
+          "uni06D2",
+          "uni0654"
+        ],
+        "fina": [
+          "uni06D2.fina",
+          "uni0654"
+        ]
+      },
+      "decompose": [
+        "uni06D2",
+        "uni0654"
+      ]
+    },
+    "uni06D5": {
+      "positions": {
+        "isol": [
+          "uni06D5"
+        ],
+        "fina": [
+          "uni0647.fina"
+        ]
+      }
+    },
+    "uni06EE": {
+      "positions": {
+        "isol": [
+          "uni062F",
+          "uni065B"
+        ],
+        "fina": [
+          "uni062F.fina",
+          "uni065B"
+        ]
+      },
+      "decompose": [
+        "uni062F",
+        "uni065B"
+      ]
+    },
+    "uni06EF": {
+      "positions": {
+        "isol": [
+          "uni0631",
+          "uni065B"
+        ],
+        "fina": [
+          "uni0631.fina",
+          "uni065B"
+        ]
+      },
+      "decompose": [
+        "uni0631",
+        "uni065B"
+      ]
+    },
+    "uni06FA": {
+      "positions": {
+        "isol": [
+          "uni0633",
+          "dotBelow-ar",
+          "threeDotsUpAbove-ar"
+        ],
+        "init": [
+          "uni0633.init",
+          "dotBelow-ar",
+          "threeDotsUpAbove-ar"
+        ],
+        "medi": [
+          "uni0633.medi",
+          "dotBelow-ar",
+          "threeDotsUpAbove-ar"
+        ],
+        "fina": [
+          "uni0633.fina",
+          "dotBelow-ar",
+          "threeDotsUpAbove-ar"
+        ]
+      },
+      "decompose": [
+        "uni0633",
+        "dotBelow-ar",
+        "threeDotsUpAbove-ar"
+      ]
+    },
+    "uni06FB": {
+      "positions": {
+        "isol": [
+          "uni0635",
+          "dotBelow-ar",
+          "dotAbove-ar"
+        ],
+        "init": [
+          "uni0635.init",
+          "dotBelow-ar",
+          "dotAbove-ar"
+        ],
+        "medi": [
+          "uni0635.medi",
+          "dotBelow-ar",
+          "dotAbove-ar"
+        ],
+        "fina": [
+          "uni0635.fina",
+          "dotBelow-ar",
+          "dotAbove-ar"
+        ]
+      },
+      "decompose": [
+        "uni0635",
+        "dotBelow-ar",
+        "dotAbove-ar"
+      ]
+    },
+    "uni06FC": {
+      "positions": {
+        "isol": [
+          "uni0639",
+          "dotBelow-ar",
+          "dotAbove-ar"
+        ],
+        "init": [
+          "uni0639.init",
+          "dotBelow-ar",
+          "dotAbove-ar"
+        ],
+        "medi": [
+          "uni0639.medi",
+          "dotBelow-ar",
+          "dotAbove-ar"
+        ],
+        "fina": [
+          "uni0639.fina",
+          "dotBelow-ar",
+          "dotAbove-ar"
+        ]
+      },
+      "decompose": [
+        "uni0639",
+        "dotBelow-ar",
+        "dotAbove-ar"
+      ]
+    },
+    "uni06FF": {
+      "positions": {
+        "isol": [
+          "uni06BE",
+          "uni065B"
+        ],
+        "init": [
+          "uni0647.init",
+          "uni065B"
+        ],
+        "medi": [
+          "uni06BE.medi",
+          "uni065B"
+        ],
+        "fina": [
+          "uni06BE.fina",
+          "uni065B"
+        ]
+      },
+      "decompose": [
+        "uni06BE",
+        "uni065B"
+      ]
+    },
+    "uni0751": {
+      "positions": {
+        "isol": [
+          "uni066E",
+          "dotBelow-ar",
+          "threeDotsUpAbove-ar"
+        ],
+        "init": [
+          "uni066E.init",
+          "dotBelow-ar",
+          "threeDotsUpAbove-ar"
+        ],
+        "medi": [
+          "uni066E.medi",
+          "dotBelow-ar",
+          "threeDotsUpAbove-ar"
+        ],
+        "fina": [
+          "uni066E.fina",
+          "dotBelow-ar",
+          "threeDotsUpAbove-ar"
+        ]
+      },
+      "decompose": [
+        "uni066E",
+        "dotBelow-ar",
+        "threeDotsUpAbove-ar"
+      ]
+    },
+    "uni0752": {
+      "positions": {
+        "isol": [
+          "uni066E",
+          "threeDotsUpBelow-ar"
+        ],
+        "init": [
+          "uni066E.init",
+          "threeDotsUpBelow-ar"
+        ],
+        "medi": [
+          "uni066E.medi",
+          "threeDotsUpBelow-ar"
+        ],
+        "fina": [
+          "uni066E.fina",
+          "threeDotsUpBelow-ar"
+        ]
+      },
+      "decompose": [
+        "uni066E",
+        "threeDotsUpBelow-ar"
+      ]
+    },
+    "uni0753": {
+      "positions": {
+        "isol": [
+          "uni066E",
+          "threeDotsUpBelow-ar",
+          "twoDotsHorizontalAbove-ar"
+        ],
+        "init": [
+          "uni066E.init",
+          "threeDotsUpBelow-ar",
+          "twoDotsHorizontalAbove-ar"
+        ],
+        "medi": [
+          "uni066E.medi",
+          "threeDotsUpBelow-ar",
+          "twoDotsHorizontalAbove-ar"
+        ],
+        "fina": [
+          "uni066E.fina",
+          "threeDotsUpBelow-ar",
+          "twoDotsHorizontalAbove-ar"
+        ]
+      },
+      "decompose": [
+        "uni066E",
+        "threeDotsUpBelow-ar",
+        "twoDotsHorizontalAbove-ar"
+      ]
+    },
+    "uni0754": {
+      "positions": {
+        "isol": [
+          "uni066E",
+          "twoDotsHorizontalBelow-ar",
+          "dotAbove-ar"
+        ],
+        "init": [
+          "uni066E.init",
+          "twoDotsHorizontalBelow-ar",
+          "dotAbove-ar"
+        ],
+        "medi": [
+          "uni066E.medi",
+          "twoDotsHorizontalBelow-ar",
+          "dotAbove-ar"
+        ],
+        "fina": [
+          "uni066E.fina",
+          "twoDotsHorizontalBelow-ar",
+          "dotAbove-ar"
+        ]
+      },
+      "decompose": [
+        "uni066E",
+        "twoDotsHorizontalBelow-ar",
+        "dotAbove-ar"
+      ]
+    },
+    "uni0755": {
+      "positions": {
+        "isol": [
+          "uni066E",
+          "vInvertedBelow-ar"
+        ],
+        "init": [
+          "uni066E.init",
+          "vInvertedBelow-ar"
+        ],
+        "medi": [
+          "uni066E.medi",
+          "vInvertedBelow-ar"
+        ],
+        "fina": [
+          "uni066E.fina",
+          "vInvertedBelow-ar"
+        ]
+      },
+      "decompose": [
+        "uni066E",
+        "vInvertedBelow-ar"
+      ]
+    },
+    "uni0756": {
+      "positions": {
+        "isol": [
+          "uni066E",
+          "uni065A"
+        ],
+        "init": [
+          "uni066E.init",
+          "uni065A"
+        ],
+        "medi": [
+          "uni066E.medi",
+          "uni065A"
+        ],
+        "fina": [
+          "uni066E.fina",
+          "uni065A"
+        ]
+      },
+      "decompose": [
+        "uni066E",
+        "uni065A"
+      ]
+    },
+    "uni0757": {
+      "positions": {
+        "isol": [
+          "uni062D",
+          "twoDotsHorizontalAbove-ar"
+        ],
+        "init": [
+          "uni062D.init",
+          "twoDotsHorizontalAbove-ar"
+        ],
+        "medi": [
+          "uni062D.medi",
+          "twoDotsHorizontalAbove-ar"
+        ],
+        "fina": [
+          "uni062D.fina",
+          "twoDotsHorizontalAbove-ar"
+        ]
+      },
+      "decompose": [
+        "uni062D",
+        "twoDotsHorizontalAbove-ar"
+      ]
+    },
+    "uni0758": {
+      "positions": {
+        "isol": [
+          "uni062D",
+          "threeDotsUpCenter-ar"
+        ],
+        "init": [
+          "uni062D.init",
+          "threeDotsUpBelow-ar"
+        ],
+        "medi": [
+          "uni062D.medi",
+          "threeDotsUpBelow-ar"
+        ],
+        "fina": [
+          "uni062D.fina",
+          "threeDotsUpCenter-ar"
+        ]
+      }
+    },
+    "uni0759": {
+      "positions": {
+        "isol": [
+          "uni062F",
+          "twoDotsVerticalBelow-ar",
+          "tahAbove-ar"
+        ],
+        "fina": [
+          "uni062F.fina",
+          "twoDotsVerticalBelow-ar",
+          "tahAbove-ar"
+        ]
+      },
+      "decompose": [
+        "uni062F",
+        "twoDotsVerticalBelow-ar",
+        "tahAbove-ar"
+      ]
+    },
+    "uni075A": {
+      "positions": {
+        "isol": [
+          "uni062F",
+          "vInvertedBelow-ar"
+        ],
+        "fina": [
+          "uni062F.fina",
+          "vInvertedBelow-ar"
+        ]
+      },
+      "decompose": [
+        "uni062F",
+        "vInvertedBelow-ar"
+      ]
+    },
+    "uni075C": {
+      "positions": {
+        "isol": [
+          "uni0633",
+          "fourDotsAbove-ar"
+        ],
+        "init": [
+          "uni0633.init",
+          "fourDotsAbove-ar"
+        ],
+        "medi": [
+          "uni0633.medi",
+          "fourDotsAbove-ar"
+        ],
+        "fina": [
+          "uni0633.fina",
+          "fourDotsAbove-ar"
+        ]
+      },
+      "decompose": [
+        "uni0633",
+        "fourDotsAbove-ar"
+      ]
+    },
+    "uni075D": {
+      "positions": {
+        "isol": [
+          "uni0639",
+          "twoDotsHorizontalAbove-ar"
+        ],
+        "init": [
+          "uni0639.init",
+          "twoDotsHorizontalAbove-ar"
+        ],
+        "medi": [
+          "uni0639.medi",
+          "twoDotsHorizontalAbove-ar"
+        ],
+        "fina": [
+          "uni0639.fina",
+          "twoDotsHorizontalAbove-ar"
+        ]
+      },
+      "decompose": [
+        "uni0639",
+        "twoDotsHorizontalAbove-ar"
+      ]
+    },
+    "uni075E": {
+      "positions": {
+        "isol": [
+          "uni0639",
+          "threeDotsDownAbove-ar"
+        ],
+        "init": [
+          "uni0639.init",
+          "threeDotsDownAbove-ar"
+        ],
+        "medi": [
+          "uni0639.medi",
+          "threeDotsDownAbove-ar"
+        ],
+        "fina": [
+          "uni0639.fina",
+          "threeDotsDownAbove-ar"
+        ]
+      },
+      "decompose": [
+        "uni0639",
+        "threeDotsDownAbove-ar"
+      ]
+    },
+    "uni075F": {
+      "positions": {
+        "isol": [
+          "uni0639",
+          "twoDotsVerticalAbove-ar"
+        ],
+        "init": [
+          "uni0639.init",
+          "twoDotsVerticalAbove-ar"
+        ],
+        "medi": [
+          "uni0639.medi",
+          "twoDotsVerticalAbove-ar"
+        ],
+        "fina": [
+          "uni0639.fina",
+          "twoDotsVerticalAbove-ar"
+        ]
+      },
+      "decompose": [
+        "uni0639",
+        "twoDotsVerticalAbove-ar"
+      ]
+    },
+    "uni0760": {
+      "positions": {
+        "isol": [
+          "uni06A1",
+          "twoDotsHorizontalBelow-ar"
+        ],
+        "init": [
+          "uni06A1.init",
+          "twoDotsHorizontalBelow-ar"
+        ],
+        "medi": [
+          "uni06A1.medi",
+          "twoDotsHorizontalBelow-ar"
+        ],
+        "fina": [
+          "uni06A1.fina",
+          "twoDotsHorizontalBelow-ar"
+        ]
+      },
+      "decompose": [
+        "uni06A1",
+        "twoDotsHorizontalBelow-ar"
+      ]
+    },
+    "uni0761": {
+      "positions": {
+        "isol": [
+          "uni06A1",
+          "threeDotsUpBelow-ar"
+        ],
+        "init": [
+          "uni06A1.init",
+          "threeDotsUpBelow-ar"
+        ],
+        "medi": [
+          "uni06A1.medi",
+          "threeDotsUpBelow-ar"
+        ],
+        "fina": [
+          "uni06A1.fina",
+          "threeDotsUpBelow-ar"
+        ]
+      },
+      "decompose": [
+        "uni06A1",
+        "threeDotsUpBelow-ar"
+      ]
+    },
+    "uni0762": {
+      "positions": {
+        "isol": [
+          "uni06A9",
+          "dotAbove-ar"
+        ],
+        "init": [
+          "uni06A9.init",
+          "dotAbove-ar"
+        ],
+        "medi": [
+          "uni06A9.medi",
+          "dotAbove-ar"
+        ],
+        "fina": [
+          "uni06A9.fina",
+          "dotAbove-ar"
+        ]
+      },
+      "decompose": [
+        "uni06A9",
+        "dotAbove-ar"
+      ]
+    },
+    "uni0763": {
+      "positions": {
+        "isol": [
+          "uni06A9",
+          "threeDotsUpAbove-ar"
+        ],
+        "init": [
+          "uni06A9.init",
+          "threeDotsUpAbove-ar"
+        ],
+        "medi": [
+          "uni06A9.medi",
+          "threeDotsUpAbove-ar"
+        ],
+        "fina": [
+          "uni06A9.fina",
+          "threeDotsUpAbove-ar"
+        ]
+      },
+      "decompose": [
+        "uni06A9",
+        "threeDotsUpAbove-ar"
+      ]
+    },
+    "uni0764": {
+      "positions": {
+        "isol": [
+          "uni06A9",
+          "threeDotsUpBelow-ar"
+        ],
+        "init": [
+          "uni06A9.init",
+          "threeDotsUpBelow-ar"
+        ],
+        "medi": [
+          "uni06A9.medi",
+          "threeDotsUpBelow-ar"
+        ],
+        "fina": [
+          "uni06A9.fina",
+          "threeDotsUpBelow-ar"
+        ]
+      },
+      "decompose": [
+        "uni06A9",
+        "threeDotsUpBelow-ar"
+      ]
+    },
+    "uni0765": {
+      "positions": {
+        "isol": [
+          "uni0645",
+          "dotAbove-ar"
+        ],
+        "init": [
+          "uni0645.init",
+          "dotAbove-ar"
+        ],
+        "medi": [
+          "uni0645.medi",
+          "dotAbove-ar"
+        ],
+        "fina": [
+          "uni0645.fina",
+          "dotAbove-ar"
+        ]
+      },
+      "decompose": [
+        "uni0645",
+        "dotAbove-ar"
+      ]
+    },
+    "uni0766": {
+      "positions": {
+        "isol": [
+          "uni0645",
+          "dotBelow-ar"
+        ],
+        "init": [
+          "uni0645.init",
+          "dotBelow-ar"
+        ],
+        "medi": [
+          "uni0645.medi",
+          "dotBelow-ar"
+        ],
+        "fina": [
+          "uni0645.fina",
+          "dotBelow-ar"
+        ]
+      },
+      "decompose": [
+        "uni0645",
+        "dotBelow-ar"
+      ]
+    },
+    "uni0767": {
+      "positions": {
+        "isol": [
+          "uni06BA",
+          "twoDotsHorizontalBelow-ar",
+          "dotAbove-ar"
+        ],
+        "init": [
+          "uni066E.init",
+          "twoDotsHorizontalBelow-ar",
+          "dotAbove-ar"
+        ],
+        "medi": [
+          "uni066E.medi",
+          "twoDotsHorizontalBelow-ar",
+          "dotAbove-ar"
+        ],
+        "fina": [
+          "uni06BA.fina",
+          "twoDotsHorizontalBelow-ar",
+          "dotAbove-ar"
+        ]
+      },
+      "decompose": [
+        "uni06BA",
+        "twoDotsHorizontalBelow-ar",
+        "dotAbove-ar"
+      ]
+    },
+    "uni0768": {
+      "positions": {
+        "isol": [
+          "uni06BA",
+          "dotAbove-ar",
+          "tahAbove-ar"
+        ],
+        "init": [
+          "uni066E.init",
+          "dotAbove-ar",
+          "tahAbove-ar"
+        ],
+        "medi": [
+          "uni066E.medi",
+          "dotAbove-ar",
+          "tahAbove-ar"
+        ],
+        "fina": [
+          "uni06BA.fina",
+          "dotAbove-ar",
+          "tahAbove-ar"
+        ]
+      },
+      "decompose": [
+        "uni06BA",
+        "dotAbove-ar",
+        "tahAbove-ar"
+      ]
+    },
+    "uni0769": {
+      "positions": {
+        "isol": [
+          "uni06BA",
+          "dotAbove-ar",
+          "uni065A"
+        ],
+        "init": [
+          "uni066E.init",
+          "dotAbove-ar",
+          "uni065A"
+        ],
+        "medi": [
+          "uni066E.medi",
+          "dotAbove-ar",
+          "uni065A"
+        ],
+        "fina": [
+          "uni06BA.fina",
+          "dotAbove-ar",
+          "uni065A"
+        ]
+      },
+      "decompose": [
+        "uni06BA",
+        "dotAbove-ar",
+        "uni065A"
+      ]
+    },
+    "uni076B": {
+      "positions": {
+        "isol": [
+          "uni0631",
+          "twoDotsVerticalAbove-ar"
+        ],
+        "fina": [
+          "uni0631.fina",
+          "twoDotsVerticalAbove-ar"
+        ]
+      },
+      "decompose": [
+        "uni0631",
+        "twoDotsVerticalAbove-ar"
+      ]
+    },
+    "uni076C": {
+      "positions": {
+        "isol": [
+          "uni0631",
+          "uni0654"
+        ],
+        "fina": [
+          "uni0631.fina",
+          "uni0654"
+        ]
+      },
+      "decompose": [
+        "uni0631",
+        "uni0654"
+      ]
+    },
+    "uni076D": {
+      "positions": {
+        "isol": [
+          "uni0633",
+          "twoDotsVerticalAbove-ar"
+        ],
+        "init": [
+          "uni0633.init",
+          "twoDotsVerticalAbove-ar"
+        ],
+        "medi": [
+          "uni0633.medi",
+          "twoDotsVerticalAbove-ar"
+        ],
+        "fina": [
+          "uni0633.fina",
+          "twoDotsVerticalAbove-ar"
+        ]
+      },
+      "decompose": [
+        "uni0633",
+        "twoDotsVerticalAbove-ar"
+      ]
+    },
+    "uni076E": {
+      "positions": {
+        "isol": [
+          "uni062D",
+          "tahCenter-ar"
+        ],
+        "init": [
+          "uni062D.init",
+          "tahBelow-ar"
+        ],
+        "medi": [
+          "uni062D.medi",
+          "tahBelow-ar"
+        ],
+        "fina": [
+          "uni062D.fina",
+          "tahCenter-ar"
+        ]
+      }
+    },
+    "uni076F": {
+      "positions": {
+        "isol": [
+          "uni062D",
+          "twoDotsHorizontalCenter-ar",
+          "tahCenter-ar"
+        ],
+        "init": [
+          "uni062D.init",
+          "twoDotsHorizontalCenter-ar",
+          "tahCenter-ar"
+        ],
+        "medi": [
+          "uni062D.medi",
+          "twoDotsHorizontalCenter-ar",
+          "tahCenter-ar"
+        ],
+        "fina": [
+          "uni062D.fina",
+          "twoDotsHorizontalCenter-ar",
+          "tahCenter-ar"
+        ]
+      },
+      "decompose": [
+        "uni062D",
+        "twoDotsHorizontalCenter-ar",
+        "tahCenter-ar"
+      ]
+    },
+    "uni0770": {
+      "positions": {
+        "isol": [
+          "uni0633",
+          "twoDotsHorizontalAbove-ar",
+          "tahAbove-ar"
+        ],
+        "init": [
+          "uni0633.init",
+          "twoDotsHorizontalAbove-ar",
+          "tahAbove-ar"
+        ],
+        "medi": [
+          "uni0633.medi",
+          "twoDotsHorizontalAbove-ar",
+          "tahAbove-ar"
+        ],
+        "fina": [
+          "uni0633.fina",
+          "twoDotsHorizontalAbove-ar",
+          "tahAbove-ar"
+        ]
+      },
+      "decompose": [
+        "uni0633",
+        "twoDotsHorizontalAbove-ar",
+        "tahAbove-ar"
+      ]
+    },
+    "uni0771": {
+      "positions": {
+        "isol": [
+          "uni0631",
+          "twoDotsHorizontalAbove-ar",
+          "tahAbove-ar"
+        ],
+        "fina": [
+          "uni0631.fina",
+          "twoDotsHorizontalAbove-ar",
+          "tahAbove-ar"
+        ]
+      },
+      "decompose": [
+        "uni0631",
+        "twoDotsHorizontalAbove-ar",
+        "tahAbove-ar"
+      ]
+    },
+    "uni0772": {
+      "positions": {
+        "isol": [
+          "uni062D",
+          "tahAbove-ar"
+        ],
+        "init": [
+          "uni062D.init",
+          "tahAbove-ar"
+        ],
+        "medi": [
+          "uni062D.medi",
+          "tahAbove-ar"
+        ],
+        "fina": [
+          "uni062D.fina",
+          "tahAbove-ar"
+        ]
+      },
+      "decompose": [
+        "uni062D",
+        "tahAbove-ar"
+      ]
+    },
+    "uni077E": {
+      "positions": {
+        "isol": [
+          "uni0633",
+          "uni065B"
+        ],
+        "init": [
+          "uni0633.init",
+          "uni065B"
+        ],
+        "medi": [
+          "uni0633.medi",
+          "uni065B"
+        ],
+        "fina": [
+          "uni0633.fina",
+          "uni065B"
+        ]
+      },
+      "decompose": [
+        "uni0633",
+        "uni065B"
+      ]
+    },
+    "uni077F": {
+      "positions": {
+        "isol": [
+          "kafDotless-ar",
+          "twoDotsHorizontalAbove-ar",
+          "miniKeheh-ar"
+        ],
+        "init": [
+          "uni06A9.init",
+          "twoDotsHorizontalAbove-ar"
+        ],
+        "medi": [
+          "uni06A9.medi",
+          "twoDotsHorizontalAbove-ar"
+        ],
+        "fina": [
+          "kafDotless-ar.fina",
+          "twoDotsHorizontalAbove-ar",
+          "miniKeheh-ar"
+        ]
+      }
+    },
+    "uni0889": {
+      "positions": {
+        "isol": [
+          "uni06BA",
+          "uni065B"
+        ],
+        "init": [
+          "uni066E.init",
+          "uni065B"
+        ],
+        "medi": [
+          "uni066E.medi",
+          "uni065B"
+        ],
+        "fina": [
+          "uni06BA.fina",
+          "uni065B"
+        ]
+      },
+      "decompose": [
+        "uni06BA",
+        "uni065B"
+      ]
+    },
+    "uni088A": {
+      "positions": {
+        "isol": [
+          "uni062D",
+          "vInvertedCenter-ar"
+        ],
+        "init": [
+          "uni062D.init",
+          "vInvertedBelow-ar"
+        ],
+        "medi": [
+          "uni062D.medi",
+          "vInvertedBelow-ar"
+        ],
+        "fina": [
+          "uni062D.fina",
+          "vInvertedCenter-ar"
+        ]
+      }
+    },
+    "uni088B": {
+      "positions": {
+        "isol": [
+          "uni0637",
+          "dotBelow-ar"
+        ],
+        "init": [
+          "uni0637.init",
+          "dotBelow-ar"
+        ],
+        "medi": [
+          "uni0637.medi",
+          "dotBelow-ar"
+        ],
+        "fina": [
+          "uni0637.fina",
+          "dotBelow-ar"
+        ]
+      },
+      "decompose": [
+        "uni0637",
+        "dotBelow-ar"
+      ]
+    },
+    "uni088C": {
+      "positions": {
+        "isol": [
+          "uni0637",
+          "threeDotsDownBelow-ar"
+        ],
+        "init": [
+          "uni0637.init",
+          "threeDotsDownBelow-ar"
+        ],
+        "medi": [
+          "uni0637.medi",
+          "threeDotsDownBelow-ar"
+        ],
+        "fina": [
+          "uni0637.fina",
+          "threeDotsDownBelow-ar"
+        ]
+      },
+      "decompose": [
+        "uni0637",
+        "threeDotsDownBelow-ar"
+      ]
+    },
+    "uni088D": {
+      "positions": {
+        "isol": [
+          "uni06A9",
+          "twoDotsVerticalBelow-ar"
+        ],
+        "init": [
+          "uni06A9.init",
+          "twoDotsVerticalBelow-ar"
+        ],
+        "medi": [
+          "uni06A9.medi",
+          "twoDotsVerticalBelow-ar"
+        ],
+        "fina": [
+          "uni06A9.fina",
+          "twoDotsVerticalBelow-ar"
+        ]
+      },
+      "decompose": [
+        "uni06A9",
+        "twoDotsVerticalBelow-ar"
+      ]
+    },
+    "uni08A0": {
+      "positions": {
+        "isol": [
+          "uni066E",
+          "vBelow-ar"
+        ],
+        "init": [
+          "uni066E.init",
+          "vBelow-ar"
+        ],
+        "medi": [
+          "uni066E.medi",
+          "vBelow-ar"
+        ],
+        "fina": [
+          "uni066E.fina",
+          "vBelow-ar"
+        ]
+      },
+      "decompose": [
+        "uni066E",
+        "vBelow-ar"
+      ]
+    },
+    "uni08A1": {
+      "positions": {
+        "isol": [
+          "uni066E",
+          "dotBelow-ar",
+          "uni0654"
+        ],
+        "init": [
+          "uni066E.init",
+          "dotBelow-ar",
+          "uni0654"
+        ],
+        "medi": [
+          "uni066E.medi",
+          "dotBelow-ar",
+          "uni0654"
+        ],
+        "fina": [
+          "uni066E.fina",
+          "dotBelow-ar",
+          "uni0654"
+        ]
+      },
+      "decompose": [
+        "uni066E",
+        "dotBelow-ar",
+        "uni0654"
+      ]
+    },
+    "uni08A2": {
+      "positions": {
+        "isol": [
+          "uni062D",
+          "dotCenter-ar",
+          "twoDotsHorizontalAbove-ar"
+        ],
+        "init": [
+          "uni062D.init",
+          "dotBelow-ar",
+          "twoDotsHorizontalAbove-ar"
+        ],
+        "medi": [
+          "uni062D.medi",
+          "dotBelow-ar",
+          "twoDotsHorizontalAbove-ar"
+        ],
+        "fina": [
+          "uni062D.fina",
+          "dotCenter-ar",
+          "twoDotsHorizontalAbove-ar"
+        ]
+      }
+    },
+    "uni08A3": {
+      "positions": {
+        "isol": [
+          "uni0637",
+          "twoDotsHorizontalAbove-ar"
+        ],
+        "init": [
+          "uni0637.init",
+          "twoDotsHorizontalAbove-ar"
+        ],
+        "medi": [
+          "uni0637.medi",
+          "twoDotsHorizontalAbove-ar"
+        ],
+        "fina": [
+          "uni0637.fina",
+          "twoDotsHorizontalAbove-ar"
+        ]
+      },
+      "decompose": [
+        "uni0637",
+        "twoDotsHorizontalAbove-ar"
+      ]
+    },
+    "uni08A4": {
+      "positions": {
+        "isol": [
+          "uni06A1",
+          "dotBelow-ar",
+          "threeDotsUpAbove-ar"
+        ],
+        "init": [
+          "uni06A1.init",
+          "dotBelow-ar",
+          "threeDotsUpAbove-ar"
+        ],
+        "medi": [
+          "uni06A1.medi",
+          "dotBelow-ar",
+          "threeDotsUpAbove-ar"
+        ],
+        "fina": [
+          "uni06A1.fina",
+          "dotBelow-ar",
+          "threeDotsUpAbove-ar"
+        ]
+      },
+      "decompose": [
+        "uni06A1",
+        "dotBelow-ar",
+        "threeDotsUpAbove-ar"
+      ]
+    },
+    "uni08A5": {
+      "positions": {
+        "isol": [
+          "uni066F",
+          "dotBelow-ar",
+          "twoDotsHorizontalAbove-ar"
+        ],
+        "init": [
+          "uni06A1.init",
+          "dotBelow-ar",
+          "twoDotsHorizontalAbove-ar"
+        ],
+        "medi": [
+          "uni06A1.medi",
+          "dotBelow-ar",
+          "twoDotsHorizontalAbove-ar"
+        ],
+        "fina": [
+          "uni066F.fina",
+          "dotBelow-ar",
+          "twoDotsHorizontalAbove-ar"
+        ]
+      },
+      "decompose": [
+        "uni066F",
+        "dotBelow-ar",
+        "twoDotsHorizontalAbove-ar"
+      ]
+    },
+    "uni08A7": {
+      "positions": {
+        "isol": [
+          "uni0645",
+          "threeDotsUpAbove-ar"
+        ],
+        "init": [
+          "uni0645.init",
+          "threeDotsUpAbove-ar"
+        ],
+        "medi": [
+          "uni0645.medi",
+          "threeDotsUpAbove-ar"
+        ],
+        "fina": [
+          "uni0645.fina",
+          "threeDotsUpAbove-ar"
+        ]
+      },
+      "decompose": [
+        "uni0645",
+        "threeDotsUpAbove-ar"
+      ]
+    },
+    "uni08A8": {
+      "positions": {
+        "isol": [
+          "uni0649",
+          "twoDotsHorizontalBelow-ar",
+          "uni0654"
+        ],
+        "init": [
+          "uni066E.init",
+          "twoDotsHorizontalBelow-ar",
+          "uni0654"
+        ],
+        "medi": [
+          "uni066E.medi",
+          "twoDotsHorizontalBelow-ar",
+          "uni0654"
+        ],
+        "fina": [
+          "uni0649.fina",
+          "twoDotsHorizontalBelow-ar",
+          "uni0654"
+        ]
+      },
+      "decompose": [
+        "uni0649",
+        "twoDotsHorizontalBelow-ar",
+        "uni0654"
+      ]
+    },
+    "uni08A9": {
+      "positions": {
+        "isol": [
+          "uni0649",
+          "twoDotsHorizontalBelow-ar",
+          "dotAbove-ar"
+        ],
+        "init": [
+          "uni066E.init",
+          "twoDotsHorizontalBelow-ar",
+          "dotAbove-ar"
+        ],
+        "medi": [
+          "uni066E.medi",
+          "twoDotsHorizontalBelow-ar",
+          "dotAbove-ar"
+        ],
+        "fina": [
+          "uni0649.fina",
+          "twoDotsHorizontalBelow-ar",
+          "dotAbove-ar"
+        ]
+      },
+      "decompose": [
+        "uni0649",
+        "twoDotsHorizontalBelow-ar",
+        "dotAbove-ar"
+      ]
+    },
+    "uni08AB": {
+      "positions": {
+        "isol": [
+          "uni0648",
+          "dotCenter-ar"
+        ],
+        "fina": [
+          "uni0648.fina",
+          "dotCenter-ar"
+        ]
+      },
+      "decompose": [
+        "uni0648",
+        "dotCenter-ar"
+      ]
+    },
+    "uni08AE": {
+      "positions": {
+        "isol": [
+          "uni062F",
+          "threeDotsDownBelow-ar"
+        ],
+        "fina": [
+          "uni062F.fina",
+          "threeDotsDownBelow-ar"
+        ]
+      },
+      "decompose": [
+        "uni062F",
+        "threeDotsDownBelow-ar"
+      ]
+    },
+    "uni08AF": {
+      "positions": {
+        "isol": [
+          "uni0635",
+          "threeDotsDownBelow-ar"
+        ],
+        "init": [
+          "uni0635.init",
+          "threeDotsDownBelow-ar"
+        ],
+        "medi": [
+          "uni0635.medi",
+          "threeDotsDownBelow-ar"
+        ],
+        "fina": [
+          "uni0635.fina",
+          "threeDotsDownBelow-ar"
+        ]
+      },
+      "decompose": [
+        "uni0635",
+        "threeDotsDownBelow-ar"
+      ]
+    },
+    "uni08B0": {
+      "positions": {
+        "isol": [
+          "uni06A9",
+          "gafSarkashCenter-ar"
+        ],
+        "init": [
+          "uni06A9.init",
+          "gafSarkashCenter-ar"
+        ],
+        "medi": [
+          "uni06A9.medi",
+          "gafSarkashCenter-ar"
+        ],
+        "fina": [
+          "uni06A9.fina",
+          "gafSarkashCenter-ar"
+        ]
+      },
+      "decompose": [
+        "uni06A9",
+        "gafSarkashCenter-ar"
+      ]
+    },
+    "uni08B2": {
+      "positions": {
+        "isol": [
+          "uni0631",
+          "dotAbove-ar",
+          "uni065B"
+        ],
+        "fina": [
+          "uni0631.fina",
+          "dotAbove-ar",
+          "uni065B"
+        ]
+      },
+      "decompose": [
+        "uni0631",
+        "dotAbove-ar",
+        "uni065B"
+      ]
+    },
+    "uni08B3": {
+      "positions": {
+        "isol": [
+          "uni0639",
+          "threeDotsDownBelow-ar"
+        ],
+        "init": [
+          "uni0639.init",
+          "threeDotsDownBelow-ar"
+        ],
+        "medi": [
+          "uni0639.medi",
+          "threeDotsDownBelow-ar"
+        ],
+        "fina": [
+          "uni0639.fina",
+          "threeDotsDownBelow-ar"
+        ]
+      },
+      "decompose": [
+        "uni0639",
+        "threeDotsDownBelow-ar"
+      ]
+    },
+    "uni08B4": {
+      "positions": {
+        "isol": [
+          "kafDotless-ar",
+          "dotBelow-ar",
+          "miniKeheh-ar"
+        ],
+        "init": [
+          "uni06A9.init",
+          "dotBelow-ar"
+        ],
+        "medi": [
+          "uni06A9.medi",
+          "dotBelow-ar"
+        ],
+        "fina": [
+          "kafDotless-ar.fina",
+          "dotBelow-ar",
+          "miniKeheh-ar"
+        ]
+      }
+    },
+    "uni08B5": {
+      "positions": {
+        "isol": [
+          "uni066F",
+          "dotBelow-ar"
+        ],
+        "init": [
+          "uni06A1.init",
+          "dotBelow-ar"
+        ],
+        "medi": [
+          "uni06A1.medi",
+          "dotBelow-ar"
+        ],
+        "fina": [
+          "uni066F.fina",
+          "dotBelow-ar"
+        ]
+      },
+      "decompose": [
+        "uni066F",
+        "dotBelow-ar"
+      ]
+    },
+    "uni08BB": {
+      "positions": {
+        "isol": [
+          "uni08BB"
+        ],
+        "init": [
+          "uni06A1.init",
+          "dotBelow-ar"
+        ],
+        "medi": [
+          "uni06A1.medi",
+          "dotBelow-ar"
+        ],
+        "fina": [
+          "uni06A1.fina"
+        ]
+      }
+    },
+    "uni08BC": {
+      "positions": {
+        "isol": [
+          "uni066F"
+        ],
+        "init": [
+          "uni06A1.init",
+          "dotAbove-ar"
+        ],
+        "medi": [
+          "uni06A1.medi",
+          "dotAbove-ar"
+        ],
+        "fina": [
+          "uni066F.fina"
+        ]
+      }
+    },
+    "uni08BD": {
+      "positions": {
+        "isol": [
+          "uni06BA"
+        ],
+        "init": [
+          "uni066E.init",
+          "dotAbove-ar"
+        ],
+        "medi": [
+          "uni066E.medi",
+          "dotAbove-ar"
+        ],
+        "fina": [
+          "uni06BA.fina"
+        ]
+      }
+    },
+    "uni08BE": {
+      "positions": {
+        "isol": [
+          "uni066E",
+          "threeDotsDownBelow-ar",
+          "uni065A"
+        ],
+        "init": [
+          "uni066E.init",
+          "threeDotsDownBelow-ar",
+          "uni065A"
+        ],
+        "medi": [
+          "uni066E.medi",
+          "threeDotsDownBelow-ar",
+          "uni065A"
+        ],
+        "fina": [
+          "uni066E.fina",
+          "threeDotsDownBelow-ar",
+          "uni065A"
+        ]
+      },
+      "decompose": [
+        "uni066E",
+        "threeDotsDownBelow-ar",
+        "uni065A"
+      ]
+    },
+    "uni08BF": {
+      "positions": {
+        "isol": [
+          "uni066E",
+          "twoDotsHorizontalAbove-ar",
+          "uni065A"
+        ],
+        "init": [
+          "uni066E.init",
+          "twoDotsHorizontalAbove-ar",
+          "uni065A"
+        ],
+        "medi": [
+          "uni066E.medi",
+          "twoDotsHorizontalAbove-ar",
+          "uni065A"
+        ],
+        "fina": [
+          "uni066E.fina",
+          "twoDotsHorizontalAbove-ar",
+          "uni065A"
+        ]
+      },
+      "decompose": [
+        "uni066E",
+        "twoDotsHorizontalAbove-ar",
+        "uni065A"
+      ]
+    },
+    "uni08C0": {
+      "positions": {
+        "isol": [
+          "uni066E",
+          "tahAbove-ar",
+          "uni065A"
+        ],
+        "init": [
+          "uni066E.init",
+          "tahAbove-ar",
+          "uni065A"
+        ],
+        "medi": [
+          "uni066E.medi",
+          "tahAbove-ar",
+          "uni065A"
+        ],
+        "fina": [
+          "uni066E.fina",
+          "tahAbove-ar",
+          "uni065A"
+        ]
+      },
+      "decompose": [
+        "uni066E",
+        "tahAbove-ar",
+        "uni065A"
+      ]
+    },
+    "uni08C1": {
+      "positions": {
+        "isol": [
+          "uni062D",
+          "threeDotsDownCenter-ar",
+          "uni065A"
+        ],
+        "init": [
+          "uni062D.init",
+          "threeDotsDownBelow-ar",
+          "uni065A"
+        ],
+        "medi": [
+          "uni062D.medi",
+          "threeDotsDownBelow-ar",
+          "uni065A"
+        ],
+        "fina": [
+          "uni062D.fina",
+          "threeDotsDownCenter-ar",
+          "uni065A"
+        ]
+      }
+    },
+    "uni08C2": {
+      "positions": {
+        "isol": [
+          "uni06A9",
+          "uni065A"
+        ],
+        "init": [
+          "uni06A9.init",
+          "uni065A"
+        ],
+        "medi": [
+          "uni06A9.medi",
+          "uni065A"
+        ],
+        "fina": [
+          "uni06A9.fina",
+          "uni065A"
+        ]
+      },
+      "decompose": [
+        "uni06A9",
+        "uni065A"
+      ]
+    },
+    "uni08C3": {
+      "positions": {
+        "isol": [
+          "uni0639",
+          "dotAbove-ar",
+          "threeDotsUpAbove-ar"
+        ],
+        "init": [
+          "uni0639.init",
+          "dotAbove-ar",
+          "threeDotsUpAbove-ar"
+        ],
+        "medi": [
+          "uni0639.medi",
+          "dotAbove-ar",
+          "threeDotsUpAbove-ar"
+        ],
+        "fina": [
+          "uni0639.fina",
+          "dotAbove-ar",
+          "threeDotsUpAbove-ar"
+        ]
+      },
+      "decompose": [
+        "uni0639",
+        "dotAbove-ar",
+        "threeDotsUpAbove-ar"
+      ]
+    },
+    "uni08C4": {
+      "positions": {
+        "isol": [
+          "uni066F"
+        ],
+        "init": [
+          "uni06A1.init",
+          "threeDotsUpAbove-ar"
+        ],
+        "medi": [
+          "uni06A1.medi",
+          "threeDotsUpAbove-ar"
+        ],
+        "fina": [
+          "uni066F.fina"
+        ]
+      }
+    },
+    "uni08C5": {
+      "positions": {
+        "isol": [
+          "uni062D",
+          "dotCenter-ar",
+          "threeDotsUpAbove-ar"
+        ],
+        "init": [
+          "uni062D.init",
+          "dotBelow-ar",
+          "threeDotsUpAbove-ar"
+        ],
+        "medi": [
+          "uni062D.medi",
+          "dotBelow-ar",
+          "threeDotsUpAbove-ar"
+        ],
+        "fina": [
+          "uni062D.fina",
+          "dotCenter-ar",
+          "threeDotsUpAbove-ar"
+        ]
+      }
+    },
+    "uni08C6": {
+      "positions": {
+        "isol": [
+          "uni062D",
+          "threeDotsDownBelow-ar",
+          "dotCenter-ar"
+        ],
+        "init": [
+          "uni062D.init",
+          "threeDotsDownBelow-ar",
+          "dotBelow-ar"
+        ],
+        "medi": [
+          "uni062D.medi",
+          "threeDotsDownBelow-ar",
+          "dotBelow-ar"
+        ],
+        "fina": [
+          "uni062D.fina",
+          "threeDotsDownBelow-ar",
+          "dotCenter-ar"
+        ]
+      }
+    },
+    "uni08C7": {
+      "positions": {
+        "isol": [
+          "uni0644",
+          "tahAbove-ar"
+        ],
+        "init": [
+          "uni0644.init",
+          "tahAbove-ar"
+        ],
+        "medi": [
+          "uni0644.medi",
+          "tahAbove-ar"
+        ],
+        "fina": [
+          "uni0644.fina",
+          "tahAbove-ar"
+        ]
+      },
+      "decompose": [
+        "uni0644",
+        "tahAbove-ar"
+      ]
+    }
+  },
+  "unencoded": {
+    "commaAbove-ar": {
+      "category": "Mark",
+      "anchors": [
+        "_top",
+        "top"
+      ]
+    },
+    "dotAbove-ar": {
+      "category": "Mark",
+      "anchors": [
+        "_top",
+        "top"
+      ]
+    },
+    "dotBelow-ar": {
+      "category": "Mark",
+      "anchors": [
+        "_bottom",
+        "bottom"
+      ]
+    },
+    "dotCenter-ar": {
+      "category": "Mark",
+      "anchors": [
+        "_center"
+      ]
+    },
+    "fourDotsAbove-ar": {
+      "category": "Mark",
+      "anchors": [
+        "_top",
+        "top"
+      ]
+    },
+    "fourDotsBelow-ar": {
+      "category": "Mark",
+      "anchors": [
+        "_bottom",
+        "bottom"
+      ]
+    },
+    "fourDotsCenter-ar": {
+      "category": "Mark",
+      "anchors": [
+        "_center",
+        "_bottom",
+        "bottom"
+      ]
+    },
+    "gafSarkash-ar": {
+      "category": "Mark",
+      "anchors": [
+        "_gaf",
+        "top"
+      ]
+    },
+    "gafSarkashCenter-ar": {
+      "category": "Mark",
+      "anchors": [
+        "_ring"
+      ]
+    },
+    "hehGoalMark-ar": {
+      "category": "Mark",
+      "anchors": [
+        "bottom"
+      ]
+    },
+    "kafDotless-ar": {
+      "category": "Letter",
+      "anchors": [
+        "bottom",
+        "top"
+      ],
+      "positions": {
+        "fina": [
+          "kafDotless-ar.fina"
+        ]
+      }
+    },
+    "miniKeheh-ar": {
+      "category": "Mark",
+      "anchors": [
+        "_top",
+        "top"
+      ]
+    },
+    "ringBelow-ar": {
+      "category": "Mark",
+      "anchors": [
+        "_bottom",
+        "bottom"
+      ]
+    },
+    "ringCenter-ar": {
+      "category": "Mark",
+      "anchors": [
+        "_ring",
+        "bottom"
+      ]
+    },
+    "tahAbove-ar": {
+      "category": "Mark",
+      "anchors": [
+        "_top",
+        "top"
+      ]
+    },
+    "tahBelow-ar": {
+      "category": "Mark",
+      "anchors": [
+        "_bottom",
+        "bottom"
+      ]
+    },
+    "tahCenter-ar": {
+      "category": "Mark",
+      "anchors": [
+        "_center"
+      ]
+    },
+    "tail-ar": {
+      "category": "Mark",
+      "anchors": [
+        "_tail"
+      ]
+    },
+    "threeDotsDownAbove-ar": {
+      "category": "Mark",
+      "anchors": [
+        "_top",
+        "top"
+      ]
+    },
+    "threeDotsDownBelow-ar": {
+      "category": "Mark",
+      "anchors": [
+        "_bottom",
+        "bottom"
+      ]
+    },
+    "threeDotsDownCenter-ar": {
+      "category": "Mark",
+      "anchors": [
+        "_center"
+      ]
+    },
+    "threeDotsUpAbove-ar": {
+      "category": "Mark",
+      "anchors": [
+        "_top",
+        "top"
+      ]
+    },
+    "threeDotsUpBelow-ar": {
+      "category": "Mark",
+      "anchors": [
+        "_bottom",
+        "bottom"
+      ]
+    },
+    "threeDotsUpCenter-ar": {
+      "category": "Mark",
+      "anchors": [
+        "_center"
+      ]
+    },
+    "twoDotsHorizontalAbove-ar": {
+      "category": "Mark",
+      "anchors": [
+        "_top",
+        "top"
+      ]
+    },
+    "twoDotsHorizontalBelow-ar": {
+      "category": "Mark",
+      "anchors": [
+        "_bottom",
+        "bottom"
+      ]
+    },
+    "twoDotsHorizontalCenter-ar": {
+      "category": "Mark",
+      "anchors": [
+        "_center",
+        "_bottom",
+        "bottom"
+      ]
+    },
+    "twoDotsVerticalAbove-ar": {
+      "category": "Mark",
+      "anchors": [
+        "_top",
+        "top"
+      ]
+    },
+    "twoDotsVerticalBelow-ar": {
+      "category": "Mark",
+      "anchors": [
+        "_bottom",
+        "bottom"
+      ]
+    },
+    "twoDotsVerticalCenter-ar": {
+      "category": "Mark",
+      "anchors": [
+        "_center",
+        "_bottom",
+        "bottom"
+      ]
+    },
+    "vBelow-ar": {
+      "category": "Mark",
+      "anchors": [
+        "_bottom",
+        "bottom"
+      ]
+    },
+    "vInvertedBelow-ar": {
+      "category": "Mark",
+      "anchors": [
+        "_bottom",
+        "bottom"
+      ]
+    },
+    "vInvertedCenter-ar": {
+      "category": "Mark",
+      "anchors": [
+        "_center"
+      ]
+    },
+    "wasla-ar": {
+      "category": "Mark",
+      "anchors": [
+        "_top",
+        "top"
+      ]
+    },
+    "lam_alef-ar": {
+      "category": "Letter",
+      "positions": {
+        "fina": [
+          "lam_alef-ar.fina"
+        ]
+      },
+      "anchors": [
+        "bottom_1",
+        "bottom_2",
+        "caret_1",
+        "top_1",
+        "top_2",
+        "bottom",
+        "top"
+      ]
+    },
+    "shaddaFatha-ar": {
+      "category": "Mark",
+      "components": [
+        "uni0651",
+        "uni064E"
+      ],
+      "anchors": [
+        "_top",
+        "top"
+      ]
+    },
+    "shaddaDamma-ar": {
+      "category": "Mark",
+      "components": [
+        "uni0651",
+        "uni064F"
+      ],
+      "anchors": [
+        "_top",
+        "top"
+      ]
+    },
+    "shaddaKasra-ar": {
+      "category": "Mark",
+      "components": [
+        "uni0651",
+        "uni0650"
+      ],
+      "anchors": [
+        "_top",
+        "top"
+      ]
+    },
+    "shaddaFathatan-ar": {
+      "category": "Mark",
+      "components": [
+        "uni0651",
+        "uni064B"
+      ],
+      "anchors": [
+        "_top",
+        "top"
+      ]
+    },
+    "shaddaDammatan-ar": {
+      "category": "Mark",
+      "components": [
+        "uni0651",
+        "uni064C"
+      ],
+      "anchors": [
+        "_top",
+        "top"
+      ]
+    },
+    "shaddaKasratan-ar": {
+      "category": "Mark",
+      "components": [
+        "uni0651",
+        "uni064D"
+      ],
+      "anchors": [
+        "_top",
+        "top"
+      ]
+    },
+    "shaddaAlefAbove-ar": {
+      "category": "Mark",
+      "components": [
+        "uni0651",
+        "uni0670"
+      ],
+      "anchors": [
+        "_top",
+        "top"
+      ]
+    }
+  },
+  "markVariants": {
+    "init": {
+      "dotCenter-ar": "dotBelow-ar",
+      "twoDotsHorizontalCenter-ar": "twoDotsHorizontalBelow-ar",
+      "twoDotsVerticalCenter-ar": "twoDotsVerticalBelow-ar",
+      "threeDotsUpCenter-ar": "threeDotsUpBelow-ar",
+      "threeDotsDownCenter-ar": "threeDotsDownBelow-ar",
+      "fourDotsCenter-ar": "fourDotsBelow-ar",
+      "tahCenter-ar": "tahBelow-ar",
+      "vInvertedCenter-ar": "vInvertedBelow-ar"
+    },
+    "medi": {
+      "dotCenter-ar": "dotBelow-ar",
+      "twoDotsHorizontalCenter-ar": "twoDotsHorizontalBelow-ar",
+      "twoDotsVerticalCenter-ar": "twoDotsVerticalBelow-ar",
+      "threeDotsUpCenter-ar": "threeDotsUpBelow-ar",
+      "threeDotsDownCenter-ar": "threeDotsDownBelow-ar",
+      "fourDotsCenter-ar": "fourDotsBelow-ar",
+      "tahCenter-ar": "tahBelow-ar",
+      "vInvertedCenter-ar": "vInvertedBelow-ar"
+    }
+  },
+  "anchors": {
+    "commaAbove-ar": [
+      "_top",
+      "top"
+    ],
+    "dotAbove-ar": [
+      "_top",
+      "top"
+    ],
+    "dotBelow-ar": [
+      "_bottom",
+      "bottom"
+    ],
+    "dotCenter-ar": [
+      "_center"
+    ],
+    "fourDotsAbove-ar": [
+      "_top",
+      "top"
+    ],
+    "fourDotsBelow-ar": [
+      "_bottom",
+      "bottom"
+    ],
+    "fourDotsCenter-ar": [
+      "_center",
+      "_bottom",
+      "bottom"
+    ],
+    "gafSarkash-ar": [
+      "_gaf",
+      "top"
+    ],
+    "gafSarkashCenter-ar": [
+      "_ring"
+    ],
+    "hehGoalMark-ar": [
+      "bottom"
+    ],
+    "kafDotless-ar": [
+      "bottom",
+      "top"
+    ],
+    "kafDotless-ar.fina": [
+      "bottom",
+      "top"
+    ],
+    "lam_alef-ar": [
+      "bottom_1",
+      "bottom_2",
+      "caret_1",
+      "top_1",
+      "top_2",
+      "bottom",
+      "top"
+    ],
+    "lam_alef-ar.fina": [
+      "bottom_1",
+      "bottom_2",
+      "caret_1",
+      "top_1",
+      "top_2"
+    ],
+    "lam_alef-ar.fina.ss02": [
+      "bottom_1",
+      "bottom_2",
+      "caret_1",
+      "top_1",
+      "top_2"
+    ],
+    "miniKeheh-ar": [
+      "_top",
+      "top"
+    ],
+    "ringBelow-ar": [
+      "_bottom",
+      "bottom"
+    ],
+    "ringCenter-ar": [
+      "_ring",
+      "bottom"
+    ],
+    "tahAbove-ar": [
+      "_top",
+      "top"
+    ],
+    "tahBelow-ar": [
+      "_bottom",
+      "bottom"
+    ],
+    "tahCenter-ar": [
+      "_center"
+    ],
+    "tail-ar": [
+      "_tail"
+    ],
+    "threeDotsDownAbove-ar": [
+      "_top",
+      "top"
+    ],
+    "threeDotsDownBelow-ar": [
+      "_bottom",
+      "bottom"
+    ],
+    "threeDotsDownCenter-ar": [
+      "_center"
+    ],
+    "threeDotsUpAbove-ar": [
+      "_top",
+      "top"
+    ],
+    "threeDotsUpBelow-ar": [
+      "_bottom",
+      "bottom"
+    ],
+    "threeDotsUpCenter-ar": [
+      "_center"
+    ],
+    "twoDotsHorizontalAbove-ar": [
+      "_top",
+      "top"
+    ],
+    "twoDotsHorizontalBelow-ar": [
+      "_bottom",
+      "bottom"
+    ],
+    "twoDotsHorizontalCenter-ar": [
+      "_center",
+      "_bottom",
+      "bottom"
+    ],
+    "twoDotsVerticalAbove-ar": [
+      "_top",
+      "top"
+    ],
+    "twoDotsVerticalBelow-ar": [
+      "_bottom",
+      "bottom"
+    ],
+    "twoDotsVerticalCenter-ar": [
+      "_center",
+      "_bottom",
+      "bottom"
+    ],
+    "twoVerticalBarsBelow-ar": [
+      "_bottom"
+    ],
+    "uni0041": [
+      "bottom",
+      "ogonek",
+      "top"
+    ],
+    "uni0043": [
+      "bottom",
+      "top"
+    ],
+    "uni0044": [
+      "bottom",
+      "center",
+      "top"
+    ],
+    "uni0045": [
+      "bottom",
+      "ogonek",
+      "top",
+      "topleft"
+    ],
+    "uni0047": [
+      "bottom",
+      "top"
+    ],
+    "uni0048": [
+      "bottom",
+      "center",
+      "top",
+      "topleft"
+    ],
+    "uni0049": [
+      "bottom",
+      "ogonek",
+      "top",
+      "topleft"
+    ],
+    "uni004A": [
+      "top"
+    ],
+    "uni004B": [
+      "bottom",
+      "top"
+    ],
+    "uni004C": [
+      "bottom",
+      "center",
+      "top",
+      "topright"
+    ],
+    "uni004E": [
+      "bottom",
+      "top"
+    ],
+    "uni004F": [
+      "bottom",
+      "center",
+      "ogonek",
+      "top",
+      "topleft",
+      "topright"
+    ],
+    "uni0052": [
+      "bottom",
+      "top"
+    ],
+    "uni0053": [
+      "bottom",
+      "top"
+    ],
+    "uni0054": [
+      "bottom",
+      "center",
+      "top"
+    ],
+    "uni0055": [
+      "bottom",
+      "ogonek",
+      "top",
+      "topright"
+    ],
+    "uni0056": [
+      "bottom",
+      "top"
+    ],
+    "uni0057": [
+      "bottom",
+      "top"
+    ],
+    "uni0059": [
+      "bottom",
+      "top",
+      "topleft"
+    ],
+    "uni005A": [
+      "bottom",
+      "center",
+      "top"
+    ],
+    "uni0061": [
+      "bottom",
+      "ogonek",
+      "top"
+    ],
+    "uni0061.ss03": [
+      "bottom",
+      "ogonek",
+      "top"
+    ],
+    "uni0061.ss04": [
+      "bottom",
+      "ogonek",
+      "top"
+    ],
+    "uni0063": [
+      "bottom",
+      "top"
+    ],
+    "uni0064": [
+      "bottom",
+      "center",
+      "top",
+      "topright"
+    ],
+    "uni0065": [
+      "bottom",
+      "ogonek",
+      "top"
+    ],
+    "uni0067": [
+      "bottom",
+      "top"
+    ],
+    "uni0067.ss03": [
+      "bottom",
+      "top"
+    ],
+    "uni0067.ss04": [
+      "bottom",
+      "top"
+    ],
+    "uni0068": [
+      "bottom",
+      "center",
+      "top"
+    ],
+    "uni006B": [
+      "bottom",
+      "top"
+    ],
+    "uni006C": [
+      "bottom",
+      "center",
+      "top",
+      "topright"
+    ],
+    "uni006C.ss04": [
+      "bottom",
+      "center",
+      "top",
+      "topright"
+    ],
+    "uni006E": [
+      "bottom",
+      "top"
+    ],
+    "uni006F": [
+      "bottom",
+      "center",
+      "ogonek",
+      "top",
+      "topright"
+    ],
+    "uni0072": [
+      "bottom",
+      "top"
+    ],
+    "uni0073": [
+      "bottom",
+      "top"
+    ],
+    "uni0074": [
+      "bottom",
+      "center",
+      "top",
+      "topright"
+    ],
+    "uni0075": [
+      "bottom",
+      "ogonek",
+      "top",
+      "topright"
+    ],
+    "uni0077": [
+      "bottom",
+      "top"
+    ],
+    "uni0079": [
+      "bottom",
+      "top"
+    ],
+    "uni0079.ss04": [
+      "bottom",
+      "top"
+    ],
+    "uni007A": [
+      "bottom",
+      "center",
+      "top"
+    ],
+    "uni00E6": [
+      "bottom",
+      "ogonek",
+      "top"
+    ],
+    "uni0131": [
+      "bottom",
+      "ogonek",
+      "top"
+    ],
+    "uni0237": [
+      "bottom",
+      "top"
+    ],
+    "uni0300": [
+      "_top",
+      "top"
+    ],
+    "uni0300.case": [
+      "_top",
+      "top"
+    ],
+    "uni0301": [
+      "_top",
+      "top"
+    ],
+    "uni0301.case": [
+      "_top",
+      "top"
+    ],
+    "uni0302": [
+      "_top",
+      "top"
+    ],
+    "uni0302.case": [
+      "_top",
+      "top"
+    ],
+    "uni0303": [
+      "_top",
+      "top"
+    ],
+    "uni0303.case": [
+      "_top",
+      "top"
+    ],
+    "uni0304": [
+      "_top",
+      "top"
+    ],
+    "uni0304.case": [
+      "_top",
+      "top"
+    ],
+    "uni0306": [
+      "_top",
+      "top"
+    ],
+    "uni0306.case": [
+      "_top",
+      "top"
+    ],
+    "uni0307": [
+      "_top",
+      "top"
+    ],
+    "uni0307.case": [
+      "_top",
+      "top"
+    ],
+    "uni0307.i": [
+      "_top",
+      "top"
+    ],
+    "uni0308": [
+      "_top",
+      "top"
+    ],
+    "uni0308.case": [
+      "_top",
+      "top"
+    ],
+    "uni0308.narrow": [
+      "_top",
+      "top"
+    ],
+    "uni030A": [
+      "_top",
+      "top"
+    ],
+    "uni030A.case": [
+      "_top",
+      "top"
+    ],
+    "uni030B": [
+      "_top",
+      "top"
+    ],
+    "uni030B.case": [
+      "_top",
+      "top"
+    ],
+    "uni030C": [
+      "_top",
+      "top"
+    ],
+    "uni030C.case": [
+      "_top",
+      "top"
+    ],
+    "uni0312": [
+      "_top",
+      "top"
+    ],
+    "uni0326": [
+      "_bottom",
+      "bottom"
+    ],
+    "uni0327": [
+      "_bottom",
+      "bottom"
+    ],
+    "uni0327.case": [
+      "_bottom",
+      "bottom"
+    ],
+    "uni0328": [
+      "_ogonek"
+    ],
+    "uni0335": [
+      "_center"
+    ],
+    "uni0335.case": [
+      "_center"
+    ],
+    "uni0337": [
+      "_center"
+    ],
+    "uni0338": [
+      "_center"
+    ],
+    "uni0621": [
+      "bottom",
+      "top"
+    ],
+    "uni0627": [
+      "bottom",
+      "top"
+    ],
+    "uni0627.fina": [
+      "bottom",
+      "top"
+    ],
+    "uni062D": [
+      "bottom",
+      "center",
+      "top"
+    ],
+    "uni062D.fina": [
+      "bottom",
+      "center",
+      "top"
+    ],
+    "uni062D.init": [
+      "bottom",
+      "top"
+    ],
+    "uni062D.medi": [
+      "bottom",
+      "top"
+    ],
+    "uni062F": [
+      "bottom",
+      "ring",
+      "top"
+    ],
+    "uni062F.fina": [
+      "bottom",
+      "ring",
+      "top"
+    ],
+    "uni0631": [
+      "bottom",
+      "top",
+      "center",
+      "ring"
+    ],
+    "uni0631.fina": [
+      "bottom",
+      "center",
+      "ring",
+      "top"
+    ],
+    "uni0633": [
+      "bottom",
+      "top"
+    ],
+    "uni0633.fina": [
+      "bottom",
+      "top"
+    ],
+    "uni0633.init": [
+      "bottom",
+      "top"
+    ],
+    "uni0633.medi": [
+      "bottom",
+      "top"
+    ],
+    "uni0635": [
+      "bottom",
+      "top"
+    ],
+    "uni0635.fina": [
+      "bottom",
+      "top"
+    ],
+    "uni0635.init": [
+      "bottom",
+      "top"
+    ],
+    "uni0635.medi": [
+      "bottom",
+      "top"
+    ],
+    "uni0637": [
+      "bottom",
+      "top"
+    ],
+    "uni0637.fina": [
+      "bottom",
+      "top"
+    ],
+    "uni0637.init": [
+      "bottom",
+      "top"
+    ],
+    "uni0637.medi": [
+      "bottom",
+      "top"
+    ],
+    "uni0639": [
+      "bottom",
+      "top"
+    ],
+    "uni0639.fina": [
+      "bottom",
+      "top"
+    ],
+    "uni0639.init": [
+      "bottom",
+      "top"
+    ],
+    "uni0639.medi": [
+      "bottom",
+      "top"
+    ],
+    "uni0640": [
+      "bottom",
+      "top"
+    ],
+    "uni0644": [
+      "bottom",
+      "top"
+    ],
+    "uni0644.fina": [
+      "bottom",
+      "top"
+    ],
+    "uni0644.init": [
+      "bottom",
+      "top"
+    ],
+    "uni0644.medi": [
+      "bottom",
+      "top"
+    ],
+    "uni0645": [
+      "bottom",
+      "top"
+    ],
+    "uni0645.fina": [
+      "bottom",
+      "top"
+    ],
+    "uni0645.fina.ss01": [
+      "bottom",
+      "top"
+    ],
+    "uni0645.init": [
+      "bottom",
+      "top"
+    ],
+    "uni0645.medi": [
+      "bottom",
+      "top"
+    ],
+    "uni0645.ss01": [
+      "bottom",
+      "top"
+    ],
+    "uni0647": [
+      "bottom",
+      "top"
+    ],
+    "uni0647.fina": [
+      "bottom",
+      "top"
+    ],
+    "uni0647.init": [
+      "bottom",
+      "top"
+    ],
+    "uni0647.medi": [
+      "bottom",
+      "top"
+    ],
+    "uni0648": [
+      "bottom",
+      "center",
+      "top"
+    ],
+    "uni0648.fina": [
+      "bottom",
+      "center",
+      "top"
+    ],
+    "uni0649": [
+      "bottom",
+      "tail",
+      "top"
+    ],
+    "uni0649.fina": [
+      "bottom",
+      "tail",
+      "top"
+    ],
+    "uni064B": [
+      "_top",
+      "top"
+    ],
+    "uni064C": [
+      "_top",
+      "top"
+    ],
+    "uni064D": [
+      "_bottom",
+      "bottom"
+    ],
+    "uni064E": [
+      "_top",
+      "top"
+    ],
+    "uni064F": [
+      "_top",
+      "top"
+    ],
+    "uni0650": [
+      "_bottom",
+      "bottom"
+    ],
+    "uni0651": [
+      "_top",
+      "top"
+    ],
+    "uni0652": [
+      "_top",
+      "top"
+    ],
+    "uni0653": [
+      "_top",
+      "top"
+    ],
+    "uni0654": [
+      "_top",
+      "top"
+    ],
+    "uni0655": [
+      "_bottom",
+      "bottom"
+    ],
+    "uni0656": [
+      "_bottom",
+      "bottom"
+    ],
+    "uni065A": [
+      "_top",
+      "top"
+    ],
+    "uni065B": [
+      "_top",
+      "top"
+    ],
+    "uni0662": [
+      "bottom",
+      "top"
+    ],
+    "uni066E": [
+      "bottom",
+      "ring",
+      "top"
+    ],
+    "uni066E.fina": [
+      "bottom",
+      "ring",
+      "top"
+    ],
+    "uni066E.init": [
+      "bottom",
+      "ring",
+      "top"
+    ],
+    "uni066E.medi": [
+      "bottom",
+      "ring",
+      "top"
+    ],
+    "uni066F": [
+      "bottom",
+      "top"
+    ],
+    "uni066F.fina": [
+      "bottom",
+      "top"
+    ],
+    "uni0670": [
+      "_top",
+      "top"
+    ],
+    "uni0686": [
+      "bottom",
+      "top"
+    ],
+    "uni06A1": [
+      "bottom",
+      "top",
+      "ring"
+    ],
+    "uni06A1.fina": [
+      "bottom",
+      "top"
+    ],
+    "uni06A1.init": [
+      "bottom",
+      "top"
+    ],
+    "uni06A1.medi": [
+      "bottom",
+      "top"
+    ],
+    "uni06A9": [
+      "bottom",
+      "gaf",
+      "ring",
+      "top"
+    ],
+    "uni06A9.fina": [
+      "bottom",
+      "gaf",
+      "ring",
+      "top"
+    ],
+    "uni06A9.init": [
+      "bottom",
+      "gaf",
+      "ring",
+      "top"
+    ],
+    "uni06A9.medi": [
+      "bottom",
+      "gaf",
+      "ring",
+      "top"
+    ],
+    "uni06AA": [
+      "bottom",
+      "top"
+    ],
+    "uni06AA.fina": [
+      "bottom",
+      "top"
+    ],
+    "uni06AA.init": [
+      "bottom",
+      "top"
+    ],
+    "uni06AA.medi": [
+      "bottom",
+      "top"
+    ],
+    "uni06BA": [
+      "bottom",
+      "ring",
+      "top"
+    ],
+    "uni06BA.fina": [
+      "bottom",
+      "ring",
+      "top"
+    ],
+    "uni06BE": [
+      "bottom",
+      "top"
+    ],
+    "uni06BE.fina": [
+      "bottom",
+      "top"
+    ],
+    "uni06C1.fina": [
+      "bottom",
+      "top"
+    ],
+    "uni06C1.medi": [
+      "bottom",
+      "top"
+    ],
+    "uni06D2": [
+      "bottom",
+      "top"
+    ],
+    "uni06D2.fina": [
+      "bottom",
+      "top"
+    ],
+    "uni06D2.fina.narrow": [
+      "bottom",
+      "top"
+    ],
+    "uni25CC": [
+      "bottom",
+      "center",
+      "ogonek",
+      "top"
+    ],
+    "vBelow-ar": [
+      "_bottom",
+      "bottom"
+    ],
+    "vInvertedBelow-ar": [
+      "_bottom",
+      "bottom"
+    ],
+    "vInvertedCenter-ar": [
+      "_center"
+    ],
+    "wasla-ar": [
+      "_top",
+      "top"
+    ]
+  },
+  "rlig": [
+    {
+      "inputs": [
+        "uni0644.init",
+        "uni0627.fina"
+      ],
+      "output": "lam_alef-ar",
+      "encodedOutput": "uniFEFB",
+      "ignoreMarks": true
+    },
+    {
+      "inputs": [
+        "uni0644.medi",
+        "uni0627.fina"
+      ],
+      "output": "lam_alef-ar.fina",
+      "encodedOutput": "uniFEFC",
+      "ignoreMarks": true
+    }
+  ],
+  "lamAlefAlefs": [
+    "uni0622",
+    "uni0623",
+    "uni0625",
+    "uni0671"
+  ],
+  "leaves": [
+    {
+      "id": "bases",
+      "label": "Bases",
+      "level": "essential",
+      "entries": [
+        {
+          "codepoint": 1569,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1575,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1581,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1583,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1585,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1587,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1589,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1591,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1593,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1604,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1605,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1607,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1608,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1609,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1646,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1647,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1697,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1705,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1706,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1722,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1726,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1746,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1749,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "glyph_name": "kafDotless-ar",
+          "category": "Letter",
+          "level": "essential",
+          "level_rank": 0
+        }
+      ]
+    },
+    {
+      "id": "dots",
+      "label": "Dots",
+      "level": "essential",
+      "entries": [
+        {
+          "glyph_name": "commaAbove-ar",
+          "category": "Mark",
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "glyph_name": "dotAbove-ar",
+          "category": "Mark",
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "glyph_name": "dotBelow-ar",
+          "category": "Mark",
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "glyph_name": "dotCenter-ar",
+          "category": "Mark",
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "glyph_name": "fourDotsAbove-ar",
+          "category": "Mark",
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "glyph_name": "fourDotsBelow-ar",
+          "category": "Mark",
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "glyph_name": "fourDotsCenter-ar",
+          "category": "Mark",
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "glyph_name": "gafSarkash-ar",
+          "category": "Mark",
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "glyph_name": "gafSarkashCenter-ar",
+          "category": "Mark",
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "glyph_name": "hehGoalMark-ar",
+          "category": "Mark",
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "glyph_name": "miniKeheh-ar",
+          "category": "Mark",
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "glyph_name": "ringBelow-ar",
+          "category": "Mark",
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "glyph_name": "ringCenter-ar",
+          "category": "Mark",
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "glyph_name": "tahAbove-ar",
+          "category": "Mark",
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "glyph_name": "tahBelow-ar",
+          "category": "Mark",
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "glyph_name": "tahCenter-ar",
+          "category": "Mark",
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "glyph_name": "tail-ar",
+          "category": "Mark",
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "glyph_name": "threeDotsDownAbove-ar",
+          "category": "Mark",
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "glyph_name": "threeDotsDownBelow-ar",
+          "category": "Mark",
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "glyph_name": "threeDotsDownCenter-ar",
+          "category": "Mark",
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "glyph_name": "threeDotsUpAbove-ar",
+          "category": "Mark",
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "glyph_name": "threeDotsUpBelow-ar",
+          "category": "Mark",
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "glyph_name": "threeDotsUpCenter-ar",
+          "category": "Mark",
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "glyph_name": "twoDotsHorizontalAbove-ar",
+          "category": "Mark",
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "glyph_name": "twoDotsHorizontalBelow-ar",
+          "category": "Mark",
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "glyph_name": "twoDotsHorizontalCenter-ar",
+          "category": "Mark",
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "glyph_name": "twoDotsVerticalAbove-ar",
+          "category": "Mark",
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "glyph_name": "twoDotsVerticalBelow-ar",
+          "category": "Mark",
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "glyph_name": "twoDotsVerticalCenter-ar",
+          "category": "Mark",
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "glyph_name": "vBelow-ar",
+          "category": "Mark",
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "glyph_name": "vInvertedBelow-ar",
+          "category": "Mark",
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "glyph_name": "vInvertedCenter-ar",
+          "category": "Mark",
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "glyph_name": "wasla-ar",
+          "category": "Mark",
+          "level": "essential",
+          "level_rank": 0
+        }
+      ]
+    },
+    {
+      "id": "marks",
+      "label": "Marks",
+      "level": "essential",
+      "entries": [
+        {
+          "codepoint": 1611,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1612,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1613,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1614,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1615,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1616,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1617,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1618,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1619,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1620,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1621,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1626,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1627,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1648,
+          "level": "essential",
+          "level_rank": 0
+        }
+      ]
+    },
+    {
+      "id": "letters",
+      "label": "Letters",
+      "level": "essential",
+      "entries": [
+        {
+          "codepoint": 1568,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1569,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1570,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1571,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1572,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1573,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1574,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1575,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1576,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1577,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1578,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1579,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1580,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1581,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1582,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1583,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1584,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1585,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1586,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1587,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1588,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1589,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1590,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1591,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1592,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1593,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1594,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1595,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1596,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1597,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1598,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1599,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1601,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1602,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1603,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1604,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1605,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1606,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1607,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1608,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1609,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1610,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1646,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1647,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1649,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1657,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1658,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1659,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1660,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1661,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1662,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1663,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1664,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1665,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1666,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1667,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1668,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1669,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1670,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1671,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1672,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1673,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1674,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1675,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1676,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1677,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1678,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1679,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1680,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1681,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1682,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1683,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1684,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1685,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1686,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1687,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1688,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1689,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1690,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1691,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1692,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1693,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1694,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1695,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1696,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1697,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1698,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1699,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1700,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1701,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1702,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1703,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1704,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1705,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1706,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1707,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1708,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1709,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1710,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1711,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1712,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1713,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1714,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1715,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1716,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1717,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1718,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1719,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1720,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1721,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1722,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1723,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1724,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1725,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1726,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1727,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1728,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1729,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1730,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1731,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1732,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1734,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1735,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1736,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1737,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1738,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1739,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1740,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1741,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1742,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1743,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1744,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1746,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1747,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1749,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1774,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1775,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1786,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1787,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1788,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1791,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1873,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1874,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1875,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1876,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1877,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1878,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1879,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1880,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1881,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1882,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1884,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1885,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1886,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1887,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1888,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1889,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1890,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1891,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1892,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1893,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1894,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1895,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1896,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1897,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1899,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1900,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1901,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1902,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1903,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1904,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1905,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1906,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1918,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 1919,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 2185,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 2186,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 2187,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 2188,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 2189,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 2208,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 2209,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 2210,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 2211,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 2212,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 2213,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 2215,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 2216,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 2217,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 2219,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 2222,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 2223,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 2224,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 2226,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 2227,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 2228,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 2229,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 2235,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 2236,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 2237,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 2238,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 2239,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 2240,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 2241,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 2242,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 2243,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 2244,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 2245,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 2246,
+          "level": "essential",
+          "level_rank": 0
+        },
+        {
+          "codepoint": 2247,
+          "level": "essential",
+          "level_rank": 0
+        }
+      ]
+    },
+    {
+      "id": "ligatures",
+      "label": "Ligatures",
+      "level": "essential",
+      "entries": [
+        {
+          "glyph_name": "lam_alef-ar",
+          "category": "Letter",
+          "level": "essential",
+          "level_rank": 0
+        }
+      ]
+    },
+    {
+      "id": "mark-ligatures",
+      "label": "Mark ligatures",
+      "level": "optional",
+      "entries": [
+        {
+          "glyph_name": "shaddaFatha-ar",
+          "category": "Mark",
+          "level": "optional",
+          "level_rank": 2,
+          "components": [
+            "uni0651",
+            "uni064E"
+          ]
+        },
+        {
+          "glyph_name": "shaddaDamma-ar",
+          "category": "Mark",
+          "level": "optional",
+          "level_rank": 2,
+          "components": [
+            "uni0651",
+            "uni064F"
+          ]
+        },
+        {
+          "glyph_name": "shaddaKasra-ar",
+          "category": "Mark",
+          "level": "optional",
+          "level_rank": 2,
+          "components": [
+            "uni0651",
+            "uni0650"
+          ]
+        },
+        {
+          "glyph_name": "shaddaFathatan-ar",
+          "category": "Mark",
+          "level": "optional",
+          "level_rank": 2,
+          "components": [
+            "uni0651",
+            "uni064B"
+          ]
+        },
+        {
+          "glyph_name": "shaddaDammatan-ar",
+          "category": "Mark",
+          "level": "optional",
+          "level_rank": 2,
+          "components": [
+            "uni0651",
+            "uni064C"
+          ]
+        },
+        {
+          "glyph_name": "shaddaKasratan-ar",
+          "category": "Mark",
+          "level": "optional",
+          "level_rank": 2,
+          "components": [
+            "uni0651",
+            "uni064D"
+          ]
+        },
+        {
+          "glyph_name": "shaddaAlefAbove-ar",
+          "category": "Mark",
+          "level": "optional",
+          "level_rank": 2,
+          "components": [
+            "uni0651",
+            "uni0670"
+          ]
+        }
+      ]
+    }
+  ]
+}

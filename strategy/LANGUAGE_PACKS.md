@@ -6,10 +6,13 @@ The first slice ships inside the editor, not as an external download.
 
 | Role | Entry-point group | Plugin |
 | --- | --- | --- |
-| Composition provider | `counterpunch_composition_plugins` | `space.counterpunch.latin` |
-| Feature generator | `counterpunch_feature_plugins` | `space.counterpunch.ccmp` (`feature:ccmp`) |
+| Composition provider | `counterpunch_composition_plugins` | `space.counterpunch.latin`, `space.counterpunch.arabic` |
+| Feature generator | `counterpunch_feature_plugins` | `space.counterpunch.ccmp` (`feature:ccmp`), `space.counterpunch.arabic` (`feature:arabic`) |
+| Character Set provider | `counterpunch_character_set_plugins` | `space.counterpunch.arabic` ("Arabic Language Pack") |
 
 `LatinCompositionProvider.recipe(codepoint, lookup)` returns a Unicode component recipe, or an `overrides.json` recipe when one exists. `anchors(codepoint)` and `anchor_positions(requests)` supply creation anchors. `CcmpFeatureGenerator` declares `EVENT_TYPES = ["glyph.unicode.changed"]` plus the `ccmp` intent, and `SETTINGS` for `composition_output` (`target: add-glyphs`). Glyph creation, deletion, and renaming always re-run generators. See `developer-docs/PLUGIN_SETTINGS.md`.
+
+`ArabicCompositionProvider.recipe` returns positional sequences (`isol`, `init`, `medi`, `fina`) and, when one shaping pass of the form rules reproduces every position, a `decompose` sequence for `ccmp`. The host routes an Arabic-script lookup to that provider. `ArabicFormsGenerator` writes the `forms` block in `isol` / `init` / `medi` / `fina` and the `required` block in `rlig`, plus a `languagesystem arab dflt;` prefix when the designer has not already declared `arab`. A character-set entry may omit `codepoint` when `glyph_name` is set; those rows are unencoded glyphs (category and optional components included). Encoded Arabic letters and Hyperglot Arabic codepoints share glyph-data names (`behDotless-ar`, `yehFarsi-ar`) because recipes are keyed by codepoint.
 
 ## Purpose
 
@@ -130,7 +133,9 @@ class CharacterSetProvider:
 `CharacterSetNode` contains a stable `id`, `label`, optional `description`,
 and `children`. Only leaves have `selectable: true`. `CharacterSetEntry`
 contains a Unicode sequence, a display string, and one or more provider-defined
-category tags. A provider that supports coverage selection declares its own
+category tags. `codepoint` may be omitted when `glyph_name` is set: that entry
+is an unencoded glyph, selected and created by name, with an optional
+`category` and `components`. A provider that supports coverage selection declares its own
 ordered coverage-level definitions, including their labels and defaults; each
 entry then declares the provider level it belongs to. Providers without such
 definitions show no Include control and return their complete sets.

@@ -3,6 +3,7 @@ import { glyphDataIndex, type GlyphDataSearchResult } from './glyph-data';
 import {
     characterSetPluginManager,
     type CharacterSetCoverageLevel,
+    type CharacterSetEntry,
     type CharacterSetNode
 } from './character-set-plugin-manager';
 import { Logger } from './logger';
@@ -10,6 +11,32 @@ import { bindModalEscape, type ModalEscapeBinding } from './ui/modal-escape';
 import type { FilesystemPlugin } from './filesystem-plugins/filesystem-plugin';
 
 const console = new Logger('AddGlyphsDialog');
+
+function resultKey(record: { codepoint?: number; glyph_name: string }): string {
+    if (typeof record.codepoint === 'number' && record.codepoint >= 0) {
+        return `u:${record.codepoint}`;
+    }
+    return `g:${record.glyph_name}`;
+}
+
+function characterRecord(
+    character: CharacterSetEntry
+): GlyphDataSearchResult | undefined {
+    if (typeof character.codepoint === 'number') {
+        return glyphDataIndex.getGlyphDataForUnicode([character.codepoint]);
+    }
+    if (!character.glyph_name) {
+        return undefined;
+    }
+    return {
+        codepoint: -1,
+        glyph_name: character.glyph_name,
+        name: character.glyph_name,
+        general_category: character.category === 'Mark' ? 'Mn' : 'Lo',
+        script: 'Arabic',
+        character: ''
+    };
+}
 
 const GENERAL_CATEGORY_LABELS: Record<string, string> = {
     Lu: 'Uppercase Letter',
@@ -65,7 +92,7 @@ export class AddGlyphsDialog {
     private confirmButton: HTMLButtonElement | null = null;
     private quotaError: HTMLParagraphElement | null = null;
     private results: GlyphDataSearchResult[] = [];
-    private selectedCodepoints = new Set<number>();
+    private selectedKeys = new Set<string>();
     private activeIndex = -1;
     private selectionAnchor = -1;
     private activeProviderId = 'unicode';
@@ -374,17 +401,14 @@ export class AddGlyphsDialog {
             if (version !== this.searchVersion) {
                 return;
             }
-            this.results = characters
-                .map((character) =>
-                    glyphDataIndex.getGlyphDataForUnicode([character.codepoint])
-                )
-                .filter(
-                    (record): record is GlyphDataSearchResult =>
-                        record !== undefined &&
-                        this.matchesSearch(record, query)
-                );
+            this.results = characters.flatMap((character) => {
+                const record = characterRecord(character);
+                return record && this.matchesSearch(record, query)
+                    ? [record]
+                    : [];
+            });
         }
-        this.selectedCodepoints.clear();
+        this.selectedKeys.clear();
         this.activeIndex = this.results.length ? 0 : -1;
         this.selectionAnchor = this.activeIndex;
         this.renderResults();
@@ -599,7 +623,10 @@ export class AddGlyphsDialog {
         const font = window.currentFontModel;
         const fragment = document.createDocumentFragment();
         this.results.forEach((record, index) => {
-            const existing = font?.findGlyphByCodepoint(record.codepoint);
+            const existing =
+                typeof record.codepoint === 'number' && record.codepoint >= 0
+                    ? font?.findGlyphByCodepoint(record.codepoint)
+                    : font?.findGlyph(record.glyph_name);
             const nameCollision = font?.findGlyph(record.glyph_name);
             const row = document.createElement('button');
             row.type = 'button';
@@ -608,12 +635,12 @@ export class AddGlyphsDialog {
             row.classList.toggle('is-existing', Boolean(existing));
             row.classList.toggle(
                 'is-selected',
-                this.selectedCodepoints.has(record.codepoint)
+                this.selectedKeys.has(resultKey(record))
             );
             row.setAttribute('role', 'option');
             row.setAttribute(
                 'aria-selected',
-                String(this.selectedCodepoints.has(record.codepoint))
+                String(this.selectedKeys.has(resultKey(record)))
             );
             row.addEventListener('click', (event) =>
                 this.selectRow(
@@ -644,7 +671,9 @@ export class AddGlyphsDialog {
             const properties = document.createElement('span');
             properties.className = 'add-glyph-properties';
             const extras = [
-                `U+${record.codepoint.toString(16).toUpperCase().padStart(4, '0')}`,
+                typeof record.codepoint === 'number' && record.codepoint >= 0
+                    ? `U+${record.codepoint.toString(16).toUpperCase().padStart(4, '0')}`
+                    : '',
                 record.script,
                 record.joining_type ? `join ${record.joining_type}` : ''
             ].filter(Boolean);
@@ -681,23 +710,23 @@ export class AddGlyphsDialog {
         }
         this.activeIndex = index;
         if (range && this.selectionAnchor >= 0) {
-            this.selectedCodepoints.clear();
+            this.selectedKeys.clear();
             const [start, end] = [this.selectionAnchor, index].sort(
                 (a, b) => a - b
             );
             for (let candidate = start; candidate <= end; candidate += 1) {
-                const codepoint = this.results[candidate]!.codepoint;
-                this.selectedCodepoints.add(codepoint);
+                this.selectedKeys.add(resultKey(this.results[candidate]!));
             }
         } else if (toggle) {
-            if (this.selectedCodepoints.has(record.codepoint)) {
-                this.selectedCodepoints.delete(record.codepoint);
+            const key = resultKey(record);
+            if (this.selectedKeys.has(key)) {
+                this.selectedKeys.delete(key);
             } else {
-                this.selectedCodepoints.add(record.codepoint);
+                this.selectedKeys.add(key);
             }
             this.selectionAnchor = index;
         } else {
-            this.selectedCodepoints = new Set([record.codepoint]);
+            this.selectedKeys = new Set([resultKey(record)]);
             this.selectionAnchor = index;
         }
         this.renderResults();
@@ -722,8 +751,8 @@ export class AddGlyphsDialog {
         if (this.results.length === 0) {
             return;
         }
-        this.selectedCodepoints = new Set(
-            this.results.map((record) => record.codepoint)
+        this.selectedKeys = new Set(
+            this.results.map((record) => resultKey(record))
         );
         this.activeIndex = 0;
         this.selectionAnchor = 0;
@@ -734,7 +763,7 @@ export class AddGlyphsDialog {
         if (!this.confirmButton) {
             return;
         }
-        const count = this.selectedCodepoints.size;
+        const count = this.selectedKeys.size;
         this.confirmButton.disabled = count === 0;
         this.confirmButton.textContent =
             count === 1 ? 'Add Glyph' : `Add ${count} Glyphs`;
@@ -742,19 +771,21 @@ export class AddGlyphsDialog {
 
     private async addSelected(): Promise<void> {
         const font = window.currentFontModel as Font | null;
-        if (!font || this.selectedCodepoints.size === 0) {
+        if (!font || this.selectedKeys.size === 0) {
             return;
         }
         this.clearQuotaError();
         const selected = this.results.filter((record) =>
-            this.selectedCodepoints.has(record.codepoint)
+            this.selectedKeys.has(resultKey(record))
         );
         const existingNames = new Set(font.glyphs.map((glyph) => glyph.name));
-        const additions = selected.filter(
-            (record) =>
-                !font.findGlyphByCodepoint(record.codepoint) &&
-                !existingNames.has(record.glyph_name)
-        );
+        const additions = selected.filter((record) => {
+            const encoded =
+                typeof record.codepoint === 'number' &&
+                record.codepoint >= 0 &&
+                font.findGlyphByCodepoint(record.codepoint);
+            return !encoded && !existingNames.has(record.glyph_name);
+        });
         if (additions.length === 0) {
             this.close();
             return;
@@ -787,9 +818,16 @@ export class AddGlyphsDialog {
                     : 'materialized';
             const plan = await planGlyphAdditions(
                 additions.map((record) => ({
-                    codepoint: record.codepoint,
+                    codepoint:
+                        typeof record.codepoint === 'number' &&
+                        record.codepoint >= 0
+                            ? record.codepoint
+                            : undefined,
                     glyph_name: record.glyph_name,
-                    general_category: record.general_category
+                    general_category: record.general_category,
+                    category: record.general_category.startsWith('M')
+                        ? 'Mark'
+                        : 'Letter'
                 })),
                 output,
                 {

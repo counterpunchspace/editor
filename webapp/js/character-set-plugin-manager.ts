@@ -26,11 +26,14 @@ export interface CharacterSetProvider {
     tree: CharacterSetNode[];
 }
 
-type CharacterSetEntry = {
-    codepoint: number;
+export type CharacterSetEntry = {
+    codepoint?: number;
+    glyph_name?: string;
+    category?: string;
+    components?: string[];
     level: CharacterSetCoverageLevel;
     level_rank: number;
-    categories: string[];
+    categories?: string[];
 };
 
 type PyodideLike = {

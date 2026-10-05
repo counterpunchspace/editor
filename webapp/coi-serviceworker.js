@@ -49,6 +49,7 @@ const PRECACHE_ASSETS = [
     './wheels/curvature_comb_plugin-0.1.1-py3-none-any.whl',
     './wheels/example_canvas_plugin-0.1.1-py3-none-any.whl',
     './wheels/general_filter_plugin-0.1.0-py3-none-any.whl',
+    './wheels/counterpunch_arabic-1.0.0-py3-none-any.whl',
     './wheels/counterpunch_ccmp-1.0.0-py3-none-any.whl',
     './wheels/counterpunch_latin-1.0.0-py3-none-any.whl',
 

@@ -1,5 +1,6 @@
 /** Glyphs replaced by the managed ccmp decomposition block. */
 
+import { arabicIsolShells } from './arabic-forms';
 import {
     generatorStamp,
     managedInputs,
@@ -20,12 +21,15 @@ export function ccmpShellNames(
             code.automatic !== false
         );
     });
-    if (!owned) {
-        return new Set();
-    }
-    return new Set(
-        managedInputs(features ?? undefined, CCMP_GENERATOR, CCMP_BLOCK)
+    const names = new Set(
+        owned
+            ? managedInputs(features ?? undefined, CCMP_GENERATOR, CCMP_BLOCK)
+            : []
     );
+    for (const name of arabicIsolShells(features)) {
+        names.add(name);
+    }
+    return names;
 }
 
 /** Component names written in the managed ccmp decomposition, keyed by glyph. */

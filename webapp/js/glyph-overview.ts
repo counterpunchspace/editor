@@ -3887,7 +3887,15 @@ class GlyphOverview {
                 return;
             }
         }
-        await convertSelectedGlyphs(targets, output);
+        const kept = await convertSelectedGlyphs(targets, output);
+        if (kept.length) {
+            const { showProceedDialog: showKept } =
+                await import('./ui/confirm-dialog');
+            await showKept(
+                'Kept glyphs',
+                `${formatNameList(kept)} stayed in the font because another glyph, feature, or kerning pair uses them.`
+            );
+        }
     }
 
     private createTileContextMenuHtml(

@@ -24,12 +24,23 @@ export function applyCompositionPlan(
             remove: plan.ccmpRemove,
             components: plan.ccmpComponents
         });
+        if (plan.arabicAdd || plan.arabicRemove) {
+            bridge?.setTransactionIntent?.('arabic', {
+                add: plan.arabicAdd || {},
+                remove: plan.arabicRemove || []
+            });
+        }
         for (const glyph of plan.create) {
             if (font.findGlyph(glyph.name)) {
                 continue;
             }
             const added = font.addGlyph(glyph.name, glyph.category);
             added.codepoints = glyph.codepoints;
+            if (glyph.width === 0) {
+                for (const layer of added.layers || []) {
+                    layer.width = 0;
+                }
+            }
             placeAnchors(added, glyph.anchors);
         }
         for (const name of plan.clearShells) {
@@ -46,6 +57,9 @@ export function applyCompositionPlan(
                     layer.addComponent(component);
                 }
             }
+        }
+        if (plan.deletes?.length) {
+            font.deleteGlyphs(plan.deletes);
         }
     };
     if (!bridge) {

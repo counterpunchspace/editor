@@ -7,11 +7,13 @@ const console = new Logger('LanguagePacks');
 
 export const COMPOSITION_PLUGIN_ID = 'space.counterpunch.latin';
 
-const ENSURE_LATIN_PROVIDER = `
+const ENSURE_COMPOSITION_PROVIDERS = `
 import builtins
-if not hasattr(builtins, "_cp_latin_provider"):
+if not hasattr(builtins, "_cp_composition_providers"):
     from importlib.metadata import entry_points
-    builtins._cp_latin_provider = list(entry_points(group="counterpunch_composition_plugins"))[0].load()()
+    builtins._cp_composition_providers = {}
+    for entry in list(entry_points(group="counterpunch_composition_plugins")):
+        builtins._cp_composition_providers[entry.name] = entry.load()()
 `;
 
 function lookupRecord(codepoint: number): Record<string, unknown> | null {
@@ -27,7 +29,8 @@ function lookupRecord(codepoint: number): Record<string, unknown> | null {
         category: record.category,
         decomposition: record.decomposition,
         combining_class: record.combining_class,
-        block: record.block
+        block: record.block,
+        joining_type: record.joining_type
     };
 }
 
@@ -62,11 +65,14 @@ export class LanguagePackManager {
     private recipePython(codepoint: number): string {
         return `
 import json, builtins
-${ENSURE_LATIN_PROVIDER}
+${ENSURE_COMPOSITION_PROVIDERS}
 lookup_data = json.loads(${JSON.stringify(JSON.stringify(this.closure(codepoint)))})
 def lookup(codepoint):
     return lookup_data.get(str(int(codepoint)))
-json.dumps(builtins._cp_latin_provider.recipe(${codepoint}, lookup))
+record = lookup(${codepoint}) or {}
+provider_name = "arabic" if record.get("script") == "Arabic" else "latin"
+provider = builtins._cp_composition_providers.get(provider_name)
+json.dumps(provider.recipe(${codepoint}, lookup) if provider else None)
 `;
     }
 
@@ -74,8 +80,36 @@ json.dumps(builtins._cp_latin_provider.recipe(${codepoint}, lookup))
         await this.ensureReady();
         const result = await runHostPythonAsync(`
 import json, builtins
-${ENSURE_LATIN_PROVIDER}
-json.dumps(builtins._cp_latin_provider.anchors(${codepoint}))
+${ENSURE_COMPOSITION_PROVIDERS}
+provider = builtins._cp_composition_providers.get("latin")
+json.dumps(provider.anchors(${codepoint}) if provider else [])
+`);
+        return JSON.parse(String(result)) as string[];
+    }
+
+    async recipeForName(name: string): Promise<{
+        source: string;
+        positions?: Record<string, string[]>;
+        components?: string[];
+        category?: string;
+    } | null> {
+        await this.ensureReady();
+        const result = await runHostPythonAsync(`
+import json, builtins
+${ENSURE_COMPOSITION_PROVIDERS}
+provider = builtins._cp_composition_providers.get("arabic")
+json.dumps(provider.recipe_for_name(${JSON.stringify(name)}) if provider else None)
+`);
+        return JSON.parse(String(result));
+    }
+
+    async anchorsFor(token: string): Promise<string[]> {
+        await this.ensureReady();
+        const result = await runHostPythonAsync(`
+import json, builtins
+${ENSURE_COMPOSITION_PROVIDERS}
+provider = builtins._cp_composition_providers.get("arabic")
+json.dumps(provider.anchors(${JSON.stringify(token)}) if provider else [])
 `);
         return JSON.parse(String(result)) as string[];
     }
@@ -90,8 +124,9 @@ json.dumps(builtins._cp_latin_provider.anchors(${codepoint}))
         await this.ensureReady();
         const result = await runHostPythonAsync(`
 import json, builtins
-${ENSURE_LATIN_PROVIDER}
-json.dumps(builtins._cp_latin_provider.anchor_positions(json.loads(${JSON.stringify(JSON.stringify(requests))})))
+${ENSURE_COMPOSITION_PROVIDERS}
+provider = builtins._cp_composition_providers.get("arabic") or builtins._cp_composition_providers.get("latin")
+json.dumps(provider.anchor_positions(json.loads(${JSON.stringify(JSON.stringify(requests))})) if provider else [])
 `);
         return JSON.parse(String(result));
     }

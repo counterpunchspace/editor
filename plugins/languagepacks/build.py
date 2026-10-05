@@ -40,6 +40,30 @@ PACKAGES = (
             "ccmp = counterpunch_ccmp:CcmpFeatureGenerator\n"
         ),
     },
+    {
+        "name": "counterpunch_arabic",
+        "distribution": "counterpunch-arabic",
+        "version": "1.0.0",
+        "root": EDITOR / "plugins" / "languagepacks" / "arabic" / "counterpunch_arabic",
+        "files": [
+            "__init__.py",
+            "composition.py",
+            "charset.py",
+            "generator.py",
+            "anchor_positions.py",
+            "data/arabic.json",
+        ],
+        "entry_points": (
+            "[counterpunch_composition_plugins]\n"
+            "arabic = counterpunch_arabic:ArabicCompositionProvider\n"
+            "\n"
+            "[counterpunch_feature_plugins]\n"
+            "arabic = counterpunch_arabic:ArabicFormsGenerator\n"
+            "\n"
+            "[counterpunch_character_set_plugins]\n"
+            "arabic = counterpunch_arabic:ArabicCharacterSetProvider\n"
+        ),
+    },
 )
 
 

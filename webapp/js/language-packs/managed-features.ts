@@ -58,7 +58,39 @@ export function applyGeneratorBlocks(
 ): FeaturesDocument | null {
     const current = [...(features.features || [])];
     let changed = false;
+    const prefixes = { ...(features.prefixes || {}) };
     for (const block of blocks) {
+        if (block.placement === 'prefix') {
+            const current = prefixes[block.block];
+            if (current?.automatic === false) {
+                continue;
+            }
+            if (!block.code.trim()) {
+                if (current) {
+                    delete prefixes[block.block];
+                    changed = true;
+                }
+                continue;
+            }
+            if (current?.code === block.code && current.automatic === true) {
+                continue;
+            }
+            prefixes[block.block] = {
+                code: block.code,
+                automatic: true,
+                format_specific: {
+                    ...(current?.format_specific || {}),
+                    [GENERATOR_KEY]: {
+                        generator: generatorId,
+                        version,
+                        block: block.block,
+                        capability
+                    }
+                }
+            };
+            changed = true;
+            continue;
+        }
         const index = current.findIndex(([tag, code]) => {
             const stamp = generatorStamp(code);
             return (
@@ -116,7 +148,7 @@ export function applyGeneratorBlocks(
     if (!changed) {
         return null;
     }
-    return { ...features, features: current };
+    return { ...features, features: current, prefixes };
 }
 
 export function managedInputs(
