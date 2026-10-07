@@ -108,9 +108,9 @@ const APP_SETTINGS = {
         /** Cap accumulated sparse residency (working + previous + hidden). */
         SPARSE_RESIDENT_GLYPH_BUDGET: 512,
         /** Max shard GETs/POSTs in one hydrate or seed batch. */
-        HYDRATE_BATCH_MAX_REQUESTS: 512,
+        HYDRATE_BATCH_MAX_REQUESTS: 8000,
         /** Fail closed if one hydrate/seed batch exceeds this many downloaded bytes. */
-        HYDRATE_BATCH_MAX_BYTES: 48 * 1024 * 1024,
+        HYDRATE_BATCH_MAX_BYTES: 8 * 1024 * 1024,
         /** Estimated bytes used to preflight residency when shard sizes are unknown. */
         SPARSE_ESTIMATED_BYTES_PER_GLYPH: 24 * 1024
     },

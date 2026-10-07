@@ -20,13 +20,21 @@ import { MAX_SHARD_BYTES } from "./collab-protocol-limits";
 
 export const PACK_MAGIC = new Uint8Array([0x43, 0x50, 0x4b, 0x31]);
 export const PACK_CONTENT_TYPE = "application/vnd.counterpunch.shard-pack";
-export const PACK_MAX_SHARDS = 128;
+export const PACK_MAX_SHARDS = 8000;
 export const PACK_MAX_BYTES = 48 * 1024 * 1024;
-// Workers Free allows 50 subrequests per invocation. Pack seed spends two per
-// glyph (validator + R2 put) plus the limits, authorize, and attest calls.
-// A 128-shard pack exceeds that and the attest fetch throws
-// "Too many subrequests", which the editor shows as "Shard attestation unavailable".
-export const SEED_PACK_MAX_SHARDS = 16;
+// Workers Paid allows 10,000 subrequests. One pack stays under that with
+// one R2 op per shard, one validate, one attest, and one hub call.
+// Memory, not the subrequest cap, bounds the body: one copy of 8 MiB,
+// and six such requests are 48 MiB in one isolate.
+export const SEED_PACK_MAX_SHARDS = 8000;
+export const SEED_PACK_MAX_BYTES = 8 * 1024 * 1024;
+export const LARGE_SHARD_BYTES = 1 * 1024 * 1024;
+export const PACK_R2_WAVE = 6;
+export const HYDRATE_WINDOW_BYTES = 8 * 1024 * 1024;
+export const HYDRATE_WINDOW_SHARDS = 6;
+export const PAID_SUBREQUEST_BUDGET = 10_000;
+export const CLIENT_PACK_CONCURRENCY = 6;
+export const CLIENT_PACK_INFLIGHT_BYTES = 48 * 1024 * 1024;
 export const PACK_DIGEST_BYTES = 32;
 export const PACK_MAX_SHARD_ID_BYTES = 256;
 
@@ -35,6 +43,7 @@ export const PACK_FRAME_TYPE = {
   RECEIPT: 2,
   ERROR: 3,
   END: 4,
+  DEFERRED: 5,
 };
 
 const utf8 = new TextEncoder();
@@ -139,6 +148,13 @@ export function encodePackErrorFrame(error) {
   });
 }
 
+export function encodePackDeferredFrame(shardIds = []) {
+  return encodePackFrame({
+    type: PACK_FRAME_TYPE.DEFERRED,
+    payload: utf8.encode(JSON.stringify({ shardIds: [...shardIds] })),
+  });
+}
+
 export function encodePackEndFrame(count = 0) {
   const payload = new Uint8Array(4);
   new DataView(payload.buffer).setUint32(0, Number(count) || 0, false);
@@ -187,7 +203,10 @@ export function createPackParser() {
       if (!chunk?.byteLength) {
         return [];
       }
-      buffer = concatBytes([buffer, chunk]);
+      // A whole body pushed into an empty parser stays one buffer. Frames
+      // are views into it. Concatenating would double the pack in RAM.
+      buffer =
+        buffer.byteLength === 0 ? chunk : concatBytes([buffer, chunk]);
       const frames = [];
       if (!sawMagic) {
         if (buffer.byteLength < PACK_MAGIC.byteLength) {
@@ -226,7 +245,11 @@ export function createPackParser() {
         const digest = raw.subarray(8 + idLen, 8 + idLen + PACK_DIGEST_BYTES);
         const payload = raw.subarray(8 + idLen + PACK_DIGEST_BYTES);
         let receipt = null;
-        if (type === PACK_FRAME_TYPE.RECEIPT || type === PACK_FRAME_TYPE.ERROR) {
+        if (
+          type === PACK_FRAME_TYPE.RECEIPT ||
+          type === PACK_FRAME_TYPE.ERROR ||
+          type === PACK_FRAME_TYPE.DEFERRED
+        ) {
           try {
             receipt = JSON.parse(utf8Decoder.decode(payload));
           } catch {
@@ -295,25 +318,39 @@ export async function readPackStream(stream, onFrame) {
   }
 }
 
-export function partitionPackItems(items, byteLengthOf, maxItems = PACK_MAX_SHARDS, maxBytes = PACK_MAX_BYTES) {
+export function partitionPackItems(
+  items,
+  byteLengthOf,
+  maxItems = PACK_MAX_SHARDS,
+  maxBytes = PACK_MAX_BYTES,
+  largeShardBytes = LARGE_SHARD_BYTES,
+) {
   const batches = [];
   let current = [];
   let bytes = 0;
-  for (const item of items) {
-    const size = byteLengthOf(item);
-    if (
-      current.length &&
-      (current.length >= maxItems || bytes + size > maxBytes)
-    ) {
+  const flush = () => {
+    if (current.length) {
       batches.push(current);
       current = [];
       bytes = 0;
     }
+  };
+  for (const item of items) {
+    const size = byteLengthOf(item);
+    if (size >= largeShardBytes) {
+      flush();
+      batches.push([item]);
+      continue;
+    }
+    if (
+      current.length &&
+      (current.length >= maxItems || bytes + size > maxBytes)
+    ) {
+      flush();
+    }
     current.push(item);
     bytes += size;
   }
-  if (current.length) {
-    batches.push(current);
-  }
+  flush();
   return batches;
 }

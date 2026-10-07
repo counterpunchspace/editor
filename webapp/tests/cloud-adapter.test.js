@@ -4214,7 +4214,7 @@ describe('HTTP seed (POST /state for new rooms)', () => {
         }
     });
 
-    it('seeds at most 16 shards per pack request', async () => {
+    it('seeds a small font in one pack under the paid caps', async () => {
         const originalFetch = global.fetch;
         const adapter = new CloudAdapter({
             assetId: 'asset-seed-budget',
@@ -4267,8 +4267,8 @@ describe('HTTP seed (POST /state for new rooms)', () => {
                 shards,
                 shards.length
             );
-            expect(frameCounts).toEqual([SEED_PACK_MAX_SHARDS, 4]);
-            expect(SEED_PACK_MAX_SHARDS).toBe(16);
+            expect(frameCounts).toEqual([20]);
+            expect(SEED_PACK_MAX_SHARDS).toBe(8000);
         } finally {
             global.fetch = originalFetch;
         }
@@ -4340,5 +4340,77 @@ describe('HTTP seed (POST /state for new rooms)', () => {
             console.log = originalLog;
             global.fetch = originalFetch;
         }
+    });
+
+    test('keeps at most six packs and 48 MiB in flight and isolates a large shard', async () => {
+        const adapter = new CloudAdapter({ assetId: 'asset-123' });
+        const eightMiB = 8 * 1024 * 1024;
+        const oneMiB = 1024 * 1024;
+        const pack = (total, count) =>
+            Array.from({ length: count }, () => ({
+                byteLength: Math.floor(total / count)
+            }));
+        const batches = [
+            ...Array.from({ length: 7 }, () => pack(eightMiB, 8)),
+            [{ byteLength: oneMiB }]
+        ];
+        let inFlight = 0;
+        let peak = 0;
+        let inFlightBytes = 0;
+        let peakBytes = 0;
+        let overlappedLarge = false;
+        await adapter._runPackSlots(
+            batches,
+            (batch) => batch.reduce((sum, item) => sum + item.byteLength, 0),
+            async (batch) => {
+                const bytes = batch.reduce(
+                    (sum, item) => sum + item.byteLength,
+                    0
+                );
+                if (batch.length === 1 && bytes >= oneMiB && inFlight > 0) {
+                    overlappedLarge = true;
+                }
+                inFlight += 1;
+                inFlightBytes += bytes;
+                peak = Math.max(peak, inFlight);
+                peakBytes = Math.max(peakBytes, inFlightBytes);
+                await new Promise((resolve) => setTimeout(resolve, 15));
+                inFlight -= 1;
+                inFlightBytes -= bytes;
+            }
+        );
+        expect(peak).toBeLessThanOrEqual(6);
+        expect(peakBytes).toBeLessThanOrEqual(48 * 1024 * 1024);
+        expect(overlappedLarge).toBe(false);
+    });
+
+    test('a 503 halves the pack slot count', async () => {
+        const adapter = new CloudAdapter({ assetId: 'asset-123' });
+        const logs = [];
+        const originalLog = console.log;
+        console.log = (...args) => {
+            logs.push(args);
+        };
+        let calls = 0;
+        try {
+            await adapter._runPackSlots(
+                [[{ byteLength: 10 }, { byteLength: 10 }]],
+                (batch) =>
+                    batch.reduce((sum, item) => sum + item.byteLength, 0),
+                async () => {
+                    calls += 1;
+                    if (calls === 1) {
+                        throw new Error('503');
+                    }
+                }
+            );
+        } finally {
+            console.log = originalLog;
+        }
+        expect(calls).toBe(2);
+        const reduced = logs.find(
+            (entry) => entry[0] === '[CloudAdapter] pack slots reduced'
+        );
+        expect(reduced?.[1]).toMatchObject({ slots: 3 });
     });
 });

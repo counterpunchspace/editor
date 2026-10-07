@@ -3049,6 +3049,8 @@ export class CloudAdapter implements FileSystemAdapter {
 }
 
 Object.assign(CloudAdapter.prototype, {
+    _ensureSaveGrant: cloudAdapterShardIoMethods._ensureSaveGrant,
+    _runPackSlots: cloudAdapterShardIoMethods._runPackSlots,
     _isTransientPackHydrateError:
         cloudAdapterShardIoMethods._isTransientPackHydrateError,
     _seedPack: cloudAdapterShardIoMethods._seedPack,

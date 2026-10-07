@@ -3497,7 +3497,7 @@ describe('sparse hydration integrity regressions', () => {
         expect(budgeted.previewOnly).toBe(true);
         expect(budgeted.keepExtraIds).toEqual([]);
         expect(() =>
-            assertHydrateBatchBudget({ requestCount: 513, byteLength: 1 })
+            assertHydrateBatchBudget({ requestCount: 8001, byteLength: 1 })
         ).toThrow(/request cap/);
         expect(() =>
             assertHydrateBatchBudget({

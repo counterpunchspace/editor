@@ -12,6 +12,8 @@ import {
     PACK_MAX_SHARDS,
     PACK_MAX_BYTES,
     SEED_PACK_MAX_SHARDS,
+    SEED_PACK_MAX_BYTES,
+    LARGE_SHARD_BYTES,
     PACK_FRAME_TYPE,
     concatBytes,
     hexToBytes,
@@ -31,6 +33,8 @@ export {
     PACK_MAX_SHARDS,
     PACK_MAX_BYTES,
     SEED_PACK_MAX_SHARDS,
+    SEED_PACK_MAX_BYTES,
+    LARGE_SHARD_BYTES,
     PACK_FRAME_TYPE,
     concatBytes,
     hexToBytes,
@@ -79,22 +83,30 @@ export function partitionPackItems<T>(
     const batches: T[][] = [];
     let current: T[] = [];
     let bytes = 0;
-    for (const item of items) {
-        const size = byteLengthOf(item);
-        if (
-            current.length &&
-            (current.length >= itemCap || bytes + size > maxBytes)
-        ) {
+    const flush = () => {
+        if (current.length) {
             batches.push(current);
             current = [];
             bytes = 0;
         }
+    };
+    for (const item of items) {
+        const size = byteLengthOf(item);
+        if (size >= LARGE_SHARD_BYTES) {
+            flush();
+            batches.push([item]);
+            continue;
+        }
+        if (
+            current.length &&
+            (current.length >= itemCap || bytes + size > maxBytes)
+        ) {
+            flush();
+        }
         current.push(item);
         bytes += size;
     }
-    if (current.length) {
-        batches.push(current);
-    }
+    flush();
     return batches;
 }
 

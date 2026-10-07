@@ -9,6 +9,14 @@ import {
     FileInfo
 } from './file-system-adapter';
 import { showCriticalError } from './critical-error-handler';
+
+/** A memory URL for a font that is not in the session should open the default
+ * font. Disk and cloud URLs still tell the user the file is missing. */
+export function missingFontUrlAction(
+    pluginId: string
+): 'default-font' | 'alert' {
+    return pluginId === 'memory' ? 'default-font' : 'alert';
+}
 import {
     pluginRegistry,
     FilesystemPlugin,
@@ -4340,6 +4348,19 @@ document.addEventListener('DOMContentLoaded', () => {
                                         fontPath
                                     );
                                 if (!exists) {
+                                    if (
+                                        missingFontUrlAction(pluginId) ===
+                                        'default-font'
+                                    ) {
+                                        console.warn(
+                                            '[FileBrowser]',
+                                            `Memory font not found: ${fontPath}; opening the default font`
+                                        );
+                                        await openDefaultStartupFont(
+                                            'URL memory font missing'
+                                        );
+                                        return;
+                                    }
                                     alert(
                                         `Error: File not found at "${fontPath}" in "${plugin.getName()}" plugin.\n\nThe requested file does not exist or is not accessible.`
                                     );

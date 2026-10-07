@@ -14,6 +14,15 @@ import {
     MENU_RETURN_SYMBOL
 } from './keyboard-shortcut-display';
 import { Logger } from './logger';
+
+/** A missing settings file is not a watcher error. The watcher must stop. */
+export function isMissingFileError(error: unknown): boolean {
+    const name =
+        error && typeof error === 'object' && 'name' in error
+            ? String((error as { name?: string }).name)
+            : '';
+    return name === 'NotFoundError';
+}
 import {
     getPythonDocumentKindInfo,
     type ScriptDocumentKind
@@ -1597,8 +1606,10 @@ import { showNamedUnsavedChangesDialog } from './ui/confirm-dialog';
                 console.warn(
                     '[ScriptEditor]',
                     'Could not get initial file info for:',
-                    path
+                    path,
+                    '— not watching a missing file'
                 );
+                return;
             }
 
             // Poll for changes every 2 seconds
@@ -1662,6 +1673,9 @@ import { showNamedUnsavedChangesDialog } from './ui/confirm-dialog';
 
             return null;
         } catch (error) {
+            if (isMissingFileError(error)) {
+                return null;
+            }
             console.error('[ScriptEditor]', 'Error getting file info:', error);
             return null;
         }
@@ -1688,10 +1702,7 @@ import { showNamedUnsavedChangesDialog } from './ui/confirm-dialog';
             const fileInfo = await getFileInfo(adapter, currentFilePath);
 
             if (!fileInfo) {
-                console.warn(
-                    '[ScriptEditor]',
-                    'Could not get file info during check'
-                );
+                stopFileWatcher();
                 return;
             }
 

@@ -5,19 +5,30 @@ import { timingSafeEqualString } from "./collab-protocol-timing-safe";
 
 export const PACK_SEED_GRANT_OPERATION = "pack-seed";
 export const PACK_SEED_GRANT_TTL_MS = 120_000;
+export const PACK_SAVE_GRANT_SCOPE = "save";
+export const PACK_SAVE_GRANT_TTL_MS = 15 * 60 * 1000;
+export const PACK_SEED_RECEIPT_PREFIX = "pack-seed-receipt:v1";
+export const PACK_RECEIPT_MAX_AGE_MS = 5 * 60 * 1000;
+export const PACK_RECEIPT_FUTURE_SKEW_MS = 30 * 1000;
 
 export function canonicalizePackSeedGrant(payload) {
   const shardIds = Array.isArray(payload?.shardIds)
     ? [...payload.shardIds].map((id) => String(id)).sort()
     : [];
-  return JSON.stringify({
+  const body = {
     assetId: String(payload?.assetId || ""),
     operation: String(payload?.operation || PACK_SEED_GRANT_OPERATION),
     shardIds,
     issuedAt: Number(payload?.issuedAt || 0),
     expiresAt: Number(payload?.expiresAt || 0),
     writesAllowed: payload?.writesAllowed === true,
-  });
+  };
+  if (payload?.scope === PACK_SAVE_GRANT_SCOPE) {
+    body.scope = PACK_SAVE_GRANT_SCOPE;
+    body.accessEpoch = Number(payload?.accessEpoch || 0);
+    body.glyphCount = Number(payload?.glyphCount || 0);
+  }
+  return JSON.stringify(body);
 }
 
 export async function hmacSha256Hex(secret, message) {
@@ -88,11 +99,77 @@ export async function verifyPackSeedGrant(grant, secret, expected = {}) {
   if (expected.assetId && grant.assetId !== expected.assetId) {
     return false;
   }
+  if (grant.scope === PACK_SAVE_GRANT_SCOPE) {
+    if (expected.accessEpoch != null && Number(grant.accessEpoch) !== Number(expected.accessEpoch)) {
+      return false;
+    }
+    if (
+      expected.glyphCount != null &&
+      Number(grant.glyphCount || 0) < Number(expected.glyphCount)
+    ) {
+      return false;
+    }
+    return grant.writesAllowed === true;
+  }
   const granted = new Set(
     Array.isArray(grant.shardIds) ? grant.shardIds.map((id) => String(id)) : [],
   );
   const required = Array.isArray(expected.shardIds) ? expected.shardIds : [];
   return required.every((shardId) => granted.has(String(shardId)));
+}
+
+export async function createSignedSaveGrant({
+  assetId,
+  accessEpoch,
+  glyphCount,
+  secret,
+  now = Date.now(),
+  ttlMs = PACK_SAVE_GRANT_TTL_MS,
+}) {
+  const payload = {
+    assetId,
+    operation: PACK_SEED_GRANT_OPERATION,
+    scope: PACK_SAVE_GRANT_SCOPE,
+    shardIds: [],
+    accessEpoch: Number(accessEpoch || 0),
+    glyphCount: Number(glyphCount || 0),
+    issuedAt: now,
+    expiresAt: now + ttlMs,
+    writesAllowed: true,
+  };
+  return {
+    ...payload,
+    signature: await signPackSeedGrant(payload, secret),
+  };
+}
+
+export function canonicalizePackSeedReceipt(receipt) {
+  return [
+    PACK_SEED_RECEIPT_PREFIX,
+    String(receipt?.assetId || ""),
+    String(receipt?.shardId || ""),
+    String(receipt?.checkpointObjectKey || ""),
+    String(receipt?.sha256 || receipt?.checkpointSha256 || "").toLowerCase(),
+    String(Number(receipt?.byteLength ?? receipt?.checkpointByteLength) || 0),
+    String(Number(receipt?.checkpointLogId) || 0),
+    String(Number(receipt?.accessEpoch) || 0),
+    String(receipt?.grantDigest || ""),
+    String(Number(receipt?.issuedAt) || 0),
+    String(receipt?.nonce || ""),
+  ].join("\n");
+}
+
+export async function signPackSeedReceipt(receipt, secret) {
+  return hmacSha256Hex(secret, canonicalizePackSeedReceipt(receipt));
+}
+
+export async function verifyPackSeedReceipt(receipt, secret) {
+  const signature = String(receipt?.signature || "");
+  if (!signature || !secret) {
+    return false;
+  }
+  const expectedSignature = await signPackSeedReceipt(receipt, secret);
+  return timingSafeEqualHex(signature, expectedSignature);
 }
 
 export async function createSignedPackSeedGrant({

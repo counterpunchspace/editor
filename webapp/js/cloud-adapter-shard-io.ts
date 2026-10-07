@@ -61,7 +61,143 @@ function logCloudPackFailure(
     globalThis.console.log(`[CloudAdapter] ${channel}`, detail);
 }
 
+const LARGE_SHARD_BYTES = 1024 * 1024;
+const CLIENT_PACK_CONCURRENCY = 6;
+const CLIENT_PACK_INFLIGHT_BYTES = 48 * 1024 * 1024;
+
 export const cloudAdapterShardIoMethods = {
+    async _ensureSaveGrant(glyphCount: number): Promise<void> {
+        if (this._saveGrant || !this._assetId || !this._websiteBaseUrl) {
+            return;
+        }
+        try {
+            const response = await fetch(
+                `${this._websiteBaseUrl}/api/cloud/assets/${encodeURIComponent(this._assetId)}/seed-grant`,
+                {
+                    method: 'POST',
+                    credentials: 'include',
+                    cache: 'no-store',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ glyphCount })
+                }
+            );
+            if (!response.ok) {
+                return;
+            }
+            const data = await response.json();
+            if (data?.grant) {
+                this._saveGrant = data.grant;
+            }
+        } catch {
+            /* The room still accepts a per-pack authorize grant. */
+        }
+    },
+    async _runPackSlots<T>(
+        batches: T[][],
+        byteLengthOf: (batch: T[]) => number,
+        run: (batch: T[]) => Promise<unknown>,
+        options?: { signal?: AbortSignal }
+    ): Promise<unknown[]> {
+        let slots = CLIENT_PACK_CONCURRENCY;
+        let inFlight = 0;
+        let inFlightBytes = 0;
+        let cursor = 0;
+        const results: unknown[] = new Array(batches.length);
+        const exclusive = (batch: T[]) =>
+            byteLengthOf(batch) >= LARGE_SHARD_BYTES && batch.length === 1;
+        await new Promise<void>((resolve, reject) => {
+            const launch = () => {
+                if (options?.signal?.aborted) {
+                    reject(options.signal.reason || new Error('aborted'));
+                    return;
+                }
+                if (cursor >= batches.length && inFlight === 0) {
+                    resolve();
+                    return;
+                }
+                while (cursor < batches.length && inFlight < slots) {
+                    const batch = batches[cursor];
+                    const bytes = byteLengthOf(batch);
+                    const alone = exclusive(batch);
+                    if (alone && inFlight > 0) {
+                        break;
+                    }
+                    if (
+                        !alone &&
+                        inFlight > 0 &&
+                        inFlightBytes + bytes > CLIENT_PACK_INFLIGHT_BYTES
+                    ) {
+                        break;
+                    }
+                    const index = cursor;
+                    cursor += 1;
+                    inFlight += 1;
+                    inFlightBytes += bytes;
+                    globalThis.console.log('[CloudAdapter] pack in flight', {
+                        bytes,
+                        inFlight,
+                        inFlightBytes,
+                        slots
+                    });
+                    Promise.resolve()
+                        .then(() => run(batch))
+                        .then((value) => {
+                            results[index] = value;
+                        })
+                        .catch(async (error) => {
+                            const message =
+                                error instanceof Error
+                                    ? error.message
+                                    : String(error);
+                            const retryable = /503|1102|exceededMemory/i.test(
+                                message
+                            );
+                            const attempts = Number(
+                                (batch as { packAttempts?: number })
+                                    .packAttempts || 0
+                            );
+                            if (retryable && attempts < 1) {
+                                slots = Math.max(1, Math.floor(slots / 2));
+                                globalThis.console.log(
+                                    '[CloudAdapter] pack slots reduced',
+                                    { slots }
+                                );
+                                (
+                                    batch as { packAttempts?: number }
+                                ).packAttempts = attempts + 1;
+                                try {
+                                    results[index] = await run(batch);
+                                } catch (retryError) {
+                                    results[index] =
+                                        retryError instanceof Error
+                                            ? retryError
+                                            : new Error(String(retryError));
+                                }
+                                return;
+                            }
+                            results[index] =
+                                error instanceof Error
+                                    ? error
+                                    : new Error(message);
+                        })
+                        .finally(() => {
+                            inFlight -= 1;
+                            inFlightBytes -= bytes;
+                            launch();
+                        });
+                    if (alone) {
+                        break;
+                    }
+                }
+            };
+            launch();
+        });
+        const failure = results.find((result) => result instanceof Error);
+        if (failure) {
+            throw failure;
+        }
+        return results;
+    },
     async seedDocumentSet(
         token: string,
         roomUrl: string,
@@ -69,6 +205,7 @@ export const cloudAdapterShardIoMethods = {
         glyphCount: number,
         options?: CloudShardIoOptions
     ): Promise<CloudSeedDocumentSetResult> {
+        await this._ensureSaveGrant(glyphCount);
         const batches = partitionPackItems(
             shards,
             (shard) => shard.bytes.byteLength,
@@ -105,19 +242,30 @@ export const cloudAdapterShardIoMethods = {
             bytesCompleted: cursor.bytesCompleted,
             bytesTotal: cursor.bytesTotal
         });
-        for (const batch of batches) {
-            throwIfAborted(options?.signal);
-            if (usePack) {
-                rows.push(
-                    ...(await this._seedPack(
+        if (usePack) {
+            const packedRows = await this._runPackSlots(
+                batches,
+                (batch) =>
+                    batch.reduce(
+                        (sum, shard) => sum + shard.bytes.byteLength,
+                        0
+                    ),
+                (batch) =>
+                    this._seedPack(
                         token,
                         roomUrl,
                         batch,
                         glyphCount,
                         options,
                         cursor
-                    ))
-                );
+                    ),
+                options
+            );
+            rows.push(...packedRows.flat());
+        }
+        for (const batch of usePack ? [] : batches) {
+            throwIfAborted(options?.signal);
+            if (usePack) {
                 continue;
             }
             rows.push(
@@ -233,7 +381,14 @@ export const cloudAdapterShardIoMethods = {
                             'Authorization': `Bearer ${token}`,
                             'Content-Type': 'application/octet-stream',
                             'X-Glyph-Count': String(glyphCount),
-                            'X-Collab-Idempotency-Key': idempotencyKey
+                            'X-Collab-Idempotency-Key': idempotencyKey,
+                            ...(this._saveGrant
+                                ? {
+                                      'X-Collab-Save-Grant': JSON.stringify(
+                                          this._saveGrant
+                                      )
+                                  }
+                                : {})
                         },
                         body: remainingBody as unknown as BodyInit,
                         signal: options?.signal
@@ -587,24 +742,35 @@ export const cloudAdapterShardIoMethods = {
             bytesCompleted: cursor.bytesCompleted,
             bytesTotal: cursor.bytesTotal
         });
-        for (const batch of batches) {
-            throwIfAborted(options?.signal);
-            const batchResult = usePack
-                ? await this._hydratePack(
-                      token,
-                      roomUrl,
-                      batch,
-                      options,
-                      cursor
-                  )
-                : await this._hydratePerShard(
-                      token,
-                      roomUrl,
-                      batch,
-                      options,
-                      cursor
-                  );
-            for (const [documentId, bytes] of batchResult) {
+        const packed = await this._runPackSlots(
+            batches,
+            (batch: string[]) =>
+                batch.length * SPARSE_ESTIMATED_BYTES_PER_GLYPH,
+            async (batch: string[]) => {
+                throwIfAborted(options?.signal);
+                return usePack
+                    ? await this._hydratePack(
+                          token,
+                          roomUrl,
+                          batch,
+                          options,
+                          cursor
+                      )
+                    : await this._hydratePerShard(
+                          token,
+                          roomUrl,
+                          batch,
+                          options,
+                          cursor
+                      );
+            },
+            { signal: options?.signal }
+        );
+        for (const batchResult of packed) {
+            for (const [documentId, bytes] of batchResult as Map<
+                string,
+                Uint8Array
+            >) {
                 result.set(documentId, bytes);
             }
         }

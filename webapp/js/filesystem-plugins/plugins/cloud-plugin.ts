@@ -3319,34 +3319,21 @@ export class CloudPlugin extends FilesystemPlugin {
 
     private async _abortPendingAsset(assetId: string): Promise<void> {
         const url = `${this._websiteBaseUrl}/api/cloud/assets/${encodeURIComponent(assetId)}/abort`;
-        for (let attempt = 0; attempt < 60; attempt += 1) {
-            if (attempt > 0) {
-                await new Promise((resolve) => setTimeout(resolve, 250));
-            }
-            const resp = await fetch(url, {
-                method: 'POST',
-                cache: 'no-store',
-                credentials: 'include',
-                headers: getCloudRequestHeaders({
-                    'Content-Type': 'application/json'
-                }),
-                body: JSON.stringify({ reason: 'bootstrap_failed' })
-            });
-            if (resp.status === 404) {
-                return;
-            }
-            if (!resp.ok) {
-                const body = await resp.text().catch(() => '');
-                throw new Error(`abort request failed: ${resp.status} ${body}`);
-            }
-            const data = (await resp.json().catch(() => ({}))) as {
-                complete?: boolean;
-            };
-            if (data.complete !== false) {
-                return;
-            }
+        const resp = await fetch(url, {
+            method: 'POST',
+            cache: 'no-store',
+            credentials: 'include',
+            headers: getCloudRequestHeaders({
+                'Content-Type': 'application/json'
+            }),
+            body: JSON.stringify({ reason: 'bootstrap_failed' })
+        });
+        if (resp.status === 404 || resp.ok) {
+            // One attempt. A partial purge finishes via resumeAbandonedCloudPurges.
+            return;
         }
-        throw new Error('Cloud delete did not finish');
+        const body = await resp.text().catch(() => '');
+        throw new Error(`abort request failed: ${resp.status} ${body}`);
     }
 
     get connectionStatus(): CloudConnectionStatus {
