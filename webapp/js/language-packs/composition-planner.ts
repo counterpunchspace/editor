@@ -459,6 +459,7 @@ async function planRecords(
         const managedNow = managed.includes(record.glyph_name);
         if (output === 'ccmp') {
             plan.ccmpAdd.push(record.glyph_name);
+            plan.ccmpComponents[record.glyph_name] = componentNames;
             if (clearExistingShells && font.hasGlyph(record.glyph_name)) {
                 plan.clearShells.push(record.glyph_name);
             }

@@ -191,7 +191,7 @@ describe('language packs', () => {
         expect(plan.ccmpAdd).toEqual([]);
     });
 
-    test('ccmp plan adds a shell intent and no components', async () => {
+    test('ccmp plan records the shell and its component names', async () => {
         const plan = await planGlyphAdditions(
             [
                 {
@@ -207,6 +207,9 @@ describe('language packs', () => {
         );
         expect(plan.composites).toEqual([]);
         expect(plan.ccmpAdd).toEqual(['aDiaeresis-lat']);
+        expect(plan.ccmpComponents).toEqual({
+            'aDiaeresis-lat': ['a-lat', 'diaeresisCombining']
+        });
         expect(plan.clearShells).toEqual([]);
     });
 

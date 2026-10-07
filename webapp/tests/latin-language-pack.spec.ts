@@ -37,7 +37,7 @@ test('latin composition provider decomposes adieresis from unicode', async ({
         const result = await win.pyodide.runPythonAsync(`
 import json
 from importlib.metadata import entry_points
-provider = list(entry_points(group='counterpunch_composition_plugins'))[0].load()()
+provider = next(entry for entry in entry_points(group='counterpunch_composition_plugins') if entry.name == 'latin').load()()
 def lookup(codepoint):
     table = {
         228: {"script": "Latin", "general_category": "Ll", "decomposition": "0061 0308"},
