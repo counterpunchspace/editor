@@ -62,6 +62,15 @@ export function encodePackErrorFrame(
     });
 }
 
+/** Room rejects the HTTP body at 8 MiB. Frame headers and the end frame sit on top of the payloads. */
+export const SEED_PACK_FRAMING_SLACK = 1024 * 1024;
+
+export function seedPackByteBudget(
+    maxBytes: number = SEED_PACK_MAX_BYTES
+): number {
+    return Math.max(1, maxBytes - SEED_PACK_FRAMING_SLACK);
+}
+
 export type PackFrame = {
     type: number;
     missing: boolean;

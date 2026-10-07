@@ -26,6 +26,7 @@ import {
     PACK_FRAME_TYPE,
     SEED_PACK_MAX_SHARDS,
     partitionPackItems,
+    seedPackByteBudget,
     type PackFrame
 } from './filesystem-plugins/cloud-shard-pack';
 import { throwIfAborted, yieldToUi } from './yield-to-ui';
@@ -213,7 +214,7 @@ export const cloudAdapterShardIoMethods = {
                 options?.maxRequests ?? HYDRATE_BATCH_MAX_REQUESTS,
                 SEED_PACK_MAX_SHARDS
             ),
-            options?.maxBytes ?? HYDRATE_BATCH_MAX_BYTES
+            seedPackByteBudget(options?.maxBytes ?? HYDRATE_BATCH_MAX_BYTES)
         );
         for (const batch of batches) {
             assertHydrateBatchBudget({

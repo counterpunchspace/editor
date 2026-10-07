@@ -14,7 +14,8 @@ const {
     partitionPackItems,
     SEED_PACK_MAX_SHARDS,
     SEED_PACK_MAX_BYTES,
-    LARGE_SHARD_BYTES
+    LARGE_SHARD_BYTES,
+    seedPackByteBudget
 } = require('../js/filesystem-plugins/cloud-shard-pack.ts');
 
 describe('cloud shard pack codec', () => {
@@ -116,5 +117,6 @@ describe('cloud shard pack codec', () => {
             SEED_PACK_MAX_BYTES
         );
         expect(mixed).toEqual([[1], [2], [3]]);
+        expect(seedPackByteBudget()).toBe(SEED_PACK_MAX_BYTES - 1024 * 1024);
     });
 });
