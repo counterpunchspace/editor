@@ -75,6 +75,12 @@ jobs:
                   path: _collab
                   token: ${{ secrets.CLOUD_E2E_PAT || github.token }}
 
+            # Language-pack checks run pytest via python3 -m pytest. ubuntu-latest
+            # does not ship pytest, and its Python is externally managed.
+            - name: Install language-pack pytest
+              if: matrix.shard == 1
+              run: sudo apt-get update && sudo apt-get install -y python3-pytest
+
             # Graph chokepoints, type drift, protocol bindings, tsc and jest.
             - name: Run static checks and jest
               if: matrix.shard == 1
