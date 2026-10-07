@@ -11,7 +11,8 @@ const {
     encodePackErrorFrame,
     encodePackShardFrame,
     PACK_FRAME_TYPE,
-    partitionPackItems
+    partitionPackItems,
+    SEED_PACK_MAX_SHARDS
 } = require('../js/filesystem-plugins/cloud-shard-pack.ts');
 
 describe('cloud shard pack codec', () => {
@@ -95,5 +96,17 @@ describe('cloud shard pack codec', () => {
     test('partitionPackItems respects the item cap', () => {
         const batches = partitionPackItems([1, 2, 3, 4], () => 1, 3, 1000);
         expect(batches).toEqual([[1, 2, 3], [4]]);
+    });
+
+    test('seed packs stay within the Workers Free subrequest cap', () => {
+        const items = Array.from({ length: 20 }, (_, index) => index);
+        const batches = partitionPackItems(
+            items,
+            () => 1,
+            SEED_PACK_MAX_SHARDS,
+            48 * 1024 * 1024
+        );
+        expect(SEED_PACK_MAX_SHARDS).toBe(16);
+        expect(batches.map((batch) => batch.length)).toEqual([16, 4]);
     });
 });

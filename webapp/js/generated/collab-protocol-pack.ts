@@ -22,6 +22,11 @@ export const PACK_MAGIC = new Uint8Array([0x43, 0x50, 0x4b, 0x31]);
 export const PACK_CONTENT_TYPE = "application/vnd.counterpunch.shard-pack";
 export const PACK_MAX_SHARDS = 128;
 export const PACK_MAX_BYTES = 48 * 1024 * 1024;
+// Workers Free allows 50 subrequests per invocation. Pack seed spends two per
+// glyph (validator + R2 put) plus the limits, authorize, and attest calls.
+// A 128-shard pack exceeds that and the attest fetch throws
+// "Too many subrequests", which the editor shows as "Shard attestation unavailable".
+export const SEED_PACK_MAX_SHARDS = 16;
 export const PACK_DIGEST_BYTES = 32;
 export const PACK_MAX_SHARD_ID_BYTES = 256;
 

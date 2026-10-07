@@ -24,6 +24,7 @@ import {
     encodePackBody,
     encodePackShardFrame,
     PACK_FRAME_TYPE,
+    SEED_PACK_MAX_SHARDS,
     partitionPackItems,
     type PackFrame
 } from './filesystem-plugins/cloud-shard-pack';
@@ -50,6 +51,16 @@ import { Logger } from './logger';
 
 const console = new Logger('CloudAdapterShardIo');
 
+/** Browser console, not the in-app logger. Seed and hydrate failures land here
+ * with the room's phase, status, and debug payload so the next failure is
+ * visible without a worker tail. */
+function logCloudPackFailure(
+    channel: 'pack seed failed' | 'pack hydrate failed',
+    detail: Record<string, unknown>
+): void {
+    globalThis.console.log(`[CloudAdapter] ${channel}`, detail);
+}
+
 export const cloudAdapterShardIoMethods = {
     async seedDocumentSet(
         token: string,
@@ -61,7 +72,10 @@ export const cloudAdapterShardIoMethods = {
         const batches = partitionPackItems(
             shards,
             (shard) => shard.bytes.byteLength,
-            options?.maxRequests ?? HYDRATE_BATCH_MAX_REQUESTS,
+            Math.min(
+                options?.maxRequests ?? HYDRATE_BATCH_MAX_REQUESTS,
+                SEED_PACK_MAX_SHARDS
+            ),
             options?.maxBytes ?? HYDRATE_BATCH_MAX_BYTES
         );
         for (const batch of batches) {
@@ -226,10 +240,21 @@ export const cloudAdapterShardIoMethods = {
                     }
                 );
                 if (isPackUnsupportedStatus(response.status)) {
+                    logCloudPackFailure('pack seed failed', {
+                        phase: 'http',
+                        status: response.status,
+                        message: 'pack unsupported'
+                    });
                     throw new Error('pack unsupported');
                 }
                 if (!response.ok) {
-                    throw new Error(await formatPackHttpError(response));
+                    const message = await formatPackHttpError(response);
+                    logCloudPackFailure('pack seed failed', {
+                        phase: 'http',
+                        status: response.status,
+                        message
+                    });
+                    throw new Error(message);
                 }
                 if (!response.body) {
                     throw new Error(
@@ -314,6 +339,12 @@ export const cloudAdapterShardIoMethods = {
                     /503|Failed to fetch|ERR_ABORTED|ERR_FAILED|NETWORK_CHANGED|unavailable|do_timeout|incomplete/i.test(
                         message
                     );
+                logCloudPackFailure('pack seed failed', {
+                    phase: 'transport',
+                    attempt,
+                    retryable,
+                    message
+                });
                 if (!retryable || attempt === 3) {
                     throw error;
                 }
@@ -335,10 +366,20 @@ export const cloudAdapterShardIoMethods = {
         onError: (message: string) => void
     ): void {
         if (frame.type === PACK_FRAME_TYPE.ERROR) {
+            const receipt = frame.receipt || {};
             const message =
-                typeof frame.receipt?.error === 'string'
-                    ? frame.receipt.error
+                typeof receipt.error === 'string'
+                    ? receipt.error
                     : 'shard pack seed failed';
+            logCloudPackFailure('pack seed failed', {
+                phase:
+                    typeof receipt.phase === 'string' ? receipt.phase : 'pack',
+                status: receipt.status,
+                code: receipt.code,
+                shardId: receipt.shardId || frame.shardId,
+                message,
+                debug: receipt.debug
+            });
             onError(message);
             return;
         }
@@ -590,12 +631,20 @@ export const cloudAdapterShardIoMethods = {
                 lastError = error;
                 const packTimedOut =
                     error instanceof Error && error.name === 'AbortError';
-                if (
-                    options?.signal?.aborted ||
-                    packTimedOut ||
-                    !this._isTransientPackHydrateError(error) ||
-                    attempt === 3
-                ) {
+                const message =
+                    error instanceof Error ? error.message : String(error);
+                const retryable =
+                    !options?.signal?.aborted &&
+                    !packTimedOut &&
+                    this._isTransientPackHydrateError(error) &&
+                    attempt < 3;
+                logCloudPackFailure('pack hydrate failed', {
+                    phase: 'transport',
+                    attempt,
+                    retryable,
+                    message
+                });
+                if (!retryable) {
                     throw error;
                 }
                 await new Promise((resolve) =>
@@ -638,7 +687,16 @@ export const cloudAdapterShardIoMethods = {
             throw new Error('pack unsupported');
         }
         if (!response.ok) {
-            throw new Error(`shard pack hydrate failed: ${response.status}`);
+            const message = await formatPackHttpError(
+                response,
+                'shard pack hydrate failed'
+            );
+            logCloudPackFailure('pack hydrate failed', {
+                phase: 'http',
+                status: response.status,
+                message
+            });
+            throw new Error(message);
         }
         if (!response.body) {
             throw new Error(
@@ -656,10 +714,22 @@ export const cloudAdapterShardIoMethods = {
                 if (value) {
                     for (const frame of parser.push(value)) {
                         if (frame.type === PACK_FRAME_TYPE.ERROR) {
+                            const receipt = frame.receipt || {};
                             packError =
-                                typeof frame.receipt?.error === 'string'
-                                    ? frame.receipt.error
+                                typeof receipt.error === 'string'
+                                    ? receipt.error
                                     : 'shard pack hydrate failed';
+                            logCloudPackFailure('pack hydrate failed', {
+                                phase:
+                                    typeof receipt.phase === 'string'
+                                        ? receipt.phase
+                                        : 'pack',
+                                status: receipt.status,
+                                code: receipt.code,
+                                shardId: receipt.shardId || frame.shardId,
+                                message: packError,
+                                debug: receipt.debug
+                            });
                         } else if (
                             frame.type === PACK_FRAME_TYPE.SHARD &&
                             !frame.missing

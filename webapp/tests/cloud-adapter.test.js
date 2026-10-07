@@ -19,6 +19,25 @@ const {
     publishCloudDocumentUpdate
 } = require('../js/cloud-adapter.ts');
 const { MetadataFreeRemoteUpdateError } = require('../js/patch-sync-engine.ts');
+const {
+    createPackParser,
+    encodePackErrorFrame,
+    encodePackEndFrame,
+    encodePackBody,
+    PACK_FRAME_TYPE,
+    SEED_PACK_MAX_SHARDS
+} = require('../js/filesystem-plugins/cloud-shard-pack.ts');
+const { encodePackFrame } = require('../js/generated/collab-protocol-pack.ts');
+
+function encodeTestReceiptFrame(receipt) {
+    const json = JSON.stringify(receipt);
+    return encodePackFrame({
+        type: PACK_FRAME_TYPE.RECEIPT,
+        shardId: receipt.shardId,
+        payload: Uint8Array.from(json, (ch) => ch.charCodeAt(0)),
+        digest: receipt.checkpointSha256
+    });
+}
 const { createLogEntry } = require('../js/change-log');
 const {
     createCollaborationMessageEnvelopesFromChangeLogEntries,
@@ -26,6 +45,31 @@ const {
     createCollaborationMessageEnvelope,
     collaborationMessageKey
 } = require('../js/collaboration-message.ts');
+
+function packBytesResponse(bytes, status = 200) {
+    const chunk = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+    return {
+        ok: status >= 200 && status < 300,
+        status,
+        headers: new Headers(),
+        body: {
+            getReader() {
+                let sent = false;
+                return {
+                    async read() {
+                        if (sent) {
+                            return { done: true, value: undefined };
+                        }
+                        sent = true;
+                        return { done: false, value: chunk };
+                    },
+                    releaseLock() {}
+                };
+            }
+        },
+        text: async () => ''
+    };
+}
 
 const TEST_YDOC_SCHEMA_VERSION = 6;
 const TEST_REQUIRED_CAPABILITIES = {
@@ -4166,6 +4210,134 @@ describe('HTTP seed (POST /state for new rooms)', () => {
             expect(packPosts).toBe(1);
             expect(shardPosts).toBe(0);
         } finally {
+            global.fetch = originalFetch;
+        }
+    });
+
+    it('seeds at most 16 shards per pack request', async () => {
+        const originalFetch = global.fetch;
+        const adapter = new CloudAdapter({
+            assetId: 'asset-seed-budget',
+            websiteBaseUrl: 'https://editor.example'
+        });
+        const frameCounts = [];
+        global.fetch = jest.fn(async (input, init) => {
+            const url = String(input);
+            if (
+                init?.method === 'POST' &&
+                url.includes('/asset-seed-budget/pack')
+            ) {
+                const bodyBytes =
+                    init.body instanceof Uint8Array
+                        ? init.body
+                        : new Uint8Array(init.body);
+                const parser = createPackParser();
+                const frames = parser.push(bodyBytes);
+                parser.finish();
+                const shards = frames.filter(
+                    (frame) => frame.type === PACK_FRAME_TYPE.SHARD
+                );
+                if (!shards.length || !shards[0].shardId) {
+                    throw new Error(
+                        `pack body was not readable (${bodyBytes.byteLength} bytes, ${frames.length} frames)`
+                    );
+                }
+                frameCounts.push(shards.length);
+                const receipts = shards.map((frame) =>
+                    encodeTestReceiptFrame({
+                        shardId: frame.shardId,
+                        checkpointObjectKey: `objects/${frame.shardId}`,
+                        checkpointSha256: frame.digestHex,
+                        checkpointByteLength: frame.payload.byteLength
+                    })
+                );
+                receipts.push(encodePackEndFrame(shards.length));
+                return packBytesResponse(encodePackBody(receipts));
+            }
+            return originalFetch(input, init);
+        });
+        const shards = Array.from({ length: 20 }, (_, index) => ({
+            documentId: `glyph:id-${index}`,
+            bytes: new Uint8Array([index])
+        }));
+        try {
+            await adapter.seedDocumentSet(
+                'token',
+                'wss://rooms.example/room/asset-seed-budget',
+                shards,
+                shards.length
+            );
+            expect(frameCounts).toEqual([SEED_PACK_MAX_SHARDS, 4]);
+            expect(SEED_PACK_MAX_SHARDS).toBe(16);
+        } finally {
+            global.fetch = originalFetch;
+        }
+    });
+
+    it('logs the room error frame to the browser console and throws only the short message', async () => {
+        const originalFetch = global.fetch;
+        const originalLog = console.log;
+        const logs = [];
+        console.log = (...args) => {
+            logs.push(args);
+        };
+        const adapter = new CloudAdapter({
+            assetId: 'asset-seed-debug',
+            websiteBaseUrl: 'https://editor.example'
+        });
+        global.fetch = jest.fn(async (input, init) => {
+            const url = String(input);
+            if (
+                init?.method === 'POST' &&
+                url.includes('/asset-seed-debug/pack')
+            ) {
+                return packBytesResponse(
+                    encodePackBody([
+                        encodePackErrorFrame({
+                            error: 'Checkpoint object missing',
+                            code: 'checkpoint_missing',
+                            status: 503,
+                            phase: 'attest',
+                            debug: {
+                                httpStatus: 409,
+                                body: 'Checkpoint object missing'
+                            }
+                        }),
+                        encodePackEndFrame(0)
+                    ])
+                );
+            }
+            return originalFetch(input, init);
+        });
+        try {
+            await expect(
+                adapter.seedDocumentSet(
+                    'token',
+                    'wss://rooms.example/room/asset-seed-debug',
+                    [
+                        {
+                            documentId: 'glyph:id-a',
+                            bytes: new Uint8Array([1])
+                        }
+                    ],
+                    1
+                )
+            ).rejects.toThrow('Checkpoint object missing');
+            const detail = logs.find(
+                (entry) => entry[0] === '[CloudAdapter] pack seed failed'
+            );
+            expect(detail?.[1]).toMatchObject({
+                phase: 'attest',
+                status: 503,
+                code: 'checkpoint_missing',
+                message: 'Checkpoint object missing',
+                debug: {
+                    httpStatus: 409,
+                    body: 'Checkpoint object missing'
+                }
+            });
+        } finally {
+            console.log = originalLog;
             global.fetch = originalFetch;
         }
     });
