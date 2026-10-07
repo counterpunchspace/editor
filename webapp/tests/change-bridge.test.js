@@ -4980,7 +4980,7 @@ describe('Model setter change recording', () => {
                     ? 'Curve'
                     : mutateValue(target[spec.property]);
             const expectedProperty = isComponentAnchorAlias
-                ? 'componentAnchor'
+                ? 'com.schriftgestalt.Glyphs.componentAnchor'
                 : isComponentAutomaticAlignment
                   ? 'format_specific'
                   : spec.property;
@@ -5059,7 +5059,7 @@ describe('Model setter change recording', () => {
                 expect(log[0].transactionId).toBe(log[1].transactionId);
                 expect(log[0].transactionLabel).toBe(log[1].transactionLabel);
                 expect(log.map((entry) => entry.property).sort()).toEqual([
-                    'attr',
+                    'com.schriftgestalt.Glyphs.attr',
                     'fip001-boolean'
                 ]);
                 expect(target.isSubtraction).toEqual(expectedValue);

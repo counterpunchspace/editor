@@ -2492,7 +2492,7 @@ describe('handleRemoteChangeRefresh', () => {
         );
 
         expect(queueCacheRefresh).not.toHaveBeenCalled();
-        expect(requestCompile).toHaveBeenCalledWith('remote-change', null);
+        expect(requestCompile).toHaveBeenCalledWith('feature-code', null);
     });
 
     test('classifies forwarded master reinterpolation packets as remote outline edits', async () => {
@@ -2740,13 +2740,11 @@ describe('handleRemoteChangeRefresh', () => {
         }
 
         // Local committed packets rely on the forwarded worker update even
-        // when the edit is not a layer-scoped GUI packet.
+        // when the edit is not a layer-scoped GUI packet. Feature paths
+        // compile as feature-code so the worker rebuilds its feature list.
         expect(awaitWorkerSync).toHaveBeenCalledTimes(1);
         expect(queueCacheRefresh).not.toHaveBeenCalled();
-        expect(requestCompile).toHaveBeenCalledWith(
-            'change-bridge-local',
-            null
-        );
+        expect(requestCompile).toHaveBeenCalledWith('feature-code', null);
     });
 
     test('classifies local feature-code commits as feature-code recompiles', async () => {
@@ -2786,10 +2784,7 @@ describe('handleRemoteChangeRefresh', () => {
 
         expect(awaitWorkerSync).toHaveBeenCalledTimes(1);
         expect(queueCacheRefresh).not.toHaveBeenCalled();
-        expect(requestCompile).toHaveBeenCalledWith(
-            'change-bridge-local',
-            null
-        );
+        expect(requestCompile).toHaveBeenCalledWith('feature-code', null);
     });
 
     describe('idle view lock', () => {
