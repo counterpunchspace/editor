@@ -27,6 +27,7 @@ import {
     SEED_PACK_MAX_SHARDS,
     partitionPackItems,
     seedPackByteBudget,
+    spreadPackItems,
     type PackFrame
 } from './filesystem-plugins/cloud-shard-pack';
 import { throwIfAborted, yieldToUi } from './yield-to-ui';
@@ -207,15 +208,27 @@ export const cloudAdapterShardIoMethods = {
         options?: CloudShardIoOptions
     ): Promise<CloudSeedDocumentSetResult> {
         await this._ensureSaveGrant(glyphCount);
-        const batches = partitionPackItems(
+        const seedStartedAt = performance.now();
+        const batches = spreadPackItems(
             shards,
             (shard) => shard.bytes.byteLength,
             Math.min(
                 options?.maxRequests ?? HYDRATE_BATCH_MAX_REQUESTS,
                 SEED_PACK_MAX_SHARDS
             ),
-            seedPackByteBudget(options?.maxBytes ?? HYDRATE_BATCH_MAX_BYTES)
+            seedPackByteBudget(options?.maxBytes ?? HYDRATE_BATCH_MAX_BYTES),
+            CLIENT_PACK_CONCURRENCY
         );
+        const bytesTotal = shards.reduce(
+            (sum, shard) => sum + shard.bytes.byteLength,
+            0
+        );
+        globalThis.console.log('[CloudAdapter] seed start', {
+            packs: batches.length,
+            shards: shards.length,
+            bytes: bytesTotal,
+            lanes: CLIENT_PACK_CONCURRENCY
+        });
         for (const batch of batches) {
             assertHydrateBatchBudget({
                 requestCount: batch.length,
@@ -232,10 +245,6 @@ export const cloudAdapterShardIoMethods = {
             coreCheckpointLogId: number | null;
             attestation: CloudSeededShardAttestation | null;
         }> = [];
-        const bytesTotal = shards.reduce(
-            (sum, shard) => sum + shard.bytes.byteLength,
-            0
-        );
         const cursor = shardIoTotals(options, shards.length, bytesTotal);
         await emitShardIoProgress(options, {
             completed: cursor.completed,
@@ -295,6 +304,13 @@ export const cloudAdapterShardIoMethods = {
                 attestations.push(row.attestation);
             }
         }
+        globalThis.console.log('[CloudAdapter] seed done', {
+            packs: batches.length,
+            shards: shards.length,
+            attested: attestations.length,
+            bytes: bytesTotal,
+            totalMs: Math.round(performance.now() - seedStartedAt)
+        });
         return { coreCheckpointLogId, attestations };
     },
     _isTransientPackHydrateError(error: unknown): boolean {
@@ -354,7 +370,8 @@ export const cloudAdapterShardIoMethods = {
                 this._noteTransferActivity('sending');
                 const remainingFrames: Uint8Array[] = [];
                 const assemblyStartedAt = performance.now();
-                for (const shard of remaining) {
+                for (let index = 0; index < remaining.length; index += 1) {
+                    const shard = remaining[index];
                     throwIfAborted(options?.signal);
                     remainingFrames.push(
                         encodePackShardFrame(
@@ -363,13 +380,15 @@ export const cloudAdapterShardIoMethods = {
                             await sha256Digest(shard.bytes)
                         )
                     );
-                    await yieldToUi();
+                    if (index % 64 === 63) {
+                        await yieldToUi();
+                    }
                 }
                 const remainingBody = encodePackBody(remainingFrames);
-                console.log('[CloudAdapter] pack seed assembly', {
-                    packAssemblyMs: performance.now() - assemblyStartedAt,
-                    shardCount: remaining.length
-                });
+                const assemblyMs = Math.round(
+                    performance.now() - assemblyStartedAt
+                );
+                const httpStartedAt = performance.now();
                 const response = await fetch(
                     normalizeCloudShardPackUrl(
                         roomUrl,
@@ -412,6 +431,13 @@ export const cloudAdapterShardIoMethods = {
                     });
                     throw new Error(message);
                 }
+                globalThis.console.log('[CloudAdapter] seed pack response', {
+                    shards: remaining.length,
+                    bytes: remainingBody.byteLength,
+                    assemblyMs,
+                    httpWaitMs: Math.round(performance.now() - httpStartedAt),
+                    status: response.status
+                });
                 if (!response.body) {
                     throw new Error(
                         `shard pack seed failed: ${response.status} empty body`
@@ -451,10 +477,13 @@ export const cloudAdapterShardIoMethods = {
                                             row.attestation
                                                 .checkpointByteLength ||
                                             0;
-                                        await emitShardIoProgress(options, {
+                                        await options?.onProgress?.({
                                             ...cursor,
                                             shardId: row.attestation.shardId
                                         });
+                                        if (cursor.completed % 64 === 0) {
+                                            await yieldToUi();
+                                        }
                                     }
                                 }
                             }
@@ -483,6 +512,13 @@ export const cloudAdapterShardIoMethods = {
                     (shard) => !landed.has(shard.documentId)
                 );
                 if (!remaining.length) {
+                    globalThis.console.log('[CloudAdapter] seed pack done', {
+                        shards: shards.length,
+                        attested: allRows.filter((row) => row.attestation)
+                            .length,
+                        assemblyMs,
+                        totalMs: Math.round(performance.now() - httpStartedAt)
+                    });
                     return allRows;
                 }
                 throw new Error('shard pack seed incomplete');

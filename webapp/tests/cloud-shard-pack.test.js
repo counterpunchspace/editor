@@ -15,7 +15,8 @@ const {
     SEED_PACK_MAX_SHARDS,
     SEED_PACK_MAX_BYTES,
     LARGE_SHARD_BYTES,
-    seedPackByteBudget
+    seedPackByteBudget,
+    spreadPackItems
 } = require('../js/filesystem-plugins/cloud-shard-pack.ts');
 
 describe('cloud shard pack codec', () => {
@@ -118,5 +119,27 @@ describe('cloud shard pack codec', () => {
         );
         expect(mixed).toEqual([[1], [2], [3]]);
         expect(seedPackByteBudget()).toBe(SEED_PACK_MAX_BYTES - 1024 * 1024);
+    });
+
+    test('small shards spread across six packs so R2 waves overlap', () => {
+        const items = Array.from({ length: 18 }, (_, index) => index);
+        const batches = spreadPackItems(
+            items,
+            () => 10,
+            SEED_PACK_MAX_SHARDS,
+            SEED_PACK_MAX_BYTES,
+            6
+        );
+        expect(batches).toHaveLength(6);
+        expect(batches.flat().sort((a, b) => a - b)).toEqual(items);
+        const large = spreadPackItems(
+            [1, 2, 3],
+            (item) => (item === 2 ? LARGE_SHARD_BYTES : 10),
+            SEED_PACK_MAX_SHARDS,
+            SEED_PACK_MAX_BYTES,
+            6
+        );
+        expect(large).toContainEqual([2]);
+        expect(large.flat().sort()).toEqual([1, 2, 3]);
     });
 });

@@ -4267,7 +4267,9 @@ describe('HTTP seed (POST /state for new rooms)', () => {
                 shards,
                 shards.length
             );
-            expect(frameCounts).toEqual([20]);
+            expect(frameCounts).toHaveLength(6);
+            expect(frameCounts.reduce((sum, count) => sum + count, 0)).toBe(20);
+            expect(Math.max(...frameCounts)).toBeLessThanOrEqual(4);
             expect(SEED_PACK_MAX_SHARDS).toBe(8000);
         } finally {
             global.fetch = originalFetch;
