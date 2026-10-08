@@ -2825,7 +2825,9 @@ class FontManager {
                 ...(currentGlyphName ? [currentGlyphName] : []),
                 ...this.getLiveVisibleGlyphNames()
             ],
-            purpose: 'compile'
+            // Same closure as sparse open. Compile planning only walks
+            // forward, so a newly typed base would load without its composites.
+            purpose: 'ui'
         });
         this.coveredSparseHydrationKey = coverageKey;
     }

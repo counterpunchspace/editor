@@ -28,7 +28,7 @@ const {
     afdkoFeatureCodeFromFontJson,
     catalogEntriesForDepsParse,
     catalogNameIndexFromEntries,
-    planCompileHydration,
+    planSparseHydration,
     parseMetricsKeyReferencedNames,
     patchSourceEdges,
     readFontDepsIndex,
@@ -3416,32 +3416,46 @@ describe('sparse hydration integrity regressions', () => {
         documentSet.destroy();
     });
 
-    it('compile hydration does not reverse-close composites of a typed base', () => {
+    it('typing another letter reverse-closes that letter’s composites', () => {
         const catalog = [
             { glyphId: 'id-a', name: 'a' },
             { glyphId: 'id-adi', name: 'adieresis' },
-            { glyphId: 'id-mark', name: 'dieresiscomb' }
+            { glyphId: 'id-amark', name: 'dieresiscomb' },
+            { glyphId: 'id-o', name: 'o' },
+            { glyphId: 'id-odi', name: 'odieresis' },
+            { glyphId: 'id-omark', name: 'dieresiscomb.case' }
         ];
+        const catalogIds = catalog.map((entry) => entry.glyphId);
         const edges = {
-            'id-adi': { 'id-a': 'component', 'id-mark': 'component' }
+            'id-adi': { 'id-a': 'component', 'id-amark': 'component' },
+            'id-odi': { 'id-o': 'component', 'id-omark': 'component' }
         };
-        const compile = planCompileHydration({
+        const opened = planSparseHydration({
             seedIds: ['id-a'],
-            catalogIds: catalog.map((entry) => entry.glyphId),
+            catalogIds,
             edges,
             catalog
         });
-        expect(compile.workingIds).toEqual(['id-a']);
-        expect(compile.loadIds).not.toContain('id-adi');
-        expect(
-            planCompileHydration({
-                seedIds: ['id-a'],
-                visibleIds: ['id-adi'],
-                catalogIds: catalog.map((entry) => entry.glyphId),
-                edges,
-                catalog
-            }).loadIds
-        ).toEqual(expect.arrayContaining(['id-a', 'id-adi', 'id-mark']));
+        expect(opened.loadIds).toEqual(
+            expect.arrayContaining(['id-a', 'id-adi', 'id-amark'])
+        );
+        expect(opened.loadIds).not.toContain('id-odi');
+
+        const typed = planSparseHydration({
+            seedIds: ['id-a', 'id-o'],
+            previousWorkingIds: opened.workingIds,
+            catalogIds,
+            loadedIds: opened.loadIds,
+            edges,
+            catalog
+        });
+        expect(typed.loadIds).toEqual(
+            expect.arrayContaining(['id-o', 'id-odi', 'id-omark', 'id-adi'])
+        );
+        expect(typed.missingIds).toEqual(
+            expect.arrayContaining(['id-o', 'id-odi', 'id-omark'])
+        );
+        expect(typed.missingIds).not.toContain('id-adi');
     });
 
     it('reuses catalog name indexes for the same generation key', () => {

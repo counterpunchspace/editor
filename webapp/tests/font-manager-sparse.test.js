@@ -159,7 +159,7 @@ describe('FontManager sparse hydration', () => {
         expect(plugin.ensureSparseHydration).toHaveBeenCalledWith({
             text: 'ä',
             glyphNames: [],
-            purpose: 'compile'
+            purpose: 'ui'
         });
     });
 });
