@@ -227,13 +227,7 @@ export default defineConfig({
                     // headless shell when Chrome's own sandbox is enabled.
                     chromiumSandbox: false
                 },
-                // Staging Pages already sends COOP/COEP. The production
-                // service worker would hide /live from page.route, so the
-                // HTTP fault matrix could not inject 429 and 503.
-                contextOptions:
-                    process.env.CLOUD_COLLAB_REMOTE === '1'
-                        ? { serviceWorkers: 'block' as const }
-                        : {}
+                contextOptions: {}
             }
         },
         ...(process.env.CLOUD_COLLAB_PREVIEW_SMOKE === '1'

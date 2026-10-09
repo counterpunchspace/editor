@@ -2110,14 +2110,19 @@ export class PatchSyncEngine {
 
     private _removeGlyphDoc(glyphName: string): void {
         const glyphId = this._glyphIdByName.get(glyphName);
-        if (!glyphId) {
-            const glyphsMap = this.fontMap.get('glyphs');
-            if (glyphsMap instanceof Y.Map) {
-                glyphsMap.delete(glyphName);
+        const glyphMap = this._glyphMapForName(glyphName);
+        if (glyphMap instanceof Y.Map) {
+            for (const key of [...glyphMap.keys()]) {
+                glyphMap.delete(key);
             }
-            return;
         }
-        this._pendingDestroyedGlyphIds.add(glyphId);
+        const glyphsMap = this.fontMap.get('glyphs');
+        if (glyphsMap instanceof Y.Map && glyphsMap.has(glyphName)) {
+            glyphsMap.delete(glyphName);
+        }
+        if (glyphId) {
+            this._pendingDestroyedGlyphIds.add(glyphId);
+        }
     }
 
     private _flushDestroyedGlyphDocs(): void {
@@ -6197,7 +6202,7 @@ export class PatchSyncEngine {
         readOptions?: { ignoreExisting?: boolean; existingGlyph?: unknown }
     ): Unsafe | null {
         const glyphMap = this._glyphMapForName(glyphName);
-        if (!(glyphMap instanceof Y.Map)) {
+        if (!(glyphMap instanceof Y.Map) || glyphMap.size === 0) {
             return null;
         }
 
@@ -6330,13 +6335,19 @@ export class PatchSyncEngine {
             }
 
             const glyphName = pathSegments[1];
-            const glyphRecord = glyphs.find(
+            const glyphIndex = glyphs.findIndex(
                 (glyph) => glyph?.name === glyphName
             );
-
-            if (!glyphRecord) {
+            if (glyphIndex < 0) {
                 continue;
             }
+
+            if (pathSegments.length === 2) {
+                glyphs.splice(glyphIndex, 1);
+                continue;
+            }
+
+            const glyphRecord = glyphs[glyphIndex];
 
             if (pathSegments.length === 3) {
                 delete glyphRecord[pathSegments[2]];

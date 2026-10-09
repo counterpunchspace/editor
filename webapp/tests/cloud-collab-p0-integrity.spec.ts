@@ -35,7 +35,10 @@ test.describe('Cloud P0 integrity Playwright gates', () => {
                 browser,
                 request,
                 runId,
-                `Fustat-p0-${runId}`
+                `Fustat-p0-${runId}`,
+                process.env.CLOUD_COLLAB_REMOTE === '1'
+                    ? { serviceWorkers: 'block' }
+                    : undefined
             );
         try {
             let validatorReachable = false;

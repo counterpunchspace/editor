@@ -151,9 +151,10 @@ export const cloudAdapterShardIoMethods = {
                                 error instanceof Error
                                     ? error.message
                                     : String(error);
-                            const retryable = /503|1102|exceededMemory/i.test(
-                                message
-                            );
+                            const retryable =
+                                /503|1102|10001|exceededMemory|internal error/i.test(
+                                    message
+                                );
                             const attempts = Number(
                                 (batch as { packAttempts?: number })
                                     .packAttempts || 0
@@ -528,7 +529,7 @@ export const cloudAdapterShardIoMethods = {
                     error instanceof Error ? error.message : String(error);
                 const retryable =
                     !options?.signal?.aborted &&
-                    /503|Failed to fetch|ERR_ABORTED|ERR_FAILED|NETWORK_CHANGED|unavailable|do_timeout|incomplete/i.test(
+                    /503|10001|Failed to fetch|ERR_ABORTED|ERR_FAILED|NETWORK_CHANGED|unavailable|do_timeout|incomplete|internal error/i.test(
                         message
                     );
                 logCloudPackFailure('pack seed failed', {

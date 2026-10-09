@@ -41,7 +41,8 @@ export async function prepareOwnerCloudFont(
     browser: Browser,
     request: Parameters<typeof bootstrapCloudCollabSession>[0],
     runId: string,
-    assetName: string
+    assetName: string,
+    options?: { serviceWorkers?: 'allow' | 'block' }
 ): Promise<{
     emails: ReturnType<typeof makeCloudCollabEmails>;
     ownerSession: Awaited<ReturnType<typeof bootstrapCloudCollabSession>>;
@@ -71,7 +72,11 @@ export async function prepareOwnerCloudFont(
         emails.owner,
         'owner'
     );
-    const ownerContext = await browser.newContext();
+    const ownerContext = await browser.newContext(
+        options?.serviceWorkers
+            ? { serviceWorkers: options.serviceWorkers }
+            : undefined
+    );
     await installCrossWindowTrackersOnContext(ownerContext);
     await attachCloudCollabCookies(ownerContext, ownerSession);
     const ownerPage = await ownerContext.newPage();
