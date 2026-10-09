@@ -466,6 +466,25 @@ if (typeof window === 'undefined') {
             scope += '/';
         }
 
+        // The reload exists only to gain cross-origin isolation. Staging
+        // already sends those headers, so SharedArrayBuffer is live and a
+        // reload is a no-op that, while the browser is offline, becomes
+        // Chrome's network error page and drops the open font.
+        const reloadForCoiBootstrap = () => {
+            if (typeof SharedArrayBuffer !== 'undefined') {
+                console.log(
+                    '[COI] SharedArrayBuffer already available - skipping reload'
+                );
+                return;
+            }
+            if (navigator.onLine === false) {
+                console.log('[COI] Browser is offline - skipping reload');
+                return;
+            }
+            window.sessionStorage.setItem('coiReloadedBySelf', 'true');
+            window.location.reload();
+        };
+
         console.log('[COI] Registering service worker...');
         navigator.serviceWorker
             .register(window.document.currentScript.src, {
@@ -523,11 +542,7 @@ if (typeof window === 'undefined') {
                         console.log(
                             '[COI] Service worker active but not controlling - reloading...'
                         );
-                        window.sessionStorage.setItem(
-                            'coiReloadedBySelf',
-                            'true'
-                        );
-                        window.location.reload();
+                        reloadForCoiBootstrap();
                         return;
                     }
 
@@ -564,11 +579,7 @@ if (typeof window === 'undefined') {
                                     console.log(
                                         '[COI] Service worker activated - reloading...'
                                     );
-                                    window.sessionStorage.setItem(
-                                        'coiReloadedBySelf',
-                                        'true'
-                                    );
-                                    window.location.reload();
+                                    reloadForCoiBootstrap();
                                 }
                             }
                         );

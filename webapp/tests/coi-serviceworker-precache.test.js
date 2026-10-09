@@ -231,5 +231,9 @@ describe('COI ServiceWorker PRECACHE_ASSETS', () => {
         expect(swContent).toMatch(
             /if \(navigator\.serviceWorker\.controller\)/
         );
+        expect(swContent).toMatch(
+            /SharedArrayBuffer already available - skipping reload/
+        );
+        expect(swContent).toMatch(/Browser is offline - skipping reload/);
     });
 });
