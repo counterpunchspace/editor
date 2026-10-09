@@ -388,7 +388,8 @@ test.describe('Cloud collab deletion leaves nothing behind', () => {
 
             // Inside the undo window nothing is removed, even when cron runs.
             await api(page, 'POST', '/api/dev/cloud/maintenance/run', {
-                now: Date.now() + DAY_MS - 60 * 60 * 1000
+                now: Date.now() + DAY_MS - 60 * 60 * 1000,
+                assetId
             });
             const inWindow = await census(page, assetId, [roomId], glyphPrefix);
             expect(roomHasData(inWindow.rooms[roomId])).toBe(true);
@@ -407,7 +408,8 @@ test.describe('Cloud collab deletion leaves nothing behind', () => {
                     .font_shard_ops ?? 0
             ).toBe(0);
             await api(page, 'POST', '/api/dev/cloud/maintenance/run', {
-                now: Date.now() + 2 * DAY_MS
+                now: Date.now() + 2 * DAY_MS,
+                assetId
             });
             const afterUndo = await census(
                 page,
@@ -427,7 +429,8 @@ test.describe('Cloud collab deletion leaves nothing behind', () => {
             );
             expect(marked.json.marked).toBe(1);
             await api(page, 'POST', '/api/dev/cloud/maintenance/run', {
-                now: Date.now() + DAY_MS + 60 * 1000
+                now: Date.now() + DAY_MS + 60 * 1000,
+                assetId
             });
 
             const after = await census(page, assetId, [roomId], glyphPrefix);
