@@ -274,6 +274,36 @@ export async function nudgeGlyphNode(
     return edited;
 }
 
+/** Logged only when a staging assertion is about to fail, so CI keeps the invitee socket state. */
+export async function dumpLiveSessionState(
+    page: Page,
+    label: string
+): Promise<void> {
+    const snapshot = await page
+        .evaluate(() => {
+            const w = window as any;
+            const session = w.cloudPlugin?._liveSession;
+            const bridge = w.changeBridge;
+            return {
+                adapters: [...(session?._adapters?.keys?.() || [])],
+                desired: [...(session?._desiredDocumentIds || [])],
+                active: w.fontManager?.getActiveEditorGlyphName?.() ?? null,
+                current: w.glyphCanvas?.getCurrentGlyphName?.() ?? null,
+                buffer: w.glyphCanvas?.textRunEditor?.glyphNameBuffer ?? null,
+                docIdA: bridge?.glyphDocumentIdForName?.('a') ?? null,
+                role: w.cloudPlugin?.getCurrentAssetRole?.() ?? null,
+                hasModel: !!w.currentFontModel,
+                hasGlyphA: !!w.currentFontModel?.findGlyph?.('a'),
+                status: w.cloudPlugin?.connectionStatus ?? null
+            };
+        })
+        .catch((error: unknown) => ({
+            evaluateError:
+                error instanceof Error ? error.message : String(error)
+        }));
+    console.log(label, JSON.stringify(snapshot));
+}
+
 export async function collectPageErrors(page: Page): Promise<string[]> {
     const errors: string[] = [];
     page.on('pageerror', (err) => {

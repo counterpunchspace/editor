@@ -9,6 +9,7 @@ import {
     E2E_COMPACTOR_TOKEN,
     E2E_VALIDATOR_TOKEN,
     dumpCollabIntegrity,
+    dumpLiveSessionState,
     glyphNodeX,
     nudgeGlyphNode,
     probeWorkerAuth,
@@ -348,12 +349,18 @@ test.describe('Cloud P0 integrity Playwright gates', () => {
                 .poll(async () => true, { timeout: 500 + 1000 })
                 .toBeTruthy();
 
-            const inviteeEdit = await nudgeGlyphNode(
-                inviteePage,
-                'a',
-                23,
-                'Invitee offline WAL'
-            );
+            let inviteeEdit: { oldX: number; newX: number };
+            try {
+                inviteeEdit = await nudgeGlyphNode(
+                    inviteePage,
+                    'a',
+                    23,
+                    'Invitee offline WAL'
+                );
+            } catch (error) {
+                await dumpLiveSessionState(inviteePage, 'P0_INVITEE_DUMP');
+                throw error;
+            }
             expect(inviteeEdit.newX).toBe(aBefore + 23);
             await dumpCollabIntegrity(inviteePage, 'invitee-after-nudge');
             await dumpCollabIntegrity(ownerPage, 'owner-after-invitee-nudge');

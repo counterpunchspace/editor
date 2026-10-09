@@ -199,9 +199,27 @@ describe('CloudDurableWal', () => {
         expect(wal.recordsFor('glyph:aaa')).toHaveLength(1);
         await wal.acknowledgeMany('asset-1', 'font-core', ['shared-txn']);
         expect(wal.pendingCount).toBe(1);
+        expect(wal.pendingCountFor('font-core')).toBe(0);
+        expect(wal.pendingCountFor('glyph:aaa')).toBe(1);
         expect(wal.recordsFor('glyph:aaa')[0].clientTransactionId).toBe(
             'shared-txn'
         );
+    });
+
+    test('notifies listeners when a document row is stored or dropped', async () => {
+        global.indexedDB = createIndexedDbMock();
+        const wal = new CloudDurableWal();
+        await wal.load('asset-1');
+        const seen = [];
+        const stop = wal.onChange(() => {
+            seen.push(wal.pendingCountFor('font-core'));
+        });
+        await wal.append(sampleRecord('notify-txn'));
+        await wal.acknowledgeMany('asset-1', 'font-core', ['notify-txn']);
+        stop();
+        await wal.append(sampleRecord('after-stop'));
+        expect(seen).toEqual([1, 0]);
+        expect(wal.pendingCountFor('font-core')).toBe(1);
     });
 
     test('1k append throughput stays interactive', async () => {

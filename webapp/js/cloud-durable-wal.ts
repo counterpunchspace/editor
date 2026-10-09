@@ -148,17 +148,56 @@ export class CloudDurableWal {
     private _loadedAssetId: string | null = null;
     private _db: IDBDatabase | null = null;
     private _openPromise: Promise<IDBDatabase> | null = null;
+    private _changeListeners = new Set<() => void>();
 
     get health(): CloudWalHealth {
         return this._health;
     }
 
     get pendingCount(): number {
-        return [...this._records.values()].filter(
-            (record) =>
-                record.state !== 'acknowledged' &&
-                walUpdateBytes(record).byteLength > 0
-        ).length;
+        let count = 0;
+        for (const record of this._records.values()) {
+            if (this._isPending(record)) {
+                count += 1;
+            }
+        }
+        return count;
+    }
+
+    /** Unacked rows for one room. Adapters share this log, so a glyph row must not count as font-deps work. */
+    pendingCountFor(documentId: string): number {
+        let count = 0;
+        for (const record of this._records.values()) {
+            if (record.documentId === documentId && this._isPending(record)) {
+                count += 1;
+            }
+        }
+        return count;
+    }
+
+    /**
+     * Fires after a row is stored or dropped. Every adapter listening on a
+     * shared log needs this: an ack handled by the glyph socket otherwise
+     * never wakes a waiter registered on font-deps.
+     */
+    onChange(listener: () => void): () => void {
+        this._changeListeners.add(listener);
+        return () => {
+            this._changeListeners.delete(listener);
+        };
+    }
+
+    private _isPending(record: CloudWalRecord): boolean {
+        return (
+            record.state !== 'acknowledged' &&
+            walUpdateBytes(record).byteLength > 0
+        );
+    }
+
+    private _emitChange(): void {
+        for (const listener of this._changeListeners) {
+            listener();
+        }
     }
 
     recordsFor(documentId?: string): CloudWalRecord[] {
@@ -321,6 +360,7 @@ export class CloudDurableWal {
             });
             this._loadedAssetId = record.assetId;
             this._health = 'ready';
+            this._emitChange();
         } catch (error) {
             this._health = 'unavailable';
             this._db = null;
@@ -386,6 +426,7 @@ export class CloudDurableWal {
             throw error;
         }
         this._records.delete(key);
+        this._emitChange();
     }
 
     async acknowledgeMany(
@@ -413,6 +454,7 @@ export class CloudDurableWal {
                 recordKey({ assetId, documentId, clientTransactionId })
             );
         }
+        this._emitChange();
     }
 
     close(): void {

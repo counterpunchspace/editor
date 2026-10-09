@@ -253,6 +253,14 @@ jobs:
                   CLOUD_COLLAB_ROOM_URL: https://staging.rooms.counterpunch.space
                   E2E_OPERATOR_TOKEN: ${{ secrets.E2E_OPERATOR_TOKEN }}
 
+            - name: Upload Playwright failure evidence
+              if: failure()
+              uses: actions/upload-artifact@v4
+              with:
+                  name: cloud-collab-e2e-shard-${{ matrix.shard }}
+                  path: webapp/test-results
+                  if-no-files-found: ignore
+
     # Publishes the attestation only when every e2e shard passed.
     cloud-collab-e2e-result:
         needs: cloud-collab-e2e

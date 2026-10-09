@@ -25,6 +25,7 @@ import {
 import {
     assertServiceReachable,
     collectPageErrors,
+    dumpLiveSessionState,
     gotoEditorPage,
     saveCurrentFontToCloud,
     waitForCloudLiveIdle,
@@ -453,6 +454,9 @@ test('revoking a member closes an open glyph shard, and a new invite restores ed
                 String(id).startsWith('glyph:')
             );
         });
+        if (!glyphOpen) {
+            await dumpLiveSessionState(inviteePage, 'GLYPH_OPEN_DUMP');
+        }
         expect(glyphOpen).toBe(true);
         await opened.ownerPage.evaluate(async (userId) => {
             await (window as any).cloudPlugin.removeMember(userId);

@@ -19,6 +19,7 @@ const {
     publishCloudDocumentUpdate
 } = require('../js/cloud-adapter.ts');
 const { MetadataFreeRemoteUpdateError } = require('../js/patch-sync-engine.ts');
+const { CloudDurableWal } = require('../js/cloud-durable-wal.ts');
 const {
     createPackParser,
     encodePackErrorFrame,
@@ -1402,6 +1403,80 @@ describe('CloudAdapter outbound updates', () => {
         expect(durable).toBe(true);
         expect(adapter.pendingSyncCount).toBe(0);
         adapter.disconnect();
+    });
+
+    it('does not wait on another document that shares the WAL', async () => {
+        global.indexedDB = createIndexedDbMock();
+        const wal = new CloudDurableWal();
+        await wal.load('asset-123');
+        await wal.append({
+            assetId: 'asset-123',
+            documentId: 'glyph:a',
+            clientTransactionId: 'glyph-txn',
+            updateBytes: new Uint8Array([1, 2, 3, 4]),
+            collaborationMessage: makeLiveCollabMessage({
+                transactionId: 61
+            }),
+            state: 'applied',
+            createdAt: Date.now(),
+            attempts: 0
+        });
+        const deps = new CloudAdapter({
+            assetId: 'asset-123',
+            documentId: 'font-deps',
+            wal
+        });
+        const glyph = new CloudAdapter({
+            assetId: 'asset-123',
+            documentId: 'glyph:a',
+            wal
+        });
+        expect(deps.pendingSyncCount).toBe(1);
+        await expect(deps.waitUntilDurable()).resolves.toBeUndefined();
+
+        let glyphDurable = false;
+        const waiting = glyph.waitUntilDurable().then(() => {
+            glyphDurable = true;
+        });
+        await Promise.resolve();
+        expect(glyphDurable).toBe(false);
+        await wal.acknowledgeMany('asset-123', 'glyph:a', ['glyph-txn']);
+        await waiting;
+        expect(glyphDurable).toBe(true);
+        deps.disconnect();
+        glyph.disconnect();
+    });
+
+    it('resolves waitUntilDurable when the socket disconnects', async () => {
+        global.indexedDB = createIndexedDbMock();
+        const wal = new CloudDurableWal();
+        await wal.load('asset-123');
+        const glyph = new CloudAdapter({
+            assetId: 'asset-123',
+            documentId: 'glyph:a',
+            wal
+        });
+        await wal.append({
+            assetId: 'asset-123',
+            documentId: 'glyph:a',
+            clientTransactionId: 'glyph-pending',
+            updateBytes: new Uint8Array([9]),
+            collaborationMessage: makeLiveCollabMessage({
+                transactionId: 62
+            }),
+            state: 'applied',
+            createdAt: Date.now(),
+            attempts: 0
+        });
+        let durable = false;
+        const waiting = glyph.waitUntilDurable().then(() => {
+            durable = true;
+        });
+        await Promise.resolve();
+        expect(durable).toBe(false);
+        glyph.disconnect();
+        await waiting;
+        expect(durable).toBe(true);
     });
 
     it('preserves and retries an unacked live update across reconnect bootstrap', async () => {

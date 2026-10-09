@@ -267,6 +267,7 @@ export class CloudAdapter implements FileSystemAdapter {
     private _outboundAckSentAtBySeq = new Map<number, number>();
     private _pendingDurabilityMessages: CollaborationMessageEnvelope[] = [];
     private _durableWaiters: Array<() => void> = [];
+    private _walUnsubscribe: (() => void) | null = null;
     private _wal: CloudDurableWal;
     private _pendingInboundUpdates: CloudLiveUpdateMessage[] = [];
     private _inboundFlushScheduled = false;
@@ -343,12 +344,34 @@ export class CloudAdapter implements FileSystemAdapter {
         return this._wal.pendingCount;
     }
 
+    /**
+     * Resolves when this room's own rows are acked, or when the socket is
+     * torn down. The session WAL is shared, so waiting on the global count
+     * leaves font-deps blocked on a glyph row it will never ack.
+     */
     waitUntilDurable(): Promise<void> {
-        if (this.pendingSyncCount === 0) {
+        if (this._destroyed || this._documentPendingCount() === 0) {
             return Promise.resolve();
         }
         return new Promise((resolve) => {
             this._durableWaiters.push(resolve);
+            this._ensureDurabilitySubscription();
+            if (this._destroyed || this._documentPendingCount() === 0) {
+                this._flushDurableWaiters();
+            }
+        });
+    }
+
+    private _documentPendingCount(): number {
+        return this._wal.pendingCountFor(this._documentId);
+    }
+
+    private _ensureDurabilitySubscription(): void {
+        if (this._walUnsubscribe) {
+            return;
+        }
+        this._walUnsubscribe = this._wal.onChange(() => {
+            this._flushDurableWaiters();
         });
     }
 
@@ -370,7 +393,7 @@ export class CloudAdapter implements FileSystemAdapter {
     }
 
     private _flushDurableWaiters(): void {
-        if (this.pendingSyncCount > 0) {
+        if (!this._destroyed && this._documentPendingCount() > 0) {
             return;
         }
         const waiters = this._durableWaiters;
@@ -633,6 +656,9 @@ export class CloudAdapter implements FileSystemAdapter {
         this._lastNotedTransfer = null;
         this._lastEmittedTransferActivity = 'idle';
         this._setStatus('disconnected');
+        this._walUnsubscribe?.();
+        this._walUnsubscribe = null;
+        this._flushDurableWaiters();
     }
 
     sendForwardedUpdate(
