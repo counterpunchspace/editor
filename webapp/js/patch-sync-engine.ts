@@ -1074,47 +1074,38 @@ export class PatchSyncEngine {
                 return glyphMap;
             }
         }
-        // A remote delete drops the name from glyphOrder before the undo or
-        // redo packet restores the body. The document is still here; bind it
-        // again when its map carries this name.
-        const retiredId = this._retiredGlyphIdByName.get(glyphName);
-        const retiredMap = retiredId
-            ? this._glyphDocs.get(retiredId)?.getMap('glyph')
-            : null;
-        if (
-            retiredId &&
-            retiredMap instanceof Y.Map &&
-            retiredMap.size > 0 &&
-            retiredMap.get('name') === glyphName
-        ) {
-            this._glyphIdByName.set(glyphName, retiredId);
-            this._glyphNameById.set(retiredId, glyphName);
-            this._retiredGlyphIdByName.delete(glyphName);
-            return retiredMap;
-        }
-        for (const [candidateId, doc] of this._glyphDocs) {
-            const glyphMap = doc.getMap('glyph');
-            if (
-                !(glyphMap instanceof Y.Map) ||
-                glyphMap.size === 0 ||
-                glyphMap.get('name') !== glyphName
-            ) {
-                continue;
-            }
-            const owner = this._glyphNameById.get(candidateId);
-            if (
-                owner &&
-                owner !== glyphName &&
-                this._glyphIdByName.get(owner) === candidateId
-            ) {
-                continue;
-            }
-            this._glyphIdByName.set(glyphName, candidateId);
-            this._glyphNameById.set(candidateId, glyphName);
-            this._retiredGlyphIdByName.delete(glyphName);
-            return glyphMap;
-        }
         return null;
+    }
+
+    /**
+     * A remote glyphOrder update drops a name whose map is still empty.
+     * The body arrives in a later packet, after that index pass, so bind the
+     * document that this update just wrote before JSON is read from it.
+     */
+    private _bindAppliedGlyphDocument(documentId: string): void {
+        if (!documentId.startsWith('glyph:')) {
+            return;
+        }
+        const glyphId = documentId.slice('glyph:'.length);
+        const glyphMap = this._glyphDocs.get(glyphId)?.getMap('glyph');
+        if (!(glyphMap instanceof Y.Map) || glyphMap.size === 0) {
+            return;
+        }
+        const glyphName = glyphMap.get('name');
+        if (typeof glyphName !== 'string' || !glyphName) {
+            return;
+        }
+        const previousName = this._glyphNameById.get(glyphId);
+        if (
+            previousName &&
+            previousName !== glyphName &&
+            this._glyphIdByName.get(previousName) === glyphId
+        ) {
+            this._glyphIdByName.delete(previousName);
+        }
+        this._glyphIdByName.set(glyphName, glyphId);
+        this._glyphNameById.set(glyphId, glyphName);
+        this._retiredGlyphIdByName.delete(glyphName);
     }
 
     private _ensureGlyphDoc(
@@ -5500,6 +5491,7 @@ export class PatchSyncEngine {
                 return false;
             }
             this._reconcileGlyphDocsAfterRemoteEntries(effectiveRemoteEntries);
+            this._bindAppliedGlyphDocument(resolvedDocumentId);
             this._syncRemoteJsonFromYDoc(effectiveRemoteEntries);
             this._yjsWorkerCallback?.(
                 update,
