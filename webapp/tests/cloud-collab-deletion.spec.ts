@@ -13,7 +13,7 @@ import {
     attachCloudCollabCookies,
     bootstrapCloudCollabSession,
     cleanupCloudCollabUsers,
-    cloudCollabOperatorHeaders,
+    cloudCollabOperatorBrowserHeaders,
     makeCloudCollabEmails
 } from './helpers/cloud-collab-session';
 import {
@@ -60,7 +60,8 @@ async function api<T>(
     body?: unknown
 ): Promise<{ status: number; json: T }> {
     const operatorAuthorization =
-        cloudCollabOperatorHeaders().Authorization || '';
+        cloudCollabOperatorBrowserHeaders()['X-Counterpunch-E2E-Operator'] ||
+        '';
     return page.evaluate(
         async ({
             method,
@@ -76,7 +77,9 @@ async function api<T>(
                 credentials: 'include',
                 headers: {
                     'Content-Type': 'application/json',
-                    ...(authorization ? { Authorization: authorization } : {})
+                    ...(authorization
+                        ? { 'X-Counterpunch-E2E-Operator': authorization }
+                        : {})
                 },
                 body: body === undefined ? undefined : JSON.stringify(body)
             });

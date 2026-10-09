@@ -3,7 +3,7 @@ import {
     LOCAL_EDITOR_ORIGIN,
     LOCAL_ROOM_ORIGIN,
     LOCAL_WEBSITE_ORIGIN,
-    cloudCollabOperatorHeaders
+    cloudCollabOperatorBrowserHeaders
 } from './cloud-collab-session';
 import { shouldIgnoreCrossWindowPageError } from './change-bridge-cross-window';
 
@@ -305,7 +305,8 @@ export async function requestDebugRoomControl(
     body: Record<string, unknown>
 ): Promise<{ status: number; payload: Record<string, unknown> }> {
     const operatorAuthorization =
-        cloudCollabOperatorHeaders().Authorization || '';
+        cloudCollabOperatorBrowserHeaders()['X-Counterpunch-E2E-Operator'] ||
+        '';
     return page.evaluate(
         async ({
             assetId: id,
@@ -324,7 +325,7 @@ export async function requestDebugRoomControl(
                     headers: {
                         'Content-Type': 'application/json',
                         ...(authorization
-                            ? { Authorization: authorization }
+                            ? { 'X-Counterpunch-E2E-Operator': authorization }
                             : {})
                     },
                     body: JSON.stringify(actionBody)

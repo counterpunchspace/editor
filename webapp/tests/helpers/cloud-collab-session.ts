@@ -15,6 +15,15 @@ export function cloudCollabOperatorHeaders(): Record<string, string> {
     return { Authorization: `Bearer ${token}` };
 }
 
+/** Browser fetches that also send the session cookie. Authorization would hide that cookie. */
+export function cloudCollabOperatorBrowserHeaders(): Record<string, string> {
+    const token = process.env.E2E_OPERATOR_TOKEN || '';
+    if (!token) {
+        return {};
+    }
+    return { 'X-Counterpunch-E2E-Operator': token };
+}
+
 export type CloudCollabRole = 'owner' | 'invitee' | 'viewer';
 
 export type CloudCollabUserSession = {
