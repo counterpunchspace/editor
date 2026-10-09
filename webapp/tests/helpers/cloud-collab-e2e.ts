@@ -2,7 +2,8 @@ import { expect, type APIRequestContext, type Page } from '@playwright/test';
 import {
     LOCAL_EDITOR_ORIGIN,
     LOCAL_ROOM_ORIGIN,
-    LOCAL_WEBSITE_ORIGIN
+    LOCAL_WEBSITE_ORIGIN,
+    cloudCollabOperatorHeaders
 } from './cloud-collab-session';
 import { shouldIgnoreCrossWindowPageError } from './change-bridge-cross-window';
 
@@ -303,8 +304,14 @@ export async function requestDebugRoomControl(
     assetId: string,
     body: Record<string, unknown>
 ): Promise<{ status: number; payload: Record<string, unknown> }> {
+    const operatorAuthorization =
+        cloudCollabOperatorHeaders().Authorization || '';
     return page.evaluate(
-        async ({ assetId: id, body: actionBody }) => {
+        async ({
+            assetId: id,
+            body: actionBody,
+            operatorAuthorization: authorization
+        }) => {
             const base = String(
                 (window as any).authManager?.websiteURL || ''
             ).replace(/\/$/, '');
@@ -314,7 +321,12 @@ export async function requestDebugRoomControl(
                     method: 'POST',
                     credentials: 'include',
                     cache: 'no-store',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: {
+                        'Content-Type': 'application/json',
+                        ...(authorization
+                            ? { Authorization: authorization }
+                            : {})
+                    },
                     body: JSON.stringify(actionBody)
                 }
             );
@@ -327,7 +339,7 @@ export async function requestDebugRoomControl(
             }
             return { status: resp.status, payload };
         },
-        { assetId, body }
+        { assetId, body, operatorAuthorization }
     );
 }
 

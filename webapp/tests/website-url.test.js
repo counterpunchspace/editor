@@ -12,6 +12,12 @@ describe('resolveWebsiteURL', () => {
         );
     });
 
+    it('maps the staging editor host to the staging website', () => {
+        expect(resolveWebsiteURL('staging.editor.counterpunch.space')).toBe(
+            'https://staging.counterpunch.space'
+        );
+    });
+
     it('maps the production editor host to the production website', () => {
         expect(resolveWebsiteURL('editor.counterpunch.space')).toBe(
             'https://counterpunch.space'

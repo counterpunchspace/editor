@@ -13,6 +13,7 @@ import {
     attachCloudCollabCookies,
     bootstrapCloudCollabSession,
     cleanupCloudCollabUsers,
+    cloudCollabOperatorHeaders,
     makeCloudCollabEmails
 } from './helpers/cloud-collab-session';
 import {
@@ -58,15 +59,25 @@ async function api<T>(
     path: string,
     body?: unknown
 ): Promise<{ status: number; json: T }> {
+    const operatorAuthorization =
+        cloudCollabOperatorHeaders().Authorization || '';
     return page.evaluate(
-        async ({ method, path, body }) => {
+        async ({
+            method,
+            path,
+            body,
+            operatorAuthorization: authorization
+        }) => {
             const base = String(
                 (window as any).authManager?.websiteURL || ''
             ).replace(/\/$/, '');
             const response = await fetch(`${base}${path}`, {
                 method,
                 credentials: 'include',
-                headers: { 'Content-Type': 'application/json' },
+                headers: {
+                    'Content-Type': 'application/json',
+                    ...(authorization ? { Authorization: authorization } : {})
+                },
                 body: body === undefined ? undefined : JSON.stringify(body)
             });
             return {
@@ -74,7 +85,7 @@ async function api<T>(
                 json: await response.json().catch(() => ({}))
             };
         },
-        { method, path, body }
+        { method, path, body, operatorAuthorization }
     ) as Promise<{ status: number; json: T }>;
 }
 

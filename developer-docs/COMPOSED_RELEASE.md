@@ -37,10 +37,11 @@ Or Actions → **Preview Release**. The local script returns to a live `ci-watch
 2. Waits for a successful editor `ci.yml` **push** run on **that SHA** (up to 90 minutes). If that run fails or is cancelled, it refuses to publish.
 3. Freezes editor / website / collab SHAs (`main`, or `WEBSITE_SHA` / `COLLAB_SHA` if those repo variables are set).
 4. Waits for a successful website and collab `deploy.yml` **push** run on those frozen SHAs (up to 90 minutes each). A failed or missing sibling run refuses to publish.
-5. Verifies the cloud-collab Playwright e2e attestation. The suite runs once, sharded, in editor `ci.yml`; CI uploads `cloud-e2e-trio` (the website and collab SHAs it tested) only when all shards pass, and `scripts/verify-cloud-e2e-attestation.sh` fails the cutover if those differ from the frozen trio. If website or collab `main` moved since the editor CI ran, rerun that CI run.
-6. Deploys **validator → compactor → room**, applies `schema.sql` to shared D1 `context_users`, deploys **website Pages**, then a **real-email signup gate** against the live website origin, then **editor Pages**.
-7. Tags all three repos with the preview version (`v0.0.N-pre.DATE`, monotonic N; DATE is the UTC day of the cut).
-8. Publishes the GitHub prerelease with Unreleased changelog notes plus `trio.json`.
+5. Verifies the cloud-collab Playwright attestation from that push. The suite runs against the staging hostnames. CI uploads `cloud-e2e-trio` only when all shards pass, and `scripts/verify-cloud-e2e-attestation.sh` fails the cutover if those SHAs differ from the frozen trio. If website or collab `main` moved since the editor CI ran, rerun that CI run.
+6. Deploys that frozen trio to staging again and reruns the full cloud-collab suite there. A later push can overwrite staging, so this run is the one that gates the cutover. A red suite does not move preview or production hostnames.
+7. Checks that the target project's secret names are present, deploys **validator → compactor**, uploads the room as a version, and calls `/internal/cutover-pairing` on that version URL before `versions deploy` attaches the room route. Then applies `schema.sql` to shared D1 `context_users`, deploys **website Pages**, runs the real-email signup gate on that website origin, checks the secret names again, then deploys **editor Pages**.
+8. Tags all three repos with the preview version (`v0.0.N-pre.DATE`, monotonic N; DATE is the UTC day of the cut).
+9. Publishes the GitHub prerelease with Unreleased changelog notes plus `trio.json`.
 
 It does not rewrite `CHANGELOG.md`. Push website and collab `main` first if those SHAs should be in this cutover. Production uses the same sibling CI wait inside composed cutover.
 
@@ -54,13 +55,22 @@ That still bumps the editor version, extracts notes from `CHANGELOG.md`, commits
 
 ## Preview vs production hosts
 
-| Role | Preview | Production |
-| --- | --- | --- |
-| Editor Pages | `editorpreview` → https://preview.editor.counterpunch.space | `editor` → https://editor.counterpunch.space |
-| Website Pages | `websitepreview` → https://preview.counterpunch.space | `website` → https://counterpunch.space |
-| Room | `room-preview` → https://preview.rooms.counterpunch.space | `room` |
-| Validator / compactor | `validator-preview` / `compactor-preview` | `validator` / `compactor` |
-| Room R2 | `fonts-room-state-preview` | `fonts-room-state` |
+| Role | Staging | Preview | Production |
+| --- | --- | --- | --- |
+| Editor Pages | `editorstaging` → https://staging.editor.counterpunch.space | `editorpreview` → https://preview.editor.counterpunch.space | `editor` → https://editor.counterpunch.space |
+| Website Pages | `websitestaging` → https://staging.counterpunch.space | `websitepreview` → https://preview.counterpunch.space | `website` → https://counterpunch.space |
+| Room | `room-staging` → https://staging.rooms.counterpunch.space | `room-preview` → https://preview.rooms.counterpunch.space | `room` |
+| Validator / compactor | `validator-staging` / `compactor-staging` | `validator-preview` / `compactor-preview` | `validator` / `compactor` |
+| Room R2 | `fonts-room-state-staging` | `fonts-room-state-preview` | `fonts-room-state` |
+| D1 | `context_users_staging` | shared `context_users` | shared `context_users` |
+
+Staging is public and exists to run the cloud-collab suite. It does not serve customers. `push.sh` deploys it and runs the suite. Preview Release and Release deploy the frozen SHAs there again, rerun the suite, then cut those bytes over.
+
+Proxied DNS on `counterpunch.space` (the deploy token cannot edit DNS):
+
+- `staging` CNAME `websitestaging-58q.pages.dev`
+- `staging.editor` CNAME `editorstaging.pages.dev`
+- `staging.rooms` proxied the same way as `preview.rooms`, so the worker route `staging.rooms.counterpunch.space/*` receives traffic
 
 Website preview must point `ROOM_WORKER_URL` at the preview room origin. JWT `AUTH_TOKEN_SECRET`, `CLOUD_*` website↔room tokens, and validator/compactor shared HMAC tokens live in the **Cloudflare dashboard**. Cutover does not re-upload them from GitHub.
 
@@ -77,12 +87,25 @@ Composed cutover deploys Pages with `cloudflare/wrangler-action` (`pages deploy 
 - `CLOUDFLARE_ACCOUNT_ID`
 - `SIGNUP_E2E_IMAP_USER` — Gmail address used only for the cutover magic-link gate (`…@gmail.com`)
 - `SIGNUP_E2E_IMAP_PASS` — Google **App Password** for that mailbox (not the Google account password)
+- `E2E_OPERATOR_TOKEN` — same value as the `websitestaging` Pages secret. Push CI and both cutovers send it as `Authorization` on the staging dev routes. It is not set on preview or production.
 
 This is not the same as `CLOUD_E2E_PAT`. The PAT never talks to Cloudflare. Missing IMAP secrets fail the cutover closed (no silent skip).
 
 ## Real-email signup gate
 
-After website Pages deploy and before editor Pages, cutover `POST`s `/api/auth/request-login` to `https://preview.counterpunch.space` or `https://counterpunch.space`, polls Gmail IMAP for the Resend mail, `GET`s `/api/auth/verify`, then deletes the `+cp-e2e-{run_id}` user from shared D1 `context_users` and expunges that run's signup message from the Gmail inbox. Local cloud-collab e2e still uses `AUTH_TOKEN_ALLOW_INSECURE_LOCAL_FALLBACK`; this gate is not in `ci.yml`.
+Push CI and both cutovers `POST` `/api/auth/request-login` to `https://staging.counterpunch.space` before the Playwright suite (`SIGNUP_E2E_D1_NAME=context_users_staging`). After the product website deploy, and before editor Pages, cutover does the same against `https://preview.counterpunch.space` or `https://counterpunch.space`, then deletes the `+cp-e2e-{run_id}` user from shared D1 `context_users`. Local `npm run test:cloud-collab` still uses `AUTH_TOKEN_ALLOW_INSECURE_LOCAL_FALLBACK`.
+
+## Staging secrets you set once
+
+Copy each value from the preview resource in parentheses. The same name on two resources must be the same string. Generate `E2E_OPERATOR_TOKEN` and put it only on `websitestaging` and in the editor repo Actions secret `E2E_OPERATOR_TOKEN`.
+
+- `validator-staging` (from `validator-preview`): `VALIDATOR_SHARED_TOKEN`
+- `compactor-staging` (from `compactor-preview`): `COMPACTOR_SHARED_TOKEN`
+- `room-staging` (from `room-preview`): `AUTH_TOKEN_SECRET`, `VALIDATOR_SHARED_TOKEN`, `COMPACTOR_SHARED_TOKEN`, `CLOUD_AUTHORIZE_SERVICE_TOKEN`, `CLOUD_ATTEST_SERVICE_TOKEN`, `CLOUD_ROOM_LIMITS_SERVICE_TOKEN`, `CLOUD_SHARD_OPS_SERVICE_TOKEN`, `ROOM_STATUS_SERVICE_TOKEN`
+- `websitestaging` (from `websitepreview`): `RESEND_API_KEY`, `AUTH_TOKEN_SECRET`, `CLOUD_AUTHORIZE_SERVICE_TOKEN`, `CLOUD_ATTEST_SERVICE_TOKEN`, `CLOUD_ROOM_LIMITS_SERVICE_TOKEN`, `CLOUD_SHARD_OPS_SERVICE_TOKEN`, `COMPACTOR_SHARED_TOKEN`, `ROOM_STATUS_SERVICE_TOKEN`, plus the new `E2E_OPERATOR_TOKEN`
+- `editorstaging`: none
+
+Do not set `AUTH_TOKEN_ALLOW_INSECURE_LOCAL_FALLBACK` or `LOCAL_CLOUD_DEV_ENABLED` on staging. Leave Stripe, OpenRouter, `GITHUB_PLUGIN_CATALOG_TOKEN`, `ROOM_LOG_SERVICE_TOKEN`, and `ROOM_COMPACTOR_SERVICE_TOKEN` unset there.
 
 ### Operator setup (once, before the first cutover that includes this step)
 

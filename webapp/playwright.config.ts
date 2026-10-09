@@ -113,7 +113,8 @@ export default defineConfig({
 
     globalTeardown: './scripts/playwright-global-teardown.mjs',
     globalSetup:
-        process.env.CLOUD_COLLAB_E2E === '1'
+        process.env.CLOUD_COLLAB_E2E === '1' &&
+        process.env.CLOUD_COLLAB_REMOTE !== '1'
             ? './scripts/cloud-collab-global-setup.mjs'
             : undefined,
 
@@ -180,10 +181,7 @@ export default defineConfig({
     projects: [
         {
             name: 'chromium',
-            testIgnore: [
-                '**/cloud-collab*.spec.ts',
-                '**/cloud-wal-idb.spec.ts'
-            ],
+            testIgnore: ['**/cloud-collab*.spec.ts'],
             use: {
                 ...devices['Desktop Chrome'],
                 // Enable SharedArrayBuffer (required for your WASM/Pyodide)
@@ -208,7 +206,7 @@ export default defineConfig({
         },
         {
             name: 'cloud-collab',
-            testMatch: ['**/cloud-collab*.spec.ts', '**/cloud-wal-idb.spec.ts'],
+            testMatch: ['**/cloud-collab*.spec.ts'],
             testIgnore: ['**/cloud-collab-preview-smoke.spec.ts'],
             timeout: 480000,
             use: {

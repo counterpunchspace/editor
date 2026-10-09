@@ -18,6 +18,7 @@ import {
     attachCloudCollabCookies,
     bootstrapCloudCollabSession,
     cleanupCloudCollabUsers,
+    cloudCollabOperatorHeaders,
     makeCloudCollabEmails,
     LOCAL_WEBSITE_ORIGIN
 } from './helpers/cloud-collab-session';
@@ -39,7 +40,7 @@ async function setLimitsTier(
     request: {
         post: (
             url: string,
-            options: { data: unknown }
+            options: { data: unknown; headers?: Record<string, string> }
         ) => Promise<{
             ok: () => boolean;
             status: () => number;
@@ -55,7 +56,7 @@ async function setLimitsTier(
 }> {
     const response = await request.post(
         `${LOCAL_WEBSITE_ORIGIN}/api/dev/local-cloud-limits`,
-        { data: { email, tier } }
+        { data: { email, tier }, headers: cloudCollabOperatorHeaders() }
     );
     expect(response.ok(), `limits fixture ${response.status()}`).toBe(true);
     const body = await response.json();

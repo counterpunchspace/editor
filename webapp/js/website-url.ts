@@ -12,5 +12,9 @@ export function resolveWebsiteURL(hostname?: string): string {
         return 'https://preview.counterpunch.space';
     }
 
+    if (effectiveHostname === 'staging.editor.counterpunch.space') {
+        return 'https://staging.counterpunch.space';
+    }
+
     return 'https://counterpunch.space';
 }

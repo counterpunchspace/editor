@@ -1,8 +1,8 @@
 #!/bin/bash
 
 # Push collab, website and editor (in that order) when they have unpushed commits.
-# Siblings go first so the editor CI, which runs the cloud-collab e2e against
-# their main, tests what you just pushed.
+# Siblings go first so the editor CI, which deploys staging and runs the
+# cloud-collab e2e against those hostnames, tests what you just pushed.
 # Afterwards it runs ci-watch.sh and exits with its status (0 green, 1 red).
 # Usage: ./push.sh [--dry-run]
 
@@ -74,7 +74,7 @@ for entry in "${TO_PUSH[@]}"; do
 done
 
 echo ""
-echo "Pushed. Watching CI (the editor run includes the cloud-collab e2e)..."
+echo "Pushed. Watching CI (the editor run deploys staging and runs the cloud-collab e2e)..."
 WATCH_ARGS=()
 for entry in "${TO_PUSH[@]}"; do
     WATCH_ARGS+=("${entry#*:}")

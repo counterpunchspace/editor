@@ -170,7 +170,7 @@ npm run test:snapshots
 4. Creates and pushes git tag `vX.Y.Z`
 5. Triggers GitHub Actions **Release**, which certifies the editor then runs composed cutover (production workers + Pages) and tags website + collab with the same version. `trio.json` is attached to the GitHub release. The script then runs `ci-watch.sh` and stays in the terminal until the CI run and the Release workflow finish (exit 0 green, 1 red with the failed job and error lines).
 
-`previewrelease.sh` pushes unpushed `main` commits and starts **Preview Release**, then watches that run the same way. You can start it before editor CI is green: the workflow waits for a green `ci.yml` push run on that SHA, freezes the editor/website/collab trio, verifies the cloud-collab e2e attestation, deploys preview Cloudflare (validator → compactor → room-preview, applies `schema.sql` to shared D1, then websitepreview → editorpreview), tags all three repos, and publishes the GitHub prerelease (`v0.0.N-pre.DATE`). Notes are the Unreleased changelog diff. It does not rewrite `CHANGELOG.md`. Canonical write-up: `developer-docs/COMPOSED_RELEASE.md`.
+`previewrelease.sh` pushes unpushed `main` commits and starts **Preview Release**, then watches that run the same way. You can start it before editor CI is green: the workflow waits for a green `ci.yml` push run on that SHA, freezes the editor/website/collab trio, verifies the staging e2e attestation, redeploys that trio to the staging hostnames and reruns the full cloud-collab suite, then deploys preview Cloudflare (secret-name check, validator → compactor, room version probe, then the room route, `schema.sql` on shared D1, websitepreview, signup gate, secret-name check, editorpreview), tags all three repos, and publishes the GitHub prerelease (`v0.0.N-pre.DATE`). Notes are the Unreleased changelog diff. It does not rewrite `CHANGELOG.md`. Canonical write-up: `developer-docs/COMPOSED_RELEASE.md`.
 
 ### Pushing the trio (`push.sh`)
 
@@ -503,6 +503,7 @@ The open font’s family name is prepended to the body when a font is open. Iden
 ## Deployment
 
 - **Production**: https://editor.counterpunch.space, https://counterpunch.space, production room worker
+- **Staging**: https://staging.editor.counterpunch.space, https://staging.counterpunch.space, https://staging.rooms.counterpunch.space (cloud-collab e2e from `./push.sh` and again before cutover)
 - **Preview**: https://preview.editor.counterpunch.space, https://preview.counterpunch.space, https://preview.rooms.counterpunch.space (`./previewrelease.sh`)
 - Platform: Cloudflare Pages (editor + website) and Workers (validator, compactor, room). One composed cutover ships the matching trio (tag + `trio.json`). Website/collab `main` do not auto-deploy.
 - CI/CD: GitHub Actions. See `developer-docs/COMPOSED_RELEASE.md`.

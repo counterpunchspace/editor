@@ -170,9 +170,9 @@ jobs:
                   GH_TOKEN: ${{ secrets.CLOUD_E2E_PAT }}
               run: bash scripts/wait-for-green-ci.sh "${{ vars.COLLAB_REPOSITORY || format('{0}/collab', github.repository_owner) }}" "${{ needs.freeze.outputs.collab_sha }}" deploy.yml
 
-    # The cloud-collab Playwright suite already ran in editor CI on this exact
-    # editor commit. Releasing only verifies that run was green and tested the
-    # same website and collab commits that are about to be deployed.
+    # Push CI already tested these SHAs on staging. Cutover deploys them
+    # again, because a later push can overwrite staging, and reruns the suite
+    # before any product hostname changes.
     verify-e2e:
         needs: [freeze, sibling-ci]
         runs-on: ubuntu-latest
@@ -188,8 +188,138 @@ jobs:
                   GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
               run: bash scripts/verify-cloud-e2e-attestation.sh "${{ needs.freeze.outputs.editor_sha }}" "${{ needs.freeze.outputs.website_sha }}" "${{ needs.freeze.outputs.collab_sha }}"
 
-    deploy:
+    staging-deploy:
         needs: [freeze, verify-e2e]
+        runs-on: ubuntu-latest
+        timeout-minutes: 90
+        steps:
+            - name: Checkout editor
+              uses: actions/checkout@v4
+              with:
+                  ref: ${{ needs.freeze.outputs.editor_sha }}
+                  fetch-depth: 0
+
+            - name: Checkout website
+              uses: actions/checkout@v4
+              with:
+                  repository: ${{ vars.WEBSITE_REPOSITORY || format('{0}/website', github.repository_owner) }}
+                  ref: ${{ needs.freeze.outputs.website_sha }}
+                  path: _cutover/website
+                  token: ${{ secrets.CLOUD_E2E_PAT }}
+                  fetch-depth: 0
+
+            - name: Checkout collab
+              uses: actions/checkout@v4
+              with:
+                  repository: ${{ vars.COLLAB_REPOSITORY || format('{0}/collab', github.repository_owner) }}
+                  ref: ${{ needs.freeze.outputs.collab_sha }}
+                  path: _cutover/collab
+                  token: ${{ secrets.CLOUD_E2E_PAT }}
+                  fetch-depth: 0
+
+            - name: Resolve collab root
+              id: collab
+              run: |
+                  if [ -f _cutover/collab/workers/room/wrangler.toml ]; then
+                    echo "root=${GITHUB_WORKSPACE}/_cutover/collab" >> "$GITHUB_OUTPUT"
+                  elif [ -f _cutover/collab/collab/workers/room/wrangler.toml ]; then
+                    echo "root=${GITHUB_WORKSPACE}/_cutover/collab/collab" >> "$GITHUB_OUTPUT"
+                  else
+                    exit 1
+                  fi
+
+            - name: Set up Node.js
+              uses: actions/setup-node@v4
+              with:
+                  node-version: "24"
+
+            - name: Install collab dependencies
+              run: npm ci
+              working-directory: ${{ steps.collab.outputs.root }}
+
+            - name: Install website dependencies
+              run: npm ci
+              working-directory: _cutover/website
+
+            - name: Build website
+              run: npm run build
+              working-directory: _cutover/website
+
+            - name: Install editor webapp dependencies
+              run: npm install --prefix webapp
+
+            - name: Build editor
+              run: npm run build --prefix webapp
+              env:
+                  EDITOR_VERSION: ${{ needs.freeze.outputs.editor_version }}
+                  BUILD_HASH_FULL: ${{ needs.freeze.outputs.editor_sha }}
+                  BUILD_HASH_SHORT: ${{ needs.freeze.outputs.editor_sha }}
+
+            - name: Deploy staging Workers and website
+              env:
+                  CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+                  CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+                  EDITOR_ROOT: ${{ github.workspace }}
+                  WEBSITE_ROOT: ${{ github.workspace }}/_cutover/website
+                  COLLAB_ROOT: ${{ steps.collab.outputs.root }}
+                  COMMIT_SHA: ${{ needs.freeze.outputs.collab_sha }}
+              run: bash scripts/deploy-cloud-staging.sh site
+
+            - name: Real-email signup on staging
+              working-directory: _cutover/website
+              env:
+                  SIGNUP_E2E_ORIGIN: https://staging.counterpunch.space
+                  SIGNUP_E2E_D1_NAME: context_users_staging
+                  SIGNUP_E2E_IMAP_USER: ${{ secrets.SIGNUP_E2E_IMAP_USER }}
+                  SIGNUP_E2E_IMAP_PASS: ${{ secrets.SIGNUP_E2E_IMAP_PASS }}
+                  CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+                  CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+              run: node scripts/e2e-magic-link-signup.mjs
+
+            - name: Deploy staging editor
+              env:
+                  CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+                  CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+                  EDITOR_ROOT: ${{ github.workspace }}
+              run: bash scripts/deploy-cloud-staging.sh editor
+
+    staging-e2e:
+        needs: [freeze, staging-deploy]
+        runs-on: ubuntu-latest
+        timeout-minutes: 90
+        strategy:
+            fail-fast: false
+            matrix:
+                shard: [1, 2, 3, 4]
+        steps:
+            - name: Checkout editor
+              uses: actions/checkout@v4
+              with:
+                  ref: ${{ needs.freeze.outputs.editor_sha }}
+
+            - name: Set up Node.js
+              uses: actions/setup-node@v4
+              with:
+                  node-version: "24"
+
+            - name: Install editor webapp dependencies
+              run: npm install --prefix webapp
+
+            - name: Install Playwright Chromium
+              run: npx --prefix webapp playwright install --with-deps chromium
+
+            - name: Run cloud-collab Playwright on staging
+              run: npm run test:cloud-collab --prefix webapp -- --shard=${{ matrix.shard }}/4
+              env:
+                  CLOUD_COLLAB_E2E: "1"
+                  CLOUD_COLLAB_REMOTE: "1"
+                  CLOUD_E2E_EDITOR_URL: https://staging.editor.counterpunch.space
+                  CLOUD_COLLAB_WEBSITE_URL: https://staging.counterpunch.space
+                  CLOUD_COLLAB_ROOM_URL: https://staging.rooms.counterpunch.space
+                  E2E_OPERATOR_TOKEN: ${{ secrets.E2E_OPERATOR_TOKEN }}
+
+    deploy:
+        needs: [freeze, staging-e2e]
         runs-on: ubuntu-latest
         steps:
             - name: Checkout editor
@@ -236,6 +366,13 @@ jobs:
               run: npm ci
               working-directory: ${{ steps.collab.outputs.root }}
 
+            - name: Require product secret names
+              env:
+                  CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+                  CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+                  COLLAB_ROOT: ${{ steps.collab.outputs.root }}
+              run: node scripts/probe-product-secrets.mjs check-names "${{ inputs.target }}"
+
             - name: Deploy validator
               uses: cloudflare/wrangler-action@v3
               env:
@@ -258,16 +395,13 @@ jobs:
                   command: ${{ inputs.target == 'preview' && 'deploy --env preview' || 'deploy' }}
                   vars: COMMIT_SHA
 
-            - name: Deploy room
-              uses: cloudflare/wrangler-action@v3
+            - name: Upload room version, pair secrets, then deploy the route
               env:
+                  CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+                  CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+                  COLLAB_ROOT: ${{ steps.collab.outputs.root }}
                   COMMIT_SHA: ${{ needs.freeze.outputs.collab_sha }}
-              with:
-                  apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-                  accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-                  workingDirectory: ${{ steps.collab.outputs.root }}/workers/room
-                  command: ${{ inputs.target == 'preview' && 'deploy --env preview' || 'deploy' }}
-                  vars: COMMIT_SHA
+              run: node scripts/probe-product-secrets.mjs promote-room "${{ inputs.target }}"
 
             - name: Install website dependencies
               run: npm ci
@@ -346,6 +480,13 @@ jobs:
                   CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
                   CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
               run: node scripts/e2e-magic-link-signup.mjs
+
+            - name: Require product secret names after website deploy
+              env:
+                  CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+                  CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+                  COLLAB_ROOT: ${{ steps.collab.outputs.root }}
+              run: node scripts/probe-product-secrets.mjs check-names "${{ inputs.target }}"
 
             - name: Inject editor version
               run: |

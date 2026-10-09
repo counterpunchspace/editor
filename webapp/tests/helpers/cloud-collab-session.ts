@@ -1,8 +1,19 @@
 import { type BrowserContext, type APIRequestContext } from '@playwright/test';
 
-export const LOCAL_WEBSITE_ORIGIN = 'https://localhost:8788';
-export const LOCAL_EDITOR_ORIGIN = 'https://localhost:8000';
-export const LOCAL_ROOM_ORIGIN = 'http://localhost:8787';
+export const LOCAL_WEBSITE_ORIGIN =
+    process.env.CLOUD_COLLAB_WEBSITE_URL || 'https://localhost:8788';
+export const LOCAL_EDITOR_ORIGIN =
+    process.env.CLOUD_E2E_EDITOR_URL || 'https://localhost:8000';
+export const LOCAL_ROOM_ORIGIN =
+    process.env.CLOUD_COLLAB_ROOM_URL || 'http://localhost:8787';
+
+export function cloudCollabOperatorHeaders(): Record<string, string> {
+    const token = process.env.E2E_OPERATOR_TOKEN || '';
+    if (!token) {
+        return {};
+    }
+    return { Authorization: `Bearer ${token}` };
+}
 
 export type CloudCollabRole = 'owner' | 'invitee' | 'viewer';
 
@@ -40,7 +51,10 @@ export async function bootstrapCloudCollabSession(
         `${websiteUrl()}/api/dev/local-cloud-session`,
         {
             data: { email, name: `E2E ${role}` },
-            headers: { Origin: LOCAL_EDITOR_ORIGIN },
+            headers: {
+                Origin: LOCAL_EDITOR_ORIGIN,
+                ...cloudCollabOperatorHeaders()
+            },
             failOnStatusCode: false
         }
     );
@@ -97,7 +111,10 @@ export async function cleanupCloudCollabUsers(
         `${websiteUrl()}/api/dev/local-cloud-cleanup`,
         {
             data: { emails },
-            headers: { Origin: LOCAL_EDITOR_ORIGIN },
+            headers: {
+                Origin: LOCAL_EDITOR_ORIGIN,
+                ...cloudCollabOperatorHeaders()
+            },
             failOnStatusCode: false
         }
     );
