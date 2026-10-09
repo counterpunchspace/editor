@@ -170,6 +170,34 @@ export function getCloudRequestHeaders(
 
 export const HYDRATE_PACK_FETCH_TIMEOUT_MS = 90_000;
 
+/**
+ * AbortSignal.timeout() rejects as TimeoutError ("signal timed out").
+ * Older browsers used AbortError for the same timer. A caller-cancelled
+ * signal is a different abort and must not be retried.
+ */
+export function shouldRetryHydrateTransport(
+    error: unknown,
+    callerAborted: boolean,
+    attempt: number
+): boolean {
+    if (callerAborted || attempt >= 3) {
+        return false;
+    }
+    const name = error instanceof Error ? error.name : '';
+    const message = error instanceof Error ? error.message : String(error);
+    const ownTimeout =
+        name === 'TimeoutError' || /signal timed out/i.test(message);
+    if (ownTimeout) {
+        return attempt < 1;
+    }
+    if (name === 'AbortError') {
+        return false;
+    }
+    return /503|Failed to fetch|ERR_ABORTED|ERR_FAILED|NETWORK_CHANGED|unavailable|do_timeout|incomplete|aborted|shard pack hydrate failed: 5\d\d/i.test(
+        message
+    );
+}
+
 export function abortSignalWithTimeout(
     signal: AbortSignal | undefined,
     timeoutMs: number

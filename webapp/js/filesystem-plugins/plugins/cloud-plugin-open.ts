@@ -35,7 +35,7 @@ function isCloudNetworkFailure(error: unknown): boolean {
         return true;
     }
     const message = error instanceof Error ? error.message : String(error);
-    return /failed to fetch|networkerror|network request failed|ERR_INTERNET|ERR_CONNECTION|ERR_NETWORK/i.test(
+    return /failed to fetch|networkerror|network request failed|ERR_INTERNET|ERR_CONNECTION|ERR_NETWORK|signal timed out/i.test(
         message
     );
 }

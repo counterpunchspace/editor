@@ -4490,4 +4490,58 @@ describe('HTTP seed (POST /state for new rooms)', () => {
         );
         expect(reduced?.[1]).toMatchObject({ slots: 3 });
     });
+
+    test('retries a pack hydrate once when the deadline reports signal timed out', async () => {
+        const adapter = new CloudAdapter({ assetId: 'asset-123' });
+        let calls = 0;
+        adapter._hydratePackOnce = async () => {
+            calls += 1;
+            if (calls === 1) {
+                const error = new Error('signal timed out');
+                error.name = 'TimeoutError';
+                throw error;
+            }
+            return new Map([['font-core', new Uint8Array([1])]]);
+        };
+        const result = await adapter._hydratePack(
+            'token',
+            'https://rooms.example/room/asset-123',
+            ['font-core'],
+            undefined,
+            {
+                completed: 0,
+                total: 1,
+                bytesCompleted: 0,
+                bytesTotal: 1
+            }
+        );
+        expect(calls).toBe(2);
+        expect(result.get('font-core')).toEqual(new Uint8Array([1]));
+    });
+
+    test('does not retry a caller abort of a pack hydrate', async () => {
+        const adapter = new CloudAdapter({ assetId: 'asset-123' });
+        let calls = 0;
+        adapter._hydratePackOnce = async () => {
+            calls += 1;
+            const error = new Error('The operation was aborted');
+            error.name = 'AbortError';
+            throw error;
+        };
+        await expect(
+            adapter._hydratePack(
+                'token',
+                'https://rooms.example/room/asset-123',
+                ['font-core'],
+                undefined,
+                {
+                    completed: 0,
+                    total: 1,
+                    bytesCompleted: 0,
+                    bytesTotal: 1
+                }
+            )
+        ).rejects.toThrow('aborted');
+        expect(calls).toBe(1);
+    });
 });

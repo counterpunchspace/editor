@@ -44,6 +44,7 @@ import {
     formatPackHttpError,
     abortSignalWithTimeout,
     HYDRATE_PACK_FETCH_TIMEOUT_MS,
+    shouldRetryHydrateTransport,
     type CloudShardIoOptions,
     type CloudShardIoProgress,
     type CloudSeededShardAttestation,
@@ -833,15 +834,13 @@ export const cloudAdapterShardIoMethods = {
                 );
             } catch (error) {
                 lastError = error;
-                const packTimedOut =
-                    error instanceof Error && error.name === 'AbortError';
                 const message =
                     error instanceof Error ? error.message : String(error);
-                const retryable =
-                    !options?.signal?.aborted &&
-                    !packTimedOut &&
-                    this._isTransientPackHydrateError(error) &&
-                    attempt < 3;
+                const retryable = shouldRetryHydrateTransport(
+                    error,
+                    options?.signal?.aborted === true,
+                    attempt
+                );
                 logCloudPackFailure('pack hydrate failed', {
                     phase: 'transport',
                     attempt,
