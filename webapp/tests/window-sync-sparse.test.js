@@ -733,4 +733,31 @@ describe('linked window resident snapshot', () => {
         ]);
         sync.destroy();
     });
+
+    test('a resumed main heartbeat removes the take-over dialog', () => {
+        window.windowRole = {
+            sessionId: 'test',
+            isMainWindow: () => false,
+            isLinkedWindow: () => true
+        };
+        const bridge = {
+            windowId: 'linked',
+            onLocalUpdate: () => {}
+        };
+        const sync = new WindowSync(bridge, 'test-main-heartbeat');
+        sync._latchMainMissing();
+        expect(document.getElementById('linked-make-main-banner')).toBeTruthy();
+        expect(document.documentElement.dataset.linkedReadOnly).toBe('true');
+
+        sync._handleMessage({
+            type: 'main-heartbeat',
+            windowId: 'main',
+            sessionId: 'test',
+            at: Date.now()
+        });
+
+        expect(document.getElementById('linked-make-main-banner')).toBeNull();
+        expect(document.documentElement.dataset.linkedReadOnly).toBe('false');
+        sync.destroy();
+    });
 });

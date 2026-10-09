@@ -1537,7 +1537,12 @@ export class WindowSync {
         document.documentElement.dataset.linkedReadOnly = readOnly
             ? 'true'
             : 'false';
-        void readOnly;
+        if (!readOnly) {
+            // A stall longer than the heartbeat window latches this offer.
+            // The next heartbeat means the main window is back; leaving the
+            // overlay up blocks the linked window for the rest of the session.
+            document.getElementById('linked-make-main-banner')?.remove();
+        }
     }
 
     private _offerMakeMainWindow(): void {
