@@ -436,6 +436,29 @@ export class CloudAdapter implements FileSystemAdapter {
         };
     }
 
+    /**
+     * Playwright probes the room with the live token. Expose it on localhost
+     * and on pages opened with ?test=true (the staging cloud-collab suite).
+     * Ordinary editor sessions keep the token off this snapshot.
+     */
+    private _roomTokenForTestProbe(): string | null {
+        const token = this._directConnection?.token ?? null;
+        if (!token || typeof location === 'undefined') {
+            return null;
+        }
+        const host = location.hostname;
+        if (host === 'localhost' || host === '127.0.0.1') {
+            return token;
+        }
+        try {
+            return new URLSearchParams(location.search).get('test') === 'true'
+                ? token
+                : null;
+        } catch {
+            return null;
+        }
+    }
+
     getAccessSnapshot(): CloudAdapterAccessSnapshot {
         return {
             documentId: this._documentId,
@@ -446,12 +469,7 @@ export class CloudAdapter implements FileSystemAdapter {
             lastServerError: this._lastServerError,
             accessRevoked: this._accessRevoked,
             reconnectForbidden: this._reconnectForbidden,
-            roomToken:
-                typeof location !== 'undefined' &&
-                (location.hostname === 'localhost' ||
-                    location.hostname === '127.0.0.1')
-                    ? (this._directConnection?.token ?? null)
-                    : null,
+            roomToken: this._roomTokenForTestProbe(),
             roomUrl: this._directConnection?.roomUrl ?? null,
             role: this.getCachedAssetRole(this._assetId)
         };

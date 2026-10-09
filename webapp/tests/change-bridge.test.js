@@ -12456,9 +12456,14 @@ describe('ChangeBridge _syncJsonFromYDoc scope-aware undo regression', () => {
         receiverBridge.applyDocumentSetState(senderBridge.encodeDocumentSet());
 
         const emittedUpdates = [];
-        senderBridge.onLocalUpdate((update, _message, entries) => {
-            emittedUpdates.push({ update, entries });
-            receiverBridge.applyRemoteUpdate(update, entries);
+        senderBridge.onLocalUpdate((update, _message, entries, documentId) => {
+            emittedUpdates.push({ update, entries, documentId });
+            receiverBridge.applyRemoteUpdate(
+                update,
+                entries,
+                undefined,
+                documentId
+            );
         });
         senderBridge.onGlyphRevisionSignal((update, entries) => {
             emittedUpdates.push({ update, entries });

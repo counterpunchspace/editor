@@ -984,7 +984,10 @@ export class PatchSyncEngine {
     documentIdForPath(path: Array<string | number>): string {
         if (path[0] === 'glyphs' && path.length >= 2) {
             const key = String(path[1]);
-            const glyphId = this._glyphIdByName.get(key) || key;
+            const glyphId =
+                this._glyphIdByName.get(key) ||
+                this._retiredGlyphIdByName.get(key) ||
+                key;
             return glyphDocumentId(glyphId);
         }
         if (path[0] === 'fontDeps' || path[0] === 'deps') {
@@ -1071,7 +1074,46 @@ export class PatchSyncEngine {
                 return glyphMap;
             }
         }
-        // Sharded fonts only hydrate glyphs from glyph documents.
+        // A remote delete drops the name from glyphOrder before the undo or
+        // redo packet restores the body. The document is still here; bind it
+        // again when its map carries this name.
+        const retiredId = this._retiredGlyphIdByName.get(glyphName);
+        const retiredMap = retiredId
+            ? this._glyphDocs.get(retiredId)?.getMap('glyph')
+            : null;
+        if (
+            retiredId &&
+            retiredMap instanceof Y.Map &&
+            retiredMap.size > 0 &&
+            retiredMap.get('name') === glyphName
+        ) {
+            this._glyphIdByName.set(glyphName, retiredId);
+            this._glyphNameById.set(retiredId, glyphName);
+            this._retiredGlyphIdByName.delete(glyphName);
+            return retiredMap;
+        }
+        for (const [candidateId, doc] of this._glyphDocs) {
+            const glyphMap = doc.getMap('glyph');
+            if (
+                !(glyphMap instanceof Y.Map) ||
+                glyphMap.size === 0 ||
+                glyphMap.get('name') !== glyphName
+            ) {
+                continue;
+            }
+            const owner = this._glyphNameById.get(candidateId);
+            if (
+                owner &&
+                owner !== glyphName &&
+                this._glyphIdByName.get(owner) === candidateId
+            ) {
+                continue;
+            }
+            this._glyphIdByName.set(glyphName, candidateId);
+            this._glyphNameById.set(candidateId, glyphName);
+            this._retiredGlyphIdByName.delete(glyphName);
+            return glyphMap;
+        }
         return null;
     }
 
@@ -1088,6 +1130,7 @@ export class PatchSyncEngine {
         }
         this._glyphIdByName.set(glyphName, glyphId);
         this._glyphNameById.set(glyphId, glyphName);
+        this._retiredGlyphIdByName.delete(glyphName);
         if (glyphJson) {
             doc.transact(() => {
                 const glyphMap = doc.getMap('glyph');
@@ -2107,16 +2150,24 @@ export class PatchSyncEngine {
     }
 
     private _pendingDestroyedGlyphIds = new Set<string>();
+    private _retiredGlyphIdByName = new Map<string, string>();
 
     private _removeGlyphDoc(glyphName: string): void {
         const glyphId = this._glyphIdByName.get(glyphName);
-        if (!glyphId) {
-            const glyphsMap = this.fontMap.get('glyphs');
-            if (glyphsMap instanceof Y.Map) {
-                glyphsMap.delete(glyphName);
+        const glyphMap = this._glyphMapForName(glyphName);
+        if (glyphMap instanceof Y.Map) {
+            for (const key of [...glyphMap.keys()]) {
+                glyphMap.delete(key);
             }
+        }
+        const glyphsMap = this.fontMap.get('glyphs');
+        if (glyphsMap instanceof Y.Map && glyphsMap.has(glyphName)) {
+            glyphsMap.delete(glyphName);
+        }
+        if (!glyphId) {
             return;
         }
+        this._retiredGlyphIdByName.set(glyphName, glyphId);
         this._pendingDestroyedGlyphIds.add(glyphId);
     }
 
@@ -6197,7 +6248,7 @@ export class PatchSyncEngine {
         readOptions?: { ignoreExisting?: boolean; existingGlyph?: unknown }
     ): Unsafe | null {
         const glyphMap = this._glyphMapForName(glyphName);
-        if (!(glyphMap instanceof Y.Map)) {
+        if (!(glyphMap instanceof Y.Map) || glyphMap.size === 0) {
             return null;
         }
 
