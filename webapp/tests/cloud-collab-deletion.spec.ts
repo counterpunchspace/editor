@@ -134,6 +134,19 @@ function roomHasData(room: RoomCensus): boolean {
     );
 }
 
+/**
+ * The undo window must keep every object that existed at the baseline.
+ * The delete's own checkpoint can land after that census, so the count
+ * may rise. A purge would drop a key or shrink the count.
+ */
+function expectR2ObjectsKept(before: Census, after: Census): void {
+    expect(after.r2.count).toBeGreaterThanOrEqual(before.r2.count);
+    const kept = new Set(after.r2.keys);
+    for (const key of before.r2.keys) {
+        expect(kept.has(key), key).toBe(true);
+    }
+}
+
 async function openAndSaveFustat(page: Page, name: string): Promise<string> {
     await page.goto('/?test=true&examples=core');
     await waitForCanvasReady(page);
@@ -277,6 +290,11 @@ test.describe('Cloud collab deletion leaves nothing behind', () => {
             );
             expect(first.status).toBeLessThan(300);
             expect(first.json.complete).toBe(false);
+            // The tab is gone. A live socket reconnects into rooms the cron
+            // just wiped and leaves font-core occupied again.
+            await page.evaluate(() => {
+                (window as any).cloudPlugin.disconnectFromRoom();
+            });
 
             const partial = await census(page, assetId, rooms);
             // Positive control: the interrupted delete really left things behind.
@@ -374,7 +392,7 @@ test.describe('Cloud collab deletion leaves nothing behind', () => {
             });
             const inWindow = await census(page, assetId, [roomId], glyphPrefix);
             expect(roomHasData(inWindow.rooms[roomId])).toBe(true);
-            expect(inWindow.r2.count).toBe(before.r2.count);
+            expectR2ObjectsKept(before, inWindow);
 
             // Undo cancels the cleanup, and cron past 24h then changes nothing.
             const undone = await api<{ cleared: number }>(
@@ -398,7 +416,7 @@ test.describe('Cloud collab deletion leaves nothing behind', () => {
                 glyphPrefix
             );
             expect(roomHasData(afterUndo.rooms[roomId])).toBe(true);
-            expect(afterUndo.r2.count).toBe(before.r2.count);
+            expectR2ObjectsKept(before, afterUndo);
 
             // Delete again, wait out the window: everything for the glyph goes.
             const marked = await api<{ marked: number }>(
