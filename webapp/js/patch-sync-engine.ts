@@ -2110,19 +2110,14 @@ export class PatchSyncEngine {
 
     private _removeGlyphDoc(glyphName: string): void {
         const glyphId = this._glyphIdByName.get(glyphName);
-        const glyphMap = this._glyphMapForName(glyphName);
-        if (glyphMap instanceof Y.Map) {
-            for (const key of [...glyphMap.keys()]) {
-                glyphMap.delete(key);
+        if (!glyphId) {
+            const glyphsMap = this.fontMap.get('glyphs');
+            if (glyphsMap instanceof Y.Map) {
+                glyphsMap.delete(glyphName);
             }
+            return;
         }
-        const glyphsMap = this.fontMap.get('glyphs');
-        if (glyphsMap instanceof Y.Map && glyphsMap.has(glyphName)) {
-            glyphsMap.delete(glyphName);
-        }
-        if (glyphId) {
-            this._pendingDestroyedGlyphIds.add(glyphId);
-        }
+        this._pendingDestroyedGlyphIds.add(glyphId);
     }
 
     private _flushDestroyedGlyphDocs(): void {
@@ -6202,7 +6197,7 @@ export class PatchSyncEngine {
         readOptions?: { ignoreExisting?: boolean; existingGlyph?: unknown }
     ): Unsafe | null {
         const glyphMap = this._glyphMapForName(glyphName);
-        if (!(glyphMap instanceof Y.Map) || glyphMap.size === 0) {
+        if (!(glyphMap instanceof Y.Map)) {
             return null;
         }
 
