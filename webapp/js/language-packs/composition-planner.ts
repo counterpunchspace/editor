@@ -1,4 +1,9 @@
-/** Plan glyph creation and ccmp membership from composition recipes. */
+/**
+ * Plan glyph creation and ccmp membership from composition recipes.
+ * Recipes run only while adding glyphs. Converting glyphs that already
+ * exist reads their components and feature rules, even when those differ
+ * from the recipe.
+ */
 
 export type CompositionOutput = 'materialized' | 'ccmp' | 'none';
 

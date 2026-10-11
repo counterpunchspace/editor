@@ -860,6 +860,44 @@ describe('language packs', () => {
         ]);
     });
 
+    test('conversion keeps a sequence that differs from the sample recipe', () => {
+        const deviated = {
+            name: 'qaf-ar',
+            sequences: {
+                isol: ['qafDotless-ar', 'dotAbove-ar'],
+                init: ['fehDotless-ar.init', 'dotAbove-ar'],
+                medi: ['fehDotless-ar.medi', 'dotAbove-ar'],
+                fina: ['qafDotless-ar.fina', 'dotAbove-ar']
+            },
+            chain: true,
+            pinned: [],
+            missing: null,
+            members: ['qaf-ar.init', 'qaf-ar.medi', 'qaf-ar.fina']
+        };
+        const toComponents = planArabicConversion([deviated], 'materialized');
+        expect(toComponents.composites).toEqual([
+            {
+                name: 'qaf-ar',
+                components: ['qafDotless-ar', 'dotAbove-ar']
+            },
+            {
+                name: 'qaf-ar.init',
+                components: ['fehDotless-ar.init', 'dotAbove-ar']
+            },
+            {
+                name: 'qaf-ar.medi',
+                components: ['fehDotless-ar.medi', 'dotAbove-ar']
+            },
+            {
+                name: 'qaf-ar.fina',
+                components: ['qafDotless-ar.fina', 'dotAbove-ar']
+            }
+        ]);
+        const back = planArabicConversion([deviated], 'ccmp');
+        expect(back.ccmpComponents['qaf-ar']).toEqual(deviated.sequences.isol);
+        expect(back.deletes).toEqual(deviated.members);
+    });
+
     test('form expansion substitutes a component only when its positional glyph exists', () => {
         const components = ['behDotless-ar', 'twoDotsHorizontalAbove-ar'];
         const has = (name) => name === 'behDotless-ar.init';

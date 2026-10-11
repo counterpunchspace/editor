@@ -55,6 +55,7 @@ class ArabicFontSource:
             if len(codepoints) == 1:
                 self.by_codepoint[int(codepoints[0])] = name
         self.ccmp = _ccmp_rules(font)
+        self.forms = _form_rules(font)
         self.characters = self._characters()
         self.unencoded = self._unencoded()
         self.rlig = _RLIG
@@ -202,11 +203,42 @@ class ArabicFontSource:
             )
         return rows
 
+    def _has_paths(self, name: str) -> bool:
+        glyph = self.glyphs.get(name)
+        if glyph is None:
+            return False
+        for layer in glyph.get("layers") or []:
+            for shape in layer.get("shapes") or []:
+                nodes = shape.get("nodes")
+                if isinstance(nodes, list) and nodes:
+                    return True
+                if isinstance(nodes, str) and nodes.strip():
+                    return True
+        return False
+
+    def _positional(self, name: str, position: str) -> list[str] | None:
+        """The glyphs that draw ``name`` in ``position``.
+
+        A one-glyph substitution is Fustat's shape reuse and wins over an
+        alias form glyph. A drawn form, or a form with several components,
+        is that glyph.
+        """
+        rule = self.forms.get(position, {}).get(name)
+        form = f"{name}.{position}"
+        refs = self.components(form) if form in self.glyphs else []
+        if rule and (form not in self.glyphs or (len(refs) == 1 and not self._has_paths(form))):
+            return list(rule)
+        if form not in self.glyphs:
+            return None
+        if refs and not self._has_paths(form):
+            return refs
+        return [form]
+
     def _expand(self, components: list[str], position: str) -> list[str]:
         expanded = []
         for name in components:
-            form = f"{name}.{position}"
-            expanded.append(form if form in self.glyphs else name)
+            resolved = self._positional(name, position)
+            expanded.extend(resolved if resolved else [name])
         return expanded
 
     def _characters(self) -> dict[str, dict[str, Any]]:
@@ -220,12 +252,9 @@ class ArabicFontSource:
             positions: dict[str, list[str]] = {}
             if rule:
                 positions["isol"] = [self.token_for(part) for part in rule]
+                wanted = self._wanted_positions(name)
                 for position in _FORM_SUFFIXES:
-                    form_components = self.components(f"{name}.{position}")
-                    if form_components:
-                        positions[position] = [
-                            self.token_for(part) for part in form_components
-                        ]
+                    if wanted is not None and position not in wanted:
                         continue
                     expanded = self._expand(rule, position)
                     if expanded != rule:
@@ -239,28 +268,41 @@ class ArabicFontSource:
                     if components
                     else [identity]
                 )
+                wanted = self._wanted_positions(name)
                 for position in _FORM_SUFFIXES:
-                    form_name = f"{name}.{position}"
-                    if form_name not in self.glyphs:
+                    if wanted is not None and position not in wanted:
                         continue
-                    form_components = self.components(form_name)
-                    if form_components:
-                        positions[position] = [
-                            self.token_for(part) for part in form_components
-                        ]
-                    else:
-                        positions[position] = [self.token_for(form_name)]
+                    resolved = self._positional(name, position)
+                    if not resolved:
+                        continue
+                    positions[position] = [
+                        self.token_for(part) for part in resolved
+                    ]
             record: dict[str, Any] = {"positions": positions}
-            if rule and self._chain(rule, positions):
+            if rule and self._chain(name, rule, positions):
                 record["decompose"] = positions["isol"]
             characters[identity] = record
         return characters
 
-    def _chain(self, rule: list[str], positions: dict[str, list[str]]) -> bool:
+    def _wanted_positions(self, name: str) -> list[str] | None:
+        glyph = self.glyphs.get(name) or {}
+        specific = glyph.get("format_specific") or {}
+        positions = specific.get("positions")
+        if not isinstance(positions, list):
+            return None
+        kept = [str(position) for position in positions if position in ("isol", *_FORM_SUFFIXES)]
+        return kept or None
+
+    def _chain(self, name: str, rule: list[str], positions: dict[str, list[str]]) -> bool:
         isol = positions.get("isol") or []
         if len(isol) < 2:
             return False
+        wanted = self._wanted_positions(name)
         for position in _FORM_SUFFIXES:
+            if wanted is not None and position not in wanted:
+                continue
+            if position not in positions and wanted is None:
+                continue
             expanded = [self.token_for(part) for part in self._expand(rule, position)]
             actual = positions.get(position, isol)
             if actual != expanded:
@@ -303,10 +345,10 @@ class ArabicFontSource:
         return unencoded
 
 
-def _ccmp_rules(font: dict[str, Any]) -> dict[str, list[str]]:
+def _substitution_rules(font: dict[str, Any], tag: str) -> dict[str, list[str]]:
     rules: dict[str, list[str]] = {}
-    for tag, body in (font.get("features") or {}).get("features") or []:
-        if tag != "ccmp":
+    for feature, body in (font.get("features") or {}).get("features") or []:
+        if feature != tag:
             continue
         code = body.get("code") if isinstance(body, dict) else ""
         for line in str(code).splitlines():
@@ -314,5 +356,16 @@ def _ccmp_rules(font: dict[str, Any]) -> dict[str, list[str]]:
             if not text.startswith("sub ") or " by " not in text:
                 continue
             lhs, rhs = text[4:].split(" by ", 1)
-            rules[lhs.strip()] = rhs.replace(";", "").split()
+            target = lhs.strip()
+            if " " in target:
+                continue
+            rules[target] = rhs.replace(";", "").split()
     return rules
+
+
+def _ccmp_rules(font: dict[str, Any]) -> dict[str, list[str]]:
+    return _substitution_rules(font, "ccmp")
+
+
+def _form_rules(font: dict[str, Any]) -> dict[str, dict[str, list[str]]]:
+    return {tag: _substitution_rules(font, tag) for tag in _FORM_SUFFIXES}

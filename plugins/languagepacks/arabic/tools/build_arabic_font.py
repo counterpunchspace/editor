@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
-"""Build a ccmp-only Arabic Babelfont from Fustat Regular.
+"""Build an Arabic composition Babelfont from Fustat Regular.
 
 Chain letters are empty encoded shells. Their decompositions live in ``ccmp``.
-Drawn skeletons, dots, and lam-alef keep Regular outlines and anchors. Letters
-whose presentation forms are not that decomposition keep component-only form
-glyphs. No axis, GPOS, or features other than ``ccmp``.
+Drawn skeletons, dots, and lam-alef keep Regular outlines and anchors. A
+positional sequence that is only another glyph (Fustat's shape reuse, such as
+``qafDotless-ar`` initial using ``fehDotless-ar.init``) is an ``init``,
+``medi``, or ``fina`` substitution and is not its own glyph. A form Fustat
+draws, including ``noonGhunna-ar.fina``, keeps that outline. Encoded glyphs
+use glyph-data names so a new font can find those outlines. No axis or GPOS.
 
 Run from the editor repo:
 ``python3 plugins/languagepacks/arabic/tools/build_arabic_font.py``.
@@ -12,6 +15,7 @@ Run from the editor repo:
 
 from __future__ import annotations
 
+import gzip
 import json
 import math
 import sys
@@ -23,6 +27,7 @@ sys.path.insert(0, str(TOOLS))
 from build_arabic_data import (  # noqa: E402
     FORM_OWNER,
     FUSTAT,
+    GLYPH_DATA,
     OUTPUT,
     PACK_NAMES,
     build,
@@ -159,6 +164,16 @@ class FontBuilder:
         self.data = data
         self.glyphs: dict[str, dict] = {}
         self.ccmp: list[tuple[str, list[str]]] = []
+        self.reuse: dict[str, list[tuple[str, str]]] = {
+            "init": [],
+            "medi": [],
+            "fina": [],
+        }
+        self.glyph_names, self.cp_by_name = load_glyph_names()
+        for fustat_name, glyph in self.fustat.items():
+            codepoints = glyph.get("codepoints") or []
+            if len(codepoints) == 1 and fustat_name not in self.cp_by_name:
+                self.cp_by_name[fustat_name] = int(codepoints[0])
         self.regular_metrics = {}
         for master in fustat.get("masters") or []:
             if master.get("id") == REGULAR:
@@ -173,9 +188,9 @@ class FontBuilder:
         root, suffix = split_token(token)
         if root.startswith("uni"):
             codepoint = int(root[3:], 16)
-            base = self.by_codepoint.get(codepoint)
+            base = self.glyph_names.get(codepoint) or self.by_codepoint.get(codepoint)
             if base is None:
-                raise KeyError(f"no Fustat glyph for {token}")
+                raise KeyError(f"no glyph name for {token}")
             return base + (f".{suffix}" if suffix else "")
         return token
 
@@ -183,8 +198,16 @@ class FontBuilder:
         if token in INVERSE_FORM:
             return INVERSE_FORM[token]
         root, suffix = split_token(token)
+        codepoint = None
         if root.startswith("uni"):
-            base = self.by_codepoint.get(int(root[3:], 16))
+            codepoint = int(root[3:], 16)
+        else:
+            codepoint = self.cp_by_name.get(root)
+        if codepoint is not None:
+            identity = f"uni{codepoint:04X}" + (f".{suffix}" if suffix else "")
+            if identity in INVERSE_FORM:
+                return INVERSE_FORM[identity]
+            base = self.by_codepoint.get(codepoint)
             if base is None:
                 return None
             candidate = base + (f".{suffix}" if suffix else "")
@@ -231,6 +254,13 @@ class FontBuilder:
             ],
             "format_specific": {},
         }
+
+    def stamp_positions(self, name: str, record: dict) -> None:
+        glyph = self.glyphs.get(name)
+        if glyph is None:
+            return
+        specific = glyph.setdefault("format_specific", {})
+        specific["positions"] = list(record["positions"])
 
     def flatten(self, fustat_name: str, stack: frozenset[str] = frozenset()) -> list[dict]:
         if fustat_name in stack:
@@ -299,6 +329,7 @@ class FontBuilder:
                 self.ccmp.append(
                     (name, [self.pack_name(token) for token in record["decompose"]])
                 )
+                self.stamp_positions(name, record)
                 continue
             isol = record["positions"].get("isol") or [identity]
             if isol != [identity]:
@@ -309,6 +340,16 @@ class FontBuilder:
                     width=width or 600,
                     components=[self.pack_name(token) for token in isol],
                 )
+            elif name not in self.glyphs:
+                width, paths, anchors = self.drawing(identity)
+                self.add(
+                    name,
+                    codepoints=codepoints,
+                    width=width or 600,
+                    paths=paths,
+                    anchors=anchors,
+                )
+            self.stamp_positions(name, record)
             for position, sequence in record["positions"].items():
                 if position == "isol" or not sequence:
                     continue
@@ -319,6 +360,12 @@ class FontBuilder:
                 if component_names == [form]:
                     width, paths, anchors = self.drawing(sequence[0])
                     self.add(form, width=width, paths=paths, anchors=anchors)
+                    continue
+                # One other glyph is Fustat's reuse (qafDotless init is
+                # fehDotless init). The substitution is the recipe; an alias
+                # glyph would be created empty in the user's font.
+                if len(component_names) == 1:
+                    self.reuse[position].append((name, component_names[0]))
                     continue
                 self.add(
                     form,
@@ -363,10 +410,13 @@ class FontBuilder:
                     reference = shape.get("reference")
                     if not reference or reference in self.glyphs or reference == glyph["name"]:
                         continue
-                    source = self.fustat.get(reference)
+                    source_name = self.fustat_name(reference) or reference
+                    source = self.fustat.get(source_name)
                     codepoints = []
                     if source and len(source.get("codepoints") or []) == 1:
                         codepoints = [int(source["codepoints"][0])]
+                    elif reference in self.cp_by_name:
+                        codepoints = [self.cp_by_name[reference]]
                     width, paths, anchors = self.drawing_named(reference)
                     category = (
                         "Mark"
@@ -384,11 +434,12 @@ class FontBuilder:
                     pending = True
 
     def drawing_named(self, fustat_or_pack: str) -> tuple[float, list[dict], list[dict]]:
-        glyph = self.fustat.get(fustat_or_pack)
+        source_name = self.fustat_name(fustat_or_pack) or fustat_or_pack
+        glyph = self.fustat.get(source_name)
         layer = regular_layer(glyph) if glyph else None
         if layer is None:
             return 600, [], []
-        paths = layer_paths(layer) or self.flatten(fustat_or_pack)
+        paths = layer_paths(layer) or self.flatten(source_name)
         return float(layer.get("width") or 0), paths, layer_anchors(layer)
 
     def document(self) -> dict:
@@ -396,6 +447,14 @@ class FontBuilder:
             f"sub {glyph} by {' '.join(components)};"
             for glyph, components in sorted(self.ccmp)
         ]
+        features = [["ccmp", {"code": "\n".join(lines), "automatic": False}]]
+        for tag in ("init", "medi", "fina"):
+            rules = [
+                f"sub {glyph} by {target};"
+                for glyph, target in sorted(set(self.reuse[tag]))
+            ]
+            if rules:
+                features.append([tag, {"code": "\n".join(rules), "automatic": False}])
         return {
             "upm": 1000,
             "version": [1, 0],
@@ -420,12 +479,24 @@ class FontBuilder:
             "features": {
                 "classes": {},
                 "prefixes": {},
-                "features": [["ccmp", {"code": "\n".join(lines), "automatic": False}]],
+                "features": features,
             },
             "first_kern_groups": {},
             "second_kern_groups": {},
             "format_specific": {},
         }
+
+
+def load_glyph_names() -> tuple[dict[int, str], dict[str, int]]:
+    records = json.loads(gzip.open(GLYPH_DATA, "rt", encoding="utf-8").read())
+    by_codepoint: dict[int, str] = {}
+    by_name: dict[str, int] = {}
+    for record in records:
+        codepoint = int(record["codepoint"])
+        name = str(record["glyph_name"])
+        by_codepoint[codepoint] = name
+        by_name[name] = codepoint
+    return by_codepoint, by_name
 
 
 def codepoints_of(token: str) -> list[int]:

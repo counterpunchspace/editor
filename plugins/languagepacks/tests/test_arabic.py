@@ -9,7 +9,7 @@ ARABIC = Path(__file__).resolve().parents[1] / "arabic"
 sys.path.insert(0, str(ARABIC))
 sys.path.insert(0, str(ARABIC / "tools"))
 
-from build_arabic_data import UnmappedMark, parse_substitutions
+from build_arabic_data import UnmappedMark, build, parse_substitutions
 from counterpunch_arabic.charset import ArabicCharacterSetProvider
 from counterpunch_arabic.composition import ArabicCompositionProvider
 from counterpunch_arabic.font_source import ArabicFontSource
@@ -112,6 +112,38 @@ def test_data_identities_and_pack_names():
     ]
     assert "decompose" not in SOURCE.characters["uni06CC"]
     assert SOURCE.characters["uni0643"]["positions"]["init"] == ["uni06A9.init"]
+    assert "qafDotless-ar.init" not in SOURCE.glyphs
+    assert "qafDotless-ar.medi" not in SOURCE.glyphs
+    assert "noonGhunna-ar.init" not in SOURCE.glyphs
+    assert "noonGhunna-ar.medi" not in SOURCE.glyphs
+    assert "alefMaksura-ar.init" not in SOURCE.glyphs
+    assert "alefMaksura-ar.medi" not in SOURCE.glyphs
+    assert SOURCE.characters["uni0642"]["positions"]["init"] == [
+        "uni06A1.init",
+        "twoDotsHorizontalAbove-ar",
+    ]
+    assert SOURCE.characters["uni066F"]["positions"]["init"] == ["uni06A1.init"]
+    assert SOURCE.characters["uni06BA"]["positions"]["init"] == ["uni066E.init"]
+    assert SOURCE.characters["uni06BA"]["positions"]["fina"] == ["uni06BA.fina"]
+    assert SOURCE.characters["uni0649"]["positions"]["init"] == ["uni066E.init"]
+    assert SOURCE.characters["uni0649"]["positions"]["medi"] == ["uni066E.medi"]
+    assert "init" in SOURCE.characters["uni0649"]["positions"]
+    ghunna_fina = SOURCE.drawing("noonGhunna-ar.fina")
+    assert ghunna_fina and ghunna_fina["paths"]
+
+
+def test_sample_font_recipes_match_fustat_positions():
+    """Every Arabic letter's recipe is the Fustat shaping of that letter.
+
+    Positional mark differences (a dot in init/medi that isol/fina omit) and
+    shape reuse live in that data. The sample font is only a carrier.
+    """
+    data = build(center_marks=False)
+    for identity, record in data["characters"].items():
+        actual = SOURCE.characters.get(identity)
+        assert actual is not None, identity
+        assert actual["positions"] == record["positions"], identity
+        assert actual.get("decompose") == record.get("decompose"), identity
 
 
 def test_pack_font_draws_bases_and_leaves_chain_letters_empty():
