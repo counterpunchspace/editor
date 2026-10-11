@@ -297,10 +297,9 @@ test('arabic add glyphs can stay empty or copy composition outlines', async ({
                     const dotDrawn = dotLayers.every(
                         (layer) =>
                             Math.abs(layer.width - 206 * scale) < 0.5 &&
-                            (layer.shapes || []).some(
-                                (shape) =>
-                                    shape.isPath() &&
-                                    shape.asPath().nodes.length > 0
+                            (layer.anchors || []).length > 0 &&
+                            (layer.shapes || []).every(
+                                (shape) => !shape.isPath()
                             )
                     );
                     const init = (font?.features?.features || []).find(
@@ -345,6 +344,89 @@ test('arabic add glyphs can stay empty or copy composition outlines', async ({
             init: true,
             rlig: true
         });
+
+    await page.evaluate(() => {
+        window.glyphCanvas?.textRunEditor?.setTextBuffer(
+            String.fromCodePoint(0x08a8)
+        );
+    });
+    await expect
+        .poll(
+            () =>
+                page.evaluate(() => {
+                    const canvas = window.glyphCanvas?.canvas;
+                    const context = canvas?.getContext('2d');
+                    if (!canvas || !context) {
+                        return 0;
+                    }
+                    const pixels = context.getImageData(
+                        0,
+                        0,
+                        canvas.width,
+                        canvas.height
+                    ).data;
+                    let red = 0;
+                    for (let index = 0; index < pixels.length; index += 4) {
+                        const r = pixels[index];
+                        const g = pixels[index + 1];
+                        const b = pixels[index + 2];
+                        const a = pixels[index + 3];
+                        if (
+                            a > 200 &&
+                            r > 170 &&
+                            r < 250 &&
+                            g < 200 &&
+                            b < 200 &&
+                            r > g + 35 &&
+                            r > b + 35 &&
+                            Math.abs(g - b) < 40
+                        ) {
+                            red += 1;
+                        }
+                    }
+                    return red;
+                }),
+            { timeout: 45000 }
+        )
+        .toBeGreaterThan(40);
+
+    await page.evaluate(() => {
+        window.glyphOverviewInstance.selectAndRevealGlyphNames([
+            'twoDotsHorizontalBelow-ar'
+        ]);
+    });
+    await expect
+        .poll(
+            () =>
+                page.evaluate(() => {
+                    const canvas = document.querySelector(
+                        '#glyph-overview-container [data-glyph-name="twoDotsHorizontalBelow-ar"] canvas'
+                    ) as HTMLCanvasElement | null;
+                    const context = canvas?.getContext('2d');
+                    if (!canvas || !context || canvas.width === 0) {
+                        return 0;
+                    }
+                    const pixels = context.getImageData(
+                        0,
+                        0,
+                        canvas.width,
+                        canvas.height
+                    ).data;
+                    let count = 0;
+                    for (let index = 0; index < pixels.length; index += 4) {
+                        const r = pixels[index];
+                        const g = pixels[index + 1];
+                        const b = pixels[index + 2];
+                        const a = pixels[index + 3];
+                        if (a > 30 && a < 200 && r > 140 && g < 90 && b < 90) {
+                            count += 1;
+                        }
+                    }
+                    return count;
+                }),
+            { timeout: 20000 }
+        )
+        .toBeGreaterThan(8);
 
     const letter = await page.evaluate(() => {
         const font = window.currentFontModel;
@@ -479,4 +561,439 @@ test('arabic add glyphs can stay empty or copy composition outlines', async ({
                 !message.includes('Failed to fetch')
         )
     ).toEqual([]);
+});
+
+test('placeholder outlines follow harfbuzz pieces and stay out of the font', async ({
+    page
+}) => {
+    test.setTimeout(180000);
+    const errors: string[] = [];
+    page.on('pageerror', (error) => errors.push(error.message));
+    page.on('console', (message) => {
+        if (message.type() === 'error') {
+            errors.push(message.text());
+        }
+    });
+    await page.goto('/?test=true');
+    await openFileFromFilesView(page, 'YanoneKaffeesatz.designspace');
+    await waitForOpenSessionReady(page, 'YanoneKaffeesatz.designspace');
+    await waitForLivePython(page);
+    await page.evaluate(() => {
+        const font = window.currentFontModel;
+        for (const name of ['a', 'dieresiscomb']) {
+            const glyph = font?.findGlyph(name);
+            if (!glyph) {
+                continue;
+            }
+            for (const layer of glyph.layers || []) {
+                while ((layer.paths || []).length > 0) {
+                    layer.removeShape(layer.paths[0]);
+                }
+            }
+        }
+        const recorded: Array<{ text: string; x: number; y: number }> = [];
+        (
+            window as Window & {
+                __placeholderTexts?: Array<{
+                    text: string;
+                    x: number;
+                    y: number;
+                }>;
+            }
+        ).__placeholderTexts = recorded;
+        const original = CanvasRenderingContext2D.prototype.fillText;
+        CanvasRenderingContext2D.prototype.fillText = function (
+            text: string,
+            x: number,
+            y: number,
+            maxWidth?: number
+        ) {
+            if (String(this.fillStyle).includes('196')) {
+                recorded.push({ text: String(text), x, y });
+            }
+            return original.call(this, text, x, y, maxWidth);
+        };
+        window.glyphCanvas?.textRunEditor?.setTextBuffer('ä');
+    });
+
+    await expect
+        .poll(
+            () =>
+                page.evaluate(() => {
+                    const textRun = window.glyphCanvas?.textRunEditor;
+                    const names = textRun?.glyphNameBuffer || [];
+                    const positions = names.map((_, index) =>
+                        textRun?._getGlyphPosition(index)
+                    );
+                    const canvas = window.glyphCanvas?.canvas;
+                    const context = canvas?.getContext('2d');
+                    let red = 0;
+                    if (canvas && context) {
+                        const pixels = context.getImageData(
+                            0,
+                            0,
+                            canvas.width,
+                            canvas.height
+                        ).data;
+                        for (let index = 0; index < pixels.length; index += 4) {
+                            const r = pixels[index];
+                            const g = pixels[index + 1];
+                            const b = pixels[index + 2];
+                            const a = pixels[index + 3];
+                            if (
+                                a > 200 &&
+                                r > 170 &&
+                                r < 250 &&
+                                g < 200 &&
+                                b < 200 &&
+                                r > g + 35 &&
+                                r > b + 35 &&
+                                Math.abs(g - b) < 40
+                            ) {
+                                red += 1;
+                            }
+                        }
+                    }
+                    const font = window.currentFontModel;
+                    const base = font?.findGlyph('a');
+                    const mark = font?.findGlyph('dieresiscomb');
+                    const hints =
+                        (
+                            window as Window & {
+                                __placeholderTexts?: Array<{
+                                    text: string;
+                                    x: number;
+                                    y: number;
+                                }>;
+                            }
+                        ).__placeholderTexts || [];
+                    const baseHint = hints.find((hint) => hint.text === 'a');
+                    const markHint = hints.find(
+                        (hint) =>
+                            hint.text === '\u0308' || hint.text === '\u00a8'
+                    );
+                    const basePaths = (base?.layers || []).some(
+                        (layer) => (layer.paths || []).length > 0
+                    );
+                    const markPaths = (mark?.layers || []).some(
+                        (layer) => (layer.paths || []).length > 0
+                    );
+                    const baseAnchors = (base?.layers || []).some(
+                        (layer) => (layer.anchors || []).length > 0
+                    );
+                    const markAnchors = (mark?.layers || []).some(
+                        (layer) => (layer.anchors || []).length > 0
+                    );
+                    const separated = Boolean(
+                        baseHint &&
+                        markHint &&
+                        (Math.abs(baseHint.x - markHint.x) > 10 ||
+                            Math.abs(baseHint.y - markHint.y) > 10)
+                    );
+                    return {
+                        ready:
+                            red > 200 &&
+                            separated &&
+                            !basePaths &&
+                            !markPaths &&
+                            baseAnchors &&
+                            markAnchors,
+                        names,
+                        red,
+                        painted: red > 200,
+                        hints: hints.map((hint) => hint.text),
+                        y0: positions[0]?.yOffset ?? 0,
+                        y1: positions[1]?.yOffset ?? 0,
+                        separated,
+                        basePaths,
+                        markPaths,
+                        baseAnchors,
+                        markAnchors
+                    };
+                }),
+            { timeout: 45000 }
+        )
+        .toMatchObject({
+            painted: true,
+            basePaths: false,
+            markPaths: false,
+            baseAnchors: true,
+            markAnchors: true,
+            separated: true,
+            hints: expect.arrayContaining(['a', '\u0308'])
+        });
+
+    await page.evaluate(() => {
+        window.glyphOverviewInstance.selectAndRevealGlyphNames([
+            'a',
+            'adieresis'
+        ]);
+    });
+    await expect
+        .poll(
+            () =>
+                page.evaluate(() => {
+                    const pink = (name: string): number => {
+                        const canvases = document.querySelectorAll(
+                            `#glyph-overview-container [data-glyph-name="${name}"] canvas`
+                        );
+                        let best = 0;
+                        canvases.forEach((node) => {
+                            const canvas = node as HTMLCanvasElement;
+                            const context = canvas.getContext('2d');
+                            if (!context || canvas.width === 0) {
+                                return;
+                            }
+                            const pixels = context.getImageData(
+                                0,
+                                0,
+                                canvas.width,
+                                canvas.height
+                            ).data;
+                            let count = 0;
+                            for (
+                                let index = 0;
+                                index < pixels.length;
+                                index += 4
+                            ) {
+                                const r = pixels[index];
+                                const g = pixels[index + 1];
+                                const b = pixels[index + 2];
+                                const a = pixels[index + 3];
+                                const plain =
+                                    a > 30 &&
+                                    a < 200 &&
+                                    r > 140 &&
+                                    g < 90 &&
+                                    b < 90;
+                                const onWhite =
+                                    a > 200 &&
+                                    r > 170 &&
+                                    r < 250 &&
+                                    g < 200 &&
+                                    b < 200 &&
+                                    r > g + 35 &&
+                                    r > b + 35 &&
+                                    Math.abs(g - b) < 40;
+                                if (plain || onWhite) {
+                                    count += 1;
+                                }
+                            }
+                            best = Math.max(best, count);
+                        });
+                        return best;
+                    };
+                    return `${pink('a')},${pink('adieresis')}`;
+                }),
+            { timeout: 20000 }
+        )
+        .toMatch(/^[1-9]\d*,[1-9]\d*$/);
+
+    await page.evaluate(async () => {
+        await window.glyphCanvas.textRunEditor.selectGlyphByIndex(0, true);
+    });
+    await expect
+        .poll(
+            () =>
+                page.evaluate(() => {
+                    const active = Boolean(
+                        window.glyphCanvas?.outlineEditor?.active
+                    );
+                    const canvas = window.glyphCanvas?.canvas;
+                    const context = canvas?.getContext('2d');
+                    let red = 0;
+                    if (canvas && context) {
+                        const pixels = context.getImageData(
+                            0,
+                            0,
+                            canvas.width,
+                            canvas.height
+                        ).data;
+                        for (let index = 0; index < pixels.length; index += 4) {
+                            const r = pixels[index];
+                            const g = pixels[index + 1];
+                            const b = pixels[index + 2];
+                            const a = pixels[index + 3];
+                            if (
+                                a > 200 &&
+                                r > 170 &&
+                                r < 250 &&
+                                g < 200 &&
+                                b < 200 &&
+                                r > g + 35 &&
+                                r > b + 35 &&
+                                Math.abs(g - b) < 40
+                            ) {
+                                red += 1;
+                            }
+                        }
+                    }
+                    return { active, red, ready: active && red > 40 };
+                }),
+            { timeout: 20000 }
+        )
+        .toMatchObject({ ready: true });
+    expect(
+        errors.filter(
+            (message) =>
+                !message.includes('ERR_CONNECTION_REFUSED') &&
+                !message.includes('Failed to check auth status') &&
+                !message.includes('Failed to fetch')
+        )
+    ).toEqual([]);
+});
+
+test('placeholder sample outlines punch counters with the nonzero rule', async ({
+    page
+}) => {
+    test.setTimeout(180000);
+    await page.goto('/?test=true');
+    await openFileFromFilesView(page, 'Fustat.glyphs');
+    await waitForOpenSessionReady(page, 'Fustat.glyphs');
+    await waitForLivePython(page);
+    const prepared = await page.evaluate(() => {
+        const font = window.currentFontModel;
+        const glyph = font?.findGlyph('heh-ar');
+        if (!glyph) {
+            return { ok: false, reason: 'missing heh-ar', shapes: '' };
+        }
+        for (const layer of glyph.layers || []) {
+            let guard = 0;
+            while ((layer.shapes || []).length > 0 && guard < 80) {
+                layer.removeShape(0);
+                guard += 1;
+            }
+        }
+        const shapes = (glyph.layers || [])
+            .map((layer) => (layer.shapes || []).length)
+            .join(',');
+        window.glyphCanvas?.textRunEditor?.setTextBuffer('/heh-ar ');
+        window.glyphOverviewInstance?.selectAndRevealGlyphNames?.(['heh-ar']);
+        return { ok: shapes === '' || /^0(,0)*$/.test(shapes), shapes };
+    });
+    expect(prepared.shapes).toMatch(/^0(,0)*$/);
+    expect(prepared.ok).toBe(true);
+
+    const probe = () =>
+        page.evaluate(async () => {
+            const textRun = window.glyphCanvas?.textRunEditor;
+            if (!textRun?.glyphNameBuffer?.length) {
+                return 'waiting';
+            }
+            if (!window.glyphCanvas?.outlineEditor?.active) {
+                await textRun.selectGlyphByIndex(0, true);
+            }
+            const isBlended = (
+                r: number,
+                g: number,
+                b: number,
+                a: number
+            ): boolean =>
+                a > 200 &&
+                r > 170 &&
+                r < 250 &&
+                g < 200 &&
+                b < 200 &&
+                r > g + 35 &&
+                r > b + 35 &&
+                Math.abs(g - b) < 40;
+            const isPlain = (
+                r: number,
+                g: number,
+                b: number,
+                a: number
+            ): boolean => a > 30 && a < 200 && r > 140 && g < 90 && b < 90;
+            const hole = (
+                canvas: HTMLCanvasElement,
+                painted: (r: number, g: number, b: number, a: number) => boolean
+            ): string => {
+                const context = canvas.getContext('2d');
+                if (!context || canvas.width === 0) {
+                    return '0,0,0';
+                }
+                const pixels = context.getImageData(
+                    0,
+                    0,
+                    canvas.width,
+                    canvas.height
+                ).data;
+                let minX = canvas.width;
+                let minY = canvas.height;
+                let maxX = 0;
+                let maxY = 0;
+                let red = 0;
+                const hit: boolean[] = [];
+                for (let y = 0; y < canvas.height; y += 1) {
+                    for (let x = 0; x < canvas.width; x += 1) {
+                        const index = (y * canvas.width + x) * 4;
+                        const on = painted(
+                            pixels[index],
+                            pixels[index + 1],
+                            pixels[index + 2],
+                            pixels[index + 3]
+                        );
+                        hit.push(on);
+                        if (!on) {
+                            continue;
+                        }
+                        red += 1;
+                        minX = Math.min(minX, x);
+                        minY = Math.min(minY, y);
+                        maxX = Math.max(maxX, x);
+                        maxY = Math.max(maxY, y);
+                    }
+                }
+                if (red < 20) {
+                    return `${red},0,0`;
+                }
+                const cx = Math.round((minX + maxX) / 2);
+                const cy = Math.round((minY + maxY) / 2);
+                const center = hit[cy * canvas.width + cx] ? 1 : 0;
+                let edge = 0;
+                for (let y = minY; y <= maxY; y += 1) {
+                    for (let x = minX; x <= maxX; x += 1) {
+                        const onBorder =
+                            x <= minX + 1 ||
+                            x >= maxX - 1 ||
+                            y <= minY + 1 ||
+                            y >= maxY - 1;
+                        if (onBorder && hit[y * canvas.width + x]) {
+                            edge += 1;
+                        }
+                    }
+                }
+                return `${red},${center},${edge}`;
+            };
+            const editor = window.glyphCanvas?.canvas;
+            const editorSample =
+                editor && window.glyphCanvas?.outlineEditor?.active
+                    ? hole(editor, isBlended)
+                    : 'inactive';
+            const tiles = document.querySelectorAll(
+                '#glyph-overview-container [data-glyph-name="heh-ar"] canvas'
+            );
+            let tileSample = '0,0,0';
+            let tileRed = -1;
+            tiles.forEach((node) => {
+                const sample = hole(
+                    node as HTMLCanvasElement,
+                    (r, g, b, a) => isPlain(r, g, b, a) || isBlended(r, g, b, a)
+                );
+                const red = Number(sample.split(',')[0]);
+                if (red > tileRed) {
+                    tileRed = red;
+                    tileSample = sample;
+                }
+            });
+            const punched = (sample: string): boolean => {
+                const [red, center, edge] = sample.split(',').map(Number);
+                return red > 80 && edge > 4 && center === 0;
+            };
+            if (punched(editorSample) && punched(tileSample)) {
+                return 'ok';
+            }
+            return `${textRun.glyphNameBuffer.join('+')}|${editorSample}|${tileSample}`;
+        });
+
+    await expect.poll(probe, { timeout: 60000 }).toBe('ok');
 });

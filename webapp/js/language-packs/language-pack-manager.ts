@@ -140,8 +140,19 @@ json.dumps(provider.anchors(${JSON.stringify(token)}) if provider else [])
         const result = await runHostPythonAsync(`
 import json, builtins
 ${ENSURE_COMPOSITION_PROVIDERS}
-provider = builtins._cp_composition_providers.get("arabic")
-json.dumps(provider.drawings(json.loads(${JSON.stringify(JSON.stringify(names))})) if provider else {})
+names = json.loads(${JSON.stringify(JSON.stringify(names))})
+found = {}
+for provider in builtins._cp_composition_providers.values():
+    draw = getattr(provider, "drawings", None)
+    if not callable(draw):
+        continue
+    payload = draw(names) or {}
+    if not isinstance(payload, dict):
+        continue
+    for key, value in payload.items():
+        if key not in found and value:
+            found[key] = value
+json.dumps(found)
 `);
         return JSON.parse(String(result));
     }

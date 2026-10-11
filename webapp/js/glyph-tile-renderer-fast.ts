@@ -15,6 +15,10 @@ import {
     transformPointWithAffine
 } from './glyph-path-geometry';
 import { Logger } from './logger';
+import {
+    paintPlaceholderGlyph,
+    placeholderCenteringX
+} from './language-packs/placeholder-outlines';
 import APP_SETTINGS from './settings';
 
 const console = new Logger('GlyphTileRendererFast');
@@ -296,9 +300,13 @@ class FastGlyphTileRenderer {
             return canvas;
         }
 
-        // Center horizontally based on glyph visual bounds
+        // Center horizontally based on glyph visual bounds. Empty glyphs
+        // have no ink yet, so center the placeholder on its sample or advance.
         const bounds = this.getSafeBounds(glyphData);
-        const glyphVisualCenterX = (bounds.xMin + bounds.xMax) / 2;
+        const degenerate = bounds.xMax - bounds.xMin < 1;
+        const glyphVisualCenterX = degenerate
+            ? placeholderCenteringX(glyphData.name, glyphData.width || 0)
+            : (bounds.xMin + bounds.xMax) / 2;
         const tileCenterX = drawWidth / 2;
         const offsetX = tileCenterX - glyphVisualCenterX * scale;
 
@@ -312,6 +320,9 @@ class FastGlyphTileRenderer {
         // Draw shapes in layer order so subtraction cutters punch holes.
         const shapes = Array.isArray(glyphData?.shapes) ? glyphData.shapes : [];
         this.drawShapes(ctx, shapes);
+        if (glyphData.name) {
+            paintPlaceholderGlyph(ctx, glyphData.name);
+        }
 
         ctx.restore();
 

@@ -1,6 +1,6 @@
-import type { Babelfont } from '../babelfont';
 import type { Font, Glyph } from '../babelfont-model';
 import type { CompositionPlan, GlyphDrawing } from './composition-planner';
+import { rememberPlaceholderDrawing } from './placeholder-outlines';
 
 type Bridge = {
     beginTransaction(
@@ -90,18 +90,10 @@ export function applyCompositionPlan(
 }
 
 function placeDrawing(glyph: Glyph, drawing: GlyphDrawing, upm: number): void {
+    rememberPlaceholderDrawing(glyph.name, drawing);
     const scale = upm / (drawing.upm || upm || 1000);
     for (const layer of glyph.layers || []) {
         layer.width = drawing.width * scale;
-        for (const path of drawing.paths) {
-            const added = layer.addPath(path.closed);
-            added.nodes = path.nodes.map((node) => ({
-                x: node.x * scale,
-                y: node.y * scale,
-                nodetype: node.nodetype as Babelfont.NodeType,
-                ...(node.smooth ? { smooth: true } : {})
-            }));
-        }
         for (const anchor of drawing.anchors) {
             layer.addAnchor(anchor.x * scale, anchor.y * scale, anchor.name);
         }
