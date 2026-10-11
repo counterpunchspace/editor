@@ -465,6 +465,12 @@ class GlyphOverview {
         window.addEventListener('generatedFeaturesChanged', () =>
             this.refreshCcmpTiles()
         );
+        window.addEventListener('placeholderOutlinesReady', () => {
+            if (!this.outlinePaintAllowed) {
+                return;
+            }
+            void this.renderGlyphOutlines(this.currentLocation);
+        });
 
         // Listen for glyph stack changes to update highlight immediately
         window.addEventListener(

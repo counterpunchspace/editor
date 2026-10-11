@@ -10,6 +10,7 @@ import { Logger } from '../logger';
 import { getPathFillOpacity } from '../path-fill-opacity-pref';
 import { get_glyph_name } from '../../wasm-dist/babelfont_fontc_web';
 import { isCcmpShellGlyph } from '../language-packs/ccmp-shells';
+import { paintPlaceholderGlyph } from '../language-packs/placeholder-outlines';
 import {
     normalizeAffineTransform,
     transformPointWithAffine as applyAffineToPoint,
@@ -302,6 +303,11 @@ export class GlyphCanvasRenderer {
     private fps: number = 0;
     private readonly FPS_UPDATE_INTERVAL = 500; // Update FPS display every 500ms
     private punchOutScratch: HTMLCanvasElement | null = null;
+    private decomposedPlaceholderBlob: Uint8Array | null = null;
+    private decomposedPlaceholderCache = new Map<
+        string,
+        Array<{ name: string; x: number; y: number }>
+    >();
 
     /**
      *
@@ -955,6 +961,16 @@ export class GlyphCanvasRenderer {
                                 : 1;
                         paintFill(fillColor, fillAlpha);
                     }
+                }
+
+                const placeholderName =
+                    explicitGlyphName ||
+                    this.textRunEditor.glyphNameBuffer[glyphIndex];
+                if (placeholderName && !skipHarfBuzz) {
+                    this.ctx.save();
+                    this.ctx.translate(x, y);
+                    this.drawPlaceholderOverlay(placeholderName);
+                    this.ctx.restore();
                 }
 
                 if (explicitGlyphName && isCcmpShellGlyph(explicitGlyphName)) {
@@ -2516,6 +2532,236 @@ export class GlyphCanvasRenderer {
         main.restore();
     }
 
+    private placeholderGlyphName(): string {
+        const stack = this.glyphCanvas.outlineEditor.parseGlyphStack();
+        if (stack.length) {
+            return stack[stack.length - 1].glyphName || '';
+        }
+        const index = this.textRunEditor.selectedGlyphIndex;
+        return (
+            this.textRunEditor.shapedGlyphs[index]?.explicitGlyphName ||
+            this.textRunEditor.glyphNameBuffer[index] ||
+            this.glyphCanvas.outlineEditor.currentGlyphName ||
+            ''
+        );
+    }
+
+    private layerHasPathInk(
+        layerData: Babelfont.Layer | null | undefined
+    ): boolean {
+        return (layerData?.shapes || []).some(
+            (shape) =>
+                'nodes' in shape &&
+                Array.isArray(shape.nodes) &&
+                shape.nodes.length > 0
+        );
+    }
+
+    private drawPlaceholderOverlay(name: string): void {
+        paintPlaceholderGlyph(this.ctx, name, {
+            paintDecomposed: (parts) =>
+                this.paintDecomposedPlaceholders(name, parts)
+        });
+    }
+
+    private paintDecomposedPlaceholders(
+        shellName: string,
+        parts: string[]
+    ): boolean {
+        const textRun = this.textRunEditor;
+        const hb = textRun.hb;
+        const hbFont = textRun.hbFont;
+        if (!hb || !hbFont || parts.length < 2) {
+            return false;
+        }
+        const blob = textRun.shapingFontBlob || textRun.fontBlob;
+        if (blob !== this.decomposedPlaceholderBlob) {
+            this.decomposedPlaceholderBlob = blob;
+            this.decomposedPlaceholderCache.clear();
+        }
+        const font = (
+            window as Window & {
+                currentFontModel?: {
+                    findGlyph?: (
+                        name: string
+                    ) => { codepoints?: number[] } | null | undefined;
+                };
+            }
+        ).currentFontModel;
+        const shellCodepoint = font?.findGlyph?.(shellName)?.codepoints?.[0];
+        let text = '';
+        if (typeof shellCodepoint === 'number' && shellCodepoint > 0) {
+            text = String.fromCodePoint(shellCodepoint);
+        } else {
+            const codepoints: number[] = [];
+            for (const part of parts) {
+                const codepoint = font?.findGlyph?.(part)?.codepoints?.[0];
+                if (typeof codepoint !== 'number') {
+                    return false;
+                }
+                codepoints.push(codepoint);
+            }
+            text = String.fromCodePoint(...codepoints);
+        }
+        const cacheKey = `${text}:${blob?.byteLength || 0}`;
+        let positioned = this.decomposedPlaceholderCache.get(cacheKey);
+        if (!positioned) {
+            const buffer = hb.createBuffer();
+            let glyphs: Array<{
+                g: number;
+                ax: number;
+                dx: number;
+                dy: number;
+                cl: number;
+            }> = [];
+            try {
+                buffer.addText(text);
+                buffer.guessSegmentProperties();
+                const features =
+                    textRun.featuresManager?.getHarfBuzzFeatures?.();
+                if (features) {
+                    hb.shape(hbFont, buffer, features);
+                } else {
+                    hb.shape(hbFont, buffer);
+                }
+                glyphs = buffer.json();
+            } catch {
+                buffer.destroy();
+                return false;
+            }
+            buffer.destroy();
+            let pen = 0;
+            positioned = glyphs.map((glyph) => {
+                let resolved = '';
+                if (blob) {
+                    try {
+                        resolved = get_glyph_name(blob, glyph.g) || '';
+                    } catch {
+                        resolved = '';
+                    }
+                }
+                const item = {
+                    name: resolved || parts[glyph.cl] || '',
+                    x: pen + (glyph.dx || 0),
+                    y: glyph.dy || 0
+                };
+                pen += glyph.ax || 0;
+                return item;
+            });
+            this.decomposedPlaceholderCache.set(cacheKey, positioned);
+        }
+        if (
+            positioned.length < 2 ||
+            positioned.every((item) => item.name === shellName)
+        ) {
+            return false;
+        }
+        for (const item of positioned) {
+            if (
+                !item.name ||
+                item.name === '.notdef' ||
+                item.name === shellName
+            ) {
+                continue;
+            }
+            this.ctx.save();
+            this.ctx.translate(item.x, item.y);
+            paintPlaceholderGlyph(this.ctx, item.name, { depth: 1 });
+            this.ctx.restore();
+        }
+        return true;
+    }
+
+    private drawPlaceholderLayer(
+        layerData: Babelfont.Layer | null | undefined,
+        name: string
+    ): void {
+        const components = (layerData?.shapes || []).filter(
+            (shape): shape is Babelfont.Component => 'reference' in shape
+        );
+        if (components.length) {
+            for (const shape of components) {
+                if (this.layerHasPathInk(shape.layerData)) {
+                    continue;
+                }
+                const [a, b, c, d, tx, ty] = normalizeAffineTransform(
+                    shape.transform
+                );
+                this.ctx.save();
+                this.ctx.transform(a, b, c, d, tx, ty);
+                if (
+                    (shape.layerData?.shapes || []).some(
+                        (nested) => 'reference' in nested
+                    )
+                ) {
+                    this.drawPlaceholderLayer(shape.layerData, shape.reference);
+                } else {
+                    paintPlaceholderGlyph(this.ctx, shape.reference, {
+                        depth: 1
+                    });
+                }
+                this.ctx.restore();
+            }
+            return;
+        }
+        this.drawPlaceholderOverlay(name);
+    }
+
+    private paintPlaceholderForSelectedGlyph(
+        layerData: Babelfont.Layer | null | undefined
+    ): void {
+        const origin = this.selectedGlyphOrigin();
+        const name = this.placeholderGlyphName();
+        if (!origin || !name || this.layerHasPathInk(layerData)) {
+            return;
+        }
+        this.ctx.save();
+        this.ctx.translate(origin.x, origin.y);
+        if (this.glyphCanvas.outlineEditor.isEditingComponent()) {
+            const transform =
+                this.glyphCanvas.outlineEditor.getAccumulatedTransform();
+            this.ctx.transform(
+                transform[0],
+                transform[1],
+                transform[2],
+                transform[3],
+                transform[4],
+                transform[5]
+            );
+        }
+        this.drawPlaceholderLayer(layerData, name);
+        this.ctx.restore();
+    }
+
+    private selectedGlyphOrigin(): { x: number; y: number } | null {
+        if (
+            this.textRunEditor.selectedGlyphIndex < 0 ||
+            this.textRunEditor.selectedGlyphIndex >=
+                this.textRunEditor.shapedGlyphs.length
+        ) {
+            return null;
+        }
+        const glyph =
+            this.textRunEditor.shapedGlyphs[
+                this.textRunEditor.selectedGlyphIndex
+            ];
+        const layout = this.textRunEditor._getGlyphPosition(
+            this.textRunEditor.selectedGlyphIndex
+        );
+        let xPosition = layout.xPosition;
+        let xOffset = glyph.dx || 0;
+        const animatedOriginX =
+            this.glyphCanvas.featureChangeAnimator?.getSelectedGlyphOriginX();
+        if (animatedOriginX !== null && animatedOriginX !== undefined) {
+            xPosition = animatedOriginX;
+            xOffset = 0;
+        }
+        return {
+            x: xPosition + xOffset,
+            y: layout.yOffset
+        };
+    }
+
     drawOutlineEditor() {
         // Validate APP_SETTINGS is available
         if (
@@ -2556,6 +2802,7 @@ export class GlyphCanvasRenderer {
                 visibleGuides.length === 0 &&
                 !hasPairedGhost)
         ) {
+            this.paintPlaceholderForSelectedGlyph(currentLayerData);
             console.log(
                 '[Renderer]',
                 'Skipping drawOutlineEditor: no shapes, anchors, or guides at current stack position'
@@ -2620,6 +2867,13 @@ export class GlyphCanvasRenderer {
                 transform[3],
                 transform[4],
                 transform[5]
+            );
+        }
+
+        if (!this.layerHasPathInk(currentLayerData)) {
+            this.drawPlaceholderLayer(
+                currentLayerData,
+                this.placeholderGlyphName()
             );
         }
 
