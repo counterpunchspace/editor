@@ -1,6 +1,6 @@
 /** Plan glyph creation and ccmp membership from composition recipes. */
 
-export type CompositionOutput = 'materialized' | 'ccmp';
+export type CompositionOutput = 'materialized' | 'ccmp' | 'none';
 
 export interface GlyphRecord {
     codepoint?: number;
@@ -52,6 +52,22 @@ export interface CompositionProvider {
         category?: string;
     } | null>;
     anchorsFor?(token: string): Promise<string[]>;
+    drawings?(names: readonly string[]): Promise<Record<string, GlyphDrawing>>;
+}
+
+export interface GlyphDrawing {
+    upm: number;
+    width: number;
+    paths: Array<{
+        closed: boolean;
+        nodes: Array<{
+            x: number;
+            y: number;
+            nodetype: string;
+            smooth?: boolean;
+        }>;
+    }>;
+    anchors: Array<{ name: string; x: number; y: number }>;
 }
 
 export interface PlannedAnchor {
@@ -67,6 +83,7 @@ export interface PlannedGlyph {
     category: string;
     anchors: PlannedAnchor[];
     width?: number;
+    drawing?: GlyphDrawing;
 }
 
 export interface CompositionPlan {
@@ -94,7 +111,22 @@ export interface PlanFont {
 const CCMP_GENERATOR = 'space.counterpunch.ccmp';
 
 export function compositionOutputSetting(value: unknown): CompositionOutput {
-    return value === 'ccmp' ? 'ccmp' : 'materialized';
+    if (value === 'ccmp' || value === 'none') {
+        return value;
+    }
+    return 'materialized';
+}
+
+/** Replace each component with `{name}.{position}` when that glyph exists. */
+export function expandFormSequence(
+    components: readonly string[],
+    position: string,
+    hasGlyph: (name: string) => boolean
+): string[] {
+    return components.map((name) => {
+        const form = `${name}.${position}`;
+        return hasGlyph(form) ? form : name;
+    });
 }
 
 export async function planGlyphAdditions(
@@ -202,6 +234,15 @@ async function planRecords(
         }
     }
 
+    if (output === 'none') {
+        for (const record of records) {
+            if (!font.hasGlyph(record.glyph_name)) {
+                ensureGlyph(record, true);
+            }
+        }
+        return plan;
+    }
+
     const resolved = new Map<string, string>();
 
     function remember(token: string, name: string): string {
@@ -241,7 +282,7 @@ async function planRecords(
                         {
                             glyph_name: name,
                             general_category: 'Lo',
-                            category: 'Letter'
+                            category: 'Base'
                         },
                         requested
                     );
@@ -395,7 +436,7 @@ async function planRecords(
                         {
                             glyph_name: positional,
                             general_category: 'Lo',
-                            category: 'Letter'
+                            category: 'Base'
                         },
                         false
                     );
@@ -473,13 +514,26 @@ async function planRecords(
             }
         }
     }
+    if (provider.drawings && plan.create.length) {
+        const drawings = await provider.drawings(
+            plan.create.map((glyph) => glyph.name)
+        );
+        for (const glyph of plan.create) {
+            const drawing = drawings[glyph.name];
+            if (!drawing) {
+                continue;
+            }
+            glyph.drawing = drawing;
+            glyph.anchors = [];
+        }
+    }
     if (anchorRequests.length) {
         const positioned = await provider.anchorPositions(anchorRequests);
         for (const row of positioned) {
             const glyph = plan.create.find(
                 (item) => item.name === row.glyph_name
             );
-            if (!glyph) {
+            if (!glyph || glyph.drawing) {
                 continue;
             }
             for (const [name, point] of Object.entries(row.positions)) {
@@ -539,6 +593,8 @@ export interface ArabicConversionFamily {
     chain: boolean;
     pinned: string[];
     missing: string | null;
+    /** Existing `.init` / `.medi` / `.fina` glyphs of this character, selected or not. */
+    members?: string[];
 }
 
 export function planArabicConversion(
@@ -573,13 +629,7 @@ export function planArabicConversion(
                 plan.arabicAdd[family.name] = family.sequences;
             }
             plan.clearShells.push(family.name);
-            for (const [position, sequence] of Object.entries(
-                family.sequences
-            )) {
-                if (position === 'isol' || sequence.length < 2) {
-                    continue;
-                }
-                const positional = `${family.name}.${position}`;
+            for (const positional of formMembers(family)) {
                 if (family.pinned.includes(positional)) {
                     plan.kept.push(positional);
                 } else {
@@ -593,14 +643,18 @@ export function planArabicConversion(
             for (const [position, sequence] of Object.entries(
                 family.sequences
             )) {
-                if (position === 'isol' || sequence.length < 2) {
+                if (
+                    position === 'isol' ||
+                    !sequence.length ||
+                    (sequence.length === 1 && sequence[0] === family.name)
+                ) {
                     continue;
                 }
                 const positional = `${family.name}.${position}`;
                 plan.create.push({
                     name: positional,
                     codepoints: [],
-                    category: 'Letter',
+                    category: 'Base',
                     anchors: []
                 });
                 plan.composites.push({
@@ -613,6 +667,15 @@ export function planArabicConversion(
         }
     }
     return plan;
+}
+
+function formMembers(family: ArabicConversionFamily): string[] {
+    if (family.members) {
+        return family.members;
+    }
+    return (['init', 'medi', 'fina'] as const)
+        .filter((position) => (family.sequences[position] || []).length > 0)
+        .map((position) => `${family.name}.${position}`);
 }
 
 export const CCMP_PLUGIN_ID = CCMP_GENERATOR;

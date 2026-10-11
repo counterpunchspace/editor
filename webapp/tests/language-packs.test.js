@@ -8,7 +8,8 @@ const {
     planRebuild,
     planExistingConversion,
     planArabicConversion,
-    compositionOutputSetting
+    compositionOutputSetting,
+    expandFormSequence
 } = require('../js/language-packs/composition-planner.ts');
 const {
     applyForms,
@@ -131,6 +132,37 @@ const arabicProvider = {
     async anchorsFor() {
         return [];
     },
+    async drawings(names) {
+        const drawn = {
+            'behDotless-ar': {
+                upm: 1000,
+                width: 916,
+                paths: [
+                    {
+                        closed: true,
+                        nodes: [{ x: 0, y: 0, nodetype: 'line' }]
+                    }
+                ],
+                anchors: [{ name: 'top', x: 10, y: 20 }]
+            },
+            'behDotless-ar.init': {
+                upm: 1000,
+                width: 400,
+                paths: [
+                    {
+                        closed: true,
+                        nodes: [{ x: 1, y: 1, nodetype: 'line' }]
+                    }
+                ],
+                anchors: []
+            }
+        };
+        return Object.fromEntries(
+            names
+                .filter((name) => drawn[name])
+                .map((name) => [name, drawn[name]])
+        );
+    },
     async anchorPositions(requests) {
         return requests.map((request) => ({
             glyph_name: request.glyph_name,
@@ -189,6 +221,49 @@ describe('language packs', () => {
         ]);
         expect(plan.supportingCount).toBe(2);
         expect(plan.ccmpAdd).toEqual([]);
+    });
+
+    test('empty plan adds the character without components or supporting glyphs', async () => {
+        const plan = await planGlyphAdditions(
+            [
+                {
+                    codepoint: 0xe4,
+                    glyph_name: 'aDiaeresis-lat',
+                    general_category: 'Ll'
+                }
+            ],
+            compositionOutputSetting('none'),
+            font,
+            provider,
+            []
+        );
+        expect(plan.create.map((glyph) => glyph.name)).toEqual([
+            'aDiaeresis-lat'
+        ]);
+        expect(plan.composites).toEqual([]);
+        expect(plan.ccmpAdd).toEqual([]);
+        expect(plan.supportingCount).toBe(0);
+    });
+
+    test('empty arabic plan adds the letter and skips its chain', async () => {
+        const plan = await planGlyphAdditions(
+            [
+                {
+                    codepoint: 0x62a,
+                    glyph_name: 'teh-ar',
+                    general_category: 'Lo'
+                }
+            ],
+            'none',
+            font,
+            arabicProvider,
+            []
+        );
+        expect(plan.create.map((glyph) => glyph.name)).toEqual(['teh-ar']);
+        expect(plan.create[0].drawing).toBeUndefined();
+        expect(plan.composites).toEqual([]);
+        expect(plan.ccmpAdd).toEqual([]);
+        expect(plan.supportingCount).toBe(0);
     });
 
     test('ccmp plan records the shell and its component names', async () => {
@@ -620,6 +695,12 @@ describe('language packs', () => {
             ])
         );
         expect(plan.ccmpAdd).toEqual([]);
+        expect(
+            plan.create.find((glyph) => glyph.name === 'behDotless-ar')?.drawing
+        ).toMatchObject({ width: 916 });
+        expect(
+            plan.create.find((glyph) => glyph.name === 'teh-ar')?.drawing
+        ).toBeUndefined();
     });
 
     test('arabic ccmp teh is a chain and Farsi yeh is positional', async () => {
@@ -641,6 +722,26 @@ describe('language packs', () => {
             'twoDotsHorizontalAbove-ar'
         ]);
         expect(teh.composites).toEqual([]);
+        expect(teh.create.map((glyph) => glyph.name)).toEqual(
+            expect.arrayContaining([
+                'teh-ar',
+                'behDotless-ar',
+                'behDotless-ar.init',
+                'behDotless-ar.medi',
+                'behDotless-ar.fina',
+                'twoDotsHorizontalAbove-ar'
+            ])
+        );
+        expect(teh.create.map((glyph) => glyph.name)).not.toContain(
+            'teh-ar.init'
+        );
+        expect(
+            teh.create.find((glyph) => glyph.name === 'behDotless-ar.init')
+                ?.drawing
+        ).toMatchObject({ width: 400 });
+        expect(
+            teh.create.find((glyph) => glyph.name === 'teh-ar')?.drawing
+        ).toBeUndefined();
         const yeh = await planGlyphAdditions(
             [
                 {
@@ -742,6 +843,33 @@ describe('language packs', () => {
         ]);
         expect(positional.kept).toEqual(['yehFarsi-ar.init']);
         expect(positional.deletes).toEqual([]);
+        const partial = planArabicConversion(
+            [
+                {
+                    ...chain,
+                    members: ['teh-ar.init', 'teh-ar.medi', 'teh-ar.fina'],
+                    sequences: { isol: chain.sequences.isol }
+                }
+            ],
+            'ccmp'
+        );
+        expect(partial.deletes).toEqual([
+            'teh-ar.init',
+            'teh-ar.medi',
+            'teh-ar.fina'
+        ]);
+    });
+
+    test('form expansion substitutes a component only when its positional glyph exists', () => {
+        const components = ['behDotless-ar', 'twoDotsHorizontalAbove-ar'];
+        const has = (name) => name === 'behDotless-ar.init';
+        expect(expandFormSequence(components, 'init', has)).toEqual([
+            'behDotless-ar.init',
+            'twoDotsHorizontalAbove-ar'
+        ]);
+        expect(expandFormSequence(components, 'medi', () => false)).toEqual(
+            components
+        );
     });
 
     test('form rules rewrite one pass and family roots follow the encoded glyph', () => {

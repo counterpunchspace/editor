@@ -6,21 +6,17 @@ name is substituted only while emitting a rule for this font.
 
 from __future__ import annotations
 
-import json
 import re
-from importlib.resources import files
 from typing import Any
 
+from counterpunch_arabic.font_source import ArabicFontSource
+
 _RULE = re.compile(r"^\s*sub\s+(\S+)\s+by\s+(.+?)\s*;\s*$")
+_LOOKUP_NAME = re.compile(r"\blookup\s+(\S+)\s*\{")
 _POSITIONS = ("init", "medi", "fina")
 _VOWELS = {0x064B, 0x064C, 0x064D, 0x064E, 0x064F, 0x0650, 0x0651, 0x0652, 0x0670}
 _ALEF = ("uni0622", "uni0623", "uni0625", "uni0671")
 _CCMP = "space.counterpunch.ccmp"
-
-
-def _load() -> dict[str, Any]:
-    path = files("counterpunch_arabic").joinpath("data/arabic.json")
-    return json.loads(path.read_text(encoding="utf-8"))
 
 
 class ArabicFormsGenerator:
@@ -32,11 +28,11 @@ class ArabicFormsGenerator:
     INTENT_KEYS = ["arabic"]
 
     def __init__(self) -> None:
-        data = _load()
-        self._characters = data["characters"]
-        self._mark_variants = data["markVariants"]
-        self._rlig = data["rlig"]
-        self._lam_alef_alefs = data["lamAlefAlefs"]
+        source = ArabicFontSource()
+        self._characters = source.characters
+        self._mark_variants = source.mark_variants
+        self._rlig = source.rlig
+        self._lam_alef_alefs = source.lam_alef_alefs
 
     def needs_rebuild(self, batch: dict[str, Any], font: Any, context: dict[str, Any]) -> bool:
         del font, context
@@ -176,7 +172,9 @@ class ArabicFormsGenerator:
             {
                 "block": "required",
                 "tag": "rlig",
-                "code": self._rlig_code(glyphs, names, present),
+                "code": self._rlig_code(
+                    glyphs, names, present, _unmanaged_feature_code(font, "rlig")
+                ),
                 "placement": "first",
             }
         )
@@ -187,6 +185,7 @@ class ArabicFormsGenerator:
         glyphs: dict[str, Any],
         names: dict[str, str],
         present: set[str],
+        existing: str = "",
     ) -> str:
         lookups = []
         decompose_lines = []
@@ -205,7 +204,8 @@ class ArabicFormsGenerator:
             decompose_lines.append(
                 f"sub {group} {target}' by {' '.join(components)};"
             )
-        if decompose_lines:
+        defined = _lookup_names(existing)
+        if decompose_lines and "lam_alef_decompose" not in defined:
             lookups.append(_lookup("lam_alef_decompose", "IgnoreMarks", decompose_lines))
 
         ligature_lines = []
@@ -215,7 +215,7 @@ class ArabicFormsGenerator:
             if output not in present or not all(inputs):
                 continue
             ligature_lines.append(f"sub {' '.join(inputs)} by {output};")  # type: ignore[arg-type]
-        if ligature_lines:
+        if ligature_lines and "lam_alef" not in defined:
             lookups.append(_lookup("lam_alef", "IgnoreMarks", ligature_lines))
 
         mark_lines = []
@@ -228,7 +228,7 @@ class ArabicFormsGenerator:
                 continue
             mark_lines.append(f"sub {left} {right} by {glyph};")
             mark_lines.append(f"sub {right} {left} by {glyph};")
-        if mark_lines:
+        if mark_lines and "mark_ligatures" not in defined:
             lookups.append(_lookup("mark_ligatures", "0", mark_lines))
         return "\n".join(lookups)
 
@@ -261,6 +261,24 @@ def _rename(rules: dict[str, list[str]], previous: str, current: str) -> None:
 def _lookup(name: str, flag: str, lines: list[str]) -> str:
     body = "\n".join(f"  {line}" for line in lines)
     return f"lookup {name} {{\n  lookupflag {flag};\n{body}\n}} {name};"
+
+
+def _lookup_names(code: str) -> set[str]:
+    return set(_LOOKUP_NAME.findall(code))
+
+
+def _unmanaged_feature_code(font: Any, tag: str) -> str:
+    features = getattr(font, "features", None) if font is not None else None
+    parts: list[str] = []
+    for entry in list(getattr(features, "features", None) or []):
+        if str(entry[0]) != tag:
+            continue
+        code = entry[1]
+        stamp = _field(_field(code, "format_specific"), "com.counterpunch.generator")
+        if _text(_field(stamp, "generator")) == ArabicFormsGenerator.generator_id:
+            continue
+        parts.append(_text(_field(code, "code")))
+    return "\n".join(parts)
 
 
 def _index(font: Any) -> dict[str, Any]:

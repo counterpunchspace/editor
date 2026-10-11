@@ -1,5 +1,9 @@
 import { Font } from './babelfont-model';
-import { glyphDataIndex, type GlyphDataSearchResult } from './glyph-data';
+import {
+    codepointQuery,
+    glyphDataIndex,
+    type GlyphDataSearchResult
+} from './glyph-data';
 import {
     characterSetPluginManager,
     type CharacterSetCoverageLevel,
@@ -424,9 +428,7 @@ export class AddGlyphsDialog {
             record.character === query ||
             record.glyph_name.toLowerCase().includes(normalized) ||
             record.name.toLowerCase().includes(normalized) ||
-            record.codepoint
-                .toString(16)
-                .startsWith(normalized.replace(/^u\+|^0x/, ''))
+            record.codepoint.toString(16).startsWith(codepointQuery(normalized))
         );
     }
 
@@ -803,19 +805,18 @@ export class AddGlyphsDialog {
         try {
             const { languagePackManager } =
                 await import('./language-packs/language-pack-manager');
-            const { planGlyphAdditions } =
+            const { compositionOutputSetting, planGlyphAdditions } =
                 await import('./language-packs/composition-planner');
             const { applyCompositionPlan } =
                 await import('./language-packs/composition-applicator');
             const { managedInputs } =
                 await import('./language-packs/managed-features');
-            const output =
+            const output = compositionOutputSetting(
                 font.getPluginSetting(
                     'space.counterpunch.ccmp',
                     'composition_output'
-                ) === 'ccmp'
-                    ? 'ccmp'
-                    : 'materialized';
+                )
+            );
             const plan = await planGlyphAdditions(
                 additions.map((record) => ({
                     codepoint:
@@ -827,7 +828,7 @@ export class AddGlyphsDialog {
                     general_category: record.general_category,
                     category: record.general_category.startsWith('M')
                         ? 'Mark'
-                        : 'Letter'
+                        : 'Base'
                 })),
                 output,
                 {

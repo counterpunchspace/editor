@@ -20,9 +20,10 @@ class CcmpFeatureGenerator:
             "id": "composition_output",
             "type": "radio",
             "label": "Composition output for new glyphs",
-            "help": "Components builds the glyph from components. ccmp leaves it empty and composes it when text is shaped.",
+            "help": "Empty adds the character with no components. Components builds it from components. ccmp leaves it empty and composes it when text is shaped.",
             "target": "add-glyphs",
             "options": [
+                {"value": "none", "label": "Empty"},
                 {"value": "materialized", "label": "Components"},
                 {"value": "ccmp", "label": "ccmp"},
             ],

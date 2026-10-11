@@ -12,6 +12,7 @@ sys.path.insert(0, str(ARABIC / "tools"))
 from build_arabic_data import UnmappedMark, parse_substitutions
 from counterpunch_arabic.charset import ArabicCharacterSetProvider
 from counterpunch_arabic.composition import ArabicCompositionProvider
+from counterpunch_arabic.font_source import ArabicFontSource
 from counterpunch_arabic.generator import ArabicFormsGenerator
 
 class Component:
@@ -56,7 +57,7 @@ def _ccmp(code):
     ]
 
 
-def generate(batch, names, codepoints=None, components=None, managed=None, ccmp="", languages=""):
+def generate(batch, names, codepoints=None, components=None, managed=None, ccmp="", languages="", features=None):
     codepoints = codepoints or {}
     components = components or {}
     glyphs = [
@@ -67,9 +68,12 @@ def generate(batch, names, codepoints=None, components=None, managed=None, ccmp=
         )
         for name in names
     ]
+    entries = list(features or [])
+    if ccmp:
+        entries = _ccmp(ccmp) + entries
     return GENERATOR.generate(
         batch,
-        Font(glyphs, _ccmp(ccmp) if ccmp else []),
+        Font(glyphs, entries),
         {"managed_blocks": managed or {}, "languagesystem_text": languages},
     )
 
@@ -77,12 +81,13 @@ def generate(batch, names, codepoints=None, components=None, managed=None, ccmp=
 DATA = json.loads(
     (ARABIC / "counterpunch_arabic" / "data" / "arabic.json").read_text(encoding="utf-8")
 )
+SOURCE = ArabicFontSource()
 GENERATOR = ArabicFormsGenerator()
 EDITOR = Path(__file__).resolve().parents[3]
 
 
 def _tokens():
-    for record in DATA["characters"].values():
+    for record in SOURCE.characters.values():
         for sequence in record["positions"].values():
             yield from sequence
         yield from record.get("decompose") or []
@@ -92,21 +97,37 @@ def test_data_identities_and_pack_names():
     for token in _tokens():
         if token.startswith("uni"):
             codepoint = int(token.split(".")[0][3:], 16)
-            assert not 0xFBB2 <= codepoint <= 0xFBC2
+            assert not 0xFB50 <= codepoint <= 0xFEFF
             assert token.split(".")[-1] in {token, "init", "medi", "fina"} or "." not in token
         else:
             root = token.rsplit(".", 1)[0] if token.rsplit(".", 1)[-1] in {"init", "medi", "fina"} else token
-            assert root in DATA["unencoded"]
+            assert root in SOURCE.unencoded
     dot_names = {entry["glyph_name"] for entry in DATA["leaves"][1]["entries"]}
     assert dot_names
     assert all("codepoint" not in entry for entry in DATA["leaves"][1]["entries"])
-    assert "kafDotless-ar" in DATA["unencoded"]
-    assert DATA["characters"]["uni062A"]["decompose"] == [
+    assert "kafDotless-ar" in SOURCE.unencoded
+    assert SOURCE.characters["uni062A"]["decompose"] == [
         "uni066E",
         "twoDotsHorizontalAbove-ar",
     ]
-    assert "decompose" not in DATA["characters"]["uni06CC"]
-    assert DATA["characters"]["uni0643"]["positions"]["init"] == ["uni06A9.init"]
+    assert "decompose" not in SOURCE.characters["uni06CC"]
+    assert SOURCE.characters["uni0643"]["positions"]["init"] == ["uni06A9.init"]
+
+
+def test_pack_font_draws_bases_and_leaves_chain_letters_empty():
+    teh = SOURCE.glyphs["teh-ar"]
+    assert teh["codepoints"] == [0x062A]
+    assert SOURCE.components("teh-ar") == []
+    assert SOURCE.drawing("teh-ar") is None
+    base = SOURCE.drawing("behDotless-ar")
+    assert base["paths"]
+    assert {anchor["name"] for anchor in base["anchors"]} >= {"top", "bottom"}
+    assert SOURCE.drawing("behDotless-ar.init")["paths"]
+    dots = SOURCE.drawing("twoDotsHorizontalAbove-ar")
+    assert dots["paths"]
+    yeh_init = SOURCE.components("yehFarsi-ar.init")
+    assert "behDotless-ar.init" in yeh_init
+    assert SOURCE.ccmp["teh-ar"][0] == "behDotless-ar"
 
 
 def test_pack_names_do_not_collide_with_glyph_data():
@@ -114,7 +135,7 @@ def test_pack_names_do_not_collide_with_glyph_data():
         gzip.open(EDITOR / "webapp" / "data" / "glyph-data.json.gz", "rt", encoding="utf-8").read()
     )
     glyph_names = {record["glyph_name"].lower() for record in records}
-    for name in DATA["unencoded"]:
+    for name in SOURCE.unencoded:
         assert name.lower() not in glyph_names
         for suffix in ("init", "medi", "fina"):
             assert f"{name}.{suffix}".lower() not in glyph_names
@@ -240,6 +261,27 @@ def test_lam_alef_from_pack_names_or_encoded_forms():
     )
     rlig = next(block["code"] for block in code["blocks"] if block["tag"] == "rlig")
     assert "lam_alef" not in rlig
+
+
+def test_designer_lam_alef_lookup_is_not_duplicated():
+    names = ["lam-ar.init", "lam-ar.medi", "alef-ar.fina", "lam_alef-ar", "lam_alef-ar.fina"]
+    points = {"lam-ar.init": 0x0644, "lam-ar.medi": 0x0644, "alef-ar.fina": 0x0627}
+    code = generate(
+        {"lifecycle": [], "changes": [], "intents": {}},
+        names,
+        points,
+        features=[
+            [
+                "rlig",
+                {
+                    "code": "lookup lam_alef {\n  lookupflag IgnoreMarks;\n  sub lam-ar.init alef-ar.fina by lam_alef-ar;\n} lam_alef;",
+                    "automatic": False,
+                },
+            ]
+        ],
+    )
+    rlig = next(block["code"] for block in code["blocks"] if block["tag"] == "rlig")
+    assert "lookup lam_alef {" not in rlig
 
 
 def test_lam_alef_decompose_uses_composite_components():

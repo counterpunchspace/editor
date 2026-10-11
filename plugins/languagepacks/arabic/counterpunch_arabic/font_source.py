@@ -1,0 +1,318 @@
+"""Load the bundled Arabic composition font and read ccmp recipes from it."""
+
+from __future__ import annotations
+
+import json
+from importlib.resources import files
+from typing import Any
+
+_FORM_SUFFIXES = ("init", "medi", "fina")
+_RLIG = [
+    {
+        "inputs": ["uni0644.init", "uni0627.fina"],
+        "output": "lam_alef-ar",
+        "encodedOutput": "uniFEFB",
+        "ignoreMarks": True,
+    },
+    {
+        "inputs": ["uni0644.medi", "uni0627.fina"],
+        "output": "lam_alef-ar.fina",
+        "encodedOutput": "uniFEFC",
+        "ignoreMarks": True,
+    },
+]
+_LAM_ALEF_ALEFS = ["uni0622", "uni0623", "uni0625", "uni0671"]
+
+
+def _uni(codepoint: int) -> str:
+    if codepoint <= 0xFFFF:
+        return f"uni{codepoint:04X}"
+    return f"uni{codepoint:X}"
+
+
+def _split(name: str) -> tuple[str, str]:
+    if "." not in name:
+        return name, ""
+    root, suffix = name.rsplit(".", 1)
+    if suffix in _FORM_SUFFIXES:
+        return root, suffix
+    return name, ""
+
+
+def _load() -> dict[str, Any]:
+    path = files("counterpunch_arabic").joinpath("data/arabic.babelfont")
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+class ArabicFontSource:
+    def __init__(self) -> None:
+        font = _load()
+        self.upm = int(font.get("upm") or 1000)
+        self.glyphs = {glyph["name"]: glyph for glyph in font.get("glyphs") or []}
+        self.by_codepoint: dict[int, str] = {}
+        for name, glyph in self.glyphs.items():
+            codepoints = glyph.get("codepoints") or []
+            if len(codepoints) == 1:
+                self.by_codepoint[int(codepoints[0])] = name
+        self.ccmp = _ccmp_rules(font)
+        self.characters = self._characters()
+        self.unencoded = self._unencoded()
+        self.rlig = _RLIG
+        self.lam_alef_alefs = _LAM_ALEF_ALEFS
+        self.mark_variants: dict[str, dict[str, str]] = {"init": {}, "medi": {}}
+
+    def token_for(self, name: str) -> str:
+        root, suffix = _split(name)
+        glyph = self.glyphs.get(root)
+        codepoints = (glyph or {}).get("codepoints") or []
+        if len(codepoints) == 1:
+            return _uni(int(codepoints[0])) + (f".{suffix}" if suffix else "")
+        return name
+
+    def name_for_token(self, token: str) -> str | None:
+        root, suffix = _split(token)
+        if root.startswith("uni"):
+            try:
+                codepoint = int(root[3:], 16)
+            except ValueError:
+                return None
+            base = self.by_codepoint.get(codepoint)
+            if base is None:
+                return None
+            name = base + (f".{suffix}" if suffix else "")
+            return name if name in self.glyphs else None
+        return token if token in self.glyphs else None
+
+    def components(self, name: str) -> list[str]:
+        glyph = self.glyphs.get(name)
+        if glyph is None:
+            return []
+        for layer in glyph.get("layers") or []:
+            refs = [
+                shape.get("reference")
+                for shape in layer.get("shapes") or []
+                if shape.get("reference")
+            ]
+            if refs:
+                return [ref for ref in refs if isinstance(ref, str)]
+        return []
+
+    def anchor_names(self, name: str) -> list[str]:
+        glyph = self.glyphs.get(name)
+        if glyph is None:
+            return []
+        names: list[str] = []
+        for layer in glyph.get("layers") or []:
+            for anchor in layer.get("anchors") or []:
+                anchor_name = anchor.get("name")
+                if anchor_name and anchor_name not in names:
+                    names.append(anchor_name)
+        return names
+
+    def category(self, name: str) -> str:
+        glyph = self.glyphs.get(name) or {}
+        category = glyph.get("category")
+        if isinstance(category, dict):
+            category = next(iter(category.values()), "")
+        return "Mark" if category == "Mark" else "Letter"
+
+    def drawing(self, name: str) -> dict[str, Any] | None:
+        glyph = self.glyphs.get(name)
+        if glyph is None or self.components(name):
+            return None
+        layer = (glyph.get("layers") or [None])[0]
+        if not isinstance(layer, dict):
+            return None
+        paths = []
+        for shape in layer.get("shapes") or []:
+            nodes = shape.get("nodes")
+            if isinstance(nodes, list) and nodes:
+                paths.append(
+                    {"closed": bool(shape.get("closed", True)), "nodes": nodes}
+                )
+        anchors = [
+            {
+                "name": anchor.get("name"),
+                "x": float(anchor.get("x") or 0),
+                "y": float(anchor.get("y") or 0),
+            }
+            for anchor in layer.get("anchors") or []
+            if anchor.get("name")
+        ]
+        if not paths and not anchors:
+            return None
+        return {
+            "upm": self.upm,
+            "width": float(layer.get("width") or 0),
+            "paths": paths,
+            "anchors": anchors,
+        }
+
+    def drawings(self, names: list[str]) -> dict[str, Any]:
+        found = {}
+        for name in names:
+            drawing = self.drawing(str(name))
+            if drawing is not None:
+                found[str(name)] = drawing
+        return found
+
+    def anchor_positions(self, requests: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        rows = []
+        for request in requests:
+            name = str(request.get("glyph_name") or "")
+            drawing = self.drawing(name)
+            if drawing is None and name not in self.glyphs:
+                rows.append(
+                    {
+                        "glyph_name": name,
+                        "master_id": request.get("master_id"),
+                        "positions": {},
+                        "known": False,
+                    }
+                )
+                continue
+            located = {
+                anchor["name"]: [anchor["x"], anchor["y"]]
+                for anchor in (drawing or {}).get("anchors") or []
+            }
+            if drawing is None:
+                located = {
+                    anchor_name: [0, 0]
+                    for anchor_name in self.anchor_names(name)
+                }
+                for layer in (self.glyphs.get(name) or {}).get("layers") or []:
+                    for anchor in layer.get("anchors") or []:
+                        if anchor.get("name"):
+                            located[anchor["name"]] = [
+                                float(anchor.get("x") or 0),
+                                float(anchor.get("y") or 0),
+                            ]
+            positions = {
+                anchor_name: located[anchor_name]
+                for anchor_name in request.get("names") or []
+                if anchor_name in located
+            }
+            rows.append(
+                {
+                    "glyph_name": name,
+                    "master_id": request.get("master_id"),
+                    "positions": positions,
+                    "known": True,
+                }
+            )
+        return rows
+
+    def _expand(self, components: list[str], position: str) -> list[str]:
+        expanded = []
+        for name in components:
+            form = f"{name}.{position}"
+            expanded.append(form if form in self.glyphs else name)
+        return expanded
+
+    def _characters(self) -> dict[str, dict[str, Any]]:
+        characters: dict[str, dict[str, Any]] = {}
+        for name, glyph in self.glyphs.items():
+            codepoints = glyph.get("codepoints") or []
+            if len(codepoints) != 1:
+                continue
+            identity = _uni(int(codepoints[0]))
+            rule = self.ccmp.get(name)
+            positions: dict[str, list[str]] = {}
+            if rule:
+                positions["isol"] = [self.token_for(part) for part in rule]
+                for position in _FORM_SUFFIXES:
+                    form_components = self.components(f"{name}.{position}")
+                    if form_components:
+                        positions[position] = [
+                            self.token_for(part) for part in form_components
+                        ]
+                        continue
+                    expanded = self._expand(rule, position)
+                    if expanded != rule:
+                        positions[position] = [
+                            self.token_for(part) for part in expanded
+                        ]
+            else:
+                components = self.components(name)
+                positions["isol"] = (
+                    [self.token_for(part) for part in components]
+                    if components
+                    else [identity]
+                )
+                for position in _FORM_SUFFIXES:
+                    form_name = f"{name}.{position}"
+                    if form_name not in self.glyphs:
+                        continue
+                    form_components = self.components(form_name)
+                    if form_components:
+                        positions[position] = [
+                            self.token_for(part) for part in form_components
+                        ]
+                    else:
+                        positions[position] = [self.token_for(form_name)]
+            record: dict[str, Any] = {"positions": positions}
+            if rule and self._chain(rule, positions):
+                record["decompose"] = positions["isol"]
+            characters[identity] = record
+        return characters
+
+    def _chain(self, rule: list[str], positions: dict[str, list[str]]) -> bool:
+        isol = positions.get("isol") or []
+        if len(isol) < 2:
+            return False
+        for position in _FORM_SUFFIXES:
+            expanded = [self.token_for(part) for part in self._expand(rule, position)]
+            actual = positions.get(position, isol)
+            if actual != expanded:
+                return False
+        return True
+
+    def _unencoded(self) -> dict[str, dict[str, Any]]:
+        unencoded: dict[str, dict[str, Any]] = {}
+        for name, glyph in self.glyphs.items():
+            if glyph.get("codepoints"):
+                continue
+            root, suffix = _split(name)
+            root_glyph = self.glyphs.get(root)
+            if suffix and root_glyph and root_glyph.get("codepoints"):
+                continue
+            if suffix:
+                continue
+            entry: dict[str, Any] = {"category": self.category(name)}
+            components = self.components(name)
+            if components:
+                entry["components"] = [self.token_for(part) for part in components]
+            anchors = self.anchor_names(name)
+            if anchors:
+                entry["anchors"] = anchors
+            positions = {}
+            for position in _FORM_SUFFIXES:
+                form_name = f"{name}.{position}"
+                if form_name not in self.glyphs:
+                    continue
+                form_components = self.components(form_name)
+                if form_components:
+                    positions[position] = [
+                        self.token_for(part) for part in form_components
+                    ]
+                else:
+                    positions[position] = [form_name]
+            if positions:
+                entry["positions"] = positions
+            unencoded[name] = entry
+        return unencoded
+
+
+def _ccmp_rules(font: dict[str, Any]) -> dict[str, list[str]]:
+    rules: dict[str, list[str]] = {}
+    for tag, body in (font.get("features") or {}).get("features") or []:
+        if tag != "ccmp":
+            continue
+        code = body.get("code") if isinstance(body, dict) else ""
+        for line in str(code).splitlines():
+            text = line.strip()
+            if not text.startswith("sub ") or " by " not in text:
+                continue
+            lhs, rhs = text[4:].split(" by ", 1)
+            rules[lhs.strip()] = rhs.replace(";", "").split()
+    return rules

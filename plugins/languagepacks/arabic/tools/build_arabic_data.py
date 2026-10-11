@@ -190,7 +190,7 @@ def components_of(glyph: dict) -> list[str]:
     return refs
 
 
-def build() -> dict:
+def build(center_marks: bool = True) -> dict:
     font = json.loads(FUSTAT.read_text(encoding="utf-8"))
     glyph_data = load_glyph_data()
     glyphs = {glyph["name"]: glyph for glyph in font["glyphs"]}
@@ -258,7 +258,7 @@ def build() -> dict:
         for _ in range(6):
             expanded = _apply(sequence, rules["ccmp"])
             expanded = _apply(expanded, rules[position])
-            if position in {"init", "medi"}:
+            if center_marks and position in {"init", "medi"}:
                 expanded = [center.get(item, item) for item in expanded]
             if expanded == sequence:
                 break

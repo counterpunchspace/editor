@@ -70,6 +70,19 @@ describe('GlyphDataIndex', () => {
         ).toEqual(['A-lat']);
         expect(glyphDataIndex.search('u+61')[0].glyph_name).toBe('a-lat');
         expect(glyphDataIndex.search('a')[0].character).toBe('a');
+        glyphDataIndex.loadRecordsForTests([
+            ...sample,
+            {
+                codepoint: 0x08a8,
+                glyph_name: 'yehTwoDotsBelowAndHamzaAbove-ar',
+                name: 'ARABIC LETTER YEH WITH TWO DOTS BELOW AND HAMZA ABOVE',
+                general_category: 'Lo',
+                script: 'Arabic'
+            }
+        ]);
+        expect(glyphDataIndex.search('U+08A8')[0].glyph_name).toBe(
+            'yehTwoDotsBelowAndHamzaAbove-ar'
+        );
     });
 
     test('GlyphDataIndex can be constructed independently for isolation', () => {

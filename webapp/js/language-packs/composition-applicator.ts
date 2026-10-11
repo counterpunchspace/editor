@@ -1,5 +1,6 @@
+import type { Babelfont } from '../babelfont';
 import type { Font, Glyph } from '../babelfont-model';
-import type { CompositionPlan } from './composition-planner';
+import type { CompositionPlan, GlyphDrawing } from './composition-planner';
 
 type Bridge = {
     beginTransaction(
@@ -36,12 +37,16 @@ export function applyCompositionPlan(
             }
             const added = font.addGlyph(glyph.name, glyph.category);
             added.codepoints = glyph.codepoints;
-            if (glyph.width === 0) {
-                for (const layer of added.layers || []) {
-                    layer.width = 0;
+            if (glyph.drawing) {
+                placeDrawing(added, glyph.drawing, font.upm || 1000);
+            } else {
+                if (glyph.width === 0) {
+                    for (const layer of added.layers || []) {
+                        layer.width = 0;
+                    }
                 }
+                placeAnchors(added, glyph.anchors);
             }
-            placeAnchors(added, glyph.anchors);
         }
         for (const name of plan.clearShells) {
             clearGlyph(font.findGlyph(name));
@@ -57,6 +62,13 @@ export function applyCompositionPlan(
                     layer.addComponent(component);
                 }
             }
+        }
+        for (const planned of plan.create) {
+            const glyph = font.findGlyph(planned.name);
+            if (!glyph) {
+                continue;
+            }
+            glyph.category = planned.category === 'Mark' ? 'Mark' : 'Base';
         }
         if (plan.deletes?.length) {
             font.deleteGlyphs(plan.deletes);
@@ -74,6 +86,25 @@ export function applyCompositionPlan(
         run();
     } finally {
         bridge.endTransaction();
+    }
+}
+
+function placeDrawing(glyph: Glyph, drawing: GlyphDrawing, upm: number): void {
+    const scale = upm / (drawing.upm || upm || 1000);
+    for (const layer of glyph.layers || []) {
+        layer.width = drawing.width * scale;
+        for (const path of drawing.paths) {
+            const added = layer.addPath(path.closed);
+            added.nodes = path.nodes.map((node) => ({
+                x: node.x * scale,
+                y: node.y * scale,
+                nodetype: node.nodetype as Babelfont.NodeType,
+                ...(node.smooth ? { smooth: true } : {})
+            }));
+        }
+        for (const anchor of drawing.anchors) {
+            layer.addAnchor(anchor.x * scale, anchor.y * scale, anchor.name);
+        }
     }
 }
 

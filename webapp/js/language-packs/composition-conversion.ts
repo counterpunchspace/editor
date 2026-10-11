@@ -4,6 +4,7 @@ import { applyCompositionPlan } from './composition-applicator';
 import { applyForms, arabicFormRules, familyRoot } from './arabic-forms';
 import { ccmpDecomposition, ccmpShellNames } from './ccmp-shells';
 import {
+    expandFormSequence,
     planArabicConversion,
     planExistingConversion,
     type ArabicConversionFamily,
@@ -128,7 +129,7 @@ export async function loadCompositionOffer(
         decomposition: (name) => rules.get(name) || []
     });
     for (const root of roots) {
-        if (!isArabicRoot(font, root)) {
+        if (!isFormFamily(font, root)) {
             continue;
         }
         const family = arabicFamily(font, root);
@@ -156,7 +157,7 @@ export async function convertSelectedGlyphs(
     const roots = [
         ...new Set(names.map((name) => familyRoot(name, font) || name))
     ];
-    const arabic = roots.filter((name) => isArabicRoot(font, name));
+    const arabic = roots.filter((name) => isFormFamily(font, name));
     const latin = roots.filter((name) => !arabic.includes(name));
     const latinPlan = planExistingConversion(
         latin.map((name) => ({
@@ -182,16 +183,21 @@ export async function convertSelectedGlyphs(
     return plan.kept;
 }
 
-function isArabicRoot(
+function isFormFamily(
     font: { findGlyph(name: string): { codepoints?: number[] } | undefined },
     name: string
 ): boolean {
     const codepoint = font.findGlyph(name)?.codepoints?.[0];
-    return (
+    if (
         name.endsWith('-ar') ||
         (typeof codepoint === 'number' &&
             codepoint >= 0x0600 &&
             codepoint <= 0x08ff)
+    ) {
+        return true;
+    }
+    return (['init', 'medi', 'fina'] as const).some((position) =>
+        Boolean(font.findGlyph(`${name}.${position}`))
     );
 }
 
@@ -212,48 +218,64 @@ function arabicFamily(
     if (isol.length) {
         sequences.isol = isol;
     }
+    const hasGlyph = (token: string) => Boolean(font.findGlyph(token));
     let missing: string | null = null;
     for (const position of ['init', 'medi', 'fina'] as const) {
         const positionalName = `${name}.${position}`;
         const components = glyphComponentNames(font.findGlyph(positionalName));
         const rule = formRules.get(position)?.get(name) || [];
-        if (components.length >= 2) {
+        if (components.length && font.findGlyph(positionalName)) {
             sequences[position] = components;
         } else if (rule.length) {
             sequences[position] = rule;
         } else if (sequences.isol) {
-            const applied = applyForms(sequences.isol, position, formRules);
-            if (applied.length) {
-                sequences[position] = applied;
+            const expanded = expandFormSequence(
+                sequences.isol,
+                position,
+                hasGlyph
+            );
+            if (expanded.join(' ') !== sequences.isol.join(' ')) {
+                sequences[position] = expanded;
+            } else {
+                const applied = applyForms(sequences.isol, position, formRules);
+                if (applied.join(' ') !== sequences.isol.join(' ')) {
+                    sequences[position] = applied;
+                }
             }
         }
         if (
-            sequences[position]?.some((token) => !font.findGlyph(token)) &&
+            sequences[position]?.some((token) => !hasGlyph(token)) &&
             !missing
         ) {
             missing =
-                sequences[position].find((token) => !font.findGlyph(token)) ||
-                null;
+                sequences[position].find((token) => !hasGlyph(token)) || null;
         }
     }
+    const members = (['init', 'medi', 'fina'] as const)
+        .map((position) => `${name}.${position}`)
+        .filter((positional) => hasGlyph(positional));
     const chain =
         Boolean(sequences.isol) &&
         (['init', 'medi', 'fina'] as const).every((position) => {
             if (!sequences[position]) {
                 return true;
             }
-            return (
-                applyForms(sequences.isol, position, formRules).join(' ') ===
-                sequences[position].join(' ')
-            );
+            const target = sequences[position].join(' ');
+            const expanded = expandFormSequence(
+                sequences.isol,
+                position,
+                hasGlyph
+            ).join(' ');
+            const applied = applyForms(
+                sequences.isol,
+                position,
+                formRules
+            ).join(' ');
+            return expanded === target || applied === target;
         });
     const pinned: string[] = [];
-    for (const [position, sequence] of Object.entries(sequences)) {
-        if (position === 'isol' || sequence.length < 2) {
-            continue;
-        }
-        const positional = `${name}.${position}`;
-        if (!font.findGlyph(positional) || !font.preflightDeleteGlyphs) {
+    for (const positional of members) {
+        if (!font.preflightDeleteGlyphs) {
             continue;
         }
         const preflight = font.preflightDeleteGlyphs([positional]);
@@ -292,7 +314,7 @@ function arabicFamily(
             pinned.push(positional);
         }
     }
-    return { name, sequences, chain, pinned, missing };
+    return { name, sequences, chain, pinned, missing, members };
 }
 
 function mergePlans(

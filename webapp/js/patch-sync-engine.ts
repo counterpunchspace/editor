@@ -10049,7 +10049,11 @@ export class PatchSyncEngine {
             glyphSnapshot,
             existingGlyphSnapshot
         ) as Record<string, unknown>;
-
+        if (!Object.prototype.hasOwnProperty.call(glyphJson, 'category')) {
+            glyphJson.category =
+                (existingGlyphSnapshot as { category?: unknown } | undefined)
+                    ?.category || 'Base';
+        }
         for (const [gk, gv] of Object.entries(glyphJson)) {
             if (gk === 'layers' && Array.isArray(gv)) {
                 let layersMap = glyphMap.get('layers') as

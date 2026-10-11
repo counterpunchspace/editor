@@ -114,6 +114,38 @@ json.dumps(provider.anchors(${JSON.stringify(token)}) if provider else [])
         return JSON.parse(String(result)) as string[];
     }
 
+    async drawings(names: readonly string[]): Promise<
+        Record<
+            string,
+            {
+                upm: number;
+                width: number;
+                paths: Array<{
+                    closed: boolean;
+                    nodes: Array<{
+                        x: number;
+                        y: number;
+                        nodetype: string;
+                        smooth?: boolean;
+                    }>;
+                }>;
+                anchors: Array<{ name: string; x: number; y: number }>;
+            }
+        >
+    > {
+        if (!names.length) {
+            return {};
+        }
+        await this.ensureReady();
+        const result = await runHostPythonAsync(`
+import json, builtins
+${ENSURE_COMPOSITION_PROVIDERS}
+provider = builtins._cp_composition_providers.get("arabic")
+json.dumps(provider.drawings(json.loads(${JSON.stringify(JSON.stringify(names))})) if provider else {})
+`);
+        return JSON.parse(String(result));
+    }
+
     async anchorPositions(requests: unknown[]): Promise<
         Array<{
             glyph_name: string;
@@ -125,8 +157,30 @@ json.dumps(provider.anchors(${JSON.stringify(token)}) if provider else [])
         const result = await runHostPythonAsync(`
 import json, builtins
 ${ENSURE_COMPOSITION_PROVIDERS}
-provider = builtins._cp_composition_providers.get("arabic") or builtins._cp_composition_providers.get("latin")
-json.dumps(provider.anchor_positions(json.loads(${JSON.stringify(JSON.stringify(requests))})) if provider else [])
+requests = json.loads(${JSON.stringify(JSON.stringify(requests))})
+arabic = builtins._cp_composition_providers.get("arabic")
+latin = builtins._cp_composition_providers.get("latin")
+rows = arabic.anchor_positions(requests) if arabic else []
+missing = []
+missing_at = []
+if not rows:
+    rows = [{} for _ in requests]
+for index, row in enumerate(rows):
+    if not row.get("known"):
+        missing.append(requests[index])
+        missing_at.append(index)
+if missing and latin:
+    latin_rows = latin.anchor_positions(missing)
+    for index, row in zip(missing_at, latin_rows):
+        rows[index] = row
+json.dumps([
+    {
+        "glyph_name": row.get("glyph_name"),
+        "master_id": row.get("master_id"),
+        "positions": row.get("positions") or {},
+    }
+    for row in rows
+])
 `);
         return JSON.parse(String(result));
     }

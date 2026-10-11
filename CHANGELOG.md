@@ -1,5 +1,6 @@
 # Unreleased
 
+- **Arabic composition font**: The Arabic language pack ships a ccmp-only Babelfont. Add Glyphs can add a character empty, as components, or as ccmp. Components and ccmp copy example outlines and anchors from that font onto the skeletons and dots. Converting to components reads the font's own ccmp rules and builds init/medi/fina glyphs from them; converting back to ccmp removes that character's presentation forms, including ones that were not selected, and keeps a form another glyph still uses.
 - **Rename Glyph(s) rewire**: The rename dialog can point component bases and metrics keys inside the renamed glyphs at the counterparts produced by the same search and replace. The option appears only when at least one such reference exists, and the preview lists them. The rewires share the rename's undo step.
 - **Latin small caps**: Adding a `.sc` glyph writes `smcp` for the matching Latin lowercase letter and `c2sc` for the uppercase letter whose Unicode lowercase maps to it. Deleting the small cap removes those automatic rules.
 - **Languagesystems and aalt**: `feature:languagesystems` runs after the other feature generators and writes the `languagesystem` statements used by the feature code, including `DFLT dflt` when any system is used. `feature:aalt` references every other feature and updates when a feature block is added or removed.

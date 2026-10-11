@@ -4,6 +4,15 @@ const console = new Logger('GlyphData');
 
 const GLYPH_DATA_URL = '/data/glyph-data.json.gz';
 
+/** Hex digits from a codepoint query, without the leading zeros in `U+08A8`. */
+export function codepointQuery(normalized: string): string {
+    const hex = normalized.replace(/^(?:u\+|0x)/, '');
+    if (!/^[0-9a-f]+$/.test(hex)) {
+        return hex;
+    }
+    return hex.replace(/^0+/, '') || '0';
+}
+
 export interface GlyphData {
     codepoint: number;
     glyph_name: string;
@@ -81,7 +90,7 @@ export class GlyphDataIndex {
             return this.records.slice(0, limit);
         }
 
-        const hex = normalized.replace(/^u\+|^0x/, '');
+        const hex = codepointQuery(normalized);
         const queryWords = normalized.split(/\s+/).filter(Boolean);
         const suffixSegment = normalized.startsWith('-')
             ? normalized

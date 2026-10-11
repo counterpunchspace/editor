@@ -5093,6 +5093,37 @@ class FontManager {
                 return false;
             }
 
+            const bridge = window.patchSyncEngine as
+                | {
+                      getYValue?: (path: Array<string | number>) => unknown;
+                      glyphDocumentIdForName?: (
+                          glyphName: string
+                      ) => string | null;
+                  }
+                | undefined;
+            if (
+                documentId?.startsWith('glyph:') &&
+                changedGlyphs.length > 0 &&
+                changedGlyphs.every((glyphName) => {
+                    const liveDocumentId =
+                        bridge?.glyphDocumentIdForName?.(glyphName);
+                    const glyphValue = bridge?.getYValue?.([
+                        'glyphs',
+                        glyphName
+                    ]);
+                    const liveHasCategory =
+                        glyphValue instanceof Y.Map &&
+                        glyphValue.get('category') != null;
+                    return liveDocumentId !== documentId || !liveHasCategory;
+                })
+            ) {
+                // A glyph delete clears the map before this packet is sent, so the
+                // update has no category. The worker rejects that shell and
+                // drops the whole font. Skip it; the bridge has already
+                // removed the glyph.
+                return true;
+            }
+
             try {
                 const response = await fontCompilation.sendMessage({
                     type: 'applyYjsUpdate',
