@@ -261,9 +261,28 @@ jobs:
                   path: webapp/test-results
                   if-no-files-found: ignore
 
-    # Publishes the attestation only when every e2e shard passed.
-    cloud-collab-e2e-result:
+    cloud-collab-staging-leftovers:
         needs: cloud-collab-e2e
+        if: always() && needs.cloud-collab-e2e.result != 'cancelled'
+        runs-on: ubuntu-latest
+        steps:
+            - name: Checkout editor
+              uses: actions/checkout@v4
+
+            - name: Set up Node.js
+              uses: actions/setup-node@v4
+              with:
+                  node-version: "24"
+
+            - name: Remove staging e2e data and fail if any was left
+              env:
+                  CLOUD_COLLAB_WEBSITE_URL: https://staging.counterpunch.space
+                  E2E_OPERATOR_TOKEN: ${{ secrets.E2E_OPERATOR_TOKEN }}
+              run: node scripts/staging-e2e-leftovers.mjs
+
+    # Publishes the attestation only when every e2e shard passed and staging is clean.
+    cloud-collab-e2e-result:
+        needs: [cloud-collab-e2e, cloud-collab-staging-leftovers]
         runs-on: ubuntu-latest
         steps:
             - name: Download shard trio
