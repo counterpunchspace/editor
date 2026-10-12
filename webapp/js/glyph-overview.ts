@@ -27,6 +27,7 @@ import {
 } from './tippy-utils';
 import { isOverviewFollowStackScrollEnabled } from './glyph-overview-follow-stack-pref';
 import { isCcmpShellGlyph } from './language-packs/ccmp-shells';
+import { PATH_FILL_OPACITY_CHANGED_EVENT } from './path-fill-opacity-pref';
 import {
     conversionMenuLabel,
     type CompositionOffer
@@ -466,6 +467,12 @@ class GlyphOverview {
             this.refreshCcmpTiles()
         );
         window.addEventListener('placeholderOutlinesReady', () => {
+            if (!this.outlinePaintAllowed) {
+                return;
+            }
+            void this.renderGlyphOutlines(this.currentLocation);
+        });
+        window.addEventListener(PATH_FILL_OPACITY_CHANGED_EVENT, () => {
             if (!this.outlinePaintAllowed) {
                 return;
             }

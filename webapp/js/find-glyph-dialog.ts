@@ -1,4 +1,5 @@
 import { fastGlyphTileRenderer } from './glyph-tile-renderer-fast';
+import { PATH_FILL_OPACITY_CHANGED_EVENT } from './path-fill-opacity-pref';
 import {
     compareGlyphsBySearchRelevance,
     glyphMatchesSearchTerms,
@@ -171,6 +172,9 @@ export class FindGlyphDialog {
 
         this.buildContent();
         this.registerEvents();
+        window.addEventListener(PATH_FILL_OPACITY_CHANGED_EVENT, () => {
+            this.drawCachedPreviews();
+        });
     }
 
     /**

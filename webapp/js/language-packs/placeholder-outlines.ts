@@ -3,8 +3,12 @@ import {
     buildGlyphPathFromNodes,
     normalizeAffineTransform
 } from '../glyph-path-geometry';
+import { getPathFillOpacity } from '../path-fill-opacity-pref';
+import APP_SETTINGS from '../settings';
 import type { GlyphDrawing } from './composition-planner';
 import { ccmpDecomposition } from './ccmp-shells';
+
+const PLACEHOLDER_RED = '196, 48, 48';
 
 const drawings = new Map<string, GlyphDrawing>();
 const hinted = new Set<string>();
@@ -35,8 +39,11 @@ type FontLayer = {
     }>;
 };
 
+export type PlaceholderEmphasis = 'rest' | 'hover' | 'active';
+
 type PlaceholderPaintOptions = {
     depth?: number;
+    emphasis?: PlaceholderEmphasis;
     paintDecomposed?: (parts: string[]) => boolean;
 };
 
@@ -201,7 +208,8 @@ export function placeholderCenteringX(name: string, width: number): number {
     return width > 0 ? width / 2 : 0;
 }
 
-function ccmpPlaceholderParts(name: string): string[] {
+/** ccmp pieces to draw when this glyph has no sample outline of its own. */
+export function placeholderCcmpParts(name: string): string[] {
     if (drawings.get(name)?.paths?.length) {
         return [];
     }
@@ -212,11 +220,53 @@ function ccmpPlaceholderParts(name: string): string[] {
     return parts;
 }
 
-function paintLeaf(ctx: CanvasRenderingContext2D, name: string): void {
+/** Screen-pixel size in the context's current font space. */
+function screenPixel(ctx: CanvasRenderingContext2D): number {
+    const transform = ctx.getTransform();
+    const scale = Math.hypot(transform.a, transform.b);
+    return scale > 0 ? 1 / scale : 1;
+}
+
+function placeholderFillAlpha(emphasis: PlaceholderEmphasis): number {
+    const slider = getPathFillOpacity();
+    if (emphasis === 'active') {
+        return Math.min(0.12, slider + 0.04);
+    }
+    if (emphasis === 'hover') {
+        return Math.min(0.12, slider * 2 + 0.02);
+    }
+    return slider;
+}
+
+function applyPlaceholderInk(
+    ctx: CanvasRenderingContext2D,
+    emphasis: PlaceholderEmphasis
+): void {
+    const pixel = screenPixel(ctx);
+    const dash = APP_SETTINGS.OUTLINE_EDITOR.SUBTRACTION_OUTLINE_DASH;
+    const strokePx =
+        emphasis === 'active'
+            ? 2
+            : APP_SETTINGS.OUTLINE_EDITOR.OUTLINE_STROKE_WIDTH;
+    ctx.fillStyle = `rgba(${PLACEHOLDER_RED}, ${placeholderFillAlpha(emphasis)})`;
+    ctx.strokeStyle =
+        emphasis === 'hover'
+            ? `rgba(160, 28, 28, 1)`
+            : `rgba(${PLACEHOLDER_RED}, ${emphasis === 'rest' ? 0.85 : 1})`;
+    ctx.lineWidth = strokePx * pixel;
+    ctx.setLineDash([dash[0] * pixel, dash[1] * pixel]);
+    ctx.lineJoin = 'round';
+    ctx.lineCap = 'butt';
+}
+
+function paintLeaf(
+    ctx: CanvasRenderingContext2D,
+    name: string,
+    emphasis: PlaceholderEmphasis
+): void {
     const drawing = drawings.get(name);
     const upm = fontUpm();
     ctx.save();
-    ctx.fillStyle = 'rgba(196, 48, 48, 0.45)';
     if (drawing?.paths?.length) {
         const scale = upm / (drawing.upm || upm || 1000);
         ctx.scale(scale, scale);
@@ -234,7 +284,9 @@ function paintLeaf(ctx: CanvasRenderingContext2D, name: string): void {
             hasContour = true;
         }
         if (hasContour) {
+            applyPlaceholderInk(ctx, emphasis);
             ctx.fill(built, 'nonzero');
+            ctx.stroke(built);
         }
         ctx.restore();
         return;
@@ -249,16 +301,20 @@ function paintLeaf(ctx: CanvasRenderingContext2D, name: string): void {
         return;
     }
     ctx.scale(1, -1);
+    applyPlaceholderInk(ctx, emphasis);
     ctx.font = `${upm}px ui-sans-serif, system-ui, sans-serif`;
     ctx.textBaseline = 'alphabetic';
     const markAnchor = (glyphLayer(name)?.anchors || []).find((anchor) =>
         anchor.name?.startsWith('_')
     );
+    const text = String.fromCodePoint(codepoint);
     if (markAnchor && Number.isFinite(markAnchor.x)) {
         ctx.textAlign = 'center';
-        ctx.fillText(String.fromCodePoint(codepoint), markAnchor.x || 0, 0);
+        ctx.fillText(text, markAnchor.x || 0, 0);
+        ctx.strokeText(text, markAnchor.x || 0, 0);
     } else {
-        ctx.fillText(String.fromCodePoint(codepoint), 0, 0);
+        ctx.fillText(text, 0, 0);
+        ctx.strokeText(text, 0, 0);
     }
     ctx.restore();
 }
@@ -298,10 +354,82 @@ export function paintPlaceholderGlyph(
         return;
     }
     if (depth === 0) {
-        const parts = ccmpPlaceholderParts(name);
+        const parts = placeholderCcmpParts(name);
         if (parts.length > 1 && options.paintDecomposed?.(parts)) {
             return;
         }
     }
-    paintLeaf(ctx, name);
+    paintLeaf(ctx, name, options.emphasis ?? 'rest');
+}
+
+/**
+ * Sample outline in font units, with component transforms included.
+ * Null when this glyph has real ink, or no vector sample is loaded yet.
+ */
+export function buildPlaceholderPath(name: string, depth = 0): Path2D | null {
+    if (!name || name === '.notdef' || depth > 5) {
+        return null;
+    }
+    if (!fontModel()?.findGlyph?.(name) || glyphHasPathInk(name)) {
+        return null;
+    }
+    const components = modelComponents(name);
+    if (components.length) {
+        const built = new Path2D();
+        let hasChild = false;
+        for (const component of components) {
+            const child = buildPlaceholderPath(component.name, depth + 1);
+            if (!child) {
+                continue;
+            }
+            const transform = component.transform;
+            built.addPath(
+                child,
+                new DOMMatrix([
+                    transform[0],
+                    transform[1],
+                    transform[2],
+                    transform[3],
+                    transform[4],
+                    transform[5]
+                ])
+            );
+            hasChild = true;
+        }
+        return hasChild ? built : null;
+    }
+    const drawing = drawings.get(name);
+    if (!drawing?.paths?.length) {
+        return null;
+    }
+    const upm = fontUpm();
+    const scale = upm / (drawing.upm || upm || 1000);
+    const built = new Path2D();
+    let hasContour = false;
+    for (const path of drawing.paths) {
+        if (!path.nodes?.length) {
+            continue;
+        }
+        const contour = new Path2D();
+        buildGlyphPathFromNodes(path.nodes as Babelfont.Node[], contour);
+        if (path.closed !== false) {
+            contour.closePath();
+        }
+        built.addPath(contour, new DOMMatrix([scale, 0, 0, scale, 0, 0]));
+        hasContour = true;
+    }
+    return hasContour ? built : null;
+}
+
+/** True when a vector sample outline can be hit, including ccmp pieces. */
+export function placeholderHasVectorOutline(name: string, depth = 0): boolean {
+    if (!name || name === '.notdef' || depth > 5) {
+        return false;
+    }
+    if (buildPlaceholderPath(name)) {
+        return true;
+    }
+    return placeholderCcmpParts(name).some(
+        (part) => part !== name && placeholderHasVectorOutline(part, depth + 1)
+    );
 }

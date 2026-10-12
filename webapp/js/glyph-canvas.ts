@@ -3965,14 +3965,56 @@ class GlyphCanvas {
             }
         }
 
-        // Pass 2: empty glyphs (no outlines/components to draw) use the full
-        // advance width × metrics band so they can still be double-clicked.
+        // Pass 1b: empty glyphs that have sample outlines hit those outlines,
+        // not the whole advance. A mark can then win over the base it sits on.
+        if (foundIndex < 0 && this.renderer) {
+            for (let i = 0; i < this.textRunEditor!.shapedGlyphs.length; i++) {
+                if (!this.isShapedGlyphVisuallyEmpty(i)) {
+                    continue;
+                }
+                const glyph = this.textRunEditor!.shapedGlyphs[i];
+                const name =
+                    glyph.explicitGlyphName ||
+                    this.textRunEditor!.glyphNameBuffer[i] ||
+                    '';
+                if (!name || !this.renderer.hasPlaceholderOutline(name)) {
+                    continue;
+                }
+                const pos = this.textRunEditor!._getGlyphPosition(i);
+                const x = pos.xPosition + (glyph.dx || 0);
+                if (
+                    this.renderer.hitTestPlaceholderOutline(
+                        name,
+                        x,
+                        pos.yOffset,
+                        this.mouseX,
+                        this.mouseY
+                    )
+                ) {
+                    foundIndex = i;
+                    break;
+                }
+            }
+        }
+
+        // Pass 2: glyphs with no outlines at all still use the full advance
+        // width × metrics band so they can be double-clicked.
         if (foundIndex < 0) {
             for (let i = 0; i < this.textRunEditor!.shapedGlyphs.length; i++) {
                 const glyph = this.textRunEditor!.shapedGlyphs[i];
                 const xAdvance = glyph.ax || 0;
                 const pos = this.textRunEditor!._getGlyphPosition(i);
                 const x = pos.xPosition + (glyph.dx || 0);
+                const placeholderName =
+                    glyph.explicitGlyphName ||
+                    this.textRunEditor!.glyphNameBuffer[i] ||
+                    '';
+                if (
+                    placeholderName &&
+                    this.renderer?.hasPlaceholderOutline(placeholderName)
+                ) {
+                    continue;
+                }
 
                 if (this.isShapedGlyphVisuallyEmpty(i) && xAdvance > 0) {
                     const yMin = metricsBand.lowest + pos.yOffset;

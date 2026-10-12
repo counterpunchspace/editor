@@ -10,7 +10,13 @@ import { Logger } from '../logger';
 import { getPathFillOpacity } from '../path-fill-opacity-pref';
 import { get_glyph_name } from '../../wasm-dist/babelfont_fontc_web';
 import { isCcmpShellGlyph } from '../language-packs/ccmp-shells';
-import { paintPlaceholderGlyph } from '../language-packs/placeholder-outlines';
+import {
+    buildPlaceholderPath,
+    paintPlaceholderGlyph,
+    placeholderCcmpParts,
+    placeholderHasVectorOutline,
+    type PlaceholderEmphasis
+} from '../language-packs/placeholder-outlines';
 import {
     normalizeAffineTransform,
     transformPointWithAffine as applyAffineToPoint,
@@ -967,9 +973,14 @@ export class GlyphCanvasRenderer {
                     explicitGlyphName ||
                     this.textRunEditor.glyphNameBuffer[glyphIndex];
                 if (placeholderName && !skipHarfBuzz) {
+                    const emphasis: PlaceholderEmphasis = isSelected
+                        ? 'active'
+                        : isHovered
+                          ? 'hover'
+                          : 'rest';
                     this.ctx.save();
                     this.ctx.translate(x, y);
-                    this.drawPlaceholderOverlay(placeholderName);
+                    this.drawPlaceholderOverlay(placeholderName, emphasis);
                     this.ctx.restore();
                 }
 
@@ -2557,22 +2568,166 @@ export class GlyphCanvasRenderer {
         );
     }
 
-    private drawPlaceholderOverlay(name: string): void {
+    private drawPlaceholderOverlay(
+        name: string,
+        emphasis: PlaceholderEmphasis = 'rest'
+    ): void {
         paintPlaceholderGlyph(this.ctx, name, {
+            emphasis,
             paintDecomposed: (parts) =>
-                this.paintDecomposedPlaceholders(name, parts)
+                this.paintDecomposedPlaceholders(name, parts, emphasis)
         });
+    }
+
+    /**
+     * Hit-test a sample outline the same way as compiled ink: nonzero fill
+     * plus a screen-pixel stroke tolerance. ccmp pieces use HarfBuzz positions.
+     */
+    hitTestPlaceholderOutline(
+        name: string,
+        originX: number,
+        originY: number,
+        mouseX: number,
+        mouseY: number
+    ): boolean {
+        if (!name || !this.ctx || !this.viewportManager) {
+            return false;
+        }
+        const transform = this.viewportManager.getTransformMatrix();
+        this.ctx.save();
+        this.ctx.setTransform(
+            transform.a,
+            transform.b,
+            transform.c,
+            transform.d,
+            transform.e,
+            transform.f
+        );
+        this.ctx.translate(originX, originY);
+        const hit = this.hitTestPlaceholderAtTransform(name, mouseX, mouseY, 0);
+        this.ctx.restore();
+        return hit;
+    }
+
+    hasPlaceholderOutline(name: string): boolean {
+        return placeholderHasVectorOutline(name);
+    }
+
+    private hitTestPlaceholderAtTransform(
+        name: string,
+        mouseX: number,
+        mouseY: number,
+        depth: number
+    ): boolean {
+        if (!name || name === '.notdef' || depth > 5) {
+            return false;
+        }
+        const parts = placeholderCcmpParts(name);
+        if (parts.length > 1) {
+            const positioned = this.positionDecomposedPlaceholders(name, parts);
+            if (
+                positioned &&
+                positioned.length > 1 &&
+                positioned.some((item) => item.name && item.name !== name)
+            ) {
+                for (const item of positioned) {
+                    if (
+                        !item.name ||
+                        item.name === '.notdef' ||
+                        item.name === name
+                    ) {
+                        continue;
+                    }
+                    this.ctx.save();
+                    this.ctx.translate(item.x, item.y);
+                    const hit =
+                        this.pointInPlaceholderPath(
+                            item.name,
+                            mouseX,
+                            mouseY
+                        ) ||
+                        this.hitTestPlaceholderAtTransform(
+                            item.name,
+                            mouseX,
+                            mouseY,
+                            depth + 1
+                        );
+                    this.ctx.restore();
+                    if (hit) {
+                        return true;
+                    }
+                }
+                return false;
+            }
+        }
+        return this.pointInPlaceholderPath(name, mouseX, mouseY);
+    }
+
+    private pointInPlaceholderPath(
+        name: string,
+        mouseX: number,
+        mouseY: number
+    ): boolean {
+        const path = buildPlaceholderPath(name);
+        if (!path || !this.ctx || !this.viewportManager) {
+            return false;
+        }
+        this.ctx.save();
+        this.ctx.setLineDash([]);
+        this.ctx.lineWidth =
+            APP_SETTINGS.OUTLINE_EDITOR.HIT_TOLERANCE /
+            this.viewportManager.scale;
+        const hit =
+            this.ctx.isPointInPath(path, mouseX, mouseY) ||
+            this.ctx.isPointInStroke(path, mouseX, mouseY);
+        this.ctx.restore();
+        return hit;
     }
 
     private paintDecomposedPlaceholders(
         shellName: string,
-        parts: string[]
+        parts: string[],
+        emphasis: PlaceholderEmphasis = 'rest'
     ): boolean {
+        const positioned = this.positionDecomposedPlaceholders(
+            shellName,
+            parts
+        );
+        if (
+            !positioned ||
+            positioned.length < 2 ||
+            positioned.every((item) => item.name === shellName)
+        ) {
+            return false;
+        }
+        for (const item of positioned) {
+            if (
+                !item.name ||
+                item.name === '.notdef' ||
+                item.name === shellName
+            ) {
+                continue;
+            }
+            this.ctx.save();
+            this.ctx.translate(item.x, item.y);
+            paintPlaceholderGlyph(this.ctx, item.name, {
+                depth: 1,
+                emphasis
+            });
+            this.ctx.restore();
+        }
+        return true;
+    }
+
+    private positionDecomposedPlaceholders(
+        shellName: string,
+        parts: string[]
+    ): Array<{ name: string; x: number; y: number }> | null {
         const textRun = this.textRunEditor;
         const hb = textRun.hb;
         const hbFont = textRun.hbFont;
         if (!hb || !hbFont || parts.length < 2) {
-            return false;
+            return null;
         }
         const blob = textRun.shapingFontBlob || textRun.fontBlob;
         if (blob !== this.decomposedPlaceholderBlob) {
@@ -2597,7 +2752,7 @@ export class GlyphCanvasRenderer {
             for (const part of parts) {
                 const codepoint = font?.findGlyph?.(part)?.codepoints?.[0];
                 if (typeof codepoint !== 'number') {
-                    return false;
+                    return null;
                 }
                 codepoints.push(codepoint);
             }
@@ -2627,7 +2782,7 @@ export class GlyphCanvasRenderer {
                 glyphs = buffer.json();
             } catch {
                 buffer.destroy();
-                return false;
+                return null;
             }
             buffer.destroy();
             let pen = 0;
@@ -2650,31 +2805,13 @@ export class GlyphCanvasRenderer {
             });
             this.decomposedPlaceholderCache.set(cacheKey, positioned);
         }
-        if (
-            positioned.length < 2 ||
-            positioned.every((item) => item.name === shellName)
-        ) {
-            return false;
-        }
-        for (const item of positioned) {
-            if (
-                !item.name ||
-                item.name === '.notdef' ||
-                item.name === shellName
-            ) {
-                continue;
-            }
-            this.ctx.save();
-            this.ctx.translate(item.x, item.y);
-            paintPlaceholderGlyph(this.ctx, item.name, { depth: 1 });
-            this.ctx.restore();
-        }
-        return true;
+        return positioned;
     }
 
     private drawPlaceholderLayer(
         layerData: Babelfont.Layer | null | undefined,
-        name: string
+        name: string,
+        emphasis: PlaceholderEmphasis = 'rest'
     ): void {
         const components = (layerData?.shapes || []).filter(
             (shape): shape is Babelfont.Component => 'reference' in shape
@@ -2694,17 +2831,22 @@ export class GlyphCanvasRenderer {
                         (nested) => 'reference' in nested
                     )
                 ) {
-                    this.drawPlaceholderLayer(shape.layerData, shape.reference);
+                    this.drawPlaceholderLayer(
+                        shape.layerData,
+                        shape.reference,
+                        emphasis
+                    );
                 } else {
                     paintPlaceholderGlyph(this.ctx, shape.reference, {
-                        depth: 1
+                        depth: 1,
+                        emphasis
                     });
                 }
                 this.ctx.restore();
             }
             return;
         }
-        this.drawPlaceholderOverlay(name);
+        this.drawPlaceholderOverlay(name, emphasis);
     }
 
     private paintPlaceholderForSelectedGlyph(
@@ -2729,7 +2871,7 @@ export class GlyphCanvasRenderer {
                 transform[5]
             );
         }
-        this.drawPlaceholderLayer(layerData, name);
+        this.drawPlaceholderLayer(layerData, name, 'active');
         this.ctx.restore();
     }
 
@@ -2873,7 +3015,8 @@ export class GlyphCanvasRenderer {
         if (!this.layerHasPathInk(currentLayerData)) {
             this.drawPlaceholderLayer(
                 currentLayerData,
-                this.placeholderGlyphName()
+                this.placeholderGlyphName(),
+                'active'
             );
         }
 

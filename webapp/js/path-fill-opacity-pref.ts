@@ -1,5 +1,5 @@
 /**
- * Preference: opacity of editable outline fills and subtraction cutter fills.
+ * Preference: opacity of editable outline fills, placeholder fills, and subtraction cutter fills.
  * Default comes from APP_SETTINGS.OUTLINE_EDITOR.PATH_FILL_OPACITY.
  * Editing View → View menu owns the Fill slider.
  */
@@ -61,7 +61,7 @@ export function createPathFillOpacityMenuControl(options?: {
     const disabled = options?.disabled === true;
     const setting = document.createElement('div');
     setting.className = 'plugin-menu-setting plugin-menu-fill-setting';
-    setting.title = 'Opacity of outline and subtraction fills';
+    setting.title = 'Opacity of outline, placeholder, and subtraction fills';
     if (disabled) {
         setting.classList.add('plugin-menu-item-disabled');
         setting.setAttribute('aria-disabled', 'true');

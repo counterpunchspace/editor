@@ -127,9 +127,35 @@ export async function cleanupCloudCollabUsers(
             failOnStatusCode: false
         }
     );
-    if (!response.ok() && response.status() !== 404) {
+    if (!response.ok()) {
+        const detail = await response.text();
+        if (
+            process.env.CLOUD_COLLAB_REMOTE === '1' ||
+            response.status() !== 404
+        ) {
+            throw new Error(
+                `local-cloud-cleanup failed (${response.status()}): ${detail}`
+            );
+        }
         console.warn(
-            `local-cloud-cleanup failed (${response.status()}): ${await response.text()}`
+            `local-cloud-cleanup failed (${response.status()}): ${detail}`
+        );
+        return;
+    }
+    const body = (await response.json()) as {
+        ok?: boolean;
+        leftovers?: Record<string, unknown>;
+    };
+    const leftoverCount = body.leftovers
+        ? Object.values(body.leftovers).reduce<number>((sum, value) => {
+              if (typeof value === 'number') return sum + value;
+              if (Array.isArray(value)) return sum + value.length;
+              return sum;
+          }, 0)
+        : 0;
+    if (body.ok === false || leftoverCount > 0) {
+        throw new Error(
+            `local-cloud-cleanup left data behind: ${JSON.stringify(body)}`
         );
     }
 }
