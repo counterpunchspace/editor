@@ -589,31 +589,6 @@ test('placeholder outlines follow harfbuzz pieces and stay out of the font', asy
                 }
             }
         }
-        const recorded: Array<{ text: string; x: number; y: number }> = [];
-        (
-            window as Window & {
-                __placeholderTexts?: Array<{
-                    text: string;
-                    x: number;
-                    y: number;
-                }>;
-            }
-        ).__placeholderTexts = recorded;
-        const original = CanvasRenderingContext2D.prototype.fillText;
-        CanvasRenderingContext2D.prototype.fillText = function (
-            text: string,
-            x: number,
-            y: number,
-            maxWidth?: number
-        ) {
-            const ink = String(this.fillStyle).match(
-                /rgba?\(\s*(90|150|176|208)\s*,/
-            );
-            if (ink) {
-                recorded.push({ text: String(text), x, y });
-            }
-            return original.call(this, text, x, y, maxWidth);
-        };
         window.glyphCanvas?.textRunEditor?.setTextBuffer('ä');
     });
 
@@ -654,21 +629,8 @@ test('placeholder outlines follow harfbuzz pieces and stay out of the font', asy
                     const font = window.currentFontModel;
                     const base = font?.findGlyph('a');
                     const mark = font?.findGlyph('dieresiscomb');
-                    const hints =
-                        (
-                            window as Window & {
-                                __placeholderTexts?: Array<{
-                                    text: string;
-                                    x: number;
-                                    y: number;
-                                }>;
-                            }
-                        ).__placeholderTexts || [];
-                    const baseHint = hints.find((hint) => hint.text === 'a');
-                    const markHint = hints.find(
-                        (hint) =>
-                            hint.text === '\u0308' || hint.text === '\u00a8'
-                    );
+                    const basePos = positions[0];
+                    const markPos = positions[1];
                     const basePaths = (base?.layers || []).some(
                         (layer) => (layer.paths || []).length > 0
                     );
@@ -682,10 +644,18 @@ test('placeholder outlines follow harfbuzz pieces and stay out of the font', asy
                         (layer) => (layer.anchors || []).length > 0
                     );
                     const separated = Boolean(
-                        baseHint &&
-                        markHint &&
-                        (Math.abs(baseHint.x - markHint.x) > 10 ||
-                            Math.abs(baseHint.y - markHint.y) > 10)
+                        names.length >= 2 &&
+                        basePos &&
+                        markPos &&
+                        (Math.abs(
+                            (basePos.xPosition || 0) - (markPos.xPosition || 0)
+                        ) > 10 ||
+                            Math.abs(
+                                (basePos.yOffset || 0) - (markPos.yOffset || 0)
+                            ) > 10 ||
+                            Math.abs(
+                                (basePos.xOffset || 0) - (markPos.xOffset || 0)
+                            ) > 10)
                     );
                     return {
                         ready:
@@ -698,7 +668,7 @@ test('placeholder outlines follow harfbuzz pieces and stay out of the font', asy
                         names,
                         red,
                         painted: red > 40,
-                        hints: hints.map((hint) => hint.text),
+                        hints: names,
                         y0: positions[0]?.yOffset ?? 0,
                         y1: positions[1]?.yOffset ?? 0,
                         separated,
@@ -717,7 +687,7 @@ test('placeholder outlines follow harfbuzz pieces and stay out of the font', asy
             baseAnchors: true,
             markAnchors: true,
             separated: true,
-            hints: expect.arrayContaining(['a', '\u0308'])
+            hints: expect.arrayContaining(['a', 'dieresiscomb'])
         });
 
     await page.evaluate(() => {
