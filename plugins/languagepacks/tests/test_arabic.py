@@ -9,7 +9,7 @@ ARABIC = Path(__file__).resolve().parents[1] / "arabic"
 sys.path.insert(0, str(ARABIC))
 sys.path.insert(0, str(ARABIC / "tools"))
 
-from build_arabic_data import UnmappedMark, build, parse_substitutions
+from build_arabic_data import FUSTAT, UnmappedMark, build, parse_substitutions
 from counterpunch_arabic.charset import ArabicCharacterSetProvider
 from counterpunch_arabic.composition import ArabicCompositionProvider
 from counterpunch_arabic.font_source import ArabicFontSource
@@ -150,6 +150,10 @@ def test_data_identities_and_pack_names():
     assert ghunna_fina and ghunna_fina["paths"]
 
 
+@pytest.mark.skipif(
+    not FUSTAT.is_file(),
+    reason="Fustat source lives in the local gfsources checkout",
+)
 def test_sample_font_recipes_match_fustat_positions():
     """Every Arabic letter's recipe is the Fustat shaping of that letter.
 
