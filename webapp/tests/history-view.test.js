@@ -660,6 +660,70 @@ describe('history view', () => {
         expect(editB.className).toContain('history-entry-cmdz-unreachable');
     });
 
+    test('glyph packets that share a history item render as one commit', () => {
+        resetLogCounter();
+        const collaborationItems = [
+            baseItem({
+                id: 'message-c',
+                timestamp: 1000,
+                summary: 'Add glyphs',
+                label: 'Add glyphs',
+                historyItemId: 'history-add-glyphs',
+                historyAction: 'change',
+                undoScope: 'layer',
+                originatingGlyphName: 'A',
+                originatingLayerId: 'layer-1',
+                updateByteLength: 16,
+                changedGlyphNames: ['A', 'C'],
+                changedLayerIds: ['layer-1'],
+                workerReplayTargets: [{ glyphName: 'A', layerId: 'layer-1' }],
+                changes: [{ op: 'add', path: 'glyphs.C' }]
+            }),
+            baseItem({
+                id: 'message-d',
+                timestamp: 1001,
+                summary: 'Add glyphs',
+                label: 'Add glyphs',
+                historyItemId: 'history-add-glyphs',
+                historyAction: 'change',
+                undoScope: 'layer',
+                originatingGlyphName: 'A',
+                originatingLayerId: 'layer-1',
+                updateByteLength: 16,
+                changedGlyphNames: ['D'],
+                changedLayerIds: ['layer-1'],
+                workerReplayTargets: [{ glyphName: 'A', layerId: 'layer-1' }],
+                changes: [{ op: 'add', path: 'glyphs.D' }]
+            })
+        ];
+        const changeLogEntries = [
+            createLogEntry({
+                timestamp: 1000,
+                windowId: 'main-1',
+                windowRoleLabel: 'main',
+                historyItemId: 'history-add-glyphs',
+                historyAction: 'change',
+                transactionLabel: 'Add glyphs',
+                transactionId: 1,
+                op: 'add',
+                undoScope: 'layer',
+                path: 'glyphs.A:layers.layer-1:width',
+                oldValue: 600,
+                newValue: 700,
+                originatingGlyphName: 'A',
+                originatingLayerId: 'layer-1'
+            })
+        ];
+
+        mountHistoryView({
+            collaborationItems,
+            changeLogEntries
+        });
+
+        expect(document.querySelectorAll('.history-entry')).toHaveLength(1);
+        expect(document.body.textContent).toContain('Add glyphs');
+    });
+
     test('hidden-run marker enables the show-unreachable toggle', () => {
         resetLogCounter();
 

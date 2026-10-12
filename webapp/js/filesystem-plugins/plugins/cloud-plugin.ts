@@ -2391,6 +2391,18 @@ export class CloudPlugin extends FilesystemPlugin {
         if (this._isSyncingCatalog) {
             return;
         }
+        if (window.patchSyncEngine?.deferCatalogProjection) {
+            window.patchSyncEngine.noteDeferredCatalogOwner?.(this);
+            return;
+        }
+        this._flushCatalogProjection();
+    }
+
+    /** Writes the catalog queued while a multi-glyph commit was emitting. */
+    flushDeferredCatalogProjection(): void {
+        if (window.patchSyncEngine?.deferCatalogProjection) {
+            return;
+        }
         this._flushCatalogProjection();
     }
 

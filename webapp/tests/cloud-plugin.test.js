@@ -2848,6 +2848,49 @@ describe('CloudPlugin glyph catch-up from core revision map', () => {
         });
     });
 
+    test('a multi-glyph add projects the catalog once', () => {
+        const plugin = new CloudPlugin();
+        const fontJson = {
+            glyphs: [
+                { id: 'id-c', name: 'C', codepoints: [67], layers: [] },
+                { id: 'id-d', name: 'D', codepoints: [68], layers: [] }
+            ]
+        };
+        plugin._currentFontJson = () => fontJson;
+        const projected = [];
+        const originalEngine = window.patchSyncEngine;
+        const engine = {
+            deferCatalogProjection: true,
+            syncCloudOwnedProjection: (owned) => projected.push(owned)
+        };
+        window.patchSyncEngine = engine;
+        try {
+            const context = {
+                origin: 'local',
+                update: new Uint8Array(),
+                documentId: 'glyph:id-c'
+            };
+            plugin._syncCatalogFromCommittedChange(
+                [{ op: 'add', path: ['glyphs', 'C'], newValue: { name: 'C' } }],
+                context
+            );
+            plugin._syncCatalogFromCommittedChange(
+                [{ op: 'add', path: ['glyphs', 'D'], newValue: { name: 'D' } }],
+                { ...context, documentId: 'glyph:id-d' }
+            );
+            expect(projected).toHaveLength(0);
+            engine.deferCatalogProjection = false;
+            plugin.flushDeferredCatalogProjection();
+            expect(projected).toHaveLength(1);
+            expect(Object.keys(projected[0].glyphCatalog).sort()).toEqual([
+                'id-c',
+                'id-d'
+            ]);
+        } finally {
+            window.patchSyncEngine = originalEngine;
+        }
+    });
+
     test('a glyph rename updates the catalog under the new name', () => {
         const plugin = new CloudPlugin();
         const fontJson = {

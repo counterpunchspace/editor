@@ -647,6 +647,14 @@ export class PatchSyncEngine {
     private _cloudWalCommitChain: Promise<void> = Promise.resolve();
     /** Serializes persist-then-deliver of local cloud emits after apply. */
     private _cloudEmitPersistChain: Promise<void> = Promise.resolve();
+    /**
+     * While a multi-document commit is emitting, catalog projection waits
+     * and lands as one core write after every glyph packet has been delivered.
+     */
+    private _catalogDeferDepth = 0;
+    private _deferredCatalogOwners = new Set<{
+        flushDeferredCatalogProjection?: () => void;
+    }>();
     /** Collects glyph WAL clientTransactionIds for the next core revision row. */
     private _revisionDependsOnSink: string[] | null = null;
     private _lastCloudCommitDebug: Record<string, unknown> | null = null;
@@ -1610,12 +1618,8 @@ export class PatchSyncEngine {
                 compileEditType: null
             });
         }
-        const batchSize = 20;
-        for (let index = 0; index < operations.length; index += batchSize) {
-            this._queueOrCommitOperations(
-                operations.slice(index, index + batchSize),
-                'Update cloud catalog'
-            );
+        if (operations.length) {
+            this._queueOrCommitOperations(operations, 'Update cloud catalog');
         }
         fontRecord[CORE_GLYPH_CATALOG_KEY] = owned.glyphCatalog;
         fontRecord[CORE_CODEPOINT_INDEX_KEY] = owned.codepointIndex;
@@ -2295,7 +2299,7 @@ export class PatchSyncEngine {
         update: YjsUpdate,
         changeLogEntries: ChangeLogEntry[],
         documentId: string = FONT_CORE_DOCUMENT_ID,
-        options?: { dependsOn?: string[] }
+        options?: { dependsOn?: string[]; skipCollaborationLog?: boolean }
     ): void {
         // Undo/redo may append a coarse control entry for history-stack state,
         // but every emitted Yjs packet must still be observed through the same
@@ -2312,7 +2316,7 @@ export class PatchSyncEngine {
                     windowId: this.windowId
                 }
             );
-        if (collaborationMessage) {
+        if (collaborationMessage && !options?.skipCollaborationLog) {
             this._appendCollaborationLogItems([
                 this._createCollaborationLogItem(
                     collaborationMessage,
@@ -2323,14 +2327,15 @@ export class PatchSyncEngine {
                     )
                 )
             ]);
-            if (
-                this._revisionDependsOnSink &&
-                documentId.startsWith('glyph:')
-            ) {
-                this._revisionDependsOnSink.push(
-                    collaborationMessageKey(collaborationMessage)
-                );
-            }
+        }
+        if (
+            collaborationMessage &&
+            this._revisionDependsOnSink &&
+            documentId.startsWith('glyph:')
+        ) {
+            this._revisionDependsOnSink.push(
+                collaborationMessageKey(collaborationMessage)
+            );
         }
         const deliver = (): void => {
             pushCollabIntegrityEvent('emit-local', {
@@ -3293,6 +3298,18 @@ export class PatchSyncEngine {
     /** Whether a transaction is currently open. */
     get inTransaction(): boolean {
         return this._txDepth > 0;
+    }
+
+    /** Catalog projection should queue until the current commit finishes emitting. */
+    get deferCatalogProjection(): boolean {
+        return this._catalogDeferDepth > 0;
+    }
+
+    /** Remember which plugin queued catalog work for this commit. */
+    noteDeferredCatalogOwner(owner: {
+        flushDeferredCatalogProjection?: () => void;
+    }): void {
+        this._deferredCatalogOwners.add(owner);
     }
 
     private _pushApplyKind(kind: ApplyKind): void {
@@ -7653,6 +7670,40 @@ export class PatchSyncEngine {
         };
     }
 
+    /**
+     * One history row for every document this commit touches. Shard packets
+     * still go out separately; they are not additional collaboration commits.
+     */
+    private _appendCommitCollaborationItem(
+        entries: ChangeLogEntry[],
+        packets: Array<{ documentId: string; update: YjsUpdate }>
+    ): void {
+        if (!packets.length) {
+            return;
+        }
+        const collaborationMessage =
+            createCollaborationMessageEnvelopeFromChangeLogEntries(entries, {
+                localSequence: this._nextCollaborationMessageSequence++,
+                source: 'change-bridge',
+                windowId: this.windowId
+            });
+        if (!collaborationMessage) {
+            return;
+        }
+        const representative =
+            packets.find(
+                (packet) => packet.documentId === FONT_CORE_DOCUMENT_ID
+            ) ?? packets[0];
+        this._appendCollaborationLogItems([
+            this._createCollaborationLogItem(
+                collaborationMessage,
+                representative.update,
+                'local',
+                this._deriveForwardChangesFromChangeLogEntries(entries)
+            )
+        ]);
+    }
+
     private _commitOperations(
         operations: TransactionBufferedOperation[],
         label: string | null,
@@ -7987,42 +8038,76 @@ export class PatchSyncEngine {
                 return null;
             }
             this._lastLocalUpdateLogIndex = this._changeLog.length;
-            this._withGlyphRevisionCatchUp(
-                this._glyphIdsTouchedByOperations(effectiveOperations),
-                () => {
-                    for (const packet of pendingPackets) {
-                        const doc = this._docForId(packet.documentId);
-                        const baseline =
-                            localUpdateBaselineByDoc.get(packet.documentId) ||
-                            (doc ? Y.encodeStateVector(doc) : null);
-                        const stampedUpdate =
-                            doc && baseline
-                                ? Y.encodeStateAsUpdate(doc, baseline)
-                                : packet.update;
-                        const measured = doc
-                            ? measureShardBytesForSubmit({
-                                  lastEncodedBytes:
-                                      this._lastEncodedShardBytes.get(
-                                          packet.documentId
-                                      ) || 0,
-                                  packetBytes: stampedUpdate.byteLength,
-                                  encodeFullShard: () =>
-                                      Y.encodeStateAsUpdate(doc).byteLength
-                              })
-                            : { shardBytes: packet.shardBytes };
-                        this._noteBroadcastStateVector(packet.documentId);
-                        this._lastEncodedShardBytes.set(
-                            packet.documentId,
-                            measured.shardBytes
-                        );
-                        this._emitLocalUpdate(
-                            stampedUpdate,
-                            packet.entries,
-                            packet.documentId
-                        );
+            this._catalogDeferDepth += 1;
+            const persistChainBeforeEmit = this._cloudEmitPersistChain;
+            try {
+                this._appendCommitCollaborationItem(
+                    changeLogEntries,
+                    pendingPackets
+                );
+                this._withGlyphRevisionCatchUp(
+                    this._glyphIdsTouchedByOperations(effectiveOperations),
+                    () => {
+                        for (const packet of pendingPackets) {
+                            const doc = this._docForId(packet.documentId);
+                            const baseline =
+                                localUpdateBaselineByDoc.get(
+                                    packet.documentId
+                                ) || (doc ? Y.encodeStateVector(doc) : null);
+                            const stampedUpdate =
+                                doc && baseline
+                                    ? Y.encodeStateAsUpdate(doc, baseline)
+                                    : packet.update;
+                            const measured = doc
+                                ? measureShardBytesForSubmit({
+                                      lastEncodedBytes:
+                                          this._lastEncodedShardBytes.get(
+                                              packet.documentId
+                                          ) || 0,
+                                      packetBytes: stampedUpdate.byteLength,
+                                      encodeFullShard: () =>
+                                          Y.encodeStateAsUpdate(doc).byteLength
+                                  })
+                                : { shardBytes: packet.shardBytes };
+                            this._noteBroadcastStateVector(packet.documentId);
+                            this._lastEncodedShardBytes.set(
+                                packet.documentId,
+                                measured.shardBytes
+                            );
+                            this._emitLocalUpdate(
+                                stampedUpdate,
+                                packet.entries,
+                                packet.documentId,
+                                { skipCollaborationLog: true }
+                            );
+                        }
                     }
+                );
+            } finally {
+                const persistChainAfterEmit = this._cloudEmitPersistChain;
+                const releaseCatalogDefer = (): void => {
+                    this._catalogDeferDepth = Math.max(
+                        0,
+                        this._catalogDeferDepth - 1
+                    );
+                    if (this._catalogDeferDepth !== 0) {
+                        return;
+                    }
+                    const owners = [...this._deferredCatalogOwners];
+                    this._deferredCatalogOwners.clear();
+                    for (const owner of owners) {
+                        owner.flushDeferredCatalogProjection?.();
+                    }
+                };
+                if (persistChainAfterEmit !== persistChainBeforeEmit) {
+                    persistChainAfterEmit.then(
+                        releaseCatalogDefer,
+                        releaseCatalogDefer
+                    );
+                } else {
+                    releaseCatalogDefer();
                 }
-            );
+            }
         }
 
         for (const remap of glyphNameRemaps) {

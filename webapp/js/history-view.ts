@@ -307,7 +307,8 @@ class HistoryViewController {
 
         const groupedItems = new Map<string, HistoryDisplayItem>();
         for (const item of this.collaborationItems) {
-            const groupKey = item.promptGroupId ?? item.id;
+            const groupKey =
+                item.promptGroupId || item.historyItemId || item.id;
             const existing = groupedItems.get(groupKey);
             if (!existing) {
                 groupedItems.set(groupKey, {

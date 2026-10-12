@@ -2651,6 +2651,31 @@ describe('ChangeBridge', () => {
         expect(log[0].op).toBe('add');
     });
 
+    test('adding several glyphs in one transaction is one collaboration commit', () => {
+        const { bridge } = createTestBridge('add-glyphs-one-commit');
+        const localUpdates = [];
+        bridge.onLocalUpdate((_update, _message, _entries, documentId) => {
+            localUpdates.push(documentId);
+        });
+
+        bridge.beginTransaction('Add glyphs', null, {
+            compileChangeSource: 'model-edit',
+            compileEditType: null
+        });
+        bridge.recordAdd(['glyphs', 'C'], { name: 'C', layers: [] });
+        bridge.recordAdd(['glyphs', 'D'], { name: 'D', layers: [] });
+        bridge.endTransaction();
+
+        expect(
+            localUpdates.filter((documentId) => documentId.startsWith('glyph:'))
+        ).toHaveLength(2);
+        const items = bridge.getCollaborationLog();
+        expect(items).toHaveLength(1);
+        expect(items[0].label).toBe('Add glyphs');
+        expect([...items[0].changedGlyphNames].sort()).toEqual(['C', 'D']);
+        bridge.destroy();
+    });
+
     test('addGlyph stores DefaultForMaster layers in a Y.Map keyed by master id', () => {
         const { bridge, font, fontJson } = createTestBridge('add-glyph-layers');
         fontJson.masters.push({
