@@ -221,6 +221,13 @@ class AuthManager {
             }
         } catch (error) {
             console.error('[Auth] Failed to check auth status:', error);
+            const offline =
+                (typeof navigator !== 'undefined' &&
+                    navigator.onLine === false) ||
+                error instanceof TypeError;
+            if (offline && this.user) {
+                return this.user;
+            }
             this.user = null;
             this.subscription = null;
             this.credits = null;
@@ -377,6 +384,10 @@ class AuthManager {
 
         if (this.isLocalWebsiteURL()) {
             return await this.bootstrapLocalCloudSession(options.localEmail);
+        }
+
+        if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+            return this.user;
         }
 
         if (options.allowLoginRedirect !== false) {
