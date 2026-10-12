@@ -629,8 +629,26 @@ test('placeholder outlines follow harfbuzz pieces and stay out of the font', asy
                     const font = window.currentFontModel;
                     const base = font?.findGlyph('a');
                     const mark = font?.findGlyph('dieresiscomb');
-                    const basePos = positions[0];
-                    const markPos = positions[1];
+                    const composed = font?.findGlyph('adieresis');
+                    const pieces = (composed?.layers || []).flatMap((layer) =>
+                        (layer.components || []).map((component) => {
+                            const transform = component.transform;
+                            const translation = Array.isArray(transform)
+                                ? [transform[4], transform[5]]
+                                : transform?.translation || [0, 0];
+                            return {
+                                name: String(component.reference || ''),
+                                x: Number(translation[0] || 0),
+                                y: Number(translation[1] || 0)
+                            };
+                        })
+                    );
+                    const basePiece = pieces.find(
+                        (piece) => piece.name === 'a'
+                    );
+                    const markPiece = pieces.find(
+                        (piece) => piece.name === 'dieresiscomb'
+                    );
                     const basePaths = (base?.layers || []).some(
                         (layer) => (layer.paths || []).length > 0
                     );
@@ -644,18 +662,10 @@ test('placeholder outlines follow harfbuzz pieces and stay out of the font', asy
                         (layer) => (layer.anchors || []).length > 0
                     );
                     const separated = Boolean(
-                        names.length >= 2 &&
-                        basePos &&
-                        markPos &&
-                        (Math.abs(
-                            (basePos.xPosition || 0) - (markPos.xPosition || 0)
-                        ) > 10 ||
-                            Math.abs(
-                                (basePos.yOffset || 0) - (markPos.yOffset || 0)
-                            ) > 10 ||
-                            Math.abs(
-                                (basePos.xOffset || 0) - (markPos.xOffset || 0)
-                            ) > 10)
+                        basePiece &&
+                        markPiece &&
+                        (Math.abs(basePiece.x - markPiece.x) > 10 ||
+                            Math.abs(basePiece.y - markPiece.y) > 10)
                     );
                     return {
                         ready:
@@ -668,7 +678,7 @@ test('placeholder outlines follow harfbuzz pieces and stay out of the font', asy
                         names,
                         red,
                         painted: red > 40,
-                        hints: names,
+                        hints: pieces.map((piece) => piece.name),
                         y0: positions[0]?.yOffset ?? 0,
                         y1: positions[1]?.yOffset ?? 0,
                         separated,
