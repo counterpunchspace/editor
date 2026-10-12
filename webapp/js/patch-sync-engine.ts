@@ -10135,9 +10135,12 @@ export class PatchSyncEngine {
             existingGlyphSnapshot
         ) as Record<string, unknown>;
         if (!Object.prototype.hasOwnProperty.call(glyphJson, 'category')) {
-            glyphJson.category =
-                (existingGlyphSnapshot as { category?: unknown } | undefined)
-                    ?.category || 'Base';
+            const existingCategory = (
+                existingGlyphSnapshot as { category?: unknown } | undefined
+            )?.category;
+            if (typeof existingCategory === 'string' && existingCategory) {
+                glyphJson.category = existingCategory;
+            }
         }
         for (const [gk, gv] of Object.entries(glyphJson)) {
             if (gk === 'layers' && Array.isArray(gv)) {
