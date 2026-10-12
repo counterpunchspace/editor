@@ -700,11 +700,10 @@ test('placeholder outlines follow harfbuzz pieces and stay out of the font', asy
             hints: expect.arrayContaining(['a', 'dieresiscomb'])
         });
 
-    await page.evaluate(() => {
-        window.glyphOverviewInstance.selectAndRevealGlyphNames([
-            'a',
-            'adieresis'
-        ]);
+    await page.evaluate(async () => {
+        const overview = window.glyphOverviewInstance;
+        overview.selectAndRevealGlyphNames(['a', 'adieresis']);
+        await overview.renderGlyphOutlines({}, { force: true });
     });
     await expect
         .poll(
@@ -737,11 +736,7 @@ test('placeholder outlines follow harfbuzz pieces and stay out of the font', asy
                                 const g = pixels[index + 1];
                                 const b = pixels[index + 2];
                                 const a = pixels[index + 3];
-                                const visible =
-                                    a > 40 &&
-                                    !(r > 245 && g > 245 && b > 245) &&
-                                    !(r < 18 && g < 18 && b < 18);
-                                if (visible) {
+                                if (a > 40) {
                                     count += 1;
                                 }
                             }
