@@ -606,7 +606,10 @@ test('placeholder outlines follow harfbuzz pieces and stay out of the font', asy
             y: number,
             maxWidth?: number
         ) {
-            if (String(this.fillStyle).includes('176')) {
+            const ink = String(this.fillStyle).match(
+                /rgba?\(\s*(90|150|176|208)\s*,/
+            );
+            if (ink) {
                 recorded.push({ text: String(text), x, y });
             }
             return original.call(this, text, x, y, maxWidth);
