@@ -357,7 +357,12 @@ class FastGlyphTileRenderer {
             }
         }
         if (glyphData.name && !paintedLeaf) {
-            this.strokePlaceholderContours(ctx, glyphData.name);
+            const stroked = this.strokePlaceholderContours(ctx, glyphData.name);
+            if (!stroked) {
+                paintPlaceholderGlyph(ctx, glyphData.name, {
+                    appearance: 'text'
+                });
+            }
         }
 
         ctx.restore();
@@ -371,10 +376,10 @@ class FastGlyphTileRenderer {
     private strokePlaceholderContours(
         ctx: CanvasRenderingContext2D,
         name: string
-    ): void {
+    ): boolean {
         const contours = placeholderContoursForReference(name);
         if (!contours.length) {
-            return;
+            return false;
         }
         const path = new Path2D();
         let hasContour = false;
@@ -389,7 +394,7 @@ class FastGlyphTileRenderer {
             hasContour = true;
         }
         if (!hasContour) {
-            return;
+            return false;
         }
         const isDark =
             document.documentElement.getAttribute('data-theme') !== 'light';
@@ -404,6 +409,7 @@ class FastGlyphTileRenderer {
         ctx.lineJoin = 'round';
         ctx.stroke(path);
         ctx.restore();
+        return true;
     }
 
     /**

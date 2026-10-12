@@ -700,16 +700,31 @@ test('placeholder outlines follow harfbuzz pieces and stay out of the font', asy
             hints: expect.arrayContaining(['a', 'dieresiscomb'])
         });
 
-    await page.evaluate(async () => {
-        const overview = window.glyphOverviewInstance;
-        overview.selectAndRevealGlyphNames(['a', 'adieresis']);
-        await overview.renderGlyphOutlines({}, { force: true });
+    await page.evaluate(() => {
+        window.glyphOverviewInstance.selectAndRevealGlyphNames([
+            'a',
+            'adieresis'
+        ]);
+        for (const name of ['a', 'adieresis']) {
+            document
+                .querySelector(
+                    `#glyph-overview-container [data-glyph-name="${name}"]`
+                )
+                ?.scrollIntoView({ block: 'center', inline: 'nearest' });
+        }
     });
     await expect
         .poll(
             () =>
                 page.evaluate(() => {
                     const pink = (name: string): number => {
+                        const node = document.querySelector(
+                            `#glyph-overview-container [data-glyph-name="${name}"]`
+                        );
+                        node?.scrollIntoView({
+                            block: 'center',
+                            inline: 'nearest'
+                        });
                         const canvases = document.querySelectorAll(
                             `#glyph-overview-container [data-glyph-name="${name}"] canvas`
                         );
