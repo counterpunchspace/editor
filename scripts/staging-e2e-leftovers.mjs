@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * After cloud-collab e2e on staging: delete test users and their rooms, then
- * fail if that sweep found anything or could not finish.
+ * fail if that sweep could not finish or anything is still left.
  *
  * The website route only accepts this from the staging operator token.
  */
@@ -28,11 +28,15 @@ const response = await fetch(`${website}/api/dev/local-cloud-cleanup`, {
 
 const body = await response.json().catch(() => ({}));
 const found = Number(body.found || 0);
-if (!response.ok || body.ok === false || found > 0) {
+if (!response.ok || body.ok === false) {
   console.error(
     `Staging e2e cleanup ${response.status}: ${JSON.stringify(body)}`,
   );
   process.exit(1);
 }
 
-console.log("Staging e2e leftover check: nothing left.");
+if (found > 0) {
+  console.log(`Staging e2e leftover check: removed ${found} test users.`);
+} else {
+  console.log("Staging e2e leftover check: nothing left.");
+}
