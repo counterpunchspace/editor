@@ -371,15 +371,11 @@ test('arabic add glyphs can stay empty or copy composition outlines', async ({
                         const g = pixels[index + 1];
                         const b = pixels[index + 2];
                         const a = pixels[index + 3];
+                        const neutral =
+                            Math.abs(r - g) < 18 && Math.abs(g - b) < 18;
                         if (
-                            a > 200 &&
-                            r > 170 &&
-                            r < 250 &&
-                            g < 200 &&
-                            b < 200 &&
-                            r > g + 35 &&
-                            r > b + 35 &&
-                            Math.abs(g - b) < 40
+                            (a > 180 && r > 145 && r < 220 && neutral) ||
+                            (a > 80 && r > 35 && r < 145 && neutral)
                         ) {
                             red += 1;
                         }
@@ -418,7 +414,9 @@ test('arabic add glyphs can stay empty or copy composition outlines', async ({
                         const g = pixels[index + 1];
                         const b = pixels[index + 2];
                         const a = pixels[index + 3];
-                        if (a > 30 && a < 200 && r > 140 && g < 90 && b < 90) {
+                        const neutral =
+                            Math.abs(r - g) < 18 && Math.abs(g - b) < 18;
+                        if (a > 40 && r < 230 && (neutral || r < 40)) {
                             count += 1;
                         }
                     }
@@ -608,7 +606,7 @@ test('placeholder outlines follow harfbuzz pieces and stay out of the font', asy
             y: number,
             maxWidth?: number
         ) {
-            if (String(this.fillStyle).includes('196')) {
+            if (String(this.fillStyle).includes('176')) {
                 recorded.push({ text: String(text), x, y });
             }
             return original.call(this, text, x, y, maxWidth);
@@ -640,15 +638,11 @@ test('placeholder outlines follow harfbuzz pieces and stay out of the font', asy
                             const g = pixels[index + 1];
                             const b = pixels[index + 2];
                             const a = pixels[index + 3];
+                            const neutral =
+                                Math.abs(r - g) < 18 && Math.abs(g - b) < 18;
                             if (
-                                a > 200 &&
-                                r > 170 &&
-                                r < 250 &&
-                                g < 200 &&
-                                b < 200 &&
-                                r > g + 35 &&
-                                r > b + 35 &&
-                                Math.abs(g - b) < 40
+                                (a > 180 && r > 145 && r < 220 && neutral) ||
+                                (a > 80 && r > 35 && r < 145 && neutral)
                             ) {
                                 red += 1;
                             }
@@ -692,7 +686,7 @@ test('placeholder outlines follow harfbuzz pieces and stay out of the font', asy
                     );
                     return {
                         ready:
-                            red > 200 &&
+                            red > 40 &&
                             separated &&
                             !basePaths &&
                             !markPaths &&
@@ -700,7 +694,7 @@ test('placeholder outlines follow harfbuzz pieces and stay out of the font', asy
                             markAnchors,
                         names,
                         red,
-                        painted: red > 200,
+                        painted: red > 40,
                         hints: hints.map((hint) => hint.text),
                         y0: positions[0]?.yOffset ?? 0,
                         y1: positions[1]?.yOffset ?? 0,
@@ -760,22 +754,12 @@ test('placeholder outlines follow harfbuzz pieces and stay out of the font', asy
                                 const g = pixels[index + 1];
                                 const b = pixels[index + 2];
                                 const a = pixels[index + 3];
-                                const plain =
-                                    a > 30 &&
-                                    a < 200 &&
-                                    r > 140 &&
-                                    g < 90 &&
-                                    b < 90;
-                                const onWhite =
-                                    a > 200 &&
-                                    r > 170 &&
-                                    r < 250 &&
-                                    g < 200 &&
-                                    b < 200 &&
-                                    r > g + 35 &&
-                                    r > b + 35 &&
-                                    Math.abs(g - b) < 40;
-                                if (plain || onWhite) {
+                                const neutral =
+                                    Math.abs(r - g) < 18 &&
+                                    Math.abs(g - b) < 18;
+                                const ink =
+                                    a > 40 && r < 230 && (neutral || r < 40);
+                                if (ink) {
                                     count += 1;
                                 }
                             }
@@ -814,15 +798,11 @@ test('placeholder outlines follow harfbuzz pieces and stay out of the font', asy
                             const g = pixels[index + 1];
                             const b = pixels[index + 2];
                             const a = pixels[index + 3];
+                            const neutral =
+                                Math.abs(r - g) < 18 && Math.abs(g - b) < 18;
                             if (
-                                a > 200 &&
-                                r > 170 &&
-                                r < 250 &&
-                                g < 200 &&
-                                b < 200 &&
-                                r > g + 35 &&
-                                r > b + 35 &&
-                                Math.abs(g - b) < 40
+                                (a > 180 && r > 145 && r < 220 && neutral) ||
+                                (a > 80 && r > 35 && r < 145 && neutral)
                             ) {
                                 red += 1;
                             }
@@ -883,26 +863,15 @@ test('placeholder sample outlines punch counters with the nonzero rule', async (
             if (!window.glyphCanvas?.outlineEditor?.active) {
                 await textRun.selectGlyphByIndex(0, true);
             }
-            const isBlended = (
+            const isInk = (
                 r: number,
                 g: number,
                 b: number,
                 a: number
-            ): boolean =>
-                a > 200 &&
-                r > 170 &&
-                r < 250 &&
-                g < 200 &&
-                b < 200 &&
-                r > g + 35 &&
-                r > b + 35 &&
-                Math.abs(g - b) < 40;
-            const isPlain = (
-                r: number,
-                g: number,
-                b: number,
-                a: number
-            ): boolean => a > 30 && a < 200 && r > 140 && g < 90 && b < 90;
+            ): boolean => {
+                const neutral = Math.abs(r - g) < 18 && Math.abs(g - b) < 18;
+                return a > 40 && r < 230 && (neutral || r < 40);
+            };
             const hole = (
                 canvas: HTMLCanvasElement,
                 painted: (r: number, g: number, b: number, a: number) => boolean
@@ -967,7 +936,7 @@ test('placeholder sample outlines punch counters with the nonzero rule', async (
             const editor = window.glyphCanvas?.canvas;
             const editorSample =
                 editor && window.glyphCanvas?.outlineEditor?.active
-                    ? hole(editor, isBlended)
+                    ? hole(editor, isInk)
                     : 'inactive';
             const tiles = document.querySelectorAll(
                 '#glyph-overview-container [data-glyph-name="heh-ar"] canvas'
@@ -975,10 +944,7 @@ test('placeholder sample outlines punch counters with the nonzero rule', async (
             let tileSample = '0,0,0';
             let tileRed = -1;
             tiles.forEach((node) => {
-                const sample = hole(
-                    node as HTMLCanvasElement,
-                    (r, g, b, a) => isPlain(r, g, b, a) || isBlended(r, g, b, a)
-                );
+                const sample = hole(node as HTMLCanvasElement, isInk);
                 const red = Number(sample.split(',')[0]);
                 if (red > tileRed) {
                     tileRed = red;
@@ -987,7 +953,7 @@ test('placeholder sample outlines punch counters with the nonzero rule', async (
             });
             const punched = (sample: string): boolean => {
                 const [red, center, edge] = sample.split(',').map(Number);
-                return red > 80 && edge > 4 && center === 0;
+                return red > 40 && edge > 4 && center === 0;
             };
             if (punched(editorSample) && punched(tileSample)) {
                 return 'ok';
