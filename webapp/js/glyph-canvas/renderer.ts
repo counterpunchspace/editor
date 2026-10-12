@@ -14,7 +14,10 @@ import {
     buildPlaceholderPath,
     paintPlaceholderGlyph,
     placeholderCcmpParts,
+    placeholderContoursForReference,
+    placeholderOutlineDash,
     placeholderHasVectorOutline,
+    type PlaceholderContour,
     type PlaceholderEmphasis
 } from '../language-packs/placeholder-outlines';
 import {
@@ -847,6 +850,9 @@ export class GlyphCanvasRenderer {
                     isSelected &&
                     this.glyphCanvas.outlineEditor.active &&
                     !this.glyphCanvas.outlineEditor.isPreviewMode;
+                const placeholderName =
+                    explicitGlyphName ||
+                    this.textRunEditor.glyphNameBuffer[glyphIndex];
 
                 if (!skipHarfBuzz) {
                     // Check if this is .notdef (GID 0) with no explicit fallback.
@@ -969,9 +975,6 @@ export class GlyphCanvasRenderer {
                     }
                 }
 
-                const placeholderName =
-                    explicitGlyphName ||
-                    this.textRunEditor.glyphNameBuffer[glyphIndex];
                 if (placeholderName && !skipHarfBuzz) {
                     const emphasis: PlaceholderEmphasis = isSelected
                         ? 'active'
@@ -980,7 +983,15 @@ export class GlyphCanvasRenderer {
                           : 'rest';
                     this.ctx.save();
                     this.ctx.translate(x, y);
-                    this.drawPlaceholderOverlay(placeholderName, emphasis);
+                    this.drawPlaceholderOverlay(
+                        placeholderName,
+                        emphasis,
+                        'text',
+                        isExplicitToken,
+                        this.glyphCanvas.outlineEditor.active &&
+                            !this.glyphCanvas.outlineEditor.isPreviewMode &&
+                            !isSelected
+                    );
                     this.ctx.restore();
                 }
 
@@ -1126,6 +1137,11 @@ export class GlyphCanvasRenderer {
                 );
             }
 
+            const placeholderName =
+                explicitGlyphName ||
+                (glyphIndex >= 0
+                    ? this.textRunEditor.glyphNameBuffer[glyphIndex]
+                    : '');
             this.ctx.save();
             this.ctx.globalAlpha = op.alpha;
             this.ctx.fillStyle = fillColor;
@@ -1136,8 +1152,22 @@ export class GlyphCanvasRenderer {
                     op.y
                 );
             } else if (glyphData) {
+                this.ctx.save();
                 this.ctx.translate(op.x, op.y);
                 this.ctx.fill(new Path2D(glyphData));
+                this.ctx.restore();
+            }
+            if (placeholderName) {
+                this.ctx.save();
+                this.ctx.translate(op.x, op.y);
+                this.drawPlaceholderOverlay(
+                    placeholderName,
+                    'rest',
+                    'text',
+                    !!explicitGlyphName,
+                    inEditMode && !isSelected
+                );
+                this.ctx.restore();
             }
             this.ctx.restore();
         }
@@ -2426,9 +2456,11 @@ export class GlyphCanvasRenderer {
             if (outlineShapeIsComponent(shape)) {
                 const component = shape as {
                     Component?: {
+                        reference?: string;
                         transform?: unknown;
                         layerData?: { shapes?: unknown[] };
                     };
+                    reference?: string;
                     transform?: unknown;
                     layerData?: { shapes?: unknown[] };
                 };
@@ -2444,13 +2476,30 @@ export class GlyphCanvasRenderer {
                 const childFill = componentFillForIndex
                     ? componentFillForIndex(index)
                     : fillStyle;
-                contours.push(
-                    ...this.collectPunchFillContours(
-                        inner.layerData?.shapes,
-                        childAffine,
-                        childFill
-                    )
+                const nested = this.collectPunchFillContours(
+                    inner.layerData?.shapes,
+                    childAffine,
+                    childFill
                 );
+                if (nested.length) {
+                    contours.push(...nested);
+                    continue;
+                }
+                const reference =
+                    typeof inner.reference === 'string' ? inner.reference : '';
+                for (const leaf of placeholderContoursForReference(reference)) {
+                    if (!leaf.closed || !leaf.nodes.length) {
+                        continue;
+                    }
+                    contours.push({
+                        nodes: this.transformOutlineNodes(
+                            leaf.nodes,
+                            childAffine
+                        ),
+                        subtract: false,
+                        fillStyle: childFill
+                    });
+                }
                 continue;
             }
             if (!getClosedFromOutlineShape(shape)) {
@@ -2570,12 +2619,80 @@ export class GlyphCanvasRenderer {
 
     private drawPlaceholderOverlay(
         name: string,
-        emphasis: PlaceholderEmphasis = 'rest'
+        emphasis: PlaceholderEmphasis = 'rest',
+        appearance: 'edit' | 'text' = 'edit',
+        token = false,
+        muted = false
     ): void {
         paintPlaceholderGlyph(this.ctx, name, {
             emphasis,
+            appearance,
+            token,
+            muted,
             paintDecomposed: (parts) =>
-                this.paintDecomposedPlaceholders(name, parts, emphasis)
+                this.paintDecomposedPlaceholders(
+                    name,
+                    parts,
+                    emphasis,
+                    appearance,
+                    token,
+                    muted
+                )
+        });
+    }
+
+    private standInOutlineShapes(contours: PlaceholderContour[]): Array<{
+        nodes: Babelfont.Node[];
+        closed: boolean;
+    }> {
+        return contours
+            .filter((contour) => contour.nodes.length > 0)
+            .map((contour) => ({
+                nodes: contour.nodes,
+                closed: contour.closed
+            }));
+    }
+
+    private shapesForComponentDraw(shape: {
+        reference?: string;
+        layerData?: { shapes?: Babelfont.Shape[] };
+    }): Array<{
+        nodes?: Babelfont.Node[];
+        closed?: boolean;
+        reference?: string;
+        placeholder?: boolean;
+    }> {
+        const shapes = shape.layerData?.shapes;
+        if (
+            Array.isArray(shapes) &&
+            this.componentShapesCarryOutlines(shapes)
+        ) {
+            return shapes;
+        }
+        return this.standInOutlineShapes(
+            placeholderContoursForReference(shape.reference || '')
+        ).map((contour) => ({
+            ...contour,
+            placeholder: true
+        }));
+    }
+
+    private componentShapesCarryOutlines(shapes: Babelfont.Shape[]): boolean {
+        return shapes.some((shape) => {
+            if (!shape || typeof shape !== 'object') {
+                return false;
+            }
+            if ('reference' in shape && typeof shape.reference === 'string') {
+                return true;
+            }
+            if ('Component' in shape) {
+                return true;
+            }
+            return (
+                'nodes' in shape &&
+                Array.isArray(shape.nodes) &&
+                shape.nodes.length > 0
+            );
         });
     }
 
@@ -2687,7 +2804,10 @@ export class GlyphCanvasRenderer {
     private paintDecomposedPlaceholders(
         shellName: string,
         parts: string[],
-        emphasis: PlaceholderEmphasis = 'rest'
+        emphasis: PlaceholderEmphasis = 'rest',
+        appearance: 'edit' | 'text' = 'edit',
+        token = false,
+        muted = false
     ): boolean {
         const positioned = this.positionDecomposedPlaceholders(
             shellName,
@@ -2712,7 +2832,10 @@ export class GlyphCanvasRenderer {
             this.ctx.translate(item.x, item.y);
             paintPlaceholderGlyph(this.ctx, item.name, {
                 depth: 1,
-                emphasis
+                emphasis,
+                appearance,
+                token,
+                muted
             });
             this.ctx.restore();
         }
@@ -2817,33 +2940,6 @@ export class GlyphCanvasRenderer {
             (shape): shape is Babelfont.Component => 'reference' in shape
         );
         if (components.length) {
-            for (const shape of components) {
-                if (this.layerHasPathInk(shape.layerData)) {
-                    continue;
-                }
-                const [a, b, c, d, tx, ty] = normalizeAffineTransform(
-                    shape.transform
-                );
-                this.ctx.save();
-                this.ctx.transform(a, b, c, d, tx, ty);
-                if (
-                    (shape.layerData?.shapes || []).some(
-                        (nested) => 'reference' in nested
-                    )
-                ) {
-                    this.drawPlaceholderLayer(
-                        shape.layerData,
-                        shape.reference,
-                        emphasis
-                    );
-                } else {
-                    paintPlaceholderGlyph(this.ctx, shape.reference, {
-                        depth: 1,
-                        emphasis
-                    });
-                }
-                this.ctx.restore();
-            }
             return;
         }
         this.drawPlaceholderOverlay(name, emphasis);
@@ -3256,14 +3352,10 @@ export class GlyphCanvasRenderer {
                     // Apply component transform
                     this.ctx.transform(a, b, c, d, tx, ty);
 
-                    // Draw the component's outline shapes if they were fetched
-                    if (
-                        'reference' in shape &&
-                        shape.layerData &&
-                        shape.layerData.shapes
-                    ) {
+                    const componentShapes = this.shapesForComponentDraw(shape);
+                    if (componentShapes.length) {
                         this.drawComponentWithOutlines(
-                            shape.layerData.shapes,
+                            componentShapes,
                             isSelected,
                             isHovered,
                             isAutomaticComponentLayer,
@@ -3278,9 +3370,8 @@ export class GlyphCanvasRenderer {
                         if (isHovered) {
                             const componentName =
                                 shape.reference || 'component';
-                            const bounds = this.getComponentBounds(
-                                shape.layerData.shapes
-                            );
+                            const bounds =
+                                this.getComponentBounds(componentShapes);
                             if (bounds.hasPoints) {
                                 componentLabels.push({
                                     componentName,
@@ -5966,11 +6057,23 @@ export class GlyphCanvasRenderer {
                     // Draw other glyphs normally with HarfBuzz
                     this.ctx.fillStyle = colors.GLYPH_INACTIVE_IN_EDITOR;
 
-                    if (glyphData) {
+                    const placeholderName =
+                        this.textRunEditor.glyphNameBuffer[glyphIndex];
+                    if (glyphData || placeholderName) {
                         this.ctx.save();
                         this.ctx.translate(x, y);
-                        const path = new Path2D(glyphData);
-                        this.ctx.fill(path);
+                        if (glyphData) {
+                            this.ctx.fill(new Path2D(glyphData));
+                        }
+                        if (placeholderName) {
+                            this.drawPlaceholderOverlay(
+                                placeholderName,
+                                'rest',
+                                'text',
+                                false,
+                                true
+                            );
+                        }
                         this.ctx.restore();
                     }
                 }
@@ -6921,7 +7024,8 @@ export class GlyphCanvasRenderer {
         layerData.shapes.forEach((shape: any, index: number) => {
             if (!('reference' in shape)) return;
 
-            if (!shape.layerData || !shape.layerData.shapes) return;
+            const componentShapes = this.shapesForComponentDraw(shape);
+            if (!componentShapes.length) return;
 
             const transformRaw =
                 shape.transform || DecomposedAffineTransform.identity();
@@ -6935,7 +7039,7 @@ export class GlyphCanvasRenderer {
 
             // Draw the component's flattened outline (blue box) using existing function
             this.drawComponentWithOutlines(
-                shape.layerData.shapes,
+                componentShapes,
                 false,
                 false,
                 isAutomaticComponentLayer,
@@ -6989,7 +7093,8 @@ export class GlyphCanvasRenderer {
         layerData.shapes.forEach((shape: any, index: number) => {
             if (!('reference' in shape)) return;
 
-            if (!shape.layerData || !shape.layerData.shapes) return;
+            const componentShapes = this.shapesForComponentDraw(shape);
+            if (!componentShapes.length) return;
 
             // Get selection/hover state (only if interaction is enabled)
             const isHovered =
@@ -7014,7 +7119,7 @@ export class GlyphCanvasRenderer {
 
             // Draw component outlines
             this.drawComponentWithOutlines(
-                shape.layerData.shapes,
+                componentShapes,
                 isSelected,
                 isHovered,
                 isAutomaticComponentLayer,
@@ -7040,12 +7145,13 @@ export class GlyphCanvasRenderer {
         invScale: number,
         isDarkTheme: boolean,
         skipFill = false
-    ): void {
+    ): boolean {
         type FlattenedOutlineShape = {
             nodes: any[];
             transform: number[] | null;
             closed: boolean;
             subtract: boolean;
+            placeholder: boolean;
         };
 
         // Collect all outline shapes (non-component shapes with nodes) at each nesting level
@@ -7093,16 +7199,31 @@ export class GlyphCanvasRenderer {
                         }
                     }
 
-                    if (
-                        componentShape.layerData &&
-                        componentShape.layerData.shapes
-                    ) {
-                        outlineShapes.push(
-                            ...collectOutlineShapes(
-                                componentShape.layerData.shapes,
-                                nestedTransform
-                            )
-                        );
+                    const nestedShapes = componentShape.layerData?.shapes;
+                    const nested = Array.isArray(nestedShapes)
+                        ? collectOutlineShapes(nestedShapes, nestedTransform)
+                        : [];
+                    if (nested.length) {
+                        outlineShapes.push(...nested);
+                    } else {
+                        const reference =
+                            typeof componentShape.reference === 'string'
+                                ? componentShape.reference
+                                : '';
+                        for (const leaf of placeholderContoursForReference(
+                            reference
+                        )) {
+                            if (!leaf.nodes.length) {
+                                continue;
+                            }
+                            outlineShapes.push({
+                                nodes: leaf.nodes,
+                                transform: nestedTransform,
+                                closed: leaf.closed,
+                                subtract: false,
+                                placeholder: true
+                            });
+                        }
                     }
                 } else if (
                     componentShape.nodes &&
@@ -7112,7 +7233,8 @@ export class GlyphCanvasRenderer {
                         nodes: componentShape.nodes,
                         transform: transform,
                         closed: Boolean(componentShape.closed),
-                        subtract: outlineShapeIsSubtraction(componentShape)
+                        subtract: outlineShapeIsSubtraction(componentShape),
+                        placeholder: componentShape.placeholder === true
                     });
                 }
             });
@@ -7122,7 +7244,9 @@ export class GlyphCanvasRenderer {
 
         const outlineShapes = collectOutlineShapes(shapes);
 
-        if (outlineShapes.length === 0) return;
+        if (outlineShapes.length === 0) {
+            return false;
+        }
 
         const fills = APP_SETTINGS.OUTLINE_EDITOR.COMPONENT_FILLS;
 
@@ -7180,30 +7304,43 @@ export class GlyphCanvasRenderer {
 
         // Stroke all explicit component paths so manual and automatic components
         // stay visually distinct from neighboring inactive glyph fills.
-        const subtractionDash = this.subtractionOutlineDash(invScale);
-        outlineShapes.forEach(({ nodes, transform, closed, subtract }) => {
-            this.ctx.save();
-            if (transform) {
-                this.ctx.transform(
-                    transform[0],
-                    transform[1],
-                    transform[2],
-                    transform[3],
-                    transform[4],
-                    transform[5]
+        const placeholderStroke =
+            document.documentElement.getAttribute('data-theme') !== 'light'
+                ? 'rgba(230, 230, 230, 0.95)'
+                : 'rgba(60, 60, 60, 0.95)';
+        outlineShapes.forEach(
+            ({ nodes, transform, closed, subtract, placeholder }) => {
+                this.ctx.save();
+                if (transform) {
+                    this.ctx.transform(
+                        transform[0],
+                        transform[1],
+                        transform[2],
+                        transform[3],
+                        transform[4],
+                        transform[5]
+                    );
+                }
+                this.ctx.beginPath();
+                this.buildPathFromNodes(nodes, closed);
+                if (closed) {
+                    this.ctx.closePath();
+                }
+                this.ctx.strokeStyle = placeholder
+                    ? placeholderStroke
+                    : strokeColor;
+                this.ctx.lineWidth =
+                    APP_SETTINGS.OUTLINE_EDITOR.COMPONENT_STROKE_WIDTH *
+                    invScale;
+                this.ctx.setLineDash(
+                    placeholder || subtract
+                        ? placeholderOutlineDash(this.ctx)
+                        : []
                 );
+                this.ctx.stroke();
+                this.ctx.restore();
             }
-            this.ctx.beginPath();
-            this.buildPathFromNodes(nodes, closed);
-            if (closed) {
-                this.ctx.closePath();
-            }
-            this.ctx.strokeStyle = strokeColor;
-            this.ctx.lineWidth =
-                APP_SETTINGS.OUTLINE_EDITOR.COMPONENT_STROKE_WIDTH * invScale;
-            this.ctx.setLineDash(subtract ? subtractionDash : []);
-            this.ctx.stroke();
-            this.ctx.restore();
-        });
+        );
+        return true;
     }
 }

@@ -127,6 +127,14 @@ npm run tokens
 
 If you change Rust code in `babelfont-fontc-build/src/`, you MUST rebuild the WebAssembly output with `./build-fontc-wasm.sh` before considering the task finished.
 
+### Language-pack wheels
+
+The editor loads language packs from the wheels in `webapp/wheels/`, not from the Python under `plugins/languagepacks/`. After the Arabic sample font changes (`plugins/languagepacks/arabic/counterpunch_arabic/data/arabic.babelfont` or `arabic.json`), recompile that bundle before considering the task finished:
+
+```bash
+python3 plugins/languagepacks/build.py
+```
+
 ### Testing
 
 ```bash

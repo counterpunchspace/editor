@@ -256,6 +256,10 @@ class ArabicFontSource:
                 for position in _FORM_SUFFIXES:
                     if wanted is not None and position not in wanted:
                         continue
+                    explicit = self._explicit_form(name, position)
+                    if explicit is not None:
+                        positions[position] = explicit
+                        continue
                     expanded = self._expand(rule, position)
                     if expanded != rule:
                         positions[position] = [
@@ -293,6 +297,15 @@ class ArabicFontSource:
         kept = [str(position) for position in positions if position in ("isol", *_FORM_SUFFIXES)]
         return kept or None
 
+    def _explicit_form(self, name: str, position: str) -> list[str] | None:
+        form = f"{name}.{position}"
+        if form not in self.glyphs or self._has_paths(form):
+            return None
+        refs = self.components(form)
+        if len(refs) < 2:
+            return None
+        return [self.token_for(part) for part in refs]
+
     def _chain(self, name: str, rule: list[str], positions: dict[str, list[str]]) -> bool:
         isol = positions.get("isol") or []
         if len(isol) < 2:
@@ -300,6 +313,8 @@ class ArabicFontSource:
         wanted = self._wanted_positions(name)
         for position in _FORM_SUFFIXES:
             if wanted is not None and position not in wanted:
+                continue
+            if self._explicit_form(name, position) is not None:
                 continue
             if position not in positions and wanted is None:
                 continue

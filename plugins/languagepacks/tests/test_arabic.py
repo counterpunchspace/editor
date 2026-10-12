@@ -127,6 +127,24 @@ def test_data_identities_and_pack_names():
     assert SOURCE.characters["uni06BA"]["positions"]["fina"] == ["uni06BA.fina"]
     assert SOURCE.characters["uni0649"]["positions"]["init"] == ["uni066E.init"]
     assert SOURCE.characters["uni0649"]["positions"]["medi"] == ["uni066E.medi"]
+    assert SOURCE.characters["uni062C"]["positions"]["isol"] == [
+        "uni062D",
+        "dotCenter-ar",
+    ]
+    assert SOURCE.characters["uni062C"]["positions"]["init"] == [
+        "uni062D.init",
+        "dotBelow-ar",
+    ]
+    assert SOURCE.characters["uni062C"]["positions"]["medi"] == [
+        "uni062D.medi",
+        "dotBelow-ar",
+    ]
+    assert SOURCE.characters["uni062C"]["positions"]["fina"] == [
+        "uni062D.fina",
+        "dotCenter-ar",
+    ]
+    assert SOURCE.components("jeem-ar.init") == ["hah-ar.init", "dotBelow-ar"]
+    assert SOURCE.components("jeem-ar.medi") == ["hah-ar.medi", "dotBelow-ar"]
     assert "init" in SOURCE.characters["uni0649"]["positions"]
     ghunna_fina = SOURCE.drawing("noonGhunna-ar.fina")
     assert ghunna_fina and ghunna_fina["paths"]

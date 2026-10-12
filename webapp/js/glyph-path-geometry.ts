@@ -62,6 +62,21 @@ export function transformPointWithAffine(
     };
 }
 
+export type GlyphStandInContour = {
+    nodes: Array<{ x: number; y: number; nodetype?: string }>;
+    closed: boolean;
+};
+
+let glyphStandInContours: ((name: string) => GlyphStandInContour[]) | null =
+    null;
+
+/** Sample contours used when a component reference has no real outlines. */
+export function setGlyphStandInContours(
+    provider: (name: string) => GlyphStandInContour[]
+): void {
+    glyphStandInContours = provider;
+}
+
 function boundsFromMinMax(
     minX: number,
     minY: number,
@@ -735,21 +750,47 @@ export function calculateGlyphShapeBounds(
                   ? shape.Component
                   : null;
 
-        if (!componentData?.layerData?.shapes) {
+        if (!componentData) {
             continue;
         }
 
+        const reference =
+            typeof componentData.reference === 'string'
+                ? componentData.reference
+                : '';
+        const nestedShapes = componentData.layerData?.shapes as
+            Unsafe[] | undefined;
         const componentTransform = Array.isArray(componentData.transform)
             ? normalizeAffineTransform(componentData.transform)
             : normalizeAffineTransform(
                   componentData.transform || createIdentityDecomposedAffine()
               );
-        includeBounds(
-            calculateGlyphShapeBounds(
-                componentData.layerData.shapes,
-                composeTransforms(parentTransform, componentTransform)
-            )
-        );
+        const composed = composeTransforms(parentTransform, componentTransform);
+        const nestedBounds =
+            Array.isArray(nestedShapes) && nestedShapes.length
+                ? calculateGlyphShapeBounds(nestedShapes, composed)
+                : null;
+        if (nestedBounds) {
+            includeBounds(nestedBounds);
+            continue;
+        }
+        const standIn = reference ? glyphStandInContours?.(reference) : null;
+        if (!standIn?.length) {
+            continue;
+        }
+        for (const contour of standIn) {
+            if (!contour.nodes?.length) {
+                continue;
+            }
+            includeBounds(
+                calculateGlyphPathBounds({
+                    nodes: contour.nodes.map((node) =>
+                        transformNode(node, composed)
+                    ),
+                    closed: contour.closed
+                })
+            );
+        }
     }
 
     return boundsFromMinMax(minX, minY, maxX, maxY);

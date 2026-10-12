@@ -11,6 +11,9 @@ use glyph-data names so a new font can find those outlines. No axis or GPOS.
 
 Run from the editor repo:
 ``python3 plugins/languagepacks/arabic/tools/build_arabic_font.py``.
+
+The editor does not read this font from source. After it changes, recompile the
+language-pack bundle with ``python3 plugins/languagepacks/build.py``.
 """
 
 from __future__ import annotations
@@ -255,6 +258,25 @@ class FontBuilder:
             "format_specific": {},
         }
 
+    def add_explicit_forms(self, name: str, record: dict) -> None:
+        """A positional sequence that is not the parts' own forms becomes a glyph."""
+        decompose = [self.pack_name(token) for token in record.get("decompose") or []]
+        for position, sequence in record["positions"].items():
+            if position == "isol" or not sequence:
+                continue
+            component_names = [self.pack_name(token) for token in sequence]
+            expanded = []
+            for part in decompose:
+                form = f"{part}.{position}"
+                expanded.append(form if form in self.glyphs else part)
+            if component_names == expanded:
+                continue
+            form_name = f"{name}.{position}"
+            if form_name in self.glyphs:
+                continue
+            width = self.drawing(sequence[0])[0] or 600
+            self.add(form_name, width=width, components=component_names)
+
     def stamp_positions(self, name: str, record: dict) -> None:
         glyph = self.glyphs.get(name)
         if glyph is None:
@@ -330,6 +352,7 @@ class FontBuilder:
                     (name, [self.pack_name(token) for token in record["decompose"]])
                 )
                 self.stamp_positions(name, record)
+                self.add_explicit_forms(name, record)
                 continue
             isol = record["positions"].get("isol") or [identity]
             if isol != [identity]:

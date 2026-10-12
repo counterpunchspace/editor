@@ -2,6 +2,7 @@
 // Renders glyph outlines directly to canvas elements without data URL conversion
 // Uses a shared offscreen canvas for path building, then draws to target canvases
 
+import type { Babelfont } from './babelfont';
 import { pathHasSubtractionFlag } from './path-boolean-flag';
 import {
     fillPunchFillContoursOnContext,
@@ -17,7 +18,10 @@ import {
 import { Logger } from './logger';
 import {
     paintPlaceholderGlyph,
-    placeholderCenteringX
+    placeholderCenteringX,
+    placeholderComponentRefs,
+    placeholderContoursForReference,
+    placeholderOutlineDash
 } from './language-packs/placeholder-outlines';
 import APP_SETTINGS from './settings';
 
@@ -74,6 +78,17 @@ function pathIsClosed(shape: any, data: any): boolean {
     return true;
 }
 
+function shapesIncludeComponent(
+    shapes: Array<{ reference?: string; Component?: object } | null>
+): boolean {
+    return shapes.some(
+        (shape) =>
+            !!shape &&
+            typeof shape === 'object' &&
+            ('reference' in shape || 'Component' in shape)
+    );
+}
+
 function pathIsSubtraction(shape: any, data: any): boolean {
     return (
         pathHasSubtractionFlag(data?.format_specific) ||
@@ -110,13 +125,27 @@ export function collectOverviewPunchFillContours(
             const childFill = componentFillFor
                 ? componentFillFor(inner)
                 : fillStyle;
-            contours.push(
-                ...collectOverviewPunchFillContours(
-                    inner.layerData?.shapes,
-                    childAffine,
-                    childFill
-                )
+            const nested = collectOverviewPunchFillContours(
+                inner.layerData?.shapes,
+                childAffine,
+                childFill
             );
+            if (nested.length) {
+                contours.push(...nested);
+                continue;
+            }
+            const reference =
+                typeof inner.reference === 'string' ? inner.reference : '';
+            for (const leaf of placeholderContoursForReference(reference)) {
+                if (!leaf.closed || !leaf.nodes.length) {
+                    continue;
+                }
+                contours.push({
+                    nodes: transformOutlineNodes(leaf.nodes, childAffine),
+                    subtract: false,
+                    fillStyle: childFill
+                });
+            }
             continue;
         }
         const data =
@@ -320,13 +349,103 @@ class FastGlyphTileRenderer {
         // Draw shapes in layer order so subtraction cutters punch holes.
         const shapes = Array.isArray(glyphData?.shapes) ? glyphData.shapes : [];
         this.drawShapes(ctx, shapes);
-        if (glyphData.name) {
-            paintPlaceholderGlyph(ctx, glyphData.name);
+        let paintedLeaf = false;
+        if (glyphData.name && !shapesIncludeComponent(shapes)) {
+            if (!this.paintModelComponents(ctx, glyphData.name)) {
+                paintPlaceholderGlyph(ctx, glyphData.name);
+                paintedLeaf = true;
+            }
+        }
+        if (glyphData.name && !paintedLeaf) {
+            this.strokePlaceholderContours(ctx, glyphData.name);
         }
 
         ctx.restore();
 
         return canvas;
+    }
+
+    /**
+     * Dashed outline over sample contours that stand in for an empty base.
+     */
+    private strokePlaceholderContours(
+        ctx: CanvasRenderingContext2D,
+        name: string
+    ): void {
+        const contours = placeholderContoursForReference(name);
+        if (!contours.length) {
+            return;
+        }
+        const path = new Path2D();
+        let hasContour = false;
+        for (const contour of contours) {
+            if (!contour.nodes.length) {
+                continue;
+            }
+            buildGlyphPathFromNodes(contour.nodes, path);
+            if (contour.closed) {
+                path.closePath();
+            }
+            hasContour = true;
+        }
+        if (!hasContour) {
+            return;
+        }
+        const isDark =
+            document.documentElement.getAttribute('data-theme') !== 'light';
+        ctx.save();
+        ctx.strokeStyle = isDark
+            ? 'rgba(230, 230, 230, 0.95)'
+            : 'rgba(60, 60, 60, 0.95)';
+        const dash = placeholderOutlineDash(ctx);
+        ctx.lineWidth =
+            dash[0] / APP_SETTINGS.OUTLINE_EDITOR.SUBTRACTION_OUTLINE_DASH[0];
+        ctx.setLineDash(dash);
+        ctx.lineJoin = 'round';
+        ctx.stroke(path);
+        ctx.restore();
+    }
+
+    /**
+     * Component fill for a composite whose tile payload has no component shapes.
+     * Sample contours stand in for a referenced glyph that has no outlines.
+     */
+    private paintModelComponents(
+        ctx: CanvasRenderingContext2D,
+        name: string
+    ): boolean {
+        const refs = placeholderComponentRefs(name);
+        if (!refs.length) {
+            return false;
+        }
+        const contours: PunchFillContour[] = [];
+        for (const component of refs) {
+            const fillStyle = component.automatic
+                ? this.autoComponentColor
+                : this.manualComponentColor;
+            for (const leaf of placeholderContoursForReference(
+                component.name
+            )) {
+                if (!leaf.closed || !leaf.nodes.length) {
+                    continue;
+                }
+                contours.push({
+                    nodes: transformOutlineNodes(
+                        leaf.nodes,
+                        component.transform
+                    ),
+                    subtract: false,
+                    fillStyle
+                });
+            }
+        }
+        if (contours.length) {
+            fillPunchFillContoursOnContext(ctx, contours, (target, nodes) => {
+                buildGlyphPathFromNodes(nodes as Babelfont.Node[], target);
+                target.closePath();
+            });
+        }
+        return true;
     }
 
     /**

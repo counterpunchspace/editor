@@ -304,6 +304,19 @@ def build(center_marks: bool = True) -> dict:
         ):
             record["decompose"] = isol
 
+    # Jeem's connecting forms drop the bowl dot below the baseline.
+    # Isolated and final keep the center dot.
+    jeem = characters.get("uni062C")
+    if jeem:
+        for position in ("init", "medi"):
+            sequence = jeem["positions"].get(position)
+            if not sequence:
+                continue
+            jeem["positions"][position] = [
+                "dotBelow-ar" if token == "dotCenter-ar" else token
+                for token in sequence
+            ]
+
     unencoded: dict[str, dict] = {}
     anchors: dict[str, list[str]] = {}
     used_pack: set[str] = set()

@@ -2,6 +2,7 @@ import {
     collectOverviewPunchFillContours,
     fastGlyphTileRenderer
 } from '../js/glyph-tile-renderer-fast';
+import { rememberPlaceholderDrawing } from '../js/language-packs/placeholder-outlines';
 
 function rect(x0, y0, x1, y1, extra = {}) {
     return {
@@ -47,6 +48,53 @@ describe('overview tile punch-out', () => {
         expect(contours[1].fillStyle).toBe('path');
         expect(contours[2].fillStyle).toBe('component');
         expect(contours[2].nodes[0].x).toBe(10);
+    });
+
+    test('an empty component uses the placeholder drawing as component fill', () => {
+        const previous = window.currentFontModel;
+        window.currentFontModel = {
+            upm: 1000,
+            findGlyph(name) {
+                if (name === 'base') {
+                    return { layers: [{ paths: [] }] };
+                }
+                return null;
+            }
+        };
+        rememberPlaceholderDrawing('base', {
+            upm: 1000,
+            width: 100,
+            paths: [
+                {
+                    closed: true,
+                    nodes: [
+                        { x: 0, y: 0, nodetype: 'Line' },
+                        { x: 100, y: 0, nodetype: 'Line' },
+                        { x: 100, y: 80, nodetype: 'Line' }
+                    ]
+                }
+            ],
+            anchors: []
+        });
+
+        const contours = collectOverviewPunchFillContours(
+            [
+                {
+                    reference: 'base',
+                    transform: [1, 0, 0, 1, 20, 5]
+                }
+            ],
+            [1, 0, 0, 1, 0, 0],
+            'path',
+            () => 'component'
+        );
+
+        window.currentFontModel = previous;
+        expect(contours).toHaveLength(1);
+        expect(contours[0].fillStyle).toBe('component');
+        expect(contours[0].subtract).toBe(false);
+        expect(contours[0].nodes[0]).toMatchObject({ x: 20, y: 5 });
+        expect(contours[0].nodes[1]).toMatchObject({ x: 120, y: 5 });
     });
 
     test('renderToCanvas punches cutters with destination-out', () => {

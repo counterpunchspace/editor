@@ -91,6 +91,7 @@ import {
     normalizeAffineTransform,
     transformPointWithAffine
 } from '../glyph-path-geometry';
+import { placeholderContoursForReference } from '../language-packs/placeholder-outlines';
 import {
     applyLiveSidebearingVisualSync,
     formatSidebearingHistoryValue,
@@ -14303,20 +14304,12 @@ export class OutlineEditor {
                 // Check for both nested { Component: { reference, ... } } and flat { reference, ... }
                 const isComponent =
                     'Component' in shape || 'reference' in shape;
-                const hasLayerData =
-                    ('Component' in shape &&
-                        (shape as any).Component.layerData) ||
-                    ('reference' in shape && (shape as any).layerData);
-                const layerData =
-                    ('Component' in shape &&
-                        (shape as any).Component.layerData) ||
-                    ('reference' in shape && (shape as any).layerData);
-                const shapesData = layerData && layerData.shapes;
 
-                if (isComponent && shapesData) {
-                    if (this._isPointInComponent(shape, glyphX, glyphY)) {
-                        foundComponentIndex = index;
-                    }
+                if (
+                    isComponent &&
+                    this._isPointInComponent(shape, glyphX, glyphY)
+                ) {
+                    foundComponentIndex = index;
                 }
             }
         }
@@ -14411,13 +14404,29 @@ export class OutlineEditor {
                             parentTransform[5]
                     ];
 
-                    if (compData.layerData && compData.layerData.shapes) {
-                        outlineShapes.push(
-                            ...collectOutlineShapes(
-                                compData.layerData.shapes,
-                                combinedTransform
-                            )
-                        );
+                    const nestedShapes = compData.layerData?.shapes;
+                    const nested = nestedShapes
+                        ? collectOutlineShapes(nestedShapes, combinedTransform)
+                        : [];
+                    if (nested.length) {
+                        outlineShapes.push(...nested);
+                    } else {
+                        const reference =
+                            typeof compData.reference === 'string'
+                                ? compData.reference
+                                : '';
+                        for (const leaf of placeholderContoursForReference(
+                            reference
+                        )) {
+                            if (!leaf.nodes.length) {
+                                continue;
+                            }
+                            outlineShapes.push({
+                                nodes: leaf.nodes,
+                                transform: combinedTransform,
+                                closed: leaf.closed
+                            });
+                        }
                     }
                 } else {
                     const contour = getEditableContour(componentShape);
@@ -14442,7 +14451,21 @@ export class OutlineEditor {
             : shape;
         const layerData = shapeComponentData.layerData;
 
-        const outlineShapes = collectOutlineShapes(layerData?.shapes || []);
+        let outlineShapes = collectOutlineShapes(layerData?.shapes || []);
+
+        if (outlineShapes.length === 0) {
+            const reference =
+                typeof componentData.reference === 'string'
+                    ? componentData.reference
+                    : '';
+            outlineShapes = placeholderContoursForReference(reference)
+                .filter((leaf) => leaf.nodes.length > 0)
+                .map((leaf) => ({
+                    nodes: leaf.nodes,
+                    transform: [1, 0, 0, 1, 0, 0] as Transform,
+                    closed: leaf.closed
+                }));
+        }
 
         if (outlineShapes.length === 0) {
             return false;
