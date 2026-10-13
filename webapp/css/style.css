@@ -531,9 +531,10 @@
     border: 0;
     color: var(--text-secondary);
     display: flex;
+    flex-flow: row nowrap;
     flex-shrink: 0;
     font-size: 11px;
-    gap: 10px;
+    gap: 16px;
     margin: 8px 0 0;
     padding: 0;
 }
@@ -542,16 +543,25 @@
     display: none;
 }
 
-.add-glyph-coverage-controls legend {
+.add-glyph-coverage-legend {
     color: var(--text-secondary);
     font-weight: 600;
-    margin-right: 2px;
 }
 
 .add-glyph-coverage-controls label {
     align-items: center;
     display: flex;
     gap: 4px;
+}
+
+.add-glyph-coverage-count {
+    background: var(--background-secondary);
+    border-radius: 999px;
+    color: var(--text-secondary);
+    font-variant-numeric: tabular-nums;
+    line-height: 1.4;
+    margin-left: -2px;
+    padding: 0 6px;
 }
 
 .add-glyph-list {

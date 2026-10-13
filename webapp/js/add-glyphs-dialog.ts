@@ -67,6 +67,10 @@ function coverageForSet(
     };
 }
 
+type ListedGlyph = GlyphDataSearchResult & {
+    coverageLevel?: CharacterSetCoverageLevel;
+};
+
 function resultKey(record: { codepoint?: number; glyph_name: string }): string {
     if (typeof record.codepoint === 'number' && record.codepoint >= 0) {
         return `u:${record.codepoint}`;
@@ -146,7 +150,7 @@ export class AddGlyphsDialog {
     private list: HTMLElement | null = null;
     private confirmButton: HTMLButtonElement | null = null;
     private quotaError: HTMLParagraphElement | null = null;
-    private results: GlyphDataSearchResult[] = [];
+    private results: ListedGlyph[] = [];
     private selectedKeys = new Set<string>();
     private activeIndex = -1;
     private selectionAnchor = -1;
@@ -155,6 +159,7 @@ export class AddGlyphsDialog {
     private activeSetIndex = -1;
     private setSelectionAnchor = -1;
     private enabledLevels = new Set<CharacterSetCoverageLevel>();
+    private coverageTotals = new Map<CharacterSetCoverageLevel, number>();
     private setMembers = new Map<string, CharacterSetMembers>();
     private setMembersProviderId = '';
     private setMembersRequest = 0;
@@ -451,20 +456,35 @@ export class AddGlyphsDialog {
         const version = ++this.searchVersion;
         const query = this.searchInput?.value || '';
         if (this.activeProviderId === 'unicode') {
+            this.coverageTotals = new Map();
             this.results = glyphDataIndex.search(query);
         } else {
+            const levels =
+                this.getActiveProvider()?.coverageLevels.map(
+                    (level) => level.id
+                ) || [];
             const characters = await characterSetPluginManager.getCharacters(
                 this.activeProviderId,
                 [...this.selectedSetIds],
-                [...this.enabledLevels]
+                levels
             );
             if (version !== this.searchVersion) {
                 return;
             }
+            this.coverageTotals = new Map();
+            for (const character of characters) {
+                this.coverageTotals.set(
+                    character.level,
+                    (this.coverageTotals.get(character.level) || 0) + 1
+                );
+            }
             this.results = characters.flatMap((character) => {
+                if (!this.enabledLevels.has(character.level)) {
+                    return [];
+                }
                 const record = characterRecord(character);
                 return record && this.matchesSearch(record, query)
-                    ? [record]
+                    ? [{ ...record, coverageLevel: character.level }]
                     : [];
             });
         }
@@ -563,7 +583,8 @@ export class AddGlyphsDialog {
             this.coverageControls.replaceChildren();
             return;
         }
-        const legend = document.createElement('legend');
+        const legend = document.createElement('span');
+        legend.className = 'add-glyph-coverage-legend';
         legend.textContent = 'Include';
         const fragment = document.createDocumentFragment();
         fragment.appendChild(legend);
@@ -573,10 +594,29 @@ export class AddGlyphsDialog {
             input.type = 'checkbox';
             input.checked = this.enabledLevels.has(level.id);
             input.dataset.coverageLevel = level.id;
-            option.append(input, document.createTextNode(level.label));
+            const count = document.createElement('span');
+            count.className = 'add-glyph-coverage-count';
+            count.dataset.coverageCount = level.id;
+            count.textContent = '0';
+            option.append(input, document.createTextNode(level.label), count);
             fragment.appendChild(option);
         }
         this.coverageControls.replaceChildren(fragment);
+        this.syncCoverageCounts();
+    }
+
+    private syncCoverageCounts(): void {
+        if (!this.coverageControls) {
+            return;
+        }
+        const counts = this.coverageTotals;
+        for (const count of this.coverageControls.querySelectorAll<HTMLElement>(
+            '[data-coverage-count]'
+        )) {
+            const level = count.dataset
+                .coverageCount as CharacterSetCoverageLevel;
+            count.textContent = String(counts.get(level) || 0);
+        }
     }
 
     private renderSetTree(): void {
@@ -808,6 +848,7 @@ export class AddGlyphsDialog {
         });
         this.list.replaceChildren(fragment);
         this.syncConfirmButton();
+        this.syncCoverageCounts();
     }
 
     private selectRow(index: number, range: boolean, toggle: boolean): void {
