@@ -36,10 +36,44 @@ export type CharacterSetEntry = {
     categories?: string[];
 };
 
+export type CharacterSetMembers = {
+    codepoints: number[];
+    glyphNames: string[];
+};
+
 type PyodideLike = {
     loadPackage(name: string): Promise<void>;
     runPythonAsync(code: string): Promise<string>;
 };
+
+function parseMembersBySet(
+    value: unknown
+): Record<string, CharacterSetMembers> {
+    if (!isRecord(value)) {
+        return {};
+    }
+    const members: Record<string, CharacterSetMembers> = {};
+    for (const [setId, entry] of Object.entries(value)) {
+        if (!isRecord(entry)) {
+            continue;
+        }
+        members[setId] = {
+            codepoints: Array.isArray(entry.codepoints)
+                ? entry.codepoints.filter(
+                      (codepoint): codepoint is number =>
+                          typeof codepoint === 'number' && codepoint >= 0
+                  )
+                : [],
+            glyphNames: Array.isArray(entry.glyph_names)
+                ? entry.glyph_names.filter(
+                      (name): name is string =>
+                          typeof name === 'string' && name.length > 0
+                  )
+                : []
+        };
+    }
+    return members;
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === 'object' && value !== null;
@@ -165,6 +199,33 @@ if result is None:
 json.dumps(result)
 `);
         return JSON.parse(result) as CharacterSetEntry[];
+    }
+
+    async getMembersBySet(
+        providerId: string,
+        setIds: readonly string[],
+        levels: readonly CharacterSetCoverageLevel[]
+    ): Promise<Record<string, CharacterSetMembers>> {
+        await this.ensureReady();
+        const pyodide = await this.waitForPyodide();
+        const result = await pyodide.runPythonAsync(`
+import json
+from importlib.metadata import entry_points
+
+provider_id = ${JSON.stringify(providerId)}
+set_ids = ${JSON.stringify(setIds)}
+levels = ${JSON.stringify(levels)}
+result = None
+for entry in entry_points(group='counterpunch_character_set_plugins'):
+    provider = entry.load()()
+    if provider.provider_id == provider_id:
+        result = provider.members_by_set(set_ids, levels)
+        break
+if result is None:
+    raise RuntimeError(f'Character Set provider not installed: {provider_id}')
+json.dumps(result)
+`);
+        return parseMembersBySet(JSON.parse(result));
     }
 
     private async load(): Promise<void> {

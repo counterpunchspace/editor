@@ -43,3 +43,25 @@ class HyperglotCharacterSetProvider:
                 if existing is None or character["level_rank"] < existing["level_rank"]:
                     characters[codepoint] = character
         return list(characters.values())
+
+    def members_by_set(self, set_ids, levels):
+        """Return each selected list's defined codepoints, deduped within the list."""
+        requested_levels = set(levels)
+        selected = set(set_ids)
+        grouped = {}
+        for leaf in self._data["leaves"]:
+            if leaf["id"] not in selected:
+                continue
+            codepoints = {}
+            for character in leaf["characters"]:
+                if requested_levels and character["level"] not in requested_levels:
+                    continue
+                codepoint = character["codepoint"]
+                existing = codepoints.get(codepoint)
+                if existing is None or character["level_rank"] < existing:
+                    codepoints[codepoint] = character["level_rank"]
+            grouped[leaf["id"]] = {
+                "codepoints": list(codepoints),
+                "glyph_names": [],
+            }
+        return grouped

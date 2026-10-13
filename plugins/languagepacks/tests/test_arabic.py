@@ -392,6 +392,11 @@ def test_character_set_and_recipe_round_trip():
     assert provider.metadata()["name"] == "Arabic Language Pack"
     letters = provider.characters(["letters"], ["essential"])
     assert any(entry.get("codepoint") == 0x062A for entry in letters)
+    members = provider.members_by_set(["letters", "dots"], [])
+    assert 0x062A in members["letters"]["codepoints"]
+    assert "twoDotsHorizontalAbove-ar" in members["dots"]["glyph_names"]
+    assert members["letters"]["codepoints"]
+    assert 0x062A not in members["dots"]["codepoints"]
     dots = provider.characters(["dots"], ["essential"])
     assert any(entry.get("glyph_name") == "twoDotsHorizontalAbove-ar" for entry in dots)
     assert all("codepoint" not in entry for entry in dots)

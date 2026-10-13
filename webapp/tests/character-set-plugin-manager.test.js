@@ -84,4 +84,29 @@ describe('CharacterSetPluginManager', () => {
             expect.objectContaining({ codepoint: 65, level: 'essential' })
         ]);
     });
+
+    it('loads defined members for each character set', async () => {
+        window.pyodide.runPythonAsync.mockImplementation(async (code) => {
+            if (code.includes('provider.members_by_set')) {
+                return JSON.stringify({
+                    'eng/0': {
+                        codepoints: [65, 66, -1, 'nope'],
+                        glyph_names: ['A', '']
+                    }
+                });
+            }
+            if (code.includes('entry_points(group=')) {
+                return JSON.stringify([]);
+            }
+            return '';
+        });
+        const manager = new CharacterSetPluginManager();
+        await manager.ensureReady();
+
+        await expect(
+            manager.getMembersBySet('org.rosettatype.hyperglot', ['eng/0'], [])
+        ).resolves.toEqual({
+            'eng/0': { codepoints: [65, 66], glyphNames: ['A'] }
+        });
+    });
 });

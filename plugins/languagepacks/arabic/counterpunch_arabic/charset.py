@@ -61,3 +61,33 @@ class ArabicCharacterSetProvider:
                 if existing is None or entry["level_rank"] < existing["level_rank"]:
                     characters[key] = dict(entry)
         return list(characters.values())
+
+    def members_by_set(self, set_ids: list[str], levels: list[str]) -> dict[str, dict[str, list]]:
+        """Return each selected list's defined glyphs, deduped within the list."""
+        requested = set(levels)
+        selected = set(set_ids)
+        grouped: dict[str, dict[str, list]] = {}
+        for leaf in self._data["leaves"]:
+            if leaf["id"] not in selected:
+                continue
+            codepoints: dict[int, int] = {}
+            names: dict[str, int] = {}
+            for entry in leaf["entries"]:
+                if requested and entry["level"] not in requested:
+                    continue
+                rank = entry["level_rank"]
+                if "codepoint" in entry:
+                    codepoint = entry["codepoint"]
+                    existing = codepoints.get(codepoint)
+                    if existing is None or rank < existing:
+                        codepoints[codepoint] = rank
+                elif entry.get("glyph_name"):
+                    name = entry["glyph_name"]
+                    existing = names.get(name)
+                    if existing is None or rank < existing:
+                        names[name] = rank
+            grouped[leaf["id"]] = {
+                "codepoints": list(codepoints),
+                "glyph_names": list(names),
+            }
+        return grouped

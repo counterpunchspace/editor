@@ -475,16 +475,42 @@
 }
 
 .add-glyph-set-row {
+    align-items: center;
     background: transparent;
     border: 0;
     color: var(--text-primary);
     cursor: pointer;
-    display: block;
+    display: flex;
     font: inherit;
     font-size: 12px;
+    gap: 8px;
     padding: 6px 8px;
     text-align: left;
     width: 100%;
+}
+
+.add-glyph-set-label {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.add-glyph-set-coverage {
+    background: var(--background-secondary);
+    border-radius: 999px;
+    color: var(--text-secondary);
+    flex: 0 0 auto;
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+    line-height: 1.4;
+    padding: 0 6px;
+}
+
+.add-glyph-set-coverage.is-complete {
+    background: color-mix(in srgb, var(--accent-green) 18%, var(--background-primary));
+    color: var(--accent-green);
 }
 
 .add-glyph-set-row:hover,

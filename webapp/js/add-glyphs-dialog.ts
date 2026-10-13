@@ -8,6 +8,7 @@ import {
     characterSetPluginManager,
     type CharacterSetCoverageLevel,
     type CharacterSetEntry,
+    type CharacterSetMembers,
     type CharacterSetNode
 } from './character-set-plugin-manager';
 import { Logger } from './logger';
@@ -15,6 +16,56 @@ import { bindModalEscape, type ModalEscapeBinding } from './ui/modal-escape';
 import type { FilesystemPlugin } from './filesystem-plugins/filesystem-plugin';
 
 const console = new Logger('AddGlyphsDialog');
+
+function selectableSetIds(nodes: CharacterSetNode[]): string[] {
+    return nodes.flatMap((node) => [
+        ...(node.selectable ? [node.id] : []),
+        ...selectableSetIds(node.children || [])
+    ]);
+}
+
+function indexFontCoverage(font: Font | null | undefined): {
+    codepoints: Set<number>;
+    names: Set<string>;
+} {
+    const codepoints = new Set<number>();
+    const names = new Set<string>();
+    for (const glyph of font?.glyphs || []) {
+        if (glyph.name) {
+            names.add(glyph.name);
+        }
+        for (const codepoint of glyph.codepoints || []) {
+            if (codepoint >= 0) {
+                codepoints.add(codepoint);
+            }
+        }
+    }
+    return { codepoints, names };
+}
+
+function coverageForSet(
+    members: CharacterSetMembers | undefined,
+    font: { codepoints: Set<number>; names: Set<string> }
+): { present: number; total: number } | null {
+    if (!members) {
+        return null;
+    }
+    let present = 0;
+    for (const codepoint of members.codepoints) {
+        if (font.codepoints.has(codepoint)) {
+            present += 1;
+        }
+    }
+    for (const name of members.glyphNames) {
+        if (font.names.has(name)) {
+            present += 1;
+        }
+    }
+    return {
+        present,
+        total: members.codepoints.length + members.glyphNames.length
+    };
+}
 
 function resultKey(record: { codepoint?: number; glyph_name: string }): string {
     if (typeof record.codepoint === 'number' && record.codepoint >= 0) {
@@ -104,6 +155,9 @@ export class AddGlyphsDialog {
     private activeSetIndex = -1;
     private setSelectionAnchor = -1;
     private enabledLevels = new Set<CharacterSetCoverageLevel>();
+    private setMembers = new Map<string, CharacterSetMembers>();
+    private setMembersProviderId = '';
+    private setMembersRequest = 0;
     private searchVersion = 0;
     private escapeBinding: ModalEscapeBinding | null = null;
 
@@ -131,6 +185,8 @@ export class AddGlyphsDialog {
             ]);
             this.renderProviderOptions();
             this.updateProviderLayout();
+            await this.ensureSetMembers();
+            this.renderSetTree();
             this.searchInput.disabled = false;
             this.searchInput.placeholder =
                 'Search glyph names, Unicode names, characters, or U+ codepoints.';
@@ -464,6 +520,7 @@ export class AddGlyphsDialog {
         );
         this.renderCoverageControls();
         this.updateProviderLayout();
+        await this.ensureSetMembers();
         this.renderSetTree();
         await this.updateResults();
     }
@@ -536,12 +593,35 @@ export class AddGlyphsDialog {
         this.activeSetIndex = sets.length
             ? Math.min(this.activeSetIndex, sets.length - 1)
             : -1;
+        const fontCoverage = indexFontCoverage(window.currentFontModel);
         const fragment = document.createDocumentFragment();
         sets.forEach((set, index) => {
             const row = document.createElement('button');
             row.type = 'button';
             row.className = 'add-glyph-set-row';
-            row.textContent = set.label;
+            const label = document.createElement('span');
+            label.className = 'add-glyph-set-label';
+            label.textContent = set.label;
+            row.appendChild(label);
+            const coverage = coverageForSet(
+                this.setMembers.get(set.id),
+                fontCoverage
+            );
+            if (coverage) {
+                const chip = document.createElement('span');
+                chip.className = 'add-glyph-set-coverage';
+                chip.classList.toggle(
+                    'is-complete',
+                    coverage.total > 0 && coverage.present === coverage.total
+                );
+                chip.textContent = `${coverage.present}/${coverage.total}`;
+                chip.title = `${coverage.present} of ${coverage.total} glyphs from this character set are in the font`;
+                row.appendChild(chip);
+                row.setAttribute(
+                    'aria-label',
+                    `${set.label}, ${coverage.present} of ${coverage.total}`
+                );
+            }
             row.classList.toggle('is-active', index === this.activeSetIndex);
             row.classList.toggle(
                 'is-selected',
@@ -563,6 +643,31 @@ export class AddGlyphsDialog {
             fragment.appendChild(row);
         });
         this.setTree.replaceChildren(fragment);
+    }
+
+    private async ensureSetMembers(): Promise<void> {
+        const provider = this.getActiveProvider();
+        if (!provider || this.setMembersProviderId === provider.id) {
+            return;
+        }
+        const request = ++this.setMembersRequest;
+        try {
+            const grouped = await characterSetPluginManager.getMembersBySet(
+                provider.id,
+                selectableSetIds(provider.tree),
+                []
+            );
+            if (
+                request !== this.setMembersRequest ||
+                this.activeProviderId !== provider.id
+            ) {
+                return;
+            }
+            this.setMembersProviderId = provider.id;
+            this.setMembers = new Map(Object.entries(grouped));
+        } catch (error) {
+            console.error('Could not load character set coverage', error);
+        }
     }
 
     private getVisibleSets(
