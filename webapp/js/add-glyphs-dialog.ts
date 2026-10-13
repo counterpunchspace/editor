@@ -33,11 +33,11 @@ function loadEnabledCoverageLevels(): Set<CharacterSetCoverageLevel> {
     try {
         const raw = localStorage.getItem(COVERAGE_STORAGE_KEY);
         if (raw === null) {
-            return new Set(['essential']);
+            return new Set(['essential', 'recommended']);
         }
         const parsed = JSON.parse(raw) as unknown;
         if (!Array.isArray(parsed)) {
-            return new Set(['essential']);
+            return new Set(['essential', 'recommended']);
         }
         return new Set(
             parsed.filter(
@@ -48,7 +48,7 @@ function loadEnabledCoverageLevels(): Set<CharacterSetCoverageLevel> {
             )
         );
     } catch {
-        return new Set(['essential']);
+        return new Set(['essential', 'recommended']);
     }
 }
 

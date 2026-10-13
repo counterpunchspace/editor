@@ -1477,13 +1477,13 @@
     {
       "id": "mark-ligatures",
       "label": "Mark ligatures",
-      "level": "optional",
+      "level": "recommended",
       "entries": [
         {
           "glyph_name": "shaddaFatha-ar",
           "category": "Mark",
-          "level": "optional",
-          "level_rank": 2,
+          "level": "recommended",
+          "level_rank": 1,
           "components": [
             "uni0651",
             "uni064E"
@@ -1492,8 +1492,8 @@
         {
           "glyph_name": "shaddaDamma-ar",
           "category": "Mark",
-          "level": "optional",
-          "level_rank": 2,
+          "level": "recommended",
+          "level_rank": 1,
           "components": [
             "uni0651",
             "uni064F"
@@ -1502,8 +1502,8 @@
         {
           "glyph_name": "shaddaKasra-ar",
           "category": "Mark",
-          "level": "optional",
-          "level_rank": 2,
+          "level": "recommended",
+          "level_rank": 1,
           "components": [
             "uni0651",
             "uni0650"
@@ -1512,8 +1512,8 @@
         {
           "glyph_name": "shaddaFathatan-ar",
           "category": "Mark",
-          "level": "optional",
-          "level_rank": 2,
+          "level": "recommended",
+          "level_rank": 1,
           "components": [
             "uni0651",
             "uni064B"
@@ -1522,8 +1522,8 @@
         {
           "glyph_name": "shaddaDammatan-ar",
           "category": "Mark",
-          "level": "optional",
-          "level_rank": 2,
+          "level": "recommended",
+          "level_rank": 1,
           "components": [
             "uni0651",
             "uni064C"
@@ -1532,8 +1532,8 @@
         {
           "glyph_name": "shaddaKasratan-ar",
           "category": "Mark",
-          "level": "optional",
-          "level_rank": 2,
+          "level": "recommended",
+          "level_rank": 1,
           "components": [
             "uni0651",
             "uni064D"
@@ -1542,8 +1542,8 @@
         {
           "glyph_name": "shaddaAlefAbove-ar",
           "category": "Mark",
-          "level": "optional",
-          "level_rank": 2,
+          "level": "recommended",
+          "level_rank": 1,
           "components": [
             "uni0651",
             "uni0670"

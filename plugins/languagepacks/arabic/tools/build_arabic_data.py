@@ -532,9 +532,9 @@ def _leaves(characters: dict, bases: list[str], unencoded: dict) -> list[dict]:
         {
             "id": "mark-ligatures",
             "label": "Mark ligatures",
-            "level": "optional",
+            "level": "recommended",
             "entries": [
-                named(name, "optional") for name, _components in MARK_LIGATURES
+                named(name, "recommended") for name, _components in MARK_LIGATURES
             ],
         },
     ]
