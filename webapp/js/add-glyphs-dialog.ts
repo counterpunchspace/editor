@@ -27,6 +27,7 @@ const COVERAGE_LEVELS: ReadonlyArray<{
 ];
 
 const COVERAGE_STORAGE_KEY = 'addGlyphsCoverageLevels';
+const PROVIDER_STORAGE_KEY = 'addGlyphsCharacterSetProvider';
 
 function loadEnabledCoverageLevels(): Set<CharacterSetCoverageLevel> {
     try {
@@ -63,6 +64,23 @@ function saveEnabledCoverageLevels(
                 )
             )
         );
+    } catch {
+        // Preference storage can be unavailable in private browsing.
+    }
+}
+
+function loadSavedProviderId(): string | null {
+    try {
+        const saved = localStorage.getItem(PROVIDER_STORAGE_KEY);
+        return saved && saved.trim() ? saved : null;
+    } catch {
+        return null;
+    }
+}
+
+function saveProviderId(providerId: string): void {
+    try {
+        localStorage.setItem(PROVIDER_STORAGE_KEY, providerId);
     } catch {
         // Preference storage can be unavailable in private browsing.
     }
@@ -239,7 +257,9 @@ export class AddGlyphsDialog {
                 characterSetPluginManager.ensureReady(),
                 this.refreshCompositionSettings()
             ]);
+            this.restoreSavedProvider();
             this.renderProviderOptions();
+            this.renderCoverageControls();
             this.updateProviderLayout();
             await this.ensureSetMembers();
             this.renderSetTree();
@@ -575,8 +595,24 @@ export class AddGlyphsDialog {
         this.providerSelect.value = this.activeProviderId;
     }
 
+    private restoreSavedProvider(): void {
+        const saved = loadSavedProviderId();
+        if (!saved) {
+            return;
+        }
+        const known =
+            saved === 'unicode' ||
+            characterSetPluginManager
+                .getProviders()
+                .some((provider) => provider.id === saved);
+        if (known) {
+            this.activeProviderId = saved;
+        }
+    }
+
     private async changeProvider(providerId: string): Promise<void> {
         this.activeProviderId = providerId;
+        saveProviderId(providerId);
         this.selectedSetIds.clear();
         this.activeSetIndex = -1;
         this.setSelectionAnchor = -1;
