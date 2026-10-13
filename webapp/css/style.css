@@ -5948,8 +5948,7 @@ html[data-command-modifier='ctrl'] .shortcut-option-modifier::before {
     width: 100%;
     box-sizing: border-box;
     padding: 6px 8px;
-    border-top: 1px solid var(--border-primary);
-    border-bottom: 1px solid var(--border-primary);
+    border: 1px solid var(--border-primary);
 }
 
 .find-glyph-search-input {
