@@ -19,6 +19,9 @@
 
 /* Glyph Data search uses the shared info-popup language with a denser result row. */
 .add-glyphs-popup {
+    box-sizing: border-box;
+    height: 92vh;
+    max-height: 92vh;
     width: min(860px, calc(100vw - 32px));
     max-width: 860px;
 }
@@ -332,6 +335,21 @@
     flex-shrink: 0;
 }
 
+.info-popup-content.add-glyphs-content {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    min-height: 0;
+    overflow: hidden;
+}
+
+.add-glyphs-popup > .info-popup-header,
+.add-glyph-provider-control,
+.add-glyphs-composition,
+.add-glyphs-content .find-glyph-actions {
+    flex-shrink: 0;
+}
+
 .add-glyph-provider-control {
     align-items: center;
     color: var(--text-secondary);
@@ -398,7 +416,11 @@
 }
 
 .add-glyph-body {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
     margin-top: 12px;
+    min-height: 0;
 }
 
 .add-glyphs-popup.has-character-set-tree .add-glyph-body {
@@ -406,33 +428,23 @@
     display: grid;
     gap: 12px;
     grid-template-columns: minmax(260px, 0.32fr) minmax(0, 1fr);
-}
-
-.add-glyphs-popup.has-character-set-tree .add-glyph-list {
-    height: min(58vh, 580px);
-    max-height: none;
-}
-
-.add-glyphs-popup.has-character-set-tree .add-glyph-set-tree {
-    max-height: min(58vh, 580px);
+    grid-template-rows: minmax(0, 1fr);
 }
 
 .add-glyph-set-panel,
 .add-glyph-results-panel {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    min-height: 0;
     min-width: 0;
+    overflow: hidden;
 }
 
 .add-glyph-set-panel {
     border: 1px solid var(--border-primary);
     border-radius: 6px;
-    display: flex;
-    flex-direction: column;
     padding: 10px;
-}
-
-.add-glyphs-popup.has-character-set-tree .add-glyph-set-panel {
-    min-height: 0;
-    overflow: hidden;
 }
 
 .add-glyph-set-panel[hidden] {
@@ -441,9 +453,15 @@
 
 .add-glyph-set-panel h3 {
     color: var(--text-secondary);
+    flex-shrink: 0;
     font-size: 12px;
     font-weight: 600;
     margin-bottom: 8px;
+}
+
+.add-glyph-set-panel .overview-search-control,
+.add-glyph-results-panel > .find-glyph-search {
+    flex-shrink: 0;
 }
 
 .add-glyph-set-panel .overview-search-control {
@@ -451,7 +469,7 @@
 }
 
 .add-glyph-set-tree {
-    flex: 1;
+    flex: 1 1 auto;
     min-height: 0;
     overflow: auto;
 }
@@ -487,10 +505,15 @@
     border: 0;
     color: var(--text-secondary);
     display: flex;
+    flex-shrink: 0;
     font-size: 11px;
     gap: 10px;
     margin: 8px 0 0;
     padding: 0;
+}
+
+.add-glyph-coverage-controls[hidden] {
+    display: none;
 }
 
 .add-glyph-coverage-controls legend {
@@ -506,8 +529,9 @@
 }
 
 .add-glyph-list {
-    max-height: min(58vh, 580px);
+    flex: 1 1 auto;
     max-width: 100%;
+    min-height: 0;
     overflow-y: auto;
     border: 1px solid var(--border-primary);
     border-radius: 6px;
@@ -520,11 +544,8 @@
     }
 
     .add-glyphs-popup.has-character-set-tree .add-glyph-body {
-        grid-template-columns: 1fr;
-    }
-
-    .add-glyphs-popup.has-character-set-tree .add-glyph-set-tree {
-        max-height: 180px;
+        grid-template-columns: minmax(0, 1fr);
+        grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
     }
 }
 
