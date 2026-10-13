@@ -30,6 +30,32 @@ describe('keyboard navigation browser-history guard', () => {
     it('still blocks browser history navigation outside text inputs', () => {
         expect(dispatchAltLeft(document.body).defaultPrevented).toBe(true);
     });
+
+    it('selects modal search field text on Cmd+A', () => {
+        const popup = document.createElement('div');
+        popup.className = 'info-popup';
+        const input = document.createElement('input');
+        input.type = 'search';
+        input.className = 'find-glyph-search-input';
+        input.value = 'dot';
+        popup.appendChild(input);
+        document.body.appendChild(popup);
+        input.focus();
+
+        const event = new KeyboardEvent('keydown', {
+            key: 'a',
+            metaKey: true,
+            ctrlKey: true,
+            bubbles: true,
+            cancelable: true
+        });
+        document.dispatchEvent(event);
+
+        expect(event.defaultPrevented).toBe(true);
+        expect(input.selectionStart).toBe(0);
+        expect(input.selectionEnd).toBe(3);
+        popup.remove();
+    });
 });
 
 describe('keyboard navigation focusView DOM transfer', () => {

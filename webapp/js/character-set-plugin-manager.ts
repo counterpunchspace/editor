@@ -17,7 +17,13 @@ export interface CharacterSetProvider {
     name: string;
     version: string;
     tree: CharacterSetNode[];
+    glyphCategories: GlyphCategoryDefinition[];
 }
+
+export type GlyphCategoryDefinition = {
+    id: string;
+    label: string;
+};
 
 export type CharacterSetEntry = {
     codepoint?: number;
@@ -111,11 +117,26 @@ function parseProvider(value: unknown): CharacterSetProvider | null {
     if (tree.some((node) => node === null)) {
         return null;
     }
+    const glyphCategories = Array.isArray(value.glyph_categories)
+        ? value.glyph_categories.flatMap((category) => {
+              if (
+                  !isRecord(category) ||
+                  typeof category.id !== 'string' ||
+                  typeof category.label !== 'string' ||
+                  !category.id ||
+                  !category.label
+              ) {
+                  return [];
+              }
+              return [{ id: category.id, label: category.label }];
+          })
+        : [];
     return {
         id: value.id,
         name: value.name,
         version: value.version,
-        tree: tree.filter((node): node is CharacterSetNode => node !== null)
+        tree: tree.filter((node): node is CharacterSetNode => node !== null),
+        glyphCategories
     };
 }
 

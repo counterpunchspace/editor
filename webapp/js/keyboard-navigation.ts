@@ -1934,14 +1934,22 @@ import {
                 }
             }
 
-            // Allow Cmd+A in text input elements
+            // Allow Cmd+A in text input elements. Modal search fields select
+            // their own text instead of the list behind the dialog.
             if (isTextInputElement(activeElement)) {
-                console.log(
-                    '[KeyboardNav]',
-                    'Allowing Cmd+A in text input:',
-                    activeElement?.tagName,
-                    activeElement?.id || activeElement?.className
-                );
+                if (
+                    activeElement instanceof HTMLInputElement &&
+                    (activeElement.classList.contains(
+                        'find-glyph-search-input'
+                    ) ||
+                        (activeElement.type === 'search' &&
+                            activeElement.closest('.info-popup')))
+                ) {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    event.stopImmediatePropagation();
+                    activeElement.select();
+                }
                 return;
             }
 

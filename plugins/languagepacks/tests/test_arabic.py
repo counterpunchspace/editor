@@ -102,9 +102,20 @@ def test_data_identities_and_pack_names():
         else:
             root = token.rsplit(".", 1)[0] if token.rsplit(".", 1)[-1] in {"init", "medi", "fina"} else token
             assert root in SOURCE.unencoded
-    dot_names = {entry["glyph_name"] for entry in DATA["leaves"][1]["entries"]}
-    assert dot_names
-    assert all("codepoint" not in entry for entry in DATA["leaves"][1]["entries"])
+    entries = DATA["leaves"][0]["entries"]
+    assert DATA["leaves"][0]["id"] == "arabic"
+    assert len(DATA["leaves"]) == 1
+    dot_names = {
+        entry["glyph_name"]
+        for entry in entries
+        if "glyph_name" in entry and "codepoint" not in entry
+    }
+    assert "twoDotsHorizontalAbove-ar" in dot_names
+    assert all(
+        "codepoint" not in entry
+        for entry in entries
+        if entry.get("glyph_name") in dot_names
+    )
     assert "kafDotless-ar" in SOURCE.unencoded
     assert SOURCE.characters["uni062A"]["decompose"] == [
         "uni066E",
@@ -148,6 +159,12 @@ def test_data_identities_and_pack_names():
     assert "init" in SOURCE.characters["uni0649"]["positions"]
     ghunna_fina = SOURCE.drawing("noonGhunna-ar.fina")
     assert ghunna_fina and ghunna_fina["paths"]
+    ligature = SOURCE.drawing("shaddaFatha-ar")
+    assert ligature and len(ligature["paths"]) >= 2
+    fatha = SOURCE.drawing("fatha-ar")
+    ligature_top = max(node["y"] for path in ligature["paths"] for node in path["nodes"])
+    fatha_top = max(node["y"] for path in fatha["paths"] for node in path["nodes"])
+    assert ligature_top > fatha_top
 
 
 @pytest.mark.skipif(
@@ -390,16 +407,36 @@ def test_vowel_ligature_orders_and_encoded_tanween_is_not_one():
 def test_character_set_and_recipe_round_trip():
     provider = ArabicCharacterSetProvider()
     assert provider.metadata()["name"] == "Arabic Language Pack"
-    letters = provider.characters(["letters"], ["essential"])
-    assert any(entry.get("codepoint") == 0x062A for entry in letters)
-    members = provider.members_by_set(["letters", "dots"], [])
-    assert 0x062A in members["letters"]["codepoints"]
-    assert "twoDotsHorizontalAbove-ar" in members["dots"]["glyph_names"]
-    assert members["letters"]["codepoints"]
-    assert 0x062A not in members["dots"]["codepoints"]
-    dots = provider.characters(["dots"], ["essential"])
+    assert provider.metadata()["tree"] == []
+    assert provider.metadata()["glyph_categories"][0] == {
+        "id": "bases",
+        "label": "Bases",
+    }
+    glyphs = provider.characters([], ["essential", "recommended"])
+    assert all(entry.get("codepoint") != 0x062A for entry in glyphs)
+    by_name = {
+        entry["glyph_name"]: entry for entry in glyphs if entry.get("glyph_name")
+    }
+    by_codepoint = {
+        entry["codepoint"]: entry for entry in glyphs if "codepoint" in entry
+    }
+    assert by_name["twoDotsHorizontalAbove-ar"]["categories"] == ["dots"]
+    assert by_name["lam_alef-ar"]["categories"] == ["ligatures"]
+    assert by_name["shaddaFatha-ar"]["categories"] == ["mark-ligatures"]
+    assert by_name["kafDotless-ar"]["categories"] == ["bases"]
+    assert by_codepoint[0x064E]["categories"] == ["marks"]
+    assert by_codepoint[0x0627]["categories"] == ["bases"]
+    assert any(
+        entry.get("glyph_name") == "twoDotsHorizontalAbove-ar" for entry in glyphs
+    )
+    assert any(entry.get("glyph_name") == "lam_alef-ar" for entry in glyphs)
+    assert any(entry.get("glyph_name") == "shaddaFatha-ar" for entry in glyphs)
+    members = provider.members_by_set([], [])
+    assert "twoDotsHorizontalAbove-ar" in members["arabic"]["glyph_names"]
+    assert "lam_alef-ar" in members["arabic"]["glyph_names"]
+    assert 0x062A not in members["arabic"]["codepoints"]
+    dots = provider.characters(["arabic"], ["essential"])
     assert any(entry.get("glyph_name") == "twoDotsHorizontalAbove-ar" for entry in dots)
-    assert all("codepoint" not in entry for entry in dots)
     composition = ArabicCompositionProvider()
 
     def lookup(codepoint):

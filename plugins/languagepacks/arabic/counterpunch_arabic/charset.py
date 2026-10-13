@@ -7,9 +7,27 @@ from importlib.resources import files
 from typing import Any
 
 
+def _union_categories(left: Any, right: Any) -> list[str]:
+    categories: list[str] = []
+    for source in (left, right):
+        if not isinstance(source, list):
+            continue
+        for category in source:
+            if isinstance(category, str) and category not in categories:
+                categories.append(category)
+    return categories
+
+
 class ArabicCharacterSetProvider:
     provider_id = "space.counterpunch.arabic"
     display_name = "Arabic Language Pack"
+    glyph_categories = [
+        {"id": "bases", "label": "Bases"},
+        {"id": "dots", "label": "Dots"},
+        {"id": "marks", "label": "Marks"},
+        {"id": "ligatures", "label": "Ligatures"},
+        {"id": "mark-ligatures", "label": "Mark ligatures"},
+    ]
 
     def __init__(self) -> None:
         path = files("counterpunch_arabic").joinpath("data/arabic.json")
@@ -20,21 +38,8 @@ class ArabicCharacterSetProvider:
             "id": self.provider_id,
             "name": self.display_name,
             "version": "1.0.0",
-            "tree": [
-                {
-                    "id": "arabic",
-                    "label": "Arabic",
-                    "selectable": False,
-                    "children": [
-                        {
-                            "id": leaf["id"],
-                            "label": leaf["label"],
-                            "selectable": True,
-                        }
-                        for leaf in self._data["leaves"]
-                    ],
-                }
-            ],
+            "tree": [],
+            "glyph_categories": self.glyph_categories,
         }
 
     def characters(self, set_ids: list[str], levels: list[str]) -> list[dict[str, Any]]:
@@ -42,7 +47,7 @@ class ArabicCharacterSetProvider:
         selected = set(set_ids)
         characters: dict[str, dict[str, Any]] = {}
         for leaf in self._data["leaves"]:
-            if leaf["id"] not in selected:
+            if selected and leaf["id"] not in selected:
                 continue
             for entry in leaf["entries"]:
                 if requested and entry["level"] not in requested:
@@ -52,9 +57,19 @@ class ArabicCharacterSetProvider:
                     if "codepoint" in entry
                     else f"g{entry['glyph_name']}"
                 )
+                incoming = dict(entry)
                 existing = characters.get(key)
-                if existing is None or entry["level_rank"] < existing["level_rank"]:
-                    characters[key] = dict(entry)
+                if existing is None:
+                    characters[key] = incoming
+                    continue
+                categories = _union_categories(
+                    existing.get("categories"), incoming.get("categories")
+                )
+                if entry["level_rank"] < existing["level_rank"]:
+                    incoming["categories"] = categories
+                    characters[key] = incoming
+                else:
+                    existing["categories"] = categories
         return list(characters.values())
 
     def members_by_set(self, set_ids: list[str], levels: list[str]) -> dict[str, dict[str, list]]:
@@ -63,7 +78,7 @@ class ArabicCharacterSetProvider:
         selected = set(set_ids)
         grouped: dict[str, dict[str, list]] = {}
         for leaf in self._data["leaves"]:
-            if leaf["id"] not in selected:
+            if selected and leaf["id"] not in selected:
                 continue
             codepoints: dict[int, int] = {}
             names: dict[str, int] = {}

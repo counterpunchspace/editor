@@ -1,4 +1,5 @@
 import { Font } from './babelfont-model';
+import { fastGlyphTileRenderer } from './glyph-tile-renderer-fast';
 import {
     codepointQuery,
     glyphDataIndex,
@@ -26,48 +27,7 @@ const COVERAGE_LEVELS: ReadonlyArray<{
     { id: 'optional', label: 'Optional' }
 ];
 
-const COVERAGE_STORAGE_KEY = 'addGlyphsCoverageLevels';
 const PROVIDER_STORAGE_KEY = 'addGlyphsCharacterSetProvider';
-
-function loadEnabledCoverageLevels(): Set<CharacterSetCoverageLevel> {
-    try {
-        const raw = localStorage.getItem(COVERAGE_STORAGE_KEY);
-        if (raw === null) {
-            return new Set(['essential', 'recommended']);
-        }
-        const parsed = JSON.parse(raw) as unknown;
-        if (!Array.isArray(parsed)) {
-            return new Set(['essential', 'recommended']);
-        }
-        return new Set(
-            parsed.filter(
-                (level): level is CharacterSetCoverageLevel =>
-                    level === 'essential' ||
-                    level === 'recommended' ||
-                    level === 'optional'
-            )
-        );
-    } catch {
-        return new Set(['essential', 'recommended']);
-    }
-}
-
-function saveEnabledCoverageLevels(
-    levels: Set<CharacterSetCoverageLevel>
-): void {
-    try {
-        localStorage.setItem(
-            COVERAGE_STORAGE_KEY,
-            JSON.stringify(
-                COVERAGE_LEVELS.map((level) => level.id).filter((id) =>
-                    levels.has(id)
-                )
-            )
-        );
-    } catch {
-        // Preference storage can be unavailable in private browsing.
-    }
-}
 
 function loadSavedProviderId(): string | null {
     try {
@@ -138,6 +98,7 @@ function coverageForSet(
 
 type ListedGlyph = GlyphDataSearchResult & {
     coverageLevel?: CharacterSetCoverageLevel;
+    categories?: string[];
 };
 
 function resultKey(record: { codepoint?: number; glyph_name: string }): string {
@@ -214,9 +175,9 @@ export class AddGlyphsDialog {
     private setSearchInput: HTMLInputElement | null = null;
     private setTree: HTMLElement | null = null;
     private setPanel: HTMLElement | null = null;
-    private coverageControls: HTMLElement | null = null;
     private compositionSettings: HTMLElement | null = null;
     private list: HTMLElement | null = null;
+    private categoryFilters: HTMLElement | null = null;
     private confirmButton: HTMLButtonElement | null = null;
     private quotaError: HTMLParagraphElement | null = null;
     private results: ListedGlyph[] = [];
@@ -225,14 +186,17 @@ export class AddGlyphsDialog {
     private selectionAnchor = -1;
     private activeProviderId = 'unicode';
     private selectedSetIds = new Set<string>();
+    private disabledCategories = new Set<string>();
+    private presenceFilter: 'all' | 'present' | 'missing' = 'all';
+    private categoryChips: HTMLElement | null = null;
+    private searchTimer: number | null = null;
     private activeSetIndex = -1;
     private setSelectionAnchor = -1;
-    private enabledLevels = loadEnabledCoverageLevels();
-    private coverageTotals = new Map<CharacterSetCoverageLevel, number>();
     private setMembers = new Map<string, CharacterSetMembers>();
     private setMembersProviderId = '';
     private setMembersRequest = 0;
     private searchVersion = 0;
+    private samplePreviewVersion = 0;
     private escapeBinding: ModalEscapeBinding | null = null;
 
     constructor() {
@@ -259,7 +223,6 @@ export class AddGlyphsDialog {
             ]);
             this.restoreSavedProvider();
             this.renderProviderOptions();
-            this.renderCoverageControls();
             this.updateProviderLayout();
             await this.ensureSetMembers();
             this.renderSetTree();
@@ -280,6 +243,10 @@ export class AddGlyphsDialog {
     }
 
     private close(): void {
+        if (this.searchTimer !== null) {
+            window.clearTimeout(this.searchTimer);
+            this.searchTimer = null;
+        }
         this.escapeBinding?.release();
         this.escapeBinding = null;
         this.clearQuotaError();
@@ -366,13 +333,10 @@ export class AddGlyphsDialog {
         this.searchInput.setAttribute('aria-label', 'Search glyph data');
         search.appendChild(this.searchInput);
 
-        this.coverageControls = document.createElement('fieldset');
-        this.coverageControls.className = 'add-glyph-coverage-controls';
-
         this.setPanel = document.createElement('section');
         this.setPanel.className = 'add-glyph-set-panel';
         const setHeading = document.createElement('h3');
-        setHeading.textContent = 'Character Sets';
+        setHeading.textContent = 'Glyph Sets';
         const setSearch = document.createElement('div');
         setSearch.className = 'find-glyph-search overview-search-control';
         const setSearchIcon = document.createElement('span');
@@ -383,8 +347,8 @@ export class AddGlyphsDialog {
         this.setSearchInput = document.createElement('input');
         this.setSearchInput.className = 'find-glyph-search-input';
         this.setSearchInput.type = 'search';
-        this.setSearchInput.placeholder = 'Search character sets';
-        this.setSearchInput.setAttribute('aria-label', 'Search character sets');
+        this.setSearchInput.placeholder = 'Search glyph sets';
+        this.setSearchInput.setAttribute('aria-label', 'Search glyph sets');
         setSearch.appendChild(this.setSearchInput);
         this.setTree = document.createElement('div');
         this.setTree.className = 'add-glyph-set-tree';
@@ -396,6 +360,9 @@ export class AddGlyphsDialog {
         this.list.className = 'add-glyph-list';
         this.list.setAttribute('role', 'listbox');
         this.list.setAttribute('aria-multiselectable', 'true');
+        new ResizeObserver(() => this.syncAbbreviatedTitles()).observe(
+            this.list
+        );
 
         const actions = document.createElement('div');
         actions.className = 'find-glyph-actions';
@@ -421,7 +388,42 @@ export class AddGlyphsDialog {
         body.className = 'add-glyph-body';
         const resultsPanel = document.createElement('section');
         resultsPanel.className = 'add-glyph-results-panel';
-        resultsPanel.append(search, this.coverageControls, this.list);
+        const resultsHeading = document.createElement('h3');
+        resultsHeading.textContent = 'Glyphs';
+        const resultsToolbar = document.createElement('div');
+        resultsToolbar.className = 'add-glyph-results-toolbar';
+        resultsToolbar.append(search);
+        this.categoryFilters = document.createElement('div');
+        this.categoryFilters.className = 'add-glyph-category-filters';
+        this.categoryFilters.hidden = true;
+        const presence = document.createElement('div');
+        presence.className = 'add-glyph-presence';
+        presence.setAttribute('role', 'radiogroup');
+        presence.setAttribute('aria-label', 'Which glyphs to show');
+        for (const option of [
+            ['all', 'All'],
+            ['present', 'Present'],
+            ['missing', 'Missing']
+        ] as const) {
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.dataset.presence = option[0];
+            button.textContent = option[1];
+            button.setAttribute('aria-pressed', String(option[0] === 'all'));
+            if (option[0] === 'all') {
+                button.classList.add('is-selected');
+            }
+            presence.appendChild(button);
+        }
+        this.categoryChips = document.createElement('div');
+        this.categoryChips.className = 'add-glyph-category-chips';
+        this.categoryFilters.append(presence, this.categoryChips);
+        resultsPanel.append(
+            resultsHeading,
+            resultsToolbar,
+            this.categoryFilters,
+            this.list
+        );
         body.append(this.setPanel, resultsPanel);
         this.content.replaceChildren(
             providerBar,
@@ -447,7 +449,13 @@ export class AddGlyphsDialog {
             }
         });
         this.searchInput?.addEventListener('input', () => {
-            void this.updateResults();
+            if (this.searchTimer !== null) {
+                window.clearTimeout(this.searchTimer);
+            }
+            this.searchTimer = window.setTimeout(() => {
+                this.searchTimer = null;
+                void this.updateResults();
+            }, 200);
         });
         this.providerSelect?.addEventListener('change', () => {
             void this.changeProvider(this.providerSelect?.value || 'unicode');
@@ -455,23 +463,51 @@ export class AddGlyphsDialog {
         this.setSearchInput?.addEventListener('input', () =>
             this.renderSetTree()
         );
-        this.coverageControls?.addEventListener('change', (event) => {
-            const input = event.target;
+        this.categoryFilters?.addEventListener('click', (event) => {
+            const presenceButton = (
+                event.target as HTMLElement | null
+            )?.closest('[data-presence]');
+            if (presenceButton instanceof HTMLButtonElement) {
+                const presence = presenceButton.dataset.presence;
+                if (
+                    presence === 'all' ||
+                    presence === 'present' ||
+                    presence === 'missing'
+                ) {
+                    this.presenceFilter = presence;
+                    this.renderResults();
+                }
+                return;
+            }
+            const chip = (event.target as HTMLElement | null)?.closest(
+                '[data-category]'
+            );
             if (
-                !(input instanceof HTMLInputElement) ||
-                !input.dataset.coverageLevel
+                !(chip instanceof HTMLButtonElement) ||
+                !chip.dataset.category
             ) {
                 return;
             }
-            const level = input.dataset
-                .coverageLevel as CharacterSetCoverageLevel;
-            if (input.checked) {
-                this.enabledLevels.add(level);
+            const category = chip.dataset.category;
+            if (this.disabledCategories.has(category)) {
+                this.disabledCategories.delete(category);
             } else {
-                this.enabledLevels.delete(level);
+                this.disabledCategories.add(category);
             }
-            saveEnabledCoverageLevels(this.enabledLevels);
-            void this.updateResults();
+            this.renderResults();
+        });
+        this.list?.addEventListener('change', (event) => {
+            const input = event.target;
+            if (
+                !(input instanceof HTMLInputElement) ||
+                !input.dataset.selectAll
+            ) {
+                return;
+            }
+            this.setColumnSelection(
+                input.dataset.selectAll as CharacterSetCoverageLevel,
+                input.checked
+            );
         });
         document.addEventListener(
             'keydown',
@@ -485,6 +521,15 @@ export class AddGlyphsDialog {
                     !event.shiftKey &&
                     !event.altKey
                 ) {
+                    const target = event.target;
+                    if (
+                        target instanceof HTMLInputElement ||
+                        target instanceof HTMLTextAreaElement ||
+                        (target instanceof HTMLElement &&
+                            target.isContentEditable)
+                    ) {
+                        return;
+                    }
                     event.preventDefault();
                     event.stopImmediatePropagation();
                     this.selectAllResults();
@@ -528,7 +573,6 @@ export class AddGlyphsDialog {
         const version = ++this.searchVersion;
         const query = this.searchInput?.value || '';
         if (this.activeProviderId === 'unicode') {
-            this.coverageTotals = new Map();
             this.results = glyphDataIndex.search(query);
         } else {
             const characters = await characterSetPluginManager.getCharacters(
@@ -539,22 +583,23 @@ export class AddGlyphsDialog {
             if (version !== this.searchVersion) {
                 return;
             }
-            this.coverageTotals = new Map();
-            for (const character of characters) {
-                this.coverageTotals.set(
-                    character.level,
-                    (this.coverageTotals.get(character.level) || 0) + 1
-                );
-            }
-            this.results = characters.flatMap((character) => {
-                if (!this.enabledLevels.has(character.level)) {
-                    return [];
-                }
-                const record = characterRecord(character);
-                return record && this.matchesSearch(record, query)
-                    ? [{ ...record, coverageLevel: character.level }]
-                    : [];
-            });
+            this.results = COVERAGE_LEVELS.flatMap((level) =>
+                characters.flatMap((character) => {
+                    if (character.level !== level.id) {
+                        return [];
+                    }
+                    const record = characterRecord(character);
+                    return record && this.matchesSearch(record, query)
+                        ? [
+                              {
+                                  ...record,
+                                  coverageLevel: character.level,
+                                  categories: character.categories || []
+                              }
+                          ]
+                        : [];
+                })
+            );
         }
         this.selectedKeys.clear();
         this.activeIndex = this.results.length ? 0 : -1;
@@ -614,9 +659,9 @@ export class AddGlyphsDialog {
         this.activeProviderId = providerId;
         saveProviderId(providerId);
         this.selectedSetIds.clear();
+        this.disabledCategories.clear();
         this.activeSetIndex = -1;
         this.setSelectionAnchor = -1;
-        this.renderCoverageControls();
         this.updateProviderLayout();
         await this.ensureSetMembers();
         this.renderSetTree();
@@ -629,9 +674,6 @@ export class AddGlyphsDialog {
         if (this.setPanel) {
             this.setPanel.hidden = !hasSetTree;
         }
-        if (this.coverageControls) {
-            this.coverageControls.hidden = !provider;
-        }
         if (this.searchInput) {
             this.searchInput.placeholder = provider
                 ? 'Search selected characters'
@@ -640,6 +682,12 @@ export class AddGlyphsDialog {
         this.content
             ?.closest('.add-glyphs-popup')
             ?.classList.toggle('has-character-set-tree', hasSetTree);
+        this.content
+            ?.closest('.add-glyphs-popup')
+            ?.classList.toggle(
+                'has-coverage-columns',
+                Boolean(provider) && !hasSetTree
+            );
     }
 
     private getActiveProvider() {
@@ -649,50 +697,6 @@ export class AddGlyphsDialog {
         return characterSetPluginManager
             .getProviders()
             .find((candidate) => candidate.id === this.activeProviderId);
-    }
-
-    private renderCoverageControls(): void {
-        if (!this.coverageControls) {
-            return;
-        }
-        if (!this.getActiveProvider()) {
-            this.coverageControls.replaceChildren();
-            return;
-        }
-        const legend = document.createElement('span');
-        legend.className = 'add-glyph-coverage-legend';
-        legend.textContent = 'Include';
-        const fragment = document.createDocumentFragment();
-        fragment.appendChild(legend);
-        for (const level of COVERAGE_LEVELS) {
-            const option = document.createElement('label');
-            const input = document.createElement('input');
-            input.type = 'checkbox';
-            input.checked = this.enabledLevels.has(level.id);
-            input.dataset.coverageLevel = level.id;
-            const count = document.createElement('span');
-            count.className = 'add-glyph-coverage-count';
-            count.dataset.coverageCount = level.id;
-            count.textContent = '0';
-            option.append(input, document.createTextNode(level.label), count);
-            fragment.appendChild(option);
-        }
-        this.coverageControls.replaceChildren(fragment);
-        this.syncCoverageCounts();
-    }
-
-    private syncCoverageCounts(): void {
-        if (!this.coverageControls) {
-            return;
-        }
-        const counts = this.coverageTotals;
-        for (const count of this.coverageControls.querySelectorAll<HTMLElement>(
-            '[data-coverage-count]'
-        )) {
-            const level = count.dataset
-                .coverageCount as CharacterSetCoverageLevel;
-            count.textContent = String(counts.get(level) || 0);
-        }
     }
 
     private renderSetTree(): void {
@@ -844,87 +848,420 @@ export class AddGlyphsDialog {
             return;
         }
         const font = window.currentFontModel;
-        const fragment = document.createDocumentFragment();
-        this.results.forEach((record, index) => {
-            const existing =
-                typeof record.codepoint === 'number' && record.codepoint >= 0
-                    ? font?.findGlyphByCodepoint(record.codepoint)
-                    : font?.findGlyph(record.glyph_name);
-            const nameCollision = font?.findGlyph(record.glyph_name);
-            const row = document.createElement('button');
-            row.type = 'button';
-            row.className = 'add-glyph-row';
-            row.classList.toggle('is-active', index === this.activeIndex);
-            row.classList.toggle('is-existing', Boolean(existing));
-            row.classList.toggle(
-                'is-selected',
-                this.selectedKeys.has(resultKey(record))
-            );
-            row.setAttribute('role', 'option');
-            row.setAttribute(
-                'aria-selected',
-                String(this.selectedKeys.has(resultKey(record)))
-            );
-            row.addEventListener('click', (event) =>
-                this.selectRow(
-                    index,
-                    event.shiftKey,
-                    event.metaKey || event.ctrlKey
+        const rows = this.results.map((record, index) =>
+            this.createGlyphRow(record, index, font)
+        );
+        this.renderCategoryFilters();
+        if (this.getActiveProvider()) {
+            this.list.className = 'add-glyph-columns';
+            this.list.removeAttribute('role');
+            const columns = document.createDocumentFragment();
+            for (const level of COVERAGE_LEVELS) {
+                columns.appendChild(
+                    this.createLevelColumn(
+                        level,
+                        rows.filter((_, index) => {
+                            const record = this.results[index];
+                            return (
+                                record?.coverageLevel === level.id &&
+                                this.recordIsShown(record)
+                            );
+                        })
+                    )
+                );
+            }
+            this.list.replaceChildren(columns);
+        } else {
+            this.list.className = 'add-glyph-list';
+            this.list.setAttribute('role', 'listbox');
+            this.list.replaceChildren(
+                ...rows.filter((_, index) =>
+                    this.recordIsShown(this.results[index])
                 )
             );
-            row.addEventListener('dblclick', () => {
-                this.selectRow(index, false, false);
-                this.addSelected();
-            });
+        }
+        this.syncConfirmButton();
+        this.syncAbbreviatedTitles();
+        void this.paintSamplePreviews();
+    }
 
-            const preview = document.createElement('span');
-            preview.className = 'add-glyph-preview';
-            preview.textContent = record.general_category.startsWith('M')
-                ? `\u25cc${record.character}`
-                : record.character || '—';
-            row.appendChild(preview);
+    private renderCategoryFilters(): void {
+        if (!this.categoryFilters) {
+            return;
+        }
+        const definitions = this.getActiveProvider()?.glyphCategories || [];
+        const counts = new Map<string, number>();
+        for (const record of this.results) {
+            if (!this.matchesPresence(record)) {
+                continue;
+            }
+            for (const category of record.categories || []) {
+                counts.set(category, (counts.get(category) || 0) + 1);
+            }
+        }
+        const categories = definitions.filter(
+            (category) => (counts.get(category.id) || 0) > 0
+        );
+        this.categoryFilters.hidden = this.results.length === 0;
+        for (const button of this.categoryFilters.querySelectorAll<HTMLButtonElement>(
+            '[data-presence]'
+        )) {
+            const selected = button.dataset.presence === this.presenceFilter;
+            button.classList.toggle('is-selected', selected);
+            button.setAttribute('aria-pressed', String(selected));
+        }
+        if (!this.categoryChips) {
+            return;
+        }
+        if (categories.length === 0) {
+            this.categoryChips.replaceChildren();
+            return;
+        }
+        const fragment = document.createDocumentFragment();
+        for (const category of categories) {
+            const chip = document.createElement('button');
+            chip.type = 'button';
+            chip.className = 'add-glyph-category-chip';
+            chip.dataset.category = category.id;
+            const selected = !this.disabledCategories.has(category.id);
+            chip.classList.toggle('is-selected', selected);
+            chip.setAttribute('aria-pressed', String(selected));
+            const label = document.createElement('span');
+            label.textContent = category.label;
+            const count = document.createElement('span');
+            count.className = 'add-glyph-set-coverage';
+            count.textContent = String(counts.get(category.id) || 0);
+            chip.append(label, count);
+            fragment.appendChild(chip);
+        }
+        this.categoryChips.replaceChildren(fragment);
+    }
 
-            const details = document.createElement('span');
-            details.className = 'add-glyph-details';
-            const name = document.createElement('strong');
-            name.textContent = record.glyph_name;
-            details.appendChild(name);
-            row.appendChild(details);
+    private recordIsPresent(record: ListedGlyph): boolean {
+        const font = window.currentFontModel;
+        if (typeof record.codepoint === 'number' && record.codepoint >= 0) {
+            return Boolean(font?.findGlyphByCodepoint(record.codepoint));
+        }
+        return Boolean(font?.findGlyph(record.glyph_name));
+    }
 
-            const properties = document.createElement('span');
-            properties.className = 'add-glyph-properties';
-            const extras = [
-                typeof record.codepoint === 'number' && record.codepoint >= 0
-                    ? `U+${record.codepoint.toString(16).toUpperCase().padStart(4, '0')}`
-                    : '',
-                record.script,
-                record.joining_type ? `join ${record.joining_type}` : ''
-            ].filter(Boolean);
-            const metadata = document.createElement('span');
-            metadata.textContent = existing
-                ? 'Already in font'
-                : nameCollision
-                  ? 'Glyph name already in font'
-                  : extras.join(' · ');
-            properties.appendChild(metadata);
-            const category = document.createElement('span');
-            category.className = 'add-glyph-category';
+    private matchesPresence(record: ListedGlyph): boolean {
+        if (this.presenceFilter === 'all') {
+            return true;
+        }
+        const present = this.recordIsPresent(record);
+        return this.presenceFilter === 'present' ? present : !present;
+    }
+
+    private recordIsShown(record: ListedGlyph | undefined): boolean {
+        if (!record || !this.matchesPresence(record)) {
+            return false;
+        }
+        return this.matchesGlyphCategories(record);
+    }
+
+    /** A glyph with several plugin categories stays visible while any of them is selected. */
+    private matchesGlyphCategories(record: ListedGlyph): boolean {
+        const categories = record.categories;
+        if (!categories?.length) {
+            return true;
+        }
+        return categories.some(
+            (category) => !this.disabledCategories.has(category)
+        );
+    }
+
+    private glyphCategoryLabel(id: string): string {
+        return (
+            this.getActiveProvider()?.glyphCategories.find(
+                (category) => category.id === id
+            )?.label || id
+        );
+    }
+
+    private syncAbbreviatedTitles(): void {
+        if (!this.list) {
+            return;
+        }
+        for (const label of this.list.querySelectorAll<HTMLElement>(
+            '.add-glyph-details strong, .add-glyph-unicode-name'
+        )) {
+            const text = label.textContent || '';
+            if (text && label.scrollWidth > label.clientWidth + 1) {
+                label.title = text;
+            } else {
+                label.removeAttribute('title');
+            }
+        }
+    }
+
+    private async paintSamplePreviews(): Promise<void> {
+        const version = ++this.samplePreviewVersion;
+        const previews = [
+            ...(this.list?.querySelectorAll<HTMLElement>(
+                '[data-sample-glyph]'
+            ) || [])
+        ];
+        const names = [
+            ...new Set(
+                previews
+                    .map((preview) => preview.dataset.sampleGlyph || '')
+                    .filter(Boolean)
+            )
+        ];
+        if (!names.length) {
+            return;
+        }
+        const { languagePackManager } =
+            await import('./language-packs/language-pack-manager');
+        const drawings = await languagePackManager.drawings(names);
+        if (version !== this.samplePreviewVersion || !this.list) {
+            return;
+        }
+        const metrics = this.sampleTileMetrics();
+        for (const preview of previews) {
+            if (!preview.isConnected) {
+                continue;
+            }
+            const name = preview.dataset.sampleGlyph || '';
+            const drawing = drawings[name];
+            if (!drawing?.paths?.length) {
+                continue;
+            }
+            const scale =
+                metrics.upm / (drawing.upm > 0 ? drawing.upm : metrics.upm);
+            const display = 44;
+            const canvas = fastGlyphTileRenderer.renderToCanvas(
+                {
+                    name,
+                    width: drawing.width * scale,
+                    shapes: drawing.paths.map((path) => ({
+                        closed: path.closed,
+                        nodes: path.nodes.map((node) => ({
+                            ...node,
+                            x: node.x * scale,
+                            y: node.y * scale
+                        }))
+                    }))
+                },
+                metrics,
+                display,
+                display,
+                undefined,
+                {
+                    fill: getComputedStyle(preview).color,
+                    sample: true
+                }
+            );
+            canvas.style.width = `${display}px`;
+            canvas.style.height = `${display}px`;
+            preview.replaceChildren(canvas);
+        }
+    }
+
+    private sampleTileMetrics(): {
+        ascender: number;
+        descender: number;
+        upm: number;
+    } {
+        const font = window.currentFontModel;
+        const master = font?.masters?.[0];
+        const upm = font?.upm && font.upm > 0 ? font.upm : 1000;
+        return {
+            upm,
+            ascender: master?.metrics?.Ascender ?? upm * 0.8,
+            descender: master?.metrics?.Descender ?? -upm * 0.2
+        };
+    }
+
+    private createLevelColumn(
+        level: (typeof COVERAGE_LEVELS)[number],
+        rows: HTMLButtonElement[]
+    ): HTMLElement {
+        const column = document.createElement('section');
+        column.className = rows.length
+            ? 'add-glyph-column'
+            : 'add-glyph-column is-empty';
+        const header = document.createElement('div');
+        header.className = 'add-glyph-column-header';
+        const titleGroup = document.createElement('div');
+        titleGroup.className = 'add-glyph-column-title';
+        const title = document.createElement('h4');
+        title.textContent = level.label;
+        const present = rows.filter((row) =>
+            row.classList.contains('is-existing')
+        ).length;
+        const coverage = document.createElement('span');
+        coverage.className = 'add-glyph-set-coverage';
+        coverage.classList.toggle(
+            'is-complete',
+            rows.length > 0 && present === rows.length
+        );
+        coverage.textContent = `${present}/${rows.length}`;
+        coverage.title = `${present} of ${rows.length} glyphs in this column are in the font`;
+        titleGroup.append(title, coverage);
+        const selectAll = document.createElement('label');
+        selectAll.className = 'add-glyph-select-all';
+        const input = document.createElement('input');
+        input.type = 'checkbox';
+        input.dataset.selectAll = level.id;
+        const keys = rows.map((row) => row.dataset.resultKey || '');
+        const selectedCount = keys.filter((key) =>
+            this.selectedKeys.has(key)
+        ).length;
+        input.checked = keys.length > 0 && selectedCount === keys.length;
+        input.indeterminate = selectedCount > 0 && selectedCount < keys.length;
+        input.disabled = keys.length === 0;
+        input.setAttribute('aria-label', `Select all ${level.label} glyphs`);
+        selectAll.append(input, 'Select all');
+        header.append(titleGroup, selectAll);
+        const list = document.createElement('div');
+        list.className = 'add-glyph-list';
+        list.setAttribute('role', 'listbox');
+        list.setAttribute('aria-label', level.label);
+        list.setAttribute('aria-multiselectable', 'true');
+        list.replaceChildren(...rows);
+        column.append(header, list);
+        return column;
+    }
+
+    private createGlyphRow(
+        record: ListedGlyph,
+        index: number,
+        font: Font | null | undefined
+    ): HTMLButtonElement {
+        const existing =
+            typeof record.codepoint === 'number' && record.codepoint >= 0
+                ? font?.findGlyphByCodepoint(record.codepoint)
+                : font?.findGlyph(record.glyph_name);
+        const nameCollision = font?.findGlyph(record.glyph_name);
+        const row = document.createElement('button');
+        row.type = 'button';
+        row.className = 'add-glyph-row';
+        row.dataset.resultIndex = String(index);
+        row.dataset.resultKey = resultKey(record);
+        row.classList.toggle('is-active', index === this.activeIndex);
+        row.classList.toggle('is-existing', Boolean(existing));
+        row.classList.toggle(
+            'is-selected',
+            this.selectedKeys.has(resultKey(record))
+        );
+        row.setAttribute('role', 'option');
+        row.setAttribute(
+            'aria-selected',
+            String(this.selectedKeys.has(resultKey(record)))
+        );
+        row.addEventListener('click', (event) =>
+            this.selectRow(
+                index,
+                event.shiftKey,
+                event.metaKey || event.ctrlKey
+            )
+        );
+        row.addEventListener('dblclick', () => {
+            this.selectRow(index, false, false);
+            this.addSelected();
+        });
+
+        const preview = document.createElement('span');
+        preview.className = 'add-glyph-preview';
+        const unencoded =
+            typeof record.codepoint !== 'number' || record.codepoint < 0;
+        if (unencoded) {
+            preview.dataset.sampleGlyph = record.glyph_name;
+        }
+        const previewChar = document.createElement('span');
+        previewChar.className = 'add-glyph-preview-char';
+        previewChar.textContent = record.general_category.startsWith('M')
+            ? `\u25cc${record.character}`
+            : record.character || '—';
+        preview.appendChild(previewChar);
+        row.appendChild(preview);
+
+        const details = document.createElement('span');
+        details.className = 'add-glyph-details';
+        const name = document.createElement('strong');
+        name.textContent = record.glyph_name;
+        details.appendChild(name);
+
+        const status = document.createElement('span');
+        status.className = 'add-glyph-status';
+        const extras = [
+            record.script,
+            record.joining_type ? `join ${record.joining_type}` : ''
+        ].filter(Boolean);
+        if (existing) {
+            const chip = document.createElement('span');
+            chip.className =
+                'add-glyph-set-coverage is-complete add-glyph-present';
+            const mark = document.createElement('span');
+            mark.className = 'material-symbols-outlined';
+            mark.setAttribute('aria-hidden', 'true');
+            mark.textContent = 'check';
+            chip.append(mark, 'Already in font');
+            status.appendChild(chip);
+        } else {
+            status.textContent = nameCollision
+                ? 'Glyph name already in font'
+                : extras.join(' · ');
+        }
+        const unicodeName = document.createElement('span');
+        unicodeName.className = 'add-glyph-unicode-name';
+        if (typeof record.codepoint === 'number' && record.codepoint >= 0) {
+            const codepoint = document.createElement('span');
+            codepoint.className = 'add-glyph-codepoint';
+            codepoint.textContent = `0x${record.codepoint
+                .toString(16)
+                .toUpperCase()
+                .padStart(4, '0')}`;
+            unicodeName.append(codepoint, ` ${record.name}`);
+        } else {
+            unicodeName.textContent = record.name;
+        }
+        details.appendChild(unicodeName);
+        row.appendChild(details);
+
+        const meta = document.createElement('span');
+        meta.className = 'add-glyph-meta';
+        meta.appendChild(status);
+
+        const category = document.createElement('span');
+        category.className = 'add-glyph-category';
+        if (record.categories?.length) {
+            category.textContent = record.categories
+                .map((id) => this.glyphCategoryLabel(id))
+                .join(' · ');
+        } else {
             const categoryName =
                 GENERAL_CATEGORY_LABELS[record.general_category] ||
                 'Unicode Character';
             category.textContent = `${categoryName} (${record.general_category})`;
-            properties.appendChild(category);
-            row.appendChild(properties);
+        }
+        meta.appendChild(category);
+        row.appendChild(meta);
+        return row;
+    }
 
-            const unicodeName = document.createElement('span');
-            unicodeName.className = 'add-glyph-unicode-name';
-            unicodeName.textContent = record.name;
-            row.appendChild(unicodeName);
-            fragment.appendChild(row);
-        });
-        this.list.replaceChildren(fragment);
-        this.syncConfirmButton();
-        this.syncCoverageCounts();
+    private setColumnSelection(
+        level: CharacterSetCoverageLevel,
+        selected: boolean
+    ): void {
+        for (const record of this.results) {
+            if (
+                record.coverageLevel !== level ||
+                !this.matchesGlyphCategories(record) ||
+                !this.matchesPresence(record)
+            ) {
+                continue;
+            }
+            const key = resultKey(record);
+            if (selected) {
+                this.selectedKeys.add(key);
+            } else {
+                this.selectedKeys.delete(key);
+            }
+        }
+        this.syncSelectionState();
     }
 
     private selectRow(index: number, range: boolean, toggle: boolean): void {
@@ -934,12 +1271,32 @@ export class AddGlyphsDialog {
         }
         this.activeIndex = index;
         if (range && this.selectionAnchor >= 0) {
-            this.selectedKeys.clear();
-            const [start, end] = [this.selectionAnchor, index].sort(
-                (a, b) => a - b
-            );
-            for (let candidate = start; candidate <= end; candidate += 1) {
-                this.selectedKeys.add(resultKey(this.results[candidate]!));
+            const anchor = this.results[this.selectionAnchor];
+            const level = anchor?.coverageLevel;
+            if (
+                level &&
+                record.coverageLevel &&
+                level !== record.coverageLevel
+            ) {
+                this.selectedKeys = new Set([resultKey(record)]);
+                this.selectionAnchor = index;
+            } else {
+                this.selectedKeys.clear();
+                const [start, end] = [this.selectionAnchor, index].sort(
+                    (a, b) => a - b
+                );
+                for (let candidate = start; candidate <= end; candidate += 1) {
+                    const item = this.results[candidate];
+                    if (
+                        !item ||
+                        !this.matchesGlyphCategories(item) ||
+                        !this.matchesPresence(item) ||
+                        (level && item.coverageLevel !== level)
+                    ) {
+                        continue;
+                    }
+                    this.selectedKeys.add(resultKey(item));
+                }
             }
         } else if (toggle) {
             const key = resultKey(record);
@@ -953,16 +1310,63 @@ export class AddGlyphsDialog {
             this.selectedKeys = new Set([resultKey(record)]);
             this.selectionAnchor = index;
         }
-        this.renderResults();
+        this.syncSelectionState();
+    }
+
+    private syncSelectionState(): void {
+        if (!this.list) {
+            return;
+        }
+        for (const row of this.list.querySelectorAll<HTMLElement>(
+            '.add-glyph-row'
+        )) {
+            const key = row.dataset.resultKey || '';
+            const selected = this.selectedKeys.has(key);
+            row.classList.toggle('is-selected', selected);
+            row.classList.toggle(
+                'is-active',
+                Number(row.dataset.resultIndex) === this.activeIndex
+            );
+            row.setAttribute('aria-selected', String(selected));
+        }
+        for (const input of this.list.querySelectorAll<HTMLInputElement>(
+            '[data-select-all]'
+        )) {
+            const rows = [
+                ...(input
+                    .closest('.add-glyph-column')
+                    ?.querySelectorAll<HTMLElement>('.add-glyph-row') || [])
+            ];
+            const selectedCount = rows.filter((row) =>
+                this.selectedKeys.has(row.dataset.resultKey || '')
+            ).length;
+            input.checked = rows.length > 0 && selectedCount === rows.length;
+            input.indeterminate =
+                selectedCount > 0 && selectedCount < rows.length;
+        }
+        this.syncConfirmButton();
     }
 
     private moveActive(delta: number, extend: boolean): void {
-        const next = this.activeIndex + delta;
+        const current = this.results[this.activeIndex];
+        let next = this.activeIndex + delta;
+        if (current?.coverageLevel) {
+            const indexes = this.results.flatMap((record, index) =>
+                record.coverageLevel === current.coverageLevel &&
+                this.recordIsShown(record)
+                    ? [index]
+                    : []
+            );
+            const position = indexes.indexOf(this.activeIndex);
+            next = indexes[position + delta] ?? -1;
+        }
         if (next < 0 || next >= this.results.length) {
             return;
         }
         this.selectRow(next, extend, false);
-        this.list?.children[next]?.scrollIntoView({ block: 'nearest' });
+        this.list
+            ?.querySelector<HTMLElement>(`[data-result-index="${next}"]`)
+            ?.scrollIntoView({ block: 'nearest' });
     }
 
     private toggleActive(): void {
@@ -972,15 +1376,16 @@ export class AddGlyphsDialog {
     }
 
     private selectAllResults(): void {
-        if (this.results.length === 0) {
+        const visible = this.results.filter((record) =>
+            this.recordIsShown(record)
+        );
+        if (visible.length === 0) {
             return;
         }
-        this.selectedKeys = new Set(
-            this.results.map((record) => resultKey(record))
-        );
+        this.selectedKeys = new Set(visible.map((record) => resultKey(record)));
         this.activeIndex = 0;
         this.selectionAnchor = 0;
-        this.renderResults();
+        this.syncSelectionState();
     }
 
     private syncConfirmButton(): void {

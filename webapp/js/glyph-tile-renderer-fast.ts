@@ -276,7 +276,8 @@ class FastGlyphTileRenderer {
         metrics: RenderMetrics | undefined,
         width: number,
         height: number,
-        existingCanvas?: HTMLCanvasElement
+        existingCanvas?: HTMLCanvasElement,
+        options?: { fill?: string; sample?: boolean }
     ): HTMLCanvasElement {
         this.ensureColorsInitialized();
 
@@ -307,8 +308,9 @@ class FastGlyphTileRenderer {
         // Scale for hi-dpi
         ctx.scale(dpr, dpr);
 
-        // Calculate drawing area (reserve space at bottom for label)
-        const labelHeight = Math.max(8, height * 0.16);
+        // Overview tiles keep a label band and draw smaller. Sample tiles
+        // fill the square and use the caller's ink.
+        const labelHeight = options?.sample ? 0 : Math.max(8, height * 0.16);
         const drawHeight = height - labelHeight;
         const drawWidth = width;
         const padding = 2;
@@ -324,7 +326,9 @@ class FastGlyphTileRenderer {
         }
 
         // Scale to fit metrics height in drawing area (0.7 factor to draw 30% smaller)
-        const scale = ((drawHeight - padding * 2) / metricsHeight) * 0.7;
+        const scale =
+            ((drawHeight - padding * 2) / metricsHeight) *
+            (options?.sample ? 1 : 0.7);
         if (!Number.isFinite(scale) || scale <= 0) {
             return canvas;
         }
@@ -340,7 +344,8 @@ class FastGlyphTileRenderer {
         const offsetX = tileCenterX - glyphVisualCenterX * scale;
 
         // Y offset: position so ascender is at top of drawing area, shifted down 20% of tile height
-        const offsetY = padding + ascender * scale + height * 0.2;
+        const offsetY =
+            padding + ascender * scale + (options?.sample ? 0 : height * 0.2);
 
         ctx.save();
         ctx.translate(offsetX, offsetY);
@@ -348,20 +353,25 @@ class FastGlyphTileRenderer {
 
         // Draw shapes in layer order so subtraction cutters punch holes.
         const shapes = Array.isArray(glyphData?.shapes) ? glyphData.shapes : [];
-        this.drawShapes(ctx, shapes);
-        let paintedLeaf = false;
-        if (glyphData.name && !shapesIncludeComponent(shapes)) {
-            if (!this.paintModelComponents(ctx, glyphData.name)) {
-                paintPlaceholderGlyph(ctx, glyphData.name);
-                paintedLeaf = true;
+        this.drawShapes(ctx, shapes, options?.fill);
+        if (!options?.sample) {
+            let paintedLeaf = false;
+            if (glyphData.name && !shapesIncludeComponent(shapes)) {
+                if (!this.paintModelComponents(ctx, glyphData.name)) {
+                    paintPlaceholderGlyph(ctx, glyphData.name);
+                    paintedLeaf = true;
+                }
             }
-        }
-        if (glyphData.name && !paintedLeaf) {
-            const stroked = this.strokePlaceholderContours(ctx, glyphData.name);
-            if (!stroked) {
-                paintPlaceholderGlyph(ctx, glyphData.name, {
-                    appearance: 'text'
-                });
+            if (glyphData.name && !paintedLeaf) {
+                const stroked = this.strokePlaceholderContours(
+                    ctx,
+                    glyphData.name
+                );
+                if (!stroked) {
+                    paintPlaceholderGlyph(ctx, glyphData.name, {
+                        appearance: 'text'
+                    });
+                }
             }
         }
 
@@ -457,19 +467,26 @@ class FastGlyphTileRenderer {
     /**
      * Draw paths and components in shape order, punching subtraction cutters.
      */
-    private drawShapes(ctx: CanvasRenderingContext2D, shapes: any[]): void {
+    private drawShapes(
+        ctx: CanvasRenderingContext2D,
+        shapes: any[],
+        fill?: string
+    ): void {
         if (!Array.isArray(shapes) || shapes.length === 0) {
             return;
         }
 
+        const pathFill = fill || this.pathColor;
         const contours = collectOverviewPunchFillContours(
             shapes,
             [1, 0, 0, 1, 0, 0],
-            this.pathColor,
-            (component) =>
-                this.isAutomaticallyAlignedComponent(component)
-                    ? this.autoComponentColor
-                    : this.manualComponentColor
+            pathFill,
+            fill
+                ? () => pathFill
+                : (component) =>
+                      this.isAutomaticallyAlignedComponent(component)
+                          ? this.autoComponentColor
+                          : this.manualComponentColor
         );
         fillPunchFillContoursOnContext(ctx, contours, (target, nodes) => {
             buildGlyphPathFromNodes(nodes as any[], target);

@@ -194,6 +194,11 @@
     max-width: 1720px;
 }
 
+.add-glyphs-popup.has-coverage-columns {
+    width: min(1280px, calc(100vw - 32px));
+    max-width: 1280px;
+}
+
 .rename-glyphs-popup {
     width: min(960px, calc(100vw - 32px));
     max-width: 960px;
@@ -433,6 +438,8 @@
 
 .add-glyph-set-panel,
 .add-glyph-results-panel {
+    border: 1px solid var(--border-active);
+    border-radius: 6px;
     display: flex;
     flex: 1 1 auto;
     flex-direction: column;
@@ -441,37 +448,196 @@
     overflow: hidden;
 }
 
-.add-glyph-set-panel {
-    border: 1px solid var(--border-primary);
-    border-radius: 6px;
-    padding: 10px;
-}
-
 .add-glyph-set-panel[hidden] {
     display: none;
 }
 
-.add-glyph-set-panel h3 {
+.add-glyph-set-panel h3,
+.add-glyph-results-panel h3 {
     color: var(--text-secondary);
     flex-shrink: 0;
     font-size: 12px;
     font-weight: 600;
-    margin-bottom: 8px;
+    margin: 0;
+    padding: 10px 10px 0;
 }
 
-.add-glyph-set-panel .overview-search-control,
-.add-glyph-results-panel > .find-glyph-search {
+.add-glyph-set-panel > .find-glyph-search,
+.add-glyph-results-toolbar {
     flex-shrink: 0;
+    margin: 8px 10px 22px;
 }
 
-.add-glyph-set-panel .overview-search-control {
-    margin-bottom: 8px;
+.add-glyph-set-panel > .find-glyph-search {
+    width: auto;
 }
 
-.add-glyph-set-tree {
+.add-glyph-results-toolbar {
+    align-items: center;
+    display: flex;
+    gap: 12px;
+    min-width: 0;
+}
+
+.add-glyph-results-toolbar > .find-glyph-search {
     flex: 1 1 auto;
+    margin: 0;
+    min-width: 0;
+    width: auto;
+}
+
+.add-glyph-results-toolbar:has(
+        + .add-glyph-category-filters:not([hidden])
+    ) {
+    margin-bottom: 10px;
+}
+
+.add-glyph-category-filters {
+    align-items: center;
+    display: flex;
+    flex-shrink: 0;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin: 0 10px 14px;
+}
+
+.add-glyph-category-filters[hidden] {
+    display: none;
+}
+
+.add-glyph-presence {
+    background: var(--background-secondary);
+    border: 1px solid var(--border-primary);
+    border-radius: 6px;
+    display: inline-flex;
+    flex-shrink: 0;
+    overflow: hidden;
+}
+
+.add-glyph-presence button {
+    background: transparent;
+    border: 0;
+    color: var(--text-secondary);
+    cursor: pointer;
+    font: inherit;
+    font-size: 11px;
+    padding: 3px 8px;
+}
+
+.add-glyph-presence button + button {
+    border-left: 1px solid var(--border-primary);
+}
+
+.add-glyph-presence button.is-selected {
+    background: var(--background-hover);
+    color: var(--text-primary);
+}
+
+.add-glyph-category-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.add-glyph-category-chip {
+    align-items: center;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 999px;
+    color: var(--text-secondary);
+    cursor: pointer;
+    display: inline-flex;
+    font: inherit;
+    font-size: 11px;
+    gap: 6px;
+    padding: 1px 2px 1px 8px;
+}
+
+.add-glyph-category-chip.is-selected {
+    background: var(--background-hover);
+    border-color: transparent;
+    color: var(--text-primary);
+}
+
+.add-glyph-category-chip .add-glyph-set-coverage {
+    pointer-events: none;
+}
+
+.add-glyph-column-title {
+    align-items: center;
+    display: flex;
+    gap: 6px;
+    min-width: 0;
+}
+
+.add-glyph-column-title h4 {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.add-glyph-set-tree,
+.add-glyph-list {
+    flex: 1 1 auto;
+    margin: 0;
+    max-width: 100%;
     min-height: 0;
     overflow: auto;
+}
+
+.add-glyph-columns {
+    display: flex;
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: hidden;
+}
+
+.add-glyph-column {
+    border-top: 1px solid var(--border-primary);
+    display: flex;
+    flex: 1 1 0;
+    flex-direction: column;
+    min-height: 0;
+    min-width: 0;
+}
+
+.add-glyph-column.is-empty {
+    flex: 0 0 200px;
+}
+
+.add-glyph-column + .add-glyph-column {
+    border-left: 1px solid var(--border-primary);
+}
+
+.add-glyph-column-header {
+    align-items: center;
+    border-bottom: 1px solid var(--border-primary);
+    display: flex;
+    flex-shrink: 0;
+    gap: 8px;
+    justify-content: space-between;
+    padding: 6px 8px;
+}
+
+.add-glyph-column-header h4 {
+    color: var(--text-secondary);
+    font-size: 12px;
+    font-weight: 600;
+    margin: 0;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.add-glyph-select-all {
+    align-items: center;
+    color: var(--text-secondary);
+    display: flex;
+    flex: 0 0 auto;
+    font-size: 12px;
+    gap: 6px;
 }
 
 .add-glyph-set-row {
@@ -484,6 +650,7 @@
     font: inherit;
     font-size: 12px;
     gap: 8px;
+    margin: 0;
     padding: 6px 8px;
     text-align: left;
     width: 100%;
@@ -531,11 +698,11 @@
     border: 0;
     color: var(--text-secondary);
     display: flex;
+    flex: 0 0 auto;
     flex-flow: row nowrap;
-    flex-shrink: 0;
     font-size: 11px;
     gap: 16px;
-    margin: 8px 0 0;
+    margin: 0;
     padding: 0;
 }
 
@@ -564,16 +731,6 @@
     padding: 0 6px;
 }
 
-.add-glyph-list {
-    flex: 1 1 auto;
-    max-width: 100%;
-    min-height: 0;
-    overflow-y: auto;
-    border: 1px solid var(--border-primary);
-    border-radius: 6px;
-    margin-top: 12px;
-}
-
 @media (max-width: 700px) {
     .add-glyphs-popup.has-character-set-tree {
         width: calc(100vw - 32px);
@@ -583,22 +740,37 @@
         grid-template-columns: minmax(0, 1fr);
         grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
     }
+
+    .add-glyph-columns {
+        flex-direction: column;
+    }
+
+    .add-glyph-column,
+    .add-glyph-column.is-empty {
+        flex: 1 1 0;
+    }
+
+    .add-glyph-column + .add-glyph-column {
+        border-left: 0;
+        border-top: 1px solid var(--border-primary);
+    }
 }
 
 .add-glyph-row {
-    align-items: center;
+    align-items: stretch;
     background: transparent;
     border: 0;
     border-bottom: 1px solid var(--border-primary);
     color: var(--text-primary);
+    column-gap: 10px;
     cursor: pointer;
     display: grid;
     font: inherit;
-    gap: 12px;
-    grid-template-columns: 44px minmax(0, 1fr) minmax(0, 190px);
+    grid-template-columns: auto minmax(0, 1fr) max-content;
+    margin: 0;
     min-width: 0;
     overflow: hidden;
-    padding: 8px 12px;
+    padding: 0 8px 0 0;
     text-align: left;
     width: 100%;
 }
@@ -622,11 +794,37 @@
 
 .add-glyph-row.is-existing {
     color: var(--text-faint);
+}
+
+.add-glyph-row.is-existing .add-glyph-preview,
+.add-glyph-row.is-existing .add-glyph-details,
+.add-glyph-row.is-existing .add-glyph-category {
     opacity: 0.45;
 }
 
-.add-glyph-row.is-existing.is-selected {
+.add-glyph-row.is-existing.is-selected .add-glyph-preview,
+.add-glyph-row.is-existing.is-selected .add-glyph-details,
+.add-glyph-row.is-existing.is-selected .add-glyph-category {
     opacity: 0.7;
+}
+
+.add-glyph-present {
+    display: inline-flex;
+    align-items: center;
+    font-size: 12px;
+    font-variant-numeric: normal;
+    gap: 2px;
+    justify-self: end;
+    width: fit-content;
+}
+
+.add-glyph-present .material-symbols-outlined {
+    font-size: 13px;
+    font-variation-settings:
+        'FILL' 0,
+        'wght' 600,
+        'GRAD' 0,
+        'opsz' 20;
 }
 
 .add-glyph-row:disabled {
@@ -635,53 +833,101 @@
 }
 
 .add-glyph-preview {
+    align-items: center;
+    align-self: stretch;
+    aspect-ratio: 1;
+    display: flex;
+    height: auto;
+    justify-content: center;
+    justify-self: stretch;
+    min-height: 56px;
+    min-width: 56px;
+    width: auto;
+}
+
+.add-glyph-preview canvas {
+    display: block;
+    height: 100%;
+    width: 100%;
+}
+
+.add-glyph-preview-char {
     font-family:
         system-ui, 'Segoe UI Symbol', 'Segoe UI Historic', 'Apple Symbols',
         'Noto Sans Symbols 2', 'Noto Sans Symbols', 'Noto Sans', sans-serif;
-    font-size: 28px;
+    font-size: 44px;
     line-height: 1;
     text-align: center;
 }
 
 .add-glyph-details {
-    display: grid;
+    align-items: stretch;
+    align-self: center;
+    display: flex;
+    flex-direction: column;
     gap: 2px;
+    justify-content: center;
     min-width: 0;
+    overflow: hidden;
+    padding: 6px 0;
+    text-align: left;
 }
 
 .add-glyph-details strong {
+    display: block;
     font-family: var(--font-families-mono);
-    font-size: 13px;
-}
-
-.add-glyph-details span,
-.add-glyph-properties {
-    color: var(--text-tertiary);
-    font-size: 11px;
+    font-size: 14px;
+    min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+    width: 100%;
+}
+
+.add-glyph-meta {
+    align-items: flex-end;
+    align-self: center;
+    display: flex;
+    flex-direction: column;
+    flex-shrink: 0;
+    gap: 2px;
+    justify-content: center;
+    padding: 6px 0;
+    text-align: right;
+}
+
+.add-glyph-status,
+.add-glyph-category {
+    font-size: 12px;
+    max-width: 100%;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.add-glyph-status {
+    color: var(--text-tertiary);
 }
 
 .add-glyph-category {
     color: var(--text-secondary);
 }
 
-.add-glyph-properties {
-    display: grid;
-    gap: 2px;
-    min-width: 0;
-    text-align: right;
-}
-
 .add-glyph-unicode-name {
     color: var(--text-tertiary);
-    font-size: 11px;
-    grid-column: 1 / -1;
+    display: block;
+    font-size: 12px;
     min-width: 0;
     overflow: hidden;
+    text-align: left;
     text-overflow: ellipsis;
     white-space: nowrap;
+    width: 100%;
+}
+
+.add-glyph-codepoint {
+    font-family: var(--font-families-mono);
 }
 
 /* Local Inter UI font for canvas labels */

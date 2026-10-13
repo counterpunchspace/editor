@@ -471,20 +471,22 @@ def _order_marks(sequence: list[str]) -> list[str]:
 
 
 def _leaves(characters: dict, bases: list[str], unencoded: dict) -> list[dict]:
-    def encoded(identity: str, level: str) -> dict:
+    def encoded(identity: str, level: str, categories: list[str]) -> dict:
         return {
             "codepoint": int(identity[3:], 16),
             "level": level,
             "level_rank": {"essential": 0, "recommended": 1, "optional": 2}[level],
+            "categories": categories,
         }
 
-    def named(name: str, level: str) -> dict:
+    def named(name: str, level: str, categories: list[str]) -> dict:
         entry = unencoded[name]
         item = {
             "glyph_name": name,
             "category": entry["category"],
             "level": level,
             "level_rank": {"essential": 0, "recommended": 1, "optional": 2}[level],
+            "categories": categories,
         }
         if entry.get("components"):
             item["components"] = entry["components"]
@@ -497,46 +499,24 @@ def _leaves(characters: dict, bases: list[str], unencoded: dict) -> list[dict]:
     ]
     return [
         {
-            "id": "bases",
-            "label": "Bases",
-            "level": "essential",
-            "entries": [encoded(identity, "essential") for identity in bases]
-            + [named("kafDotless-ar", "essential")],
-        },
-        {
-            "id": "dots",
-            "label": "Dots",
-            "level": "essential",
-            "entries": [named(name, "essential") for name in sorted(dot_names)],
-        },
-        {
-            "id": "marks",
-            "label": "Marks",
-            "level": "essential",
-            "entries": [encoded(uni_label(codepoint), "essential") for codepoint in MARK_CODEPOINTS],
-        },
-        {
-            "id": "letters",
-            "label": "Letters",
+            "id": "arabic",
+            "label": "Arabic",
             "level": "essential",
             "entries": [
-                encoded(identity, "essential") for identity in sorted(characters)
+                *[encoded(identity, "essential", ["bases"]) for identity in bases],
+                named("kafDotless-ar", "essential", ["bases"]),
+                *[named(name, "essential", ["dots"]) for name in sorted(dot_names)],
+                *[
+                    encoded(uni_label(codepoint), "essential", ["marks"])
+                    for codepoint in MARK_CODEPOINTS
+                ],
+                named("lam_alef-ar", "essential", ["ligatures"]),
+                *[
+                    named(name, "recommended", ["mark-ligatures"])
+                    for name, _components in MARK_LIGATURES
+                ],
             ],
-        },
-        {
-            "id": "ligatures",
-            "label": "Ligatures",
-            "level": "essential",
-            "entries": [named("lam_alef-ar", "essential")],
-        },
-        {
-            "id": "mark-ligatures",
-            "label": "Mark ligatures",
-            "level": "recommended",
-            "entries": [
-                named(name, "recommended") for name, _components in MARK_LIGATURES
-            ],
-        },
+        }
     ]
 
 

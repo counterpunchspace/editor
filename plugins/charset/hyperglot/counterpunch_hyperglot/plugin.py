@@ -4,6 +4,17 @@ import json
 from importlib.resources import files
 
 
+def _union_categories(left, right):
+    categories = []
+    for source in (left, right):
+        if not isinstance(source, list):
+            continue
+        for category in source:
+            if isinstance(category, str) and category not in categories:
+                categories.append(category)
+    return categories
+
+
 class HyperglotCharacterSetProvider:
     """Read the build-time-resolved Hyperglot character-set catalogue."""
 
@@ -20,6 +31,14 @@ class HyperglotCharacterSetProvider:
             "name": self.display_name,
             "version": self._data["version"],
             "tree": self._data["tree"],
+            "glyph_categories": [
+                {"id": "base", "label": "Base"},
+                {"id": "auxiliary", "label": "Auxiliary"},
+                {"id": "marks", "label": "Marks"},
+                {"id": "punctuation", "label": "Punctuation"},
+                {"id": "numerals", "label": "Numerals"},
+                {"id": "currency", "label": "Currency"},
+            ],
         }
 
     def characters(self, set_ids, levels):
@@ -34,9 +53,19 @@ class HyperglotCharacterSetProvider:
                 if requested_levels and character["level"] not in requested_levels:
                     continue
                 codepoint = character["codepoint"]
+                incoming = dict(character)
                 existing = characters.get(codepoint)
-                if existing is None or character["level_rank"] < existing["level_rank"]:
-                    characters[codepoint] = character
+                if existing is None:
+                    characters[codepoint] = incoming
+                    continue
+                categories = _union_categories(
+                    existing.get("categories"), incoming.get("categories")
+                )
+                if character["level_rank"] < existing["level_rank"]:
+                    incoming["categories"] = categories
+                    characters[codepoint] = incoming
+                else:
+                    existing["categories"] = categories
         return list(characters.values())
 
     def members_by_set(self, set_ids, levels):

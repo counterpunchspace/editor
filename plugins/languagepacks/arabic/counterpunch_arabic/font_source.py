@@ -30,6 +30,23 @@ def _uni(codepoint: int) -> str:
     return f"uni{codepoint:X}"
 
 
+def _shift_paths(
+    paths: list[dict[str, Any]], dx: float, dy: float
+) -> list[dict[str, Any]]:
+    if dx == 0 and dy == 0:
+        return paths
+    shifted = []
+    for path in paths:
+        nodes = []
+        for node in path.get("nodes") or []:
+            copied = dict(node)
+            copied["x"] = float(node.get("x") or 0) + dx
+            copied["y"] = float(node.get("y") or 0) + dy
+            nodes.append(copied)
+        shifted.append({"closed": path.get("closed", True), "nodes": nodes})
+    return shifted
+
+
 def _split(name: str) -> tuple[str, str]:
     if "." not in name:
         return name, ""
@@ -117,9 +134,13 @@ class ArabicFontSource:
             category = next(iter(category.values()), "")
         return "Mark" if category == "Mark" else "Letter"
 
-    def drawing(self, name: str) -> dict[str, Any] | None:
+    def drawing(
+        self, name: str, _depth: int = 0, _stack: frozenset[str] | None = None
+    ) -> dict[str, Any] | None:
+        if _depth > 5 or name in (_stack or frozenset()):
+            return None
         glyph = self.glyphs.get(name)
-        if glyph is None or self.components(name):
+        if glyph is None:
             return None
         layer = (glyph.get("layers") or [None])[0]
         if not isinstance(layer, dict):
@@ -140,6 +161,10 @@ class ArabicFontSource:
             for anchor in layer.get("anchors") or []
             if anchor.get("name")
         ]
+        if not paths:
+            paths = self._placed_component_paths(
+                layer.get("shapes") or [], _depth, (_stack or frozenset()) | {name}
+            )
         if not paths and not anchors:
             return None
         return {
@@ -148,6 +173,41 @@ class ArabicFontSource:
             "paths": paths,
             "anchors": anchors,
         }
+
+    def _placed_component_paths(
+        self, shapes: list[Any], depth: int, stack: frozenset[str]
+    ) -> list[dict[str, Any]]:
+        """Stack component outlines, attaching `_top` to the previous `top`."""
+        paths: list[dict[str, Any]] = []
+        available: dict[str, tuple[float, float]] = {}
+        for shape in shapes:
+            if not isinstance(shape, dict):
+                continue
+            reference = shape.get("reference")
+            if not isinstance(reference, str) or not reference:
+                continue
+            child = self.drawing(reference, depth + 1, stack)
+            if child is None:
+                continue
+            child_anchors = {
+                anchor["name"]: (anchor["x"], anchor["y"])
+                for anchor in child.get("anchors") or []
+            }
+            dx, dy = 0.0, 0.0
+            for anchor_name, (x, y) in child_anchors.items():
+                if not anchor_name.startswith("_"):
+                    continue
+                base = available.get(anchor_name[1:])
+                if base is None:
+                    continue
+                dx, dy = base[0] - x, base[1] - y
+                break
+            paths.extend(_shift_paths(child.get("paths") or [], dx, dy))
+            for anchor_name, (x, y) in child_anchors.items():
+                if anchor_name.startswith("_"):
+                    continue
+                available[anchor_name] = (x + dx, y + dy)
+        return paths
 
     def drawings(self, names: list[str]) -> dict[str, Any]:
         found = {}

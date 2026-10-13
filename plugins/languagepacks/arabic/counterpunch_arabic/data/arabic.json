@@ -1,1484 +1,612 @@
 {
   "leaves": [
     {
-      "id": "bases",
-      "label": "Bases",
+      "id": "arabic",
+      "label": "Arabic",
       "level": "essential",
       "entries": [
         {
           "codepoint": 1569,
           "level": "essential",
-          "level_rank": 0
+          "level_rank": 0,
+          "categories": [
+            "bases"
+          ]
         },
         {
           "codepoint": 1575,
           "level": "essential",
-          "level_rank": 0
+          "level_rank": 0,
+          "categories": [
+            "bases"
+          ]
         },
         {
           "codepoint": 1581,
           "level": "essential",
-          "level_rank": 0
+          "level_rank": 0,
+          "categories": [
+            "bases"
+          ]
         },
         {
           "codepoint": 1583,
           "level": "essential",
-          "level_rank": 0
+          "level_rank": 0,
+          "categories": [
+            "bases"
+          ]
         },
         {
           "codepoint": 1585,
           "level": "essential",
-          "level_rank": 0
+          "level_rank": 0,
+          "categories": [
+            "bases"
+          ]
         },
         {
           "codepoint": 1587,
           "level": "essential",
-          "level_rank": 0
+          "level_rank": 0,
+          "categories": [
+            "bases"
+          ]
         },
         {
           "codepoint": 1589,
           "level": "essential",
-          "level_rank": 0
+          "level_rank": 0,
+          "categories": [
+            "bases"
+          ]
         },
         {
           "codepoint": 1591,
           "level": "essential",
-          "level_rank": 0
+          "level_rank": 0,
+          "categories": [
+            "bases"
+          ]
         },
         {
           "codepoint": 1593,
           "level": "essential",
-          "level_rank": 0
+          "level_rank": 0,
+          "categories": [
+            "bases"
+          ]
         },
         {
           "codepoint": 1604,
           "level": "essential",
-          "level_rank": 0
+          "level_rank": 0,
+          "categories": [
+            "bases"
+          ]
         },
         {
           "codepoint": 1605,
           "level": "essential",
-          "level_rank": 0
+          "level_rank": 0,
+          "categories": [
+            "bases"
+          ]
         },
         {
           "codepoint": 1607,
           "level": "essential",
-          "level_rank": 0
+          "level_rank": 0,
+          "categories": [
+            "bases"
+          ]
         },
         {
           "codepoint": 1608,
           "level": "essential",
-          "level_rank": 0
+          "level_rank": 0,
+          "categories": [
+            "bases"
+          ]
         },
         {
           "codepoint": 1609,
           "level": "essential",
-          "level_rank": 0
+          "level_rank": 0,
+          "categories": [
+            "bases"
+          ]
         },
         {
           "codepoint": 1646,
           "level": "essential",
-          "level_rank": 0
+          "level_rank": 0,
+          "categories": [
+            "bases"
+          ]
         },
         {
           "codepoint": 1647,
           "level": "essential",
-          "level_rank": 0
+          "level_rank": 0,
+          "categories": [
+            "bases"
+          ]
         },
         {
           "codepoint": 1697,
           "level": "essential",
-          "level_rank": 0
+          "level_rank": 0,
+          "categories": [
+            "bases"
+          ]
         },
         {
           "codepoint": 1705,
           "level": "essential",
-          "level_rank": 0
+          "level_rank": 0,
+          "categories": [
+            "bases"
+          ]
         },
         {
           "codepoint": 1706,
           "level": "essential",
-          "level_rank": 0
+          "level_rank": 0,
+          "categories": [
+            "bases"
+          ]
         },
         {
           "codepoint": 1722,
           "level": "essential",
-          "level_rank": 0
+          "level_rank": 0,
+          "categories": [
+            "bases"
+          ]
         },
         {
           "codepoint": 1726,
           "level": "essential",
-          "level_rank": 0
+          "level_rank": 0,
+          "categories": [
+            "bases"
+          ]
         },
         {
           "codepoint": 1746,
           "level": "essential",
-          "level_rank": 0
+          "level_rank": 0,
+          "categories": [
+            "bases"
+          ]
         },
         {
           "codepoint": 1749,
           "level": "essential",
-          "level_rank": 0
+          "level_rank": 0,
+          "categories": [
+            "bases"
+          ]
         },
         {
           "glyph_name": "kafDotless-ar",
           "category": "Letter",
           "level": "essential",
-          "level_rank": 0
-        }
-      ]
-    },
-    {
-      "id": "dots",
-      "label": "Dots",
-      "level": "essential",
-      "entries": [
+          "level_rank": 0,
+          "categories": [
+            "bases"
+          ]
+        },
         {
           "glyph_name": "commaAbove-ar",
           "category": "Mark",
           "level": "essential",
-          "level_rank": 0
+          "level_rank": 0,
+          "categories": [
+            "dots"
+          ]
         },
         {
           "glyph_name": "dotAbove-ar",
           "category": "Mark",
           "level": "essential",
-          "level_rank": 0
+          "level_rank": 0,
+          "categories": [
+            "dots"
+          ]
         },
         {
           "glyph_name": "dotBelow-ar",
           "category": "Mark",
           "level": "essential",
-          "level_rank": 0
+          "level_rank": 0,
+          "categories": [
+            "dots"
+          ]
         },
         {
           "glyph_name": "dotCenter-ar",
           "category": "Mark",
           "level": "essential",
-          "level_rank": 0
+          "level_rank": 0,
+          "categories": [
+            "dots"
+          ]
         },
         {
           "glyph_name": "fourDotsAbove-ar",
           "category": "Mark",
           "level": "essential",
-          "level_rank": 0
+          "level_rank": 0,
+          "categories": [
+            "dots"
+          ]
         },
         {
           "glyph_name": "fourDotsBelow-ar",
           "category": "Mark",
           "level": "essential",
-          "level_rank": 0
+          "level_rank": 0,
+          "categories": [
+            "dots"
+          ]
         },
         {
           "glyph_name": "fourDotsCenter-ar",
           "category": "Mark",
           "level": "essential",
-          "level_rank": 0
+          "level_rank": 0,
+          "categories": [
+            "dots"
+          ]
         },
         {
           "glyph_name": "gafSarkash-ar",
           "category": "Mark",
           "level": "essential",
-          "level_rank": 0
+          "level_rank": 0,
+          "categories": [
+            "dots"
+          ]
         },
         {
           "glyph_name": "gafSarkashCenter-ar",
           "category": "Mark",
           "level": "essential",
-          "level_rank": 0
+          "level_rank": 0,
+          "categories": [
+            "dots"
+          ]
         },
         {
           "glyph_name": "hehGoalMark-ar",
           "category": "Mark",
           "level": "essential",
-          "level_rank": 0
+          "level_rank": 0,
+          "categories": [
+            "dots"
+          ]
         },
         {
           "glyph_name": "miniKeheh-ar",
           "category": "Mark",
           "level": "essential",
-          "level_rank": 0
+          "level_rank": 0,
+          "categories": [
+            "dots"
+          ]
         },
         {
           "glyph_name": "ringBelow-ar",
           "category": "Mark",
           "level": "essential",
-          "level_rank": 0
+          "level_rank": 0,
+          "categories": [
+            "dots"
+          ]
         },
         {
           "glyph_name": "ringCenter-ar",
           "category": "Mark",
           "level": "essential",
-          "level_rank": 0
+          "level_rank": 0,
+          "categories": [
+            "dots"
+          ]
         },
         {
           "glyph_name": "tahAbove-ar",
           "category": "Mark",
           "level": "essential",
-          "level_rank": 0
+          "level_rank": 0,
+          "categories": [
+            "dots"
+          ]
         },
         {
           "glyph_name": "tahCenter-ar",
           "category": "Mark",
           "level": "essential",
-          "level_rank": 0
+          "level_rank": 0,
+          "categories": [
+            "dots"
+          ]
         },
         {
           "glyph_name": "tail-ar",
           "category": "Mark",
           "level": "essential",
-          "level_rank": 0
+          "level_rank": 0,
+          "categories": [
+            "dots"
+          ]
         },
         {
           "glyph_name": "threeDotsDownAbove-ar",
           "category": "Mark",
           "level": "essential",
-          "level_rank": 0
+          "level_rank": 0,
+          "categories": [
+            "dots"
+          ]
         },
         {
           "glyph_name": "threeDotsDownBelow-ar",
           "category": "Mark",
           "level": "essential",
-          "level_rank": 0
+          "level_rank": 0,
+          "categories": [
+            "dots"
+          ]
         },
         {
           "glyph_name": "threeDotsDownCenter-ar",
           "category": "Mark",
           "level": "essential",
-          "level_rank": 0
+          "level_rank": 0,
+          "categories": [
+            "dots"
+          ]
         },
         {
           "glyph_name": "threeDotsUpAbove-ar",
           "category": "Mark",
           "level": "essential",
-          "level_rank": 0
+          "level_rank": 0,
+          "categories": [
+            "dots"
+          ]
         },
         {
           "glyph_name": "threeDotsUpBelow-ar",
           "category": "Mark",
           "level": "essential",
-          "level_rank": 0
+          "level_rank": 0,
+          "categories": [
+            "dots"
+          ]
         },
         {
           "glyph_name": "threeDotsUpCenter-ar",
           "category": "Mark",
           "level": "essential",
-          "level_rank": 0
+          "level_rank": 0,
+          "categories": [
+            "dots"
+          ]
         },
         {
           "glyph_name": "twoDotsHorizontalAbove-ar",
           "category": "Mark",
           "level": "essential",
-          "level_rank": 0
+          "level_rank": 0,
+          "categories": [
+            "dots"
+          ]
         },
         {
           "glyph_name": "twoDotsHorizontalBelow-ar",
           "category": "Mark",
           "level": "essential",
-          "level_rank": 0
+          "level_rank": 0,
+          "categories": [
+            "dots"
+          ]
         },
         {
           "glyph_name": "twoDotsHorizontalCenter-ar",
           "category": "Mark",
           "level": "essential",
-          "level_rank": 0
+          "level_rank": 0,
+          "categories": [
+            "dots"
+          ]
         },
         {
           "glyph_name": "twoDotsVerticalAbove-ar",
           "category": "Mark",
           "level": "essential",
-          "level_rank": 0
+          "level_rank": 0,
+          "categories": [
+            "dots"
+          ]
         },
         {
           "glyph_name": "twoDotsVerticalBelow-ar",
           "category": "Mark",
           "level": "essential",
-          "level_rank": 0
+          "level_rank": 0,
+          "categories": [
+            "dots"
+          ]
         },
         {
           "glyph_name": "twoDotsVerticalCenter-ar",
           "category": "Mark",
           "level": "essential",
-          "level_rank": 0
+          "level_rank": 0,
+          "categories": [
+            "dots"
+          ]
         },
         {
           "glyph_name": "vBelow-ar",
           "category": "Mark",
           "level": "essential",
-          "level_rank": 0
+          "level_rank": 0,
+          "categories": [
+            "dots"
+          ]
         },
         {
           "glyph_name": "vInvertedBelow-ar",
           "category": "Mark",
           "level": "essential",
-          "level_rank": 0
+          "level_rank": 0,
+          "categories": [
+            "dots"
+          ]
         },
         {
           "glyph_name": "vInvertedCenter-ar",
           "category": "Mark",
           "level": "essential",
-          "level_rank": 0
+          "level_rank": 0,
+          "categories": [
+            "dots"
+          ]
         },
         {
           "glyph_name": "wasla-ar",
           "category": "Mark",
           "level": "essential",
-          "level_rank": 0
-        }
-      ]
-    },
-    {
-      "id": "marks",
-      "label": "Marks",
-      "level": "essential",
-      "entries": [
+          "level_rank": 0,
+          "categories": [
+            "dots"
+          ]
+        },
         {
           "codepoint": 1611,
           "level": "essential",
-          "level_rank": 0
+          "level_rank": 0,
+          "categories": [
+            "marks"
+          ]
         },
         {
           "codepoint": 1612,
           "level": "essential",
-          "level_rank": 0
+          "level_rank": 0,
+          "categories": [
+            "marks"
+          ]
         },
         {
           "codepoint": 1613,
           "level": "essential",
-          "level_rank": 0
+          "level_rank": 0,
+          "categories": [
+            "marks"
+          ]
         },
         {
           "codepoint": 1614,
           "level": "essential",
-          "level_rank": 0
+          "level_rank": 0,
+          "categories": [
+            "marks"
+          ]
         },
         {
           "codepoint": 1615,
           "level": "essential",
-          "level_rank": 0
+          "level_rank": 0,
+          "categories": [
+            "marks"
+          ]
         },
         {
           "codepoint": 1616,
           "level": "essential",
-          "level_rank": 0
+          "level_rank": 0,
+          "categories": [
+            "marks"
+          ]
         },
         {
           "codepoint": 1617,
           "level": "essential",
-          "level_rank": 0
+          "level_rank": 0,
+          "categories": [
+            "marks"
+          ]
         },
         {
           "codepoint": 1618,
           "level": "essential",
-          "level_rank": 0
+          "level_rank": 0,
+          "categories": [
+            "marks"
+          ]
         },
         {
           "codepoint": 1619,
           "level": "essential",
-          "level_rank": 0
+          "level_rank": 0,
+          "categories": [
+            "marks"
+          ]
         },
         {
           "codepoint": 1620,
           "level": "essential",
-          "level_rank": 0
+          "level_rank": 0,
+          "categories": [
+            "marks"
+          ]
         },
         {
           "codepoint": 1621,
           "level": "essential",
-          "level_rank": 0
+          "level_rank": 0,
+          "categories": [
+            "marks"
+          ]
         },
         {
           "codepoint": 1626,
           "level": "essential",
-          "level_rank": 0
+          "level_rank": 0,
+          "categories": [
+            "marks"
+          ]
         },
         {
           "codepoint": 1627,
           "level": "essential",
-          "level_rank": 0
+          "level_rank": 0,
+          "categories": [
+            "marks"
+          ]
         },
         {
           "codepoint": 1648,
           "level": "essential",
-          "level_rank": 0
-        }
-      ]
-    },
-    {
-      "id": "letters",
-      "label": "Letters",
-      "level": "essential",
-      "entries": [
-        {
-          "codepoint": 1568,
-          "level": "essential",
-          "level_rank": 0
+          "level_rank": 0,
+          "categories": [
+            "marks"
+          ]
         },
-        {
-          "codepoint": 1569,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1570,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1571,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1572,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1573,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1574,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1575,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1576,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1577,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1578,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1579,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1580,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1581,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1582,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1583,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1584,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1585,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1586,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1587,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1588,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1589,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1590,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1591,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1592,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1593,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1594,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1595,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1596,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1597,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1598,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1599,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1601,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1602,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1603,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1604,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1605,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1606,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1607,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1608,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1609,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1610,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1646,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1647,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1649,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1657,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1658,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1659,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1660,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1661,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1662,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1663,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1664,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1665,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1666,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1667,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1668,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1669,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1670,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1671,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1672,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1673,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1674,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1675,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1676,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1677,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1678,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1679,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1680,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1681,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1682,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1683,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1684,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1685,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1686,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1687,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1688,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1689,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1690,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1691,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1692,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1693,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1694,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1695,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1696,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1697,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1698,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1699,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1700,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1701,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1702,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1703,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1704,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1705,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1706,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1707,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1708,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1709,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1710,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1711,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1712,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1713,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1714,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1715,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1716,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1717,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1718,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1719,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1720,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1721,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1722,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1723,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1724,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1725,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1726,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1727,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1728,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1729,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1730,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1731,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1732,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1734,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1735,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1736,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1737,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1738,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1739,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1740,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1741,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1742,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1743,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1744,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1746,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1747,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1749,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1774,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1775,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1786,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1787,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1788,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1791,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1873,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1874,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1875,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1876,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1877,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1878,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1879,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1880,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1881,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1882,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1884,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1885,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1886,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1887,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1888,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1889,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1890,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1891,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1892,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1893,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1894,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1895,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1896,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1897,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1899,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1900,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1901,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1902,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1903,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1904,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1905,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1906,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1918,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 1919,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 2185,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 2186,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 2187,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 2188,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 2189,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 2208,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 2209,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 2210,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 2211,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 2212,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 2213,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 2215,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 2216,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 2217,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 2219,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 2222,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 2223,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 2224,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 2226,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 2227,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 2228,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 2229,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 2235,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 2236,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 2237,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 2238,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 2239,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 2240,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 2241,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 2242,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 2243,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 2244,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 2245,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 2246,
-          "level": "essential",
-          "level_rank": 0
-        },
-        {
-          "codepoint": 2247,
-          "level": "essential",
-          "level_rank": 0
-        }
-      ]
-    },
-    {
-      "id": "ligatures",
-      "label": "Ligatures",
-      "level": "essential",
-      "entries": [
         {
           "glyph_name": "lam_alef-ar",
           "category": "Letter",
           "level": "essential",
-          "level_rank": 0
-        }
-      ]
-    },
-    {
-      "id": "mark-ligatures",
-      "label": "Mark ligatures",
-      "level": "recommended",
-      "entries": [
+          "level_rank": 0,
+          "categories": [
+            "ligatures"
+          ]
+        },
         {
           "glyph_name": "shaddaFatha-ar",
           "category": "Mark",
@@ -1487,6 +615,9 @@
           "components": [
             "uni0651",
             "uni064E"
+          ],
+          "categories": [
+            "mark-ligatures"
           ]
         },
         {
@@ -1497,6 +628,9 @@
           "components": [
             "uni0651",
             "uni064F"
+          ],
+          "categories": [
+            "mark-ligatures"
           ]
         },
         {
@@ -1507,6 +641,9 @@
           "components": [
             "uni0651",
             "uni0650"
+          ],
+          "categories": [
+            "mark-ligatures"
           ]
         },
         {
@@ -1517,6 +654,9 @@
           "components": [
             "uni0651",
             "uni064B"
+          ],
+          "categories": [
+            "mark-ligatures"
           ]
         },
         {
@@ -1527,6 +667,9 @@
           "components": [
             "uni0651",
             "uni064C"
+          ],
+          "categories": [
+            "mark-ligatures"
           ]
         },
         {
@@ -1537,6 +680,9 @@
           "components": [
             "uni0651",
             "uni064D"
+          ],
+          "categories": [
+            "mark-ligatures"
           ]
         },
         {
@@ -1547,6 +693,9 @@
           "components": [
             "uni0651",
             "uni0670"
+          ],
+          "categories": [
+            "mark-ligatures"
           ]
         }
       ]
