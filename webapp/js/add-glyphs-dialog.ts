@@ -17,6 +17,57 @@ import type { FilesystemPlugin } from './filesystem-plugins/filesystem-plugin';
 
 const console = new Logger('AddGlyphsDialog');
 
+const COVERAGE_LEVELS: ReadonlyArray<{
+    id: CharacterSetCoverageLevel;
+    label: string;
+}> = [
+    { id: 'essential', label: 'Essential' },
+    { id: 'recommended', label: 'Recommended' },
+    { id: 'optional', label: 'Optional' }
+];
+
+const COVERAGE_STORAGE_KEY = 'addGlyphsCoverageLevels';
+
+function loadEnabledCoverageLevels(): Set<CharacterSetCoverageLevel> {
+    try {
+        const raw = localStorage.getItem(COVERAGE_STORAGE_KEY);
+        if (raw === null) {
+            return new Set(['essential']);
+        }
+        const parsed = JSON.parse(raw) as unknown;
+        if (!Array.isArray(parsed)) {
+            return new Set(['essential']);
+        }
+        return new Set(
+            parsed.filter(
+                (level): level is CharacterSetCoverageLevel =>
+                    level === 'essential' ||
+                    level === 'recommended' ||
+                    level === 'optional'
+            )
+        );
+    } catch {
+        return new Set(['essential']);
+    }
+}
+
+function saveEnabledCoverageLevels(
+    levels: Set<CharacterSetCoverageLevel>
+): void {
+    try {
+        localStorage.setItem(
+            COVERAGE_STORAGE_KEY,
+            JSON.stringify(
+                COVERAGE_LEVELS.map((level) => level.id).filter((id) =>
+                    levels.has(id)
+                )
+            )
+        );
+    } catch {
+        // Preference storage can be unavailable in private browsing.
+    }
+}
+
 function selectableSetIds(nodes: CharacterSetNode[]): string[] {
     return nodes.flatMap((node) => [
         ...(node.selectable ? [node.id] : []),
@@ -158,7 +209,7 @@ export class AddGlyphsDialog {
     private selectedSetIds = new Set<string>();
     private activeSetIndex = -1;
     private setSelectionAnchor = -1;
-    private enabledLevels = new Set<CharacterSetCoverageLevel>();
+    private enabledLevels = loadEnabledCoverageLevels();
     private coverageTotals = new Map<CharacterSetCoverageLevel, number>();
     private setMembers = new Map<string, CharacterSetMembers>();
     private setMembersProviderId = '';
@@ -399,6 +450,7 @@ export class AddGlyphsDialog {
             } else {
                 this.enabledLevels.delete(level);
             }
+            saveEnabledCoverageLevels(this.enabledLevels);
             void this.updateResults();
         });
         document.addEventListener(
@@ -459,14 +511,10 @@ export class AddGlyphsDialog {
             this.coverageTotals = new Map();
             this.results = glyphDataIndex.search(query);
         } else {
-            const levels =
-                this.getActiveProvider()?.coverageLevels.map(
-                    (level) => level.id
-                ) || [];
             const characters = await characterSetPluginManager.getCharacters(
                 this.activeProviderId,
                 [...this.selectedSetIds],
-                levels
+                COVERAGE_LEVELS.map((level) => level.id)
             );
             if (version !== this.searchVersion) {
                 return;
@@ -532,12 +580,6 @@ export class AddGlyphsDialog {
         this.selectedSetIds.clear();
         this.activeSetIndex = -1;
         this.setSelectionAnchor = -1;
-        const provider = this.getActiveProvider();
-        this.enabledLevels = new Set(
-            provider?.coverageLevels
-                .filter((level) => level.default)
-                .map((level) => level.id) || []
-        );
         this.renderCoverageControls();
         this.updateProviderLayout();
         await this.ensureSetMembers();
@@ -548,12 +590,11 @@ export class AddGlyphsDialog {
     private updateProviderLayout(): void {
         const provider = this.getActiveProvider();
         const hasSetTree = Boolean(provider?.tree.length);
-        const hasCoverageLevels = Boolean(provider?.coverageLevels.length);
         if (this.setPanel) {
             this.setPanel.hidden = !hasSetTree;
         }
         if (this.coverageControls) {
-            this.coverageControls.hidden = !hasCoverageLevels;
+            this.coverageControls.hidden = !provider;
         }
         if (this.searchInput) {
             this.searchInput.placeholder = provider
@@ -578,8 +619,7 @@ export class AddGlyphsDialog {
         if (!this.coverageControls) {
             return;
         }
-        const provider = this.getActiveProvider();
-        if (!provider?.coverageLevels.length) {
+        if (!this.getActiveProvider()) {
             this.coverageControls.replaceChildren();
             return;
         }
@@ -588,7 +628,7 @@ export class AddGlyphsDialog {
         legend.textContent = 'Include';
         const fragment = document.createDocumentFragment();
         fragment.appendChild(legend);
-        for (const level of provider.coverageLevels) {
+        for (const level of COVERAGE_LEVELS) {
             const option = document.createElement('label');
             const input = document.createElement('input');
             input.type = 'checkbox';

@@ -19,11 +19,6 @@ class HyperglotCharacterSetProvider:
             "id": self.provider_id,
             "name": self.display_name,
             "version": self._data["version"],
-            "coverage_levels": [
-                {"id": "essential", "label": "Essential", "default": True},
-                {"id": "recommended", "label": "Recommended", "default": False},
-                {"id": "optional", "label": "Optional", "default": False},
-            ],
             "tree": self._data["tree"],
         }
 

@@ -12,17 +12,10 @@ export interface CharacterSetNode {
     children?: CharacterSetNode[];
 }
 
-export interface CharacterSetCoverageLevelDefinition {
-    id: CharacterSetCoverageLevel;
-    label: string;
-    default: boolean;
-}
-
 export interface CharacterSetProvider {
     id: string;
     name: string;
     version: string;
-    coverageLevels: CharacterSetCoverageLevelDefinition[];
     tree: CharacterSetNode[];
 }
 
@@ -104,24 +97,6 @@ function parseNode(value: unknown): CharacterSetNode | null {
     };
 }
 
-function parseCoverageLevel(
-    value: unknown
-): CharacterSetCoverageLevelDefinition | null {
-    if (
-        !isRecord(value) ||
-        !['essential', 'recommended', 'optional'].includes(String(value.id)) ||
-        typeof value.label !== 'string' ||
-        typeof value.default !== 'boolean'
-    ) {
-        return null;
-    }
-    return {
-        id: value.id as CharacterSetCoverageLevel,
-        label: value.label,
-        default: value.default
-    };
-}
-
 function parseProvider(value: unknown): CharacterSetProvider | null {
     if (
         !isRecord(value) ||
@@ -136,20 +111,10 @@ function parseProvider(value: unknown): CharacterSetProvider | null {
     if (tree.some((node) => node === null)) {
         return null;
     }
-    const coverageLevels = Array.isArray(value.coverage_levels)
-        ? value.coverage_levels.map(parseCoverageLevel)
-        : [];
-    if (coverageLevels.some((level) => level === null)) {
-        return null;
-    }
     return {
         id: value.id,
         name: value.name,
         version: value.version,
-        coverageLevels: coverageLevels.filter(
-            (level): level is CharacterSetCoverageLevelDefinition =>
-                level !== null
-        ),
         tree: tree.filter((node): node is CharacterSetNode => node !== null)
     };
 }

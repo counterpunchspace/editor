@@ -27,13 +27,6 @@ describe('CharacterSetPluginManager', () => {
                             id: 'org.rosettatype.hyperglot',
                             name: 'Hyperglot',
                             version: '0.8.1',
-                            coverage_levels: [
-                                {
-                                    id: 'essential',
-                                    label: 'Essential',
-                                    default: true
-                                }
-                            ],
                             tree: [
                                 {
                                     id: 'eng',
@@ -64,9 +57,6 @@ describe('CharacterSetPluginManager', () => {
         expect(manager.getProviders()).toEqual([
             expect.objectContaining({
                 id: 'org.rosettatype.hyperglot',
-                coverageLevels: [
-                    expect.objectContaining({ id: 'essential', default: true })
-                ],
                 tree: [
                     expect.objectContaining({
                         children: [expect.objectContaining({ id: 'eng/0' })]

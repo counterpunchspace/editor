@@ -20,11 +20,6 @@ class ArabicCharacterSetProvider:
             "id": self.provider_id,
             "name": self.display_name,
             "version": "1.0.0",
-            "coverage_levels": [
-                {"id": "essential", "label": "Essential", "default": True},
-                {"id": "recommended", "label": "Recommended", "default": False},
-                {"id": "optional", "label": "Optional", "default": False},
-            ],
             "tree": [
                 {
                     "id": "arabic",
