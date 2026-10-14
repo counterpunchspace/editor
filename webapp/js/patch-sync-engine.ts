@@ -155,12 +155,20 @@ export type LocalUpdateListener = (
 
 export type CommittedChangeOrigin = 'local' | 'remote';
 
+/** Several documents emitted by one commit, so UI can refresh once. */
+export type CommittedUiBatch = {
+    id: string;
+    index: number;
+    count: number;
+};
+
 export type CommittedChangeListener = (
     entries: ChangeLogEntry[],
     context: {
         origin: CommittedChangeOrigin;
         update: YjsUpdate;
         documentId?: string;
+        uiBatch?: CommittedUiBatch;
     }
 ) => void;
 
@@ -641,6 +649,8 @@ export class PatchSyncEngine {
     private _txStartTimeMs: number | null = null;
     /** Next transaction ID counter */
     private _nextTxId = 1;
+    /** Identifies multi-document emits that belong to one UI refresh. */
+    private _nextUiBatchSerial = 1;
     /** Transaction-scoped tokens that already persisted a cloud WAL prepared row. */
     private _cloudWalApplyTokens = new Set<string>();
     /** Serializes cloud WAL-before-apply commits so callers can await them. */
@@ -2295,11 +2305,47 @@ export class PatchSyncEngine {
         this._noteBroadcastStateVector(documentId);
     }
 
+    /**
+     * Emit one Yjs packet per document, tagged so a multi-glyph commit
+     * refreshes the overview once instead of once per glyph.
+     */
+    private _emitLocalUpdateBatch(
+        packets: Array<{
+            update: YjsUpdate;
+            entries: ChangeLogEntry[];
+            documentId: string;
+            options?: {
+                dependsOn?: string[];
+                skipCollaborationLog?: boolean;
+            };
+        }>
+    ): void {
+        const count = packets.length;
+        const id =
+            count > 1 ? `ui-batch:${this._nextUiBatchSerial++}` : undefined;
+        for (let index = 0; index < packets.length; index += 1) {
+            const packet = packets[index];
+            this._emitLocalUpdate(
+                packet.update,
+                packet.entries,
+                packet.documentId,
+                {
+                    ...packet.options,
+                    ...(id ? { uiBatch: { id, index, count } } : {})
+                }
+            );
+        }
+    }
+
     private _emitLocalUpdate(
         update: YjsUpdate,
         changeLogEntries: ChangeLogEntry[],
         documentId: string = FONT_CORE_DOCUMENT_ID,
-        options?: { dependsOn?: string[]; skipCollaborationLog?: boolean }
+        options?: {
+            dependsOn?: string[];
+            skipCollaborationLog?: boolean;
+            uiBatch?: CommittedUiBatch;
+        }
     ): void {
         // Undo/redo may append a coarse control entry for history-stack state,
         // but every emitted Yjs packet must still be observed through the same
@@ -2351,7 +2397,12 @@ export class PatchSyncEngine {
                 this._yjsWorkerCallback?.(update, emissionEntries, documentId);
             }
             for (const cb of this._committedChangeListeners) {
-                cb(emissionEntries, { origin: 'local', update, documentId });
+                cb(emissionEntries, {
+                    origin: 'local',
+                    update,
+                    documentId,
+                    ...(options?.uiBatch ? { uiBatch: options.uiBatch } : {})
+                });
             }
         };
         const reportPersistFailure = (id: string, reason: string): void => {
@@ -2454,7 +2505,11 @@ export class PatchSyncEngine {
         const allEntries = getEffectiveEmissionEntries(
             this._getNewChangeLogEntriesForLocalUpdate()
         );
-        let emitted = false;
+        const packets: Array<{
+            update: YjsUpdate;
+            entries: ChangeLogEntry[];
+            documentId: string;
+        }> = [];
         for (const [documentId, baseline] of baselines) {
             const doc = this._docForId(documentId) || this.yDoc;
             const incrementalUpdate = Y.encodeStateAsUpdate(doc, baseline);
@@ -2483,12 +2538,17 @@ export class PatchSyncEngine {
                 });
                 continue;
             }
-            this._emitLocalUpdate(incrementalUpdate, docEntries, documentId);
-            emitted = true;
+            packets.push({
+                update: incrementalUpdate,
+                entries: docEntries,
+                documentId
+            });
         }
-        if (!emitted) {
+        if (!packets.length) {
             this._lastLocalUpdateLogIndex = this._changeLog.length;
+            return;
         }
+        this._emitLocalUpdateBatch(packets);
     }
 
     private _documentIdForUndoTarget(target: {
@@ -6692,13 +6752,13 @@ export class PatchSyncEngine {
                 !this._isApplyingRemote
             ) {
                 this._lastLocalUpdateLogIndex = this._changeLog.length;
-                for (const packet of packetsToApply) {
-                    this._emitLocalUpdate(
-                        packet.update,
-                        changeLogEntries,
-                        packet.documentId
-                    );
-                }
+                this._emitLocalUpdateBatch(
+                    packetsToApply.map((packet) => ({
+                        update: packet.update,
+                        entries: changeLogEntries,
+                        documentId: packet.documentId
+                    }))
+                );
             }
         } finally {
             this._popApplyKind();
@@ -8048,6 +8108,12 @@ export class PatchSyncEngine {
                 this._withGlyphRevisionCatchUp(
                     this._glyphIdsTouchedByOperations(effectiveOperations),
                     () => {
+                        const uiPackets: Array<{
+                            update: YjsUpdate;
+                            entries: ChangeLogEntry[];
+                            documentId: string;
+                            options: { skipCollaborationLog: true };
+                        }> = [];
                         for (const packet of pendingPackets) {
                             const doc = this._docForId(packet.documentId);
                             const baseline =
@@ -8074,13 +8140,14 @@ export class PatchSyncEngine {
                                 packet.documentId,
                                 measured.shardBytes
                             );
-                            this._emitLocalUpdate(
-                                stampedUpdate,
-                                packet.entries,
-                                packet.documentId,
-                                { skipCollaborationLog: true }
-                            );
+                            uiPackets.push({
+                                update: stampedUpdate,
+                                entries: packet.entries,
+                                documentId: packet.documentId,
+                                options: { skipCollaborationLog: true }
+                            });
                         }
+                        this._emitLocalUpdateBatch(uiPackets);
                     }
                 );
             } finally {

@@ -13,7 +13,8 @@
 
 import {
     PatchSyncEngine,
-    type CommittedChangeOrigin
+    type CommittedChangeOrigin,
+    type CommittedUiBatch
 } from './patch-sync-engine';
 import { fromYType } from './change-bridge-ydoc';
 import { Font } from './babelfont-model';
@@ -1889,6 +1890,83 @@ type LocalUndoRedoVisualContext = {
     previousWidth?: number | null;
 };
 
+type PendingCommittedUiRefresh = {
+    entries: ChangeLogEntry[];
+    entryLists: ChangeLogEntry[][];
+    origin: CommittedChangeOrigin;
+    workerForwards: Promise<void>[];
+    seen: number;
+    count: number;
+    undo?: LocalUndoRedoVisualContext;
+};
+
+const pendingCommittedUiRefreshes = new Map<
+    string,
+    PendingCommittedUiRefresh
+>();
+
+/**
+ * Fold the documents of one commit into a single overview refresh.
+ * Returns the merged payload when the batch is complete, otherwise null.
+ */
+export function takeCommittedUiRefresh(
+    entries: ChangeLogEntry[],
+    origin: CommittedChangeOrigin,
+    uiBatch: CommittedUiBatch | undefined,
+    workerForward: Promise<void>,
+    undo: LocalUndoRedoVisualContext | undefined
+): {
+    entries: ChangeLogEntry[];
+    origin: CommittedChangeOrigin;
+    workerForwards: Promise<void>[];
+    undo?: LocalUndoRedoVisualContext;
+} | null {
+    if (!uiBatch || uiBatch.count <= 1) {
+        return {
+            entries,
+            origin,
+            workerForwards: [workerForward],
+            ...(undo ? { undo } : {})
+        };
+    }
+    let pending = pendingCommittedUiRefreshes.get(uiBatch.id);
+    if (!pending) {
+        pending = {
+            entries: [],
+            entryLists: [],
+            origin,
+            workerForwards: [],
+            seen: 0,
+            count: uiBatch.count,
+            ...(undo ? { undo } : {})
+        };
+        pendingCommittedUiRefreshes.set(uiBatch.id, pending);
+    }
+    if (!pending.entryLists.includes(entries)) {
+        pending.entryLists.push(entries);
+        pending.entries.push(...entries);
+    }
+    pending.workerForwards.push(workerForward);
+    if (undo) {
+        pending.undo = undo;
+    }
+    pending.seen += 1;
+    if (pending.seen < pending.count) {
+        return null;
+    }
+    pendingCommittedUiRefreshes.delete(uiBatch.id);
+    return {
+        entries: pending.entries,
+        origin: pending.origin,
+        workerForwards: pending.workerForwards,
+        ...(pending.undo ? { undo: pending.undo } : {})
+    };
+}
+
+export function resetCommittedUiRefreshCoalescer(): void {
+    pendingCommittedUiRefreshes.clear();
+}
+
 function isUndoRedoCommittedPacket(entries: ChangeLogEntry[]): boolean {
     return entries.some(
         (entry) =>
@@ -2920,10 +2998,6 @@ function initializeBridge(detail: {
     // JSON. Entries carry workerReplayTargets for incremental layer cache updates.
     bridge.onCommittedChange((entries, context) => {
         const workerForward = latestWorkerForward;
-        const localCompileContext =
-            context.origin === 'local'
-                ? resolveLocalCommittedCompileContext(entries)
-                : undefined;
         const localUndoRedoContext =
             context.origin === 'local' && pendingLocalUndoRedoContext
                 ? pendingLocalUndoRedoContext
@@ -2931,14 +3005,28 @@ function initializeBridge(detail: {
         if (localUndoRedoContext) {
             pendingLocalUndoRedoContext = null;
         }
+        const refresh = takeCommittedUiRefresh(
+            entries,
+            context.origin,
+            context.uiBatch,
+            workerForward,
+            localUndoRedoContext
+        );
+        if (!refresh) {
+            return;
+        }
+        const localCompileContext =
+            refresh.origin === 'local'
+                ? resolveLocalCommittedCompileContext(refresh.entries)
+                : undefined;
         void enqueueCommittedChangeRefresh(() =>
-            handleCommittedChangeRefresh(entries, context.origin, {
+            handleCommittedChangeRefresh(refresh.entries, refresh.origin, {
                 awaitWorkerSync: async () => {
-                    await workerForward;
+                    await Promise.all(refresh.workerForwards);
                     await fontCompilation.awaitWorkerDocumentSync();
                 },
                 ...(localCompileContext ? { localCompileContext } : {}),
-                ...(localUndoRedoContext ? { localUndoRedoContext } : {})
+                ...(refresh.undo ? { localUndoRedoContext: refresh.undo } : {})
             })
         );
     });

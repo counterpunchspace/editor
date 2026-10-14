@@ -6257,3 +6257,50 @@ describe('committed undo/redo compile requests', () => {
         expect(requestCompile).toHaveBeenCalledTimes(1);
     });
 });
+
+const {
+    takeCommittedUiRefresh,
+    resetCommittedUiRefreshCoalescer
+} = require('../js/change-bridge-init');
+
+describe('takeCommittedUiRefresh', () => {
+    beforeEach(() => {
+        resetCommittedUiRefreshCoalescer();
+    });
+
+    test('holds a multi-document commit until every packet has arrived', () => {
+        const shared = [{ path: 'glyphs.A:' }, { path: 'glyphs.B:' }];
+        const first = takeCommittedUiRefresh(
+            shared,
+            'local',
+            { id: 'ui-batch:1', index: 0, count: 2 },
+            Promise.resolve(),
+            { editedGlyphName: 'A' }
+        );
+        expect(first).toBeNull();
+
+        const done = takeCommittedUiRefresh(
+            shared,
+            'local',
+            { id: 'ui-batch:1', index: 1, count: 2 },
+            Promise.resolve(),
+            undefined
+        );
+        expect(done.entries).toEqual(shared);
+        expect(done.workerForwards).toHaveLength(2);
+        expect(done.undo).toEqual({ editedGlyphName: 'A' });
+    });
+
+    test('passes a single document through immediately', () => {
+        const entries = [{ path: 'glyphs.A:' }];
+        const done = takeCommittedUiRefresh(
+            entries,
+            'local',
+            undefined,
+            Promise.resolve(),
+            undefined
+        );
+        expect(done.entries).toBe(entries);
+        expect(done.workerForwards).toHaveLength(1);
+    });
+});
