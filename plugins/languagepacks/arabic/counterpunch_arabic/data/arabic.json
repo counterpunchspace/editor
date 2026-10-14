@@ -334,6 +334,15 @@
           ]
         },
         {
+          "glyph_name": "tahBelow-ar",
+          "category": "Mark",
+          "level": "essential",
+          "level_rank": 0,
+          "categories": [
+            "dots"
+          ]
+        },
+        {
           "glyph_name": "tail-ar",
           "category": "Mark",
           "level": "essential",

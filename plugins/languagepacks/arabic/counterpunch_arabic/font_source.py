@@ -38,6 +38,25 @@ KASRA_DISPLAY = {
     "uni0650": "uni064E",
     "uni064D": "uni064B",
 }
+# The hah bowl keeps these marks centered when the letter is isolated or
+# final. Initial and medial forms draw the same mark below the baseline.
+HAH_CENTER_TO_BELOW = {
+    "dotCenter-ar": "dotBelow-ar",
+    "twoDotsHorizontalCenter-ar": "twoDotsHorizontalBelow-ar",
+    "twoDotsVerticalCenter-ar": "twoDotsVerticalBelow-ar",
+    "threeDotsUpCenter-ar": "threeDotsUpBelow-ar",
+    "threeDotsDownCenter-ar": "threeDotsDownBelow-ar",
+    "fourDotsCenter-ar": "fourDotsBelow-ar",
+    "tahCenter-ar": "tahBelow-ar",
+    "vInvertedCenter-ar": "vInvertedBelow-ar",
+}
+_HAH_BASES = {"uni062D", "hah-ar"}
+
+
+def below_marks_on_hah(sequence: list[str]) -> list[str]:
+    if not sequence or sequence[0].split(".")[0] not in _HAH_BASES:
+        return sequence
+    return [HAH_CENTER_TO_BELOW.get(token, token) for token in sequence]
 
 
 def _uni(codepoint: int) -> str:
@@ -95,7 +114,10 @@ class ArabicFontSource:
         self.mark_orders = MARK_ORDERS
         self.kasra_display = KASRA_DISPLAY
         self.lam_alef_alefs = _LAM_ALEF_ALEFS
-        self.mark_variants: dict[str, dict[str, str]] = {"init": {}, "medi": {}}
+        self.mark_variants: dict[str, dict[str, str]] = {
+            "init": dict(HAH_CENTER_TO_BELOW),
+            "medi": dict(HAH_CENTER_TO_BELOW),
+        }
 
     def token_for(self, name: str) -> str:
         root, suffix = _split(name)
@@ -363,6 +385,10 @@ class ArabicFontSource:
             record: dict[str, Any] = {"positions": positions}
             if rule and self._chain(name, rule, positions):
                 record["decompose"] = positions["isol"]
+            for position in ("init", "medi"):
+                sequence = positions.get(position)
+                if sequence:
+                    positions[position] = below_marks_on_hah(sequence)
             characters[identity] = record
         return characters
 

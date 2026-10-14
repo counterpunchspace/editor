@@ -154,6 +154,24 @@ def test_data_identities_and_pack_names():
         "uni062D.fina",
         "dotCenter-ar",
     ]
+    assert SOURCE.characters["uni0686"]["positions"]["init"] == [
+        "uni062D.init",
+        "threeDotsDownBelow-ar",
+    ]
+    assert SOURCE.characters["uni0686"]["positions"]["medi"] == [
+        "uni062D.medi",
+        "threeDotsDownBelow-ar",
+    ]
+    assert SOURCE.characters["uni0686"]["positions"]["fina"] == [
+        "uni062D.fina",
+        "threeDotsDownCenter-ar",
+    ]
+    assert SOURCE.characters["uni08A2"]["positions"]["init"] == [
+        "uni062D.init",
+        "dotBelow-ar",
+        "twoDotsHorizontalAbove-ar",
+    ]
+    assert "ringCenter-ar" in SOURCE.characters["uni06BC"]["positions"]["init"]
     assert SOURCE.components("jeem-ar.init") == ["hah-ar.init", "dotBelow-ar"]
     assert SOURCE.components("jeem-ar.medi") == ["hah-ar.medi", "dotBelow-ar"]
     assert "init" in SOURCE.characters["uni0649"]["positions"]
@@ -289,6 +307,35 @@ def test_intent_remove_drops_positional_lines():
     )
     init = next(block["code"] for block in result["blocks"] if block["tag"] == "init")
     assert "twoDotsHorizontalBelow-ar" not in init
+
+
+def test_hah_bowl_marks_drop_below_in_connecting_forms():
+    result = generate(
+        {"lifecycle": [], "changes": [], "intents": {}},
+        [
+            "jeem-ar",
+            "hah-ar",
+            "hah-ar.init",
+            "hah-ar.medi",
+            "dotCenter-ar",
+            "dotBelow-ar",
+            "threeDotsDownCenter-ar",
+            "threeDotsDownBelow-ar",
+        ],
+        {"jeem-ar": 0x062C, "hah-ar": 0x062D},
+        ccmp="sub jeem-ar by hah-ar dotCenter-ar;",
+    )
+    init = next(block["code"] for block in result["blocks"] if block["tag"] == "init")
+    medi = next(block["code"] for block in result["blocks"] if block["tag"] == "medi")
+    assert "sub jeem-ar by" not in init
+    assert "sub hah-ar by hah-ar.init;" in init
+    assert "sub dotCenter-ar by dotBelow-ar;" in init
+    assert "sub threeDotsDownCenter-ar by threeDotsDownBelow-ar;" in init
+    assert "sub dotCenter-ar by dotBelow-ar;" in medi
+    assert "sub threeDotsDownCenter-ar by threeDotsDownBelow-ar;" in medi
+    assert "sub dotCenter-ar by dotBelow-ar;" not in next(
+        block["code"] for block in result["blocks"] if block["tag"] == "fina"
+    )
 
 
 def test_mark_variant_and_rename():
