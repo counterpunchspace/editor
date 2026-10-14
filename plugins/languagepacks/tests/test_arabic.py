@@ -159,12 +159,9 @@ def test_data_identities_and_pack_names():
     assert "init" in SOURCE.characters["uni0649"]["positions"]
     ghunna_fina = SOURCE.drawing("noonGhunna-ar.fina")
     assert ghunna_fina and ghunna_fina["paths"]
-    ligature = SOURCE.drawing("shaddaFatha-ar")
-    assert ligature and len(ligature["paths"]) >= 2
     fatha = SOURCE.drawing("fatha-ar")
-    ligature_top = max(node["y"] for path in ligature["paths"] for node in path["nodes"])
-    fatha_top = max(node["y"] for path in fatha["paths"] for node in path["nodes"])
-    assert ligature_top > fatha_top
+    assert fatha and fatha["paths"]
+    assert SOURCE.drawing("shaddaFatha-ar") is None
 
 
 @pytest.mark.skipif(
@@ -391,17 +388,61 @@ def test_arabic_does_not_write_languagesystems():
     assert all(block["tag"] != "languagesystems" for block in added["blocks"])
 
 
-def test_vowel_ligature_orders_and_encoded_tanween_is_not_one():
+def test_mark_order_swaps_only_the_opposite_typing_order():
     result = generate(
         {"lifecycle": [], "changes": [], "intents": {}},
-        ["shadda-ar", "fatha-ar", "shaddaFatha-ar", "fathatan-ar"],
-        {"shadda-ar": 0x0651, "fatha-ar": 0x064E, "fathatan-ar": 0x064B},
-        components={"shaddaFatha-ar": ["shadda-ar", "fatha-ar"]},
+        [
+            "shadda-ar",
+            "fatha-ar",
+            "fathatan-ar",
+            "kasra-ar",
+            "kasraTanween-ar",
+        ],
+        {
+            "shadda-ar": 0x0651,
+            "fatha-ar": 0x064E,
+            "fathatan-ar": 0x064B,
+            "kasra-ar": 0x0650,
+            "kasraTanween-ar": 0x064D,
+        },
     )
-    rlig = next(block["code"] for block in result["blocks"] if block["tag"] == "rlig")
-    assert "sub shadda-ar fatha-ar by shaddaFatha-ar;" in rlig
-    assert "sub fatha-ar shadda-ar by shaddaFatha-ar;" in rlig
-    assert "fathatan-ar" not in rlig
+    rlig = next(
+        block["code"]
+        for block in result["blocks"]
+        if block["tag"] == "rlig" and block.get("placement") != "prefix"
+    )
+    prefix = next(
+        block["code"] for block in result["blocks"] if block["placement"] == "prefix"
+    )
+    assert "sub fatha-ar' shadda-ar by shadda-ar;" in rlig
+    assert "sub shadda-ar shadda-ar' by fatha-ar;" in rlig
+    assert "sub fathatan-ar' shadda-ar by shadda-ar;" in rlig
+    assert "sub shadda-ar shadda-ar' by fathatan-ar;" in rlig
+    assert "sub kasra-ar' shadda-ar by shadda-ar;" in rlig
+    assert "sub shadda-ar kasra-ar' by shadda-ar;" in rlig
+    assert "sub shadda-ar' shadda-ar by fatha-ar;" in rlig
+    assert "sub kasraTanween-ar' shadda-ar by shadda-ar;" in rlig
+    assert "sub shadda-ar kasraTanween-ar' by shadda-ar;" in rlig
+    assert "sub shadda-ar' shadda-ar by fathatan-ar;" in rlig
+    assert "sub shadda-ar shadda-ar' by kasra-ar;" not in rlig
+    assert "sub shadda-ar shadda-ar' by kasraTanween-ar;" not in rlig
+    assert rlig.index("lookup mark_order_0 ") < rlig.index("lookup mark_order_2 ")
+    assert rlig.index("lookup mark_order_2 ") < rlig.index("lookup mark_order_2_shown ")
+    assert rlig.index("lookup mark_order_3 ") < rlig.index("lookup mark_order_5 ")
+    assert "sub shadda-ar' fatha-ar" not in rlig
+    assert "sub fatha-ar by" not in rlig
+    assert "shaddaFatha" not in rlig
+    assert prefix == ""
+
+    missing = generate(
+        {"lifecycle": [], "changes": [], "intents": {}},
+        ["fatha-ar"],
+        {"fatha-ar": 0x064E},
+    )
+    missing_rlig = next(
+        block["code"] for block in missing["blocks"] if block["tag"] == "rlig"
+    )
+    assert "mark_order" not in missing_rlig
 
 
 def test_character_set_and_recipe_round_trip():
@@ -422,7 +463,7 @@ def test_character_set_and_recipe_round_trip():
     }
     assert by_name["twoDotsHorizontalAbove-ar"]["categories"] == ["dots"]
     assert by_name["lam_alef-ar"]["categories"] == ["ligatures"]
-    assert by_name["shaddaFatha-ar"]["categories"] == ["mark-ligatures"]
+    assert "shaddaFatha-ar" not in by_name
     assert by_name["kafDotless-ar"]["categories"] == ["bases"]
     assert by_codepoint[0x064E]["categories"] == ["marks"]
     assert by_codepoint[0x0627]["categories"] == ["bases"]
@@ -430,7 +471,11 @@ def test_character_set_and_recipe_round_trip():
         entry.get("glyph_name") == "twoDotsHorizontalAbove-ar" for entry in glyphs
     )
     assert any(entry.get("glyph_name") == "lam_alef-ar" for entry in glyphs)
-    assert any(entry.get("glyph_name") == "shaddaFatha-ar" for entry in glyphs)
+    assert all(entry.get("glyph_name") != "shaddaFatha-ar" for entry in glyphs)
+    assert all(
+        category["id"] != "mark-ligatures"
+        for category in provider.metadata()["glyph_categories"]
+    )
     members = provider.members_by_set([], [])
     assert "twoDotsHorizontalAbove-ar" in members["arabic"]["glyph_names"]
     assert "lam_alef-ar" in members["arabic"]["glyph_names"]
@@ -445,5 +490,4 @@ def test_character_set_and_recipe_round_trip():
     recipe = composition.recipe(0x062A, lookup)
     assert recipe["positions"]["isol"] == ["uni066E", "twoDotsHorizontalAbove-ar"]
     assert composition.recipe(0x0041, lambda codepoint: {"script": "Latin"}) is None
-    named = composition.recipe_for_name("shaddaFatha-ar")
-    assert named["components"] == ["uni0651", "uni064E"]
+    assert composition.recipe_for_name("shaddaFatha-ar") is None

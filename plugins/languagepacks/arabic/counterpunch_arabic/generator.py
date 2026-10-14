@@ -14,7 +14,6 @@ from counterpunch_arabic.font_source import ArabicFontSource
 _RULE = re.compile(r"^\s*sub\s+(\S+)\s+by\s+(.+?)\s*;\s*$")
 _LOOKUP_NAME = re.compile(r"\blookup\s+(\S+)\s*\{")
 _POSITIONS = ("init", "medi", "fina")
-_VOWELS = {0x064B, 0x064C, 0x064D, 0x064E, 0x064F, 0x0650, 0x0651, 0x0652, 0x0670}
 _ALEF = ("uni0622", "uni0623", "uni0625", "uni0671")
 _CCMP = "space.counterpunch.ccmp"
 
@@ -32,6 +31,8 @@ class ArabicFormsGenerator:
         self._characters = source.characters
         self._mark_variants = source.mark_variants
         self._rlig = source.rlig
+        self._mark_orders = source.mark_orders
+        self._kasra_display = source.kasra_display
         self._lam_alef_alefs = source.lam_alef_alefs
 
     def needs_rebuild(self, batch: dict[str, Any], font: Any, context: dict[str, Any]) -> bool:
@@ -168,14 +169,23 @@ class ArabicFormsGenerator:
             {"block": "forms", "tag": tag, "code": "\n".join(written[tag]), "placement": "first"}
             for tag in ("isol", "init", "medi", "fina")
         ]
+        unmanaged = _unmanaged_feature_code(font, "rlig")
         blocks_out.append(
             {
                 "block": "required",
                 "tag": "rlig",
-                "code": self._rlig_code(
-                    glyphs, names, present, _unmanaged_feature_code(font, "rlig")
-                ),
+                "code": self._rlig_code(glyphs, names, present, unmanaged),
                 "placement": "first",
+            }
+        )
+        # Drop the earlier prefix. Its bare `sub shadda by fatha` lookups ran
+        # outside one pair and turned the other mark into fatha.
+        blocks_out.append(
+            {
+                "block": "mark_order",
+                "tag": "rlig",
+                "code": "",
+                "placement": "prefix",
             }
         )
         return {"blocks": blocks_out, "diagnostics": diagnostics}
@@ -218,18 +228,12 @@ class ArabicFormsGenerator:
         if ligature_lines and "lam_alef" not in defined:
             lookups.append(_lookup("lam_alef", "IgnoreMarks", ligature_lines))
 
-        mark_lines = []
-        for glyph, components in _vowel_ligatures(glyphs):
-            if glyph not in present or len(components) != 2:
-                continue
-            left = _resolve(components[0], names, present)
-            right = _resolve(components[1], names, present)
-            if not left or not right:
-                continue
-            mark_lines.append(f"sub {left} {right} by {glyph};")
-            mark_lines.append(f"sub {right} {left} by {glyph};")
-        if mark_lines and "mark_ligatures" not in defined:
-            lookups.append(_lookup("mark_ligatures", "0", mark_lines))
+        if "mark_order" not in defined:
+            lookups.extend(
+                _mark_order_lookups(
+                    self._mark_orders, self._kasra_display, names, present
+                )
+            )
         return "\n".join(lookups)
 
 
@@ -349,19 +353,65 @@ def _ccmp_inputs(font: Any) -> set[str]:
     return set()
 
 
-def _vowel_ligatures(glyphs: dict[str, Any]) -> list[tuple[str, tuple[str, str]]]:
-    found = []
-    for name, glyph in glyphs.items():
-        if _first_codepoint(glyph) is not None or not name:
+def _mark_order_lookups(
+    orders: tuple[tuple[str, str], ...],
+    kasra_display: dict[str, str],
+    names: dict[str, str],
+    present: set[str],
+) -> list[str]:
+    """Swap the opposite typing order into the ligature's component order.
+
+    The ligature was stored as shadda then the other mark. Typing the other
+    mark first is rewritten in two steps that stay inside this pair: the
+    leading mark becomes shadda, then the trailing shadda becomes that mark.
+
+    Kasra is the exception. It is drawn with the fatha glyph so both marks
+    sit above the letter, with that glyph under the shadda. The combination
+    is still read as a kasra. The second step is its own lookup so it sees
+    the doubled shadda from the first step, including when shadda was typed
+    first.
+    """
+    lookups: list[str] = []
+    for index, (first, second) in enumerate(orders):
+        canonical_first = _resolve(first, names, present)
+        canonical_second = _resolve(second, names, present)
+        if (
+            not canonical_first
+            or not canonical_second
+            or canonical_first == canonical_second
+        ):
             continue
-        components = _component_names(glyph)
-        if len(components) != 2:
+        shown = _resolve(kasra_display.get(second, ""), names, present)
+        if shown and shown != canonical_second:
+            lookups.append(
+                _lookup(
+                    f"mark_order_{index}",
+                    "0",
+                    [
+                        f"sub {canonical_second}' {canonical_first} by {canonical_first};",
+                        f"sub {canonical_first} {canonical_second}' by {canonical_first};",
+                    ],
+                )
+            )
+            lookups.append(
+                _lookup(
+                    f"mark_order_{index}_shown",
+                    "0",
+                    [f"sub {canonical_first}' {canonical_first} by {shown};"],
+                )
+            )
             continue
-        identities = [_glyph_identity(component, glyphs) for component in components]
-        if any(item is None or item[1] not in _VOWELS for item in identities):
-            continue
-        found.append((name, (identities[0][0], identities[1][0])))  # type: ignore[index]
-    return found
+        lookups.append(
+            _lookup(
+                f"mark_order_{index}",
+                "0",
+                [
+                    f"sub {canonical_second}' {canonical_first} by {canonical_first};",
+                    f"sub {canonical_first} {canonical_first}' by {canonical_second};",
+                ],
+            )
+        )
+    return lookups
 
 
 def _alef_composites(

@@ -1,8 +1,7 @@
-/** Arabic form rules, family roots, and ligature discovery. */
+/** Arabic form rules and family roots. */
 
 import type { Font, Glyph } from '../babelfont-model';
 import {
-    firstCodepoint,
     glyphIdentity,
     glyphsByNameMap,
     localNamesByIdentity,
@@ -13,9 +12,6 @@ import { generatorStamp, type FeaturesDocument } from './managed-features';
 
 export const ARABIC_GENERATOR = 'space.counterpunch.arabic';
 const FORM_SUFFIXES = new Set(['.init', '.medi', '.fina']);
-const VOWEL_MARKS = new Set<number>([
-    0x064b, 0x064c, 0x064d, 0x064e, 0x064f, 0x0650, 0x0651, 0x0652, 0x0670
-]);
 const LAM_ALEF_ALEFS = ['uni0622', 'uni0623', 'uni0625', 'uni0671'];
 
 export function arabicFormRules(
@@ -88,39 +84,6 @@ export function arabicIsolShells(
     features: FeaturesDocument | null | undefined
 ): Set<string> {
     return new Set(arabicFormRules(features).get('isol')?.keys() || []);
-}
-
-export function discoverVowelLigatures(font: Font): Array<{
-    glyph: string;
-    components: [string, string];
-}> {
-    const glyphs = glyphsByNameMap(font);
-    const found: Array<{ glyph: string; components: [string, string] }> = [];
-    for (const glyph of font.glyphs) {
-        if (firstCodepoint(glyph) !== null || !glyph.name) {
-            continue;
-        }
-        const layer = (glyph.layers || []).find((item) => !item.is_background);
-        const components = (layer?.components || [])
-            .map((component) => component.reference)
-            .filter((name): name is string => Boolean(name));
-        if (components.length !== 2) {
-            continue;
-        }
-        const identities = components.map((name) =>
-            glyphIdentity(name, glyphs)
-        );
-        if (
-            identities.some((item) => !item || !VOWEL_MARKS.has(item.unicode))
-        ) {
-            continue;
-        }
-        found.push({
-            glyph: glyph.name,
-            components: [identities[0]!.identity, identities[1]!.identity]
-        });
-    }
-    return found;
 }
 
 export function discoverAlefComposites(font: Font): Array<{

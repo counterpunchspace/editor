@@ -117,13 +117,6 @@ const arabicProvider = {
         ) {
             return { positions: {}, category: 'Mark' };
         }
-        if (name === 'shaddaFatha-ar') {
-            return {
-                positions: {},
-                category: 'Mark',
-                components: ['uni0651', 'uni064E']
-            };
-        }
         return null;
     },
     async anchors() {
@@ -760,28 +753,6 @@ describe('language packs', () => {
         expect(yeh.arabicAdd['yehFarsi-ar'].init).toEqual([
             'behDotless-ar.init',
             'twoDotsHorizontalBelow-ar'
-        ]);
-    });
-
-    test('unencoded mark ligatures are composites without a codepoint', async () => {
-        const plan = await planGlyphAdditions(
-            [
-                {
-                    glyph_name: 'shaddaFatha-ar',
-                    general_category: 'Mn',
-                    category: 'Mark'
-                }
-            ],
-            'materialized',
-            font,
-            arabicProvider,
-            []
-        );
-        expect(
-            plan.create.find((glyph) => glyph.name === 'shaddaFatha-ar')
-        ).toMatchObject({ codepoints: [], category: 'Mark', width: 0 });
-        expect(plan.composites).toEqual([
-            { name: 'shaddaFatha-ar', components: ['shadda-ar', 'fatha-ar'] }
         ]);
     });
 

@@ -26,7 +26,6 @@ class ArabicCharacterSetProvider:
         {"id": "dots", "label": "Dots"},
         {"id": "marks", "label": "Marks"},
         {"id": "ligatures", "label": "Ligatures"},
-        {"id": "mark-ligatures", "label": "Mark ligatures"},
     ]
 
     def __init__(self) -> None:

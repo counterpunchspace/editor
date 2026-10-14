@@ -22,6 +22,22 @@ _RLIG = [
     },
 ]
 _LAM_ALEF_ALEFS = ["uni0622", "uni0623", "uni0625", "uni0671"]
+# Each pair is the order the two marks should keep. rlig swaps the opposite typing order.
+MARK_ORDERS = (
+    ("uni0651", "uni064E"),
+    ("uni0651", "uni064F"),
+    ("uni0651", "uni0650"),
+    ("uni0651", "uni064B"),
+    ("uni0651", "uni064C"),
+    ("uni0651", "uni064D"),
+    ("uni0651", "uni0670"),
+)
+# Kasra is drawn with the fatha glyph so the combination sits above the
+# letter, under the shadda. The text is still read as a kasra.
+KASRA_DISPLAY = {
+    "uni0650": "uni064E",
+    "uni064D": "uni064B",
+}
 
 
 def _uni(codepoint: int) -> str:
@@ -76,6 +92,8 @@ class ArabicFontSource:
         self.characters = self._characters()
         self.unencoded = self._unencoded()
         self.rlig = _RLIG
+        self.mark_orders = MARK_ORDERS
+        self.kasra_display = KASRA_DISPLAY
         self.lam_alef_alefs = _LAM_ALEF_ALEFS
         self.mark_variants: dict[str, dict[str, str]] = {"init": {}, "medi": {}}
 

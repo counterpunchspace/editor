@@ -96,15 +96,6 @@ FORM_OWNER = {
 }
 
 MARK_CODEPOINTS = list(range(0x064B, 0x0656)) + [0x065A, 0x065B, 0x0670]
-MARK_LIGATURES = [
-    ("shaddaFatha-ar", ["uni0651", "uni064E"]),
-    ("shaddaDamma-ar", ["uni0651", "uni064F"]),
-    ("shaddaKasra-ar", ["uni0651", "uni0650"]),
-    ("shaddaFathatan-ar", ["uni0651", "uni064B"]),
-    ("shaddaDammatan-ar", ["uni0651", "uni064C"]),
-    ("shaddaKasratan-ar", ["uni0651", "uni064D"]),
-    ("shaddaAlefAbove-ar", ["uni0651", "uni0670"]),
-]
 POSITIONS = ("isol", "init", "medi", "fina")
 JOINING_POSITIONS = {"D": POSITIONS, "R": ("isol", "fina"), "U": ("isol",)}
 
@@ -386,13 +377,6 @@ def build(center_marks: bool = True) -> dict:
             "kafDotless-ar.fina"
         ]
 
-    for name, components in MARK_LIGATURES:
-        unencoded[name] = {
-            "category": "Mark",
-            "components": components,
-            "anchors": ["_top", "top"],
-        }
-
     mark_variants = {"init": {}, "medi": {}}
     for source, target in center.items():
         source_tokens = expand_name(source, set())
@@ -511,10 +495,6 @@ def _leaves(characters: dict, bases: list[str], unencoded: dict) -> list[dict]:
                     for codepoint in MARK_CODEPOINTS
                 ],
                 named("lam_alef-ar", "essential", ["ligatures"]),
-                *[
-                    named(name, "recommended", ["mark-ligatures"])
-                    for name, _components in MARK_LIGATURES
-                ],
             ],
         }
     ]
