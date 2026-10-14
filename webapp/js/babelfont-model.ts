@@ -3354,6 +3354,35 @@ function bridgeHasRecording(bridge: unknown): boolean {
     return !!bridge && typeof (bridge as any).recordChange === 'function';
 }
 
+function pluginSettingsBag(
+    formatSpecific: Record<string, Unsafe> | undefined
+): Record<string, { values?: Record<string, Unsafe> }> | undefined {
+    if (!formatSpecific) {
+        return undefined;
+    }
+    const flat = formatSpecific['com.counterpunch.plugin-settings'];
+    if (flat && typeof flat === 'object' && !Array.isArray(flat)) {
+        return flat as Record<string, { values?: Record<string, Unsafe> }>;
+    }
+    const com = formatSpecific.com;
+    if (!com || typeof com !== 'object' || Array.isArray(com)) {
+        return undefined;
+    }
+    const counterpunch = (com as Record<string, Unsafe>).counterpunch;
+    if (
+        !counterpunch ||
+        typeof counterpunch !== 'object' ||
+        Array.isArray(counterpunch)
+    ) {
+        return undefined;
+    }
+    const nested = (counterpunch as Record<string, Unsafe>)['plugin-settings'];
+    if (!nested || typeof nested !== 'object' || Array.isArray(nested)) {
+        return undefined;
+    }
+    return nested as Record<string, { values?: Record<string, Unsafe> }>;
+}
+
 function recordAndMarkDirty(
     modelObj: ModelBase,
     prop: string,
@@ -9005,7 +9034,65 @@ export class Layer extends ArrayElementBase {
      * top = anchors["top"]
      */
     computedAnchors(): ComputedAnchorMap {
-        return this.collectComputedAnchors(new Set());
+        const stamp = this.computedAnchorsStamp();
+        const cached = (
+            this as Layer & {
+                _computedAnchorsCache?: {
+                    stamp: string;
+                    value: ComputedAnchorMap;
+                };
+            }
+        )._computedAnchorsCache;
+        if (cached && cached.stamp === stamp) {
+            return cached.value;
+        }
+        const value = this.collectComputedAnchors(new Set());
+        (
+            this as Layer & {
+                _computedAnchorsCache?: {
+                    stamp: string;
+                    value: ComputedAnchorMap;
+                };
+            }
+        )._computedAnchorsCache = { stamp, value };
+        return value;
+    }
+
+    private computedAnchorsStamp(): string {
+        const parts: string[] = [];
+        const visit = (layer: Layer, seen: Set<string>) => {
+            const glyphName = layer.getGlyphName() || '';
+            if (glyphName && seen.has(glyphName)) {
+                return;
+            }
+            if (glyphName) {
+                seen.add(glyphName);
+            }
+            const anchors = (layer.anchors || [])
+                .map((anchor) => `${anchor.name}:${anchor.x},${anchor.y}`)
+                .join(';');
+            const components = (layer.components || [])
+                .map((component) => {
+                    const referenced =
+                        layer.getAutomaticComponentLayer(component);
+                    const transform = JSON.stringify(
+                        component.transform || null
+                    );
+                    return `${component.reference}@${transform}`;
+                })
+                .join('|');
+            parts.push(
+                `${glyphName}#${layer.id || ''}[${anchors}](${components})`
+            );
+            for (const component of layer.components || []) {
+                const referenced = layer.getAutomaticComponentLayer(component);
+                if (referenced) {
+                    visit(referenced, seen);
+                }
+            }
+        };
+        visit(this, new Set());
+        return parts.join('||');
     }
 
     /**
@@ -14241,10 +14328,9 @@ export class Font extends ModelBase {
      * `undefined` so the caller can use the plugin default.
      */
     getPluginSetting(pluginId: string, settingId: string): unknown {
-        const stored = this.format_specific?.[
-            'com.counterpunch.plugin-settings'
-        ] as Record<string, { values?: Record<string, unknown> }> | undefined;
-        return stored?.[pluginId]?.values?.[settingId];
+        return pluginSettingsBag(this.format_specific)?.[pluginId]?.values?.[
+            settingId
+        ];
     }
 
     /**

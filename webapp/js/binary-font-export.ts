@@ -5,6 +5,7 @@ import {
 } from './font-compilation';
 import { del, get, set } from 'idb-keyval';
 import { fontDestinationPluginManager } from './font-destination-plugin-manager';
+import { prepareCompileFilters } from './compile-filter-host';
 import { Logger } from './logger';
 
 const console = new Logger('BinaryFontExport');
@@ -253,6 +254,19 @@ async function compileFullFont(): Promise<{
     await fullFontCompilation.bootstrapWorkerCacheFromFontState(
         workerSeedState
     );
+    const compileFilters = await prepareCompileFilters(null);
+    if (compileFilters.layerUpdates.length > 0) {
+        await fullFontCompilation.sendMessage({
+            type: 'applyPreviewLayerOverlay',
+            layerUpdates: compileFilters.layerUpdates,
+            changedGlyphs: compileFilters.layerUpdates.map(
+                (update) => update.glyphName
+            ),
+            nonGlyphChangeHints: [],
+            invalidateLayoutClosure: true
+        });
+    }
+    fullFontCompilation.setCompileFeatureOverlay(compileFilters.features || '');
 
     const filename = getSuggestedFilename(currentFont.path);
     const compiled = await fullFontCompilation.compileCached('user', filename);

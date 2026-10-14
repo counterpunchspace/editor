@@ -1171,6 +1171,15 @@ export function seed_ydoc_document(document_id, state_update) {
 }
 
 /**
+ * @param {string} text
+ */
+export function set_compile_feature_overlay(text) {
+    const ptr0 = passStringToWasm0(text, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    wasm.set_compile_feature_overlay(ptr0, len0);
+}
+
+/**
  * Configure the maximum total size of the dedicated debug compiled-font bytes
  * cache. The caller should pass one eighth of the app memory budget.
  * @param {number} max_bytes

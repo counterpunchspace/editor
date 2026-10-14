@@ -303,6 +303,26 @@ describe('glyph rename change-path encoding', () => {
             expect(getPathSegments(joined)).toEqual(segments.map(String));
         }
     });
+
+    test('round-trips font-level keys that contain dots', () => {
+        const { getPathSegments } = require('../js/change-log');
+        const segments = [
+            'format_specific',
+            'com.counterpunch.plugin-settings',
+            'harakat'
+        ];
+        const joined = joinPathWithGlyphSeparator(segments);
+        expect(joined).toBe(
+            'format_specific.com\\.counterpunch\\.plugin-settings.harakat'
+        );
+        expect(getPathSegments(joined)).toEqual(segments);
+        expect(getPathSegments('masters.0.name.dflt')).toEqual([
+            'masters',
+            '0',
+            'name',
+            'dflt'
+        ]);
+    });
 });
 
 describe('glyphRenamesForHistoryAction', () => {

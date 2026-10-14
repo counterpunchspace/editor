@@ -1974,10 +1974,20 @@ export function setYPath(
             // Always use the indexed-map structure for these keys,
             // creating it if it doesn't exist yet.
             if (typeof seg === 'string' && INDEXED_MAP_KEYS[segStr]) {
+                // Master guides are a flat Y.Array. Creating guidesById
+                // here discards that array and turns each pos.x / pos.y
+                // write into a new guide.
+                const existingById = getIndexedByIdMap(current, segStr);
+                const flatArray = current.get(segStr);
+                if (!existingById && isYArray(flatArray)) {
+                    next = flatArray;
+                    current = next;
+                    i += 1;
+                    continue;
+                }
                 // Font.features is a container map; only the nested
                 // `features.features` list is an indexed map. Do not
                 // create featuresById on the font root.
-                const existingById = getIndexedByIdMap(current, segStr);
                 const byIdMap =
                     existingById ||
                     (segStr === 'features'

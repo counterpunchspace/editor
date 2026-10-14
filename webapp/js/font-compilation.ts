@@ -538,6 +538,7 @@ export class FontCompilation {
     pendingWorkerDocumentSyncCount: number;
     pendingWorkerDocumentReplaces: Map<string, Uint8Array>;
     workerDocumentReplaceFlush: Promise<unknown> | null;
+    compileFeatureOverlay: string;
 
     constructor(options?: { connectInterpolation?: boolean }) {
         this.worker = null;
@@ -555,6 +556,7 @@ export class FontCompilation {
         this.pendingWorkerDocumentSyncCount = 0;
         this.pendingWorkerDocumentReplaces = new Map();
         this.workerDocumentReplaceFlush = null;
+        this.compileFeatureOverlay = '';
     }
 
     /** Mark whether editing compiles may rely on the worker's current document cache. */
@@ -1215,12 +1217,26 @@ export class FontCompilation {
     /**
      * Send a generic message to the worker and wait for response
      */
+    setCompileFeatureOverlay(text: string): void {
+        this.compileFeatureOverlay = text || '';
+    }
+
     async sendMessage(data: any, transfer?: Transferable[]): Promise<any> {
         if (!this.worker) {
             throw new Error('Worker not initialized');
         }
 
         const messageType = data.type || 'unknown';
+        if (
+            (messageType === 'compile' ||
+                messageType === 'compileCached' ||
+                messageType === 'compileEditingCached' ||
+                messageType === 'compileDebugCached' ||
+                messageType === 'compileBinaryFont') &&
+            typeof data.featureOverlay !== 'string'
+        ) {
+            data.featureOverlay = this.compileFeatureOverlay;
+        }
         const requestId = this.compilationId++;
         const traceContext: TimelineTraceContext = {
             process: 'main',

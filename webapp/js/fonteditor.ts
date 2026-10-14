@@ -6,6 +6,7 @@ const {
     markFontEditorReadyFailed
 } = require('./editor-startup-ready.js');
 import { fontDestinationPluginManager } from './font-destination-plugin-manager';
+import { discoverCompileFilters } from './compile-filter-host';
 import { getFocusViewId } from './window-ui-state';
 import { notifyLoadingOverlayHiding } from './welcome-screen';
 import {
@@ -290,6 +291,15 @@ async function initFontEditor() {
                     error
                 );
             }
+        }
+        try {
+            await discoverCompileFilters();
+        } catch (error) {
+            console.error(
+                '[FontEditor]',
+                'Failed to discover compile filter plugins:',
+                error
+            );
         }
 
         return true;

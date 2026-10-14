@@ -871,9 +871,16 @@ function pathTouchesMasterKerning(path: string): boolean {
 }
 
 function pathTouchesRtlKerningFormatSpecific(path: string): boolean {
-    return (
+    if (
         path === 'format_specific.com.schriftgestalt.Glyphs.kerningRTL' ||
         path.startsWith('format_specific.com.schriftgestalt.Glyphs.kerningRTL.')
+    ) {
+        return true;
+    }
+    const key = getPathSegments(path)[1] || '';
+    return (
+        key === 'com.schriftgestalt.Glyphs.kerningRTL' ||
+        key.startsWith('com.schriftgestalt.Glyphs.kerningRTL.')
     );
 }
 

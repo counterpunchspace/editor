@@ -7206,6 +7206,23 @@ class GlyphCanvas {
         this.updatePropertyPanel();
         this.outlineEditor.performHitDetection(null);
         this.render();
+
+        const handle = this.outlineEditor.selectedGuideHandle;
+        const guide = this.getSelectedGuideModel();
+        const master = this.getCurrentEditingMasterModel();
+        if (guide && handle && window.compileFilterHost) {
+            void window.compileFilterHost.onGuideCommitted({
+                kind: 'position',
+                scope: handle.scope === 'layer' ? 'layer' : 'master',
+                masterId: master?.id,
+                name: guide.name,
+                pos: {
+                    x: guide.pos?.x,
+                    y: guide.pos?.y,
+                    angle: guide.pos?.angle
+                }
+            });
+        }
     }
 
     private async commitGuideNamePropertyPanelValue(

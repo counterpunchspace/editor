@@ -999,3 +999,165 @@ def Notification(title, body=''):
     body_text = '' if body is None else str(body)
     host.showSystemNotification(title_text, body_text)
 
+
+_CP_COMPILE_FILTERS = {}
+_CP_COMPILE_FILTER_GROUP = 'counterpunch_compilefilter_plugins'
+
+
+def _cp_compile_filters_discover():
+    """Load CompileFilter entry points and return their hook flags as JSON."""
+    import sys
+    from importlib.metadata import entry_points
+
+    if sys.version_info >= (3, 10):
+        found = entry_points(group=_CP_COMPILE_FILTER_GROUP)
+    else:
+        found = entry_points().get(_CP_COMPILE_FILTER_GROUP, [])
+
+    described = []
+    for entry in found:
+        instance = entry.load()()
+        plugin_id = getattr(instance, 'id', entry.name)
+        _CP_COMPILE_FILTERS[plugin_id] = instance
+        described.append({
+            'id': plugin_id,
+            'hasLayer': callable(getattr(instance, 'filter_layer_json', None)),
+            'hasPropagated': callable(
+                getattr(instance, 'filter_layer_json_propagated_anchors', None)
+            ),
+            'hasFont': callable(getattr(instance, 'filter_font_json', None)),
+            'hasSetup': callable(getattr(instance, 'setup', None)),
+            'hasTakedown': callable(getattr(instance, 'takedown', None)),
+            'hasGuide': callable(getattr(instance, 'onGuideChange', None)),
+        })
+    return json.dumps(described)
+
+
+def _cp_compile_filter_setup(plugin_id):
+    plugin = _CP_COMPILE_FILTERS.get(plugin_id)
+    if plugin is None or not callable(getattr(plugin, 'setup', None)):
+        return
+    try:
+        result = plugin.setup(Font())
+        js.window.__cpCompileFilterSetupResult = json.dumps(result, default=str)
+    except Exception:
+        import traceback
+        js.window.__cpCompileFilterError = traceback.format_exc()
+        raise
+
+
+def _cp_compile_filter_takedown(plugin_id):
+    plugin = _CP_COMPILE_FILTERS.get(plugin_id)
+    if plugin is None or not callable(getattr(plugin, 'takedown', None)):
+        return
+    plugin.takedown(Font())
+
+
+def _cp_compile_filter_guide(plugin_id, change_json):
+    plugin = _CP_COMPILE_FILTERS.get(plugin_id)
+    if plugin is None or not callable(getattr(plugin, 'onGuideChange', None)):
+        return False
+    before = _materialize_py_value(
+        Font().getPluginSetting(plugin_id, 'minimum_by_master')
+    )
+    plugin.onGuideChange(Font(), json.loads(change_json))
+    after = _materialize_py_value(
+        Font().getPluginSetting(plugin_id, 'minimum_by_master')
+    )
+    return json.dumps(before, default=str) != json.dumps(after, default=str)
+
+
+def _cp_compile_filters_run(payload_json):
+    """Run the JSON compile hooks. payload is {ids, font, layers:[{glyphName, layer}]}."""
+    payload = json.loads(payload_json)
+    plugins = [
+        _CP_COMPILE_FILTERS[plugin_id]
+        for plugin_id in payload.get('ids') or []
+        if plugin_id in _CP_COMPILE_FILTERS
+    ]
+    font = payload.get('font') or {}
+    replaced = {}
+    current_layers = {
+        f"{item['glyphName']}\x1f{item['layer'].get('id') or ''}": item['layer']
+        for item in payload.get('layers') or []
+    }
+    for item in payload.get('layers') or []:
+        glyph_name = item['glyphName']
+        working = json.loads(json.dumps(item['layer']))
+        key = f"{glyph_name}\x1f{working.get('id') or ''}"
+        for plugin in plugins:
+            ctx = _cp_compile_filter_ctx(plugin, font, working)
+            layer_fn = getattr(plugin, 'filter_layer_json', None)
+            if callable(layer_fn):
+                updated = layer_fn(working, ctx)
+                if isinstance(updated, dict):
+                    working = updated
+            propagated = getattr(plugin, 'filter_layer_json_propagated_anchors', None)
+            if callable(propagated):
+                inherited = item.get('inherited') or {}
+                anchors = working.setdefault('anchors', [])
+                names = {anchor.get('name') for anchor in anchors}
+                for name, point in inherited.items():
+                    if name not in names and isinstance(point, dict):
+                        anchors.append({
+                            'name': name,
+                            'x': point.get('x'),
+                            'y': point.get('y'),
+                        })
+                        names.add(name)
+                updated = propagated(working, ctx)
+                if isinstance(updated, dict):
+                    working = updated
+        replaced[key] = working
+        current_layers[key] = working
+
+    compile_font = json.loads(json.dumps(font))
+    for glyph in compile_font.get('glyphs') or []:
+        layers = []
+        for layer in glyph.get('layers') or []:
+            key = f"{glyph.get('name')}\x1f{layer.get('id') or ''}"
+            layers.append(current_layers.get(key, layer))
+        glyph['layers'] = layers
+
+    chunks = []
+    for plugin in plugins:
+        font_fn = getattr(plugin, 'filter_font_json', None)
+        if not callable(font_fn):
+            continue
+        ctx = _cp_compile_filter_ctx(plugin, compile_font, {})
+        result = font_fn(compile_font, ctx)
+        if isinstance(result, dict) and isinstance(result.get('features'), str):
+            chunks.append(result['features'])
+    return json.dumps({'layers': replaced, 'features': '\n'.join(chunks)})
+
+
+def _cp_plugin_settings_bag(format_specific):
+    if not isinstance(format_specific, dict):
+        return {}
+    flat = format_specific.get('com.counterpunch.plugin-settings')
+    if isinstance(flat, dict):
+        return flat
+    com = format_specific.get('com')
+    if not isinstance(com, dict):
+        return {}
+    counterpunch = com.get('counterpunch')
+    if not isinstance(counterpunch, dict):
+        return {}
+    nested = counterpunch.get('plugin-settings')
+    return nested if isinstance(nested, dict) else {}
+
+
+def _cp_compile_filter_ctx(plugin, font, layer):
+    master = layer.get('master') if isinstance(layer, dict) else None
+    master_id = master.get('master') if isinstance(master, dict) else None
+    masters = font.get('masters') or []
+    master_record = next((item for item in masters if item.get('id') == master_id), None)
+    settings = _cp_plugin_settings_bag(font.get('format_specific') or {})
+    values = (settings.get(getattr(plugin, 'id', ''), {}) or {}).get('values') or {}
+    return {
+        'master': master_record,
+        'masterId': master_id,
+        'axes': font.get('axes') or [],
+        'settings': values,
+    }
+

@@ -698,8 +698,9 @@ function getLayerScopeKey(
  * so that downstream parsing can extract the glyph name in O(1) without
  * consulting a glyph-name list.  All other segments use '.'.
  *
- * Only applies ':' when path[0] is 'glyphs' — all other path roots
- * (axes, masters, features, etc.) use plain dot-joining.
+ * Only applies ':' when path[0] is 'glyphs'. Other roots escape dots
+ * inside a segment so keys such as `com.counterpunch.plugin-settings`
+ * survive `getPathSegments`.
  */
 function encodePathSegment(segment: string | number): string {
     return String(segment).replace(/\\/g, '\\\\').replace(/\./g, '\\.');
@@ -736,7 +737,7 @@ function decodePathTail(tail: string): string[] {
 
 export function joinPathWithGlyphSeparator(path: (string | number)[]): string {
     if (path.length === 0) return '';
-    if (path[0] !== 'glyphs') return path.join('.');
+    if (path[0] !== 'glyphs') return encodePathTail(path);
     if (path.length === 1) return 'glyphs';
     // Glyph-root add/remove paths must terminate the name with ':' so dotted
     // names like fourFarsi-ar.locl round-trip through getPathSegments.
@@ -805,7 +806,7 @@ export function getPathSegments(path: string): string[] {
         return [];
     }
 
-    return splitGlyphPath(path) || path.split('.');
+    return splitGlyphPath(path) || decodePathTail(path);
 }
 
 function derivePropertyFromPath(path: string): string {

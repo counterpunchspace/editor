@@ -13968,7 +13968,30 @@ export class OutlineEditor {
                 }
 
                 endDragTransaction();
-                if (dragType === 'slide-point') {
+                if (dragType === 'guide') {
+                    const handle = this.selectedGuideHandle;
+                    const master = this.getRootMasterModel();
+                    const layerModel = this.getCurrentLayerModel();
+                    const guide = handle
+                        ? handle.scope === 'master'
+                            ? master?.guides?.[handle.index]
+                            : layerModel?.guides?.[handle.index]
+                        : undefined;
+                    if (guide && handle && window.compileFilterHost) {
+                        void window.compileFilterHost.onGuideCommitted({
+                            kind: 'position',
+                            scope:
+                                handle.scope === 'layer' ? 'layer' : 'master',
+                            masterId: master?.id,
+                            name: guide.name,
+                            pos: {
+                                x: guide.pos?.x,
+                                y: guide.pos?.y,
+                                angle: guide.pos?.angle
+                            }
+                        });
+                    }
+                } else if (dragType === 'slide-point') {
                     const currentGlyphModel = this.getCurrentGlyphModel();
                     if (!fontManager.currentFont && currentGlyphModel?.name) {
                         window.dispatchEvent(
@@ -13980,11 +14003,6 @@ export class OutlineEditor {
                             })
                         );
                     }
-                } else if (dragType !== 'guide') {
-                    // Post-commit overview refresh is handled by the
-                    // committed-change funnel (onCommittedChange →
-                    // handleCommittedChangeRefresh) for all drag types,
-                    // so no separate dependent-glyph sync is needed here.
                 }
             } catch (error) {
                 endDragTransaction();

@@ -123,6 +123,7 @@ const FONT_CORE_DOCUMENT_ID: &str = "font-core";
 const FONT_DEPS_DOCUMENT_ID: &str = "font-deps";
 
 static PREVIEW_OVERLAY: Mutex<Option<PreviewOverlay>> = Mutex::new(None);
+static COMPILE_FEATURE_OVERLAY: Mutex<String> = Mutex::new(String::new());
 static LAST_PREVIEW_LAYOUT_CLOSURE_CACHE_KEY: Mutex<Option<String>> = Mutex::new(None);
 
 struct PreviewOverlay {
@@ -2216,6 +2217,55 @@ fn drop_unresolved_components(font: &mut babelfont::Font) {
     }
 }
 
+fn apply_compile_feature_overlay(font: &mut babelfont::Font) {
+    let extra = COMPILE_FEATURE_OVERLAY
+        .lock()
+        .unwrap()
+        .clone();
+    if extra.trim().is_empty() {
+        return;
+    }
+    let Ok(mut value) = serde_json::to_value(&font.features) else {
+        return;
+    };
+    let Some(features) = value.get_mut("features").and_then(|item| item.as_array_mut()) else {
+        return;
+    };
+    const MARKER: &str = "# Automatic Code";
+    let block = format!("\n{extra}\n");
+    if let Some(entry) = features.iter_mut().find(|entry| {
+        entry
+            .get(0)
+            .and_then(|tag| tag.as_str())
+            == Some("mkmk")
+    }) {
+        if let Some(code) = entry.get_mut(1).and_then(|item| item.get_mut("code")) {
+            if let Some(text) = code.as_str().map(str::to_string) {
+                let mut next = text;
+                if let Some(index) = next.find(MARKER) {
+                    next.insert_str(index + MARKER.len(), &block);
+                } else {
+                    next.push_str(&format!("\n{MARKER}{block}"));
+                }
+                *code = serde_json::Value::String(next);
+            }
+        }
+    } else {
+        features.push(serde_json::json!([
+            "mkmk",
+            { "code": format!("{MARKER}{block}"), "automatic": false }
+        ]));
+    }
+    if let Ok(parsed) = serde_json::from_value(value) {
+        font.features = parsed;
+    }
+}
+
+#[wasm_bindgen]
+pub fn set_compile_feature_overlay(text: &str) {
+    *COMPILE_FEATURE_OVERLAY.lock().unwrap() = text.to_string();
+}
+
 fn compile_with_feature_debug_context(
     font: &babelfont::Font,
     options: &CompilationOptions,
@@ -2226,6 +2276,8 @@ fn compile_with_feature_debug_context(
     if options.skip_features {
         font.features = babelfont::Features::default();
         drop_unresolved_components(&mut font);
+    } else {
+        apply_compile_feature_overlay(&mut font);
     }
     let feature_source = font.features.to_fea();
     match BabelfontIrSource::compile(font, options) {

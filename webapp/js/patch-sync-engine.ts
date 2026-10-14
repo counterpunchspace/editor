@@ -7682,8 +7682,8 @@ export class PatchSyncEngine {
             oldValue: operation.oldValue,
             newValue: operation.newValue,
             editSource: operation.editSource ?? null,
-            compileChangeSource: operation.compileChangeSource ?? null,
-            compileEditType: operation.compileEditType ?? null,
+            compileChangeSource: operation.compileChangeSource,
+            compileEditType: operation.compileEditType,
             visualAnchorSide: operation.visualAnchorSide ?? null,
             workerReplayTargets: normalizeWorkerReplayTargets(
                 operation.workerReplayTargets
@@ -7709,8 +7709,8 @@ export class PatchSyncEngine {
             oldValue: cloneHistoryValue(operation.oldValue),
             newValue: cloneHistoryValue(operation.newValue),
             editSource: operation.editSource ?? null,
-            compileChangeSource: operation.compileChangeSource ?? null,
-            compileEditType: operation.compileEditType ?? null,
+            compileChangeSource: operation.compileChangeSource,
+            compileEditType: operation.compileEditType,
             workerReplayTargets: normalizeWorkerReplayTargets(
                 operation.workerReplayTargets
             ),

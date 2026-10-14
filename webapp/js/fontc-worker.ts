@@ -39,6 +39,7 @@ import init, {
     get_glyphs_outlines,
     set_debug_font_cache_max_bytes,
     validate_feature_source_with_full_filter_pipeline,
+    set_compile_feature_overlay,
     filtered_boolean_fingerprints,
     boolean_op_paths,
     version
@@ -73,6 +74,12 @@ let lastStoreFontAtMs = 0;
 let dragCompilesSinceStore = 0;
 const PERF_TRACE_CONTEXT_GLOBAL_KEY = '__cpPerfTraceContext';
 const MAX_DUMP_LAYER_TARGETS = 256;
+
+function applyCompileFeatureOverlay(data: { featureOverlay?: unknown }): void {
+    const text =
+        typeof data.featureOverlay === 'string' ? data.featureOverlay : '';
+    set_compile_feature_overlay(text);
+}
 
 type TimelineTraceContext = {
     process?: string;
@@ -865,6 +872,7 @@ self.onmessage = async (event) => {
                 const wasmCompileBridgeSpanId = timelineSpanStart(
                     'font.worker.compile.invokeWasm'
                 );
+                applyCompileFeatureOverlay(data);
                 const ttfBytes = compile_babelfont(
                     cleanedJson,
                     data.options || {}
@@ -1000,6 +1008,8 @@ self.onmessage = async (event) => {
                 const baseSubsetGlyphs = Array.isArray(subsetGlyphs)
                     ? subsetGlyphs
                     : null;
+
+                applyCompileFeatureOverlay(data);
 
                 if (_compileSource === 'feature-code') {
                     const validateFeaturesSpanId = timelineSpanStart(
@@ -1219,6 +1229,7 @@ self.onmessage = async (event) => {
 
             try {
                 const startTime = performance.now();
+                applyCompileFeatureOverlay(data);
                 const {
                     id,
                     options,
@@ -1321,6 +1332,7 @@ self.onmessage = async (event) => {
 
             try {
                 const startTime = performance.now();
+                applyCompileFeatureOverlay(data);
                 const compiledBytes = compile_cached_font(data.options || {});
                 const endTime = performance.now();
 
@@ -1365,6 +1377,7 @@ self.onmessage = async (event) => {
 
             try {
                 const startTime = performance.now();
+                applyCompileFeatureOverlay(data);
                 if (
                     typeof data.memoryBudgetBytes === 'number' &&
                     Number.isFinite(data.memoryBudgetBytes) &&

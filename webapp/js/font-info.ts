@@ -5,6 +5,15 @@
 
 import tippy, { type Instance as TippyInstance } from 'tippy.js';
 import { Logger } from './logger';
+import {
+    discoverCompileFilters,
+    discoveredCompileFilters,
+    invalidateCompileFilterCache,
+    linkedCompileFilterIds,
+    setLinkedCompileFilterIds,
+    setupCompileFilter,
+    takedownCompileFilter
+} from './compile-filter-host';
 import { fontCompilation } from './font-compilation';
 import { attachTopRowSidebarInterpolation } from './top-row-sidebar-interpolation';
 import { getFontInfoSection, setFontInfoSection } from './window-ui-state';
@@ -79,7 +88,8 @@ type FontInfoTab =
     | 'masters'
     | 'instances'
     | 'custom_ot_values'
-    | 'features';
+    | 'features'
+    | 'compile_filters';
 type FeatureItemType = 'prefix' | 'class' | 'feature';
 type FontNameFieldKey = keyof Babelfont.Names;
 type FontRootFieldKey = 'upm' | 'version' | 'note' | 'date';
@@ -154,6 +164,11 @@ const FONTINFO_SECTIONS: FontInfoSectionConfig[] = [
         id: 'features',
         label: 'Features',
         usesSearch: true
+    },
+    {
+        id: 'compile_filters',
+        label: 'Compile Filters',
+        usesSearch: false
     }
 ];
 
@@ -764,6 +779,8 @@ class FontInfoManager {
     private axesTab: HTMLElement | null = null;
     private customOTValuesTab: HTMLElement | null = null;
     private featuresTab: HTMLElement | null = null;
+    private compileFiltersTab: HTMLElement | null = null;
+    private compileFiltersFieldsContainer: HTMLElement | null = null;
     private generalFieldsContainer: HTMLElement | null = null;
     private namesFieldsContainer: HTMLElement | null = null;
     private mastersFieldsContainer: HTMLElement | null = null;
@@ -1056,6 +1073,96 @@ class FontInfoManager {
         }
     }
 
+    reloadCompileFiltersIfVisible(): void {
+        if (this.currentTab !== 'compile_filters') {
+            return;
+        }
+        this.paintCompileFilters();
+    }
+
+    private async renderCompileFiltersContent(): Promise<void> {
+        const container = this.compileFiltersFieldsContainer;
+        const font = window.currentFontModel;
+        if (!container || !font) {
+            return;
+        }
+        await discoverCompileFilters();
+        this.paintCompileFilters();
+    }
+
+    private paintCompileFilters(): void {
+        const container = this.compileFiltersFieldsContainer;
+        const font = window.currentFontModel;
+        if (!container || !font) {
+            return;
+        }
+        const linked = linkedCompileFilterIds(font);
+        const available = discoveredCompileFilters();
+        container.replaceChildren();
+
+        const list = document.createElement('div');
+        for (const pluginId of linked) {
+            const row = document.createElement('div');
+            row.className = 'fontinfo-field';
+            const label = document.createElement('span');
+            label.textContent = pluginId;
+            const remove = document.createElement('button');
+            remove.type = 'button';
+            remove.className = 'dialog-button';
+            remove.textContent = 'Remove';
+            remove.addEventListener('click', () => {
+                void this.unlinkCompileFilter(pluginId);
+            });
+            row.append(label, remove);
+            list.appendChild(row);
+        }
+        container.appendChild(list);
+
+        for (const plugin of available) {
+            if (linked.includes(plugin.id)) {
+                continue;
+            }
+            const add = document.createElement('button');
+            add.type = 'button';
+            add.className = 'dialog-button';
+            add.textContent = `Add ${plugin.id}`;
+            add.addEventListener('click', () => {
+                void this.linkCompileFilter(plugin.id);
+            });
+            container.appendChild(add);
+        }
+    }
+
+    private async linkCompileFilter(pluginId: string): Promise<void> {
+        const font = window.currentFontModel;
+        if (!font) {
+            return;
+        }
+        const ids = linkedCompileFilterIds(font);
+        if (!ids.includes(pluginId)) {
+            setLinkedCompileFilterIds(font, [...ids, pluginId]);
+        }
+        invalidateCompileFilterCache();
+        await setupCompileFilter(pluginId);
+        await this.renderCompileFiltersContent();
+        await window.fontManager?.recompileEditingFont?.();
+    }
+
+    private async unlinkCompileFilter(pluginId: string): Promise<void> {
+        const font = window.currentFontModel;
+        if (!font) {
+            return;
+        }
+        await takedownCompileFilter(pluginId);
+        setLinkedCompileFilterIds(
+            font,
+            linkedCompileFilterIds(font).filter((id) => id !== pluginId)
+        );
+        invalidateCompileFilterCache();
+        await this.renderCompileFiltersContent();
+        await window.fontManager?.recompileEditingFont?.();
+    }
+
     private getSavedTab(): FontInfoTab {
         const saved = getFontInfoSection();
         if (
@@ -1065,7 +1172,8 @@ class FontInfoManager {
             saved === 'masters' ||
             saved === 'instances' ||
             saved === 'custom_ot_values' ||
-            saved === 'features'
+            saved === 'features' ||
+            saved === 'compile_filters'
         ) {
             return saved;
         }
@@ -2546,8 +2654,18 @@ class FontInfoManager {
         viewContent.appendChild(this.mastersTab);
         viewContent.appendChild(this.instancesTab);
         viewContent.appendChild(this.axesTab);
+        this.compileFiltersTab = document.createElement('div');
+        this.compileFiltersTab.id = 'fontinfo-compile-filters-content';
+        this.compileFiltersTab.style.display = 'none';
+        this.compileFiltersTab.style.height = '100%';
+        this.compileFiltersTab.style.overflow = 'auto';
+        this.compileFiltersFieldsContainer = document.createElement('div');
+        this.compileFiltersFieldsContainer.className = 'fontinfo-names-fields';
+        this.compileFiltersTab.appendChild(this.compileFiltersFieldsContainer);
+
         viewContent.appendChild(this.customOTValuesTab);
         viewContent.appendChild(this.featuresTab);
+        viewContent.appendChild(this.compileFiltersTab);
 
         // Set up automatic checkbox handler
         const autoCheckbox = this.featuresTab.querySelector(
@@ -2709,6 +2827,10 @@ class FontInfoManager {
             this.featuresTab.style.display =
                 tab === 'features' ? 'block' : 'none';
         }
+        if (this.compileFiltersTab) {
+            this.compileFiltersTab.style.display =
+                tab === 'compile_filters' ? 'block' : 'none';
+        }
 
         if (tab === 'features') {
             // Initialize editor lazily on first show
@@ -2762,6 +2884,10 @@ class FontInfoManager {
                     (!this.axesDataLoaded || this.pendingAxesModelSyncRefresh)
                 ) {
                     this.refreshVisibleAxesContent();
+                }
+
+                if (tab === 'compile_filters') {
+                    void this.renderCompileFiltersContent();
                 }
 
                 if (
@@ -3095,6 +3221,8 @@ class FontInfoManager {
                 return this.axesTab;
             case 'custom_ot_values':
                 return this.customOTValuesTab;
+            case 'compile_filters':
+                return this.compileFiltersTab;
             default:
                 return null;
         }
@@ -9682,6 +9810,9 @@ class FontInfoManager {
 
 // Create singleton instance
 const fontInfoManager = new FontInfoManager();
+window.addEventListener('compilefiltersregistered', () => {
+    fontInfoManager.reloadCompileFiltersIfVisible();
+});
 
 // Export for global access
 (window as any).fontInfoManager = fontInfoManager;

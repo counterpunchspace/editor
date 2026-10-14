@@ -424,6 +424,8 @@ export function seed_ydoc(state_update: Uint8Array): void;
 
 export function seed_ydoc_document(document_id: string, state_update: Uint8Array): void;
 
+export function set_compile_feature_overlay(text: string): void;
+
 /**
  * Configure the maximum total size of the dedicated debug compiled-font bytes
  * cache. The caller should pass one eighth of the app memory budget.
@@ -455,6 +457,12 @@ export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembl
 
 export interface InitOutput {
     readonly memory: WebAssembly.Memory;
+    readonly get_font_axes: (a: number, b: number) => [number, number, number, number];
+    readonly get_font_features: (a: number, b: number) => [number, number, number, number];
+    readonly get_font_features_with_tables: (a: number, b: number) => [number, number, number, number];
+    readonly get_glyph_name: (a: number, b: number, c: number) => [number, number, number, number];
+    readonly get_glyph_order: (a: number, b: number) => [number, number, number, number];
+    readonly get_stylistic_set_names: (a: number, b: number) => [number, number, number, number];
     readonly adopt_preview_layout_closure_from_last: () => number;
     readonly apply_preview_layer_overlay: (a: number, b: number, c: number, d: number) => [number, number, number, number];
     readonly apply_yjs_update: (a: number, b: number, c: number, d: number) => [number, number, number, number];
@@ -492,6 +500,7 @@ export interface InitOutput {
     readonly save_font_as_ufo_entries: (a: number, b: number) => [number, number, number, number];
     readonly seed_ydoc: (a: number, b: number) => [number, number];
     readonly seed_ydoc_document: (a: number, b: number, c: number, d: number) => [number, number];
+    readonly set_compile_feature_overlay: (a: number, b: number) => void;
     readonly set_debug_font_cache_max_bytes: (a: number) => void;
     readonly store_font: (a: number, b: number) => [number, number];
     readonly validate_feature_source_with_full_filter_pipeline: (a: any) => [number, number];
@@ -501,12 +510,6 @@ export interface InitOutput {
     readonly reinterpolate_layer_yjs: (a: number, b: number, c: number, d: number) => [number, number, number];
     readonly reinterpolate_master_layers_yjs: (a: number, b: number) => [number, number, number];
     readonly remove_masters_yjs: (a: number, b: number) => [number, number, number];
-    readonly get_font_axes: (a: number, b: number) => [number, number, number, number];
-    readonly get_font_features: (a: number, b: number) => [number, number, number, number];
-    readonly get_font_features_with_tables: (a: number, b: number) => [number, number, number, number];
-    readonly get_glyph_name: (a: number, b: number, c: number) => [number, number, number, number];
-    readonly get_glyph_order: (a: number, b: number) => [number, number, number, number];
-    readonly get_stylistic_set_names: (a: number, b: number) => [number, number, number, number];
     readonly __wbindgen_malloc: (a: number, b: number) => number;
     readonly __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;
     readonly __wbindgen_exn_store: (a: number) => void;

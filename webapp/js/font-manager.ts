@@ -14,6 +14,7 @@ import {
     adoptTransferredUint8Array
 } from './font-compilation';
 import { get_glyph_order } from '../wasm-dist/babelfont_fontc_web';
+import { prepareCompileFilters } from './compile-filter-host';
 import * as babelfontWasm from '../wasm-dist/babelfont_fontc_web';
 import type { Babelfont } from './babelfont';
 import { designspaceToUserspace, userspaceToDesignspace } from './locations';
@@ -3554,6 +3555,26 @@ class FontManager {
                               wasJsonStale ||
                                   this.pendingBabelfontJsonSyncAfterDrag
                           );
+
+                const compileFilters = await prepareCompileFilters(
+                    subsetForCompile ?? null
+                );
+                if (compileFilters.layerUpdates.length > 0) {
+                    await this.sendWorkerPreviewLayerOverlay(
+                        compileFilters.layerUpdates as Array<{
+                            glyphName: string;
+                            layerId: string;
+                            layerData: Babelfont.Layer;
+                        }>,
+                        compileFilters.layerUpdates.map(
+                            (update) => update.glyphName
+                        ),
+                        true
+                    );
+                }
+                fontCompilation.setCompileFeatureOverlay(
+                    compileFilters.features || ''
+                );
 
                 result = await fontCompilation.compileEditingFromJsonCached(
                     validatedJson,
