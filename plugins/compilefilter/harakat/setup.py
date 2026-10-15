@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name="counterpunch-harakat",
-    version="0.1.12",
+    version="0.1.14",
     description="Raise Arabic vowel marks to a per-master minimum height at compile time",
     author="Yanone",
     license="GPL-3.0-or-later",

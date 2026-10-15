@@ -460,6 +460,23 @@ function layerInkBounds(
     return { yMin, yMax };
 }
 
+function componentRecords(layer: { data?: { shapes?: RawShape[] } }): {
+    components?: Array<{ reference: string; matrix: number[] }>;
+} {
+    const components: Array<{ reference: string; matrix: number[] }> = [];
+    for (const shape of layer.data?.shapes || []) {
+        const component = shapeComponent(shape);
+        if (!component) {
+            continue;
+        }
+        components.push({
+            reference: component.reference,
+            matrix: shapeMatrix(component.transform) || [1, 0, 0, 1, 0, 0]
+        });
+    }
+    return components.length > 0 ? { components } : {};
+}
+
 function anchorOnlyLayerRecord(layer: {
     id?: string;
     is_background?: boolean;
@@ -480,7 +497,8 @@ function anchorOnlyLayerRecord(layer: {
                 name: anchor.name,
                 x: Number(anchor.x) || 0,
                 y: Number(anchor.y) || 0
-            }))
+            })),
+        ...componentRecords(layer as { data?: { shapes?: RawShape[] } })
     };
 }
 

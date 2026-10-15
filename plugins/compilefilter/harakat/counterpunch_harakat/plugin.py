@@ -85,28 +85,31 @@ class Harakat:
         for _shell, parts in _ccmp_rules(font).items():
             if parts and all(part in present for part in parts):
                 sequences.append(parts)
+        shells = set(_ccmp_rules(font))
         for name in _bare_base_names(font):
-            if name in present:
+            if name in present and name not in shells:
                 sequences.append([name])
 
         # The overlay runs after fontc's mark and mkmk lookups, so the first
         # vowel's ``_top`` already sits on the propagated top of its context.
-        # The floor lifts ``_top`` onto the guideline. On masters where the
-        # floor is positive, a further shift lines the first vowel's ink
-        # center up with the highest vowel center. Later vowels are not
-        # matched, so they keep their place in the stack. A named lookup must
-        # not be declared here: inside a feature block it would apply to
-        # every vowel.
+        # The shared center line is the guideline plus the highest ink-center
+        # offset. A vowel is lifted as soon as that line passes its own
+        # center, even when ``_top`` is still above the guideline. Later
+        # vowels are not matched, so they keep their place in the stack. A
+        # named lookup must not be declared here: inside a feature block it
+        # would apply to every vowel.
         lines = ["lookupflag 0;"]
         for parts in sequences:
-            floors = []
+            gaps = []
             for location, minimum in locations:
-                propagated = _resolved_top(font, parts, location, glyphs, masters)
+                propagated = _propagated_top(
+                    font, parts, location, glyphs, masters
+                )
                 if propagated is None:
-                    floors = []
+                    gaps = []
                     break
-                floors.append(max(0.0, minimum - propagated))
-            if not floors or all(delta <= 0 for delta in floors):
+                gaps.append(minimum - propagated)
+            if not gaps:
                 continue
             context = " ".join(parts)
             for mark in marks:
@@ -114,11 +117,14 @@ class Harakat:
                     continue
                 mark_offsets = offsets.get(mark)
                 combined = []
-                for index, floor in enumerate(floors):
-                    extra = 0.0
-                    if floor > 0 and mark_offsets is not None and tallest:
-                        extra = tallest[index] - mark_offsets[index]
-                    combined.append(floor + extra)
+                for index, gap in enumerate(gaps):
+                    center = mark_offsets[index] if mark_offsets is not None else 0.0
+                    reference = (
+                        tallest[index]
+                        if tallest and mark_offsets is not None
+                        else center
+                    )
+                    combined.append(max(0.0, gap + reference - center))
                 scalar = _variable_scalar(locations, combined, font.get("axes") or [])
                 if scalar is None:
                     continue
@@ -195,9 +201,10 @@ def _bare_base_names(font):
         if not isinstance(glyph, dict):
             continue
         name = glyph.get("name")
-        if not name or _is_vowel_mark(glyph) or not _has_anchor(glyph, "top"):
+        if not name or _is_vowel_mark(glyph):
             continue
-        names.append(str(name))
+        if _has_anchor(glyph, "top") or _has_components(glyph):
+            names.append(str(name))
     return names
 
 
@@ -228,6 +235,92 @@ def _is_vowel_mark(glyph):
         except (TypeError, ValueError):
             continue
     return False
+
+
+def _has_components(glyph):
+    for layer in glyph.get("layers") or []:
+        if _component_records(layer):
+            return True
+    return False
+
+
+def _component_records(layer):
+    records = []
+    for item in (layer or {}).get("components") or []:
+        if isinstance(item, str) and item:
+            records.append({"reference": item, "matrix": None})
+            continue
+        if not isinstance(item, dict):
+            continue
+        reference = item.get("reference")
+        if reference:
+            records.append(
+                {"reference": str(reference), "matrix": item.get("matrix")}
+            )
+    if records:
+        return records
+    for shape in (layer or {}).get("shapes") or []:
+        if not isinstance(shape, dict):
+            continue
+        reference = shape.get("reference")
+        transform = shape.get("transform")
+        component = shape.get("Component")
+        if not reference and isinstance(component, dict):
+            reference = component.get("reference")
+            transform = component.get("transform")
+        if reference:
+            records.append({"reference": str(reference), "matrix": transform})
+    return records
+
+
+def _apply_matrix(x, y, matrix):
+    if not isinstance(matrix, (list, tuple)) or len(matrix) < 6:
+        return x, y
+    return (
+        float(matrix[0]) * x + float(matrix[2]) * y + float(matrix[4]),
+        float(matrix[1]) * x + float(matrix[3]) * y + float(matrix[5]),
+    )
+
+
+def _propagated_top(font, parts, location, glyphs, masters):
+    """Attachment height of a shaped context.
+
+    A ``ccmp`` context is several glyphs, and each glyph's anchors are
+    composed in order. A component glyph is one shaped glyph: its
+    components are already positioned by their transforms, and the last
+    ``top`` wins, which is the same height the ``ccmp`` chain composes.
+    """
+    if len(parts) == 1:
+        layer = _layer_for(font, parts[0], location, glyphs, masters)
+        if layer is not None and _component_records(layer):
+            return _component_top(
+                font, parts[0], location, glyphs, masters, set()
+            )
+    return _resolved_top(font, parts, location, glyphs, masters)
+
+
+def _component_top(font, name, location, glyphs, masters, seen):
+    if name in seen:
+        return None
+    layer = _layer_for(font, name, location, glyphs, masters)
+    if layer is None:
+        return None
+    records = _component_records(layer)
+    if not records:
+        top = _anchors(layer).get("top")
+        return top[1] if top else None
+    seen.add(name)
+    available = {}
+    for record in records:
+        reference = record["reference"]
+        nested = _component_top(font, reference, location, glyphs, masters, seen)
+        anchors = _anchors(_layer_for(font, reference, location, glyphs, masters))
+        if nested is not None and "top" not in anchors:
+            anchors = {**anchors, "top": (0.0, nested)}
+        for anchor_name, (x, y) in anchors.items():
+            available[anchor_name] = _apply_matrix(x, y, record["matrix"])
+    top = available.get("top")
+    return top[1] if top else None
 
 
 def _has_anchor(glyph, anchor_name):

@@ -231,6 +231,7 @@ font = {
         {"name": "noon-ar", "category": "Letter", "layers": [{"id": "l", "master": {"master": "m"}, "anchors": [{"name": "top", "x": 0, "y": 200}]}]},
         {"name": "noonghunna-ar", "category": "Letter", "layers": [{"id": "l", "master": {"master": "m"}, "anchors": [{"name": "top", "x": 0, "y": 200}]}]},
         {"name": "alef-ar", "category": "Letter", "layers": [{"id": "l", "master": {"master": "m"}, "anchors": [{"name": "top", "x": 0, "y": 700}]}]},
+        {"name": "lam-ar", "category": "Letter", "layers": [{"id": "l", "master": {"master": "m"}, "anchors": [{"name": "top", "x": 0, "y": 450}]}]},
         {"name": "dotabove-ar", "category": "Mark", "layers": [{"id": "l", "master": {"master": "m"}, "anchors": [{"name": "_top", "x": 0, "y": 0}, {"name": "top", "x": 0, "y": 80}]}]},
         {"name": "fatha-ar", "category": "Mark", "codepoints": [1614], "layers": [{"id": "l", "master": {"master": "m"}, "anchors": [{"name": "_top", "x": 0, "y": 0}, {"name": "top", "x": 0, "y": 40}], "yMin": 0, "yMax": 40}]},
         {"name": "damma-ar", "category": "Mark", "codepoints": [1615], "layers": [{"id": "l", "master": {"master": "m"}, "anchors": [{"name": "_top", "x": 0, "y": 0}], "yMin": 0, "yMax": 100}]},
@@ -238,9 +239,56 @@ font = {
     ],
 }
 features = plugin.filter_font_json(font, ctx)
-json.dumps({"raised": raised, "features": None if features is None else features["features"]})
+def _shift(result, prefix):
+    text = "" if result is None else result["features"]
+    for line in text.splitlines():
+        if line.startswith(prefix):
+            return line.split("<0 ", 1)[1].split(" ", 1)[0]
+    return None
+skel = {"name": "skel-ar", "category": "Letter", "layers": [{"id": "l", "master": {"master": "m"}, "anchors": [{"name": "top", "x": 0, "y": 200}]}]}
+dot = {"name": "dotabove-ar", "category": "Mark", "layers": [{"id": "l", "master": {"master": "m"}, "anchors": [{"name": "_top", "x": 0, "y": 0}, {"name": "top", "x": 0, "y": 80}]}]}
+marks = [glyph for glyph in font["glyphs"] if glyph["name"] in ("fatha-ar", "damma-ar", "sukun-ar")]
+ccmp_font = {
+    "upm": 1000,
+    "masters": font["masters"],
+    "axes": font["axes"],
+    "features": {"features": [["ccmp", {"code": "sub beh-ar by skel-ar dotabove-ar;"}]]},
+    "glyphs": [{"name": "beh-ar", "category": "Letter", "layers": [{"id": "l", "master": {"master": "m"}, "anchors": []}]}] + [skel, dot] + marks,
+}
+component_font = {
+    "upm": 1000,
+    "masters": font["masters"],
+    "axes": font["axes"],
+    "features": {"features": []},
+    "glyphs": [{
+        "name": "beh-ar",
+        "category": "Letter",
+        "layers": [{
+            "id": "l",
+            "master": {"master": "m"},
+            "anchors": [],
+            "components": [
+                {"reference": "skel-ar", "matrix": [1, 0, 0, 1, 0, 0]},
+                {"reference": "dotabove-ar", "matrix": [1, 0, 0, 1, 0, 200]},
+            ],
+        }],
+    }, skel, dot] + marks,
+}
+ccmp_features = plugin.filter_font_json(ccmp_font, ctx)
+component_features = plugin.filter_font_json(component_font, ctx)
+json.dumps({
+    "raised": raised,
+    "features": None if features is None else features["features"],
+    "ccmpShift": _shift(ccmp_features, "pos skel-ar dotabove-ar fatha-ar'"),
+    "componentShift": _shift(component_features, "pos beh-ar fatha-ar'"),
+})
 `);
-        return JSON.parse(raw) as { raised: unknown; features: string };
+        return JSON.parse(raw) as {
+            raised: unknown;
+            features: string;
+            ccmpShift: string | null;
+            componentShift: string | null;
+        };
     });
 
     expect(compiled.raised).toBeNull();
@@ -260,11 +308,17 @@ json.dumps({"raised": raised, "features": None if features is None else features
     expect(compiled.features).toContain(
         "pos noonghunna-ar damma-ar' <0 250 0 0>;"
     );
+    // Lam's top is 450, fifty above the guide. Fatha's center is still
+    // eighty below the shared line, so it moves thirty. Damma already meets it.
+    expect(compiled.features).toContain("pos lam-ar fatha-ar' <0 30 0 0>;");
+    expect(compiled.features).not.toContain("pos lam-ar damma-ar'");
     expect(compiled.features).not.toContain('alef-ar');
     expect(compiled.features).not.toContain('sukun-ar');
     expect(compiled.features).not.toMatch(/\blookup\s/);
     expect(compiled.features).not.toContain("@harakat'");
     expect(compiled.features).not.toContain('dotabove-ar]');
+    expect(compiled.ccmpShift).toBe('200');
+    expect(compiled.componentShift).toBe(compiled.ccmpShift);
 });
 
 type ShapedMark = {
@@ -436,8 +490,8 @@ function alignmentErrors(off: Shaped, on: Shaped): number[] {
         }
         const natural = before.dy + before.topY;
         const offset = (first.inkMin + first.inkY) / 2 - first.topY;
-        const expected =
-            natural < guide ? guide + Math.max(0, tallest - offset) : natural;
+        const aligned = guide + Math.max(0, tallest - offset);
+        const expected = Math.max(natural, aligned);
         return Math.abs(first.dy + first.topY - expected);
     });
 }
@@ -545,14 +599,11 @@ test('the Harakat guide aligns the first vowel and moves stacks in unison', asyn
     expect(overlay).not.toMatch(/\blookup\s/);
     expect(overlay).not.toContain("@harakat'");
     expect(overlay.split('\n')[0]).not.toContain('dotabove-ar');
-    expect(overlay).not.toContain('alef-ar.short.fina');
 
-    // The alef's marks are already above the guideline and stay put.
     const alef = on.clusters.findIndex((cluster) =>
         cluster.base.startsWith('alef-ar')
     );
     expect(alef).toBeGreaterThanOrEqual(0);
-    expect(on.clusters[alef].marks).toEqual(off.clusters[alef].marks);
     // Something below the guideline did move.
     expect(
         on.clusters.some(
