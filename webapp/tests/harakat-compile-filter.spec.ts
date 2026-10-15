@@ -232,7 +232,9 @@ font = {
         {"name": "noonghunna-ar", "category": "Letter", "layers": [{"id": "l", "master": {"master": "m"}, "anchors": [{"name": "top", "x": 0, "y": 200}]}]},
         {"name": "alef-ar", "category": "Letter", "layers": [{"id": "l", "master": {"master": "m"}, "anchors": [{"name": "top", "x": 0, "y": 700}]}]},
         {"name": "dotabove-ar", "category": "Mark", "layers": [{"id": "l", "master": {"master": "m"}, "anchors": [{"name": "_top", "x": 0, "y": 0}, {"name": "top", "x": 0, "y": 80}]}]},
-        {"name": "fatha-ar", "category": "Mark", "codepoints": [1614], "layers": [{"id": "l", "master": {"master": "m"}, "anchors": [{"name": "_top", "x": 0, "y": 0}, {"name": "top", "x": 0, "y": 40}]}]},
+        {"name": "fatha-ar", "category": "Mark", "codepoints": [1614], "layers": [{"id": "l", "master": {"master": "m"}, "anchors": [{"name": "_top", "x": 0, "y": 0}, {"name": "top", "x": 0, "y": 40}], "yMin": 0, "yMax": 40}]},
+        {"name": "damma-ar", "category": "Mark", "codepoints": [1615], "layers": [{"id": "l", "master": {"master": "m"}, "anchors": [{"name": "_top", "x": 0, "y": 0}], "yMin": 0, "yMax": 100}]},
+        {"name": "sukun-ar", "category": "Mark", "boundsOnly": True, "codepoints": [1618], "layers": [{"id": "l", "master": {"master": "m"}, "anchors": [{"name": "_top", "x": 0, "y": 0}], "yMin": 0, "yMax": 200}]},
     ],
 }
 features = plugin.filter_font_json(font, ctx)
@@ -243,26 +245,42 @@ json.dumps({"raised": raised, "features": None if features is None else features
 
     expect(compiled.raised).toBeNull();
     expect(compiled.features).toContain('fatha-ar');
-    // Guide 400: the chain's top is 200 + 80, the bare base's is 200, and
-    // alef's 700 is already above the guide.
+    // Guide 400. Centers sit 20, 50, and 100 above ``_top``. Sukun is
+    // bounds-only, so it sets the center line and is not named in a rule.
+    // Chain floor 120: fatha 120+80, damma 120+50. Bare floor 200.
     expect(compiled.features).toContain(
-        "pos noonghunna-ar dotabove-ar @harakat' <0 120 0 0>;"
+        "pos noonghunna-ar dotabove-ar fatha-ar' <0 200 0 0>;"
     );
     expect(compiled.features).toContain(
-        "pos noonghunna-ar @harakat' <0 200 0 0>;"
+        "pos noonghunna-ar dotabove-ar damma-ar' <0 170 0 0>;"
+    );
+    expect(compiled.features).toContain(
+        "pos noonghunna-ar fatha-ar' <0 280 0 0>;"
+    );
+    expect(compiled.features).toContain(
+        "pos noonghunna-ar damma-ar' <0 250 0 0>;"
     );
     expect(compiled.features).not.toContain('alef-ar');
+    expect(compiled.features).not.toContain('sukun-ar');
     expect(compiled.features).not.toMatch(/\blookup\s/);
-    expect(compiled.features).not.toContain("@harakat @harakat'");
+    expect(compiled.features).not.toContain("@harakat'");
     expect(compiled.features).not.toContain('dotabove-ar]');
 });
 
-type ShapedMark = { name: string; dy: number; vowel: boolean; topY: number };
+type ShapedMark = {
+    name: string;
+    dy: number;
+    vowel: boolean;
+    topY: number;
+    inkMin: number;
+    inkY: number;
+};
 type ShapedCluster = { base: string; marks: ShapedMark[] };
 type Shaped = {
     clusters: ShapedCluster[];
     guideY: number | null;
     settingY: number | null;
+    tallestOffset: number;
 };
 
 const HARAKAT_WORD = 'حَّرَّكاَّتّْ';
@@ -284,6 +302,7 @@ async function shapeHarakatWord(page: Page): Promise<Shaped> {
         type Layer = {
             master?: { master?: string };
             anchors?: Anchor[];
+            data?: { shapes?: Array<{ nodes?: Array<{ y?: number }> }> };
         };
         const font = window.currentFontModel as {
             axes?: Array<{ tag: string; map?: Array<[number, number]> }>;
@@ -291,6 +310,10 @@ async function shapeHarakatWord(page: Page): Promise<Shaped> {
                 id: string;
                 location?: Record<string, number>;
                 guides?: Array<{ name?: string; pos: { y: number } }>;
+            }>;
+            glyphs?: Array<{
+                codepoints?: number[];
+                layers?: Layer[];
             }>;
             getPluginSetting(pluginId: string, settingId: string): unknown;
             findGlyph(name: string):
@@ -316,6 +339,42 @@ async function shapeHarakatWord(page: Page): Promise<Shaped> {
             0x065b,
             0x0670
         ]);
+        const nodeBounds = (
+            layer: Layer | undefined
+        ): { min: number; max: number } | null => {
+            let min: number | null = null;
+            let max: number | null = null;
+            for (const shape of layer?.data?.shapes || []) {
+                for (const node of shape.nodes || []) {
+                    if (typeof node.y !== 'number') {
+                        continue;
+                    }
+                    min = min === null ? node.y : Math.min(min, node.y);
+                    max = max === null ? node.y : Math.max(max, node.y);
+                }
+            }
+            return min === null || max === null ? null : { min, max };
+        };
+        let tallestOffset = 0;
+        for (const glyph of font.glyphs || []) {
+            if (!(glyph.codepoints || []).some((cp) => vowels.has(cp))) {
+                continue;
+            }
+            const layer = (glyph.layers || []).find(
+                (item) => item.master?.master === master?.id
+            );
+            const top = (layer?.anchors || []).find(
+                (item) => item.name === '_top'
+            );
+            const ink = nodeBounds(layer);
+            if (!top || !ink) {
+                continue;
+            }
+            tallestOffset = Math.max(
+                tallestOffset,
+                (ink.min + ink.max) / 2 - top.y
+            );
+        }
 
         const editor = win.glyphCanvas?.textRunEditor;
         const compiled = win.fontManager?.editingFont;
@@ -339,13 +398,16 @@ async function shapeHarakatWord(page: Page): Promise<Shaped> {
             const top = (layer?.anchors || []).find(
                 (item) => item.name === '_top'
             );
+            const ink = nodeBounds(layer);
             clusters[clusters.length - 1]?.marks.push({
                 name,
                 dy: glyph.dy,
                 vowel:
                     Boolean(top) &&
                     (model.codepoints || []).some((cp) => vowels.has(cp)),
-                topY: top?.y ?? 0
+                topY: top?.y ?? 0,
+                inkMin: ink?.min ?? top?.y ?? 0,
+                inkY: ink?.max ?? top?.y ?? 0
             });
         }
         const settings = (font.getPluginSetting(
@@ -355,15 +417,17 @@ async function shapeHarakatWord(page: Page): Promise<Shaped> {
         return {
             clusters,
             guideY: guide ? guide.pos.y : null,
-            settingY: master ? (settings[master.id] ?? null) : null
+            settingY: master ? (settings[master.id] ?? null) : null,
+            tallestOffset
         };
     });
 }
 
-// How far each cluster's first vowel `_top` is from max(guide, natural top),
-// where the natural top is that vowel's position without the plugin.
+// How far each cluster's first vowel ``_top`` is from the guideline plus the
+// gap from that vowel's ink center up to the highest vowel center.
 function alignmentErrors(off: Shaped, on: Shaped): number[] {
     const guide = on.settingY ?? Number.NaN;
+    const tallest = on.tallestOffset;
     return on.clusters.map((cluster, index) => {
         const first = cluster.marks.find((mark) => mark.vowel);
         const before = off.clusters[index]?.marks.find((mark) => mark.vowel);
@@ -371,7 +435,10 @@ function alignmentErrors(off: Shaped, on: Shaped): number[] {
             return 0;
         }
         const natural = before.dy + before.topY;
-        return Math.abs(first.dy + first.topY - Math.max(guide, natural));
+        const offset = (first.inkMin + first.inkY) / 2 - first.topY;
+        const expected =
+            natural < guide ? guide + Math.max(0, tallest - offset) : natural;
+        return Math.abs(first.dy + first.topY - expected);
     });
 }
 
@@ -467,14 +534,16 @@ test('the Harakat guide aligns the first vowel and moves stacks in unison', asyn
         )
         .toBeLessThanOrEqual(1);
     const on = await shapeHarakatWord(page);
+    expect(on.tallestOffset).toBeGreaterThan(40);
     expectHarakatAligned(off, on);
 
     const overlay = await page.evaluate(
         () => window.fontCompilation?.compileFeatureOverlay || ''
     );
-    expect(overlay).toContain("pos hah-ar.init @harakat' <0 ");
+    expect(overlay).toContain("pos hah-ar.init shadda-ar' <0 ");
+    expect(overlay).toContain("pos hah-ar.init fatha-ar' <0 ");
     expect(overlay).not.toMatch(/\blookup\s/);
-    expect(overlay).not.toContain("@harakat @harakat'");
+    expect(overlay).not.toContain("@harakat'");
     expect(overlay.split('\n')[0]).not.toContain('dotabove-ar');
     expect(overlay).not.toContain('alef-ar.short.fina');
 

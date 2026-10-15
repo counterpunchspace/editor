@@ -69,11 +69,17 @@ class Harakat:
         if not marks:
             return None
         glyphs = _glyph_index(font)
-        present = set(glyphs)
+        present = {
+            name
+            for name, glyph in glyphs.items()
+            if not glyph.get("boundsOnly")
+        }
         locations = _master_locations(font, ctx)
         if not locations:
             return None
         masters = _master_locations_by_id(font)
+        offsets = _ink_offsets(font, marks, locations, glyphs, masters)
+        tallest = _tallest_offsets(offsets)
 
         sequences = []
         for _shell, parts in _ccmp_rules(font).items():
@@ -85,29 +91,41 @@ class Harakat:
 
         # The overlay runs after fontc's mark and mkmk lookups, so the first
         # vowel's ``_top`` already sits on the propagated top of its context.
-        # Shift only that vowel by the gap to the guideline; HarfBuzz adds a
-        # mark's offset to every mark attached to it, so the rest of the stack
-        # follows. Named lookups must not be declared here: inside a feature
-        # block they would apply to every vowel unconditionally.
+        # The floor lifts ``_top`` onto the guideline. On masters where the
+        # floor is positive, a further shift lines the first vowel's ink
+        # center up with the highest vowel center. Later vowels are not
+        # matched, so they keep their place in the stack. A named lookup must
+        # not be declared here: inside a feature block it would apply to
+        # every vowel.
         lines = ["lookupflag 0;"]
         for parts in sequences:
-            deltas = []
+            floors = []
             for location, minimum in locations:
                 propagated = _resolved_top(font, parts, location, glyphs, masters)
                 if propagated is None:
-                    deltas = []
+                    floors = []
                     break
-                deltas.append(max(0.0, minimum - propagated))
-            if not deltas or all(delta <= 0 for delta in deltas):
+                floors.append(max(0.0, minimum - propagated))
+            if not floors or all(delta <= 0 for delta in floors):
                 continue
-            scalar = _variable_scalar(locations, deltas, font.get("axes") or [])
-            if scalar is None:
-                continue
-            lines.append(f"pos {' '.join(parts)} @harakat' <0 {scalar} 0 0>;")
+            context = " ".join(parts)
+            for mark in marks:
+                if mark not in present:
+                    continue
+                mark_offsets = offsets.get(mark)
+                combined = []
+                for index, floor in enumerate(floors):
+                    extra = 0.0
+                    if floor > 0 and mark_offsets is not None and tallest:
+                        extra = tallest[index] - mark_offsets[index]
+                    combined.append(floor + extra)
+                scalar = _variable_scalar(locations, combined, font.get("axes") or [])
+                if scalar is None:
+                    continue
+                lines.append(f"pos {context} {mark}' <0 {scalar} 0 0>;")
         if len(lines) == 1:
             return None
-        class_line = "@harakat = [" + " ".join(marks) + "];"
-        return {"features": "\n".join([class_line, *lines])}
+        return {"features": "\n".join(lines)}
 
 
 def _as_dict(value):
@@ -289,6 +307,45 @@ def _locations_match(left, right, axes):
         if float((left or {}).get(tag) or 0) != float((right or {}).get(tag) or 0):
             return False
     return True
+
+
+def _ink_offset(layer):
+    """Ink center minus ``_top``. Missing bounds leave the mark out of alignment."""
+    y_max = (layer or {}).get("yMax")
+    y_min = (layer or {}).get("yMin")
+    if y_max is None or y_min is None:
+        return None
+    anchors = _anchors(layer)
+    top = anchors.get("_top")
+    if top is None:
+        return None
+    return (float(y_min) + float(y_max)) / 2.0 - top[1]
+
+
+def _ink_offsets(font, marks, locations, glyphs, masters):
+    offsets = {}
+    for name in marks:
+        values = []
+        for location, _minimum in locations:
+            layer = _layer_for(font, name, location, glyphs, masters)
+            offset = _ink_offset(layer) if layer is not None else None
+            if offset is None:
+                values = []
+                break
+            values.append(offset)
+        if values:
+            offsets[name] = values
+    return offsets
+
+
+def _tallest_offsets(offsets):
+    if not offsets:
+        return []
+    count = len(next(iter(offsets.values())))
+    return [
+        max(values[index] for values in offsets.values())
+        for index in range(count)
+    ]
 
 
 def _anchors(layer):

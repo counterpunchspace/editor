@@ -3,6 +3,8 @@
  * see Babelfont JSON. setup, takedown, and onGuideChange see the live font.
  */
 
+import { DecomposedAffineTransform } from './babelfont-model';
+
 const COMPILE_FILTERS_KEY = 'com.counterpunch.compile-filters';
 
 export interface CompileFilterInfo {
@@ -297,6 +299,167 @@ function glyphNamesClosedBySubstitutions(
     return closed;
 }
 
+const VOWEL_CODEPOINTS = new Set<number>([
+    ...Array.from({ length: 0x0656 - 0x064b }, (_, index) => 0x064b + index),
+    0x065a,
+    0x065b,
+    0x0670
+]);
+
+type InkGlyph = {
+    name: string;
+    codepoints?: number[];
+    layers?: Array<{
+        anchors?: Array<{ name?: string }>;
+        master?: { master?: string };
+        data?: { shapes?: RawShape[] };
+    }>;
+};
+
+type RawNode = { x?: number; y?: number };
+type RawShape = {
+    nodes?: RawNode[];
+    reference?: string;
+    transform?: unknown;
+    Path?: { nodes?: RawNode[] };
+    Component?: { reference?: string; transform?: unknown };
+};
+
+function isAboveVowel(glyph: InkGlyph): boolean {
+    const codepoints = glyph.codepoints || [];
+    if (
+        !codepoints.some((codepoint) => VOWEL_CODEPOINTS.has(Number(codepoint)))
+    ) {
+        return false;
+    }
+    return (glyph.layers || []).some((layer) =>
+        (layer.anchors || []).some((anchor) => anchor.name === '_top')
+    );
+}
+
+function shapeNodes(shape: RawShape): RawNode[] | null {
+    if (Array.isArray(shape.nodes)) {
+        return shape.nodes;
+    }
+    if (Array.isArray(shape.Path?.nodes)) {
+        return shape.Path.nodes;
+    }
+    return null;
+}
+
+function shapeComponent(
+    shape: RawShape
+): { reference: string; transform?: unknown } | null {
+    if (typeof shape.reference === 'string') {
+        return { reference: shape.reference, transform: shape.transform };
+    }
+    if (typeof shape.Component?.reference === 'string') {
+        return {
+            reference: shape.Component.reference,
+            transform: shape.Component.transform
+        };
+    }
+    return null;
+}
+
+function shapeMatrix(transform: unknown): number[] | null {
+    if (!transform) {
+        return null;
+    }
+    if (Array.isArray(transform)) {
+        return transform.length >= 6 ? transform : null;
+    }
+    try {
+        return DecomposedAffineTransform.toAffine(
+            transform as Parameters<
+                typeof DecomposedAffineTransform.toAffine
+            >[0]
+        );
+    } catch {
+        return null;
+    }
+}
+
+function layerInkBounds(
+    layer: InkGlyph['layers'] extends Array<infer T> | undefined ? T : never,
+    glyphName: string,
+    glyphs: Map<string, InkGlyph>,
+    seen: Set<string>,
+    apply: (x: number, y: number) => number = (_x, y) => y
+): { yMin: number; yMax: number } | undefined {
+    if (seen.has(glyphName)) {
+        return undefined;
+    }
+    const next = new Set(seen);
+    next.add(glyphName);
+    let yMin: number | undefined;
+    let yMax: number | undefined;
+    const consider = (x: number, y: number) => {
+        const transformed = apply(x, y);
+        if (!Number.isFinite(transformed)) {
+            return;
+        }
+        if (yMin === undefined || transformed < yMin) {
+            yMin = transformed;
+        }
+        if (yMax === undefined || transformed > yMax) {
+            yMax = transformed;
+        }
+    };
+    const masterId = layer.master?.master;
+    for (const shape of layer.data?.shapes || []) {
+        const nodes = shapeNodes(shape);
+        if (nodes) {
+            for (const node of nodes) {
+                if (typeof node?.y === 'number') {
+                    consider(node.x || 0, node.y);
+                }
+            }
+            continue;
+        }
+        const component = shapeComponent(shape);
+        if (!component || next.has(component.reference)) {
+            continue;
+        }
+        const referenced = glyphs.get(component.reference);
+        const referencedLayer =
+            (referenced?.layers || []).find(
+                (item) => item.master?.master === masterId
+            ) || referenced?.layers?.[0];
+        if (!referencedLayer) {
+            continue;
+        }
+        const matrix = shapeMatrix(component.transform);
+        const nestedApply = matrix
+            ? (x: number, y: number) =>
+                  apply(
+                      matrix[0] * x + matrix[2] * y + (matrix[4] || 0),
+                      matrix[1] * x + matrix[3] * y + (matrix[5] || 0)
+                  )
+            : apply;
+        const nested = layerInkBounds(
+            referencedLayer,
+            component.reference,
+            glyphs,
+            next,
+            nestedApply
+        );
+        if (!nested) {
+            continue;
+        }
+        if (yMin === undefined || nested.yMin < yMin) {
+            yMin = nested.yMin;
+        }
+        if (yMax === undefined || nested.yMax > yMax) {
+            yMax = nested.yMax;
+        }
+    }
+    if (yMin === undefined || yMax === undefined) {
+        return undefined;
+    }
+    return { yMin, yMax };
+}
+
 function anchorOnlyLayerRecord(layer: {
     id?: string;
     is_background?: boolean;
@@ -433,35 +596,66 @@ export async function prepareCompileFilters(
         jobs.sort((left, right) => left.depth - right.depth);
     }
 
+    const inkGlyphs = glyphs as Map<string, InkGlyph>;
+    const includedNames = new Set(included.map((glyph) => glyph.name));
+    const boundsOnly = (font.glyphs || []).filter(
+        (glyph) =>
+            glyph.exported !== false &&
+            isAboveVowel(glyph as InkGlyph) &&
+            !includedNames.has(glyph.name)
+    );
+    const layerJson = (
+        glyph: (typeof included)[number],
+        boundsOnlyGlyph: boolean
+    ) => ({
+        name: glyph.name,
+        exported: glyph.exported,
+        category: glyph.category,
+        codepoints: glyph.codepoints,
+        ...(boundsOnlyGlyph ? { boundsOnly: true } : {}),
+        layers: (glyph.layers || []).map((layer) => {
+            const record = needsLayerData
+                ? layerRecord(layer)
+                : anchorOnlyLayerRecord(
+                      layer as {
+                          id?: string;
+                          is_background?: boolean;
+                          master?: { type?: string; master?: string };
+                          location?: Record<string, number>;
+                          anchors?: Array<{
+                              name?: string;
+                              x?: number;
+                              y?: number;
+                          }>;
+                      }
+                  );
+            if (!isAboveVowel(glyph as InkGlyph)) {
+                return record;
+            }
+            const bounds = layerInkBounds(
+                layer as InkGlyph['layers'] extends Array<infer T> | undefined
+                    ? T
+                    : never,
+                glyph.name,
+                inkGlyphs,
+                new Set()
+            );
+            return bounds === undefined
+                ? record
+                : { ...record, yMin: bounds.yMin, yMax: bounds.yMax };
+        })
+    });
+
     const fontJson = {
         upm: font.upm,
         masters: font.masters,
         axes: font.axes,
         features: font.features,
         format_specific: font.format_specific,
-        glyphs: included.map((glyph) => ({
-            name: glyph.name,
-            exported: glyph.exported,
-            category: glyph.category,
-            codepoints: glyph.codepoints,
-            layers: (glyph.layers || []).map((layer) =>
-                needsLayerData
-                    ? layerRecord(layer)
-                    : anchorOnlyLayerRecord(
-                          layer as {
-                              id?: string;
-                              is_background?: boolean;
-                              master?: { type?: string; master?: string };
-                              location?: Record<string, number>;
-                              anchors?: Array<{
-                                  name?: string;
-                                  x?: number;
-                                  y?: number;
-                              }>;
-                          }
-                      )
-            )
-        }))
+        glyphs: [
+            ...included.map((glyph) => layerJson(glyph, false)),
+            ...boundsOnly.map((glyph) => layerJson(glyph, true))
+        ]
     };
     const payload = {
         ids: active.map((info) => info.id),
