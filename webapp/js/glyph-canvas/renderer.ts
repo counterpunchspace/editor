@@ -1896,6 +1896,73 @@ export class GlyphCanvasRenderer {
         }
     }
 
+    private paintTransientAnchors(
+        invScale: number,
+        isDarkTheme: boolean,
+        anchorLabels: Array<{
+            name: string;
+            x: number;
+            y: number;
+            anchorSize: number;
+            fontSize: number;
+        }>
+    ): void {
+        if (
+            this.viewportManager.scale <
+                APP_SETTINGS.OUTLINE_EDITOR.MIN_ZOOM_FOR_HANDLES ||
+            this.glyphCanvas.outlineEditor.isPaintingInterpolatedPreview?.()
+        ) {
+            return;
+        }
+        const anchors =
+            this.glyphCanvas.outlineEditor.visibleTransientAnchors();
+        if (!anchors.length) {
+            return;
+        }
+        const colors = isDarkTheme
+            ? APP_SETTINGS.OUTLINE_EDITOR.COLORS_DARK
+            : APP_SETTINGS.OUTLINE_EDITOR.COLORS_LIGHT;
+        const fontSize = 12 * invScale;
+        for (const anchor of anchors) {
+            const isHovered =
+                this.glyphCanvas.outlineEditor.hoveredTransientAnchor?.name ===
+                anchor.name;
+            const isSelected =
+                this.glyphCanvas.outlineEditor.isDraggingTransientAnchor ||
+                this.glyphCanvas.outlineEditor.selectedTransientAnchor?.name ===
+                    anchor.name;
+            const anchorSize = this.getAnchorChromeFontRadius(
+                invScale,
+                false,
+                false
+            );
+            const scaledAnchorSize =
+                anchorSize * outlineChromeStateScale(isSelected, isHovered);
+            this.ctx.save();
+            this.ctx.translate(anchor.x, anchor.y);
+            this.applyInverseComponentTransform();
+            this.paintOutlineChrome(
+                'square',
+                scaledAnchorSize,
+                colors.TRANSIENT_ANCHOR_STROKE,
+                isSelected
+                    ? colors.TRANSIENT_ANCHOR_SELECTED
+                    : colors.TRANSIENT_ANCHOR_NORMAL,
+                APP_SETTINGS.OUTLINE_EDITOR.NODE_CHROME_STROKE_WIDTH * invScale
+            );
+            this.ctx.restore();
+            if (isSelected || isHovered) {
+                anchorLabels.push({
+                    name: anchor.name,
+                    x: anchor.x,
+                    y: anchor.y,
+                    anchorSize: scaledAnchorSize,
+                    fontSize
+                });
+            }
+        }
+    }
+
     private pathOutlineChrome(
         kind: 'circle' | 'square' | 'diamond',
         radius: number
@@ -3497,6 +3564,8 @@ export class GlyphCanvasRenderer {
                 }
             });
         }
+
+        this.paintTransientAnchors(invScale, isDarkTheme, anchorLabels);
 
         const sidebearingHandles =
             this.glyphCanvas.outlineEditor.getVisibleSidebearingHandles();

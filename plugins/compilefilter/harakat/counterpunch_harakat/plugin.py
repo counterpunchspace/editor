@@ -8,6 +8,8 @@ import re
 
 GUIDE_NAME = "min_top_harakat"
 SETTING_ID = "minimum_by_master"
+LAYER_X_SETTING = "anchor_x"
+ANCHOR_NAME = "harakat"
 # Same vowel marks the Arabic language pack lists as "marks", not "dots".
 # Dots are unencoded ijam and must not be in this set.
 _VOWEL_CODEPOINTS = set(range(0x064B, 0x0656)) | {0x065A, 0x065B, 0x0670}
@@ -19,8 +21,8 @@ class Harakat:
     name = "Harakat"
     description = (
         "Raises Arabic vowel marks so matching marks share a vertical center. "
-        "A guideline on each master keeps that center from sitting lower. "
-        "Dots stay in place."
+        "A blue anchor on each master keeps that center from sitting lower, "
+        "and can shift the vowels sideways. Dots stay in place."
     )
 
     def setup(self, font):
@@ -29,17 +31,9 @@ class Harakat:
         changed = False
         for master in list(font.masters or []):
             master_id = str(master.id)
-            if master_id in settings and settings[master_id] is not None:
-                target = float(settings[master_id])
-            else:
-                target = default_y
-                settings[master_id] = target
+            if master_id not in settings or settings[master_id] is None:
+                settings[master_id] = default_y
                 changed = True
-            guide = _named_guide(master)
-            if guide is None:
-                master.addGuide({"x": 0, "y": target, "angle": 0}, GUIDE_NAME)
-            else:
-                guide.pos.y = target
         if changed:
             font.setPluginSetting(
                 self.id,
@@ -49,26 +43,63 @@ class Harakat:
         return {str(key): float(value) for key, value in settings.items()}
 
     def takedown(self, font):
+        return None
+
+    def retire_legacy_guides(self, font):
         for master in list(font.masters or []):
-            guides = list(master.guides or [])
-            for index in range(len(guides) - 1, -1, -1):
-                if guides[index].name == GUIDE_NAME:
-                    master.removeGuide(index)
+            _remove_harakat_guides(master)
 
     def onGuideChange(self, font, change):
-        if not isinstance(change, dict):
-            return
-        if change.get("kind") != "position" or change.get("scope") != "master":
-            return
-        if change.get("name") != GUIDE_NAME:
-            return
-        master_id = change.get("masterId")
-        pos = change.get("pos") or {}
-        if master_id is None or pos.get("y") is None:
-            return
-        settings = _settings(font)
-        settings[str(master_id)] = float(pos["y"])
-        font.setPluginSetting(self.id, SETTING_ID, settings)
+        return None
+
+    def transientAnchors(self, font, glyph_name, layer_id):
+        layer = _live_layer(font, glyph_name, layer_id)
+        if layer is None:
+            return []
+        top = _live_top(layer)
+        if top is None:
+            return []
+        master = getattr(layer, "master", None)
+        master_id = getattr(master, "master", None) if master is not None else None
+        y = _live_minimum(font, None if master_id is None else str(master_id))
+        stored = layer.getPluginSetting(self.id, LAYER_X_SETTING)
+        x = float(stored) if stored is not None else top[0]
+        return [{
+            "name": ANCHOR_NAME,
+            "x": x,
+            "y": y,
+            "defaultX": top[0],
+            "pluginId": self.id,
+        }]
+
+    def onTransientAnchorChange(self, font, change):
+        if not isinstance(change, dict) or change.get("name") != ANCHOR_NAME:
+            return False
+        master_id = str(change.get("masterId"))
+        if change.get("y") is None or change.get("x") is None:
+            return False
+        y = float(change["y"])
+        current_y = _settings(font).get(master_id)
+        decision = {"ok": True, "masterId": master_id}
+        if current_y is None or abs(float(current_y) - y) >= 0.5:
+            decision["y"] = y
+        layer = _live_layer(font, change.get("glyphName"), change.get("layerId"))
+        if layer is None:
+            return decision
+        default_x = change.get("defaultX")
+        x = float(change["x"])
+        stored = layer.getPluginSetting(self.id, LAYER_X_SETTING)
+        current_x = float(stored) if stored is not None else (
+            float(default_x) if default_x is not None else x
+        )
+        if abs(x - current_x) < 0.5:
+            return decision
+        if default_x is not None and abs(x - float(default_x)) < 0.5:
+            if stored is not None:
+                decision["clearX"] = True
+        else:
+            decision["x"] = x
+        return decision
 
     def filter_font_json(self, font, ctx):
         marks = _above_mark_names(font)
@@ -105,8 +136,11 @@ class Harakat:
         # named lookup must not be declared here: inside a feature block it
         # would apply to every vowel.
         lines = ["lookupflag 0;"]
+        anchor_shifts = []
+        axes = font.get("axes") or []
         for parts in sequences:
             gaps = []
+            tops = []
             for location, minimum in locations:
                 propagated = _propagated_top(
                     font, parts, location, glyphs, masters
@@ -114,9 +148,42 @@ class Harakat:
                 if propagated is None:
                     gaps = []
                     break
+                tops.append(propagated)
                 gaps.append(minimum - propagated)
             if not gaps:
                 continue
+            materialized = len(parts) == 1 and _glyph_has_components(
+                glyphs.get(parts[0])
+            )
+            raw_dxs = [
+                _context_dx(font, parts, location, glyphs, masters)
+                for location, _minimum in locations
+            ]
+            # fontc rejects a value record whose first metric is a variable
+            # scalar (`<(wght=...) (wght=...) 0 0>`). A constant dx stays in
+            # the feature. A dx that differs by master moves that layer's
+            # top anchor at compile time instead.
+            dx_text = _variable_scalar(
+                locations, raw_dxs, axes, allow_negative=True
+            )
+            shift_anchor = materialized or (
+                isinstance(dx_text, str) and dx_text.startswith("(")
+            )
+            dxs = [0.0 for _ in raw_dxs] if shift_anchor else raw_dxs
+            if shift_anchor:
+                for (location, _minimum), dx in zip(locations, raw_dxs):
+                    if dx == 0:
+                        continue
+                    layer = _layer_for(font, parts[0], location, glyphs, masters)
+                    layer_id = (layer or {}).get("id")
+                    if layer_id:
+                        anchor_shifts.append(
+                            {
+                                "glyph": parts[0],
+                                "layerId": layer_id,
+                                "dx": dx,
+                            }
+                        )
             context = " ".join(parts)
             for mark in marks:
                 if mark not in present:
@@ -131,13 +198,115 @@ class Harakat:
                         else center
                     )
                     combined.append(max(0.0, gap + reference - center))
-                scalar = _variable_scalar(locations, combined, font.get("axes") or [])
-                if scalar is None:
+                record = _position_record(locations, dxs, combined, axes)
+                if record is None:
                     continue
-                lines.append(f"pos {context} {mark}' <0 {scalar} 0 0>;")
-        if len(lines) == 1:
+                lines.append(f"pos {context} {mark}' {record};")
+        if len(lines) == 1 and not anchor_shifts:
             return None
-        return {"features": "\n".join(lines)}
+        result = {}
+        if len(lines) > 1:
+            result["features"] = "\n".join(lines)
+        if anchor_shifts:
+            result["anchorShifts"] = anchor_shifts
+        return result
+
+
+def _remove_harakat_guides(master):
+    guides = list(master.guides or [])
+    for index in range(len(guides) - 1, -1, -1):
+        if guides[index].name == GUIDE_NAME:
+            master.removeGuide(index)
+
+
+def _live_layer(font, glyph_name, layer_id):
+    if not glyph_name or not layer_id:
+        return None
+    glyph = font.findGlyph(glyph_name)
+    if glyph is None:
+        return None
+    for layer in list(glyph.layers or []):
+        if getattr(layer, "id", None) == layer_id:
+            return layer
+    return None
+
+
+def _live_top(layer):
+    for anchor in list(getattr(layer, "anchors", None) or []):
+        if getattr(anchor, "name", None) == "top":
+            return (float(anchor.x), float(anchor.y))
+    computed = layer.computedAnchors()
+    top = None
+    if computed is not None:
+        getter = getattr(computed, "get", None)
+        top = getter("top") if callable(getter) else getattr(computed, "top", None)
+    if top is None:
+        return None
+    return (float(getattr(top, "x", 0)), float(getattr(top, "y", 0)))
+
+
+def _live_minimum(font, master_id):
+    settings = _settings(font)
+    if master_id and settings.get(master_id) is not None:
+        return float(settings[master_id])
+    return float(font.upm) / 2.0
+
+
+def _glyph_has_components(glyph):
+    if not isinstance(glyph, dict):
+        return False
+    for layer in glyph.get("layers") or []:
+        if _component_records(layer):
+            return True
+    return False
+
+
+def _layer_plugin_value(layer, setting_id):
+    specific = (layer or {}).get("format_specific") or {}
+    if not isinstance(specific, dict):
+        return None
+    bag = specific.get("com.counterpunch.plugin-settings") or {}
+    if not isinstance(bag, dict):
+        return None
+    values = ((bag.get(Harakat.id) or {}).get("values") or {})
+    if not isinstance(values, dict):
+        return None
+    return values.get(setting_id)
+
+
+def _default_top_x(font, glyph_name, location, glyphs, masters):
+    layer = _layer_for(font, glyph_name, location, glyphs, masters)
+    if layer is None:
+        return None
+    anchors = _anchors(layer)
+    if "top" in anchors and not _component_records(layer):
+        return anchors["top"][0]
+    point = _component_top_point(font, glyph_name, location, glyphs, masters, set())
+    if point is not None:
+        return point[0]
+    if "top" in anchors:
+        return anchors["top"][0]
+    return None
+
+
+def _context_dx(font, parts, location, glyphs, masters):
+    glyph_name = parts[0]
+    layer = _layer_for(font, glyph_name, location, glyphs, masters)
+    stored = _layer_plugin_value(layer, LAYER_X_SETTING)
+    if stored is None:
+        return 0.0
+    default_x = _default_top_x(font, glyph_name, location, glyphs, masters)
+    if default_x is None:
+        return 0.0
+    return float(stored) - float(default_x)
+
+
+def _position_record(locations, dxs, dys, axes):
+    dy = _variable_scalar(locations, dys, axes)
+    dx = _variable_scalar(locations, dxs, axes, allow_negative=True)
+    if dy is None and (dx is None or dx == "0"):
+        return None
+    return f"<{dx or 0} {dy or 0} 0 0>"
 
 
 def _as_dict(value):
@@ -299,13 +468,19 @@ def _propagated_top(font, parts, location, glyphs, masters):
     if len(parts) == 1:
         layer = _layer_for(font, parts[0], location, glyphs, masters)
         if layer is not None and _component_records(layer):
-            return _component_top(
+            point = _component_top_point(
                 font, parts[0], location, glyphs, masters, set()
             )
+            return point[1] if point else None
     return _resolved_top(font, parts, location, glyphs, masters)
 
 
 def _component_top(font, name, location, glyphs, masters, seen):
+    point = _component_top_point(font, name, location, glyphs, masters, seen)
+    return point[1] if point else None
+
+
+def _component_top_point(font, name, location, glyphs, masters, seen):
     if name in seen:
         return None
     layer = _layer_for(font, name, location, glyphs, masters)
@@ -313,20 +488,20 @@ def _component_top(font, name, location, glyphs, masters, seen):
         return None
     records = _component_records(layer)
     if not records:
-        top = _anchors(layer).get("top")
-        return top[1] if top else None
+        return _anchors(layer).get("top")
     seen.add(name)
     available = {}
     for record in records:
         reference = record["reference"]
-        nested = _component_top(font, reference, location, glyphs, masters, seen)
+        nested = _component_top_point(
+            font, reference, location, glyphs, masters, seen
+        )
         anchors = _anchors(_layer_for(font, reference, location, glyphs, masters))
         if nested is not None and "top" not in anchors:
-            anchors = {**anchors, "top": (0.0, nested)}
+            anchors = {**anchors, "top": nested}
         for anchor_name, (x, y) in anchors.items():
             available[anchor_name] = _apply_matrix(x, y, record["matrix"])
-    top = available.get("top")
-    return top[1] if top else None
+    return available.get("top")
 
 
 def _has_anchor(glyph, anchor_name):
@@ -486,16 +661,14 @@ def _format_number(value):
     return str(value)
 
 
-def _variable_scalar(locations, deltas, axes):
-    """Y shift that puts the vowel ``_top`` on the guideline.
-
-    ``deltas`` are ``guideline - attachment`` at each master, where
-    attachment is the composed Y the vowel's ``_top`` locks onto. Knots
-    sit on the axis map so the shift interpolates in the same design
-    space as the anchors.
-    """
-    if not deltas or all(delta <= 0 for delta in deltas):
+def _variable_scalar(locations, deltas, axes, allow_negative=False):
+    """Variable y (or x) shift. Knots sit on the axis map."""
+    if not deltas:
         return None
+    if not allow_negative and all(delta <= 0 for delta in deltas):
+        return None
+    if all(delta == 0 for delta in deltas):
+        return "0" if allow_negative else None
     if len(locations) == 1 or all(delta == deltas[0] for delta in deltas):
         return _format_number(deltas[0])
     axis = axes[0] if len(axes) == 1 else None
@@ -517,8 +690,19 @@ def _variable_scalar(locations, deltas, axes):
             if user in seen:
                 continue
             seen.add(user)
-            knots.append((user, float(round(max(0.0, _interp(samples, float(design)))))))
-        if all(value <= 0 for _user, value in knots):
+            knots.append(
+                (
+                    user,
+                    float(
+                        round(
+                            _interp(samples, float(design))
+                            if allow_negative
+                            else max(0.0, _interp(samples, float(design)))
+                        )
+                    ),
+                )
+            )
+        if not allow_negative and all(value <= 0 for _user, value in knots):
             return None
         if all(value == knots[0][1] for _user, value in knots):
             return _format_number(knots[0][1])

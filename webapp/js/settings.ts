@@ -290,6 +290,9 @@ const APP_SETTINGS = {
             ANCHOR_HOVERED: 'rgba(247, 148, 29, 0.3)',
             ANCHOR_SELECTED: '#ef4136',
             ANCHOR_STROKE: '#ef4136',
+            TRANSIENT_ANCHOR_NORMAL: 'rgba(47, 128, 237, 0.35)',
+            TRANSIENT_ANCHOR_STROKE: '#2f80ed',
+            TRANSIENT_ANCHOR_SELECTED: '#2f80ed',
 
             // Components (aliases of COMPONENT_FILLS)
             COMPONENT_FILL_NORMAL: COMPONENT_FILLS.MANUAL_NORMAL,
@@ -381,6 +384,9 @@ const APP_SETTINGS = {
             ANCHOR_HOVERED: 'rgba(247, 148, 29, 0.3)',
             ANCHOR_SELECTED: '#f25a50',
             ANCHOR_STROKE: '#f25a50',
+            TRANSIENT_ANCHOR_NORMAL: 'rgba(77, 163, 255, 0.35)',
+            TRANSIENT_ANCHOR_STROKE: '#4da3ff',
+            TRANSIENT_ANCHOR_SELECTED: '#4da3ff',
 
             // Components (aliases of COMPONENT_FILLS)
             COMPONENT_FILL_NORMAL: COMPONENT_FILLS.MANUAL_NORMAL,

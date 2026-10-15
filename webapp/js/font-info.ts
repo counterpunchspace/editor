@@ -12,7 +12,9 @@ import {
     linkedCompileFilterIds,
     setLinkedCompileFilterIds,
     setupCompileFilter,
-    takedownCompileFilter
+    takedownCompileFilter,
+    retireLegacyCompileFilterGuides,
+    ensureHarakatMinimums
 } from './compile-filter-host';
 import { fontCompilation } from './font-compilation';
 import { attachTopRowSidebarInterpolation } from './top-row-sidebar-interpolation';
@@ -1270,8 +1272,14 @@ class FontInfoManager {
         if (!font) {
             return;
         }
-        // One commit for the link, the guides, and the stored minimum.
-        // Each of those writes would otherwise schedule its own full compile.
+        // The id list is its own commit. Defaults and leftover guides
+        // commit separately so this item stays the compile-filters key.
+        await retireLegacyCompileFilterGuides();
+        if (pluginId === 'harakat') {
+            ensureHarakatMinimums(font);
+        } else {
+            await setupCompileFilter(pluginId);
+        }
         const bridge = window.patchSyncEngine;
         bridge?.beginTransaction('Add compile filter', null, {
             compileChangeSource: 'compile-filter',
@@ -1283,11 +1291,15 @@ class FontInfoManager {
                 setLinkedCompileFilterIds(font, [...ids, pluginId]);
             }
             invalidateCompileFilterCache();
-            await setupCompileFilter(pluginId);
             await this.renderCompileFiltersContent();
+            this.refreshActiveCanvasTransientAnchors();
         } finally {
             bridge?.endTransaction();
         }
+    }
+
+    private refreshActiveCanvasTransientAnchors(): void {
+        window.glyphCanvas?.outlineEditor?.invalidateTransientAnchors?.();
     }
 
     private async unlinkCompileFilter(pluginId: string): Promise<void> {
@@ -1308,6 +1320,7 @@ class FontInfoManager {
             );
             invalidateCompileFilterCache();
             await this.renderCompileFiltersContent();
+            this.refreshActiveCanvasTransientAnchors();
         } finally {
             bridge?.endTransaction();
         }

@@ -1,5 +1,9 @@
 import { LayerDataNormalizer } from '../layer-data-normalizer';
 import {
+    commitTransientAnchor,
+    queryTransientAnchors
+} from '../compile-filter-host';
+import {
     applyRestingShapeGeometryToEditorLayer,
     stripInterpolatorRequestId,
     toRestingLayerJson
@@ -1562,6 +1566,48 @@ export class OutlineEditor {
     isDraggingAnchor: boolean = false;
     isDraggingSidebearing: boolean = false;
     isDraggingGuide: boolean = false;
+    isDraggingTransientAnchor: boolean = false;
+    hoveredTransientAnchor: {
+        pluginId: string;
+        name: string;
+        x: number;
+        y: number;
+        defaultX: number;
+    } | null = null;
+    selectedTransientAnchor: {
+        pluginId: string;
+        name: string;
+        x: number;
+        y: number;
+        defaultX: number;
+    } | null = null;
+    private _transientAnchors: Array<{
+        pluginId: string;
+        name: string;
+        x: number;
+        y: number;
+        defaultX: number;
+    }> = [];
+    private _transientAnchorKey = '';
+    private _transientDrag: {
+        pluginId: string;
+        name: string;
+        x: number;
+        y: number;
+        defaultX: number;
+    } | null = null;
+    private _transientKeyboardCommitTimer: number | null = null;
+    private _transientKeyboardCommitGeneration = 0;
+    private _pendingTransientKeyboardCommit: {
+        pluginId: string;
+        name: string;
+        x: number;
+        y: number;
+        defaultX: number;
+        glyphName: string;
+        layerId: string;
+        masterId: string;
+    } | null = null;
     isResizingSelection: boolean = false;
     isMarqueeSelecting: boolean = false;
     _hasMoved: boolean = false;
@@ -1576,6 +1622,7 @@ export class OutlineEditor {
         | 'transform'
         | 'sidebearing'
         | 'guide'
+        | 'transient-anchor'
         | null = null;
     currentGlyphName: string | null = null;
     private authoringRootGlyphName: string | null = null;
@@ -10180,6 +10227,8 @@ export class OutlineEditor {
         this.hoveredSidebearingHandle = null;
         this.hoveredGuideHandle = null;
         this.hoveredResizeHandle = null;
+        this.flushTransientAnchorKeyboardCommit();
+        this.selectedTransientAnchor = null;
         this.hoveredAddPointPreview = null;
         this.hoveredCommandCurvePreview = null;
         this.hoveredGlyphIndex = -1;
@@ -10603,6 +10652,21 @@ export class OutlineEditor {
             return;
         }
 
+        if (this.hoveredTransientAnchor) {
+            this.selectedGuideHandle = null;
+            this.selectedSidebearingHandle = null;
+            this.selectedPoints = [];
+            this.selectedAnchors = [];
+            this.selectedComponents = [];
+            this.selectedTransientAnchor = { ...this.hoveredTransientAnchor };
+            this.isDraggingTransientAnchor = true;
+            this._hasMoved = false;
+            this._dragType = 'transient-anchor';
+            this._transientDrag = { ...this.hoveredTransientAnchor };
+            this.glyphCanvas.render();
+            return;
+        }
+
         if (this.hoveredGuideHandle) {
             this.selectedGuideHandle = { ...this.hoveredGuideHandle };
             this.selectedPoints = [];
@@ -10679,6 +10743,7 @@ export class OutlineEditor {
         if (this.hoveredAnchorIndex !== null) {
             this.selectedGuideHandle = null;
             this.selectedSidebearingHandle = null;
+            this.selectedTransientAnchor = null;
             if (this.isSelectionToggleModifier(e)) {
                 // Shift/Cmd-click: add to or remove from selection (keep points selected for mixed selection)
                 const existingIndex = this.selectedAnchors.indexOf(
@@ -10730,6 +10795,7 @@ export class OutlineEditor {
         if (this.hoveredPointIndex) {
             this.selectedGuideHandle = null;
             this.selectedSidebearingHandle = null;
+            this.selectedTransientAnchor = null;
             const hoveredPoint = this.hoveredPointIndex;
             const isCmdCutClick =
                 (e.metaKey || e.ctrlKey) &&
@@ -10872,6 +10938,7 @@ export class OutlineEditor {
         if (this.hoveredComponentIndex !== null) {
             this.selectedGuideHandle = null;
             this.selectedSidebearingHandle = null;
+            this.selectedTransientAnchor = null;
             if (this.isSelectionToggleModifier(e)) {
                 // Shift/Cmd-click: add to or remove from selection (keep points and anchors for mixed selection)
                 const existingIndex = this.selectedComponents.indexOf(
@@ -12708,7 +12775,8 @@ export class OutlineEditor {
             (this.isDraggingComponent && this.selectedComponents.length > 0) ||
             (this.isDraggingAnchor && this.selectedAnchors.length > 0) ||
             (this.isDraggingSidebearing && this.selectedSidebearingHandle) ||
-            (this.isDraggingPoint && this.selectedPoints.length > 0)
+            (this.isDraggingPoint && this.selectedPoints.length > 0) ||
+            this.isDraggingTransientAnchor
         ) {
             if (this.layerData) {
                 this._handleDrag(e);
@@ -13002,6 +13070,15 @@ export class OutlineEditor {
                 return;
             }
             this.scheduleSidebearingDragFrame();
+            return;
+        }
+
+        if (this.isDraggingTransientAnchor && this._transientDrag) {
+            const point = this.transformMouseToComponentSpace();
+            this._transientDrag.x = point.glyphX;
+            this._transientDrag.y = point.glyphY;
+            this._hasMoved = true;
+            this.glyphCanvas.render();
             return;
         }
 
@@ -13520,6 +13597,38 @@ export class OutlineEditor {
                 this.glyphCanvas.render();
             }
             this.resetMarqueeSelection();
+            return;
+        }
+
+        if (this.isDraggingTransientAnchor) {
+            const drag = this._transientDrag;
+            const moved = this._hasMoved;
+            this.isDraggingTransientAnchor = false;
+            this._dragType = null;
+            this._transientDrag = null;
+            this._hasMoved = false;
+            if (drag) {
+                this.selectedTransientAnchor = { ...drag };
+            }
+            const layer = this.getCurrentLayerModel();
+            const glyph = this.getCurrentGlyphModel();
+            const masterId = layer?.master?.master;
+            if (moved && drag && glyph?.name && layer?.id && masterId) {
+                void commitTransientAnchor({
+                    pluginId: drag.pluginId,
+                    name: drag.name,
+                    glyphName: glyph.name,
+                    layerId: layer.id,
+                    masterId,
+                    x: drag.x,
+                    y: drag.y,
+                    defaultX: drag.defaultX
+                }).then(() => {
+                    this._transientAnchorKey = '';
+                    this.refreshTransientAnchors();
+                });
+            }
+            this.glyphCanvas.render();
             return;
         }
 
@@ -14049,7 +14158,8 @@ export class OutlineEditor {
                 this.isDraggingAnchor ||
                 this.isDraggingComponent ||
                 this.isDraggingSidebearing ||
-                this.isDraggingGuide)
+                this.isDraggingGuide ||
+                this.isDraggingTransientAnchor)
         );
     }
 
@@ -14621,8 +14731,18 @@ export class OutlineEditor {
 
         let bestAnchorIndex: number | null = null;
         let bestAnchorDist = Infinity;
+        this.refreshTransientAnchors();
+        const transientHit = this.hitTransientAnchor(glyphX, glyphY, scale);
+        if (transientHit) {
+            bestPoint = null;
+            bestAnchorIndex = null;
+        }
+        const transientChanged =
+            transientHit?.name !== this.hoveredTransientAnchor?.name ||
+            transientHit?.x !== this.hoveredTransientAnchor?.x ||
+            transientHit?.y !== this.hoveredTransientAnchor?.y;
 
-        if (currentLayerData?.anchors?.length) {
+        if (currentLayerData?.anchors?.length && !transientHit) {
             currentLayerData.anchors.forEach(
                 (anchor: Babelfont.Anchor, index: number) => {
                     const dist = Math.hypot(
@@ -14655,7 +14775,7 @@ export class OutlineEditor {
         }
 
         let bestSegment: HoveredPathSegment | null = null;
-        if (bestPoint === null && bestAnchorIndex === null) {
+        if (!transientHit && bestPoint === null && bestAnchorIndex === null) {
             const hit = this.findClosestPathSegmentHit();
             if (hit) {
                 const endZone =
@@ -14708,9 +14828,15 @@ export class OutlineEditor {
             JSON.stringify(bestSegment) !==
             JSON.stringify(this.hoveredPathSegment);
 
-        if (pointChanged || anchorChanged || segmentChanged) {
+        if (
+            pointChanged ||
+            anchorChanged ||
+            segmentChanged ||
+            transientChanged
+        ) {
             this.hoveredPointIndex = bestPoint;
-            this.hoveredAnchorIndex = bestAnchorIndex;
+            this.hoveredAnchorIndex = transientHit ? null : bestAnchorIndex;
+            this.hoveredTransientAnchor = transientHit;
             this.hoveredPathSegment = bestSegment;
             this.glyphCanvas.render();
             if (this.cmdKeyPressed || this.isCutArmed()) {
@@ -14721,6 +14847,170 @@ export class OutlineEditor {
 
     updateHoveredAnchor(): void {
         this.updateHoveredPointAndAnchor();
+    }
+
+    private nudgeSelectedTransientAnchor(dx: number, dy: number): void {
+        const selected = this.selectedTransientAnchor;
+        if (!selected || (dx === 0 && dy === 0)) {
+            return;
+        }
+        selected.x += dx;
+        selected.y += dy;
+        const stored = this._transientAnchors.find(
+            (anchor) =>
+                anchor.pluginId === selected.pluginId &&
+                anchor.name === selected.name
+        );
+        if (stored) {
+            stored.x = selected.x;
+            stored.y = selected.y;
+        }
+        this.glyphCanvas.render();
+        this.scheduleTransientAnchorKeyboardCommit();
+    }
+
+    private scheduleTransientAnchorKeyboardCommit(): void {
+        const selected = this.selectedTransientAnchor;
+        const layer = this.getCurrentLayerModel();
+        const glyph = this.getCurrentGlyphModel();
+        const masterId = layer?.master?.master;
+        if (!selected || !glyph?.name || !layer?.id || !masterId) {
+            return;
+        }
+        this._pendingTransientKeyboardCommit = {
+            pluginId: selected.pluginId,
+            name: selected.name,
+            x: selected.x,
+            y: selected.y,
+            defaultX: selected.defaultX,
+            glyphName: glyph.name,
+            layerId: layer.id,
+            masterId
+        };
+        if (this._transientKeyboardCommitTimer !== null) {
+            window.clearTimeout(this._transientKeyboardCommitTimer);
+        }
+        const generation = ++this._transientKeyboardCommitGeneration;
+        this._transientKeyboardCommitTimer = window.setTimeout(() => {
+            this._transientKeyboardCommitTimer = null;
+            void this.commitPendingTransientAnchor(generation);
+        }, APP_SETTINGS.KEYBOARD_PREVIEW_COMMIT_DEBOUNCE);
+    }
+
+    private flushTransientAnchorKeyboardCommit(): void {
+        if (this._transientKeyboardCommitTimer === null) {
+            return;
+        }
+        window.clearTimeout(this._transientKeyboardCommitTimer);
+        this._transientKeyboardCommitTimer = null;
+        const generation = ++this._transientKeyboardCommitGeneration;
+        void this.commitPendingTransientAnchor(generation);
+    }
+
+    private async commitPendingTransientAnchor(
+        generation: number
+    ): Promise<void> {
+        const pending = this._pendingTransientKeyboardCommit;
+        this._pendingTransientKeyboardCommit = null;
+        if (!pending) {
+            return;
+        }
+        await commitTransientAnchor(pending);
+        if (generation !== this._transientKeyboardCommitGeneration) {
+            return;
+        }
+        this._transientAnchorKey = '';
+        this.refreshTransientAnchors();
+    }
+
+    visibleTransientAnchors(): Array<{
+        pluginId: string;
+        name: string;
+        x: number;
+        y: number;
+        defaultX: number;
+    }> {
+        if (this._transientDrag) {
+            return [this._transientDrag];
+        }
+        return this._transientAnchors;
+    }
+
+    invalidateTransientAnchors(): void {
+        this._transientAnchorKey = '';
+        this._transientAnchors = [];
+        this.hoveredTransientAnchor = null;
+        this.selectedTransientAnchor = null;
+        this._transientDrag = null;
+        this.isDraggingTransientAnchor = false;
+        this.refreshTransientAnchors();
+        this.glyphCanvas.render();
+    }
+
+    refreshTransientAnchors(): void {
+        if (
+            this.isPaintingInterpolatedPreview?.() ||
+            this.isDraggingTransientAnchor
+        ) {
+            return;
+        }
+        const layer = this.getCurrentLayerModel();
+        const glyph = this.getCurrentGlyphModel();
+        if (!layer?.id || !glyph?.name) {
+            if (this._transientAnchors.length) {
+                this._transientAnchors = [];
+                this._transientAnchorKey = '';
+            }
+            return;
+        }
+        const key = `${glyph.name}:${layer.id}`;
+        if (key === this._transientAnchorKey) {
+            return;
+        }
+        this._transientAnchorKey = key;
+        void queryTransientAnchors(glyph.name, layer.id).then((anchors) => {
+            if (this._transientAnchorKey !== key) {
+                return;
+            }
+            this._transientAnchors = anchors.map((anchor) => ({
+                pluginId: anchor.pluginId || 'harakat',
+                name: anchor.name,
+                x: anchor.x,
+                y: anchor.y,
+                defaultX: anchor.defaultX ?? anchor.x
+            }));
+            this.glyphCanvas.render();
+        });
+    }
+
+    private hitTransientAnchor(
+        glyphX: number,
+        glyphY: number,
+        scale: number
+    ): {
+        pluginId: string;
+        name: string;
+        x: number;
+        y: number;
+        defaultX: number;
+    } | null {
+        let best: {
+            pluginId: string;
+            name: string;
+            x: number;
+            y: number;
+            defaultX: number;
+        } | null = null;
+        let bestDist = Infinity;
+        for (const anchor of this.visibleTransientAnchors()) {
+            const dist = Math.hypot(anchor.x - glyphX, anchor.y - glyphY);
+            const radius = this.getAnchorHitRadiusScreen(false, false) / scale;
+            if (dist <= radius && dist < bestDist) {
+                bestDist = dist;
+                best = anchor;
+            }
+        }
+        return best;
     }
 
     updateHoveredPoint(): void {
@@ -19929,6 +20219,31 @@ export class OutlineEditor {
             if (this.selectAllCurrentLayerObjects()) {
                 e.preventDefault();
             }
+            return;
+        }
+
+        // Handle arrow keys for the plugin anchor without touching font anchors.
+        if (
+            this.selectedTransientAnchor &&
+            (e.key === 'ArrowLeft' ||
+                e.key === 'ArrowRight' ||
+                e.key === 'ArrowUp' ||
+                e.key === 'ArrowDown')
+        ) {
+            e.preventDefault();
+            const multiplier = e.shiftKey ? 10 : 1;
+            let dx = 0;
+            let dy = 0;
+            if (e.key === 'ArrowLeft') {
+                dx = -multiplier;
+            } else if (e.key === 'ArrowRight') {
+                dx = multiplier;
+            } else if (e.key === 'ArrowUp') {
+                dy = multiplier;
+            } else if (e.key === 'ArrowDown') {
+                dy = -multiplier;
+            }
+            this.nudgeSelectedTransientAnchor(dx, dy);
             return;
         }
 

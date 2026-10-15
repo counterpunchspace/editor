@@ -9240,6 +9240,27 @@ export class Layer extends ArrayElementBase {
         recordAndMarkDirty(this, 'format_specific', old, value);
     }
 
+    getPluginSetting(pluginId: string, settingId: string): unknown {
+        return pluginSettingsBag(this.format_specific)?.[pluginId]?.values?.[
+            settingId
+        ];
+    }
+
+    setPluginSetting(
+        pluginId: string,
+        settingId: string,
+        value: unknown
+    ): void {
+        withBridgeTransaction(
+            'Change plugin setting',
+            'model-edit',
+            null,
+            () => {
+                writePluginSettingValue(this, pluginId, settingId, value);
+            }
+        );
+    }
+
     /**
      * Add a new shape to the layer
      */
@@ -13163,6 +13184,53 @@ export type GlyphRenameOptions = {
     referenceRewires?: ReadonlyMap<string, GlyphRenameMap>;
 };
 
+const FONT_PLUGIN_SETTINGS_KEY = 'com.counterpunch.plugin-settings';
+
+function pluginValuesBag(
+    owner: { format_specific?: Record<string, Unsafe> | undefined },
+    pluginId: string
+): Record<string, unknown> {
+    if (!owner.format_specific || typeof owner.format_specific !== 'object') {
+        owner.format_specific = {};
+    }
+    const root = owner.format_specific;
+    if (
+        !root[FONT_PLUGIN_SETTINGS_KEY] ||
+        typeof root[FONT_PLUGIN_SETTINGS_KEY] !== 'object'
+    ) {
+        root[FONT_PLUGIN_SETTINGS_KEY] = {};
+    }
+    const all = root[FONT_PLUGIN_SETTINGS_KEY] as Record<string, Unsafe>;
+    if (!all[pluginId] || typeof all[pluginId] !== 'object') {
+        all[pluginId] = { values: {} };
+    }
+    const entry = all[pluginId] as Record<string, Unsafe>;
+    if (!entry.values || typeof entry.values !== 'object') {
+        entry.values = {};
+    }
+    return (
+        (
+            (owner.format_specific as Record<string, Unsafe>)[
+                FONT_PLUGIN_SETTINGS_KEY
+            ] as Record<string, Unsafe>
+        )[pluginId] as { values: Record<string, unknown> }
+    ).values;
+}
+
+export function writePluginSettingValue(
+    owner: { format_specific?: Record<string, Unsafe> | undefined },
+    pluginId: string,
+    settingId: string,
+    value: unknown
+): void {
+    const values = pluginValuesBag(owner, pluginId);
+    if (value === undefined || value === null) {
+        delete values[settingId];
+        return;
+    }
+    values[settingId] = value;
+}
+
 export class Font extends ModelBase {
     private _glyphWrappers: Glyph[] | null = null;
     private _axisWrappers: Axis[] | null = null;
@@ -14346,27 +14414,7 @@ export class Font extends ModelBase {
             'model-edit',
             null,
             () => {
-                const current = {
-                    ...(this._data.format_specific || {})
-                } as Record<string, Unsafe>;
-                const all = {
-                    ...((current['com.counterpunch.plugin-settings'] ||
-                        {}) as Record<string, Unsafe>)
-                };
-                const entry = {
-                    ...((all[pluginId] || {}) as Record<string, Unsafe>),
-                    values: {
-                        ...((
-                            (all[pluginId] || {}) as {
-                                values?: Record<string, unknown>;
-                            }
-                        ).values || {}),
-                        [settingId]: value
-                    }
-                };
-                all[pluginId] = entry;
-                current['com.counterpunch.plugin-settings'] = all;
-                this.format_specific = current;
+                writePluginSettingValue(this, pluginId, settingId, value);
             }
         );
     }

@@ -1035,6 +1035,49 @@ def _cp_compile_filters_discover():
     return json.dumps(described)
 
 
+def _cp_compile_filter_transient_anchors(glyph_name, layer_id):
+    font = Font()
+    specific = getattr(font, 'format_specific', None)
+    stored = []
+    if specific is not None:
+        try:
+            stored = list(specific['com.counterpunch.compile-filters'])
+        except Exception:
+            stored = []
+    anchors = []
+    for plugin_id in stored:
+        plugin = _CP_COMPILE_FILTERS.get(str(plugin_id))
+        method = getattr(plugin, 'transientAnchors', None)
+        if not callable(method):
+            continue
+        for anchor in method(font, glyph_name, layer_id) or []:
+            if isinstance(anchor, dict):
+                anchors.append(anchor)
+    return json.dumps(anchors)
+
+
+def _cp_compile_filter_transient_anchor(change_json):
+    font = Font()
+    change = json.loads(change_json)
+    plugin_id = change.get('pluginId')
+    plugin = _CP_COMPILE_FILTERS.get(plugin_id)
+    method = getattr(plugin, 'onTransientAnchorChange', None)
+    if not callable(method):
+        return json.dumps({"ok": False})
+    result = method(font, change)
+    if not isinstance(result, dict):
+        return json.dumps({"ok": bool(result)})
+    return json.dumps(result)
+
+
+def _cp_compile_filter_retire_guides(plugin_id):
+    plugin = _CP_COMPILE_FILTERS.get(plugin_id)
+    method = getattr(plugin, 'retire_legacy_guides', None)
+    if not callable(method):
+        return
+    method(Font())
+
+
 def _cp_compile_filter_setup(plugin_id):
     plugin = _CP_COMPILE_FILTERS.get(plugin_id)
     if plugin is None or not callable(getattr(plugin, 'setup', None)):
@@ -1130,15 +1173,25 @@ def _cp_compile_filters_run(payload_json):
         compile_font = font
 
     chunks = []
+    anchor_shifts = []
     for plugin in plugins:
         font_fn = getattr(plugin, 'filter_font_json', None)
         if not callable(font_fn):
             continue
         ctx = _cp_compile_filter_ctx(plugin, compile_font, {})
         result = font_fn(compile_font, ctx)
-        if isinstance(result, dict) and isinstance(result.get('features'), str):
+        if not isinstance(result, dict):
+            continue
+        if isinstance(result.get('features'), str):
             chunks.append(result['features'])
-    return json.dumps({'layers': replaced, 'features': '\n'.join(chunks)})
+        for shift in result.get('anchorShifts') or []:
+            if isinstance(shift, dict):
+                anchor_shifts.append(shift)
+    return json.dumps({
+        'layers': replaced,
+        'features': '\n'.join(chunks),
+        'anchorShifts': anchor_shifts,
+    })
 
 
 def _cp_plugin_settings_bag(format_specific):

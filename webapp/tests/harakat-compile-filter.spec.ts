@@ -49,9 +49,19 @@ test('Harakat guide, setting, and compile hooks', async ({ page }) => {
                 switchTab?: (tab: string) => void;
                 linkCompileFilter?: (pluginId: string) => Promise<void>;
             };
+            patchSyncEngine?: {
+                setRecordingSuppressed?: (suppressed: boolean) => void;
+                inTransaction?: boolean;
+                endTransaction?: () => void;
+            };
         };
         win.focusView?.('view-fontinfo');
         win.fontInfoManager?.switchTab?.('compile_filters');
+        const bridge = win.patchSyncEngine;
+        bridge?.setRecordingSuppressed?.(false);
+        while (bridge?.inTransaction) {
+            bridge.endTransaction?.();
+        }
         await win.fontInfoManager?.linkCompileFilter?.('harakat');
     });
 
@@ -94,14 +104,106 @@ test('Harakat guide, setting, and compile hooks', async ({ page }) => {
         throw new Error(JSON.stringify(linked));
     }
     expect(linked.linked).toEqual(['harakat']);
-    expect(linked.guideCount).toBe(1);
-    expect(linked.guideY).toBe(linked.upm / 2);
+    expect(linked.guideCount).toBe(0);
     expect(linked.setting).toBe(linked.upm / 2);
+    const history = await page.evaluate(() => {
+        const log =
+            (
+                window as typeof window & {
+                    patchSyncEngine?: {
+                        getChangeLog?: () => Array<{
+                            path?: string;
+                            historyItemId?: string;
+                        }>;
+                    };
+                }
+            ).patchSyncEngine?.getChangeLog?.() || [];
+        const latest = [...log]
+            .reverse()
+            .find((entry) => entry.path?.includes('compile-filters'));
+        const itemId = latest?.historyItemId;
+        return {
+            count: log.length,
+            paths: log
+                .filter((entry) => entry.historyItemId === itemId)
+                .map((entry) => entry.path || ''),
+            recent: log.slice(-6).map((entry) => entry.path || '')
+        };
+    });
+    expect(history.paths.some((path) => path.includes('compile-filters'))).toBe(
+        true
+    );
+    expect(
+        history.paths.every((path) => path.includes('compile-filters'))
+    ).toBe(true);
+    expect(history.paths.includes('masters')).toBe(false);
+
+    const handle = await page.evaluate(async () => {
+        const win = window as typeof window & {
+            compileFilterHost?: {
+                queryTransientAnchors?: (
+                    glyphName: string,
+                    layerId: string
+                ) => Promise<Array<{ name: string; x: number; y: number }>>;
+            };
+        };
+        const font = window.currentFontModel as {
+            masters: Array<{ id: string; guides?: Array<{ name?: string }> }>;
+            glyphs?: Array<{
+                name?: string;
+                layers?: Array<{
+                    id?: string;
+                    master?: { master?: string };
+                    anchors?: Array<{ name?: string; x?: number; y?: number }>;
+                }>;
+            }>;
+            getPluginSetting: (pluginId: string, settingId: string) => unknown;
+        };
+        const master = font.masters[0];
+        const glyph = font.glyphs?.find((item) => item.name === 'hah-ar.init');
+        const layer =
+            glyph?.layers?.find((item) => item.master?.master === master.id) ||
+            glyph?.layers?.[0];
+        const top = (layer?.anchors || []).find((item) => item.name === 'top');
+        const settings = font.getPluginSetting(
+            'harakat',
+            'minimum_by_master'
+        ) as Record<string, number>;
+        const anchors = await win.compileFilterHost?.queryTransientAnchors?.(
+            glyph?.name || '',
+            layer?.id || ''
+        );
+        return {
+            anchors: anchors || [],
+            fontAnchorNames: (layer?.anchors || []).map((item) => item.name),
+            guideCount: (master.guides || []).filter(
+                (item) => item.name === 'min_top_harakat'
+            ).length,
+            topX: top?.x,
+            settingY: settings[master.id]
+        };
+    });
+    expect(handle.anchors).toHaveLength(1);
+    expect(handle.anchors[0]?.name).toBe('harakat');
+    expect(handle.anchors[0]?.x).toBe(handle.topX);
+    expect(handle.anchors[0]?.y).toBe(handle.settingY);
+    expect(handle.fontAnchorNames).not.toContain('harakat');
+    expect(handle.guideCount).toBe(0);
 
     const moved = await page.evaluate(async () => {
         const win = window as typeof window & {
             compileFilterHost?: {
                 onGuideCommitted: (change: unknown) => Promise<boolean>;
+                commitTransientAnchor?: (change: {
+                    pluginId: string;
+                    name: string;
+                    glyphName: string;
+                    layerId: string;
+                    masterId: string;
+                    x: number;
+                    y: number;
+                    defaultX: number;
+                }) => Promise<void>;
             };
             fontManager?: {
                 recompileEditingFont?: () => Promise<unknown>;
@@ -117,29 +219,24 @@ test('Harakat guide, setting, and compile hooks', async ({ page }) => {
             };
         }
         const font = window.currentFontModel as {
-            masters: Array<{
-                id: string;
-                guides?: Array<{
-                    name?: string;
-                    pos: { x: number; y: number };
-                }>;
+            masters: Array<{ id: string }>;
+            glyphs?: Array<{
+                name?: string;
+                layers?: Array<{ id?: string }>;
             }>;
             getPluginSetting: (pluginId: string, settingId: string) => unknown;
         };
         const master = font.masters[0];
-        const guide = (master.guides || []).find(
-            (item) => item.name === 'min_top_harakat'
-        );
-        if (!guide) {
-            throw new Error('min_top_harakat guide missing');
-        }
-        guide.pos.y = 640;
-        const wrote = await win.compileFilterHost?.onGuideCommitted({
-            kind: 'position',
-            scope: 'master',
+        const glyph = font.glyphs?.find((item) => item.layers?.[0]?.id);
+        const wrote = await win.compileFilterHost?.commitTransientAnchor?.({
+            pluginId: 'harakat',
+            name: 'harakat',
+            glyphName: glyph?.name || '',
+            layerId: glyph?.layers?.[0]?.id || '',
             masterId: master.id,
-            name: 'min_top_harakat',
-            pos: { x: guide.pos.x, y: 640 }
+            x: 0,
+            y: 640,
+            defaultX: 0
         });
         const settings = font.getPluginSetting(
             'harakat',
@@ -148,12 +245,96 @@ test('Harakat guide, setting, and compile hooks', async ({ page }) => {
         if (fontManager && original) {
             fontManager.recompileEditingFont = original;
         }
-        return { wrote, recompiled, setting: settings[master.id] };
+        return {
+            wrote,
+            recompiled,
+            setting: settings[master.id],
+            layerId: glyph?.layers?.[0]?.id,
+            glyphName: glyph?.name
+        };
     });
 
     expect(moved.wrote).toBe(true);
     expect(moved.recompiled).toBe(true);
     expect(moved.setting).toBe(640);
+
+    const sideways = await page.evaluate(async () => {
+        const win = window as typeof window & {
+            compileFilterHost?: {
+                commitTransientAnchor?: (change: {
+                    pluginId: string;
+                    name: string;
+                    glyphName: string;
+                    layerId: string;
+                    masterId: string;
+                    x: number;
+                    y: number;
+                    defaultX: number;
+                }) => Promise<boolean>;
+            };
+            patchSyncEngine?: {
+                getChangeLog?: () => Array<{
+                    path?: string;
+                    historyItemId?: string;
+                }>;
+            };
+        };
+        const font = window.currentFontModel as {
+            masters: Array<{ id: string }>;
+            glyphs?: Array<{
+                name?: string;
+                layers?: Array<{
+                    id?: string;
+                    getPluginSetting?: (
+                        pluginId: string,
+                        settingId: string
+                    ) => unknown;
+                }>;
+            }>;
+            getPluginSetting: (pluginId: string, settingId: string) => unknown;
+        };
+        const master = font.masters[0];
+        const glyph = font.glyphs?.find((item) => item.name === 'hah-ar.init');
+        const layer = glyph?.layers?.[0];
+        const beforeY = (
+            font.getPluginSetting('harakat', 'minimum_by_master') as Record<
+                string,
+                number
+            >
+        )[master.id];
+        await win.compileFilterHost?.commitTransientAnchor?.({
+            pluginId: 'harakat',
+            name: 'harakat',
+            glyphName: glyph?.name || '',
+            layerId: layer?.id || '',
+            masterId: master.id,
+            x: 120,
+            y: beforeY,
+            defaultX: 0
+        });
+        const log = win.patchSyncEngine?.getChangeLog?.() || [];
+        const latest = [...log]
+            .reverse()
+            .find((entry) => entry.path?.includes('anchor_x'));
+        const itemId = latest?.historyItemId;
+        const paths = log
+            .filter((entry) => entry.historyItemId === itemId)
+            .map((entry) => entry.path || '');
+        return {
+            anchorX: layer?.getPluginSetting?.('harakat', 'anchor_x'),
+            setting: (
+                font.getPluginSetting('harakat', 'minimum_by_master') as Record<
+                    string,
+                    number
+                >
+            )[master.id],
+            paths
+        };
+    });
+    expect(sideways.anchorX).toBe(120);
+    expect(sideways.setting).toBe(640);
+    expect(JSON.stringify(sideways.paths)).toContain('anchor_x');
+    expect(JSON.stringify(sideways.paths)).not.toContain('minimum_by_master');
 
     await page.evaluate(async () => {
         const win = window as typeof window & {
@@ -196,14 +377,14 @@ test('Harakat guide, setting, and compile hooks', async ({ page }) => {
     });
     const restored = await page.evaluate(() => {
         const font = window.currentFontModel as {
-            masters: Array<{
-                guides?: Array<{ name?: string; pos: { y: number } }>;
-            }>;
+            masters: Array<{ id: string }>;
+            getPluginSetting: (pluginId: string, settingId: string) => unknown;
         };
-        const guide = (font.masters[0].guides || []).find(
-            (item) => item.name === 'min_top_harakat'
-        );
-        return guide?.pos.y;
+        const settings = font.getPluginSetting(
+            'harakat',
+            'minimum_by_master'
+        ) as Record<string, number>;
+        return settings[font.masters[0].id];
     });
     expect(restored).toBe(640);
 
@@ -243,9 +424,9 @@ def _shift(result, prefix):
     text = "" if result is None else result["features"]
     for line in text.splitlines():
         if line.startswith(prefix):
-            return line.split("<0 ", 1)[1].split(" ", 1)[0]
+            return line.split("<", 1)[1].split(" ", 1)[0]
     return None
-skel = {"name": "skel-ar", "category": "Letter", "layers": [{"id": "l", "master": {"master": "m"}, "anchors": [{"name": "top", "x": 0, "y": 200}]}]}
+skel = {"name": "skel-ar", "category": "Letter", "layers": [{"id": "l", "master": {"master": "m"}, "anchors": [{"name": "top", "x": 0, "y": 200}], "format_specific": {"com.counterpunch.plugin-settings": {"harakat": {"values": {"anchor_x": 40}}}}}]}
 dot = {"name": "dotabove-ar", "category": "Mark", "layers": [{"id": "l", "master": {"master": "m"}, "anchors": [{"name": "_top", "x": 0, "y": 0}, {"name": "top", "x": 0, "y": 80}]}]}
 marks = [glyph for glyph in font["glyphs"] if glyph["name"] in ("fatha-ar", "damma-ar", "sukun-ar")]
 ccmp_font = {
@@ -267,10 +448,11 @@ component_font = {
             "id": "l",
             "master": {"master": "m"},
             "anchors": [],
-            "components": [
-                {"reference": "skel-ar", "matrix": [1, 0, 0, 1, 0, 0]},
-                {"reference": "dotabove-ar", "matrix": [1, 0, 0, 1, 0, 200]},
-            ],
+        "components": [
+            {"reference": "skel-ar", "matrix": [1, 0, 0, 1, 0, 0]},
+            {"reference": "dotabove-ar", "matrix": [1, 0, 0, 1, 0, 200]},
+        ],
+        "format_specific": {"com.counterpunch.plugin-settings": {"harakat": {"values": {"anchor_x": 40}}}},
         }],
     }, skel, dot] + marks,
 }
@@ -281,6 +463,7 @@ json.dumps({
     "features": None if features is None else features["features"],
     "ccmpShift": _shift(ccmp_features, "pos skel-ar dotabove-ar fatha-ar'"),
     "componentShift": _shift(component_features, "pos beh-ar fatha-ar'"),
+    "componentDx": None if component_features is None else (component_features.get("anchorShifts") or [{}])[0].get("dx"),
 })
 `);
         return JSON.parse(raw) as {
@@ -288,6 +471,7 @@ json.dumps({
             features: string;
             ccmpShift: string | null;
             componentShift: string | null;
+            componentDx: number | null;
         };
     });
 
@@ -317,8 +501,9 @@ json.dumps({
     expect(compiled.features).not.toMatch(/\blookup\s/);
     expect(compiled.features).not.toContain("@harakat'");
     expect(compiled.features).not.toContain('dotabove-ar]');
-    expect(compiled.ccmpShift).toBe('200');
-    expect(compiled.componentShift).toBe(compiled.ccmpShift);
+    expect(compiled.ccmpShift).toBe('40');
+    expect(compiled.componentShift).toBe('0');
+    expect(compiled.componentDx).toBe(40);
 });
 
 type ShapedMark = {
@@ -470,7 +655,7 @@ async function shapeHarakatWord(page: Page): Promise<Shaped> {
         ) || {}) as Record<string, number>;
         return {
             clusters,
-            guideY: guide ? guide.pos.y : null,
+            guideY: master ? (settings[master.id] ?? null) : null,
             settingY: master ? (settings[master.id] ?? null) : null,
             tallestOffset
         };
@@ -615,59 +800,48 @@ test('the Harakat guide aligns the first vowel and moves stacks in unison', asyn
     const moved = await page.evaluate(async () => {
         const win = window as typeof window & {
             compileFilterHost?: {
-                onGuideCommitted: (change: unknown) => Promise<boolean>;
-            };
-            patchSyncEngine?: {
-                beginTransaction: (
-                    label: string,
-                    glyph: null,
-                    meta: Record<string, unknown>
-                ) => void;
-                endTransaction: () => void;
+                commitTransientAnchor?: (change: {
+                    pluginId: string;
+                    name: string;
+                    glyphName: string;
+                    layerId: string;
+                    masterId: string;
+                    x: number;
+                    y: number;
+                    defaultX: number;
+                }) => Promise<void>;
             };
         };
         type Font = {
-            masters: Array<{
-                id: string;
-                guides?: Array<{
-                    name?: string;
-                    pos: { x: number; y: number };
-                }>;
+            masters: Array<{ id: string }>;
+            glyphs?: Array<{
+                name?: string;
+                layers?: Array<{ id?: string }>;
             }>;
+            getPluginSetting: (pluginId: string, settingId: string) => unknown;
         };
         const raised: number[] = [];
-        const count = (window.currentFontModel as Font).masters.length;
+        const font = window.currentFontModel as Font;
+        const glyph = font.glyphs?.find((item) => item.layers?.[0]?.id);
+        const count = font.masters.length;
         for (let index = 0; index < count; index += 1) {
-            // Each commit recompiles and can replace master data, so wrappers
-            // from before it would write into detached objects.
             const master = (window.currentFontModel as Font).masters[index];
-            const guide = (master.guides || []).find(
-                (item) => item.name === 'min_top_harakat'
-            );
-            if (!guide) {
-                continue;
-            }
-            const nextY = guide.pos.y + 200;
-            win.patchSyncEngine?.beginTransaction('Drag guide', null, {
-                compileChangeSource: 'mouse-drag-guide',
-                compileEditType: 'guide'
-            });
-            try {
-                guide.pos.y = nextY;
-            } finally {
-                win.patchSyncEngine?.endTransaction();
-            }
-            const wrote = await win.compileFilterHost?.onGuideCommitted({
-                kind: 'position',
-                scope: 'master',
+            const settings = font.getPluginSetting(
+                'harakat',
+                'minimum_by_master'
+            ) as Record<string, number>;
+            const nextY = Number(settings[master.id] || 0) + 200;
+            await win.compileFilterHost?.commitTransientAnchor?.({
+                pluginId: 'harakat',
+                name: 'harakat',
+                glyphName: glyph?.name || '',
+                layerId: glyph?.layers?.[0]?.id || '',
                 masterId: master.id,
-                name: 'min_top_harakat',
-                pos: { x: guide.pos.x, y: nextY }
+                x: 0,
+                y: nextY,
+                defaultX: 0
             });
             raised.push(nextY);
-            if (!wrote) {
-                throw new Error(`guide write failed for ${master.id}`);
-            }
         }
         return {
             nextY: raised[0],

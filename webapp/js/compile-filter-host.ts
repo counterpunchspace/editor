@@ -3,7 +3,10 @@
  * see Babelfont JSON. setup, takedown, and onGuideChange see the live font.
  */
 
-import { DecomposedAffineTransform } from './babelfont-model';
+import {
+    DecomposedAffineTransform,
+    writePluginSettingValue
+} from './babelfont-model';
 
 const COMPILE_FILTERS_KEY = 'com.counterpunch.compile-filters';
 
@@ -74,9 +77,10 @@ export function setLinkedCompileFilterIds(
     font: { format_specific?: Record<string, unknown> },
     ids: string[]
 ): void {
-    const next = { ...(font.format_specific || {}) };
-    next[COMPILE_FILTERS_KEY] = ids;
-    font.format_specific = next;
+    if (!font.format_specific || typeof font.format_specific !== 'object') {
+        font.format_specific = {};
+    }
+    font.format_specific[COMPILE_FILTERS_KEY] = ids;
 }
 
 export function discoveredCompileFilters(): CompileFilterInfo[] {
@@ -107,6 +111,90 @@ export async function discoverCompileFilters(): Promise<CompileFilterInfo[]> {
     );
     window.dispatchEvent(new CustomEvent('compilefiltersregistered'));
     return discoveredCompileFilters();
+}
+
+let legacyGuidesRetiredFor: unknown = null;
+
+function retireHarakatGuides(font: {
+    masters?: Array<{
+        guides?: Array<{ name?: string }>;
+        removeGuide?: (index: number) => void;
+    }>;
+}): void {
+    for (const master of font.masters || []) {
+        const guides = master.guides || [];
+        for (let index = guides.length - 1; index >= 0; index -= 1) {
+            if (guides[index]?.name === 'min_top_harakat') {
+                master.removeGuide?.(index);
+            }
+        }
+    }
+}
+
+export function ensureHarakatMinimums(font: {
+    upm?: number;
+    masters?: Array<{ id?: string }>;
+    getPluginSetting?: (pluginId: string, settingId: string) => unknown;
+    format_specific?: Record<string, unknown>;
+}): void {
+    const stored = font.getPluginSetting?.('harakat', 'minimum_by_master');
+    const settings =
+        stored && typeof stored === 'object'
+            ? { ...(stored as Record<string, number>) }
+            : {};
+    const fallback = Number(font.upm || 1000) / 2;
+    let changed = false;
+    for (const master of font.masters || []) {
+        if (!master.id || settings[master.id] != null) {
+            continue;
+        }
+        settings[master.id] = fallback;
+        changed = true;
+    }
+    if (changed) {
+        writePluginSettingValue(font, 'harakat', 'minimum_by_master', settings);
+    }
+}
+
+export async function retireLegacyCompileFilterGuides(): Promise<void> {
+    const font = (
+        window as unknown as {
+            currentFontModel?: {
+                masters?: Array<{
+                    guides?: Array<{ name?: string }>;
+                    removeGuide?: (index: number) => void;
+                }>;
+            };
+        }
+    ).currentFontModel;
+    if (!font || legacyGuidesRetiredFor === font) {
+        return;
+    }
+    legacyGuidesRetiredFor = font;
+    const bridge = (
+        window as unknown as {
+            patchSyncEngine?: {
+                beginTransaction: (
+                    label: string,
+                    glyph: null,
+                    meta: {
+                        compileChangeSource: string;
+                        compileEditType: null;
+                    }
+                ) => void;
+                endTransaction: () => void;
+            };
+        }
+    ).patchSyncEngine;
+    bridge?.beginTransaction('Remove Harakat guides', null, {
+        compileChangeSource: 'compile-filter',
+        compileEditType: null
+    });
+    try {
+        retireHarakatGuides(font);
+    } finally {
+        bridge?.endTransaction();
+    }
 }
 
 export async function setupCompileFilter(pluginId: string): Promise<void> {
@@ -476,6 +564,20 @@ function layerInkBounds(
     return { yMin, yMax };
 }
 
+function pluginSettingsRecord(layer: {
+    format_specific?: Record<string, unknown>;
+}): { format_specific?: Record<string, unknown> } {
+    const bag = layer.format_specific?.['com.counterpunch.plugin-settings'];
+    if (!bag || typeof bag !== 'object') {
+        return {};
+    }
+    return {
+        format_specific: {
+            'com.counterpunch.plugin-settings': bag
+        }
+    };
+}
+
 function componentRecords(layer: { data?: { shapes?: RawShape[] } }): {
     components?: Array<{ reference: string; matrix: number[] }>;
 } {
@@ -491,6 +593,274 @@ function componentRecords(layer: { data?: { shapes?: RawShape[] } }): {
         });
     }
     return components.length > 0 ? { components } : {};
+}
+
+export interface TransientAnchor {
+    pluginId?: string;
+    name: string;
+    x: number;
+    y: number;
+    defaultX?: number;
+}
+
+export async function queryTransientAnchors(
+    glyphName: string,
+    layerId: string
+): Promise<TransientAnchor[]> {
+    const python = pyodide();
+    if (!python || !glyphName || !layerId) {
+        return [];
+    }
+    await retireLegacyCompileFilterGuides();
+    if (discovered.length === 0) {
+        await discoverCompileFilters();
+    }
+    const raw = await python.runPythonAsync(
+        `_cp_compile_filter_transient_anchors(${pythonString(glyphName)}, ${pythonString(layerId)})`
+    );
+    const parsed = JSON.parse(String(raw)) as TransientAnchor[];
+    return Array.isArray(parsed) ? parsed : [];
+}
+
+function applyTransientAnchorDecision(
+    change: {
+        glyphName: string;
+        layerId: string;
+        masterId: string;
+    },
+    decision: {
+        y?: number;
+        x?: number;
+        clearX?: boolean;
+        masterId?: string;
+    }
+): void {
+    const font = (
+        window as unknown as {
+            currentFontModel?: {
+                glyphs?: Array<{
+                    name?: string;
+                    layers?: Array<{
+                        id?: string;
+                        format_specific?: Record<string, unknown>;
+                        setPluginSetting?: (
+                            pluginId: string,
+                            settingId: string,
+                            value: unknown
+                        ) => void;
+                    }>;
+                }>;
+                getPluginSetting?: (
+                    pluginId: string,
+                    settingId: string
+                ) => unknown;
+                format_specific?: Record<string, unknown>;
+            };
+        }
+    ).currentFontModel;
+    if (!font) {
+        return;
+    }
+    if (typeof decision.y === 'number') {
+        const masterId = decision.masterId || change.masterId;
+        const stored = font.getPluginSetting?.('harakat', 'minimum_by_master');
+        if (stored && typeof stored === 'object') {
+            (stored as Record<string, number>)[masterId] = decision.y;
+        } else {
+            writePluginSettingValue(font, 'harakat', 'minimum_by_master', {
+                [masterId]: decision.y
+            });
+        }
+    }
+    if (decision.clearX !== true && typeof decision.x !== 'number') {
+        return;
+    }
+    const glyph = font.glyphs?.find((item) => item.name === change.glyphName);
+    const layer = glyph?.layers?.find((item) => item.id === change.layerId);
+    if (!layer) {
+        return;
+    }
+    writePluginSettingValue(
+        layer,
+        'harakat',
+        'anchor_x',
+        decision.clearX ? null : decision.x
+    );
+}
+
+export async function commitTransientAnchor(change: {
+    pluginId: string;
+    name: string;
+    glyphName: string;
+    layerId: string;
+    masterId: string;
+    x: number;
+    y: number;
+    defaultX: number;
+}): Promise<boolean> {
+    const python = pyodide();
+    if (!python) {
+        return false;
+    }
+    const wrote = await python.runPythonAsync(
+        `_cp_compile_filter_transient_anchor(${pythonString(JSON.stringify(change))})`
+    );
+    const decision = JSON.parse(String(wrote)) as {
+        ok?: boolean;
+        y?: number;
+        x?: number;
+        clearX?: boolean;
+        masterId?: string;
+    };
+    const bridge = (
+        window as unknown as {
+            patchSyncEngine?: {
+                beginTransaction: (
+                    label: string,
+                    glyph: null,
+                    meta: {
+                        compileChangeSource: string;
+                        compileEditType: null;
+                    }
+                ) => void;
+                endTransaction: () => void;
+                setRecordingSuppressed?: (suppressed: boolean) => void;
+                inTransaction?: boolean;
+            };
+        }
+    ).patchSyncEngine;
+    bridge?.setRecordingSuppressed?.(false);
+    let leaked = 0;
+    while (bridge?.inTransaction && leaked < 4) {
+        bridge.endTransaction();
+        leaked += 1;
+    }
+    bridge?.beginTransaction('Move Harakat anchor', null, {
+        compileChangeSource: 'compile-filter',
+        compileEditType: null
+    });
+    let wroteResult = false;
+    try {
+        wroteResult = decision.ok !== false;
+        applyTransientAnchorDecision(change, decision);
+    } finally {
+        bridge?.endTransaction();
+    }
+    invalidateCompileFilterCache();
+    const opened = (
+        window as unknown as {
+            fontManager?: {
+                currentFont?: {
+                    needsRecompile?: boolean;
+                    requestRecompileWithoutDataChange?: (options: {
+                        compileContext: {
+                            changeSource: string;
+                            editType: null;
+                            dataFreshnessMode: 'authoritative-worker-yjs';
+                        };
+                    }) => void;
+                };
+                recompileEditingFont?: () => Promise<unknown>;
+            };
+        }
+    ).fontManager;
+    const current = opened?.currentFont;
+    current?.requestRecompileWithoutDataChange?.({
+        compileContext: {
+            changeSource: 'compile-filter',
+            editType: null,
+            dataFreshnessMode: 'authoritative-worker-yjs'
+        }
+    });
+    if (current) {
+        current.needsRecompile = false;
+    }
+    await opened?.recompileEditingFont?.();
+    return wroteResult;
+}
+
+function shiftCompileLayerX(
+    data: {
+        anchors?: Array<{ name?: string; x?: number }>;
+        shapes?: Array<{
+            reference?: string;
+            transform?: number[] | { translation?: number[] };
+        }>;
+    },
+    dx: number
+): void {
+    let shiftedAnchor = false;
+    for (const anchor of data.anchors || []) {
+        if (anchor?.name === 'top') {
+            anchor.x = Number(anchor.x || 0) + dx;
+            shiftedAnchor = true;
+        }
+    }
+    if (shiftedAnchor) {
+        return;
+    }
+    for (const shape of data.shapes || []) {
+        if (!shape?.reference) {
+            continue;
+        }
+        const transform = shape.transform;
+        if (Array.isArray(transform) && transform.length >= 6) {
+            transform[4] = Number(transform[4] || 0) + dx;
+            continue;
+        }
+        if (transform && !Array.isArray(transform)) {
+            if (!Array.isArray(transform.translation)) {
+                transform.translation = [0, 0];
+            }
+            transform.translation[0] =
+                Number(transform.translation[0] || 0) + dx;
+        }
+    }
+}
+
+function anchorShiftLayerUpdates(
+    font: {
+        glyphs?: Array<{
+            name: string;
+            layers?: Array<{
+                id?: string;
+                toJSON?: () => {
+                    anchors?: Array<{ name?: string; x?: number }>;
+                    shapes?: Array<{
+                        reference?: string;
+                        transform?: number[] | { translation?: number[] };
+                    }>;
+                };
+            }>;
+        }>;
+    },
+    shifts: Array<{ glyph: string; layerId: string; dx: number }> | undefined
+): Array<{ glyphName: string; layerId: string; layerData: unknown }> {
+    const updates = [];
+    for (const shift of shifts || []) {
+        if (!shift.dx) {
+            continue;
+        }
+        const glyph = font.glyphs?.find((item) => item.name === shift.glyph);
+        const layer = glyph?.layers?.find((item) => item.id === shift.layerId);
+        if (!layer || typeof layer.toJSON !== 'function') {
+            continue;
+        }
+        const data = JSON.parse(JSON.stringify(layer.toJSON())) as {
+            anchors?: Array<{ name?: string; x?: number }>;
+            shapes?: Array<{
+                reference?: string;
+                transform?: number[] | { translation?: number[] };
+            }>;
+        };
+        shiftCompileLayerX(data, shift.dx);
+        updates.push({
+            glyphName: shift.glyph,
+            layerId: shift.layerId,
+            layerData: data
+        });
+    }
+    return updates;
 }
 
 function anchorOnlyLayerRecord(layer: {
@@ -514,6 +884,11 @@ function anchorOnlyLayerRecord(layer: {
                 x: Number(anchor.x) || 0,
                 y: Number(anchor.y) || 0
             })),
+        ...pluginSettingsRecord(
+            layer as {
+                format_specific?: Record<string, unknown>;
+            }
+        ),
         ...componentRecords(layer as { data?: { shapes?: RawShape[] } })
     };
 }
@@ -711,10 +1086,18 @@ export async function prepareCompileFilters(
         const parsed = JSON.parse(String(raw)) as {
             layers: Record<string, unknown>;
             features: string;
+            anchorShifts?: Array<{
+                glyph: string;
+                layerId: string;
+                dx: number;
+            }>;
         };
         cachedFeatureKey = featureKey;
         cachedFeatures = parsed.features || '';
-        return { layerUpdates: [], features: cachedFeatures };
+        return {
+            layerUpdates: anchorShiftLayerUpdates(font, parsed.anchorShifts),
+            features: cachedFeatures
+        };
     }
     const raw = await pyodide()!.runPythonAsync(
         `_cp_compile_filters_run(${pythonString(JSON.stringify(payload))})`
@@ -722,19 +1105,25 @@ export async function prepareCompileFilters(
     const parsed = JSON.parse(String(raw)) as {
         layers: Record<string, unknown>;
         features: string;
+        anchorShifts?: Array<{
+            glyph: string;
+            layerId: string;
+            dx: number;
+        }>;
     };
     layerCache.set('last', JSON.stringify(parsed));
 
-    const layerUpdates = Object.entries(parsed.layers || {}).map(
-        ([key, layerData]) => {
+    const layerUpdates = [
+        ...Object.entries(parsed.layers || {}).map(([key, layerData]) => {
             const separator = key.indexOf('\u001f');
             return {
                 glyphName: key.slice(0, separator),
                 layerId: key.slice(separator + 1),
                 layerData
             };
-        }
-    );
+        }),
+        ...anchorShiftLayerUpdates(font, parsed.anchorShifts)
+    ];
     return { layerUpdates, features: parsed.features || '' };
 }
 
@@ -742,6 +1131,20 @@ declare global {
     interface Window {
         compileFilterHost?: {
             onGuideCommitted: (change: GuideChange) => Promise<boolean>;
+            commitTransientAnchor: (change: {
+                pluginId: string;
+                name: string;
+                glyphName: string;
+                layerId: string;
+                masterId: string;
+                x: number;
+                y: number;
+                defaultX: number;
+            }) => Promise<boolean>;
+            queryTransientAnchors: (
+                glyphName: string,
+                layerId: string
+            ) => Promise<TransientAnchor[]>;
             discover: () => Promise<CompileFilterInfo[]>;
             invalidate: () => void;
         };
@@ -750,6 +1153,8 @@ declare global {
 
 window.compileFilterHost = {
     onGuideCommitted: onCompileFilterGuideChange,
+    commitTransientAnchor,
+    queryTransientAnchors,
     discover: discoverCompileFilters,
     invalidate: invalidateCompileFilterCache
 };
