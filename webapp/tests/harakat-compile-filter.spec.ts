@@ -38,7 +38,7 @@ test('Harakat guide, setting, and compile hooks', async ({ page }) => {
         win.focusView?.('view-fontinfo');
         win.fontInfoManager?.switchTab?.('compile_filters');
     });
-    await page.getByRole('button', { name: 'Add harakat' }).waitFor({
+    await page.getByRole('button', { name: 'Add filter' }).waitFor({
         state: 'visible',
         timeout: 60000
     });

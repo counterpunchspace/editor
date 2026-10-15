@@ -9,6 +9,8 @@ const COMPILE_FILTERS_KEY = 'com.counterpunch.compile-filters';
 
 export interface CompileFilterInfo {
     id: string;
+    name: string;
+    description: string;
     hasLayer: boolean;
     hasPropagated: boolean;
     hasFont: boolean;
@@ -88,7 +90,21 @@ export async function discoverCompileFilters(): Promise<CompileFilterInfo[]> {
     }
     const raw = await python.runPythonAsync('_cp_compile_filters_discover()');
     const parsed = JSON.parse(String(raw)) as CompileFilterInfo[];
-    discovered.splice(0, discovered.length, ...parsed);
+    discovered.splice(
+        0,
+        discovered.length,
+        ...parsed.map((item) => ({
+            ...item,
+            name:
+                typeof item.name === 'string' && item.name.trim()
+                    ? item.name.trim()
+                    : item.id,
+            description:
+                typeof item.description === 'string'
+                    ? item.description.trim()
+                    : ''
+        }))
+    );
     window.dispatchEvent(new CustomEvent('compilefiltersregistered'));
     return discoveredCompileFilters();
 }

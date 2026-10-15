@@ -1021,6 +1021,8 @@ def _cp_compile_filters_discover():
         _CP_COMPILE_FILTERS[plugin_id] = instance
         described.append({
             'id': plugin_id,
+            'name': str(getattr(instance, 'name', '') or plugin_id),
+            'description': str(getattr(instance, 'description', '') or ''),
             'hasLayer': callable(getattr(instance, 'filter_layer_json', None)),
             'hasPropagated': callable(
                 getattr(instance, 'filter_layer_json_propagated_anchors', None)

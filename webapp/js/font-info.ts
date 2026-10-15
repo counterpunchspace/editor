@@ -1097,40 +1097,172 @@ class FontInfoManager {
             return;
         }
         const linked = linkedCompileFilterIds(font);
-        const available = discoveredCompileFilters();
+        const byId = new Map(
+            discoveredCompileFilters().map((plugin) => [plugin.id, plugin])
+        );
         container.replaceChildren();
 
+        const header = document.createElement('div');
+        header.className = 'compile-filter-header';
+        const intro = document.createElement('p');
+        intro.className = 'compile-filter-intro';
+        intro.textContent =
+            'Compile filters adjust the font while it is compiled. The source file stays unchanged.';
+        const add = document.createElement('button');
+        add.type = 'button';
+        add.className = 'dialog-button dialog-button-primary';
+        add.textContent = 'Add filter';
+        add.addEventListener('click', () => {
+            this.openCompileFilterPicker();
+        });
+        header.append(intro, add);
+        container.appendChild(header);
+
+        if (linked.length === 0) {
+            const empty = document.createElement('p');
+            empty.className = 'compile-filter-empty';
+            empty.textContent = 'No compile filters in this font.';
+            container.appendChild(empty);
+            return;
+        }
+
         const list = document.createElement('div');
+        list.className = 'compile-filter-list';
         for (const pluginId of linked) {
-            const row = document.createElement('div');
-            row.className = 'fontinfo-field';
-            const label = document.createElement('span');
-            label.textContent = pluginId;
+            const info = byId.get(pluginId);
+            const title = info?.name || pluginId;
+            const card = document.createElement('article');
+            card.className = 'compile-filter-card';
+            const text = document.createElement('div');
+            const name = document.createElement('h3');
+            name.className = 'compile-filter-name';
+            name.textContent = title;
+            text.appendChild(name);
+            if (info?.description) {
+                const description = document.createElement('p');
+                description.className = 'compile-filter-description';
+                description.textContent = info.description;
+                text.appendChild(description);
+            }
             const remove = document.createElement('button');
             remove.type = 'button';
             remove.className = 'dialog-button';
             remove.textContent = 'Remove';
+            remove.setAttribute('aria-label', `Remove ${title}`);
             remove.addEventListener('click', () => {
                 void this.unlinkCompileFilter(pluginId);
             });
-            row.append(label, remove);
-            list.appendChild(row);
+            card.append(text, remove);
+            list.appendChild(card);
         }
         container.appendChild(list);
+    }
 
-        for (const plugin of available) {
-            if (linked.includes(plugin.id)) {
-                continue;
-            }
-            const add = document.createElement('button');
-            add.type = 'button';
-            add.className = 'dialog-button';
-            add.textContent = `Add ${plugin.id}`;
-            add.addEventListener('click', () => {
-                void this.linkCompileFilter(plugin.id);
-            });
-            container.appendChild(add);
+    private compileFilterPicker: HTMLElement | null = null;
+
+    private closeCompileFilterPicker(): void {
+        this.compileFilterPicker?.remove();
+        this.compileFilterPicker = null;
+    }
+
+    private openCompileFilterPicker(): void {
+        this.closeCompileFilterPicker();
+        const font = window.currentFontModel;
+        if (!font) {
+            return;
         }
+        const linked = new Set(linkedCompileFilterIds(font));
+        const available = discoveredCompileFilters().filter(
+            (plugin) => !linked.has(plugin.id)
+        );
+
+        const overlay = document.createElement('div');
+        overlay.className = 'info-popup-overlay';
+        overlay.tabIndex = -1;
+        overlay.addEventListener('click', (event) => {
+            if (event.target === overlay) {
+                this.closeCompileFilterPicker();
+            }
+        });
+        overlay.addEventListener('keydown', (event) => {
+            if (event.key === 'Escape') {
+                event.preventDefault();
+                this.closeCompileFilterPicker();
+            }
+        });
+
+        const popup = document.createElement('div');
+        popup.className = 'info-popup';
+        popup.setAttribute('role', 'dialog');
+        popup.setAttribute('aria-modal', 'true');
+        popup.setAttribute('aria-labelledby', 'compile-filter-picker-title');
+
+        const header = document.createElement('div');
+        header.className = 'info-popup-header';
+        const title = document.createElement('h3');
+        title.id = 'compile-filter-picker-title';
+        title.textContent = 'Add compile filter';
+        const close = document.createElement('button');
+        close.type = 'button';
+        close.className = 'info-popup-close';
+        close.setAttribute('aria-label', 'Close');
+        close.innerHTML =
+            '<span class="material-symbols-outlined">close</span>';
+        close.addEventListener('click', () => {
+            this.closeCompileFilterPicker();
+        });
+        header.append(title, close);
+
+        const content = document.createElement('div');
+        content.className = 'info-popup-content';
+        if (available.length === 0) {
+            const empty = document.createElement('p');
+            empty.className = 'compile-filter-description';
+            empty.textContent =
+                discoveredCompileFilters().length === 0
+                    ? 'No compile filters are installed in this editor.'
+                    : 'Every available compile filter is already in this font.';
+            content.appendChild(empty);
+        } else {
+            const choices = document.createElement('div');
+            choices.className = 'compile-filter-choices';
+            for (const plugin of available) {
+                const choice = document.createElement('div');
+                choice.className = 'compile-filter-choice';
+                const text = document.createElement('div');
+                const name = document.createElement('div');
+                name.className = 'compile-filter-name';
+                name.textContent = plugin.name || plugin.id;
+                text.appendChild(name);
+                if (plugin.description) {
+                    const description = document.createElement('p');
+                    description.className = 'compile-filter-description';
+                    description.textContent = plugin.description;
+                    text.appendChild(description);
+                }
+                const addChoice = document.createElement('button');
+                addChoice.type = 'button';
+                addChoice.className = 'dialog-button dialog-button-primary';
+                addChoice.textContent = 'Add';
+                addChoice.setAttribute(
+                    'aria-label',
+                    `Add ${plugin.name || plugin.id}`
+                );
+                addChoice.addEventListener('click', () => {
+                    this.closeCompileFilterPicker();
+                    void this.linkCompileFilter(plugin.id);
+                });
+                choice.append(text, addChoice);
+                choices.appendChild(choice);
+            }
+            content.appendChild(choices);
+        }
+
+        popup.append(header, content);
+        overlay.appendChild(popup);
+        document.body.appendChild(overlay);
+        this.compileFilterPicker = overlay;
+        close.focus();
     }
 
     private async linkCompileFilter(pluginId: string): Promise<void> {

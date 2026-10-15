@@ -16,6 +16,12 @@ _SUB_BY = re.compile(r"^sub\s+(.+?)\s+by\s+(.+?);?\s*$")
 
 class Harakat:
     id = "harakat"
+    name = "Harakat"
+    description = (
+        "Raises Arabic vowel marks so matching marks share a vertical center. "
+        "A guideline on each master keeps that center from sitting lower. "
+        "Dots stay in place."
+    )
 
     def setup(self, font):
         settings = _settings(font)

@@ -4222,6 +4222,64 @@ html[data-command-modifier='ctrl'] .shortcut-option-modifier::before {
     padding: 12px;
 }
 
+.compile-filter-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+}
+
+.compile-filter-intro,
+.compile-filter-empty {
+    margin: 0;
+    max-width: 42rem;
+    color: var(--text-secondary);
+    font-size: 13px;
+    line-height: 1.5;
+}
+
+.compile-filter-list,
+.compile-filter-choices {
+    display: flex;
+    flex-direction: column;
+}
+
+.compile-filter-card,
+.compile-filter-choice {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 14px 0;
+    border-top: 1px solid var(--border-primary);
+}
+
+.compile-filter-choice:first-child {
+    border-top: none;
+    padding-top: 0;
+}
+
+.compile-filter-name {
+    margin: 0;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.compile-filter-description {
+    margin: 4px 0 0;
+    color: var(--text-secondary);
+    font-size: 13px;
+    line-height: 1.5;
+}
+
+.compile-filter-header .dialog-button,
+.compile-filter-card .dialog-button,
+.compile-filter-choice .dialog-button {
+    flex-shrink: 0;
+    white-space: nowrap;
+}
+
 .fontinfo-records-pane {
     height: 100%;
     min-height: 0;
