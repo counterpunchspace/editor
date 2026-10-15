@@ -1077,47 +1077,55 @@ def _cp_compile_filters_run(payload_json):
     ]
     font = payload.get('font') or {}
     replaced = {}
-    current_layers = {
-        f"{item['glyphName']}\x1f{item['layer'].get('id') or ''}": item['layer']
-        for item in payload.get('layers') or []
-    }
-    for item in payload.get('layers') or []:
-        glyph_name = item['glyphName']
-        working = json.loads(json.dumps(item['layer']))
-        key = f"{glyph_name}\x1f{working.get('id') or ''}"
-        for plugin in plugins:
-            ctx = _cp_compile_filter_ctx(plugin, font, working)
-            layer_fn = getattr(plugin, 'filter_layer_json', None)
-            if callable(layer_fn):
-                updated = layer_fn(working, ctx)
-                if isinstance(updated, dict):
-                    working = updated
-            propagated = getattr(plugin, 'filter_layer_json_propagated_anchors', None)
-            if callable(propagated):
-                inherited = item.get('inherited') or {}
-                anchors = working.setdefault('anchors', [])
-                names = {anchor.get('name') for anchor in anchors}
-                for name, point in inherited.items():
-                    if name not in names and isinstance(point, dict):
-                        anchors.append({
-                            'name': name,
-                            'x': point.get('x'),
-                            'y': point.get('y'),
-                        })
-                        names.add(name)
-                updated = propagated(working, ctx)
-                if isinstance(updated, dict):
-                    working = updated
-        replaced[key] = working
-        current_layers[key] = working
+    needs_layers = any(
+        callable(getattr(plugin, 'filter_layer_json', None))
+        or callable(getattr(plugin, 'filter_layer_json_propagated_anchors', None))
+        for plugin in plugins
+    )
+    if needs_layers:
+        current_layers = {
+            f"{item['glyphName']}\x1f{item['layer'].get('id') or ''}": item['layer']
+            for item in payload.get('layers') or []
+        }
+        for item in payload.get('layers') or []:
+            glyph_name = item['glyphName']
+            working = json.loads(json.dumps(item['layer']))
+            key = f"{glyph_name}\x1f{working.get('id') or ''}"
+            for plugin in plugins:
+                ctx = _cp_compile_filter_ctx(plugin, font, working)
+                layer_fn = getattr(plugin, 'filter_layer_json', None)
+                if callable(layer_fn):
+                    updated = layer_fn(working, ctx)
+                    if isinstance(updated, dict):
+                        working = updated
+                propagated = getattr(plugin, 'filter_layer_json_propagated_anchors', None)
+                if callable(propagated):
+                    inherited = item.get('inherited') or {}
+                    anchors = working.setdefault('anchors', [])
+                    names = {anchor.get('name') for anchor in anchors}
+                    for name, point in inherited.items():
+                        if name not in names and isinstance(point, dict):
+                            anchors.append({
+                                'name': name,
+                                'x': point.get('x'),
+                                'y': point.get('y'),
+                            })
+                            names.add(name)
+                    updated = propagated(working, ctx)
+                    if isinstance(updated, dict):
+                        working = updated
+            replaced[key] = working
+            current_layers[key] = working
 
-    compile_font = json.loads(json.dumps(font))
-    for glyph in compile_font.get('glyphs') or []:
-        layers = []
-        for layer in glyph.get('layers') or []:
-            key = f"{glyph.get('name')}\x1f{layer.get('id') or ''}"
-            layers.append(current_layers.get(key, layer))
-        glyph['layers'] = layers
+        compile_font = json.loads(json.dumps(font))
+        for glyph in compile_font.get('glyphs') or []:
+            layers = []
+            for layer in glyph.get('layers') or []:
+                key = f"{glyph.get('name')}\x1f{layer.get('id') or ''}"
+                layers.append(current_layers.get(key, layer))
+            glyph['layers'] = layers
+    else:
+        compile_font = font
 
     chunks = []
     for plugin in plugins:

@@ -64,19 +64,16 @@ class Harakat:
         settings[str(master_id)] = float(pos["y"])
         font.setPluginSetting(self.id, SETTING_ID, settings)
 
-    def filter_layer_json_propagated_anchors(self, layer, ctx):
-        # The guideline is applied in GPOS, once. Raising the anchor here as
-        # well would move ``_top`` by the same gap a second time.
-        return None
-
     def filter_font_json(self, font, ctx):
         marks = _above_mark_names(font)
         if not marks:
             return None
-        present = {glyph.get("name") for glyph in font.get("glyphs") or []}
+        glyphs = _glyph_index(font)
+        present = set(glyphs)
         locations = _master_locations(font, ctx)
         if not locations:
             return None
+        masters = _master_locations_by_id(font)
 
         sequences = []
         for _shell, parts in _ccmp_rules(font).items():
@@ -96,7 +93,7 @@ class Harakat:
         for parts in sequences:
             deltas = []
             for location, minimum in locations:
-                propagated = _resolved_top(font, parts, location)
+                propagated = _resolved_top(font, parts, location, glyphs, masters)
                 if propagated is None:
                     deltas = []
                     break
@@ -247,14 +244,29 @@ def _ccmp_rules(font):
     return rules
 
 
-def _layer_for(font, glyph_name, location):
-    glyph = next(
-        (item for item in font.get("glyphs") or [] if item.get("name") == glyph_name),
-        None,
-    )
+def _glyph_index(font):
+    return {
+        glyph.get("name"): glyph
+        for glyph in font.get("glyphs") or []
+        if isinstance(glyph, dict) and glyph.get("name")
+    }
+
+
+def _master_locations_by_id(font):
+    return {
+        master.get("id"): master.get("location") or {}
+        for master in font.get("masters") or []
+    }
+
+
+def _layer_for(font, glyph_name, location, glyphs=None, masters=None):
+    if glyphs is None:
+        glyphs = _glyph_index(font)
+    glyph = glyphs.get(glyph_name)
     if not glyph:
         return None
-    masters = {master.get("id"): master.get("location") or {} for master in font.get("masters") or []}
+    if masters is None:
+        masters = _master_locations_by_id(font)
     for layer in glyph.get("layers") or []:
         if layer.get("is_background"):
             continue
@@ -288,10 +300,10 @@ def _anchors(layer):
     return found
 
 
-def _resolved_top(font, parts, location):
+def _resolved_top(font, parts, location, glyphs=None, masters=None):
     available = {}
     for name in parts:
-        layer = _layer_for(font, name, location)
+        layer = _layer_for(font, name, location, glyphs, masters)
         if layer is None:
             return None
         anchors = _anchors(layer)

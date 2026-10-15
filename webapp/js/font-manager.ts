@@ -3556,9 +3556,16 @@ class FontManager {
                                   this.pendingBabelfontJsonSyncAfterDrag
                           );
 
-                const compileFilters = await prepareCompileFilters(
-                    subsetForCompile ?? null
-                );
+                const compileFilters = optionOverrides?.skip_features
+                    ? {
+                          layerUpdates: [] as Array<{
+                              glyphName: string;
+                              layerId: string;
+                              layerData: unknown;
+                          }>,
+                          features: ''
+                      }
+                    : await prepareCompileFilters(subsetForCompile ?? null);
                 if (compileFilters.layerUpdates.length > 0) {
                     await this.sendWorkerPreviewLayerOverlay(
                         compileFilters.layerUpdates as Array<{
@@ -3572,9 +3579,11 @@ class FontManager {
                         true
                     );
                 }
-                fontCompilation.setCompileFeatureOverlay(
-                    compileFilters.features || ''
-                );
+                if (!optionOverrides?.skip_features) {
+                    fontCompilation.setCompileFeatureOverlay(
+                        compileFilters.features || ''
+                    );
+                }
 
                 result = await fontCompilation.compileEditingFromJsonCached(
                     validatedJson,

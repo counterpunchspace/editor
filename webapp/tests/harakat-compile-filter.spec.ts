@@ -220,7 +220,8 @@ layer = {
     "master": {"type": "DefaultForMaster", "master": "m"},
 }
 ctx = {"settings": {"minimum_by_master": {"m": 400}}, "masterId": "m"}
-raised = plugin.filter_layer_json_propagated_anchors(layer, ctx)
+hook = getattr(plugin, "filter_layer_json_propagated_anchors", None)
+raised = None if hook is None else hook(layer, ctx)
 font = {
     "upm": 1000,
     "masters": [{"id": "m", "location": {"wght": 400}}],

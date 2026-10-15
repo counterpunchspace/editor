@@ -8,6 +8,9 @@ WEBAPP_WHEELS_DIR="$SCRIPT_DIR/../../../webapp/wheels"
 mkdir -p "$WEBAPP_WHEELS_DIR"
 WHEEL_FILE=$(find dist -name "*.whl" -type f)
 cp "$WHEEL_FILE" "$WEBAPP_WHEELS_DIR/"
+WHEEL_NAME="$(basename "$WHEEL_FILE")"
+PKG="${WHEEL_NAME%%-[0-9]*}"
+find "$WEBAPP_WHEELS_DIR" -maxdepth 1 -name "${PKG}-*.whl" ! -name "$WHEEL_NAME" -delete
 cd "$WEBAPP_WHEELS_DIR"
 python3 - << 'EOF'
 import json

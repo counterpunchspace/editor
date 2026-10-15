@@ -32,6 +32,8 @@ interface LayerJob {
 
 const discovered: CompileFilterInfo[] = [];
 const layerCache = new Map<string, string>();
+let cachedFeatureKey = '';
+let cachedFeatures = '';
 
 function pyodide(): { runPythonAsync(code: string): Promise<unknown> } | null {
     return (
@@ -111,6 +113,8 @@ export async function takedownCompileFilter(pluginId: string): Promise<void> {
 
 export function invalidateCompileFilterCache(): void {
     layerCache.clear();
+    cachedFeatureKey = '';
+    cachedFeatures = '';
 }
 
 export async function onCompileFilterGuideChange(
@@ -129,50 +133,75 @@ export async function onCompileFilterGuideChange(
     if (discovered.length === 0) {
         await discoverCompileFilters();
     }
+    const bridge = (
+        window as unknown as {
+            patchSyncEngine?: {
+                beginTransaction: (
+                    label: string,
+                    glyph: null,
+                    meta: {
+                        compileChangeSource: string;
+                        compileEditType: string | null;
+                    }
+                ) => void;
+                endTransaction: () => void;
+            };
+        }
+    ).patchSyncEngine;
+    // The setting write is nested in here. A guide stamp does not compile,
+    // so this commit does not stack a second compile on the one below.
+    bridge?.beginTransaction('Compile filter guide', null, {
+        compileChangeSource: 'compile-filter',
+        compileEditType: 'guide'
+    });
     let wrote = false;
-    for (const info of discovered) {
-        if (!ids.includes(info.id) || !info.hasGuide) {
-            continue;
+    try {
+        for (const info of discovered) {
+            if (!ids.includes(info.id) || !info.hasGuide) {
+                continue;
+            }
+            const raw = await python.runPythonAsync(
+                `_cp_compile_filter_guide(${pythonString(info.id)}, ${pythonString(JSON.stringify(change))})`
+            );
+            if (raw === true || String(raw) === 'True') {
+                wrote = true;
+            }
         }
-        const raw = await python.runPythonAsync(
-            `_cp_compile_filter_guide(${pythonString(info.id)}, ${pythonString(JSON.stringify(change))})`
-        );
-        if (raw === true || String(raw) === 'True') {
-            wrote = true;
-        }
+    } finally {
+        bridge?.endTransaction();
     }
     if (wrote) {
         invalidateCompileFilterCache();
-        const host = window as unknown as {
-            fontManager?: {
-                recompileEditingFont?: () => Promise<unknown>;
-                setEditingCompileContext?: (
-                    changeSource: string,
-                    editType: null
-                ) => void;
-            };
-            currentFontModel?: {
-                requestRecompileWithoutDataChange?: (options: {
-                    compileContext: {
-                        changeSource: string;
-                        editType: null;
-                        dataFreshnessMode: 'authoritative-worker-yjs';
+        const opened = (
+            window as unknown as {
+                fontManager?: {
+                    currentFont?: {
+                        needsRecompile?: boolean;
+                        requestRecompileWithoutDataChange?: (options: {
+                            compileContext: {
+                                changeSource: string;
+                                editType: null;
+                                dataFreshnessMode: 'authoritative-worker-yjs';
+                            };
+                        }) => void;
                     };
-                }) => void;
-            };
-        };
-        host.fontManager?.setEditingCompileContext?.('compile-filter', null);
-        host.currentFontModel?.requestRecompileWithoutDataChange?.({
+                    recompileEditingFont?: () => Promise<unknown>;
+                };
+            }
+        ).fontManager;
+        const font = opened?.currentFont;
+        font?.requestRecompileWithoutDataChange?.({
             compileContext: {
                 changeSource: 'compile-filter',
                 editType: null,
                 dataFreshnessMode: 'authoritative-worker-yjs'
             }
         });
-        let pending = true;
-        for (let attempt = 0; pending && attempt < 4; attempt += 1) {
-            pending = Boolean(await host.fontManager?.recompileEditingFont?.());
+        // The flag would also wake the auto-compile loop.
+        if (font) {
+            font.needsRecompile = false;
         }
+        await opened?.recompileEditingFont?.();
     }
     return wrote;
 }
@@ -268,6 +297,30 @@ function glyphNamesClosedBySubstitutions(
     return closed;
 }
 
+function anchorOnlyLayerRecord(layer: {
+    id?: string;
+    is_background?: boolean;
+    master?: { type?: string; master?: string };
+    location?: Record<string, number>;
+    anchors?: Array<{ name?: string; x?: number; y?: number }>;
+}): Record<string, unknown> {
+    return {
+        id: layer.id,
+        is_background: layer.is_background === true,
+        master: layer.master
+            ? { type: layer.master.type, master: layer.master.master }
+            : undefined,
+        location: layer.location ? { ...layer.location } : undefined,
+        anchors: (layer.anchors || [])
+            .filter((anchor) => Boolean(anchor.name))
+            .map((anchor) => ({
+                name: anchor.name,
+                x: Number(anchor.x) || 0,
+                y: Number(anchor.y) || 0
+            }))
+    };
+}
+
 function layerRecord(layer: {
     toJSON?: () => Record<string, unknown>;
     id?: string;
@@ -327,6 +380,12 @@ export async function prepareCompileFilters(
     if (active.length === 0) {
         return { layerUpdates: [], features: '' };
     }
+    // Layer hooks need outlines. Font-only hooks (Harakat) need anchors,
+    // names, and codepoints, and serializing every outline on each edit
+    // dominated compile time.
+    const needsLayerData = active.some(
+        (info) => info.hasLayer || info.hasPropagated
+    );
     const wantsAnchors = active.some((info) => info.hasPropagated);
     const selected = new Set(glyphNames || []);
     const glyphs = new Map(
@@ -343,35 +402,36 @@ export async function prepareCompileFilters(
             selected.add(name);
         }
     }
+    const included = (font.glyphs || []).filter((glyph) => {
+        if (glyph.exported === false) {
+            return false;
+        }
+        return selected.size === 0 || selected.has(glyph.name);
+    });
     const jobs: Array<{
         glyphName: string;
         depth: number;
         layer: LayerJob['layer'];
         inherited?: LayerJob['inherited'];
     }> = [];
-    for (const glyph of font.glyphs || []) {
-        if (glyph.exported === false) {
-            continue;
-        }
-        if (selected.size > 0 && !selected.has(glyph.name)) {
-            continue;
-        }
-        for (const layer of glyph.layers || []) {
-            if (layer.is_background) {
-                continue;
+    if (needsLayerData) {
+        for (const glyph of included) {
+            for (const layer of glyph.layers || []) {
+                if (layer.is_background) {
+                    continue;
+                }
+                jobs.push({
+                    glyphName: glyph.name,
+                    depth: componentDepth(glyph.name, glyphs, new Set()),
+                    layer: layerRecord(layer),
+                    inherited: wantsAnchors
+                        ? layer.computedAnchors?.() || {}
+                        : undefined
+                });
             }
-            const record = layerRecord(layer);
-            jobs.push({
-                glyphName: glyph.name,
-                depth: componentDepth(glyph.name, glyphs, new Set()),
-                layer: record,
-                inherited: wantsAnchors
-                    ? layer.computedAnchors?.() || {}
-                    : undefined
-            });
         }
+        jobs.sort((left, right) => left.depth - right.depth);
     }
-    jobs.sort((left, right) => left.depth - right.depth);
 
     const fontJson = {
         upm: font.upm,
@@ -379,15 +439,29 @@ export async function prepareCompileFilters(
         axes: font.axes,
         features: font.features,
         format_specific: font.format_specific,
-        glyphs: (font.glyphs || [])
-            .filter((glyph) => selected.size === 0 || selected.has(glyph.name))
-            .map((glyph) => ({
-                name: glyph.name,
-                exported: glyph.exported,
-                category: glyph.category,
-                codepoints: glyph.codepoints,
-                layers: (glyph.layers || []).map((layer) => layerRecord(layer))
-            }))
+        glyphs: included.map((glyph) => ({
+            name: glyph.name,
+            exported: glyph.exported,
+            category: glyph.category,
+            codepoints: glyph.codepoints,
+            layers: (glyph.layers || []).map((layer) =>
+                needsLayerData
+                    ? layerRecord(layer)
+                    : anchorOnlyLayerRecord(
+                          layer as {
+                              id?: string;
+                              is_background?: boolean;
+                              master?: { type?: string; master?: string };
+                              location?: Record<string, number>;
+                              anchors?: Array<{
+                                  name?: string;
+                                  x?: number;
+                                  y?: number;
+                              }>;
+                          }
+                      )
+            )
+        }))
     };
     const payload = {
         ids: active.map((info) => info.id),
@@ -398,6 +472,22 @@ export async function prepareCompileFilters(
             inherited: job.inherited
         }))
     };
+    if (!needsLayerData) {
+        const featureKey = JSON.stringify(fontJson);
+        if (featureKey === cachedFeatureKey) {
+            return { layerUpdates: [], features: cachedFeatures };
+        }
+        const raw = await pyodide()!.runPythonAsync(
+            `_cp_compile_filters_run(${pythonString(JSON.stringify(payload))})`
+        );
+        const parsed = JSON.parse(String(raw)) as {
+            layers: Record<string, unknown>;
+            features: string;
+        };
+        cachedFeatureKey = featureKey;
+        cachedFeatures = parsed.features || '';
+        return { layerUpdates: [], features: cachedFeatures };
+    }
     const raw = await pyodide()!.runPythonAsync(
         `_cp_compile_filters_run(${pythonString(JSON.stringify(payload))})`
     );

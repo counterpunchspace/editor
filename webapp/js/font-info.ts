@@ -1138,14 +1138,24 @@ class FontInfoManager {
         if (!font) {
             return;
         }
-        const ids = linkedCompileFilterIds(font);
-        if (!ids.includes(pluginId)) {
-            setLinkedCompileFilterIds(font, [...ids, pluginId]);
+        // One commit for the link, the guides, and the stored minimum.
+        // Each of those writes would otherwise schedule its own full compile.
+        const bridge = window.patchSyncEngine;
+        bridge?.beginTransaction('Add compile filter', null, {
+            compileChangeSource: 'compile-filter',
+            compileEditType: null
+        });
+        try {
+            const ids = linkedCompileFilterIds(font);
+            if (!ids.includes(pluginId)) {
+                setLinkedCompileFilterIds(font, [...ids, pluginId]);
+            }
+            invalidateCompileFilterCache();
+            await setupCompileFilter(pluginId);
+            await this.renderCompileFiltersContent();
+        } finally {
+            bridge?.endTransaction();
         }
-        invalidateCompileFilterCache();
-        await setupCompileFilter(pluginId);
-        await this.renderCompileFiltersContent();
-        await window.fontManager?.recompileEditingFont?.();
     }
 
     private async unlinkCompileFilter(pluginId: string): Promise<void> {
@@ -1153,14 +1163,22 @@ class FontInfoManager {
         if (!font) {
             return;
         }
-        await takedownCompileFilter(pluginId);
-        setLinkedCompileFilterIds(
-            font,
-            linkedCompileFilterIds(font).filter((id) => id !== pluginId)
-        );
-        invalidateCompileFilterCache();
-        await this.renderCompileFiltersContent();
-        await window.fontManager?.recompileEditingFont?.();
+        const bridge = window.patchSyncEngine;
+        bridge?.beginTransaction('Remove compile filter', null, {
+            compileChangeSource: 'compile-filter',
+            compileEditType: null
+        });
+        try {
+            await takedownCompileFilter(pluginId);
+            setLinkedCompileFilterIds(
+                font,
+                linkedCompileFilterIds(font).filter((id) => id !== pluginId)
+            );
+            invalidateCompileFilterCache();
+            await this.renderCompileFiltersContent();
+        } finally {
+            bridge?.endTransaction();
+        }
     }
 
     private getSavedTab(): FontInfoTab {
