@@ -25,10 +25,15 @@ from __future__ import annotations
 import gzip
 import json
 import re
+import sys
 import unicodedata
 from pathlib import Path
 
 EDITOR = Path(__file__).resolve().parents[4]
+ARABIC_PKG = EDITOR / "plugins" / "languagepacks" / "arabic"
+if str(ARABIC_PKG) not in sys.path:
+    sys.path.insert(0, str(ARABIC_PKG))
+from counterpunch_arabic.connections import CONNECTIONS, set_id  # noqa: E402
 FUSTAT = (
     EDITOR.parent
     / "gfsources"
@@ -494,7 +499,25 @@ def _leaves(characters: dict, bases: list[str], unencoded: dict) -> list[dict]:
                 ],
                 named("lam_alef-ar", "essential", ["ligatures"]),
             ],
-        }
+        },
+        *[
+            {
+                "id": set_id(str(item["id"])),
+                "label": item["title"],
+                "level": "essential",
+                "entries": [
+                    {
+                        "glyph_name": name,
+                        "category": "Letter",
+                        "level": "essential",
+                        "level_rank": 0,
+                        "categories": ["bases"],
+                    }
+                    for name in item["glyphs"]
+                ],
+            }
+            for item in CONNECTIONS
+        ],
     ]
 
 

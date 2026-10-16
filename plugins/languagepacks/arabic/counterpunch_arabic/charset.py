@@ -6,6 +6,8 @@ import json
 from importlib.resources import files
 from typing import Any
 
+from counterpunch_arabic.connections import CONNECTIONS, image_markup, set_id
+
 
 def _union_categories(left: Any, right: Any) -> list[str]:
     categories: list[str] = []
@@ -33,11 +35,28 @@ class ArabicCharacterSetProvider:
         self._data = json.loads(path.read_text(encoding="utf-8"))
 
     def metadata(self) -> dict[str, Any]:
+        tree = [{"id": "arabic", "label": "Arabic", "selectable": True}]
+        details: dict[str, dict[str, str]] = {}
+        for item in CONNECTIONS:
+            identifier = set_id(str(item["id"]))
+            tree.append(
+                {
+                    "id": identifier,
+                    "label": item["title"],
+                    "selectable": True,
+                }
+            )
+            details[identifier] = {
+                "title": item["title"],
+                "description": item["description"],
+                "image": image_markup(item["image"]),
+            }
         return {
             "id": self.provider_id,
             "name": self.display_name,
             "version": "1.0.0",
-            "tree": [],
+            "tree": tree,
+            "set_details": details,
             "glyph_categories": self.glyph_categories,
         }
 

@@ -12,9 +12,30 @@ import {
     type CharacterSetMembers,
     type CharacterSetNode
 } from './character-set-plugin-manager';
+import { ccmpDecomposition } from './language-packs/ccmp-shells';
+import { arabicFormRules } from './language-packs/arabic-forms';
+import { glyphComponentNames } from './language-packs/composition-conversion';
 import { Logger } from './logger';
 import { bindModalEscape, type ModalEscapeBinding } from './ui/modal-escape';
 import type { FilesystemPlugin } from './filesystem-plugins/filesystem-plugin';
+
+function glyphComposition(font: Font, name: string): string[] {
+    const components = glyphComponentNames(font.findGlyph(name));
+    if (components.length) {
+        return components;
+    }
+    const decomposition = ccmpDecomposition(font.features).get(name);
+    if (decomposition?.length) {
+        return decomposition;
+    }
+    for (const position of arabicFormRules(font.features).values()) {
+        const sequence = position.get(name);
+        if (sequence?.length) {
+            return sequence;
+        }
+    }
+    return [];
+}
 
 const console = new Logger('AddGlyphsDialog');
 
@@ -177,6 +198,7 @@ export class AddGlyphsDialog {
     private setPanel: HTMLElement | null = null;
     private compositionSettings: HTMLElement | null = null;
     private list: HTMLElement | null = null;
+    private setDetail: HTMLElement | null = null;
     private categoryFilters: HTMLElement | null = null;
     private confirmButton: HTMLButtonElement | null = null;
     private quotaError: HTMLParagraphElement | null = null;
@@ -424,6 +446,10 @@ export class AddGlyphsDialog {
             this.categoryFilters,
             this.list
         );
+        this.setDetail = document.createElement('aside');
+        this.setDetail.className = 'add-glyph-set-detail';
+        this.setDetail.hidden = true;
+        resultsPanel.appendChild(this.setDetail);
         body.append(this.setPanel, resultsPanel);
         this.content.replaceChildren(
             providerBar,
@@ -763,6 +789,7 @@ export class AddGlyphsDialog {
             fragment.appendChild(row);
         });
         this.setTree.replaceChildren(fragment);
+        this.renderSetDetail();
     }
 
     private async ensureSetMembers(): Promise<void> {
@@ -882,7 +909,43 @@ export class AddGlyphsDialog {
         }
         this.syncConfirmButton();
         this.syncAbbreviatedTitles();
+        this.renderSetDetail();
         void this.paintSamplePreviews();
+    }
+
+    private renderSetDetail(): void {
+        if (!this.setDetail) {
+            return;
+        }
+        const provider = this.getActiveProvider();
+        const sets = this.getVisibleSets(
+            provider?.tree || [],
+            this.setSearchInput?.value.trim().toLowerCase() || ''
+        );
+        const active = sets[this.activeSetIndex];
+        const detail =
+            active && this.selectedSetIds.has(active.id)
+                ? provider?.setDetails[active.id]
+                : undefined;
+        if (!detail) {
+            this.setDetail.hidden = true;
+            this.setDetail.replaceChildren();
+            return;
+        }
+        this.setDetail.hidden = false;
+        const text = document.createElement('div');
+        text.className = 'add-glyph-set-detail-text';
+        const title = document.createElement('h4');
+        title.textContent = detail.title;
+        const description = document.createElement('p');
+        description.textContent = detail.description;
+        text.append(title, description);
+        const image = document.createElement('img');
+        image.alt = '';
+        image.src = detail.image.trim().startsWith('<svg')
+            ? `data:image/svg+xml;charset=utf-8,${encodeURIComponent(detail.image)}`
+            : detail.image;
+        this.setDetail.replaceChildren(text, image);
     }
 
     private renderCategoryFilters(): void {
@@ -1472,7 +1535,10 @@ export class AddGlyphsDialog {
                             upm: font.upm ?? 1000,
                             italic_angle: master.metrics?.ItalicAngle ?? 0
                         }
-                    }))
+                    })),
+                    glyphNames: () =>
+                        (font.glyphs || []).map((glyph) => glyph.name),
+                    composition: (name: string) => glyphComposition(font, name)
                 },
                 languagePackManager,
                 managedInputs(

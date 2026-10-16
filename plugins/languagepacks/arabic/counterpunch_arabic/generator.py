@@ -9,6 +9,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from counterpunch_arabic.conn_names import class_name, parse_conn_name
 from counterpunch_arabic.font_source import ArabicFontSource
 
 _RULE = re.compile(r"^\s*sub\s+(\S+)\s+by\s+(.+?)\s*;\s*$")
@@ -188,7 +189,13 @@ class ArabicFormsGenerator:
                 "placement": "prefix",
             }
         )
-        return {"blocks": blocks_out, "diagnostics": diagnostics}
+        connection_blocks, connection_classes = _connection_outputs(font, present)
+        blocks_out.extend(connection_blocks)
+        return {
+            "blocks": blocks_out,
+            "classes": connection_classes,
+            "diagnostics": diagnostics,
+        }
 
     def _rlig_code(
         self,
@@ -242,6 +249,109 @@ def _resolve(token: str, names: dict[str, str], present: set[str]) -> str | None
         name = names.get(token)
         return name if name in present else None
     return token if token in present else None
+
+
+def _connection_outputs(font: Any, present: set[str]) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
+    grouped: dict[str, dict[int, list[tuple[str, str]]]] = {}
+    for name in present:
+        parsed = parse_conn_name(name)
+        if parsed is None:
+            continue
+        source, conn_id, step = parsed
+        if source not in present:
+            continue
+        grouped.setdefault(conn_id, {}).setdefault(step, []).append((source, name))
+    complete = {
+        conn_id
+        for conn_id, steps in grouped.items()
+        if steps.get(1) and steps.get(2)
+    }
+    blocks: list[dict[str, str]] = []
+    classes: list[dict[str, str]] = []
+    for conn_id in sorted(complete):
+        block = f"conn_{conn_id}"
+        pairs = {
+            step: sorted(grouped[conn_id][step])
+            for step in (1, 2)
+        }
+        blocks.append(
+            {
+                "block": block,
+                "tag": "calt",
+                "code": _lookup(
+                    block,
+                    "RightToLeft IgnoreMarks",
+                    [
+                        (
+                            f"sub @{class_name(conn_id, 1, 'source')}' "
+                            f"@{class_name(conn_id, 2, 'source')} "
+                            f"by @{class_name(conn_id, 1, 'target')};"
+                        ),
+                        (
+                            f"sub @{class_name(conn_id, 1, 'target')} "
+                            f"@{class_name(conn_id, 2, 'source')}' "
+                            f"by @{class_name(conn_id, 2, 'target')};"
+                        ),
+                    ],
+                ),
+                "placement": "first",
+            }
+        )
+        for step in (1, 2):
+            sources = [source for source, _target in pairs[step]]
+            targets = [target for _source, target in pairs[step]]
+            classes.append(
+                {
+                    "name": class_name(conn_id, step, "source"),
+                    "code": " ".join(sources),
+                    "block": block,
+                }
+            )
+            classes.append(
+                {
+                    "name": class_name(conn_id, step, "target"),
+                    "code": " ".join(targets),
+                    "block": block,
+                }
+            )
+    live_blocks = {item["block"] for item in blocks}
+    for tag, block in _owned_connection_blocks(font):
+        if block not in live_blocks:
+            blocks.append({"block": block, "tag": tag, "code": ""})
+    live_classes = {item["name"] for item in classes}
+    for name, block in _owned_connection_classes(font):
+        if name not in live_classes:
+            classes.append({"name": name, "code": "", "block": block})
+    return blocks, classes
+
+
+def _owned_connection_blocks(font: Any) -> list[tuple[str, str]]:
+    features = getattr(font, "features", None) if font is not None else None
+    found = []
+    for entry in list(getattr(features, "features", None) or []):
+        code = entry[1]
+        stamp = _field(_field(code, "format_specific"), "com.counterpunch.generator")
+        if _text(_field(stamp, "generator")) != ArabicFormsGenerator.generator_id:
+            continue
+        block = _text(_field(stamp, "block"))
+        if block.startswith("conn_"):
+            found.append((str(entry[0]), block))
+    return found
+
+
+def _owned_connection_classes(font: Any) -> list[tuple[str, str]]:
+    features = getattr(font, "features", None) if font is not None else None
+    classes = getattr(features, "classes", None) or {}
+    items = classes.items() if isinstance(classes, dict) else []
+    found = []
+    for name, code in items:
+        stamp = _field(_field(code, "format_specific"), "com.counterpunch.generator")
+        if _text(_field(stamp, "generator")) != ArabicFormsGenerator.generator_id:
+            continue
+        block = _text(_field(stamp, "block"))
+        if block.startswith("conn_"):
+            found.append((str(name), block))
+    return found
 
 
 def _parse(code: str) -> dict[str, list[str]]:

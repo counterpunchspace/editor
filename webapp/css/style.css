@@ -586,6 +586,46 @@
     overflow: auto;
 }
 
+.add-glyph-set-detail {
+    align-items: center;
+    border-top: 1px solid var(--border-primary);
+    display: flex;
+    flex-shrink: 0;
+    gap: 12px;
+    padding: 10px;
+}
+
+.add-glyph-set-detail[hidden] {
+    display: none;
+}
+
+.add-glyph-set-detail-text {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.add-glyph-set-detail-text h4 {
+    color: var(--text-primary);
+    font-size: 13px;
+    font-weight: 600;
+    margin: 0 0 4px;
+}
+
+.add-glyph-set-detail-text p {
+    color: var(--text-secondary);
+    font-size: 12px;
+    line-height: 1.4;
+    margin: 0;
+}
+
+.add-glyph-set-detail img {
+    flex: 0 0 auto;
+    height: 72px;
+    max-height: 72px;
+    object-fit: contain;
+    width: auto;
+}
+
 .add-glyph-columns {
     display: flex;
     flex: 1 1 auto;

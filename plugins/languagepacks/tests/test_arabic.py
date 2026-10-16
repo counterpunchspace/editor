@@ -104,7 +104,11 @@ def test_data_identities_and_pack_names():
             assert root in SOURCE.unencoded
     entries = DATA["leaves"][0]["entries"]
     assert DATA["leaves"][0]["id"] == "arabic"
-    assert len(DATA["leaves"]) == 1
+    assert [leaf["id"] for leaf in DATA["leaves"]] == ["arabic", "conn-high1"]
+    assert [entry["glyph_name"] for entry in DATA["leaves"][1]["entries"]] == [
+        "behDotless-ar.medi.conn-high1-1",
+        "reh-ar.fina.conn-high1-2",
+    ]
     dot_names = {
         entry["glyph_name"]
         for entry in entries
@@ -495,7 +499,12 @@ def test_mark_order_swaps_only_the_opposite_typing_order():
 def test_character_set_and_recipe_round_trip():
     provider = ArabicCharacterSetProvider()
     assert provider.metadata()["name"] == "Arabic Language Pack"
-    assert provider.metadata()["tree"] == []
+    assert provider.metadata()["tree"] == [
+        {"id": "arabic", "label": "Arabic", "selectable": True},
+        {"id": "conn-high1", "label": "High connection", "selectable": True},
+    ]
+    assert provider.metadata()["set_details"]["conn-high1"]["title"] == "High connection"
+    assert "<svg" in provider.metadata()["set_details"]["conn-high1"]["image"]
     assert provider.metadata()["glyph_categories"][0] == {
         "id": "bases",
         "label": "Bases",
@@ -538,3 +547,53 @@ def test_character_set_and_recipe_round_trip():
     assert recipe["positions"]["isol"] == ["uni066E", "twoDotsHorizontalAbove-ar"]
     assert composition.recipe(0x0041, lambda codepoint: {"script": "Latin"}) is None
     assert composition.recipe_for_name("shaddaFatha-ar") is None
+
+
+def _calt(result, block):
+    return next(
+        item["code"]
+        for item in result["blocks"]
+        if item["tag"] == "calt" and item["block"] == block
+    )
+
+
+def test_connection_feature_follows_glyph_names():
+    high = [
+        "behDotless-ar.medi",
+        "behDotless-ar.medi.conn-high1-1",
+        "reh-ar.fina",
+        "reh-ar.fina.conn-high1-2",
+        "beh-ar.medi",
+        "beh-ar.medi.conn-high1-1",
+    ]
+    result = generate({"lifecycle": [{"kind": "created", "glyphName": "behDotless-ar.medi.conn-high1-1"}], "changes": [], "intents": {}}, high)
+    code = _calt(result, "conn_high1")
+    assert "lookup conn_high1 {" in code
+    assert "lookupflag RightToLeft IgnoreMarks;" in code
+    assert "sub @conn_high1_1_source' @conn_high1_2_source by @conn_high1_1_target;" in code
+    assert "sub @conn_high1_1_target @conn_high1_2_source' by @conn_high1_2_target;" in code
+    classes = {item["name"]: item["code"] for item in result["classes"]}
+    assert classes["conn_high1_1_source"] == "beh-ar.medi behDotless-ar.medi"
+    assert classes["conn_high1_1_target"] == "beh-ar.medi.conn-high1-1 behDotless-ar.medi.conn-high1-1"
+    assert classes["conn_high1_2_source"] == "reh-ar.fina"
+    assert classes["conn_high1_2_target"] == "reh-ar.fina.conn-high1-2"
+    assert all(item["block"] != "conn_low2" for item in result["blocks"])
+
+    incomplete = generate(
+        {"lifecycle": [], "changes": [], "intents": {}},
+        ["behDotless-ar.medi", "behDotless-ar.medi.conn-high1-1"],
+    )
+    assert all(item["tag"] != "calt" or not item["code"] for item in incomplete["blocks"])
+    assert incomplete["classes"] == []
+
+    low = [
+        "behDotless-ar.medi",
+        "behDotless-ar.medi.conn-low2-1",
+        "reh-ar.fina",
+        "reh-ar.fina.conn-low2-2",
+    ]
+    other = generate({"lifecycle": [], "changes": [], "intents": {}}, low)
+    assert "lookup conn_low2 {" in _calt(other, "conn_low2")
+    assert all(item["block"] != "conn_high1" for item in other["blocks"])
+    assert other["classes"][0]["block"] == "conn_low2"
+

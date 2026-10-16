@@ -14,6 +14,7 @@ import type { TransactionBufferedOperation } from '../patch-sync-engine';
 import { withSuppressedModelRecording } from '../babelfont-model';
 import {
     applyGeneratorBlocks,
+    applyGeneratorClasses,
     generatorStamp,
     type FeaturesDocument,
     type GeneratedBlock
@@ -318,12 +319,19 @@ class FeatureGeneratorEngine {
                     skipped.push(generator.generatorId);
                     continue;
                 }
-                const next = applyGeneratorBlocks(
+                const nextBlocks = applyGeneratorBlocks(
                     features,
                     generator.generatorId,
                     generator.version,
                     generator.capability,
                     outcome.blocks
+                );
+                const nextClasses = applyGeneratorClasses(
+                    nextBlocks || features,
+                    generator.generatorId,
+                    generator.version,
+                    generator.capability,
+                    outcome.classes
                 );
                 ran.push(generator.generatorId);
                 if (outcome.diagnostics.length) {
@@ -332,8 +340,11 @@ class FeatureGeneratorEngine {
                         outcome.diagnostics.slice(0, 3).join(' ')
                     );
                 }
-                if (next) {
-                    features = next;
+                if (nextClasses) {
+                    features = nextClasses;
+                    changed = true;
+                } else if (nextBlocks) {
+                    features = nextBlocks;
                     changed = true;
                 }
             } catch (error) {
@@ -376,6 +387,7 @@ class FeatureGeneratorEngine {
         features: FeaturesDocument
     ): {
         blocks: GeneratedBlock[];
+        classes: Array<{ name: string; code: string; block: string }>;
         diagnostics: string[];
         needsRebuild: boolean;
     } | null {
@@ -421,8 +433,8 @@ for key in list(getattr(generator, 'INTENT_KEYS', []) or []):
         forced = True
 if not forced and hasattr(generator, 'needs_rebuild') and batch.get('trigger') != 'manual':
     needs = bool(generator.needs_rebuild(batch, font, context))
-produced = generator.generate(batch, font, context) if needs else {'blocks': [], 'diagnostics': []}
-json.dumps({'needsRebuild': needs, 'blocks': produced.get('blocks') or [], 'diagnostics': produced.get('diagnostics') or []})
+produced = generator.generate(batch, font, context) if needs else {'blocks': [], 'diagnostics': [], 'classes': []}
+json.dumps({'needsRebuild': needs, 'blocks': produced.get('blocks') or [], 'classes': produced.get('classes') or [], 'diagnostics': produced.get('diagnostics') or []})
 `);
             return JSON.parse(String(result));
         } finally {

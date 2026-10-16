@@ -18,6 +18,10 @@ export interface CharacterSetProvider {
     version: string;
     tree: CharacterSetNode[];
     glyphCategories: GlyphCategoryDefinition[];
+    setDetails: Record<
+        string,
+        { title: string; description: string; image: string }
+    >;
 }
 
 export type GlyphCategoryDefinition = {
@@ -131,12 +135,31 @@ function parseProvider(value: unknown): CharacterSetProvider | null {
               return [{ id: category.id, label: category.label }];
           })
         : [];
+    const setDetails: CharacterSetProvider['setDetails'] = {};
+    if (isRecord(value.set_details)) {
+        for (const [id, detail] of Object.entries(value.set_details)) {
+            if (
+                !isRecord(detail) ||
+                typeof detail.title !== 'string' ||
+                typeof detail.description !== 'string' ||
+                typeof detail.image !== 'string'
+            ) {
+                continue;
+            }
+            setDetails[id] = {
+                title: detail.title,
+                description: detail.description,
+                image: detail.image
+            };
+        }
+    }
     return {
         id: value.id,
         name: value.name,
         version: value.version,
         tree: tree.filter((node): node is CharacterSetNode => node !== null),
-        glyphCategories
+        glyphCategories,
+        setDetails
     };
 }
 

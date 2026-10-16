@@ -9,6 +9,12 @@ export interface GeneratorStamp {
     capability: string;
 }
 
+export interface GeneratedClass {
+    name: string;
+    code: string;
+    block: string;
+}
+
 export interface GeneratedBlock {
     block: string;
     tag: string;
@@ -149,6 +155,55 @@ export function applyGeneratorBlocks(
         return null;
     }
     return { ...features, features: current, prefixes };
+}
+
+/** Replace one generator's automatic classes. Manual classes are left untouched. */
+export function applyGeneratorClasses(
+    features: FeaturesDocument,
+    generatorId: string,
+    version: string,
+    capability: string,
+    classes: readonly GeneratedClass[]
+): FeaturesDocument | null {
+    const current = { ...(features.classes || {}) };
+    let changed = false;
+    for (const item of classes) {
+        const existing = current[item.name];
+        if (existing?.automatic === false) {
+            continue;
+        }
+        if (!item.code.trim()) {
+            if (
+                existing &&
+                generatorStamp(existing)?.generator === generatorId
+            ) {
+                delete current[item.name];
+                changed = true;
+            }
+            continue;
+        }
+        if (existing?.code === item.code && existing.automatic === true) {
+            continue;
+        }
+        current[item.name] = {
+            code: item.code,
+            automatic: true,
+            format_specific: {
+                ...(existing?.format_specific || {}),
+                [GENERATOR_KEY]: {
+                    generator: generatorId,
+                    version,
+                    block: item.block,
+                    capability
+                }
+            }
+        };
+        changed = true;
+    }
+    if (!changed) {
+        return null;
+    }
+    return { ...features, classes: current };
 }
 
 export function managedInputs(

@@ -59,7 +59,7 @@ PACKAGES = (
     {
         "name": "counterpunch_arabic",
         "distribution": "counterpunch-arabic",
-        "version": "1.1.0",
+        "version": "1.3.0",
         "root": EDITOR / "plugins" / "languagepacks" / "arabic" / "counterpunch_arabic",
         "files": [
             "__init__.py",
@@ -67,8 +67,11 @@ PACKAGES = (
             "charset.py",
             "generator.py",
             "font_source.py",
+            "conn_names.py",
+            "connections.py",
             "data/arabic.json",
             "data/arabic.babelfont",
+            "data/conn-high1.svg",
         ],
         "entry_points": (
             "[counterpunch_composition_plugins]\n"
@@ -112,6 +115,9 @@ def write_wheel(package: dict) -> str:
         "\n".join(records + [f"{dist_info}/RECORD,,"]) + "\n"
     ).encode()
     wheel_path = WHEELS / wheel_name
+    for stale in WHEELS.glob(f"{package['name']}-*.whl"):
+        if stale.name != wheel_name:
+            stale.unlink()
     with zipfile.ZipFile(wheel_path, "w", zipfile.ZIP_DEFLATED) as wheel:
         for name, content in files.items():
             info = zipfile.ZipInfo(name, date_time=(1980, 1, 1, 0, 0, 0))

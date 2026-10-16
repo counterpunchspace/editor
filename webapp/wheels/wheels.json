@@ -1,15 +1,15 @@
 {
-  "wheels": [
-    "base_canvas_plugin-0.1.0-py3-none-any.whl",
-    "base_glyph_filter_plugin-0.1.0-py3-none-any.whl",
-    "counterpunch_arabic-1.1.0-py3-none-any.whl",
-    "counterpunch_ccmp-1.0.0-py3-none-any.whl",
-    "counterpunch_features-1.0.0-py3-none-any.whl",
-    "counterpunch_harakat-0.1.17-py3-none-any.whl",
-    "counterpunch_hyperglot-0.8.1-py3-none-any.whl",
-    "counterpunch_latin-1.0.0-py3-none-any.whl",
-    "curvature_comb_plugin-0.1.1-py3-none-any.whl",
-    "example_canvas_plugin-0.1.1-py3-none-any.whl",
-    "general_filter_plugin-0.1.0-py3-none-any.whl"
-  ]
+    "wheels": [
+        "base_canvas_plugin-0.1.0-py3-none-any.whl",
+        "base_glyph_filter_plugin-0.1.0-py3-none-any.whl",
+        "counterpunch_arabic-1.3.0-py3-none-any.whl",
+        "counterpunch_ccmp-1.0.0-py3-none-any.whl",
+        "counterpunch_features-1.0.0-py3-none-any.whl",
+        "counterpunch_harakat-0.1.17-py3-none-any.whl",
+        "counterpunch_hyperglot-0.8.1-py3-none-any.whl",
+        "counterpunch_latin-1.0.0-py3-none-any.whl",
+        "curvature_comb_plugin-0.1.1-py3-none-any.whl",
+        "example_canvas_plugin-0.1.1-py3-none-any.whl",
+        "general_filter_plugin-0.1.0-py3-none-any.whl"
+    ]
 }

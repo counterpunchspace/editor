@@ -50,7 +50,7 @@ const PRECACHE_ASSETS = [
     './wheels/example_canvas_plugin-0.1.1-py3-none-any.whl',
     './wheels/general_filter_plugin-0.1.0-py3-none-any.whl',
     './wheels/counterpunch_features-1.0.0-py3-none-any.whl',
-    './wheels/counterpunch_arabic-1.1.0-py3-none-any.whl',
+    './wheels/counterpunch_arabic-1.3.0-py3-none-any.whl',
     './wheels/counterpunch_ccmp-1.0.0-py3-none-any.whl',
     './wheels/counterpunch_latin-1.0.0-py3-none-any.whl',
 

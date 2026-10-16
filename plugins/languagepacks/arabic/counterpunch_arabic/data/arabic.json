@@ -617,6 +617,31 @@
           ]
         }
       ]
+    },
+    {
+      "id": "conn-high1",
+      "label": "High connection",
+      "level": "essential",
+      "entries": [
+        {
+          "glyph_name": "behDotless-ar.medi.conn-high1-1",
+          "category": "Letter",
+          "level": "essential",
+          "level_rank": 0,
+          "categories": [
+            "bases"
+          ]
+        },
+        {
+          "glyph_name": "reh-ar.fina.conn-high1-2",
+          "category": "Letter",
+          "level": "essential",
+          "level_rank": 0,
+          "categories": [
+            "bases"
+          ]
+        }
+      ]
     }
   ]
 }

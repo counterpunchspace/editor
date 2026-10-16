@@ -5,6 +5,8 @@
  * from the recipe.
  */
 
+import { parseConnName, connectionTarget } from './conn-names';
+
 export type CompositionOutput = 'materialized' | 'ccmp' | 'none';
 
 export interface GlyphRecord {
@@ -111,6 +113,8 @@ export interface PlanFont {
     glyphNameForCodepoint(codepoint: number): string | undefined;
     hasGlyph(name: string): boolean;
     masters: Array<{ id: string; metrics: Record<string, number> }>;
+    glyphNames?(): readonly string[];
+    composition?(name: string): readonly string[];
 }
 
 const CCMP_GENERATOR = 'space.counterpunch.ccmp';
@@ -141,7 +145,18 @@ export async function planGlyphAdditions(
     provider: CompositionProvider,
     managedInputs: readonly string[]
 ): Promise<CompositionPlan> {
-    return planRecords(records, output, font, provider, managedInputs, false);
+    const plan = await planRecords(
+        records,
+        output,
+        font,
+        provider,
+        managedInputs,
+        false
+    );
+    if (output !== 'none') {
+        expandConnectionGlyphs(records, output, font, plan);
+    }
+    return plan;
 }
 
 /** Convert glyphs that already have components, without consulting a recipe. */
@@ -592,6 +607,54 @@ function queueAnchors(
     }
 }
 
+function expandConnectionGlyphs(
+    records: readonly GlyphRecord[],
+    output: CompositionOutput,
+    font: PlanFont,
+    plan: CompositionPlan
+): void {
+    if (!font.glyphNames || !font.composition) {
+        return;
+    }
+    const creating = new Set(plan.create.map((glyph) => glyph.name));
+    for (const record of records) {
+        const seed = parseConnName(record.glyph_name);
+        if (!seed) {
+            continue;
+        }
+        const target = connectionTarget(seed.source, seed.id, seed.step);
+        for (const name of font.glyphNames()) {
+            if (parseConnName(name) || name === seed.source) {
+                continue;
+            }
+            const sequence = font.composition(name);
+            if (!sequence.length || sequence[0] !== seed.source) {
+                continue;
+            }
+            const derived = connectionTarget(name, seed.id, seed.step);
+            if (font.hasGlyph(derived) || creating.has(derived)) {
+                continue;
+            }
+            creating.add(derived);
+            const components = [target, ...sequence.slice(1)];
+            plan.create.push({
+                name: derived,
+                codepoints: [],
+                category: 'Base',
+                anchors: []
+            });
+            plan.supportingCount += 1;
+            if (output === 'ccmp') {
+                plan.ccmpAdd.push(derived);
+                plan.ccmpComponents[derived] = components;
+                plan.clearShells.push(derived);
+            } else {
+                plan.composites.push({ name: derived, components });
+            }
+        }
+    }
+}
+
 export interface ArabicConversionFamily {
     name: string;
     sequences: Record<string, string[]>;
@@ -600,6 +663,8 @@ export interface ArabicConversionFamily {
     missing: string | null;
     /** Existing `.init` / `.medi` / `.fina` glyphs of this character, selected or not. */
     members?: string[];
+    /** Existing `.conn-<id>-<step>` glyphs whose source belongs to this character. */
+    conn?: Array<{ name: string; components: string[] }>;
 }
 
 export function planArabicConversion(
@@ -669,6 +734,22 @@ export function planArabicConversion(
             }
             plan.ccmpRemove.push(family.name);
             plan.arabicRemove.push(family.name);
+        }
+        for (const conn of family.conn || []) {
+            if (!conn.components.length) {
+                continue;
+            }
+            if (output === 'ccmp') {
+                plan.ccmpAdd.push(conn.name);
+                plan.ccmpComponents[conn.name] = conn.components;
+                plan.clearShells.push(conn.name);
+            } else {
+                plan.composites.push({
+                    name: conn.name,
+                    components: conn.components
+                });
+                plan.ccmpRemove.push(conn.name);
+            }
         }
     }
     return plan;

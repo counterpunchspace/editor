@@ -5,6 +5,7 @@
  * Recipes are only for adding glyphs.
  */
 
+import { parseConnName } from './conn-names';
 import { applyCompositionPlan } from './composition-applicator';
 import { applyForms, arabicFormRules, familyRoot } from './arabic-forms';
 import { ccmpDecomposition, ccmpShellNames } from './ccmp-shells';
@@ -259,6 +260,11 @@ function arabicFamily(
     const members = (['init', 'medi', 'fina'] as const)
         .map((position) => `${name}.${position}`)
         .filter((positional) => hasGlyph(positional));
+    const conn = connectionMembers(
+        font,
+        name,
+        ccmpDecomposition(font.features)
+    );
     const chain =
         Boolean(sequences.isol) &&
         (['init', 'medi', 'fina'] as const).every((position) => {
@@ -319,7 +325,33 @@ function arabicFamily(
             pinned.push(positional);
         }
     }
-    return { name, sequences, chain, pinned, missing, members };
+    return { name, sequences, chain, pinned, missing, members, conn };
+}
+
+function connectionMembers(
+    font: NonNullable<typeof window.currentFontModel>,
+    familyName: string,
+    rules: Map<string, string[]>
+): Array<{ name: string; components: string[] }> {
+    const found = [];
+    for (const glyph of font.glyphs || []) {
+        const parsed = parseConnName(glyph.name);
+        if (!parsed) {
+            continue;
+        }
+        const root = familyRoot(parsed.source, font) || parsed.source;
+        if (root !== familyName && parsed.source !== familyName) {
+            continue;
+        }
+        const components = glyphComponentNames(font.findGlyph(glyph.name));
+        const decomposition = rules.get(glyph.name) || [];
+        const sequence = components.length ? components : decomposition;
+        if (!sequence.length) {
+            continue;
+        }
+        found.push({ name: glyph.name, components: sequence });
+    }
+    return found;
 }
 
 function mergePlans(

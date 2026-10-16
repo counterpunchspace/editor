@@ -959,6 +959,93 @@ describe('language packs', () => {
         expect([...shells]).toEqual(['yehFarsi-ar']);
     });
 
+    test('connection glyphs expand and convert from the name token', async () => {
+        const font = {
+            glyphNameForCodepoint: () => undefined,
+            hasGlyph: (name) =>
+                ['behDotless-ar.medi', 'beh-ar.medi', 'reh-ar.fina'].includes(
+                    name
+                ),
+            masters: [],
+            glyphNames: () => [
+                'behDotless-ar.medi',
+                'beh-ar.medi',
+                'reh-ar.fina'
+            ],
+            composition: (name) =>
+                name === 'beh-ar.medi'
+                    ? ['behDotless-ar.medi', 'dotBelow-ar']
+                    : []
+        };
+        const plan = await planGlyphAdditions(
+            [
+                {
+                    glyph_name: 'behDotless-ar.medi.conn-low2-1',
+                    general_category: 'Lo'
+                }
+            ],
+            'materialized',
+            font,
+            provider,
+            []
+        );
+        expect(plan.composites).toContainEqual({
+            name: 'beh-ar.medi.conn-low2-1',
+            components: ['behDotless-ar.medi.conn-low2-1', 'dotBelow-ar']
+        });
+        const shells = await planGlyphAdditions(
+            [
+                {
+                    glyph_name: 'behDotless-ar.medi.conn-low2-1',
+                    general_category: 'Lo'
+                }
+            ],
+            'ccmp',
+            font,
+            provider,
+            []
+        );
+        expect(shells.ccmpComponents['beh-ar.medi.conn-low2-1']).toEqual([
+            'behDotless-ar.medi.conn-low2-1',
+            'dotBelow-ar'
+        ]);
+    });
+
+    test('connection conversion keeps the component list and the glyph', () => {
+        const family = {
+            name: 'teh-ar',
+            sequences: {
+                isol: ['behDotless-ar', 'twoDotsHorizontalAbove-ar']
+            },
+            chain: true,
+            pinned: [],
+            missing: null,
+            members: ['teh-ar.medi'],
+            conn: [
+                {
+                    name: 'teh-ar.medi.conn-low2-1',
+                    components: [
+                        'behDotless-ar.medi.conn-low2-1',
+                        'twoDotsHorizontalAbove-ar'
+                    ]
+                }
+            ]
+        };
+        const toCcmp = planArabicConversion([family], 'ccmp');
+        expect(toCcmp.deletes).not.toContain('teh-ar.medi.conn-low2-1');
+        expect(toCcmp.ccmpComponents['teh-ar.medi.conn-low2-1']).toEqual(
+            family.conn[0].components
+        );
+        const toComponents = planArabicConversion([family], 'materialized');
+        expect(toComponents.composites).toContainEqual({
+            name: 'teh-ar.medi.conn-low2-1',
+            components: family.conn[0].components
+        });
+        expect(toComponents.deletes || []).not.toContain(
+            'teh-ar.medi.conn-low2-1'
+        );
+    });
+
     test('new composites and glyphs patch font-deps', () => {
         expect(depsNeedUpdate(['glyphs', 'aDiaeresis-lat'])).toBe(true);
         expect(

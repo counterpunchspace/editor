@@ -422,7 +422,18 @@ class FontBuilder:
                     anchors=drawn[2],
                 )
         self.ensure_referenced()
+        self.add_connection_glyphs()
         return self.document()
+
+    def add_connection_glyphs(self) -> None:
+        pkg = Path(__file__).resolve().parents[1]
+        if str(pkg) not in sys.path:
+            sys.path.insert(0, str(pkg))
+        from counterpunch_arabic.connections import CONNECTIONS
+
+        for item in CONNECTIONS:
+            for name in item["glyphs"]:
+                self.add(name, category="Base", width=600)
 
     def ensure_referenced(self) -> None:
         pending = True
