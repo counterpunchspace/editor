@@ -8,10 +8,6 @@ import {
 } from './helpers/cloud-collab-session';
 
 test.describe.configure({ mode: 'serial' });
-test.skip(
-    process.env.PLUGIN_MARKETPLACE_SHARD === '0',
-    'The plugin marketplace run is pinned to cloud-collab shard 1.'
-);
 
 const website = () =>
     process.env.CLOUD_COLLAB_WEBSITE_URL ||
