@@ -1,5 +1,7 @@
 # General Glyph Filter Plugin
 
+Registry plugins use manifest v2 and `plugin-contracts/`. See `developer-docs/PLUGIN_CONTRACTS.md`.
+
 Provides basic glyph filters for the Context font editor.
 
 ## Filters

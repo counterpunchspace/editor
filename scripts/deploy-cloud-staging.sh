@@ -64,6 +64,10 @@ deploy_worker "$COLLAB_ROOT/workers/room"
 (
   cd "$WEBSITE_ROOT"
   npx wrangler d1 execute context_users_staging --remote --yes --file=schema.sql --config wrangler.websitestaging.toml
+  (
+    cd "$WEBSITE_ROOT/plugins-worker"
+    npx wrangler deploy --env staging
+  )
   # Hide every wrangler config. pages deploy would otherwise upload
   # production context_users from wrangler.toml, or replace dashboard
   # secrets from a file that does not contain them.

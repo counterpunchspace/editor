@@ -82,6 +82,10 @@ jobs:
               run: sudo apt-get update && sudo apt-get install -y python3-pytest
 
             # Graph chokepoints, type drift, protocol bindings, tsc and jest.
+            - name: Preflight bundled plugin wheels
+              if: matrix.shard == 1
+              run: node plugin-contracts/generate.mjs && node plugin-contracts/preflight-bundled.mjs && node --test plugin-contracts/supervisor.test.mjs
+
             - name: Run static checks and jest
               if: matrix.shard == 1
               run: npm run test:checks --prefix webapp

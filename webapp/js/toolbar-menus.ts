@@ -18,6 +18,7 @@ import {
 import { exportBinaryFont, exportBinaryFontAs } from './binary-font-export';
 import { fontDestinationPluginManager } from './font-destination-plugin-manager';
 import { showFontDestinationPluginManager } from './font-destination-plugin-ui';
+import { pluginUpdateCount } from './installed-plugin-manager';
 import {
     openRunPythonScriptDialog,
     reRunLastPythonScript,
@@ -334,7 +335,9 @@ function getToolsMenuItems(): ToolbarMenuItem[] {
         fontDestinationPluginManager.getInstalledDestinations();
     const items: ToolbarMenuItem[] = [
         {
-            label: 'Plugin Manager',
+            label:
+                'Plugin Manager' +
+                (pluginUpdateCount() ? ` (${pluginUpdateCount()})` : ''),
             icon: 'extension',
             action: showFontDestinationPluginManager
         }

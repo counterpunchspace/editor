@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "counterpunch-plugin-manifest:v2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "package", "plugins"],
+  "properties": {
+    "schema": { "const": "counterpunch-plugin-manifest:v2" },
+    "package": {
+      "type": "string",
+      "pattern": "^[a-z0-9]+(?:[-_][a-z0-9]+)*$"
+    },
+    "plugins": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": ["type", "contract", "entryPoint", "pluginId"],
+        "properties": {
+          "type": {
+            "enum": [
+              "canvas",
+              "glyphfilter",
+              "character_set",
+              "compilefilter",
+              "composition",
+              "feature",
+              "font_destination"
+            ]
+          },
+          "contract": { "type": "string", "pattern": "^[a-z_]+:v[0-9]+$" },
+          "entryPoint": { "type": "string", "minLength": 1 },
+          "pluginId": { "type": "string", "minLength": 1 }
+        }
+      }
+    }
+  }
+}

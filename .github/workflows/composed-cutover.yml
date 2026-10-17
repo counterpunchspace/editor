@@ -462,6 +462,21 @@ jobs:
             # of the Pages deploy, so it needs its own step. Preview has no
             # cron Worker: its D1 database id is not in the repo, and a
             # production-bound cron must never run against preview data.
+            - name: Check plugin contract hash
+              run: node scripts/check-plugin-contracts.mjs
+              working-directory: _cutover/website
+              env:
+                  EDITOR_ROOT: ${{ github.workspace }}
+
+            - name: Deploy plugins Worker
+              if: ${{ inputs.target == 'production' || vars.PLUGINS_WORKER_LOCKED != 'production' }}
+              uses: cloudflare/wrangler-action@v3
+              with:
+                  apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+                  accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+                  workingDirectory: _cutover/website/plugins-worker
+                  command: deploy
+
             - name: Deploy cloud cron Worker
               if: ${{ inputs.target == 'production' }}
               uses: cloudflare/wrangler-action@v3

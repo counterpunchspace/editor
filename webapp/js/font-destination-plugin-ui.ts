@@ -2,6 +2,16 @@ import {
     FontDestinationManifest,
     fontDestinationPluginManager
 } from './font-destination-plugin-manager';
+import {
+    downloadPluginWheel,
+    fetchPluginCatalog,
+    fetchPluginPurchases,
+    installedVersionFromFilename,
+    pluginAction,
+    reportPlugin,
+    type CatalogPlugin
+} from './installed-plugin-manager';
+import { resolveWebsiteURL } from './website-url';
 import { Logger } from './logger';
 import { bindModalEscape, type ModalEscapeBinding } from './ui/modal-escape';
 import { createFolderSetupCallout } from './folder-permissions-dialog';
@@ -70,10 +80,30 @@ async function renderPluginManager(content: HTMLElement): Promise<void> {
             );
             return;
         }
-        const [catalogue, installedWheels] = await Promise.all([
-            fontDestinationPluginManager.discoverCatalogue(),
-            fontDestinationPluginManager.getInstalledWheelFiles()
-        ]);
+        const installedWheels =
+            await fontDestinationPluginManager.getInstalledWheelFiles();
+        const installedPaths = installedWheels.map((wheel) => wheel.path);
+        try {
+            const catalog = await fetchPluginCatalog();
+            const purchases = await fetchPluginPurchases();
+            for (const plugin of catalog.plugins) {
+                plugin.purchased =
+                    plugin.purchased || purchases.packages.has(plugin.package);
+            }
+            content.replaceChildren(
+                renderCatalog(
+                    catalog.plugins,
+                    installedPaths,
+                    purchases.signedIn,
+                    content
+                )
+            );
+            return;
+        } catch (catalogError: unknown) {
+            console.warn('Website plugin catalog unavailable:', catalogError);
+        }
+        const catalogue =
+            await fontDestinationPluginManager.discoverCatalogue();
         const installedNames = new Set(
             installedWheels.map((wheel) => wheel.path)
         );
@@ -173,6 +203,105 @@ function createPluginDiagnostics(messages: string[]): HTMLElement {
         notice.appendChild(createTextElement('p', message));
     }
     return notice;
+}
+
+function renderCatalog(
+    plugins: CatalogPlugin[],
+    installedPaths: string[],
+    signedIn: boolean,
+    content: HTMLElement
+): HTMLElement {
+    const section = document.createElement('section');
+    section.className = 'plugin-manager-section';
+    section.appendChild(createTextElement('h4', 'Plugins'));
+    if (!plugins.length) {
+        section.appendChild(
+            createTextElement('p', 'No plugins are published yet.')
+        );
+        return section;
+    }
+    for (const plugin of plugins) {
+        const installed = installedVersionFromFilename(
+            plugin.package,
+            installedPaths
+        );
+        const actionName = pluginAction({
+            plugin,
+            installedVersion: installed,
+            signedIn
+        });
+        const row = document.createElement('article');
+        row.className = 'plugin-manager-row';
+        const details = document.createElement('div');
+        details.className = 'plugin-manager-details';
+        details.appendChild(createTextElement('h5', plugin.name));
+        details.appendChild(createTextElement('p', plugin.description));
+        if (plugin.kind === 'commercial') {
+            details.appendChild(
+                createTextElement(
+                    'p',
+                    `€${(plugin.priceCents / 100).toFixed(2)} plus tax`
+                )
+            );
+        }
+        row.appendChild(details);
+        const action = document.createElement('button');
+        action.className = 'dialog-button plugin-manager-action';
+        action.type = 'button';
+        const labels: Record<string, string> = {
+            'buy': 'Buy',
+            'sign-in': 'Sign in to buy',
+            'install': 'Install',
+            'update': `Update to ${plugin.version}`,
+            'uninstall': 'Uninstall',
+            'incompatible': 'Incompatible'
+        };
+        action.textContent = labels[actionName];
+        action.disabled = actionName === 'incompatible';
+        action.addEventListener('click', async () => {
+            action.disabled = true;
+            try {
+                if (actionName === 'buy' || actionName === 'sign-in') {
+                    window.open(
+                        `${resolveWebsiteURL()}/plugins/${encodeURIComponent(plugin.package)}/buy`,
+                        '_blank'
+                    );
+                } else if (actionName === 'uninstall' && installed) {
+                    const path = installedPaths.find((item) =>
+                        (item.split('/').pop() || '').startsWith(
+                            plugin.package.replaceAll('-', '_') + '-'
+                        )
+                    );
+                    if (path)
+                        await fontDestinationPluginManager.uninstall(path);
+                } else {
+                    await downloadPluginWheel(plugin);
+                }
+                await renderPluginManager(content);
+            } catch (error: unknown) {
+                window.alert(
+                    error instanceof Error
+                        ? error.message
+                        : 'Plugin installation failed.'
+                );
+                action.disabled = false;
+            }
+        });
+        const report = document.createElement('button');
+        report.type = 'button';
+        report.className = 'dialog-button plugin-manager-action';
+        report.textContent = 'Report';
+        report.addEventListener('click', async () => {
+            const reason = window.prompt(
+                'What should we know about this plugin?'
+            );
+            if (reason) await reportPlugin(plugin.package, reason);
+        });
+        row.appendChild(action);
+        row.appendChild(report);
+        section.appendChild(row);
+    }
+    return section;
 }
 
 function createPluginRow(

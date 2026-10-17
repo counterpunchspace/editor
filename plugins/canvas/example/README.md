@@ -1,5 +1,7 @@
 # Example Canvas Plugin
 
+Registry plugins use manifest v2 and `plugin-contracts/`. See `developer-docs/PLUGIN_CONTRACTS.md`.
+
 This is an example canvas plugin for the Context Font Editor that demonstrates how to create plugins that draw on top of the glyph canvas.
 
 ## Features

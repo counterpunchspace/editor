@@ -131,11 +131,53 @@ function getErrorMessage(error: unknown): string {
 }
 
 /** Parse and validate a Font Destination manifest without executing package code. */
+function parseFontDestinationManifestV2(
+    value: JsonRecord
+): FontDestinationManifest {
+    const plugins = Array.isArray(value.plugins) ? value.plugins : [];
+    const destination = plugins.find(
+        (plugin) => isRecord(plugin) && plugin.type === 'font_destination'
+    );
+    if (!isRecord(destination)) {
+        throw new Error('Manifest does not provide a Font Destination plugin.');
+    }
+    const destinationUrl = getRequiredString(destination, 'destinationUrl');
+    const targetOrigin = getRequiredString(destination, 'targetOrigin');
+    if (new URL(destinationUrl).origin !== targetOrigin) {
+        throw new Error(
+            'Font Destination targetOrigin must match destinationUrl.'
+        );
+    }
+    const packageName = getRequiredString(value, 'package');
+    return {
+        packageName,
+        entryPoint: getRequiredString(destination, 'entryPoint'),
+        pluginId: getRequiredString(destination, 'pluginId'),
+        name: getRequiredString(destination, 'name'),
+        description: getRequiredString(destination, 'description'),
+        destinationUrl,
+        targetOrigin,
+        repositoryUrl: getRequiredString(destination, 'repositoryUrl'),
+        imageUrl:
+            typeof destination.imageUrl === 'string'
+                ? destination.imageUrl
+                : null,
+        releaseRepository: getRequiredString(destination, 'repositoryUrl')
+            .replace(/^https:\/\/github.com\//, '')
+            .replace(/\/$/, ''),
+        wheelAssetPrefix: `${packageName.replaceAll('-', '_')}-`,
+        checksumAssetSuffix: '.sha256'
+    };
+}
+
 export function parseFontDestinationManifest(
     value: unknown
 ): FontDestinationManifest {
     if (!isRecord(value)) {
         throw new Error('Plugin manifest must be an object.');
+    }
+    if (value.schema === 'counterpunch-plugin-manifest:v2') {
+        return parseFontDestinationManifestV2(value);
     }
     if (value.schema !== 'counterpunch-plugin-manifest:v1') {
         throw new Error('Unsupported Counterpunch plugin manifest schema.');
@@ -467,6 +509,36 @@ export class FontDestinationPluginManager {
     }
 
     /** Remove a wheel; the next Pyodide initialization makes removal effective. */
+    /** Write a website wheel after checking its hash. Restore the previous file if loading fails. */
+    async installVerifiedWheel(
+        filename: string,
+        bytes: Uint8Array,
+        expectedSha256: string
+    ): Promise<void> {
+        if ((await sha256(bytes)) !== expectedSha256.toLowerCase()) {
+            throw new Error(`Checksum mismatch for ${filename}.`);
+        }
+        const adapter = getSettingsFolderAdapter();
+        const wheelPath = `${PLUGINS_DIRECTORY}/${filename}`;
+        let existing: string | Uint8Array | null = null;
+        try {
+            existing = await adapter.readFile(wheelPath);
+        } catch {
+            existing = null;
+        }
+        await adapter.writeFile(wheelPath, bytes);
+        try {
+            await this.installWheelIntoPyodide(filename, bytes);
+        } catch (error: unknown) {
+            if (existing) {
+                await adapter.writeFile(wheelPath, existing);
+            } else {
+                await adapter.deleteItem(wheelPath, false);
+            }
+            throw error;
+        }
+    }
+
     async uninstall(wheelPath: string): Promise<void> {
         if (!(await settingsFolder.isReady())) {
             throw new Error('Settings Folder is not available.');

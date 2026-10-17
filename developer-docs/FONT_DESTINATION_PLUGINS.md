@@ -1,5 +1,9 @@
 # Font Destination Plugins
 
+Registration is the Counterpunch GitHub App and manifest `counterpunch-plugin-manifest:v2`. The Plugin Manager downloads the wheel from the website registry. See `PLUGIN_CONTRACTS.md`.
+
+
+
 Font Destination plugins let a third-party website receive the binary font that
 Counterpunch just exported. The plugin is a small Python package for discovery
 and menu metadata; the actual receiver is a normal web page owned by the third

@@ -1,5 +1,9 @@
 # Plugin settings
 
+Contract checks for `SETTINGS` live in `plugin-contracts/`. See `PLUGIN_CONTRACTS.md`.
+
+
+
 Any bundled Python plugin may declare `SETTINGS`. Counterpunch renders them, stores them, and passes the resolved values back as `context.settings`. Plugins do not persist settings themselves.
 
 ```python

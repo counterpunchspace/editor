@@ -450,10 +450,9 @@ Edit → Serialize to JSON → fontc WASM → OpenType font → HarfBuzz shaping
 
 ### Plugin System
 
-- **Canvas plugins**: Custom drawing on glyph canvas (above/below outlines)
-- **Glyph filters**: Custom filtering in glyph overview
+Registrable plugin types are `canvas`, `glyphfilter`, `character_set`, `compilefilter`, `composition`, `feature`, and `font_destination`. Contracts live in `plugin-contracts/`. Changing a host's call shape requires a contract bump, a probe and fixture update, `node plugin-contracts/generate.mjs`, the bundled-wheel preflight, and `npm run sync-plugin-contracts` in the website. See `developer-docs/PLUGIN_CONTRACTS.md`.
 
-Plugins are discovered dynamically from the `plugins/` directory.
+Bundled wheels under `plugins/` are editor features, not the website registry. The Plugin Manager installs registry wheels into the Settings Folder `Plugins/` directory.
 
 ## MCP Server for Development
 

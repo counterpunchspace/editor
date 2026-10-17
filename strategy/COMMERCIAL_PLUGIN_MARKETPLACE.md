@@ -2,17 +2,13 @@
 
 ## Decision
 
-Commercial plugins are registered on the Counterpunch website. The creator sets
-the listing and the price there, and uploads the Python wheel. The website
-stores the wheel in a private R2 bucket and the listing in D1. The Plugin
-Manager lists commercial plugins from the website API. A buyer can download
-the wheel only after purchase.
+Every plugin, free or commercial, registers through the Counterpunch GitHub App. The website imports each release into a private R2 wheel store, runs a static check, then a dynamic preflight in a disposable container with no network and hard time limits. The creator clicks Publish. The Plugin Manager lists only the website registry.
 
-Free plugins stay on the public GitHub catalog they use today.
+Preview and production share `context_users`, the wheel bucket, the GitHub App, and one plugins Worker. Staging is separate, including Stripe test mode. A plugin registered on preview is already a production record.
 
-GitHub is where a creator may develop the plugin. It is not how a commercial
-plugin is discovered or delivered. The Counterpunch GitHub account does not
-need access to a creator's private repository.
+Commercial prices are EUR before tax. After tax and the Stripe fee, the creator receives 70% and Counterpunch keeps 30%. Payouts go through Stripe Connect. Buyers can refund within 14 days, capped at 3 self-serve refunds per 12 months.
+
+The notes below are the earlier analysis. Where they disagree with this decision, this decision wins.
 
 ## Why the original plan does not hold
 

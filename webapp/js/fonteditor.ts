@@ -146,6 +146,9 @@ async function initFontEditor() {
         // Stored third-party wheels are restored only when their Disk permission persists.
         try {
             await fontDestinationPluginManager.reinstallStoredPlugins();
+            const { refreshPluginUpdateCount } =
+                await import('./installed-plugin-manager');
+            void refreshPluginUpdateCount();
         } catch (error) {
             console.warn(
                 '[FontEditor]',
