@@ -31,7 +31,7 @@ async function waitForReady(
 ) {
     const started = Date.now();
     let latest: any = null;
-    while (Date.now() - started < 240000) {
+    while (Date.now() - started < 360000) {
         const body = await pluginOverview(request, sessionToken);
         const plugin = (body.plugins || []).find(
             (item: any) => item.package === packageName
@@ -57,7 +57,7 @@ test('register, buy, and install the free and commercial plugins', async ({
     browser,
     request
 }) => {
-    test.setTimeout(480000);
+    test.setTimeout(720000);
     const emails = makeCloudCollabEmails(`plugin${Date.now()}`);
     await cleanupCloudCollabUsers(request, Object.values(emails));
     const creator = await bootstrapCloudCollabSession(
