@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -38,7 +39,17 @@ PLUGIN_CONTRACTS_JSON = ${JSON.stringify(JSON.stringify(contracts))}
 `;
 
 const editorRoot = join(root, "..");
-writeFileSync(join(editorRoot, "webapp/js/plugin-contracts.generated.ts"), ts);
+const tsPath = join(editorRoot, "webapp/js/plugin-contracts.generated.ts");
+writeFileSync(tsPath, ts);
 writeFileSync(join(editorRoot, "webapp/py/plugin_contracts_generated.py"), py);
+const prettier = join(editorRoot, "webapp/node_modules/.bin/prettier");
+const formatted = spawnSync(
+  prettier,
+  ["--ignore-path", join(editorRoot, "webapp/.prettierignore"), "--write", tsPath],
+  { stdio: "inherit" }
+);
+if (formatted.status !== 0) {
+  process.exit(formatted.status ?? 1);
+}
 writeFileSync(join(root, "contracts.sha256"), sha256 + "\n");
 console.log(sha256);
