@@ -104,10 +104,14 @@ test('register, buy, and install the free and commercial plugins', async ({
         ).toHaveAttribute('aria-selected', 'true');
         await expect(account.locator('#accountPanel')).toBeHidden();
         await expect(
-            account.getByText('fontdestination-example-plugin')
+            account
+                .locator('.plugin-repo-row')
+                .filter({ hasText: 'fontdestination-example-plugin' })
         ).toBeVisible();
         await expect(
-            account.getByText('counterpunch-harakat-plugin')
+            account
+                .locator('.plugin-repo-row')
+                .filter({ hasText: 'counterpunch-harakat-plugin' })
         ).toBeVisible();
 
         await account.locator('#pluginRepo').selectOption({
