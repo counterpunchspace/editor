@@ -6445,6 +6445,12 @@ html[data-command-modifier='ctrl'] .shortcut-option-modifier::before {
     font-size: 14px;
 }
 
+.plugin-manager-search {
+    width: 100%;
+    margin: 0 0 12px;
+    box-sizing: border-box;
+}
+
 .plugin-manager-row {
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;

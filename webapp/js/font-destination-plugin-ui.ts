@@ -16,6 +16,7 @@ import { Logger } from './logger';
 import { bindModalEscape, type ModalEscapeBinding } from './ui/modal-escape';
 import { createFolderSetupCallout } from './folder-permissions-dialog';
 import { settingsFolder } from './settings-folder';
+import { discoverCompileFilters } from './compile-filter-host';
 
 const console = new Logger('FontDestinationPluginUI');
 
@@ -214,12 +215,22 @@ function renderCatalog(
     const section = document.createElement('section');
     section.className = 'plugin-manager-section';
     section.appendChild(createTextElement('h4', 'Plugins'));
+    const search = document.createElement('input');
+    search.type = 'search';
+    search.className = 'plugin-manager-search';
+    search.placeholder = 'Search by name, package, or description';
+    search.setAttribute('aria-label', 'Search plugins');
+    section.appendChild(search);
     if (!plugins.length) {
         section.appendChild(
             createTextElement('p', 'No plugins are published yet.')
         );
         return section;
     }
+    const empty = createTextElement('p', 'No plugins match that search.');
+    empty.hidden = true;
+    section.appendChild(empty);
+    const rows: HTMLElement[] = [];
     for (const plugin of plugins) {
         const installed = installedVersionFromFilename(
             plugin.package,
@@ -232,6 +243,8 @@ function renderCatalog(
         });
         const row = document.createElement('article');
         row.className = 'plugin-manager-row';
+        row.dataset.search =
+            `${plugin.name} ${plugin.package} ${plugin.description}`.toLowerCase();
         const details = document.createElement('div');
         details.className = 'plugin-manager-details';
         details.appendChild(createTextElement('h5', plugin.name));
@@ -276,6 +289,7 @@ function renderCatalog(
                         await fontDestinationPluginManager.uninstall(path);
                 } else {
                     await downloadPluginWheel(plugin);
+                    await discoverCompileFilters();
                 }
                 await renderPluginManager(content);
             } catch (error: unknown) {
@@ -300,7 +314,19 @@ function renderCatalog(
         row.appendChild(action);
         row.appendChild(report);
         section.appendChild(row);
+        rows.push(row);
     }
+    search.addEventListener('input', () => {
+        const query = search.value.trim().toLowerCase();
+        let visible = 0;
+        for (const row of rows) {
+            const matches =
+                !query || (row.dataset.search || '').includes(query);
+            row.hidden = !matches;
+            if (matches) visible += 1;
+        }
+        empty.hidden = visible > 0;
+    });
     return section;
 }
 
