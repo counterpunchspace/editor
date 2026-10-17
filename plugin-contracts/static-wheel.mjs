@@ -1,11 +1,8 @@
 import { inflateRawSync } from "node:zlib";
-import { readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import contractsJson from "./contracts.json" with { type: "json" };
 
-const root = dirname(fileURLToPath(import.meta.url));
-export const contracts = JSON.parse(readFileSync(join(root, "contracts.json"), "utf8"));
+export const contracts = contractsJson;
 export const manifestSchemaId = "counterpunch-plugin-manifest:v2";
 
 const VERSION_RE = /^[0-9]+\.[0-9]+\.[0-9]+$/;
