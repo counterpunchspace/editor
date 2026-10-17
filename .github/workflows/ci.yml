@@ -256,6 +256,7 @@ jobs:
                   CLOUD_COLLAB_WEBSITE_URL: https://staging.counterpunch.space
                   CLOUD_COLLAB_ROOM_URL: https://staging.rooms.counterpunch.space
                   E2E_OPERATOR_TOKEN: ${{ secrets.E2E_OPERATOR_TOKEN }}
+                  PLUGIN_MARKETPLACE_SHARD: ${{ matrix.shard == 1 && '1' || '0' }}
 
             - name: Upload Playwright failure evidence
               if: failure()

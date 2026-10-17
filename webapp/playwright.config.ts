@@ -181,7 +181,10 @@ export default defineConfig({
     projects: [
         {
             name: 'chromium',
-            testIgnore: ['**/cloud-collab*.spec.ts'],
+            testIgnore: [
+                '**/cloud-collab*.spec.ts',
+                '**/plugin-marketplace.spec.ts'
+            ],
             use: {
                 ...devices['Desktop Chrome'],
                 // Enable SharedArrayBuffer (required for your WASM/Pyodide)
@@ -206,7 +209,10 @@ export default defineConfig({
         },
         {
             name: 'cloud-collab',
-            testMatch: ['**/cloud-collab*.spec.ts'],
+            testMatch: [
+                '**/cloud-collab*.spec.ts',
+                '**/plugin-marketplace.spec.ts'
+            ],
             testIgnore: ['**/cloud-collab-preview-smoke.spec.ts'],
             timeout: 480000,
             use: {
