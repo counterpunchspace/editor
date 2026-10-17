@@ -67,7 +67,18 @@ deploy_worker "$COLLAB_ROOT/workers/room"
   (
     cd "$WEBSITE_ROOT/plugins-worker"
     npm install --omit=dev
-    npx wrangler deploy --env staging
+    set +e
+    deploy_output=$(npx wrangler deploy --env staging 2>&1)
+    deploy_code=$?
+    set -e
+    printf '%s\n' "$deploy_output"
+    if [ "$deploy_code" -ne 0 ]; then
+      if printf '%s\n' "$deploy_output" | grep -q "containers/me"; then
+        echo "Warning: plugins-staging was not deployed. The Cloudflare API token cannot access Containers."
+      else
+        exit "$deploy_code"
+      fi
+    fi
   )
   # Hide every wrangler config. pages deploy would otherwise upload
   # production context_users from wrangler.toml, or replace dashboard
