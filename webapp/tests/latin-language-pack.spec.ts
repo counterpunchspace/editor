@@ -92,10 +92,7 @@ test('adding a composed glyph stays responsive', async ({ page }) => {
         )
     ).toBeChecked();
     await search.fill('U+1EAC');
-    const row = page
-        .locator('#add-glyphs-modal .add-glyph-row')
-        .filter({ hasText: 'U+1EAC' })
-        .first();
+    const row = searchedGlyphRow(page, 'U+1EAC');
     await row.click();
     await page.locator('#add-glyphs-modal .dialog-button-primary').click();
     await expect
@@ -147,13 +144,21 @@ async function openAddGlyphs(page: Page): Promise<void> {
     });
 }
 
+function searchedGlyphRow(page: Page, query: string) {
+    const codepoint = query.match(/^(?:U\+|0x)([0-9a-f]+)$/i);
+    const pattern = codepoint
+        ? new RegExp(`0x0*${codepoint[1]}`, 'i')
+        : new RegExp(query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+    return page
+        .locator('#add-glyphs-modal .add-glyph-row')
+        .filter({ hasText: pattern })
+        .first();
+}
+
 async function addSearchedGlyph(page: Page, query: string): Promise<void> {
     const search = page.getByRole('searchbox', { name: 'Search glyph data' });
     await search.fill(query);
-    const row = page
-        .locator('#add-glyphs-modal .add-glyph-row')
-        .filter({ hasText: query })
-        .first();
+    const row = searchedGlyphRow(page, query);
     await expect(row).toBeVisible();
     await row.click();
     await page.locator('#add-glyphs-modal .dialog-button-primary').click();
