@@ -114,11 +114,9 @@ test('register, buy, and install the free and commercial plugins', async ({
             account.getByText('counterpunch-harakat-plugin')
         ).toBeVisible();
 
-        await account
-            .locator('#pluginRepo')
-            .selectOption({
-                label: 'counterpunchspace/fontdestination-example-plugin'
-            });
+        await account.locator('#pluginRepo').selectOption({
+            label: 'counterpunchspace/fontdestination-example-plugin'
+        });
         await account
             .locator('#pluginPackage')
             .fill('fontdestination-example-plugin');
