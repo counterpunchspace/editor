@@ -12773,8 +12773,8 @@ export class Master extends ArrayElementBase {
                 assertModelMutationAllowed();
                 const old = this.data.kerning_rtl;
                 this.data.kerning_rtl = value;
-                const font = this.parent();
-                if (font instanceof Font) {
+                const font = this.parent() as Font | null;
+                if (font && typeof font.toJSON === 'function') {
                     syncKerningRtlToFormatSpecific(font, this.data.id, value);
                 }
                 recordAndMarkDirty(this, 'kerning_rtl', old, value);

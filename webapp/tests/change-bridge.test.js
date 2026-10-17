@@ -5044,7 +5044,7 @@ describe('Model setter change recording', () => {
                 expect(
                     log.some((entry) =>
                         String(entry.path).includes(
-                            'com.schriftgestalt.Glyphs.kerningRTL'
+                            'com\\.schriftgestalt\\.Glyphs\\.kerningRTL'
                         )
                     )
                 ).toBe(true);

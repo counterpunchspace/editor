@@ -81,7 +81,9 @@ describe('binary font export', () => {
             fullFontCompilation: {
                 bootstrapWorkerCacheFromFontState:
                     bootstrapWorkerCacheFromFontStateMock,
-                compileCached: compileCachedMock
+                compileCached: compileCachedMock,
+                setCompileFeatureOverlay: jest.fn(),
+                sendMessage: jest.fn().mockResolvedValue(undefined)
             }
         }));
         jest.doMock('../js/logger', () => ({

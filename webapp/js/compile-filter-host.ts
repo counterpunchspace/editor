@@ -174,6 +174,12 @@ export async function retireLegacyCompileFilterGuides(): Promise<void> {
         return;
     }
     legacyGuidesRetiredFor = font;
+    const hasLegacyGuide = (font.masters || []).some((master) =>
+        (master.guides || []).some((guide) => guide?.name === 'min_top_harakat')
+    );
+    if (!hasLegacyGuide) {
+        return;
+    }
     const bridge = (
         window as unknown as {
             patchSyncEngine?: {

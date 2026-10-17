@@ -2244,7 +2244,9 @@ describe('FontManager editing subset inclusion', () => {
 
         const first = fontManager.compileEditingFont('a', [], ['a']);
         const second = fontManager.compileEditingFont('ab', [], ['a', 'b']);
-        await Promise.resolve();
+        for (let i = 0; i < 8; i += 1) {
+            await Promise.resolve();
+        }
         expect(compileEditingSpy).toHaveBeenCalledTimes(1);
 
         resolveFirst({
