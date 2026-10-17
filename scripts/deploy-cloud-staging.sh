@@ -66,6 +66,7 @@ deploy_worker "$COLLAB_ROOT/workers/room"
   npx wrangler d1 execute context_users_staging --remote --yes --file=schema.sql --config wrangler.websitestaging.toml
   (
     cd "$WEBSITE_ROOT/plugins-worker"
+    npm install --omit=dev
     npx wrangler deploy --env staging
   )
   # Hide every wrangler config. pages deploy would otherwise upload

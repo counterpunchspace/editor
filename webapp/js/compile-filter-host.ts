@@ -94,6 +94,9 @@ export async function discoverCompileFilters(): Promise<CompileFilterInfo[]> {
     }
     const raw = await python.runPythonAsync('_cp_compile_filters_discover()');
     const parsed = JSON.parse(String(raw)) as CompileFilterInfo[];
+    if (!Array.isArray(parsed)) {
+        return discoveredCompileFilters();
+    }
     discovered.splice(
         0,
         discovered.length,
