@@ -248,9 +248,12 @@ test('register, buy, and install the free and commercial plugins', async ({
             await account.locator('#pluginRepo').selectOption({
                 label: 'counterpunchspace/fontdestination-example-plugin'
             });
-            await account
-                .locator('#pluginPackage')
-                .fill('fontdestination-example-plugin');
+            await expect(account.locator('#pluginPackage')).toHaveValue(
+                'fontdestination-example-plugin'
+            );
+            await expect(
+                account.getByRole('button', { name: 'Register plugin' })
+            ).toBeEnabled();
             await account
                 .locator('#pluginName')
                 .fill('Example Font Destination');
@@ -323,14 +326,17 @@ test('register, buy, and install the free and commercial plugins', async ({
         let harakat = await creatorPlugin('counterpunch-harakat');
         if (!harakat.plugin) {
             await account.reload();
-            await account.locator('#pluginKind').selectOption('commercial');
-            await account.locator('#pluginPrice').fill('5.00');
             await account
                 .locator('#pluginRepo')
                 .selectOption({ label: 'yanone/counterpunch-harakat-plugin' });
-            await account
-                .locator('#pluginPackage')
-                .fill('counterpunch-harakat');
+            await expect(account.locator('#pluginPackage')).toHaveValue(
+                'counterpunch-harakat'
+            );
+            await account.locator('#pluginKind').selectOption('commercial');
+            await account.locator('#pluginPrice').fill('5.00');
+            await expect(
+                account.getByRole('button', { name: 'Register plugin' })
+            ).toBeEnabled();
             await account.locator('#pluginName').fill('Harakat');
             await account
                 .locator('#pluginDescription')
