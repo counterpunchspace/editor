@@ -24,6 +24,7 @@ const FIXTURE_PACKAGES = [
 async function prepareEditorPluginStorage(page: Page) {
     await page.addInitScript(() => {
         localStorage.setItem('welcomeDismissedVersion', '1');
+        localStorage.setItem('tourSkipped', 'true');
         const storage = window as unknown as {
             showDirectoryPicker: () => Promise<FileSystemDirectoryHandle>;
         };
@@ -41,7 +42,32 @@ async function prepareEditorPluginStorage(page: Page) {
     });
 }
 
-async function openPluginManager(page: Page) {
+async function linkStartupFolders(page: Page, waitForDialog: boolean) {
+    await page.locator('#loading-overlay').waitFor({
+        state: 'hidden',
+        timeout: 180000
+    });
+    const dialog = page.locator('.folder-permissions-overlay');
+    const visible = waitForDialog
+        ? await dialog
+              .waitFor({ state: 'visible', timeout: 20000 })
+              .then(() => true)
+              .catch(() => false)
+        : await dialog.isVisible();
+    if (!visible) {
+        return;
+    }
+    await dialog.locator('[data-folder-kind="settings"]').click();
+    await expect(dialog).toContainText('Access granted', { timeout: 20000 });
+    await dialog.locator('[data-folder-kind="project"]').click();
+    const continueButton = dialog.locator('[data-action="continue"]');
+    await expect(continueButton).toBeEnabled({ timeout: 20000 });
+    await continueButton.click();
+    await expect(dialog).toBeHidden();
+}
+
+async function openPluginManager(page: Page, waitForFolderDialog = false) {
+    await linkStartupFolders(page, waitForFolderDialog);
     const welcome = page.getByRole('button', { name: 'Got it' });
     if (await welcome.isVisible()) {
         await welcome.click();
@@ -256,7 +282,7 @@ test('register, buy, and install the free and commercial plugins', async ({
             null,
             { timeout: 180000 }
         );
-        await openPluginManager(editorPage);
+        await openPluginManager(editorPage, true);
         await editorPage.locator('.plugin-manager-search').fill('destination');
         await expect(
             editorPage.locator('.plugin-manager-row:visible')
@@ -306,7 +332,7 @@ test('register, buy, and install the free and commercial plugins', async ({
             null,
             { timeout: 180000 }
         );
-        await openPluginManager(editorPage);
+        await openPluginManager(editorPage, true);
         await editorPage.locator('.plugin-manager-search').fill('harakat');
         await editorPage.getByRole('button', { name: 'Install' }).click();
         await expect
