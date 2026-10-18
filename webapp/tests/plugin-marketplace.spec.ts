@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
 import {
     attachCloudCollabCookies,
     bootstrapCloudCollabSession,
@@ -15,6 +15,50 @@ const website = () =>
 const editor = () =>
     process.env.CLOUD_E2E_EDITOR_URL ||
     'https://staging.editor.counterpunch.space';
+
+const FIXTURE_PACKAGES = [
+    'fontdestination-example-plugin',
+    'counterpunch-harakat'
+];
+
+async function prepareEditorPluginStorage(page: Page) {
+    await page.addInitScript(() => {
+        localStorage.setItem('welcomeDismissedVersion', '1');
+        const storage = window as unknown as {
+            showDirectoryPicker: () => Promise<FileSystemDirectoryHandle>;
+        };
+        storage.showDirectoryPicker = async () => {
+            const root = await navigator.storage.getDirectory();
+            const handle = root as FileSystemDirectoryHandle & {
+                queryPermission?: (options?: unknown) => Promise<string>;
+                requestPermission?: (options?: unknown) => Promise<string>;
+            };
+            const allow = async () => 'granted';
+            handle.queryPermission = allow;
+            handle.requestPermission = allow;
+            return root;
+        };
+    });
+}
+
+async function openPluginManager(page: Page) {
+    const welcome = page.getByRole('button', { name: 'Got it' });
+    if (await welcome.isVisible()) {
+        await welcome.click();
+    }
+    const menuItem = page.locator('[data-label^="Plugin Manager"]');
+    if (!(await menuItem.isVisible())) {
+        await page.locator('#toolbar-tools-menu-btn').click({ timeout: 20000 });
+    }
+    await menuItem.click({ timeout: 20000 });
+    const search = page.locator('.plugin-manager-search');
+    const connect = page.getByRole('button', { name: 'Connect Folder' });
+    await expect(search.or(connect)).toBeVisible({ timeout: 20000 });
+    if (await connect.isVisible()) {
+        await connect.click();
+        await expect(search).toBeVisible({ timeout: 20000 });
+    }
+}
 
 async function pluginOverview(request: any, sessionToken: string) {
     const response = await request.get(`${website()}/api/creator/plugins`, {
@@ -57,9 +101,13 @@ test('register, buy, and install the free and commercial plugins', async ({
     browser,
     request
 }) => {
-    test.setTimeout(720000);
+    test.setTimeout(900000);
     const emails = makeCloudCollabEmails(`plugin${Date.now()}`);
-    await cleanupCloudCollabUsers(request, Object.values(emails));
+    await cleanupCloudCollabUsers(
+        request,
+        Object.values(emails),
+        FIXTURE_PACKAGES
+    );
     const creator = await bootstrapCloudCollabSession(
         request,
         emails.owner,
@@ -201,14 +249,14 @@ test('register, buy, and install the free and commercial plugins', async ({
         const editorContext = await browser.newContext();
         await attachCloudCollabCookies(editorContext, buyer);
         const editorPage = await editorContext.newPage();
+        await prepareEditorPluginStorage(editorPage);
         await editorPage.goto(editor());
         await editorPage.waitForFunction(
             () => Boolean((window as any).pyodide),
             null,
             { timeout: 180000 }
         );
-        await editorPage.locator('#toolbar-tools-menu-btn').click();
-        await editorPage.locator('[data-label^="Plugin Manager"]').click();
+        await openPluginManager(editorPage);
         await editorPage.locator('.plugin-manager-search').fill('destination');
         await expect(
             editorPage.locator('.plugin-manager-row:visible')
@@ -216,14 +264,21 @@ test('register, buy, and install the free and commercial plugins', async ({
         await editorPage.getByRole('button', { name: 'Install' }).click();
         await expect(
             editorPage.getByRole('button', { name: 'Uninstall' })
-        ).toBeVisible();
-        await editorPage.locator('#toolbar-tools-menu-btn').click();
+        ).toBeVisible({ timeout: 60000 });
+        const managerClose = editorPage.locator(
+            '#plugin-manager-modal-close-btn'
+        );
+        if (await managerClose.isVisible()) {
+            await managerClose.click();
+        }
+        await editorPage.locator('#toolbar-tools-menu-btn').click({
+            timeout: 20000
+        });
         await expect(
             editorPage.locator('[data-label="Example Font Destination"]')
         ).toBeVisible();
 
-        await editorPage.locator('#toolbar-tools-menu-btn').click();
-        await editorPage.locator('[data-label^="Plugin Manager"]').click();
+        await openPluginManager(editorPage);
         await editorPage.locator('.plugin-manager-search').fill('harakat');
         await expect(
             editorPage.getByRole('button', { name: 'Buy' })
@@ -246,21 +301,27 @@ test('register, buy, and install the free and commercial plugins', async ({
         );
         expect(receipt.destination).toBeTruthy();
         await editorPage.reload();
-        await editorPage.locator('#toolbar-tools-menu-btn').click();
-        await editorPage.locator('[data-label^="Plugin Manager"]').click();
+        await editorPage.waitForFunction(
+            () => Boolean((window as any).pyodide),
+            null,
+            { timeout: 180000 }
+        );
+        await openPluginManager(editorPage);
         await editorPage.locator('.plugin-manager-search').fill('harakat');
         await editorPage.getByRole('button', { name: 'Install' }).click();
         await expect
-            .poll(async () =>
-                editorPage.evaluate(async () => {
-                    const python = (window as any).pyodide;
-                    if (!python) return '';
-                    return String(
-                        await python.runPythonAsync(
-                            '_cp_compile_filters_discover()'
-                        )
-                    );
-                })
+            .poll(
+                async () =>
+                    editorPage.evaluate(async () => {
+                        const python = (window as any).pyodide;
+                        if (!python) return '';
+                        return String(
+                            await python.runPythonAsync(
+                                '_cp_compile_filters_discover()'
+                            )
+                        );
+                    }),
+                { timeout: 60000 }
             )
             .toContain('harakat');
 
@@ -268,6 +329,10 @@ test('register, buy, and install the free and commercial plugins', async ({
         await editorPage.locator('.plugin-manager-search').fill('destination');
         await editorPage.getByRole('button', { name: 'Uninstall' }).click();
     } finally {
-        await cleanupCloudCollabUsers(request, Object.values(emails));
+        await cleanupCloudCollabUsers(
+            request,
+            Object.values(emails),
+            FIXTURE_PACKAGES
+        );
     }
 });

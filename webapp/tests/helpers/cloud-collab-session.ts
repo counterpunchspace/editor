@@ -111,15 +111,23 @@ export async function attachCloudCollabCookies(
 
 export async function cleanupCloudCollabUsers(
     request: APIRequestContext,
-    emails: string[]
+    emails: string[],
+    packages: string[] = []
 ): Promise<void> {
-    if (!emails.length) {
+    if (!emails.length && !packages.length) {
         return;
+    }
+    const data: { emails?: string[]; packages?: string[] } = {};
+    if (emails.length) {
+        data.emails = emails;
+    }
+    if (packages.length) {
+        data.packages = packages;
     }
     const response = await request.post(
         `${websiteUrl()}/api/dev/local-cloud-cleanup`,
         {
-            data: { emails },
+            data,
             headers: {
                 Origin: LOCAL_EDITOR_ORIGIN,
                 ...cloudCollabOperatorHeaders()
