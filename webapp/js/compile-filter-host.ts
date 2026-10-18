@@ -43,13 +43,15 @@ let cachedFeatureKey = '';
 let cachedFeatures = '';
 
 function pyodide(): { runPythonAsync(code: string): Promise<unknown> } | null {
-    return (
-        (
-            window as unknown as {
-                pyodide?: { runPythonAsync(code: string): Promise<unknown> };
-            }
-        ).pyodide ?? null
-    );
+    const host = window as unknown as {
+        pyodide?: { runPythonAsync(code: string): Promise<unknown> };
+        __fontEditorReadyState?: string;
+    };
+    // The _cp_compile_filter* helpers exist only once fonteditor.py has run.
+    if (host.__fontEditorReadyState !== 'ready') {
+        return null;
+    }
+    return host.pyodide ?? null;
 }
 
 function pythonString(value: string): string {
