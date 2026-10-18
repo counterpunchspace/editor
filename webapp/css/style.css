@@ -6461,6 +6461,10 @@ html[data-command-modifier='ctrl'] .shortcut-option-modifier::before {
     border-top: 1px solid var(--border-primary);
 }
 
+.plugin-manager-row[hidden] {
+    display: none;
+}
+
 .plugin-manager-row:first-of-type {
     border-top: 0;
 }

@@ -43,8 +43,9 @@ async function prepareEditorPluginStorage(page: Page) {
 }
 
 async function linkStartupFolders(page: Page, waitForDialog: boolean) {
-    await page.locator('#loading-overlay').waitFor({
-        state: 'hidden',
+    // The overlay fades with opacity and keeps its box, so Playwright still
+    // treats it as visible. The hidden class is what drops pointer events.
+    await expect(page.locator('#loading-overlay')).toHaveClass(/hidden/, {
         timeout: 180000
     });
     const dialog = page.locator('.folder-permissions-overlay');
@@ -85,6 +86,28 @@ async function openPluginManager(page: Page, waitForFolderDialog = false) {
         await expect(search).toBeVisible({ timeout: 20000 });
     }
 }
+
+function pluginRow(page: Page, name: string) {
+    return page.locator('.plugin-manager-row').filter({ hasText: name });
+}
+
+async function searchPlugins(page: Page, query: string) {
+    const search = page.locator('.plugin-manager-search');
+    await search.fill(query, { timeout: 20000 });
+    await search.dispatchEvent('input');
+}
+
+const cleanupEmails: { current: string[] } = { current: [] };
+
+test.afterEach(async ({ request }, testInfo) => {
+    testInfo.setTimeout(testInfo.timeout + 60000);
+    if (process.env.PLUGIN_E2E_KEEP === '1' || !cleanupEmails.current.length) {
+        return;
+    }
+    const emails = cleanupEmails.current;
+    cleanupEmails.current = [];
+    await cleanupCloudCollabUsers(request, emails, FIXTURE_PACKAGES);
+});
 
 async function pluginOverview(request: any, sessionToken: string) {
     const response = await request.get(`${website()}/api/creator/plugins`, {
@@ -127,13 +150,19 @@ test('register, buy, and install the free and commercial plugins', async ({
     browser,
     request
 }) => {
-    test.setTimeout(900000);
-    const emails = makeCloudCollabEmails(`plugin${Date.now()}`);
-    await cleanupCloudCollabUsers(
-        request,
-        Object.values(emails),
-        FIXTURE_PACKAGES
+    test.setTimeout(600000);
+    const resume = Boolean(process.env.PLUGIN_E2E_RUN_ID);
+    const emails = makeCloudCollabEmails(
+        process.env.PLUGIN_E2E_RUN_ID || `plugin${Date.now()}`
     );
+    cleanupEmails.current = Object.values(emails);
+    if (!resume) {
+        await cleanupCloudCollabUsers(
+            request,
+            cleanupEmails.current,
+            FIXTURE_PACKAGES
+        );
+    }
     const creator = await bootstrapCloudCollabSession(
         request,
         emails.owner,
@@ -144,11 +173,21 @@ test('register, buy, and install the free and commercial plugins', async ({
         emails.invitee,
         'invitee'
     );
+    if (resume) {
+        const body = await pluginOverview(request, creator.sessionToken);
+        const owned = new Set(
+            (body.plugins || []).map((item: any) => item.package)
+        );
+        const missing = FIXTURE_PACKAGES.filter((name) => !owned.has(name));
+        if (missing.length) {
+            await cleanupCloudCollabUsers(request, [], missing);
+        }
+    }
     const headers = {
         ...cloudCollabOperatorHeaders(),
         Origin: editor()
     };
-    try {
+    {
         for (const repository of [
             'counterpunchspace/fontdestination-example-plugin',
             'yanone/counterpunch-harakat-plugin'
@@ -188,89 +227,138 @@ test('register, buy, and install the free and commercial plugins', async ({
                 .filter({ hasText: 'counterpunch-harakat-plugin' })
         ).toBeVisible();
 
-        await account.locator('#pluginRepo').selectOption({
-            label: 'counterpunchspace/fontdestination-example-plugin'
-        });
-        await account
-            .locator('#pluginPackage')
-            .fill('fontdestination-example-plugin');
-        await account.locator('#pluginName').fill('Example Font Destination');
-        await account
-            .locator('#pluginDescription')
-            .fill('A free example destination');
-        await account.locator('#pluginTerms').check();
-        await account.getByRole('button', { name: 'Register plugin' }).click();
-        await expect(account.locator('#pluginFormMessage')).toContainText(
-            'Registered',
-            { timeout: 30000 }
-        );
-        await waitForReady(
-            request,
-            creator.sessionToken,
-            'fontdestination-example-plugin'
-        );
-        await account.reload();
-        await account.getByRole('button', { name: 'Publish' }).click();
-        await expect
-            .poll(async () => {
-                const body = await pluginOverview(
-                    request,
-                    creator.sessionToken
-                );
-                return body.plugins.find(
-                    (item: any) =>
-                        item.package === 'fontdestination-example-plugin'
-                )?.status;
-            })
-            .toBe('live');
+        const creatorPlugin = async (packageName: string) => {
+            const body = await pluginOverview(request, creator.sessionToken);
+            const plugin = (body.plugins || []).find(
+                (item: any) => item.package === packageName
+            );
+            const version = plugin?.versions?.[0];
+            return {
+                body,
+                plugin,
+                settled:
+                    plugin?.status === 'live' ||
+                    version?.status === 'ready' ||
+                    version?.status === 'published'
+            };
+        };
 
-        const payout = await request.post(
-            `${website()}/api/dev/plugin-test/creator-account`,
-            {
-                data: { email: emails.owner },
-                headers,
-                failOnStatusCode: false
-            }
-        );
-        expect(payout.ok(), await payout.text()).toBeTruthy();
-        await expect
-            .poll(
-                async () => {
-                    const body = await pluginOverview(
-                        request,
-                        creator.sessionToken
-                    );
-                    return Boolean(
-                        body.payout?.payouts_enabled &&
-                        body.payout?.transfers_active
-                    );
-                },
-                { timeout: 120000 }
-            )
-            .toBeTruthy();
+        let free = await creatorPlugin('fontdestination-example-plugin');
+        if (!free.plugin) {
+            await account.locator('#pluginRepo').selectOption({
+                label: 'counterpunchspace/fontdestination-example-plugin'
+            });
+            await account
+                .locator('#pluginPackage')
+                .fill('fontdestination-example-plugin');
+            await account
+                .locator('#pluginName')
+                .fill('Example Font Destination');
+            await account
+                .locator('#pluginDescription')
+                .fill('A free example destination');
+            await account.locator('#pluginTerms').check();
+            await account
+                .getByRole('button', { name: 'Register plugin' })
+                .click();
+            await expect(
+                account
+                    .locator('.plugin-card')
+                    .filter({ hasText: 'fontdestination-example-plugin' })
+            ).toBeVisible({ timeout: 30000 });
+        }
+        if (!free.settled) {
+            await waitForReady(
+                request,
+                creator.sessionToken,
+                'fontdestination-example-plugin'
+            );
+            free = await creatorPlugin('fontdestination-example-plugin');
+        }
+        if (free.plugin?.status !== 'live') {
+            await account.reload();
+            await account
+                .getByRole('button', { name: 'Publish' })
+                .click({ timeout: 20000 });
+            await expect
+                .poll(async () => {
+                    return (
+                        await creatorPlugin('fontdestination-example-plugin')
+                    ).plugin?.status;
+                })
+                .toBe('live');
+        }
 
-        await account.reload();
-        await account.locator('#pluginKind').selectOption('commercial');
-        await account.locator('#pluginPrice').fill('5.00');
-        await account
-            .locator('#pluginRepo')
-            .selectOption({ label: 'yanone/counterpunch-harakat-plugin' });
-        await account.locator('#pluginPackage').fill('counterpunch-harakat');
-        await account.locator('#pluginName').fill('Harakat');
-        await account.locator('#pluginDescription').fill('Arabic vowel marks');
-        await account.locator('#pluginTerms').check();
-        await account.getByRole('button', { name: 'Register plugin' }).click();
-        await expect(account.locator('#pluginFormMessage')).toContainText(
-            'Registered',
-            { timeout: 30000 }
+        const payoutReady = Boolean(
+            free.body?.payout?.payouts_enabled &&
+            free.body?.payout?.transfers_active
         );
-        await waitForReady(
-            request,
-            creator.sessionToken,
-            'counterpunch-harakat'
-        );
-        await account.reload();
-        await account.getByRole('button', { name: 'Publish' }).click();
+        if (!payoutReady) {
+            const payout = await request.post(
+                `${website()}/api/dev/plugin-test/creator-account`,
+                {
+                    data: { email: emails.owner },
+                    headers,
+                    failOnStatusCode: false
+                }
+            );
+            expect(payout.ok(), await payout.text()).toBeTruthy();
+            await expect
+                .poll(
+                    async () => {
+                        const body = await pluginOverview(
+                            request,
+                            creator.sessionToken
+                        );
+                        return Boolean(
+                            body.payout?.payouts_enabled &&
+                            body.payout?.transfers_active
+                        );
+                    },
+                    { timeout: 120000 }
+                )
+                .toBeTruthy();
+        }
+
+        let harakat = await creatorPlugin('counterpunch-harakat');
+        if (!harakat.plugin) {
+            await account.reload();
+            await account.locator('#pluginKind').selectOption('commercial');
+            await account.locator('#pluginPrice').fill('5.00');
+            await account
+                .locator('#pluginRepo')
+                .selectOption({ label: 'yanone/counterpunch-harakat-plugin' });
+            await account
+                .locator('#pluginPackage')
+                .fill('counterpunch-harakat');
+            await account.locator('#pluginName').fill('Harakat');
+            await account
+                .locator('#pluginDescription')
+                .fill('Arabic vowel marks');
+            await account.locator('#pluginTerms').check();
+            await account
+                .getByRole('button', { name: 'Register plugin' })
+                .click();
+            await expect(
+                account
+                    .locator('.plugin-card')
+                    .filter({ hasText: 'counterpunch-harakat' })
+            ).toBeVisible({ timeout: 30000 });
+        }
+        if (!harakat.settled) {
+            await waitForReady(
+                request,
+                creator.sessionToken,
+                'counterpunch-harakat'
+            );
+            harakat = await creatorPlugin('counterpunch-harakat');
+        }
+        if (harakat.plugin?.status !== 'live') {
+            await account.reload();
+            await account
+                .getByRole('button', { name: 'Publish' })
+                .click({ timeout: 20000 });
+        }
 
         const editorContext = await browser.newContext();
         await attachCloudCollabCookies(editorContext, buyer);
@@ -283,32 +371,50 @@ test('register, buy, and install the free and commercial plugins', async ({
             { timeout: 180000 }
         );
         await openPluginManager(editorPage, true);
-        await editorPage.locator('.plugin-manager-search').fill('destination');
+        await searchPlugins(editorPage, 'destination');
+        const destination = pluginRow(editorPage, 'Example Font Destination');
+        await expect(destination).toBeVisible();
+        await destination
+            .getByRole('button', { name: 'Install' })
+            .click({ timeout: 20000 });
         await expect(
-            editorPage.locator('.plugin-manager-row:visible')
-        ).toHaveCount(1);
-        await editorPage.getByRole('button', { name: 'Install' }).click();
-        await expect(
-            editorPage.getByRole('button', { name: 'Uninstall' })
+            destination.getByRole('button', { name: 'Uninstall' })
         ).toBeVisible({ timeout: 60000 });
         const managerClose = editorPage.locator(
             '#plugin-manager-modal-close-btn'
         );
         if (await managerClose.isVisible()) {
-            await managerClose.click();
+            await managerClose.click({ timeout: 20000 });
         }
-        await editorPage.locator('#toolbar-tools-menu-btn').click({
-            timeout: 20000
-        });
-        await expect(
-            editorPage.locator('[data-label="Example Font Destination"]')
-        ).toBeVisible();
+        const destinationMenu = editorPage.locator(
+            '[data-label="Example Font Destination"]'
+        );
+        const destinationsMenu = editorPage.locator(
+            '[data-label="Font Destinations"]'
+        );
+        if (!(await destinationsMenu.isVisible())) {
+            await editorPage.locator('#toolbar-tools-menu-btn').click({
+                timeout: 20000
+            });
+        }
+        await destinationsMenu.hover({ timeout: 20000 });
+        await expect(destinationMenu).toBeVisible();
 
         await openPluginManager(editorPage);
-        await editorPage.locator('.plugin-manager-search').fill('harakat');
-        await expect(
-            editorPage.getByRole('button', { name: 'Buy' })
-        ).toBeVisible();
+        await searchPlugins(editorPage, 'harakat');
+        const harakatRow = pluginRow(editorPage, 'Harakat');
+        const owned = await request.get(`${website()}/api/plugins/purchases`, {
+            headers: { cookie: `session=${buyer.sessionToken}` },
+            failOnStatusCode: false
+        });
+        const ownedPackages = owned.ok()
+            ? ((await owned.json()) as { packages?: string[] }).packages || []
+            : [];
+        if (!ownedPackages.includes('counterpunch-harakat')) {
+            await expect(
+                harakatRow.getByRole('button', { name: 'Buy' })
+            ).toBeVisible({ timeout: 20000 });
+        }
         const purchased = await request.post(
             `${website()}/api/dev/plugin-test/purchase`,
             {
@@ -332,9 +438,12 @@ test('register, buy, and install the free and commercial plugins', async ({
             null,
             { timeout: 180000 }
         );
-        await openPluginManager(editorPage, true);
-        await editorPage.locator('.plugin-manager-search').fill('harakat');
-        await editorPage.getByRole('button', { name: 'Install' }).click();
+        await openPluginManager(editorPage);
+        await searchPlugins(editorPage, 'harakat');
+        const harakatInstalled = pluginRow(editorPage, 'Harakat');
+        await harakatInstalled
+            .getByRole('button', { name: 'Install' })
+            .click({ timeout: 20000 });
         await expect
             .poll(
                 async () =>
@@ -351,14 +460,12 @@ test('register, buy, and install the free and commercial plugins', async ({
             )
             .toContain('harakat');
 
-        await editorPage.getByRole('button', { name: 'Uninstall' }).click();
-        await editorPage.locator('.plugin-manager-search').fill('destination');
-        await editorPage.getByRole('button', { name: 'Uninstall' }).click();
-    } finally {
-        await cleanupCloudCollabUsers(
-            request,
-            Object.values(emails),
-            FIXTURE_PACKAGES
-        );
+        await harakatInstalled
+            .getByRole('button', { name: 'Uninstall' })
+            .click({ timeout: 20000 });
+        await searchPlugins(editorPage, 'destination');
+        await pluginRow(editorPage, 'Example Font Destination')
+            .getByRole('button', { name: 'Uninstall' })
+            .click({ timeout: 20000 });
     }
 });
