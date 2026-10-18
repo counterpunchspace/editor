@@ -8,6 +8,8 @@ import {
     writePluginSettingValue
 } from './babelfont-model';
 
+const { waitForFontEditorReady } = require('./editor-startup-ready.js');
+
 const COMPILE_FILTERS_KEY = 'com.counterpunch.compile-filters';
 
 export interface CompileFilterInfo {
@@ -43,15 +45,13 @@ let cachedFeatureKey = '';
 let cachedFeatures = '';
 
 function pyodide(): { runPythonAsync(code: string): Promise<unknown> } | null {
-    const host = window as unknown as {
-        pyodide?: { runPythonAsync(code: string): Promise<unknown> };
-        __fontEditorReadyState?: string;
-    };
-    // The _cp_compile_filter* helpers exist only once fonteditor.py has run.
-    if (host.__fontEditorReadyState !== 'ready') {
-        return null;
-    }
-    return host.pyodide ?? null;
+    return (
+        (
+            window as unknown as {
+                pyodide?: { runPythonAsync(code: string): Promise<unknown> };
+            }
+        ).pyodide ?? null
+    );
 }
 
 function pythonString(value: string): string {
@@ -618,8 +618,17 @@ export async function queryTransientAnchors(
     glyphName: string,
     layerId: string
 ): Promise<TransientAnchor[]> {
+    if (!glyphName || !layerId) {
+        return [];
+    }
+    // Glyph windows ask before fonteditor.py has defined the helpers.
+    try {
+        await waitForFontEditorReady();
+    } catch {
+        return [];
+    }
     const python = pyodide();
-    if (!python || !glyphName || !layerId) {
+    if (!python) {
         return [];
     }
     await retireLegacyCompileFilterGuides();

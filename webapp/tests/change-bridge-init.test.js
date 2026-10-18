@@ -3312,7 +3312,8 @@ describe('bridge Yjs worker callback', () => {
         );
 
         expect(markDirty).toHaveBeenCalledWith(undefined, {
-            requestEditingCompile: false
+            requestEditingCompile: false,
+            keepPendingCompile: true
         });
         expect(requestRecompileWithoutDataChange).not.toHaveBeenCalled();
         expect(updateDirtyIndicator).toHaveBeenCalledTimes(1);

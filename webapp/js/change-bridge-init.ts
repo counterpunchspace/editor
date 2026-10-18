@@ -2988,8 +2988,10 @@ function initializeBridge(detail: {
     bridge.onDirty(() => {
         const fontManager = window.fontManager;
         if (fontManager?.currentFont) {
+            // A compile already in flight must still rerun on the new data.
             fontManager.currentFont.markDirty(undefined, {
-                requestEditingCompile: false
+                requestEditingCompile: false,
+                keepPendingCompile: true
             });
             void fontManager.updateDirtyIndicator();
             window.saveButton?.updateButtonState?.();

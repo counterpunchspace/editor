@@ -382,6 +382,7 @@ export async function collectPageErrors(page: Page): Promise<string[]> {
         if (shouldIgnoreCrossWindowPageError(err.message)) {
             return;
         }
+        console.log(`[pageerror] ${err.stack || err.message}`);
         errors.push(err.message);
     });
     return errors;

@@ -521,11 +521,14 @@ class OpenedFont {
         changeSource?: string,
         options?: {
             requestEditingCompile?: boolean;
+            keepPendingCompile?: boolean;
             compileContext?: EditingCompileContext | null;
         }
     ): void {
         const requestEditingCompile = options?.requestEditingCompile !== false;
-        this.needsRecompile = requestEditingCompile;
+        this.needsRecompile =
+            requestEditingCompile ||
+            (options?.keepPendingCompile === true && this.needsRecompile);
         if (!this.isCloudBacked()) {
             this.hasUnsavedChanges = true;
         }
