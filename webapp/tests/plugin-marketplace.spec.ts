@@ -126,6 +126,10 @@ test('register, buy, and install the free and commercial plugins', async ({
             .fill('A free example destination');
         await account.locator('#pluginTerms').check();
         await account.getByRole('button', { name: 'Register plugin' }).click();
+        await expect(account.locator('#pluginFormMessage')).toContainText(
+            'Registered',
+            { timeout: 30000 }
+        );
         await waitForReady(
             request,
             creator.sessionToken,
@@ -182,6 +186,10 @@ test('register, buy, and install the free and commercial plugins', async ({
         await account.locator('#pluginDescription').fill('Arabic vowel marks');
         await account.locator('#pluginTerms').check();
         await account.getByRole('button', { name: 'Register plugin' }).click();
+        await expect(account.locator('#pluginFormMessage')).toContainText(
+            'Registered',
+            { timeout: 30000 }
+        );
         await waitForReady(
             request,
             creator.sessionToken,
