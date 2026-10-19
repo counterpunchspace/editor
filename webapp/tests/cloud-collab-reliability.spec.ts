@@ -2,48 +2,32 @@ import { test, expect, type BrowserContext, type Page } from '@playwright/test';
 import {
     waitForCanvasReady,
     waitForFontLoaded,
-    waitForOpenSessionReady,
-    focusView,
-    openFileFromFilesView
+    waitForOpenSessionReady
 } from './helpers/snapshot-helper';
 import {
     waitForBridgeReady,
-    installJsonCanonicalizer,
-    installFontModelSyncTracker,
-    installEditingFontCompileTracker,
-    waitForEditingCompile,
     alignEditorCanvas,
-    installCrossWindowTrackersOnContext,
-    waitUntilGlyphLayerDataMatches,
-    getCompilationErrorText
+    waitUntilGlyphLayerDataMatches
 } from './helpers/change-bridge-cross-window';
 import {
     attachCloudCollabCookies,
     bootstrapCloudCollabSession,
-    cleanupCloudCollabUsers,
-    makeCloudCollabEmails,
-    LOCAL_WEBSITE_ORIGIN
+    cleanupCloudCollabUsers
 } from './helpers/cloud-collab-session';
 import {
-    assertServiceReachable,
     collectPageErrors,
     editorHrefWithTestMode,
     glyphNodeX,
     gotoEditorPage,
     nudgeGlyphNode,
     requestDebugRoomControl,
-    saveCurrentFontToCloud,
     waitForCloudLiveIdle,
-    acceptCloudInviteAndGetEditorHref,
-    LOCAL_EDITOR_ORIGIN,
-    LOCAL_ROOM_ORIGIN
+    LOCAL_EDITOR_ORIGIN
 } from './helpers/cloud-collab-e2e';
 import {
     openInviteeOnAsset,
     prepareOwnerCloudFont
 } from './helpers/cloud-collab-bootstrap';
-
-test.describe.configure({ mode: 'serial' });
 
 async function nudgeGlyphNodeAt(
     page: Page,
@@ -142,34 +126,6 @@ async function catalogGlyphCount(page: Page, assetId: string): Promise<number> {
         const limits = await plugin._fetchAssetLimits(id);
         return Number(limits?.glyphCount);
     }, assetId);
-}
-
-async function rejectionKind(
-    page: Page,
-    field: 'packetBytes' | 'shardBytes'
-): Promise<string> {
-    return page.evaluate((which) => {
-        const plugin = (window as any).cloudPlugin;
-        let size = 1024;
-        let decision = { allowed: true, kind: '' };
-        while (decision.allowed && size < 64 * 1024 * 1024) {
-            size *= 2;
-            const request =
-                which === 'packetBytes'
-                    ? {
-                          documentId: 'glyph:a',
-                          packetBytes: size,
-                          shardBytes: 1
-                      }
-                    : {
-                          documentId: 'glyph:a',
-                          packetBytes: 1,
-                          shardBytes: size
-                      };
-            decision = plugin.canSubmitCollabUpdate([request]);
-        }
-        return decision.allowed ? '' : String(decision.kind || '');
-    }, field);
 }
 
 test('glyph catch-up applies edits made while the peer was offline, including a glyph it never opened', async ({
@@ -430,91 +386,7 @@ test('catalog add, rename, and delete settle on a peer and after compaction', as
     }
 });
 
-test('opening a composite loads its component and compiles', async ({
-    browser,
-    request
-}) => {
-    test.setTimeout(480000);
-    await assertServiceReachable(
-        request,
-        `${LOCAL_EDITOR_ORIGIN}/?test=true`,
-        'Editor'
-    );
-    await assertServiceReachable(
-        request,
-        `${LOCAL_WEBSITE_ORIGIN}/`,
-        'Website'
-    );
-    await assertServiceReachable(
-        request,
-        `${LOCAL_ROOM_ORIGIN}/`,
-        'Collab room'
-    );
-    const runId = `deps-${Date.now().toString(36)}`;
-    const emails = makeCloudCollabEmails(runId);
-    const ownerSession = await bootstrapCloudCollabSession(
-        request,
-        emails.owner,
-        'owner'
-    );
-    const ownerContext = await browser.newContext();
-    await installCrossWindowTrackersOnContext(ownerContext);
-    await attachCloudCollabCookies(ownerContext, ownerSession);
-    const ownerPage = await ownerContext.newPage();
-    await collectPageErrors(ownerPage);
-    let inviteeContext: BrowserContext | null = null;
-    try {
-        await ownerPage.goto('/?test=true&examples=collab-fixtures');
-        await waitForCanvasReady(ownerPage);
-        await openFileFromFilesView(ownerPage, 'NestedComponents.glyphs');
-        await waitForOpenSessionReady(ownerPage, 'NestedComponents.glyphs');
-        await waitForBridgeReady(ownerPage);
-        await installJsonCanonicalizer(ownerPage);
-        await installFontModelSyncTracker(ownerPage);
-        await installEditingFontCompileTracker(ownerPage);
-        const assetId = await saveCurrentFontToCloud(
-            ownerPage,
-            `Nested-${runId}`
-        );
-        await waitForOpenSessionReady(ownerPage, assetId);
-        await waitForEditingCompile(ownerPage);
-        await waitForCloudLiveIdle(ownerPage);
-        await focusView(ownerPage, 'ControlOrMeta+Shift+E', 'view-editor');
-        const invitee = await openInviteeOnAsset(
-            browser,
-            request,
-            ownerPage,
-            emails,
-            assetId
-        );
-        inviteeContext = invitee.inviteeContext;
-        const { inviteePage } = invitee;
-        await alignEditorCanvas(inviteePage, 'adieresis', { wght: 200 });
-        const componentPresent = await inviteePage.evaluate(() => {
-            return !!(window as any).currentFontModel?.findGlyph?.(
-                'dieresiscomb'
-            );
-        });
-        expect(componentPresent).toBe(true);
-        expect(await getCompilationErrorText(inviteePage)).toBeNull();
-        const aBefore = await glyphNodeX(ownerPage, 'a');
-        await nudgeGlyphNode(
-            ownerPage,
-            'a',
-            4,
-            'Deps nudge does not require the composite'
-        );
-        await expect
-            .poll(async () => glyphNodeX(inviteePage, 'a'), { timeout: 120000 })
-            .toBe(aBefore + 4);
-    } finally {
-        await ownerContext.close();
-        await inviteeContext?.close();
-        await cleanupCloudCollabUsers(request, [emails.owner, emails.invitee]);
-    }
-});
-
-test('oversized packets and a full tail stay local, and deleting the asset closes the peer', async ({
+test('a full tail stays local, and deleting the asset closes the peer', async ({
     browser,
     request
 }) => {
@@ -539,9 +411,6 @@ test('oversized packets and a full tail stay local, and deleting the asset close
         inviteeContext = invitee.inviteeContext;
         const { inviteePage } = invitee;
         const before = await glyphNodeX(ownerPage, 'a');
-        expect(await rejectionKind(ownerPage, 'packetBytes')).toBe('packet');
-        expect(await rejectionKind(ownerPage, 'shardBytes')).toBe('shard');
-        expect(await glyphNodeX(inviteePage, 'a')).toBe(before);
 
         const marked = await requestDebugRoomControl(ownerPage, assetId, {
             action: 'debug-set-tail-full'

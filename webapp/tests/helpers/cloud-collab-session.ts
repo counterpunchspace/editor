@@ -124,17 +124,30 @@ export async function cleanupCloudCollabUsers(
     if (packages.length) {
         data.packages = packages;
     }
-    const response = await request.post(
-        `${websiteUrl()}/api/dev/local-cloud-cleanup`,
-        {
-            data,
-            headers: {
-                Origin: LOCAL_EDITOR_ORIGIN,
-                ...cloudCollabOperatorHeaders()
-            },
-            failOnStatusCode: false
+    // Staging D1 and the edge drop connections now and then (ECONNRESET,
+    // "D1_ERROR: Network connection lost"). Cleanup is idempotent.
+    let response;
+    for (let attempt = 1; ; attempt += 1) {
+        try {
+            response = await request.post(
+                `${websiteUrl()}/api/dev/local-cloud-cleanup`,
+                {
+                    data,
+                    headers: {
+                        Origin: LOCAL_EDITOR_ORIGIN,
+                        ...cloudCollabOperatorHeaders()
+                    },
+                    failOnStatusCode: false
+                }
+            );
+        } catch (error) {
+            if (attempt >= 3) throw error;
+            await new Promise((resolve) => setTimeout(resolve, 3000 * attempt));
+            continue;
         }
-    );
+        if (response.status() < 500 || attempt >= 3) break;
+        await new Promise((resolve) => setTimeout(resolve, 3000 * attempt));
+    }
     if (!response.ok()) {
         const detail = await response.text();
         if (
