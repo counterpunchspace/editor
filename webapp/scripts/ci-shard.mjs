@@ -63,6 +63,11 @@ function collectTests(suite, titles, inheritedFile, project, out) {
 }
 
 function listTests(project) {
+    // With an output file set, the JSON reporter writes there instead of stdout.
+    const env = { ...process.env };
+    delete env.PLAYWRIGHT_JSON_OUTPUT_NAME;
+    delete env.PLAYWRIGHT_JSON_OUTPUT_FILE;
+    delete env.PLAYWRIGHT_JSON_OUTPUT_DIR;
     const result = spawnSync(
         'npx',
         [
@@ -72,7 +77,7 @@ function listTests(project) {
             '--reporter=json',
             `--project=${project}`
         ],
-        { cwd: webappRoot, encoding: 'utf8' }
+        { cwd: webappRoot, encoding: 'utf8', env }
     );
     if (result.status !== 0) {
         throw new Error(
