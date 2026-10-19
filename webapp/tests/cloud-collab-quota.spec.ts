@@ -448,12 +448,20 @@ test('revoking a member closes an open glyph shard, and a new invite restores ed
         await waitForOpenSessionReady(inviteePage, opened.assetId, 120000);
         await waitForBridgeReady(inviteePage);
         await alignEditorCanvas(inviteePage, 'a', { wght: 200 });
-        const glyphOpen = await inviteePage.evaluate(() => {
-            const session = (window as any).cloudPlugin?._liveSession;
-            return [...(session?._adapters?.keys?.() || [])].some((id) =>
-                String(id).startsWith('glyph:')
+        const hasGlyphAdapter = () =>
+            inviteePage.evaluate(() => {
+                const session = (window as any).cloudPlugin?._liveSession;
+                return [...(session?._adapters?.keys?.() || [])].some((id) =>
+                    String(id).startsWith('glyph:')
+                );
+            });
+        const glyphOpen = await expect
+            .poll(hasGlyphAdapter, { timeout: 30000 })
+            .toBe(true)
+            .then(
+                () => true,
+                () => false
             );
-        });
         if (!glyphOpen) {
             await dumpLiveSessionState(inviteePage, 'GLYPH_OPEN_DUMP');
         }

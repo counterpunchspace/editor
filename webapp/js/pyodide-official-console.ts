@@ -63,7 +63,7 @@ async function initPyodideConsole() {
         pyconsole = PyodideConsole(pyodide.globals);
 
         namespace = pyodide.globals.get('dict')();
-        await_fut = pyodide.runPython(
+        await_fut = await pyodide.runPythonAsync(
             `
       import builtins
       from pyodide.ffi import to_js

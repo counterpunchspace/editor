@@ -305,6 +305,15 @@ test('register, buy, and install the free and commercial plugins', async ({
             await account
                 .getByRole('button', { name: 'Register plugin' })
                 .click();
+            // The staging edge sometimes answers 502 after the plugin row is written.
+            await expect
+                .poll(
+                    async () =>
+                        Boolean((await creatorPlugin(packageName)).plugin),
+                    { timeout: 60000 }
+                )
+                .toBe(true);
+            await account.reload();
             await expect(
                 account.locator('.plugin-card').filter({ hasText: packageName })
             ).toBeVisible({ timeout: 30000 });
@@ -496,6 +505,10 @@ test('register, buy, and install the free and commercial plugins', async ({
             await accountPage.waitForURL(/checkout\.stripe\.com/, {
                 timeout: 60000
             });
+            // The plugin payment method configuration offers more than cards.
+            await accountPage
+                .locator('[data-testid="card-accordion-item"]')
+                .click();
             await accountPage.locator('#cardNumber').fill('4242424242424242');
             await accountPage.locator('#cardExpiry').fill('12 / 34');
             await accountPage.locator('#cardCvc').fill('123');
