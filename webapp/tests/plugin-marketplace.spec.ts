@@ -157,13 +157,29 @@ async function waitForReady(
 ) {
     const started = Date.now();
     let latest: any = null;
+    let plugin: any = null;
+    let checked = started;
     while (Date.now() - started < 540000) {
         const body = await pluginOverview(request, sessionToken);
-        const plugin = (body.plugins || []).find(
+        plugin = (body.plugins || []).find(
             (item: any) => item.package === packageName
         );
         latest = plugin?.versions?.[0] || null;
         if (latest?.status === 'ready') return latest;
+        // Registration can store the plugin yet fail to queue its import;
+        // creators then press "Check for a new release".
+        if (!latest && Date.now() - checked > 45000) {
+            checked = Date.now();
+            await request.post(
+                `${website()}/api/creator/plugins/${packageName}/check`,
+                {
+                    headers: {
+                        cookie: `session=${sessionToken}`,
+                        origin: website()
+                    }
+                }
+            );
+        }
         if (
             latest?.status === 'static_failed' ||
             latest?.status === 'preflight_failed'
@@ -175,7 +191,7 @@ async function waitForReady(
         await new Promise((resolve) => setTimeout(resolve, 2000));
     }
     throw new Error(
-        `${packageName} did not become ready: ${JSON.stringify(latest)}`
+        `${packageName} did not become ready: ${JSON.stringify(latest)} ${plugin?.last_import_error || ''}`
     );
 }
 
@@ -462,7 +478,7 @@ test('register, buy, and install the free and commercial plugins', async ({
         const destination = pluginRow(editorPage, 'Example Font Destination');
         await expect(destination).toBeVisible();
         await destination
-            .getByRole('button', { name: 'Install' })
+            .getByRole('button', { name: 'Install', exact: true })
             .click({ timeout: 20000 });
         await expect(
             destination.getByRole('button', { name: 'Uninstall' })
@@ -586,7 +602,8 @@ test('register, buy, and install the free and commercial plugins', async ({
         await searchPlugins(editorPage, 'harakat');
         const harakatInstalled = pluginRow(editorPage, 'Harakat');
         const install = harakatInstalled.getByRole('button', {
-            name: 'Install'
+            name: 'Install',
+            exact: true
         });
         const uninstall = harakatInstalled.getByRole('button', {
             name: 'Uninstall'
