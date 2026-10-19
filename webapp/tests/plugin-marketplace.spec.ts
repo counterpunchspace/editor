@@ -335,7 +335,7 @@ test('register, buy, and install the free and commercial plugins', async ({
                     .getByRole('button', { name: 'Set up payouts' })
                     .click();
                 await expect(
-                    account.locator('iframe[src*="stripe.com"]')
+                    account.locator('stripe-connect-account-onboarding')
                 ).toBeVisible({
                     timeout: 60000
                 });

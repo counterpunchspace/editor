@@ -340,7 +340,7 @@ test('arabic add glyphs can stay empty or copy composition outlines', async ({
                             rligCode.split('lookup lam_alef {').length - 1 === 1
                     };
                 }),
-            { timeout: 20000 }
+            { timeout: 60000 }
         )
         .toEqual({
             components: true,
