@@ -273,7 +273,12 @@ jobs:
         strategy:
             fail-fast: false
             matrix:
-                shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+                group:
+                    - marketplace
+                    - reliability
+                    - seed-lifecycle
+                    - quota-integrity
+                    - three-window
         steps:
             - name: Checkout editor
               uses: actions/checkout@v4
@@ -301,14 +306,14 @@ jobs:
                   PLAYWRIGHT_JSON_OUTPUT_NAME: test-results/timings.json
               run: |
                   mkdir -p test-results
-                  mapfile -t filters < <(node scripts/ci-shard.mjs --project cloud-collab --shards 10 --index "${{ matrix.shard }}")
+                  mapfile -t filters < <(node scripts/ci-shard.mjs --project cloud-collab --group "${{ matrix.group }}")
                   npx playwright test --project=cloud-collab --reporter=list --reporter=json "${filters[@]}"
 
             - name: Upload Playwright timings
               if: always()
               uses: actions/upload-artifact@v4
               with:
-                  name: playwright-timings-cloud-${{ matrix.shard }}
+                  name: playwright-timings-cloud-${{ matrix.group }}
                   path: webapp/test-results/timings.json
                   if-no-files-found: ignore
 
@@ -316,7 +321,7 @@ jobs:
               if: failure()
               uses: actions/upload-artifact@v4
               with:
-                  name: cloud-collab-e2e-shard-${{ matrix.shard }}
+                  name: cloud-collab-e2e-${{ matrix.group }}
                   path: webapp/test-results
                   if-no-files-found: ignore
 

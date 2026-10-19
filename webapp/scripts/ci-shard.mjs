@@ -116,7 +116,73 @@ function pack(tests, shardCount) {
     return bins;
 }
 
+// Cloud jobs share one staging editor. Duration packing into 10 shards put
+// too many browsers on it at once, and page loads never finished. These groups
+// are the sets that already passed together, with the marketplace test alone.
+const CLOUD_GROUPS = {
+    'marketplace': ['tests/plugin-marketplace.spec.ts'],
+    'reliability': ['tests/cloud-collab-reliability.spec.ts'],
+    'seed-lifecycle': [
+        'tests/cloud-collab-deletion.spec.ts',
+        'tests/cloud-collab-lifecycle.spec.ts',
+        'tests/cloud-collab-offline-reload.spec.ts'
+    ],
+    'quota-integrity': [
+        'tests/cloud-collab-quota.spec.ts',
+        'tests/cloud-collab-p0-integrity.spec.ts'
+    ],
+    'three-window': [
+        'tests/cloud-collab-three-window-sync.spec.ts',
+        'tests/cloud-collab-three-window-relay.spec.ts',
+        'tests/cloud-collab-three-window-reconnect.spec.ts',
+        'tests/cloud-collab-sparse-closure.spec.ts'
+    ]
+};
+
+function cloudGroupFiles(group) {
+    const files = CLOUD_GROUPS[group];
+    if (!files) {
+        throw new Error(
+            `Unknown cloud group "${group}". Expected ${Object.keys(CLOUD_GROUPS).join(', ')}`
+        );
+    }
+    const listed = new Set(listTests('cloud-collab').map((test) => test.file));
+    const assigned = new Map();
+    for (const [name, groupFiles] of Object.entries(CLOUD_GROUPS)) {
+        for (const file of groupFiles) {
+            if (assigned.has(file)) {
+                throw new Error(
+                    `${file} is in both ${assigned.get(file)} and ${name}`
+                );
+            }
+            assigned.set(file, name);
+        }
+    }
+    for (const file of listed) {
+        if (!assigned.has(file)) {
+            throw new Error(`${file} is not in a cloud group`);
+        }
+    }
+    for (const file of assigned.keys()) {
+        if (!listed.has(file)) {
+            throw new Error(`${file} is grouped but not listed`);
+        }
+    }
+    return files;
+}
+
 const project = argValue('project');
+const group = argValue('group');
+if (group) {
+    if (project && project !== 'cloud-collab') {
+        throw new Error('--group is only for the cloud-collab project');
+    }
+    for (const file of cloudGroupFiles(group)) {
+        process.stdout.write(`${file}\n`);
+    }
+    process.exit(0);
+}
+
 const shardCount = Number(argValue('shards'));
 const index = Number(argValue('index'));
 if (!project || !Number.isInteger(shardCount) || shardCount < 1) {
