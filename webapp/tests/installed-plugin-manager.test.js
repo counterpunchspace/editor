@@ -1,7 +1,8 @@
 const {
     comparePluginVersions,
     installedVersionFromFilename,
-    pluginAction
+    pluginAction,
+    revokedWheelPaths
 } = require('../js/installed-plugin-manager.ts');
 
 describe('installed plugin manager', () => {
@@ -54,5 +55,35 @@ describe('installed plugin manager', () => {
         expect(
             pluginAction({ plugin, installedVersion: null, signedIn: false })
         ).toBe('sign-in');
+        expect(
+            pluginAction({
+                plugin: { ...plugin, priceState: 'payment_method' },
+                installedVersion: null,
+                signedIn: true
+            })
+        ).toBe('payment-method');
+        expect(
+            pluginAction({
+                plugin: { ...plugin, priceState: 'ready', grossCents: 595 },
+                installedVersion: null,
+                signedIn: true
+            })
+        ).toBe('buy');
+    });
+
+    test('selects a refunded wheel and leaves an owned wheel', () => {
+        const paths = [
+            '/Plugins/counterpunch_harakat-0.1.18-py3-none-any.whl',
+            '/Plugins/example_plugin-1.0.0-py3-none-any.whl'
+        ];
+        expect(
+            revokedWheelPaths(
+                { revoked: ['counterpunch-harakat'], blocked: [] },
+                paths
+            )
+        ).toEqual([paths[0]]);
+        expect(revokedWheelPaths({ revoked: [], blocked: [] }, paths)).toEqual(
+            []
+        );
     });
 });

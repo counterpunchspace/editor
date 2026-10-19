@@ -309,11 +309,11 @@ describe('glyph rename change-path encoding', () => {
         const segments = [
             'format_specific',
             'com.counterpunch.plugin-settings',
-            'harakat'
+            'de.yanone.harakat'
         ];
         const joined = joinPathWithGlyphSeparator(segments);
         expect(joined).toBe(
-            'format_specific.com\\.counterpunch\\.plugin-settings.harakat'
+            'format_specific.com\\.counterpunch\\.plugin-settings.de\\.yanone\\.harakat'
         );
         expect(getPathSegments(joined)).toEqual(segments);
         expect(getPathSegments('masters.0.name.dflt')).toEqual([

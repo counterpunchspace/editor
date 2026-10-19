@@ -58,6 +58,28 @@ function pythonString(value: string): string {
     return JSON.stringify(value);
 }
 
+const LEGACY_PLUGIN_IDS: Record<string, string> = {
+    harakat: 'de.yanone.harakat'
+};
+let previousPluginIds = new Map<string, string>();
+
+export function rememberPluginIdAliases(
+    plugins: Array<{ types?: { pluginId: string }[]; previousIds?: string[] }>
+): void {
+    const next = new Map<string, string>();
+    for (const plugin of plugins) {
+        const current = plugin.types?.find((type) => type.pluginId)?.pluginId;
+        if (!current) continue;
+        for (const previous of plugin.previousIds || [])
+            next.set(previous, current);
+    }
+    previousPluginIds = next;
+}
+
+export function canonicalPluginId(id: string): string {
+    return previousPluginIds.get(id) || LEGACY_PLUGIN_IDS[id] || id;
+}
+
 export function linkedCompileFilterIds(
     font:
         | {
@@ -70,9 +92,9 @@ export function linkedCompileFilterIds(
     if (!Array.isArray(stored)) {
         return [];
     }
-    return stored.filter(
-        (id): id is string => typeof id === 'string' && id.length > 0
-    );
+    return stored
+        .filter((id): id is string => typeof id === 'string' && id.length > 0)
+        .map((id) => canonicalPluginId(id));
 }
 
 export function setLinkedCompileFilterIds(
@@ -82,7 +104,9 @@ export function setLinkedCompileFilterIds(
     if (!font.format_specific || typeof font.format_specific !== 'object') {
         font.format_specific = {};
     }
-    font.format_specific[COMPILE_FILTERS_KEY] = ids;
+    font.format_specific[COMPILE_FILTERS_KEY] = ids.map((id) =>
+        canonicalPluginId(id)
+    );
 }
 
 export function discoveredCompileFilters(): CompileFilterInfo[] {
@@ -136,13 +160,28 @@ function retireHarakatGuides(font: {
     }
 }
 
+export const HARAKAT_PLUGIN_ID = 'de.yanone.harakat';
+const HARAKAT_LEGACY_PLUGIN_ID = 'harakat';
+
+function harakatSetting(
+    font: {
+        getPluginSetting?: (pluginId: string, settingId: string) => unknown;
+    },
+    settingId: string
+): unknown {
+    return (
+        font.getPluginSetting?.(HARAKAT_PLUGIN_ID, settingId) ??
+        font.getPluginSetting?.(HARAKAT_LEGACY_PLUGIN_ID, settingId)
+    );
+}
+
 export function ensureHarakatMinimums(font: {
     upm?: number;
     masters?: Array<{ id?: string }>;
     getPluginSetting?: (pluginId: string, settingId: string) => unknown;
     format_specific?: Record<string, unknown>;
 }): void {
-    const stored = font.getPluginSetting?.('harakat', 'minimum_by_master');
+    const stored = harakatSetting(font, 'minimum_by_master');
     const settings =
         stored && typeof stored === 'object'
             ? { ...(stored as Record<string, number>) }
@@ -157,7 +196,12 @@ export function ensureHarakatMinimums(font: {
         changed = true;
     }
     if (changed) {
-        writePluginSettingValue(font, 'harakat', 'minimum_by_master', settings);
+        writePluginSettingValue(
+            font,
+            HARAKAT_PLUGIN_ID,
+            'minimum_by_master',
+            settings
+        );
     }
 }
 
@@ -683,13 +727,18 @@ function applyTransientAnchorDecision(
     }
     if (typeof decision.y === 'number') {
         const masterId = decision.masterId || change.masterId;
-        const stored = font.getPluginSetting?.('harakat', 'minimum_by_master');
+        const stored = harakatSetting(font, 'minimum_by_master');
         if (stored && typeof stored === 'object') {
             (stored as Record<string, number>)[masterId] = decision.y;
         } else {
-            writePluginSettingValue(font, 'harakat', 'minimum_by_master', {
-                [masterId]: decision.y
-            });
+            writePluginSettingValue(
+                font,
+                HARAKAT_PLUGIN_ID,
+                'minimum_by_master',
+                {
+                    [masterId]: decision.y
+                }
+            );
         }
     }
     if (decision.clearX !== true && typeof decision.x !== 'number') {
@@ -702,7 +751,7 @@ function applyTransientAnchorDecision(
     }
     writePluginSettingValue(
         layer,
-        'harakat',
+        HARAKAT_PLUGIN_ID,
         'anchor_x',
         decision.clearX ? null : decision.x
     );

@@ -151,7 +151,9 @@ test('register, buy, and install the free and commercial plugins', async ({
     request
 }) => {
     test.setTimeout(600000);
-    const resume = Boolean(process.env.PLUGIN_E2E_RUN_ID);
+    const resume =
+        process.env.PLUGIN_E2E_KEEP === '1' &&
+        Boolean(process.env.PLUGIN_E2E_RUN_ID);
     const emails = makeCloudCollabEmails(
         process.env.PLUGIN_E2E_RUN_ID || `plugin${Date.now()}`
     );
@@ -251,15 +253,13 @@ test('register, buy, and install the free and commercial plugins', async ({
             await expect(account.locator('#pluginPackage')).toHaveValue(
                 'fontdestination-example-plugin'
             );
+            await expect(account.locator('#pluginName')).not.toBeEditable();
+            await expect(
+                account.locator('#pluginDescription')
+            ).not.toBeEditable();
             await expect(
                 account.getByRole('button', { name: 'Register plugin' })
             ).toBeEnabled();
-            await account
-                .locator('#pluginName')
-                .fill('Example Font Destination');
-            await account
-                .locator('#pluginDescription')
-                .fill('A free example destination');
             await account.locator('#pluginTerms').check();
             await account
                 .getByRole('button', { name: 'Register plugin' })
@@ -297,6 +297,21 @@ test('register, buy, and install the free and commercial plugins', async ({
             free.body?.payout?.transfers_active
         );
         if (!payoutReady) {
+            if (!free.body?.payout) {
+                await account.locator('#payoutsTab').click();
+                await expect(account.locator('.message.warning')).toContainText(
+                    'cannot be changed'
+                );
+                await account.locator('#payoutCountry').selectOption('DE');
+                await account
+                    .getByRole('button', { name: 'Set up payouts' })
+                    .click();
+                await expect(
+                    account.locator('iframe[src*="stripe.com"]')
+                ).toBeVisible({
+                    timeout: 60000
+                });
+            }
             const payout = await request.post(
                 `${website()}/api/dev/plugin-test/creator-account`,
                 {
@@ -333,14 +348,25 @@ test('register, buy, and install the free and commercial plugins', async ({
                 'counterpunch-harakat'
             );
             await account.locator('#pluginKind').selectOption('commercial');
+            await account.locator('#pluginPricing').selectOption('ppp');
             await account.locator('#pluginPrice').fill('5.00');
+            await account.locator('#pluginFloor').fill('1.00');
+            await expect(account.locator('#pluginPricePreview')).toContainText(
+                'Cheapest:'
+            );
+            await expect(account.locator('#pluginPricePreview')).toContainText(
+                'Highest:'
+            );
+            await expect(account.locator('#pluginIds')).toHaveValue(
+                /de\.yanone\.harakat/
+            );
+            await expect(account.locator('#pluginName')).not.toBeEditable();
+            await expect(
+                account.locator('#pluginDescription')
+            ).not.toBeEditable();
             await expect(
                 account.getByRole('button', { name: 'Register plugin' })
             ).toBeEnabled();
-            await account.locator('#pluginName').fill('Harakat');
-            await account
-                .locator('#pluginDescription')
-                .fill('Arabic vowel marks');
             await account.locator('#pluginTerms').check();
             await account
                 .getByRole('button', { name: 'Register plugin' })
@@ -418,26 +444,74 @@ test('register, buy, and install the free and commercial plugins', async ({
             : [];
         if (!ownedPackages.includes('counterpunch-harakat')) {
             await expect(
+                editorPage.locator('.plugin-manager-banner')
+            ).toContainText('Add a payment method');
+            await expect(
                 harakatRow.getByRole('button', { name: 'Buy' })
-            ).toBeVisible({ timeout: 20000 });
+            ).toHaveCount(0);
+            const popupPromise = editorContext.waitForEvent('page');
+            await editorPage
+                .locator('.plugin-manager-banner')
+                .getByRole('button', { name: 'Add payment method' })
+                .click();
+            const accountPage = await popupPromise;
+            await accountPage
+                .getByRole('button', { name: 'Add payment method' })
+                .click();
+            await accountPage.waitForURL(/checkout\.stripe\.com/, {
+                timeout: 60000
+            });
+            await accountPage.locator('#cardNumber').fill('4242424242424242');
+            await accountPage.locator('#cardExpiry').fill('12 / 34');
+            await accountPage.locator('#cardCvc').fill('123');
+            await accountPage.locator('#billingName').fill('Plugin Buyer');
+            await accountPage.locator('#billingCountry').selectOption('DE');
+            await accountPage
+                .locator('#billingAddressLine1')
+                .fill('Alexanderplatz 1');
+            await accountPage.locator('#billingPostalCode').fill('10115');
+            await accountPage.locator('#billingLocality').fill('Berlin');
+            await accountPage.locator('button[type="submit"]').click();
+            await expect(accountPage.locator('#paymentInfo')).toContainText(
+                '4242',
+                {
+                    timeout: 60000
+                }
+            );
+            await editorPage.bringToFront();
+            await openPluginManager(editorPage);
+            await searchPlugins(editorPage, 'harakat');
+            const priced = pluginRow(editorPage, 'Harakat');
+            await expect(priced).toContainText('incl.');
+            await expect(priced).toContainText('VAT');
+            await priced.getByRole('button', { name: 'Buy' }).click();
+            await editorPage
+                .locator('.plugin-purchase-card')
+                .getByRole('button', { name: /^Pay / })
+                .click();
+            await expect(
+                editorPage.locator('.plugin-purchase-card')
+            ).toContainText('Purchased');
+            await expect(
+                editorPage.locator('.plugin-purchase-card').getByRole('link', {
+                    name: 'View invoice'
+                })
+            ).toBeVisible();
+            await editorPage
+                .locator('.plugin-purchase-card')
+                .getByRole('button', { name: 'Done' })
+                .click();
         }
-        const purchased = await request.post(
-            `${website()}/api/dev/plugin-test/purchase`,
-            {
-                data: {
-                    email: emails.invitee,
-                    package: 'counterpunch-harakat'
-                },
-                headers,
-                failOnStatusCode: false
-            }
+        const receiptResponse = await request.get(
+            `${website()}/api/dev/plugin-test/receipt?email=${encodeURIComponent(emails.invitee)}&package=counterpunch-harakat`,
+            { headers, failOnStatusCode: false }
         );
-        expect(purchased.ok(), await purchased.text()).toBeTruthy();
-        const receipt = await purchased.json();
-        expect(receipt.amount).toBe(
-            Math.floor(((receipt.gross - receipt.tax - receipt.fee) * 70) / 100)
-        );
-        expect(receipt.destination).toBeTruthy();
+        expect(receiptResponse.ok(), await receiptResponse.text()).toBeTruthy();
+        const receipt = await receiptResponse.json();
+        expect(receipt.invoice.status).toBe('paid');
+        expect(
+            receipt.transfers.filter((row) => row.kind === 'sale')
+        ).toHaveLength(1);
         await editorPage.reload();
         await editorPage.waitForFunction(
             () => Boolean((window as any).pyodide),
@@ -447,9 +521,12 @@ test('register, buy, and install the free and commercial plugins', async ({
         await openPluginManager(editorPage);
         await searchPlugins(editorPage, 'harakat');
         const harakatInstalled = pluginRow(editorPage, 'Harakat');
-        await harakatInstalled
-            .getByRole('button', { name: 'Install' })
-            .click({ timeout: 20000 });
+        const install = harakatInstalled.getByRole('button', {
+            name: 'Install'
+        });
+        if (await install.isVisible()) {
+            await install.click({ timeout: 20000 });
+        }
         await expect
             .poll(
                 async () =>
@@ -466,9 +543,23 @@ test('register, buy, and install the free and commercial plugins', async ({
             )
             .toContain('harakat');
 
-        await harakatInstalled
-            .getByRole('button', { name: 'Uninstall' })
-            .click({ timeout: 20000 });
+        const purchases = await editorContext.newPage();
+        await purchases.goto(`${website()}/account#purchases`);
+        const purchaseRow = purchases
+            .locator('li')
+            .filter({ hasText: 'Harakat' });
+        await expect(purchaseRow).toContainText('Refundable until');
+        purchases.once('dialog', (dialog) => dialog.accept());
+        await purchaseRow
+            .getByRole('button', { name: /Refundable until/ })
+            .click();
+        await expect(purchaseRow).toContainText('Refunded');
+        await editorPage.bringToFront();
+        await expect(editorPage.locator('.plugin-removed-toast')).toContainText(
+            'removed after your refund',
+            { timeout: 60000 }
+        );
+
         await searchPlugins(editorPage, 'destination');
         await pluginRow(editorPage, 'Example Font Destination')
             .getByRole('button', { name: 'Uninstall' })

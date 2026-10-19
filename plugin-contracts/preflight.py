@@ -4,8 +4,13 @@ import importlib.metadata
 import inspect
 import json
 import os
+import re
 import sys
 import traceback
+
+_PLUGIN_ID = re.compile(
+    r"^[a-z0-9]+(?:-[a-z0-9]+)*(?:\.[a-z0-9]+(?:-[a-z0-9]+)*){2,}$"
+)
 
 
 def _emit(kind, name):
@@ -142,6 +147,12 @@ def run(manifest, contracts, fixtures):
     if not declared:
         report["failures"].append("manifest has no plugins")
     for plugin in declared:
+        plugin_id = str(plugin.get("pluginId") or "")
+        if not _PLUGIN_ID.fullmatch(plugin_id):
+            report["failures"].append(
+                f"plugin id {plugin_id or '(missing)'} must be a reverse-domain name with at least three parts"
+            )
+            continue
         spec = by_type.get(plugin.get("type"))
         if not spec:
             report["failures"].append(f"unknown type {plugin.get('type')}")

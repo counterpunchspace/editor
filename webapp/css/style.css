@@ -6451,6 +6451,61 @@ html[data-command-modifier='ctrl'] .shortcut-option-modifier::before {
     box-sizing: border-box;
 }
 
+.plugin-manager-banner {
+    display: grid;
+    gap: 8px;
+    margin-bottom: 12px;
+    padding: 12px;
+    border: 1px solid var(--border-primary);
+    border-radius: 4px;
+    background: var(--background-secondary);
+}
+
+.plugin-manager-banner p {
+    margin: 0;
+}
+
+.plugin-purchase-sheet {
+    position: fixed;
+    inset: 0;
+    z-index: 10000;
+    display: grid;
+    place-items: center;
+    background: rgba(0, 0, 0, 0.45);
+}
+
+.plugin-purchase-card {
+    display: grid;
+    gap: 8px;
+    width: min(420px, calc(100% - 32px));
+    padding: 20px;
+    border-radius: 8px;
+    background: var(--background-primary);
+    color: var(--text-primary);
+}
+
+.plugin-purchase-card h4,
+.plugin-purchase-card p {
+    margin: 0;
+}
+
+.plugin-purchase-actions {
+    display: flex;
+    gap: 8px;
+}
+
+.plugin-purchase-link {
+    border: 0;
+    padding: 0;
+    background: none;
+    color: var(--accent-blue, #00aeef);
+    cursor: pointer;
+}
+
+.plugin-purchase-error {
+    color: var(--accent-red, #c0392b);
+}
+
 .plugin-manager-row {
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;

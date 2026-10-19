@@ -257,7 +257,11 @@ export const PLUGIN_MANIFEST_SCHEMA = {
                     },
                     contract: { type: 'string', pattern: '^[a-z_]+:v[0-9]+$' },
                     entryPoint: { type: 'string', minLength: 1 },
-                    pluginId: { type: 'string', minLength: 1 }
+                    pluginId: {
+                        type: 'string',
+                        pattern:
+                            '^[a-z0-9]+(?:-[a-z0-9]+)*(?:\\.[a-z0-9]+(?:-[a-z0-9]+)*){2,}$'
+                    }
                 }
             }
         }

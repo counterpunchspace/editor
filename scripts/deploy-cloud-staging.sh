@@ -64,6 +64,7 @@ deploy_worker "$COLLAB_ROOT/workers/room"
 (
   cd "$WEBSITE_ROOT"
   npx wrangler d1 execute context_users_staging --remote --yes --file=schema.sql --config wrangler.websitestaging.toml
+  D1_DATABASE=context_users_staging WRANGLER_CONFIG=wrangler.websitestaging.toml node scripts/ensure-receipt-columns.mjs
   (
     cd "$WEBSITE_ROOT/plugins-worker"
     npm install --omit=dev

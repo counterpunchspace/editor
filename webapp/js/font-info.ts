@@ -1275,7 +1275,7 @@ class FontInfoManager {
         // The id list is its own commit. Defaults and leftover guides
         // commit separately so this item stays the compile-filters key.
         await retireLegacyCompileFilterGuides();
-        if (pluginId === 'harakat') {
+        if (pluginId === 'de.yanone.harakat' || pluginId === 'harakat') {
             ensureHarakatMinimums(font);
         } else {
             await setupCompileFilter(pluginId);

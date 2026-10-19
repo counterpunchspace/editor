@@ -1,19 +1,40 @@
 import { editorSupportsContract } from './plugin-contracts.generated';
 import { resolveWebsiteURL } from './website-url';
 
+export type CatalogPriceState =
+    'free' | 'sign_in' | 'payment_method' | 'ready' | 'tax_unavailable';
+
 export type CatalogPlugin = {
     package: string;
     kind: 'free' | 'commercial';
     name: string;
     description: string;
-    priceCents: number;
     currency: 'eur';
     version: string | null;
     filename: string | null;
     sha256: string | null;
     releaseNotes: string | null;
     purchased: boolean;
+    priceState?: CatalogPriceState;
+    netCents?: number;
+    taxCents?: number;
+    grossCents?: number;
+    country?: string;
+    countryName?: string;
     types: { type: string; contract: string; pluginId: string }[];
+    previousIds?: string[];
+    creatorName?: string | null;
+};
+
+export type CatalogBilling = {
+    state: 'sign_in' | 'payment_method' | 'ready';
+    country?: string;
+    countryName?: string;
+    type?: string | null;
+    brand?: string | null;
+    last4?: string | null;
+    wallet?: string | null;
+    email?: string | null;
 };
 
 export type BlockedPlugin = { package: string; versions: string[] };
@@ -21,6 +42,8 @@ export type BlockedPlugin = { package: string; versions: string[] };
 export type CatalogResponse = {
     plugins: CatalogPlugin[];
     blocked: BlockedPlugin[];
+    revoked?: string[];
+    billing?: CatalogBilling;
 };
 
 const DISMISSED_KEY = 'counterpunch.plugin-updates.dismissed';
@@ -51,13 +74,24 @@ export function pluginAction(input: {
     plugin: CatalogPlugin;
     installedVersion: string | null;
     signedIn: boolean;
-}): 'buy' | 'sign-in' | 'install' | 'update' | 'uninstall' | 'incompatible' {
+}):
+    | 'buy'
+    | 'sign-in'
+    | 'payment-method'
+    | 'install'
+    | 'update'
+    | 'uninstall'
+    | 'incompatible' {
     const supported = input.plugin.types.every((type) =>
         editorSupportsContract(type.type, type.contract)
     );
     if (!supported) return 'incompatible';
     if (input.plugin.kind === 'commercial' && !input.plugin.purchased) {
-        return input.signedIn ? 'buy' : 'sign-in';
+        if (!input.signedIn || input.plugin.priceState === 'sign_in') {
+            return 'sign-in';
+        }
+        if (input.plugin.priceState !== 'ready') return 'payment-method';
+        return 'buy';
     }
     if (!input.installedVersion) return 'install';
     if (
@@ -83,13 +117,18 @@ export function contractHeader(): string {
 
 export async function fetchPluginCatalog(): Promise<CatalogResponse> {
     const response = await fetch(`${resolveWebsiteURL()}/api/plugins/catalog`, {
+        credentials: 'include',
         headers: { 'X-Plugin-Contracts': contractHeader() }
     });
     if (!response.ok) {
         throw new Error(`Plugin catalog responded ${response.status}.`);
     }
     const body = (await response.json()) as CatalogResponse;
-    return { plugins: body.plugins || [], blocked: body.blocked || [] };
+    return {
+        plugins: body.plugins || [],
+        blocked: body.blocked || [],
+        billing: body.billing
+    };
 }
 
 export async function fetchPluginPurchases(): Promise<{
@@ -140,14 +179,14 @@ export async function downloadPluginWheel(
     return bytes;
 }
 
-export async function applyBlockedPlugins(
-    blocked: BlockedPlugin[],
+export function revokedWheelPaths(
+    catalog: Pick<CatalogResponse, 'blocked' | 'revoked'>,
     installedPaths: string[]
-): Promise<string[]> {
-    const removed: string[] = [];
-    for (const file of installedPaths) {
+): string[] {
+    const revoked = new Set(catalog.revoked || []);
+    return installedPaths.filter((file) => {
         const name = file.split('/').pop() || '';
-        for (const entry of blocked) {
+        for (const entry of catalog.blocked || []) {
             const prefix = entry.package.replaceAll('-', '_') + '-';
             if (!name.startsWith(prefix)) continue;
             const version = name.slice(prefix.length).split('-')[0];
@@ -155,14 +194,111 @@ export async function applyBlockedPlugins(
                 entry.versions.includes(version) ||
                 entry.versions.includes('*')
             ) {
-                const { fontDestinationPluginManager } =
-                    await import('./font-destination-plugin-manager');
-                await fontDestinationPluginManager.uninstall(file);
-                removed.push(name);
+                return true;
             }
         }
+        for (const packageName of revoked) {
+            if (name.startsWith(packageName.replaceAll('-', '_') + '-'))
+                return true;
+        }
+        return false;
+    });
+}
+
+export async function removeRevokedPlugins(
+    catalog: Pick<CatalogResponse, 'blocked' | 'revoked' | 'plugins'>,
+    installedPaths: string[]
+): Promise<string[]> {
+    const removed: string[] = [];
+    const names = new Map(
+        (catalog.plugins || []).map((plugin) => [plugin.package, plugin.name])
+    );
+    for (const file of revokedWheelPaths(catalog, installedPaths)) {
+        const name = file.split('/').pop() || '';
+        const packageName = [...names.keys()].find((item) =>
+            name.startsWith(item.replaceAll('-', '_') + '-')
+        );
+        const { fontDestinationPluginManager } =
+            await import('./font-destination-plugin-manager');
+        await fontDestinationPluginManager.uninstall(file);
+        removed.push((packageName && names.get(packageName)) || name);
+    }
+    if (removed.length) {
+        const { discoverCompileFilters } =
+            await import('./compile-filter-host');
+        await discoverCompileFilters().catch(() => undefined);
+        showPluginRemovedToast(removed);
     }
     return removed;
+}
+
+export async function applyBlockedPlugins(
+    blocked: BlockedPlugin[],
+    installedPaths: string[]
+): Promise<string[]> {
+    return removeRevokedPlugins({ blocked, plugins: [] }, installedPaths);
+}
+
+function showPluginRemovedToast(names: string[]): void {
+    const text = names
+        .map((name) => `${name} was removed after your refund.`)
+        .join(' ');
+    let toast = document.querySelector('.plugin-removed-toast');
+    if (!toast) {
+        toast = document.createElement('div');
+        toast.className = 'plugin-removed-toast';
+        document.body.appendChild(toast);
+    }
+    toast.textContent = text;
+}
+
+let lastRevocationCheck = 0;
+
+export async function enforcePluginRevocation(force = false): Promise<void> {
+    if (!force && Date.now() - lastRevocationCheck < 60000) return;
+    lastRevocationCheck = Date.now();
+    const catalog = await fetchPluginCatalog();
+    const { rememberPluginIdAliases } = await import('./compile-filter-host');
+    rememberPluginIdAliases(catalog.plugins);
+    const { fontDestinationPluginManager } =
+        await import('./font-destination-plugin-manager');
+    const installed =
+        await fontDestinationPluginManager.getInstalledWheelFiles();
+    await removeRevokedPlugins(
+        catalog,
+        installed.map((file) => file.path)
+    );
+}
+
+export function startPluginRevocationWatch(): void {
+    window.addEventListener('focus', () => {
+        void enforcePluginRevocation(false).catch(() => undefined);
+    });
+    window.setInterval(
+        () => {
+            void enforcePluginRevocation(true).catch(() => undefined);
+        },
+        30 * 60 * 1000
+    );
+}
+
+export async function revokeBeforeReinstall(): Promise<void> {
+    const catalog = await Promise.race([
+        fetchPluginCatalog(),
+        new Promise<CatalogResponse>((_, reject) => {
+            window.setTimeout(() => reject(new Error('catalog timeout')), 4000);
+        })
+    ]);
+    const { rememberPluginIdAliases } = await import('./compile-filter-host');
+    rememberPluginIdAliases(catalog.plugins);
+    const { fontDestinationPluginManager } =
+        await import('./font-destination-plugin-manager');
+    const installed =
+        await fontDestinationPluginManager.getInstalledWheelFiles();
+    await removeRevokedPlugins(
+        catalog,
+        installed.map((file) => file.path)
+    );
 }
 
 export function dismissedUpdates(): Record<string, string> {

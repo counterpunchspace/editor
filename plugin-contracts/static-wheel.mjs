@@ -197,6 +197,9 @@ export function inspectWheel(bytes, filename, options = {}) {
       } else if (plugin.contract !== token && !supported.includes(plugin.contract)) {
         failures.push(`${plugin.pluginId} contract mismatch`);
       }
+      if (!/^[a-z0-9]+(?:-[a-z0-9]+)*(?:\.[a-z0-9]+(?:-[a-z0-9]+)*){2,}$/.test(String(plugin.pluginId || ""))) {
+        failures.push(`plugin id ${plugin.pluginId} must be a reverse-domain name with at least three parts`);
+      }
       if (String(plugin.pluginId).startsWith("space.counterpunch.")) {
         failures.push(`reserved plugin id ${plugin.pluginId}`);
       }

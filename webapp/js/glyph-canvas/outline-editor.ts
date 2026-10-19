@@ -14973,7 +14973,7 @@ export class OutlineEditor {
                 return;
             }
             this._transientAnchors = anchors.map((anchor) => ({
-                pluginId: anchor.pluginId || 'harakat',
+                pluginId: anchor.pluginId || 'de.yanone.harakat',
                 name: anchor.name,
                 x: anchor.x,
                 y: anchor.y,
