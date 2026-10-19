@@ -91,6 +91,28 @@ function pluginRow(page: Page, name: string) {
     return page.locator('.plugin-manager-row').filter({ hasText: name });
 }
 
+async function expectReleasePackage(page: Page, packageName: string) {
+    await expect
+        .poll(
+            async () => {
+                const value = await page.locator('#pluginPackage').inputValue();
+                if (value) return value;
+                const status = (
+                    await page.locator('#pluginReleaseStatus').innerText()
+                ).trim();
+                if (
+                    status &&
+                    !status.startsWith('Checking the latest release')
+                ) {
+                    throw new Error(status);
+                }
+                return '';
+            },
+            { timeout: 90000 }
+        )
+        .toBe(packageName);
+}
+
 async function searchPlugins(page: Page, query: string) {
     const search = page.locator('.plugin-manager-search');
     await search.fill(query, { timeout: 20000 });
@@ -250,7 +272,8 @@ test('register, buy, and install the free and commercial plugins', async ({
             await account.locator('#pluginRepo').selectOption({
                 label: 'counterpunchspace/fontdestination-example-plugin'
             });
-            await expect(account.locator('#pluginPackage')).toHaveValue(
+            await expectReleasePackage(
+                account,
                 'fontdestination-example-plugin'
             );
             await expect(account.locator('#pluginName')).not.toBeEditable();
@@ -349,9 +372,7 @@ test('register, buy, and install the free and commercial plugins', async ({
             await account
                 .locator('#pluginRepo')
                 .selectOption({ label: 'yanone/counterpunch-harakat-plugin' });
-            await expect(account.locator('#pluginPackage')).toHaveValue(
-                'counterpunch-harakat'
-            );
+            await expectReleasePackage(account, 'counterpunch-harakat');
             await account.locator('#pluginKind').selectOption('commercial');
             await account.locator('#pluginPricing').selectOption('ppp');
             await account.locator('#pluginPrice').fill('5.00');
