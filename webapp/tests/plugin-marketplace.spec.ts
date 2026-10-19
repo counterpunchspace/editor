@@ -554,6 +554,42 @@ test('register, buy, and install the free and commercial plugins', async ({
             .getByRole('button', { name: /Refundable until/ })
             .click();
         await expect(purchaseRow).toContainText('Refunded');
+        const again = await request.post(`${website()}/api/plugins/refund`, {
+            headers: {
+                'cookie': `session=${buyer.sessionToken}`,
+                'Origin': website(),
+                'content-type': 'application/json'
+            },
+            data: { package: 'counterpunch-harakat' },
+            failOnStatusCode: false
+        });
+        expect(again.status()).toBe(409);
+        const foreign = await request.post(
+            `${website()}/api/plugins/counterpunch-harakat/purchase`,
+            {
+                headers: {
+                    'cookie': `session=${buyer.sessionToken}`,
+                    'Origin': 'https://evil.example',
+                    'content-type': 'application/json'
+                },
+                data: { expectedGrossCents: 1 },
+                failOnStatusCode: false
+            }
+        );
+        expect(foreign.status()).toBe(403);
+        const unconfirmed = await request.post(
+            `${website()}/api/plugins/counterpunch-harakat/purchase`,
+            {
+                headers: {
+                    'cookie': `session=${buyer.sessionToken}`,
+                    'Origin': editor(),
+                    'content-type': 'application/json'
+                },
+                data: {},
+                failOnStatusCode: false
+            }
+        );
+        expect(unconfirmed.status()).toBe(400);
         await editorPage.bringToFront();
         await expect(editorPage.locator('.plugin-removed-toast')).toContainText(
             'removed after your refund',
