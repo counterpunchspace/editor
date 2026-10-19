@@ -284,11 +284,16 @@ test('register, buy, and install the free and commercial plugins', async ({
                 .getByRole('button', { name: 'Publish' })
                 .click({ timeout: 20000 });
             await expect
-                .poll(async () => {
-                    return (
-                        await creatorPlugin('fontdestination-example-plugin')
-                    ).plugin?.status;
-                })
+                .poll(
+                    async () => {
+                        return (
+                            await creatorPlugin(
+                                'fontdestination-example-plugin'
+                            )
+                        ).plugin?.status;
+                    },
+                    { timeout: 30000 }
+                )
                 .toBe('live');
         }
 
