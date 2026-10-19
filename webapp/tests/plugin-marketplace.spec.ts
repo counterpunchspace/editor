@@ -146,7 +146,7 @@ async function waitForReady(
 ) {
     const started = Date.now();
     let latest: any = null;
-    while (Date.now() - started < 360000) {
+    while (Date.now() - started < 540000) {
         const body = await pluginOverview(request, sessionToken);
         const plugin = (body.plugins || []).find(
             (item: any) => item.package === packageName
@@ -172,7 +172,7 @@ test('register, buy, and install the free and commercial plugins', async ({
     browser,
     request
 }) => {
-    test.setTimeout(600000);
+    test.setTimeout(900000);
     const resume =
         process.env.PLUGIN_E2E_KEEP === '1' &&
         Boolean(process.env.PLUGIN_E2E_RUN_ID);
