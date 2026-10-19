@@ -23,6 +23,7 @@ import {
 import {
     attachCloudCollabCookies,
     bootstrapCloudCollabSession,
+    cloudCollabOperatorHeaders,
     makeCloudCollabEmails,
     LOCAL_WEBSITE_ORIGIN
 } from './cloud-collab-session';
@@ -72,6 +73,18 @@ export async function prepareOwnerCloudFont(
         emails.owner,
         'owner'
     );
+    const limits = await request.post(
+        `${LOCAL_WEBSITE_ORIGIN}/api/dev/local-cloud-limits`,
+        {
+            data: { email: emails.owner, tier: 'unlimited' },
+            headers: cloudCollabOperatorHeaders()
+        }
+    );
+    if (!limits.ok()) {
+        throw new Error(
+            `limits fixture ${limits.status()}: ${await limits.text()}`
+        );
+    }
     const ownerContext = await browser.newContext(
         options?.serviceWorkers
             ? { serviceWorkers: options.serviceWorkers }
