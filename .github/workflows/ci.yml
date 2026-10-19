@@ -12,16 +12,10 @@ permissions:
     contents: read
 
 jobs:
-    # Static checks, jest, Rust and the chromium Playwright project. The
-    # Playwright project is sharded; shard 1 also runs the one-off checks.
-    build:
+    # Graph chokepoints, type drift, protocol bindings, tsc, jest, and Prettier.
+    checks:
         runs-on: ubuntu-latest
-        timeout-minutes: 60
-        strategy:
-            fail-fast: false
-            matrix:
-                shard: [1, 2, 3]
-
+        timeout-minutes: 30
         steps:
             - name: Checkout repository
               uses: actions/checkout@v4
@@ -36,6 +30,90 @@ jobs:
 
             - name: Install LadybugDB native binding
               run: npm rebuild @ladybugdb/core --foreground-scripts
+
+            - name: Install dependencies in webapp
+              run: npm install --prefix webapp
+
+            # The protocol bindings check generates the expected files from collab.
+            - name: Checkout collab for protocol bindings check
+              uses: actions/checkout@v4
+              with:
+                  repository: ${{ vars.COLLAB_REPOSITORY || format('{0}/collab', github.repository_owner) }}
+                  ref: ${{ vars.COLLAB_SHA != '' && vars.COLLAB_SHA || 'main' }}
+                  path: _collab
+                  token: ${{ secrets.CLOUD_E2E_PAT || github.token }}
+
+            # Language-pack checks run pytest via python3 -m pytest. ubuntu-latest
+            # does not ship pytest, and its Python is externally managed.
+            - name: Install language-pack pytest
+              run: sudo apt-get update && sudo apt-get install -y python3-pytest
+
+            - name: Preflight bundled plugin wheels
+              run: node plugin-contracts/generate.mjs && node plugin-contracts/preflight-bundled.mjs && node --test plugin-contracts/supervisor.test.mjs
+
+            - name: Run static checks and jest
+              run: npm run test:checks --prefix webapp
+              env:
+                  COLLAB_ROOT: ${{ github.workspace }}/_collab
+
+            - name: Check code formatting with Prettier
+              run: cd webapp && npx prettier -c .
+
+    rust-wasm:
+        runs-on: ubuntu-latest
+        timeout-minutes: 30
+        steps:
+            - name: Checkout repository
+              uses: actions/checkout@v4
+
+            - name: Set up Node.js
+              uses: actions/setup-node@v4
+              with:
+                  node-version: "22"
+
+            - name: Install dependencies in webapp
+              run: npm install --prefix webapp
+
+            - name: Set up Rust nightly with the WASM target
+              uses: dtolnay/rust-toolchain@nightly
+              with:
+                  targets: wasm32-unknown-unknown
+
+            # jetli/wasm-pack-action renames from /tmp onto ~/.cargo, which is a
+            # different filesystem on the Ubuntu 26 runners.
+            - name: Install wasm-pack
+              run: |
+                  version=0.13.1
+                  archive="wasm-pack-v${version}-x86_64-unknown-linux-musl"
+                  curl -fsSL "https://github.com/rustwasm/wasm-pack/releases/download/v${version}/${archive}.tar.gz" -o "/tmp/${archive}.tar.gz"
+                  tar -xzf "/tmp/${archive}.tar.gz" -C /tmp
+                  mkdir -p "$HOME/.cargo/bin"
+                  cp "/tmp/${archive}/wasm-pack" "$HOME/.cargo/bin/wasm-pack"
+                  "$HOME/.cargo/bin/wasm-pack" --version
+
+            - name: Generate Rust WASM test fixture
+              run: node webapp/compilation-test/compile-test.mjs webapp/examples/Fustat.glyphs
+
+            - name: Run Rust WASM cache tests
+              run: cd babelfont-fontc-build && rustup run nightly wasm-pack test --node
+
+    # Chromium Playwright, split by measured duration rather than whole files.
+    build:
+        runs-on: ubuntu-latest
+        timeout-minutes: 30
+        strategy:
+            fail-fast: false
+            matrix:
+                shard: [1, 2, 3, 4, 5, 6]
+
+        steps:
+            - name: Checkout repository
+              uses: actions/checkout@v4
+
+            - name: Set up Node.js
+              uses: actions/setup-node@v4
+              with:
+                  node-version: "22"
 
             - name: Install dependencies in webapp
               run: npm install --prefix webapp
@@ -65,58 +143,22 @@ jobs:
                   BUILD_HASH_FULL: ${{ steps.version.outputs.commit_full }}
                   BUILD_HASH_SHORT: ${{ steps.version.outputs.commit_short }}
 
-            # The protocol bindings check generates the expected files from collab.
-            - name: Checkout collab for protocol bindings check
-              if: matrix.shard == 1
-              uses: actions/checkout@v4
-              with:
-                  repository: ${{ vars.COLLAB_REPOSITORY || format('{0}/collab', github.repository_owner) }}
-                  ref: ${{ vars.COLLAB_SHA != '' && vars.COLLAB_SHA || 'main' }}
-                  path: _collab
-                  token: ${{ secrets.CLOUD_E2E_PAT || github.token }}
-
-            # Language-pack checks run pytest via python3 -m pytest. ubuntu-latest
-            # does not ship pytest, and its Python is externally managed.
-            - name: Install language-pack pytest
-              if: matrix.shard == 1
-              run: sudo apt-get update && sudo apt-get install -y python3-pytest
-
-            # Graph chokepoints, type drift, protocol bindings, tsc and jest.
-            - name: Preflight bundled plugin wheels
-              if: matrix.shard == 1
-              run: node plugin-contracts/generate.mjs && node plugin-contracts/preflight-bundled.mjs && node --test plugin-contracts/supervisor.test.mjs
-
-            - name: Run static checks and jest
-              if: matrix.shard == 1
-              run: npm run test:checks --prefix webapp
-              env:
-                  COLLAB_ROOT: ${{ github.workspace }}/_collab
-
             - name: Run chromium Playwright shard
-              run: npx playwright test --project=chromium --shard=${{ matrix.shard }}/3
               working-directory: webapp
+              env:
+                  PLAYWRIGHT_JSON_OUTPUT_NAME: test-results/timings.json
+              run: |
+                  mkdir -p test-results
+                  mapfile -t filters < <(node scripts/ci-shard.mjs --project chromium --shards 6 --index "${{ matrix.shard }}")
+                  npx playwright test --project=chromium --reporter=list --reporter=json "${filters[@]}"
 
-            - name: Set up Rust nightly with the WASM target
-              if: matrix.shard == 1
-              uses: dtolnay/rust-toolchain@nightly
+            - name: Upload Playwright timings
+              if: always()
+              uses: actions/upload-artifact@v4
               with:
-                  targets: wasm32-unknown-unknown
-
-            - name: Set up wasm-pack
-              if: matrix.shard == 1
-              uses: jetli/wasm-pack-action@v0.4.0
-
-            - name: Generate Rust WASM test fixture
-              if: matrix.shard == 1
-              run: node webapp/compilation-test/compile-test.mjs webapp/examples/Fustat.glyphs
-
-            - name: Run Rust WASM cache tests
-              if: matrix.shard == 1
-              run: cd babelfont-fontc-build && rustup run nightly wasm-pack test --node
-
-            - name: Check code formatting with Prettier
-              if: matrix.shard == 1
-              run: cd webapp && npx prettier -c .
+                  name: playwright-timings-chromium-${{ matrix.shard }}
+                  path: webapp/test-results/timings.json
+                  if-no-files-found: ignore
 
     # Deploys the trio to the staging hostnames, then the shard job runs the
     # suite there. previewrelease and release repeat that suite before cutover.
@@ -231,7 +273,7 @@ jobs:
         strategy:
             fail-fast: false
             matrix:
-                shard: [1, 2, 3, 4]
+                shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
         steps:
             - name: Checkout editor
               uses: actions/checkout@v4
@@ -248,7 +290,7 @@ jobs:
               run: npx --prefix webapp playwright install --with-deps chromium
 
             - name: Run cloud-collab Playwright on staging
-              run: npm run test:cloud-collab --prefix webapp -- --shard=${{ matrix.shard }}/4
+              working-directory: webapp
               env:
                   CLOUD_COLLAB_E2E: "1"
                   CLOUD_COLLAB_REMOTE: "1"
@@ -256,6 +298,19 @@ jobs:
                   CLOUD_COLLAB_WEBSITE_URL: https://staging.counterpunch.space
                   CLOUD_COLLAB_ROOM_URL: https://staging.rooms.counterpunch.space
                   E2E_OPERATOR_TOKEN: ${{ secrets.E2E_OPERATOR_TOKEN }}
+                  PLAYWRIGHT_JSON_OUTPUT_NAME: test-results/timings.json
+              run: |
+                  mkdir -p test-results
+                  mapfile -t filters < <(node scripts/ci-shard.mjs --project cloud-collab --shards 10 --index "${{ matrix.shard }}")
+                  npx playwright test --project=cloud-collab --reporter=list --reporter=json "${filters[@]}"
+
+            - name: Upload Playwright timings
+              if: always()
+              uses: actions/upload-artifact@v4
+              with:
+                  name: playwright-timings-cloud-${{ matrix.shard }}
+                  path: webapp/test-results/timings.json
+                  if-no-files-found: ignore
 
             - name: Upload Playwright failure evidence
               if: failure()
