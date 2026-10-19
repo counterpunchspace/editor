@@ -679,6 +679,11 @@ test('register, buy, and install the free and commercial plugins', async ({
         );
         expect(unconfirmed.status()).toBe(400);
         await editorPage.bringToFront();
+        // Headless pages get no focus event, so reopen the manager, which
+        // checks the catalog on every render.
+        await editorPage.locator('#plugin-manager-modal-close-btn').click();
+        await expect(editorPage.locator('#plugin-manager-modal')).toBeHidden();
+        await openPluginManager(editorPage);
         await expect(editorPage.locator('.plugin-removed-toast')).toContainText(
             'removed after your refund',
             { timeout: 60000 }
