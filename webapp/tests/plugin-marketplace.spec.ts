@@ -552,9 +552,10 @@ test('register, buy, and install the free and commercial plugins', async ({
                 .locator('.plugin-purchase-card')
                 .getByRole('button', { name: /^Pay / })
                 .click();
+            // Tax, invoice, and charge are separate Stripe calls.
             await expect(
                 editorPage.locator('.plugin-purchase-card')
-            ).toContainText('Purchased');
+            ).toContainText('Purchased', { timeout: 60000 });
             await expect(
                 editorPage.locator('.plugin-purchase-card').getByRole('link', {
                     name: 'View invoice'
