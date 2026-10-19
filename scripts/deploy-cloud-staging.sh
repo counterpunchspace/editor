@@ -35,7 +35,10 @@ if [ "$PHASE" = "editor" ]; then
   fi
   (
     cd "$EDITOR_ROOT"
-    npx wrangler pages deploy ./webapp/build --project-name=editorstaging --branch main --commit-dirty=true
+    # The repo root has no wrangler, so npx fetches one. npm sometimes skips
+    # workerd's platform binary, which leaves a broken npx cache.
+    deploy() { npx wrangler pages deploy ./webapp/build --project-name=editorstaging --branch main --commit-dirty=true; }
+    deploy || { rm -rf "$(npm config get cache)/_npx"; deploy; }
   )
   exit 0
 fi
