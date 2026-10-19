@@ -57,6 +57,8 @@ deploy_worker() {
   )
 }
 
+echo "Staging collab $(git -C "$COLLAB_ROOT" rev-parse --short HEAD) website $(git -C "$WEBSITE_ROOT" rev-parse --short HEAD)"
+
 deploy_worker "$COLLAB_ROOT/workers/validator"
 deploy_worker "$COLLAB_ROOT/workers/compactor"
 deploy_worker "$COLLAB_ROOT/workers/room"
