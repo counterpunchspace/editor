@@ -11,6 +11,12 @@ on:
 permissions:
     contents: read
 
+# Every cloud job shares one staging stack; a newer push replaces the older run
+# instead of redeploying staging under its tests.
+concurrency:
+    group: ci-${{ github.ref }}
+    cancel-in-progress: true
+
 jobs:
     # Graph chokepoints, type drift, protocol bindings, tsc, jest, and Prettier.
     checks:
@@ -97,14 +103,21 @@ jobs:
             - name: Run Rust WASM cache tests
               run: cd babelfont-fontc-build && rustup run nightly wasm-pack test --node
 
-    # Chromium Playwright, split by measured duration rather than whole files.
+    # Chromium Playwright, one named file group per job (scripts/ci-shard.mjs).
     build:
+        name: chromium · ${{ matrix.group }}
         runs-on: ubuntu-latest
         timeout-minutes: 30
         strategy:
             fail-fast: false
             matrix:
-                shard: [1, 2, 3, 4, 5, 6]
+                group:
+                    - language-packs
+                    - linked-windows
+                    - startup-and-files
+                    - path-editing
+                    - anchors-and-components
+                    - python-sync-compile
 
         steps:
             - name: Checkout repository
@@ -143,20 +156,22 @@ jobs:
                   BUILD_HASH_FULL: ${{ steps.version.outputs.commit_full }}
                   BUILD_HASH_SHORT: ${{ steps.version.outputs.commit_short }}
 
-            - name: Run chromium Playwright shard
+            - name: Run chromium Playwright group
               working-directory: webapp
               env:
                   PLAYWRIGHT_JSON_OUTPUT_NAME: test-results/timings.json
               run: |
                   mkdir -p test-results
-                  mapfile -t filters < <(node scripts/ci-shard.mjs --project chromium --shards 6 --index "${{ matrix.shard }}")
+                  node scripts/ci-shard.mjs --project chromium --group "${{ matrix.group }}" > test-results/filters.txt
+                  mapfile -t filters < test-results/filters.txt
+                  [ "${#filters[@]}" -gt 0 ]
                   npx playwright test --project=chromium --reporter=list --reporter=json "${filters[@]}"
 
             - name: Upload Playwright timings
               if: always()
               uses: actions/upload-artifact@v4
               with:
-                  name: playwright-timings-chromium-${{ matrix.shard }}
+                  name: playwright-timings-chromium-${{ matrix.group }}
                   path: webapp/test-results/timings.json
                   if-no-files-found: ignore
 
@@ -267,6 +282,7 @@ jobs:
                   path: attestation/cloud-e2e-trio.json
 
     cloud-collab-e2e:
+        name: cloud · ${{ matrix.group }}
         needs: cloud-collab-staging-deploy
         runs-on: ubuntu-latest
         timeout-minutes: 90
@@ -275,9 +291,10 @@ jobs:
             matrix:
                 group:
                     - marketplace
-                    - reliability
-                    - seed-lifecycle
-                    - quota-integrity
+                    - offline-catchup
+                    - compaction-integrity
+                    - seed-quota
+                    - deletion-sparse
                     - three-window
         steps:
             - name: Checkout editor
@@ -306,7 +323,9 @@ jobs:
                   PLAYWRIGHT_JSON_OUTPUT_NAME: test-results/timings.json
               run: |
                   mkdir -p test-results
-                  mapfile -t filters < <(node scripts/ci-shard.mjs --project cloud-collab --group "${{ matrix.group }}")
+                  node scripts/ci-shard.mjs --project cloud-collab --group "${{ matrix.group }}" > test-results/filters.txt
+                  mapfile -t filters < test-results/filters.txt
+                  [ "${#filters[@]}" -gt 0 ]
                   npx playwright test --project=cloud-collab --reporter=list --reporter=json "${filters[@]}"
 
             - name: Upload Playwright timings
