@@ -161,7 +161,7 @@ async function waitForReady(
                 `${packageName} preflight failed: ${JSON.stringify(latest.report)}`
             );
         }
-        await new Promise((resolve) => setTimeout(resolve, 5000));
+        await new Promise((resolve) => setTimeout(resolve, 2000));
     }
     throw new Error(
         `${packageName} did not become ready: ${JSON.stringify(latest)}`
@@ -267,15 +267,32 @@ test('register, buy, and install the free and commercial plugins', async ({
             };
         };
 
-        let free = await creatorPlugin('fontdestination-example-plugin');
-        if (!free.plugin) {
-            await account.locator('#pluginRepo').selectOption({
-                label: 'counterpunchspace/fontdestination-example-plugin'
-            });
-            await expectReleasePackage(
-                account,
-                'fontdestination-example-plugin'
-            );
+        const registerPlugin = async (
+            repository: string,
+            packageName: string,
+            commercial: boolean
+        ) => {
+            await account.reload();
+            await account.getByRole('tab', { name: 'Plugins' }).click();
+            await account
+                .locator('#pluginRepo')
+                .selectOption({ label: repository });
+            await expectReleasePackage(account, packageName);
+            if (commercial) {
+                await account.locator('#pluginKind').selectOption('commercial');
+                await account.locator('#pluginPricing').selectOption('ppp');
+                await account.locator('#pluginPrice').fill('5.00');
+                await account.locator('#pluginFloor').fill('1.00');
+                await expect(
+                    account.locator('#pluginPricePreview')
+                ).toContainText('Cheapest:');
+                await expect(
+                    account.locator('#pluginPricePreview')
+                ).toContainText('Highest:');
+                await expect(account.locator('#pluginIds')).toHaveValue(
+                    /de\.yanone\.harakat/
+                );
+            }
             await expect(account.locator('#pluginName')).not.toBeEditable();
             await expect(
                 account.locator('#pluginDescription')
@@ -288,44 +305,45 @@ test('register, buy, and install the free and commercial plugins', async ({
                 .getByRole('button', { name: 'Register plugin' })
                 .click();
             await expect(
-                account
-                    .locator('.plugin-card')
-                    .filter({ hasText: 'fontdestination-example-plugin' })
+                account.locator('.plugin-card').filter({ hasText: packageName })
             ).toBeVisible({ timeout: 30000 });
-        }
-        if (!free.settled) {
-            await waitForReady(
-                request,
-                creator.sessionToken,
-                'fontdestination-example-plugin'
-            );
-            free = await creatorPlugin('fontdestination-example-plugin');
-        }
-        if (free.plugin?.status !== 'live') {
+        };
+
+        const publishPlugin = async (packageName: string) => {
             await account.reload();
+            await account.getByRole('tab', { name: 'Plugins' }).click();
             await account
+                .locator('.plugin-card')
+                .filter({ hasText: packageName })
                 .getByRole('button', { name: 'Publish' })
                 .click({ timeout: 20000 });
             await expect
                 .poll(
-                    async () => {
-                        return (
-                            await creatorPlugin(
-                                'fontdestination-example-plugin'
-                            )
-                        ).plugin?.status;
-                    },
+                    async () =>
+                        (await creatorPlugin(packageName)).plugin?.status,
                     { timeout: 30000 }
                 )
                 .toBe('live');
+        };
+
+        // Both preflights run while payouts are set up and the buyer's editor
+        // loads, instead of one after another.
+        let free = await creatorPlugin('fontdestination-example-plugin');
+        if (!free.plugin) {
+            await registerPlugin(
+                'counterpunchspace/fontdestination-example-plugin',
+                'fontdestination-example-plugin',
+                false
+            );
         }
 
+        const overview = await pluginOverview(request, creator.sessionToken);
         const payoutReady = Boolean(
-            free.body?.payout?.payouts_enabled &&
-            free.body?.payout?.transfers_active
+            overview.payout?.payouts_enabled &&
+            overview.payout?.transfers_active
         );
         if (!payoutReady) {
-            if (!free.body?.payout) {
+            if (!overview.payout) {
                 await account.locator('#payoutsTab').click();
                 await expect(account.locator('.message.warning')).toContainText(
                     'cannot be changed'
@@ -368,56 +386,11 @@ test('register, buy, and install the free and commercial plugins', async ({
 
         let harakat = await creatorPlugin('counterpunch-harakat');
         if (!harakat.plugin) {
-            await account.reload();
-            await account.getByRole('tab', { name: 'Plugins' }).click();
-            await account
-                .locator('#pluginRepo')
-                .selectOption({ label: 'yanone/counterpunch-harakat-plugin' });
-            await expectReleasePackage(account, 'counterpunch-harakat');
-            await account.locator('#pluginKind').selectOption('commercial');
-            await account.locator('#pluginPricing').selectOption('ppp');
-            await account.locator('#pluginPrice').fill('5.00');
-            await account.locator('#pluginFloor').fill('1.00');
-            await expect(account.locator('#pluginPricePreview')).toContainText(
-                'Cheapest:'
+            await registerPlugin(
+                'yanone/counterpunch-harakat-plugin',
+                'counterpunch-harakat',
+                true
             );
-            await expect(account.locator('#pluginPricePreview')).toContainText(
-                'Highest:'
-            );
-            await expect(account.locator('#pluginIds')).toHaveValue(
-                /de\.yanone\.harakat/
-            );
-            await expect(account.locator('#pluginName')).not.toBeEditable();
-            await expect(
-                account.locator('#pluginDescription')
-            ).not.toBeEditable();
-            await expect(
-                account.getByRole('button', { name: 'Register plugin' })
-            ).toBeEnabled();
-            await account.locator('#pluginTerms').check();
-            await account
-                .getByRole('button', { name: 'Register plugin' })
-                .click();
-            await expect(
-                account
-                    .locator('.plugin-card')
-                    .filter({ hasText: 'counterpunch-harakat' })
-            ).toBeVisible({ timeout: 30000 });
-        }
-        if (!harakat.settled) {
-            await waitForReady(
-                request,
-                creator.sessionToken,
-                'counterpunch-harakat'
-            );
-            harakat = await creatorPlugin('counterpunch-harakat');
-        }
-        if (harakat.plugin?.status !== 'live') {
-            await account.reload();
-            await account.getByRole('tab', { name: 'Plugins' }).click();
-            await account
-                .getByRole('button', { name: 'Publish' })
-                .click({ timeout: 20000 });
         }
 
         const editorContext = await browser.newContext();
@@ -425,6 +398,38 @@ test('register, buy, and install the free and commercial plugins', async ({
         const editorPage = await editorContext.newPage();
         await prepareEditorPluginStorage(editorPage);
         await editorPage.goto(editor());
+
+        free = await creatorPlugin('fontdestination-example-plugin');
+        harakat = await creatorPlugin('counterpunch-harakat');
+        await Promise.all([
+            free.settled
+                ? null
+                : waitForReady(
+                      request,
+                      creator.sessionToken,
+                      'fontdestination-example-plugin'
+                  ),
+            harakat.settled
+                ? null
+                : waitForReady(
+                      request,
+                      creator.sessionToken,
+                      'counterpunch-harakat'
+                  )
+        ]);
+        if (
+            (await creatorPlugin('fontdestination-example-plugin')).plugin
+                ?.status !== 'live'
+        ) {
+            await publishPlugin('fontdestination-example-plugin');
+        }
+        if (
+            (await creatorPlugin('counterpunch-harakat')).plugin?.status !==
+            'live'
+        ) {
+            await publishPlugin('counterpunch-harakat');
+        }
+
         await editorPage.waitForFunction(
             () => Boolean((window as any).pyodide),
             null,
