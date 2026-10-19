@@ -369,6 +369,7 @@ test('register, buy, and install the free and commercial plugins', async ({
         let harakat = await creatorPlugin('counterpunch-harakat');
         if (!harakat.plugin) {
             await account.reload();
+            await account.getByRole('tab', { name: 'Plugins' }).click();
             await account
                 .locator('#pluginRepo')
                 .selectOption({ label: 'yanone/counterpunch-harakat-plugin' });
@@ -413,6 +414,7 @@ test('register, buy, and install the free and commercial plugins', async ({
         }
         if (harakat.plugin?.status !== 'live') {
             await account.reload();
+            await account.getByRole('tab', { name: 'Plugins' }).click();
             await account
                 .getByRole('button', { name: 'Publish' })
                 .click({ timeout: 20000 });
