@@ -588,6 +588,10 @@ test('register, buy, and install the free and commercial plugins', async ({
         const install = harakatInstalled.getByRole('button', {
             name: 'Install'
         });
+        const uninstall = harakatInstalled.getByRole('button', {
+            name: 'Uninstall'
+        });
+        await expect(install.or(uninstall)).toBeVisible({ timeout: 30000 });
         if (await install.isVisible()) {
             await install.click({ timeout: 20000 });
         }
@@ -612,12 +616,15 @@ test('register, buy, and install the free and commercial plugins', async ({
         const purchaseRow = purchases
             .locator('li')
             .filter({ hasText: 'Harakat' });
-        await expect(purchaseRow).toContainText('Refundable until');
+        await expect(purchaseRow).toContainText('Refundable until', {
+            timeout: 30000
+        });
         purchases.once('dialog', (dialog) => dialog.accept());
         await purchaseRow
             .getByRole('button', { name: /Refundable until/ })
             .click();
-        await expect(purchaseRow).toContainText('Refunded');
+        // Refund, transfer reversal, and credit note are separate Stripe calls.
+        await expect(purchaseRow).toContainText('Refunded', { timeout: 60000 });
         const again = await request.post(`${website()}/api/plugins/refund`, {
             headers: {
                 'cookie': `session=${buyer.sessionToken}`,
