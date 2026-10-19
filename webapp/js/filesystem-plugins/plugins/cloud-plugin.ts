@@ -2708,11 +2708,10 @@ export class CloudPlugin extends FilesystemPlugin {
         if (state.forbidden) {
             return;
         }
-        const live = new Set(
-            listGlyphRecords(this._currentFontJson() || {})
-                .map((glyph) => String(glyph.id || ''))
-                .filter(Boolean)
-        );
+        const live = this._liveCatalogGlyphIds();
+        if (!live) {
+            return;
+        }
         const body: { mark?: string[]; clear?: string[]; live?: string[] } = {};
         if (!state.reconciled) {
             if (live.size > GLYPH_ORPHAN_LIVE_LIST_LIMIT) {
@@ -2761,6 +2760,34 @@ export class CloudPlugin extends FilesystemPlugin {
         } catch (error) {
             console.warn('Glyph orphan sync failed:', error);
         }
+    }
+
+    /**
+     * Every glyph id in the catalog, or null when this window cannot see the
+     * whole catalog. Anything missing from the result is scheduled for purge,
+     * so a partial list must never be returned: sparse sessions only hold
+     * resident glyphs in the model and read the catalog instead.
+     */
+    private _liveCatalogGlyphIds(): Set<string> | null {
+        if (window.windowRole?.isLinkedWindow?.()) {
+            return null;
+        }
+        const bridge = window.patchSyncEngine;
+        if (bridge?.hasSparseWorkingSet?.()) {
+            bridge.refreshOwnedCatalogFromYDoc?.();
+            const owned = catalogFromCoreJson(
+                this._currentFontJson() ||
+                    getCloudFontJsonFromBridge(bridge) ||
+                    {}
+            );
+            return owned
+                ? new Set(liveCatalogGlyphIds(owned.glyphCatalog))
+                : null;
+        }
+        const ids = listGlyphRecords(this._currentFontJson() || {}).map(
+            (glyph) => (typeof glyph.id === 'string' ? glyph.id : '')
+        );
+        return ids.every(Boolean) ? new Set(ids) : null;
     }
 
     private async _drainCatalogGlyphCount(): Promise<void> {

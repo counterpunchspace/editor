@@ -2846,6 +2846,55 @@ describe('CloudPlugin glyph catch-up from core revision map', () => {
             }
             expect(fetchMock).toHaveBeenCalledTimes(1);
         });
+
+        test('a sparse session reconciles against the catalog, not resident glyphs', async () => {
+            const plugin = new CloudPlugin();
+            Object.defineProperty(plugin, '_websiteBaseUrl', {
+                get: () => 'https://site.test'
+            });
+            plugin._currentFontJson = () => ({
+                glyphs: [{ id: 'a', name: 'a', layers: [] }],
+                glyphCatalog: {
+                    a: { glyphId: 'a', name: 'a' },
+                    b: { glyphId: 'b', name: 'b' },
+                    gone: { glyphId: 'gone', name: 'gone', deleted: true }
+                }
+            });
+            const originalBridge = window.patchSyncEngine;
+            window.patchSyncEngine = {
+                hasSparseWorkingSet: () => true,
+                refreshOwnedCatalogFromYDoc: jest.fn()
+            };
+            const originalFetch = global.fetch;
+            const fetchMock = jest.fn(async () => ({ ok: true, status: 200 }));
+            global.fetch = fetchMock;
+            try {
+                await plugin._syncGlyphOrphans('asset-1');
+            } finally {
+                global.fetch = originalFetch;
+                window.patchSyncEngine = originalBridge;
+            }
+            expect(bodies(fetchMock)[0].body).toEqual({ live: ['a', 'b'] });
+        });
+
+        test('sends nothing when a glyph record has no id', async () => {
+            const plugin = new CloudPlugin();
+            plugin._currentFontJson = () => ({
+                glyphs: [
+                    { id: 'a', name: 'a', layers: [] },
+                    { name: 'b', layers: [] }
+                ]
+            });
+            const originalFetch = global.fetch;
+            const fetchMock = jest.fn(async () => ({ ok: true, status: 200 }));
+            global.fetch = fetchMock;
+            try {
+                await plugin._syncGlyphOrphans('asset-1');
+            } finally {
+                global.fetch = originalFetch;
+            }
+            expect(fetchMock).not.toHaveBeenCalled();
+        });
     });
 
     test('a multi-glyph add projects the catalog once', () => {
