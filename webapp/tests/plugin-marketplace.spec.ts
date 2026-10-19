@@ -272,8 +272,9 @@ test('register, buy, and install the free and commercial plugins', async ({
             packageName: string,
             commercial: boolean
         ) => {
+            // The tab handlers bind after load, so pick the tab by hash, not by click.
+            await account.goto(`${website()}/account#plugins`);
             await account.reload();
-            await account.getByRole('tab', { name: 'Plugins' }).click();
             await account
                 .locator('#pluginRepo')
                 .selectOption({ label: repository });
@@ -310,8 +311,9 @@ test('register, buy, and install the free and commercial plugins', async ({
         };
 
         const publishPlugin = async (packageName: string) => {
+            // The tab handlers bind after load, so pick the tab by hash, not by click.
+            await account.goto(`${website()}/account#plugins`);
             await account.reload();
-            await account.getByRole('tab', { name: 'Plugins' }).click();
             await account
                 .locator('.plugin-card')
                 .filter({ hasText: packageName })
