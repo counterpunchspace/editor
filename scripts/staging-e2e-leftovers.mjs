@@ -3,6 +3,9 @@
  * After cloud-collab e2e on staging: delete test users and their rooms, then
  * fail if that sweep could not finish or anything is still left.
  *
+ * The website keeps accounts created in the last two hours. A newer editor
+ * run can be seeding while this job, from the previous run, is still sweeping.
+ *
  * The website route only accepts this from the staging operator token.
  */
 
