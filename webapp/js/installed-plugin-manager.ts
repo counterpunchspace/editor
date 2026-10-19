@@ -127,6 +127,7 @@ export async function fetchPluginCatalog(): Promise<CatalogResponse> {
     return {
         plugins: body.plugins || [],
         blocked: body.blocked || [],
+        revoked: body.revoked || [],
         billing: body.billing
     };
 }

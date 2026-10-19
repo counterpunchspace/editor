@@ -1,5 +1,6 @@
 const {
     comparePluginVersions,
+    fetchPluginCatalog,
     installedVersionFromFilename,
     pluginAction,
     revokedWheelPaths
@@ -85,5 +86,23 @@ describe('installed plugin manager', () => {
         expect(revokedWheelPaths({ revoked: [], blocked: [] }, paths)).toEqual(
             []
         );
+    });
+
+    test('keeps refunded packages from the catalog response', async () => {
+        const realFetch = global.fetch;
+        global.fetch = jest.fn(async () => ({
+            ok: true,
+            json: async () => ({
+                plugins: [],
+                blocked: [],
+                revoked: ['counterpunch-harakat']
+            })
+        }));
+        try {
+            const catalog = await fetchPluginCatalog();
+            expect(catalog.revoked).toEqual(['counterpunch-harakat']);
+        } finally {
+            global.fetch = realFetch;
+        }
     });
 });
