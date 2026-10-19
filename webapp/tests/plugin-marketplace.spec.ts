@@ -132,11 +132,22 @@ test.afterEach(async ({ request }, testInfo) => {
 });
 
 async function pluginOverview(request: any, sessionToken: string) {
-    const response = await request.get(`${website()}/api/creator/plugins`, {
-        headers: { cookie: `session=${sessionToken}` }
-    });
-    expect(response.ok()).toBeTruthy();
-    return response.json();
+    // The staging edge drops a connection now and then; the read is idempotent.
+    for (let attempt = 1; ; attempt += 1) {
+        try {
+            const response = await request.get(
+                `${website()}/api/creator/plugins`,
+                { headers: { cookie: `session=${sessionToken}` } }
+            );
+            if (response.status() < 500 || attempt === 3) {
+                expect(response.ok()).toBeTruthy();
+                return response.json();
+            }
+        } catch (error) {
+            if (attempt === 3) throw error;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 2000 * attempt));
+    }
 }
 
 async function waitForReady(
@@ -527,6 +538,10 @@ test('register, buy, and install the free and commercial plugins', async ({
                 }
             );
             await editorPage.bringToFront();
+            await editorPage.locator('#plugin-manager-modal-close-btn').click();
+            await expect(
+                editorPage.locator('#plugin-manager-modal')
+            ).toBeHidden();
             await openPluginManager(editorPage);
             await searchPlugins(editorPage, 'harakat');
             const priced = pluginRow(editorPage, 'Harakat');
