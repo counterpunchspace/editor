@@ -212,8 +212,14 @@ async function waitForSecurityFailed(
             (item: any) => item.package === packageName
         );
         latest = plugin?.versions?.[0] || null;
-        if (latest?.status === 'security_failed') return latest;
+        const decision = latest?.checks?.security?.report?.decision;
+        if (latest?.status === 'security_failed' || decision === 'block') {
+            return latest;
+        }
         if (
+            decision === 'review' ||
+            decision === 'pass' ||
+            decision === 'timed_out' ||
             latest?.status === 'ready' ||
             latest?.status === 'published' ||
             latest?.status === 'security_timed_out' ||
@@ -221,7 +227,7 @@ async function waitForSecurityFailed(
             latest?.status === 'static_failed'
         ) {
             throw new Error(
-                `${packageName} did not fail the security review: ${JSON.stringify(latest)}`
+                `${packageName} did not fail the security review: ${JSON.stringify(latest?.checks?.security?.report || latest)}`
             );
         }
         await new Promise((resolve) => setTimeout(resolve, 2000));
