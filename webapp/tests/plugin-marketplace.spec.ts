@@ -274,6 +274,8 @@ test('register, buy, and install the free and commercial plugins', async ({
         Origin: editor()
     };
     {
+        // The two counterpunchspace repos share one GitHub App installation.
+        // Linking either of them stores every fixture on that installation.
         for (const repository of [
             'counterpunchspace/fontdestination-example-plugin',
             'counterpunchspace/dataexfiltration-example-plugin',
