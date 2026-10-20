@@ -33,6 +33,7 @@ type FontModel = {
 };
 
 type FontLayer = {
+    master?: { type?: string; master?: string };
     paths?: Array<{ nodes?: Array<{ x: number }> }>;
     anchors?: Array<{ name?: string; x?: number; y?: number }>;
     components?: Array<{
@@ -82,9 +83,22 @@ function fontUpm(): number {
     return upm && upm > 0 ? upm : 1000;
 }
 
+function glyphLayers(name: string): FontLayer[] {
+    return fontModel()?.findGlyph?.(name)?.layers || [];
+}
+
+function isMasterLayer(layer: FontLayer): boolean {
+    return layer.master?.type === 'DefaultForMaster';
+}
+
+/**
+ * The master layer for the selected master, else the first master layer.
+ * `layers[0]` is only a fallback: Glyphs sources often list an associated
+ * or intermediate layer before the master, and that layer can be empty.
+ */
 function glyphLayer(name: string): FontLayer | null {
-    const glyph = fontModel()?.findGlyph?.(name);
-    if (!glyph) {
+    const layers = glyphLayers(name);
+    if (!layers.length) {
         return null;
     }
     const masterId = (
@@ -94,18 +108,43 @@ function glyphLayer(name: string): FontLayer | null {
             };
         }
     ).glyphCanvas?.textRunEditor?.selectedMasterId;
-    if (masterId && glyph.findLayerByMasterId) {
-        const layer = glyph.findLayerByMasterId(masterId);
-        if (layer) {
-            return layer;
+    if (masterId) {
+        const selected = layers.find(
+            (layer) => isMasterLayer(layer) && layer.master?.master === masterId
+        );
+        if (selected) {
+            return selected;
         }
     }
-    return glyph.layers?.[0] || null;
+    return layers.find(isMasterLayer) || layers[0] || null;
+}
+
+function layerHasPathNodes(layer: FontLayer | null | undefined): boolean {
+    return (layer?.paths || []).some((path) => (path.nodes?.length || 0) > 0);
+}
+
+function layerHasComponents(layer: FontLayer | null | undefined): boolean {
+    return (layer?.components || []).some((component) => component.reference);
+}
+
+function masterLayers(name: string): FontLayer[] {
+    const layers = glyphLayers(name);
+    const masters = layers.filter(isMasterLayer);
+    return masters.length ? masters : layers;
+}
+
+/**
+ * True when any master layer already has outlines or components.
+ * Component names are not compared with a recipe: any reference counts.
+ */
+function glyphIsComposed(name: string): boolean {
+    return masterLayers(name).some(
+        (layer) => layerHasPathNodes(layer) || layerHasComponents(layer)
+    );
 }
 
 function glyphHasPathInk(name: string): boolean {
-    const layer = glyphLayer(name);
-    return (layer?.paths || []).some((path) => (path.nodes?.length || 0) > 0);
+    return layerHasPathNodes(glyphLayer(name));
 }
 
 function codepointOf(name: string): number | null {
@@ -224,6 +263,9 @@ export function placeholderContoursForReference(
         }
         return contours;
     }
+    if (glyphIsComposed(name)) {
+        return [];
+    }
     return scaledDrawingContours(name);
 }
 
@@ -321,7 +363,7 @@ export function placeholderCenteringX(name: string, width: number): number {
 
 /** ccmp pieces to draw when this glyph has no sample outline of its own. */
 export function placeholderCcmpParts(name: string): string[] {
-    if (drawings.get(name)?.paths?.length) {
+    if (glyphIsComposed(name) || drawings.get(name)?.paths?.length) {
         return [];
     }
     const parts = ccmpDecomposition(fontModel()?.features).get(name);
@@ -522,6 +564,9 @@ export function paintPlaceholderGlyph(
             return;
         }
     }
+    if (glyphIsComposed(name)) {
+        return;
+    }
     paintLeaf(ctx, name, emphasis, appearance, token, muted);
 }
 
@@ -560,6 +605,9 @@ export function buildPlaceholderPath(name: string, depth = 0): Path2D | null {
             hasChild = true;
         }
         return hasChild ? built : null;
+    }
+    if (glyphIsComposed(name)) {
+        return null;
     }
     const drawing = drawings.get(name);
     if (!drawing?.paths?.length) {
