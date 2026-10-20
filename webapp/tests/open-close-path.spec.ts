@@ -10,7 +10,7 @@ import { rectLineNodes } from './helpers/babelfont-test-data';
 /**
  * Open/Close Path Integration Test
  *
- * Tests the full lifecycle of opening a closed path at a node (cmd+click)
+ * Tests the full lifecycle of opening a closed path at a node (Cut tool)
  * and closing it back by dragging the endpoint onto its counterpart,
  * across linked masters (3 masters, 1 axis). Verifies:
  *
@@ -963,7 +963,7 @@ test.describe('Open/Close Path across linked masters', () => {
         expect(initialCompat.compatible).toBe(true);
 
         // ---------------------------------------------------------------
-        // 2. Cmd+click on intermediate node 2 to open the path
+        // 2. Cut tool click on intermediate node 2 to open the path
         //    (node 2 is the third on-curve node — not the start/end)
         // ---------------------------------------------------------------
         // Get the active layer's node 2 coordinates while path is still closed
@@ -978,7 +978,7 @@ test.describe('Open/Close Path across linked masters', () => {
         });
         expect(node2Coords).not.toBeNull();
 
-        // Convert glyph coords to page coords and cmd+click (ControlOrMeta+click)
+        // Convert glyph coords to page coords and click with the Cut tool.
         const screenNode2 = await glyphToPage(
             page,
             node2Coords!.x,
@@ -1015,24 +1015,12 @@ test.describe('Open/Close Path across linked masters', () => {
                 (window as any).__openPathCutResult = result;
                 return result;
             };
-            canvas.addEventListener(
-                'click',
-                (event: MouseEvent) => {
-                    (window as any).__openPathClickWasMeta =
-                        event.metaKey || event.ctrlKey;
-                },
-                { once: true, capture: true }
-            );
         });
-        await page.keyboard.down('ControlOrMeta');
+        await page.evaluate(() => {
+            (window as any).glyphCanvas.outlineEditor.setActiveEditTool('cut');
+        });
         await page.mouse.click(screenNode2.x, screenNode2.y);
-        await page.keyboard.up('ControlOrMeta');
         await page.waitForTimeout(500);
-        await expect
-            .poll(() =>
-                page.evaluate(() => (window as any).__openPathClickWasMeta)
-            )
-            .toBe(true);
         await expect
             .poll(() => page.evaluate(() => (window as any).__openPathCutCalls))
             .toBe(1);
@@ -1057,6 +1045,11 @@ test.describe('Open/Close Path across linked masters', () => {
         expect(afterOpenOutline).not.toBeNull();
         expect(afterOpenOutline!.closed).toBe(false);
         expect(afterOpenOutline!.nodeCount).toBe(5);
+        await page.evaluate(() => {
+            (window as any).glyphCanvas.outlineEditor.setActiveEditTool(
+                'select'
+            );
+        });
 
         // The last node (index 4) should be selected
         const afterOpenSelection = await getSelectionState(page);
@@ -1114,23 +1107,54 @@ test.describe('Open/Close Path across linked masters', () => {
         expect(overlapSelection.selectedPoints.length).toBe(1);
         expect(overlapSelection.selectedPoints[0].nodeIndex).toBe(4);
 
-        // Now drag the node away (move it by +100, 0 in glyph space)
-        const dragTarget = await glyphToPage(
-            page,
-            overlapCoords!.last.x + 100,
-            overlapCoords!.last.y
+        // Drag the node away by +100 in glyph space.
+        // The first move only seeds the pointer.
+        const dragDebug = await page.evaluate(
+            ({ fromX, fromY, toX, toY }) => {
+                const gc = (window as any).glyphCanvas;
+                const shaped = gc.textRunEditor.shapedGlyphs;
+                const selIdx = gc.textRunEditor.selectedGlyphIndex;
+                let xOff = 0;
+                for (let i = 0; i < selIdx; i++) xOff += shaped[i].ax || 0;
+                const glyph = shaped[selIdx];
+                const dispatch = (type: string, gx: number, gy: number) => {
+                    const screen = gc.viewportManager.fontToScreenCoordinates(
+                        gx + xOff + (glyph?.dx || 0),
+                        gy + (glyph?.dy || 0)
+                    );
+                    const rect = gc.canvas.getBoundingClientRect();
+                    gc.canvas.dispatchEvent(
+                        new MouseEvent(type, {
+                            clientX: rect.left + screen.x,
+                            clientY: rect.top + screen.y,
+                            bubbles: true,
+                            cancelable: true,
+                            button: 0,
+                            buttons: type === 'mouseup' ? 0 : 1
+                        })
+                    );
+                };
+                dispatch('mousemove', fromX, fromY);
+                dispatch('mousedown', fromX, fromY);
+                const oe = gc.outlineEditor;
+                const afterDown = {
+                    dragging: oe.isDraggingPoint,
+                    hovered: oe.hoveredPointIndex,
+                    selected: oe.selectedPoints
+                };
+                dispatch('mousemove', fromX, fromY);
+                dispatch('mousemove', toX, toY);
+                dispatch('mouseup', toX, toY);
+                return afterDown;
+            },
+            {
+                fromX: overlapCoords!.last.x,
+                fromY: overlapCoords!.last.y,
+                toX: overlapCoords!.last.x + 100,
+                toY: overlapCoords!.last.y
+            }
         );
-
-        // Start drag from the overlap position
-        await page.mouse.move(screenOverlap.x, screenOverlap.y);
-        await page.mouse.down();
-        await page.waitForTimeout(50);
-        // Move in steps to trigger mousemove handler
-        await page.mouse.move(dragTarget.x, dragTarget.y, { steps: 5 });
-        await page.waitForTimeout(50);
-        await page.mouse.up();
         await page.waitForTimeout(500);
-
         // Verify the node moved — it should no longer overlap with node 0
         const afterDragOutline = await page.evaluate(() => {
             const oe = (window as any).glyphCanvas.outlineEditor;
@@ -1190,11 +1214,6 @@ test.describe('Open/Close Path across linked masters', () => {
             preCloseCoords!.node4.x,
             preCloseCoords!.node4.y
         );
-        const screenNode0 = await glyphToPage(
-            page,
-            preCloseCoords!.node0.x,
-            preCloseCoords!.node0.y
-        );
 
         // Click on node4 first to select it
         await page.mouse.click(screenNode4.x, screenNode4.y);
@@ -1205,13 +1224,45 @@ test.describe('Open/Close Path across linked masters', () => {
         expect(preCloseSelection.selectedPoints.length).toBe(1);
         expect(preCloseSelection.selectedPoints[0].nodeIndex).toBe(4);
 
-        // Drag node4 onto node0 to close
-        await page.mouse.move(screenNode4.x, screenNode4.y);
-        await page.mouse.down();
-        await page.waitForTimeout(50);
-        await page.mouse.move(screenNode0.x, screenNode0.y, { steps: 10 });
-        await page.waitForTimeout(50);
-        await page.mouse.up();
+        // Drag node 4 onto node 0. The first move only seeds the pointer.
+        await page.evaluate(
+            ({ fromX, fromY, toX, toY }) => {
+                const gc = (window as any).glyphCanvas;
+                const shaped = gc.textRunEditor.shapedGlyphs;
+                const selIdx = gc.textRunEditor.selectedGlyphIndex;
+                let xOff = 0;
+                for (let i = 0; i < selIdx; i++) xOff += shaped[i].ax || 0;
+                const glyph = shaped[selIdx];
+                const dispatch = (type: string, gx: number, gy: number) => {
+                    const screen = gc.viewportManager.fontToScreenCoordinates(
+                        gx + xOff + (glyph?.dx || 0),
+                        gy + (glyph?.dy || 0)
+                    );
+                    const rect = gc.canvas.getBoundingClientRect();
+                    gc.canvas.dispatchEvent(
+                        new MouseEvent(type, {
+                            clientX: rect.left + screen.x,
+                            clientY: rect.top + screen.y,
+                            bubbles: true,
+                            cancelable: true,
+                            button: 0,
+                            buttons: type === 'mouseup' ? 0 : 1
+                        })
+                    );
+                };
+                dispatch('mousemove', fromX, fromY);
+                dispatch('mousedown', fromX, fromY);
+                dispatch('mousemove', fromX, fromY);
+                dispatch('mousemove', toX, toY);
+                dispatch('mouseup', toX, toY);
+            },
+            {
+                fromX: preCloseCoords!.node4.x,
+                fromY: preCloseCoords!.node4.y,
+                toX: preCloseCoords!.node0.x,
+                toY: preCloseCoords!.node0.y
+            }
+        );
         await page.waitForTimeout(500);
         await waitForCompilation(page);
         await waitForOutlineState(page, { closed: true, nodeCount: 4 });
@@ -1239,7 +1290,7 @@ test.describe('Open/Close Path across linked masters', () => {
         // The undo stack should have (from newest to oldest):
         //   - Close path (drag + close merged into one transaction)
         //   - Drag point (moving node 4 away)
-        //   - Open path (cmd+click)
+        //   - Open path (Cut tool)
 
         // Undo 1: Undo the close (should re-open the path with node4 away from node0)
         await performUndo(page);
@@ -1472,7 +1523,7 @@ test.describe('Cut title-bar tool', () => {
             outlineEditor.setCommandKeyPressed(false, false);
             return snapshot;
         });
-        expect(cmdHoverBadge.highlightedTool).toBe('pen');
-        expect(cmdHoverBadge.pointerBadge).toBe('cut');
+        expect(cmdHoverBadge.highlightedTool).toBe('select');
+        expect(cmdHoverBadge.pointerBadge).toBeNull();
     });
 });
