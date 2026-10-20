@@ -10412,7 +10412,7 @@ describe('GlyphCanvas deleteSelectedNodes', () => {
         }
     });
 
-    test('cmd-dragging a smooth point slides it along the curve across linked layers as one glyph history item', async () => {
+    test('the cut tool splits a path across linked layers as one glyph history item', async () => {
         const font = Font.fromData({
             upm: 1000,
             version: [1, 0],
@@ -10606,6 +10606,7 @@ describe('GlyphCanvas deleteSelectedNodes', () => {
         canvas.outlineEditor.layerData = JSON.parse(
             JSON.stringify(currentLayer.toJSON())
         );
+        canvas.outlineEditor.setActiveEditTool('cut');
         canvas.outlineEditor.hoveredPointIndex = {
             contourIndex: 0,
             nodeIndex: 3
@@ -10622,7 +10623,7 @@ describe('GlyphCanvas deleteSelectedNodes', () => {
                 detail: 1,
                 shiftKey: false,
                 altKey: false,
-                metaKey: true,
+                metaKey: false,
                 ctrlKey: false
             });
             canvas.outlineEditor.onMouseMove({
@@ -10630,7 +10631,7 @@ describe('GlyphCanvas deleteSelectedNodes', () => {
                 clientY: 40,
                 shiftKey: false,
                 altKey: false,
-                metaKey: true,
+                metaKey: false,
                 ctrlKey: false
             });
             await canvas.outlineEditor.onMouseUp({ clientX: 30, clientY: 40 });
@@ -13345,7 +13346,7 @@ describe('GlyphCanvas command path drawing visuals', () => {
         canvas.outlineEditor.setCommandKeyPressed(false);
     });
 
-    test('cmd hover on a point uses a crosshair cursor for cut-open', () => {
+    test('cmd hover on a point uses the selection cursor instead of the cut crosshair', () => {
         canvas.outlineEditor.setCommandKeyPressed(true);
         canvas.outlineEditor.hoveredPointIndex = {
             contourIndex: 0,
@@ -13354,7 +13355,7 @@ describe('GlyphCanvas command path drawing visuals', () => {
 
         canvas.updateCursorStyle();
 
-        expect(canvas.canvas.style.cursor).toBe('crosshair');
+        expect(canvas.canvas.style.cursor).toBe('pointer');
 
         canvas.outlineEditor.setCommandKeyPressed(false);
     });
