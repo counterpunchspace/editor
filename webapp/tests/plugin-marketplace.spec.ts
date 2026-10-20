@@ -18,7 +18,8 @@ const editor = () =>
 
 const FIXTURE_PACKAGES = [
     'fontdestination-example-plugin',
-    'counterpunch-harakat'
+    'counterpunch-harakat',
+    'dataexfiltration-example-plugin'
 ];
 
 async function prepareEditorPluginStorage(page: Page) {
@@ -182,7 +183,9 @@ async function waitForReady(
         }
         if (
             latest?.status === 'static_failed' ||
-            latest?.status === 'preflight_failed'
+            latest?.status === 'preflight_failed' ||
+            latest?.status === 'security_failed' ||
+            latest?.status === 'security_timed_out'
         ) {
             throw new Error(
                 `${packageName} preflight failed: ${JSON.stringify(latest.report)}`
@@ -195,11 +198,43 @@ async function waitForReady(
     );
 }
 
+async function waitForSecurityFailed(
+    request: any,
+    sessionToken: string,
+    packageName: string
+) {
+    const started = Date.now();
+    let latest: any = null;
+    while (Date.now() - started < 240000) {
+        const body = await pluginOverview(request, sessionToken);
+        const plugin = (body.plugins || []).find(
+            (item: any) => item.package === packageName
+        );
+        latest = plugin?.versions?.[0] || null;
+        if (latest?.status === 'security_failed') return latest;
+        if (
+            latest?.status === 'ready' ||
+            latest?.status === 'published' ||
+            latest?.status === 'security_timed_out' ||
+            latest?.status === 'preflight_failed' ||
+            latest?.status === 'static_failed'
+        ) {
+            throw new Error(
+                `${packageName} did not fail the security review: ${JSON.stringify(latest)}`
+            );
+        }
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+    }
+    throw new Error(
+        `${packageName} security review did not finish: ${JSON.stringify(latest)}`
+    );
+}
+
 test('register, buy, and install the free and commercial plugins', async ({
     browser,
     request
 }) => {
-    test.setTimeout(900000);
+    test.setTimeout(600000);
     const resume =
         process.env.PLUGIN_E2E_KEEP === '1' &&
         Boolean(process.env.PLUGIN_E2E_RUN_ID);
@@ -241,6 +276,7 @@ test('register, buy, and install the free and commercial plugins', async ({
     {
         for (const repository of [
             'counterpunchspace/fontdestination-example-plugin',
+            'counterpunchspace/dataexfiltration-example-plugin',
             'yanone/counterpunch-harakat-plugin'
         ]) {
             const linked = await request.post(
@@ -276,6 +312,11 @@ test('register, buy, and install the free and commercial plugins', async ({
             account
                 .locator('.plugin-repo-row')
                 .filter({ hasText: 'counterpunch-harakat-plugin' })
+        ).toBeVisible();
+        await expect(
+            account
+                .locator('.plugin-repo-row')
+                .filter({ hasText: 'dataexfiltration-example-plugin' })
         ).toBeVisible();
 
         const creatorPlugin = async (packageName: string) => {
@@ -430,6 +471,16 @@ test('register, buy, and install the free and commercial plugins', async ({
                 true
             );
         }
+        let exfiltration = await creatorPlugin(
+            'dataexfiltration-example-plugin'
+        );
+        if (!exfiltration.plugin) {
+            await registerPlugin(
+                'counterpunchspace/dataexfiltration-example-plugin',
+                'dataexfiltration-example-plugin',
+                false
+            );
+        }
 
         const editorContext = await browser.newContext();
         await attachCloudCollabCookies(editorContext, buyer);
@@ -453,7 +504,12 @@ test('register, buy, and install the free and commercial plugins', async ({
                       request,
                       creator.sessionToken,
                       'counterpunch-harakat'
-                  )
+                  ),
+            waitForSecurityFailed(
+                request,
+                creator.sessionToken,
+                'dataexfiltration-example-plugin'
+            )
         ]);
         if (
             (await creatorPlugin('fontdestination-example-plugin')).plugin
