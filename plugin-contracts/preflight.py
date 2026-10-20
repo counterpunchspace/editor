@@ -96,13 +96,15 @@ def _probe(instance, spec, fixtures, report):
             _emit("done", "character_set.metadata")
         elif kind == "compilefilter":
             _emit("start", "compilefilter.filter")
-            layer = json.dumps(fixtures["layer"])
+            layer = fixtures["layer"]
+            font = {"upm": 1000, "masters": [], "axes": [], "glyphs": fixtures["glyphs"]}
+            ctx = {"master": None, "masterId": None, "axes": [], "settings": {}}
             if callable(getattr(instance, "filter_layer_json", None)):
-                instance.filter_layer_json(layer)
+                instance.filter_layer_json(layer, ctx)
             if callable(getattr(instance, "filter_layer_json_propagated_anchors", None)):
-                instance.filter_layer_json_propagated_anchors(layer)
+                instance.filter_layer_json_propagated_anchors(layer, ctx)
             if callable(getattr(instance, "filter_font_json", None)):
-                instance.filter_font_json(layer)
+                instance.filter_font_json(font, ctx)
             _emit("done", "compilefilter.filter")
         elif kind == "composition":
             _emit("start", "composition.recipe")
