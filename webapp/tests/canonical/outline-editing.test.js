@@ -17,15 +17,6 @@
 const { Font } = require('../../js/babelfont-model');
 const fontManager = require('../../js/font-manager').default;
 
-function isOctantAligned(anchor, point) {
-    const dx = point.x - anchor.x;
-    const dy = point.y - anchor.y;
-    if (dx === 0 || dy === 0) {
-        return true;
-    }
-    return Math.abs(Math.abs(dx) - Math.abs(dy)) <= 1;
-}
-
 function activateEditableLayer(canvas, layerData) {
     canvas.outlineEditor.active = true;
     canvas.outlineEditor.currentGlyphName = 'A';
@@ -265,7 +256,7 @@ describe('Outline Editing canonical behavior', () => {
         canvas.destroy();
     });
 
-    test('shift-constrained smooth off-curve dragging aligns the triplet to an axis', () => {
+    test('shift-constrained smooth off-curve dragging moves the handle on one axis from its start', () => {
         const saveLayerDataSpy = jest
             .spyOn(canvas.outlineEditor, 'saveLayerData')
             .mockResolvedValue(undefined);
@@ -318,12 +309,10 @@ describe('Outline Editing canonical behavior', () => {
                 ctrlKey: false
             });
 
-            const nodes = canvas.outlineEditor.layerData.shapes[0].nodes;
-            const anchor = nodes[3];
-            const draggedHandle = nodes[4];
-            const oppositeHandle = nodes[2];
-            expect(isOctantAligned(anchor, draggedHandle)).toBe(true);
-            expect(isOctantAligned(anchor, oppositeHandle)).toBe(true);
+            const draggedHandle =
+                canvas.outlineEditor.layerData.shapes[0].nodes[4];
+            expect(draggedHandle.x).toBe(80);
+            expect(draggedHandle.y).not.toBe(60);
 
             pointerSpy.mockRestore();
         } finally {
@@ -1616,7 +1605,7 @@ describe('Outline Editing canonical behavior', () => {
         expect(canvas.outlineEditor.layerData.shapes).toHaveLength(1);
     });
 
-    test('shift-drag constrains a corner node to the nearest octant', () => {
+    test('shift pressed during a drag constrains the node to the drag origin axis', () => {
         const saveLayerDataSpy = jest
             .spyOn(canvas.outlineEditor, 'saveLayerData')
             .mockResolvedValue(undefined);
@@ -1675,8 +1664,8 @@ describe('Outline Editing canonical behavior', () => {
                 ctrlKey: false
             });
             const node = canvas.outlineEditor.layerData.shapes[0].nodes[0];
-            expect(isOctantAligned({ x: 10, y: 10 }, node)).toBe(true);
-            expect(node.x).not.toBe(10);
+            expect(node.x).toBe(10);
+            expect(node.y).not.toBe(10);
             pointerSpy.mockRestore();
         } finally {
             saveLayerDataSpy.mockRestore();

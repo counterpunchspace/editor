@@ -81,7 +81,7 @@ Each view title bar shows the same shortcut.
 - Double-click an on-curve point to toggle smooth and corner
 - `Alt/Option` slides a smooth on-curve point along its handles; on a corner on-curve point it moves the node freely while handles stay put
 - `Cmd/Ctrl+Alt/Option` drag on a smooth on-curve point slides it along the combined curve
-- `Shift` while dragging locks the move to 0°, 45°, or 90° for the whole selection
+- `Shift` while dragging locks the whole selection to horizontal or vertical from where the drag started, including when `Shift` is pressed mid-drag
 - `Cmd/Ctrl+Alt/Option+S` — stack preview
 - `Cmd/Ctrl+Alt/Option+G` — guidelines
 - `Cmd/Ctrl+Alt/Option+L` — link or unlink layers

@@ -1351,22 +1351,15 @@ function snapSmoothHandleTripletToAxis(
     return false;
 }
 
-/** Lock a translation to the nearest 0°, 45°, or 90° direction. */
-function constrainOffsetToOctant(
+/** Lock a translation to horizontal or vertical, whichever is longer. */
+function constrainOffsetToAxis(
     deltaX: number,
     deltaY: number
 ): { x: number; y: number } {
-    if (deltaX === 0 && deltaY === 0) {
-        return { x: 0, y: 0 };
+    if (Math.abs(deltaX) >= Math.abs(deltaY)) {
+        return { x: Math.round(deltaX), y: 0 };
     }
-
-    const angle = Math.atan2(deltaY, deltaX);
-    const snapped = Math.round(angle / (Math.PI / 4)) * (Math.PI / 4);
-    const length = Math.hypot(deltaX, deltaY);
-    return {
-        x: Math.round(length * Math.cos(snapped)),
-        y: Math.round(length * Math.sin(snapped))
-    };
+    return { x: 0, y: Math.round(deltaY) };
 }
 
 function snapSmoothHandlePairToAxis(
@@ -1383,7 +1376,7 @@ function snapSmoothHandlePairToAxis(
         return false;
     }
 
-    const constrained = constrainOffsetToOctant(deltaX, deltaY);
+    const constrained = constrainOffsetToAxis(deltaX, deltaY);
     draggedHandle.x = anchor.x + constrained.x;
     draggedHandle.y = anchor.y + constrained.y;
     alignHandleAlongDirection(
@@ -13128,27 +13121,25 @@ export class OutlineEditor {
     }
 
     /**
-     * Shift locks the pointer's movement from the moment Shift went down to
-     * the nearest 0°, 45°, or 90° direction. Applies to every dragged
-     * selection, not only nodes.
+     * The first pointer sample of a drag is the selection's origin. Shift
+     * projects the pointer onto the horizontal or vertical line through that
+     * origin, including when Shift goes down after the drag has started.
      */
     private constrainShiftDragPointer(
         pointer: { glyphX: number; glyphY: number },
         shiftKey: boolean
     ): { glyphX: number; glyphY: number } {
-        if (!shiftKey) {
-            this._shiftDragOriginX = null;
-            this._shiftDragOriginY = null;
-            return pointer;
-        }
         if (
             this._shiftDragOriginX === null ||
             this._shiftDragOriginY === null
         ) {
-            this._shiftDragOriginX = this.lastGlyphX ?? pointer.glyphX;
-            this._shiftDragOriginY = this.lastGlyphY ?? pointer.glyphY;
+            this._shiftDragOriginX = pointer.glyphX;
+            this._shiftDragOriginY = pointer.glyphY;
         }
-        const constrained = constrainOffsetToOctant(
+        if (!shiftKey) {
+            return pointer;
+        }
+        const constrained = constrainOffsetToAxis(
             pointer.glyphX - this._shiftDragOriginX,
             pointer.glyphY - this._shiftDragOriginY
         );
@@ -13319,7 +13310,7 @@ export class OutlineEditor {
                 effectiveDeltaY,
                 this._pointDragPreserveHandlePositions ||
                     (e.altKey && !this._smoothOnCurveAltDragConstraint),
-                e.shiftKey,
+                false,
                 glyphX,
                 glyphY,
                 e.altKey,

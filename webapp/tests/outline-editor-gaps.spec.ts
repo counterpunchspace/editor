@@ -3,7 +3,7 @@ import { focusView, waitForCanvasReady } from './helpers/snapshot-helper';
 
 /**
  * Live browser coverage for the outline-editor gap fixes:
- * axis snap of open ends, Shift-drag octants, empty-selection
+ * axis snap of open ends, Shift-drag on the drag-origin axis, empty-selection
  * Cmd/Ctrl toggle, macOS Ctrl+click, 100× nudge, shortcuts while
  * the canvas is not focused, and Space preview clearing on blur.
  */
@@ -289,12 +289,8 @@ test.describe('Outline editor gap fixes', () => {
         await page.waitForTimeout(200);
 
         const dragged = await nodeAt(page, 0, 0);
-        const dx = dragged.x - 100;
-        const dy = dragged.y - 100;
-        expect(Math.abs(dx) + Math.abs(dy)).toBeGreaterThan(0);
-        const octant =
-            dx === 0 || dy === 0 || Math.abs(Math.abs(dx) - Math.abs(dy)) <= 1;
-        expect(octant).toBe(true);
+        expect(dragged.x).toBe(100);
+        expect(dragged.y).not.toBe(100);
 
         await page.evaluate(() => {
             const oe = (window as any).glyphCanvas.outlineEditor;
