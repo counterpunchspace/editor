@@ -81,7 +81,7 @@ deploy_worker "$COLLAB_ROOT/workers/room"
       node -e 'let s="";process.stdin.on("data",(d)=>(s+=d)).on("end",()=>{try{const v=JSON.parse(s);process.stdout.write(v[v.length-1]?.annotations?.["workers/tag"]||"")}catch{}})' || true)
     rollout=()
     if [ "$deployed_tag" = "$container_tag" ]; then
-      echo "Preflight container sources unchanged ($container_tag); skipping the container rollout."
+      echo "Container image sources unchanged ($container_tag); skipping the image rollout."
       rollout=(--containers-rollout=none)
     fi
     set +e
