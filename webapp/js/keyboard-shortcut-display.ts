@@ -18,10 +18,25 @@ export const MENU_RETURN_SYMBOL = '\u23CE';
 
 const CONTROL_KEY_SYMBOL = '\u2303';
 
-function usesCommandModifier(): boolean {
+export function platformUsesCommandKey(): boolean {
     const platform =
         typeof navigator !== 'undefined' ? navigator.platform || '' : '';
     return /Mac|iPhone|iPad|iPod/i.test(platform);
+}
+
+function usesCommandModifier(): boolean {
+    return platformUsesCommandKey();
+}
+
+/** Pointer command gestures. On macOS, Ctrl alone opens the context menu. */
+export function isPointerCommandModifier(e: {
+    metaKey: boolean;
+    ctrlKey: boolean;
+}): boolean {
+    if (platformUsesCommandKey()) {
+        return e.metaKey;
+    }
+    return e.metaKey || e.ctrlKey;
 }
 
 export function commandModifierIconName():

@@ -60,7 +60,8 @@ Each view title bar shows the same shortcut.
 - `Cmd/Ctrl+Shift+B` — toggle editing the background layer
 - `Cmd/Ctrl+Alt/Option+B` — show or hide the paired layer
 - `Cmd/Ctrl+X` — cut the current selection to the clipboard (Edit → Cut)
-- Arrow keys — nudge selected objects (`Shift` for 10×)
+- Arrow keys — nudge selected objects (`Shift` for 10×, `Shift+Cmd/Ctrl` for 100×). `Cmd/Ctrl` alone still moves between glyphs or layers
+- `Alt/Option+Arrow` — nudge selected points while their handles stay put
 - `Space` — preview outline fill in one paint according to Editing View → View → Preview Area, and a dotted rectangle marks the canvas viewport (property panel deducted) so you can pan the drawing onto it (grab cursor; drag to pan). Medium hides the editor title bar, sidebar, and property panel but keeps the focused view border; Full hides toolbar and app shell. Medium and Full make the canvas pannable in that same frame. Release Space to restore chrome in one paint.
 - `Tab` — measurement tool; click and drag for a custom line
 - `T` — text mode (leave glyph editing)
@@ -73,14 +74,18 @@ Each view title bar shows the same shortcut.
 - `C` — convert tool
 - Cut has no letter shortcut; choose it in the Editor title bar
 - After the tools feel familiar, hold `Cmd/Ctrl` in empty space with nothing selected to draw a contour, or on a selected open end to continue it (same as Pen / Insert without switching tools)
-- With objects already selected, `Cmd/Ctrl+Click` adds or removes from the selection like Shift
-- With an empty selection, `Cmd/Ctrl+Click` on a segment inserts a point; on an on-curve point it cuts the path open
+- `Shift+Click` and `Cmd/Ctrl+Click` on a node, segment, anchor, or component add or remove it, including when the selection is empty
+- With an empty selection, `Cmd/Ctrl` in empty space draws a contour. On macOS, `Ctrl+Click` opens the context menu
 - Drag one open end onto another to join or close
 - `Alt/Option+Click` on a straight segment converts it to a curve
 - Double-click an on-curve point to toggle smooth and corner
-- `Shift` constrains a smooth handle while dragging
 - `Alt/Option` slides a smooth on-curve point along its handles; on a corner on-curve point it moves the node freely while handles stay put
 - `Cmd/Ctrl+Alt/Option` drag on a smooth on-curve point slides it along the combined curve
+- `Shift` while dragging locks the move to 0°, 45°, or 90° for the whole selection
+- `Cmd/Ctrl+Alt/Option+S` — stack preview
+- `Cmd/Ctrl+Alt/Option+G` — guidelines
+- `Cmd/Ctrl+Alt/Option+L` — link or unlink layers
+- `Cmd/Ctrl+Alt/Option+Up` / `Cmd/Ctrl+Alt/Option+Down` — cycle feature variations
 
 ### Panning and zooming
 

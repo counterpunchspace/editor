@@ -34,6 +34,11 @@ import { StackPreviewAnimator } from './glyph-canvas/stack-preview-animator';
 import { get_glyph_name } from '../wasm-dist/babelfont_fontc_web';
 import fontManager from './font-manager';
 import { OutlineEditor } from './glyph-canvas/outline-editor';
+import { shortcutKeyToStickyEditTool } from './glyph-canvas/edit-tools';
+import {
+    isPointerCommandModifier,
+    platformUsesCommandKey
+} from './keyboard-shortcut-display';
 import {
     applyKerningGroupMembership,
     buildEditViewKerningGroupSide,
@@ -2203,7 +2208,7 @@ class GlyphCanvas {
                     this.outlineEditor.setAltKeyPressed(true);
                 }
             }
-            if (e.key === 'Meta' || e.key === 'Control') {
+            if (this.isCommandDrawingModifierKey(e)) {
                 // Live probe showed Cmd+Tab loses Meta keyup and later delivers a
                 // fresh (!repeat) Meta keydown while cmdKeyPressed is still true.
                 // hasFocus/blur never flip, so focus watchers cannot clear this —
@@ -2274,7 +2279,7 @@ class GlyphCanvas {
                 this.altKeyRequiresFreshPress = false;
                 this.outlineEditor.setAltKeyPressed(false);
             }
-            if (e.key === 'Meta' || e.key === 'Control') {
+            if (this.isCommandDrawingModifierKey(e)) {
                 this.commandKeyRequiresFreshPress = false;
                 this.outlineEditor.setCommandKeyPressed(false);
                 this.updateCursorStyle();
@@ -2309,32 +2314,37 @@ class GlyphCanvas {
             this.isDraggingCanvas = false;
             this.outlineEditor.cancelQueuedKeyboardPreviewMoves();
             this.outlineEditor.setCommandKeyPressed(false);
-            // Note: Don't reset spaceKeyPressed here - it should be handled by the keyup event
-            // Resetting it here causes preview mode to malfunction because the keyup handler
-            // can't tell if preview mode was activated
-            // Don't exit preview mode when canvas loses focus to sidebar elements
-            // (e.g., clicking sliders). Preview mode will be managed by slider events.
-            // Only exit preview mode on true blur events (window blur, etc.)
+            // Space keyup does not arrive after focus leaves the canvas.
+            if (this.outlineEditor.spaceKeyPressed) {
+                this.outlineEditor.onSpaceKeyReleased();
+                this.outlineEditor.spaceKeyPressed = false;
+            }
         });
 
-        // Background-layer commands remain available while another editor control has focus.
+        // Outline shortcuts stay available while another editor control has focus.
         document.addEventListener(
             'keydown',
             (e) => {
                 if (
                     window.glyphCanvas !== this ||
-                    !this.outlineEditor.active ||
-                    !(e.metaKey || e.ctrlKey) ||
-                    e.code !== 'KeyB' ||
-                    (!e.shiftKey && !e.altKey)
+                    !isViewFocused('view-editor')
                 ) {
+                    return;
+                }
+                if (isNativeEditableClipboardTarget(e.target)) {
+                    return;
+                }
+                if (document.activeElement === this.canvas) {
+                    return;
+                }
+                if (!this.shouldForwardUnfocusedEditorShortcut(e)) {
                     return;
                 }
 
                 e.preventDefault();
                 e.stopPropagation();
                 e.stopImmediatePropagation();
-                void this.outlineEditor.onKeyDown(e);
+                this.onKeyDown(e);
             },
             true
         );
@@ -2960,6 +2970,57 @@ class GlyphCanvas {
         }
     }
 
+    /** macOS Control is the context-menu modifier, not command drawing. */
+    private isCommandDrawingModifierKey(e: KeyboardEvent): boolean {
+        if (e.key === 'Meta') {
+            return true;
+        }
+        return e.key === 'Control' && !platformUsesCommandKey();
+    }
+
+    private shouldForwardUnfocusedEditorShortcut(e: KeyboardEvent): boolean {
+        const command = e.metaKey || e.ctrlKey;
+        if (
+            command &&
+            (e.key === '=' || e.key === '+' || e.key === '-' || e.key === '0')
+        ) {
+            return true;
+        }
+        if (!this.outlineEditor.active) {
+            return false;
+        }
+        if (command && e.code === 'KeyB') {
+            return true;
+        }
+        if (
+            command &&
+            e.key.toLowerCase() === 'a' &&
+            !e.shiftKey &&
+            !e.altKey
+        ) {
+            return true;
+        }
+        if (
+            !command &&
+            !e.altKey &&
+            !e.repeat &&
+            shortcutKeyToStickyEditTool(e.key)
+        ) {
+            return true;
+        }
+        if (
+            e.key === 'ArrowLeft' ||
+            e.key === 'ArrowRight' ||
+            e.key === 'ArrowUp' ||
+            e.key === 'ArrowDown' ||
+            e.key === 'Delete' ||
+            e.key === 'Backspace'
+        ) {
+            return true;
+        }
+        return false;
+    }
+
     private shouldIgnoreCommandKeyActivation(): boolean {
         return (
             !this.isBrowserWindowActive() ||
@@ -2982,7 +3043,7 @@ class GlyphCanvas {
         // Authoritative sync from event modifier flags. After Cmd+Tab, keyup is
         // often lost while hasFocus/blur never change — mouse/key events still
         // report the real metaKey/ctrlKey/altKey state.
-        if (this.outlineEditor.cmdKeyPressed && !e.metaKey && !e.ctrlKey) {
+        if (this.outlineEditor.cmdKeyPressed && !isPointerCommandModifier(e)) {
             this.outlineEditor.setCommandKeyPressed(false);
             this.armModifierKeyFocusSuppression();
         }
@@ -2997,7 +3058,7 @@ class GlyphCanvas {
         if (performance.now() < this.commandKeyActivationSuppressedUntil) {
             return;
         }
-        if (!e.metaKey && !e.ctrlKey) {
+        if (!isPointerCommandModifier(e)) {
             this.commandKeyRequiresFreshPress = false;
         }
         if (
@@ -3485,7 +3546,8 @@ class GlyphCanvas {
         this.canvas!.focus();
         this.noteModifierPointerOrKeyEvent(e);
         this.outlineEditor.setCommandKeyPressed(
-            (e.metaKey || e.ctrlKey) && !this.shouldIgnoreCommandKeyActivation()
+            isPointerCommandModifier(e) &&
+                !this.shouldIgnoreCommandKeyActivation()
         );
 
         // Refresh mouse position + hover targets at click time.

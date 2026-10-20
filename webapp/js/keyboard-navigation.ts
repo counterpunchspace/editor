@@ -1905,6 +1905,17 @@ import {
                 isGlyphCanvas: window.glyphCanvas?.canvas === activeElement
             });
 
+            // Outline editing keeps Cmd/Ctrl+A when the editor view is focused,
+            // even if focus sits on a sidebar or property-panel control.
+            const editorView = document.getElementById('view-editor');
+            if (
+                editorView?.classList.contains('focused') &&
+                window.glyphCanvas?.outlineEditor?.active &&
+                !isTextInputElement(activeElement)
+            ) {
+                return;
+            }
+
             // Special case: Handle glyph canvas in text mode
             if (
                 tagName === 'canvas' &&

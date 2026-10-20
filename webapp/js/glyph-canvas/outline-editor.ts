@@ -14,6 +14,7 @@ import fontManager from '../font-manager';
 import type { Babelfont } from '../babelfont';
 import { Transform } from '../basictypes';
 import { Logger } from '../logger';
+import { isPointerCommandModifier } from '../keyboard-shortcut-display';
 import { normalizeWorkerReplayTargets } from '../change-log';
 import { recordLiveTextDiagnostic } from '../live-text-diagnostics';
 import {
@@ -1350,6 +1351,24 @@ function snapSmoothHandleTripletToAxis(
     return false;
 }
 
+/** Lock a translation to the nearest 0°, 45°, or 90° direction. */
+function constrainOffsetToOctant(
+    deltaX: number,
+    deltaY: number
+): { x: number; y: number } {
+    if (deltaX === 0 && deltaY === 0) {
+        return { x: 0, y: 0 };
+    }
+
+    const angle = Math.atan2(deltaY, deltaX);
+    const snapped = Math.round(angle / (Math.PI / 4)) * (Math.PI / 4);
+    const length = Math.hypot(deltaX, deltaY);
+    return {
+        x: Math.round(length * Math.cos(snapped)),
+        y: Math.round(length * Math.sin(snapped))
+    };
+}
+
 function snapSmoothHandlePairToAxis(
     anchor: Babelfont.Node,
     draggedHandle: Babelfont.Node,
@@ -1364,22 +1383,15 @@ function snapSmoothHandlePairToAxis(
         return false;
     }
 
-    const horizontal = Math.abs(deltaX) >= Math.abs(deltaY);
-    if (horizontal) {
-        draggedHandle.x = pointerX;
-        draggedHandle.y = anchor.y;
-        alignHandleAlongDirection(
-            anchor,
-            oppositeHandle,
-            deltaX < 0 ? 1 : -1,
-            0
-        );
-        return true;
-    }
-
-    draggedHandle.x = anchor.x;
-    draggedHandle.y = pointerY;
-    alignHandleAlongDirection(anchor, oppositeHandle, 0, deltaY < 0 ? 1 : -1);
+    const constrained = constrainOffsetToOctant(deltaX, deltaY);
+    draggedHandle.x = anchor.x + constrained.x;
+    draggedHandle.y = anchor.y + constrained.y;
+    alignHandleAlongDirection(
+        anchor,
+        oppositeHandle,
+        -constrained.x,
+        -constrained.y
+    );
     return true;
 }
 
@@ -1698,6 +1710,8 @@ export class OutlineEditor {
     lastGlyphX: number | null = null;
     lastGlyphY: number | null = null;
     lastPointDragShiftKey: boolean | null = null;
+    private _shiftDragOriginX: number | null = null;
+    private _shiftDragOriginY: number | null = null;
     altKeyPressed: boolean = false;
     cmdKeyPressed: boolean = false;
     activeEditTool: StickyEditTool = 'select';
@@ -7125,7 +7139,7 @@ export class OutlineEditor {
             return false;
         }
 
-        const isCommand = e.metaKey || e.ctrlKey;
+        const isCommand = isPointerCommandModifier(e);
         if (
             isCommand &&
             (!this.shouldTreatCommandClickAsSelectionToggle() ||
@@ -10091,13 +10105,25 @@ export class OutlineEditor {
     }
 
     /**
-     * With objects already selected, Cmd/Ctrl add/removes from the
-     * selection like Shift instead of drawing, inserting, or cutting.
-     * An in-progress path-drawing session keeps the original Cmd gesture.
+     * Shift and Cmd/Ctrl add or remove the object under the pointer, including
+     * when the selection is empty. Empty space with nothing selected still
+     * draws. An in-progress path-drawing session keeps the draw gesture.
      */
+    private isPointerOverSelectableOutlineObject(): boolean {
+        return (
+            !!this.hoveredPointIndex ||
+            this.hoveredAnchorIndex !== null ||
+            this.hoveredComponentIndex !== null ||
+            this.resolvePathSegmentClick() !== null
+        );
+    }
+
     private shouldTreatCommandClickAsSelectionToggle(): boolean {
         if (this.activePathDrawingSession) {
             return false;
+        }
+        if (this.isPointerOverSelectableOutlineObject()) {
+            return true;
         }
         return this.hasOutlineObjectSelection();
     }
@@ -10110,18 +10136,21 @@ export class OutlineEditor {
             return false;
         }
         return (
-            (e.metaKey || e.ctrlKey) &&
+            isPointerCommandModifier(e) &&
             this.shouldTreatCommandClickAsSelectionToggle()
         );
     }
 
-    /** Cmd/Ctrl still draws or inserts only when nothing is selected. */
+    /** Cmd/Ctrl draws or inserts in empty space when nothing is selected. */
     private isCommandDrawInsertArmed(): boolean {
         if (!this.cmdKeyPressed || this.altKeyPressed) {
             return false;
         }
         if (this.activePathDrawingSession) {
             return true;
+        }
+        if (this.isPointerOverSelectableOutlineObject()) {
+            return false;
         }
         return !this.hasOutlineObjectSelection();
     }
@@ -10617,7 +10646,8 @@ export class OutlineEditor {
             return;
         }
 
-        const isCmdClick = (e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey;
+        const isCmdClick =
+            isPointerCommandModifier(e) && !e.altKey && !e.shiftKey;
         const isInsertToolClick =
             this.activeEditTool === 'insert' &&
             !e.metaKey &&
@@ -10798,7 +10828,7 @@ export class OutlineEditor {
             this.selectedTransientAnchor = null;
             const hoveredPoint = this.hoveredPointIndex;
             const isCmdCutClick =
-                (e.metaKey || e.ctrlKey) &&
+                isPointerCommandModifier(e) &&
                 !e.altKey &&
                 !e.shiftKey &&
                 !this.shouldTreatCommandClickAsSelectionToggle();
@@ -10807,7 +10837,7 @@ export class OutlineEditor {
             }
 
             if (
-                (e.metaKey || e.ctrlKey) &&
+                isPointerCommandModifier(e) &&
                 e.altKey &&
                 !e.shiftKey &&
                 this.canSlideSmoothPointOnCurve(hoveredPoint)
@@ -11674,19 +11704,12 @@ export class OutlineEditor {
         }
         // Filter out active-glyph nodes: they are identical to the visible
         // node handles already drawn by the outline editor.
-        return this._snapCandidateCache.debugCandidates.filter(
-            (c) => c.source !== 'active'
-        );
-    }
-
-    private _isOpenContourEndpoint(
-        contour: EditableContour,
-        nodeIndex: number
-    ): boolean {
-        if (contour.closed || contour.nodes.length < 1) {
-            return false;
-        }
-        return nodeIndex === 0 || nodeIndex === contour.nodes.length - 1;
+        const transform = this._editedSpaceTransform();
+        return this._snapCandidateCache.debugCandidates
+            .filter((c) => c.source !== 'active')
+            .map((candidate) =>
+                this._neighborCandidateInEditedSpace(candidate, transform)
+            );
     }
 
     private _isDraggingOpenPathEndpoint(): boolean {
@@ -11922,8 +11945,7 @@ export class OutlineEditor {
                     const c: SnapCandidate = {
                         x: node.x,
                         y: node.y,
-                        source: 'active',
-                        allowAxisSnap: !this._isOpenContourEndpoint(contour, ni)
+                        source: 'active'
                     };
                     if (draggedKeys.has(`${ci}:${ni}`)) {
                         activeDragged.push(c);
@@ -12192,6 +12214,57 @@ export class OutlineEditor {
      * Resolve the snapped X/Y position for a natural point position against a
      * prepared snap candidate cache.
      */
+    /**
+     * Neighbor candidates are stored in the root glyph's space. While editing
+     * inside a component, drag coordinates are in that component's space.
+     */
+    private _editedSpaceTransform(): {
+        a: number;
+        b: number;
+        c: number;
+        d: number;
+        tx: number;
+        ty: number;
+        det: number;
+    } | null {
+        if (!this.isEditingComponent()) {
+            return null;
+        }
+        const [a, b, c, d, tx, ty] = this.getAccumulatedTransform();
+        const det = a * d - b * c;
+        if (Math.abs(det) <= 0.0001) {
+            return null;
+        }
+        return { a, b, c, d, tx, ty, det };
+    }
+
+    private _neighborCandidateInEditedSpace(
+        candidate: SnapCandidate,
+        transform: {
+            a: number;
+            b: number;
+            c: number;
+            d: number;
+            tx: number;
+            ty: number;
+            det: number;
+        } | null
+    ): SnapCandidate {
+        if (
+            !transform ||
+            (candidate.source !== 'left' && candidate.source !== 'right')
+        ) {
+            return candidate;
+        }
+        const localX = candidate.x - transform.tx;
+        const localY = candidate.y - transform.ty;
+        return {
+            ...candidate,
+            x: (transform.d * localX - transform.c * localY) / transform.det,
+            y: (transform.a * localY - transform.b * localX) / transform.det
+        };
+    }
+
     private _resolveSnappedPosition(
         naturalX: number,
         naturalY: number,
@@ -12204,6 +12277,7 @@ export class OutlineEditor {
         ySource: SnapCandidate | null;
     } {
         const snapDist = snapCandidateCache.snapDistFontUnits;
+        const editedSpace = this._editedSpaceTransform();
 
         const allCandidates = snapCandidateCache.allDragCandidates;
         let bestSnapPoint: SnapCandidate | null = null;
@@ -12215,7 +12289,11 @@ export class OutlineEditor {
         let bestSnapY: number | null = null;
         let bestDistY = snapDist;
 
-        for (const candidate of allCandidates) {
+        for (const rawCandidate of allCandidates) {
+            const candidate = this._neighborCandidateInEditedSpace(
+                rawCandidate,
+                editedSpace
+            );
             const distX = Math.abs(naturalX - candidate.x);
             const distY = Math.abs(naturalY - candidate.y);
 
@@ -12363,7 +12441,7 @@ export class OutlineEditor {
             point,
             Boolean(originPoint),
             originPoint || undefined,
-            false
+            true
         );
         const resolved = this._applyCloseTargetSnap(
             Math.round(point.x),
@@ -12414,7 +12492,7 @@ export class OutlineEditor {
             naturalPos,
             isNodeSnappingEnabled() && Boolean(originPos),
             originPos || undefined,
-            false
+            true
         );
         const resolved = this._applyCloseTargetSnap(
             naturalPos.x,
@@ -13049,6 +13127,37 @@ export class OutlineEditor {
         this.glyphCanvas.render();
     }
 
+    /**
+     * Shift locks the pointer's movement from the moment Shift went down to
+     * the nearest 0°, 45°, or 90° direction. Applies to every dragged
+     * selection, not only nodes.
+     */
+    private constrainShiftDragPointer(
+        pointer: { glyphX: number; glyphY: number },
+        shiftKey: boolean
+    ): { glyphX: number; glyphY: number } {
+        if (!shiftKey) {
+            this._shiftDragOriginX = null;
+            this._shiftDragOriginY = null;
+            return pointer;
+        }
+        if (
+            this._shiftDragOriginX === null ||
+            this._shiftDragOriginY === null
+        ) {
+            this._shiftDragOriginX = this.lastGlyphX ?? pointer.glyphX;
+            this._shiftDragOriginY = this.lastGlyphY ?? pointer.glyphY;
+        }
+        const constrained = constrainOffsetToOctant(
+            pointer.glyphX - this._shiftDragOriginX,
+            pointer.glyphY - this._shiftDragOriginY
+        );
+        return {
+            glyphX: this._shiftDragOriginX + constrained.x,
+            glyphY: this._shiftDragOriginY + constrained.y
+        };
+    }
+
     _handleDrag(e: MouseEvent): void {
         const rect = this.canvas!.getBoundingClientRect();
         const mouseX = e.clientX - rect.left;
@@ -13074,7 +13183,10 @@ export class OutlineEditor {
         }
 
         if (this.isDraggingTransientAnchor && this._transientDrag) {
-            const point = this.transformMouseToComponentSpace();
+            const point = this.constrainShiftDragPointer(
+                this.transformMouseToComponentSpace(),
+                e.shiftKey
+            );
             this._transientDrag.x = point.glyphX;
             this._transientDrag.y = point.glyphY;
             this._hasMoved = true;
@@ -13082,30 +13194,16 @@ export class OutlineEditor {
             return;
         }
 
-        const { glyphX, glyphY } = this.isDraggingGuide
+        const rawPointer = this.isDraggingGuide
             ? this.transformMouseToRootSpace()
             : this.transformMouseToComponentSpace();
+        const { glyphX, glyphY } = this.constrainShiftDragPointer(
+            rawPointer,
+            e.shiftKey
+        );
 
-        let previousGlyphX = this.lastGlyphX;
-        let previousGlyphY = this.lastGlyphY;
-        if (
-            this.isDraggingPoint &&
-            this.selectedPoints.length === 1 &&
-            this.lastPointDragShiftKey !== null &&
-            this.lastPointDragShiftKey !== e.shiftKey
-        ) {
-            const currentLayerData = this.getCurrentLayerDataFromStack();
-            const { contourIndex, nodeIndex } = this.selectedPoints[0];
-            const contour = getEditableContour(
-                currentLayerData?.shapes?.[contourIndex]
-            );
-            const node = contour?.nodes[nodeIndex];
-
-            if (node) {
-                previousGlyphX = node.x;
-                previousGlyphY = node.y;
-            }
-        }
+        const previousGlyphX = this.lastGlyphX;
+        const previousGlyphY = this.lastGlyphY;
 
         // Calculate delta from last position
         const deltaX =
@@ -13422,7 +13520,9 @@ export class OutlineEditor {
             }
         }
 
-        const snapRadius = 10 / this.glyphCanvas.viewportManager!.scale;
+        const snapRadius =
+            APP_SETTINGS.OUTLINE_EDITOR.SNAP_DISTANCE_PX /
+            (this.glyphCanvas.viewportManager?.scale || 1);
         let bestTarget: OpenPathEndpointRef | null = null;
         let bestDistance = Number.POSITIVE_INFINITY;
 
@@ -13686,6 +13786,8 @@ export class OutlineEditor {
         this.isDraggingGuide = false;
         this.isResizingSelection = false;
         this.lastPointDragShiftKey = null;
+        this._shiftDragOriginX = null;
+        this._shiftDragOriginY = null;
         this._pointDragPreserveHandlePositions = false;
         this._offCurveAltDragConstraint = null;
         this._smoothOnCurveAltDragConstraint = null;
@@ -15264,7 +15366,7 @@ export class OutlineEditor {
             return false;
         }
         if (
-            (e.metaKey || e.ctrlKey) &&
+            isPointerCommandModifier(e) &&
             !this.shouldTreatCommandClickAsSelectionToggle()
         ) {
             return false;
@@ -15745,7 +15847,8 @@ export class OutlineEditor {
     }
 
     private handleCommandPathGesture(e: MouseEvent): boolean {
-        const isCmdClick = (e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey;
+        const isCmdClick =
+            isPointerCommandModifier(e) && !e.altKey && !e.shiftKey;
         const isPenToolClick =
             this.activeEditTool === 'pen' &&
             !e.metaKey &&
@@ -17625,7 +17728,17 @@ export class OutlineEditor {
         const node = contour?.nodes?.[point.nodeIndex] as
             Babelfont.Node | undefined;
 
-        return isOnCurveNode(node);
+        if (!contour || !isOnCurveNode(node)) {
+            return false;
+        }
+        if (
+            !contour.closed &&
+            (point.nodeIndex === 0 ||
+                point.nodeIndex === contour.nodes.length - 1)
+        ) {
+            return false;
+        }
+        return true;
     }
 
     /**
@@ -20165,9 +20278,14 @@ export class OutlineEditor {
             }
         }
 
-        // Handle Cmd+Left/Right to navigate through glyphs in logical order
+        // Handle Cmd+Left/Right to navigate through glyphs in logical order.
+        // Shift+Cmd/Ctrl+Arrow is a 100× nudge and does not navigate.
         // Only when in glyph edit mode but NOT in nested component mode
-        if ((e.metaKey || e.ctrlKey) && !this.isEditingComponent()) {
+        if (
+            (e.metaKey || e.ctrlKey) &&
+            !e.shiftKey &&
+            !this.isEditingComponent()
+        ) {
             if (e.key === 'ArrowLeft') {
                 e.preventDefault();
                 if (this.active && !this.isEditingComponent()) {
@@ -20202,7 +20320,7 @@ export class OutlineEditor {
             this.selectedLayerId !== null ||
             this.braceLayerNeighborAboveMasterId !== null ||
             this.braceLayerNeighborBelowMasterId !== null;
-        if ((e.metaKey || e.ctrlKey) && canCycleLayers) {
+        if ((e.metaKey || e.ctrlKey) && !e.shiftKey && canCycleLayers) {
             if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
                 e.preventDefault();
                 this.cycleLayers(e.key === 'ArrowUp');
@@ -20231,7 +20349,12 @@ export class OutlineEditor {
                 e.key === 'ArrowDown')
         ) {
             e.preventDefault();
-            const multiplier = e.shiftKey ? 10 : 1;
+            const multiplier =
+                e.shiftKey && (e.metaKey || e.ctrlKey)
+                    ? 100
+                    : e.shiftKey
+                      ? 10
+                      : 1;
             let dx = 0;
             let dy = 0;
             if (e.key === 'ArrowLeft') {
@@ -20255,7 +20378,12 @@ export class OutlineEditor {
                 this.selectedComponents.length > 0 ||
                 this.selectedSidebearingHandle)
         ) {
-            const multiplier = e.shiftKey ? 10 : 1;
+            const multiplier =
+                e.shiftKey && (e.metaKey || e.ctrlKey)
+                    ? 100
+                    : e.shiftKey
+                      ? 10
+                      : 1;
             const preMoveDesc = this.getCurrentKeyboardSelectionHistoryDesc();
             if (
                 e.key === 'ArrowLeft' ||
