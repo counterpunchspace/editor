@@ -1,7 +1,8 @@
 import { spawn } from "node:child_process";
 
 const PROBE_MS = 5000;
-const TOTAL_MS = 60000;
+const STARTUP_MS = 60000;
+const TOTAL_MS = 120000;
 const RSS_BYTES = 768 * 1024 * 1024;
 const REPORT_MAX = 256 * 1024;
 const LOG_MAX = 16 * 1024;
@@ -13,6 +14,7 @@ function clip(text, max) {
 
 export function supervise(command, args, options = {}) {
   const probeMs = options.probeMs ?? PROBE_MS;
+  const startupMs = options.startupMs ?? STARTUP_MS;
   const totalMs = options.totalMs ?? TOTAL_MS;
   const rssBytes = options.rssBytes ?? RSS_BYTES;
   const started = Date.now();
@@ -105,7 +107,8 @@ export function supervise(command, args, options = {}) {
         kill("timeout");
         return;
       }
-      if (now - lastProbeAt > probeMs) {
+      const starting = lastProbe === "" || lastProbe === "loading";
+      if (now - lastProbeAt > (starting ? startupMs : probeMs)) {
         kill("timeout");
         return;
       }
