@@ -567,7 +567,11 @@ function renderCatalog(
             `${plugin.name} ${plugin.package} ${plugin.description}`.toLowerCase();
         const details = document.createElement('div');
         details.className = 'plugin-manager-details';
-        details.appendChild(createTextElement('h5', plugin.name));
+        const title = document.createElement('h5');
+        title.className = 'plugin-manager-title';
+        title.appendChild(document.createTextNode(plugin.name));
+        title.appendChild(screenedMark());
+        details.appendChild(title);
         details.appendChild(createTextElement('p', plugin.description));
         if (plugin.kind === 'commercial' && !plugin.purchased) {
             const priceLine =
@@ -661,6 +665,19 @@ function renderCatalog(
         empty.hidden = visible > 0;
     });
     return section;
+}
+
+const SCREENED_TOOLTIP =
+    'From the Counterpunch catalog. Before publication, the release is run in a sandbox and screened for sending data off your computer, changing the font outside that plugin type contract, and crashing or hanging the editor.';
+
+function screenedMark(): HTMLElement {
+    const mark = document.createElement('span');
+    mark.className = 'plugin-screened';
+    mark.title = SCREENED_TOOLTIP;
+    mark.setAttribute('aria-label', SCREENED_TOOLTIP);
+    mark.innerHTML =
+        '<svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M8 1.2 2.5 3.4v4.2c0 3.3 2.3 5.6 5.5 6.8 3.2-1.2 5.5-3.5 5.5-6.8V3.4L8 1.2Zm0 1.7 3.8 1.5v3.1c0 2.4-1.6 4.2-3.8 5.2-2.2-1-3.8-2.8-3.8-5.2V4.4L8 2.9Z"/></svg>';
+    return mark;
 }
 
 function createPluginRow(

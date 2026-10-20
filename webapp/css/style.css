@@ -6548,6 +6548,24 @@ html[data-command-modifier='ctrl'] .shortcut-option-modifier::before {
     font-size: 13px;
 }
 
+.plugin-manager-title {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.plugin-screened {
+    display: inline-flex;
+    flex: 0 0 auto;
+    color: var(--accent-blue);
+    cursor: help;
+}
+
+.plugin-screened svg {
+    width: 14px;
+    height: 14px;
+}
+
 .plugin-manager-details p {
     margin-top: 3px;
 }
