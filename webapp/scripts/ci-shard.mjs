@@ -141,6 +141,7 @@ const GROUPS = {
         ],
         'path-editing': [
             'tests/open-close-path.spec.ts',
+            'tests/outline-editor-gaps.spec.ts',
             'tests/path-context-menu-fuzz.spec.ts',
             'tests/boolean-subtraction.spec.ts'
         ],
