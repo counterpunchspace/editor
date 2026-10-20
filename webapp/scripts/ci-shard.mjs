@@ -168,10 +168,8 @@ const GROUPS = {
         'deletion': ['tests/cloud-collab-deletion.spec.ts'],
         'deletion-glyph': ['tests/cloud-collab-deletion-glyph.spec.ts'],
         'sparse-closure': ['tests/cloud-collab-sparse-closure.spec.ts'],
-        'three-window': [
-            'tests/cloud-collab-three-window-sync.spec.ts',
-            'tests/cloud-collab-three-window-relay.spec.ts'
-        ],
+        'three-window-sync': ['tests/cloud-collab-three-window-sync.spec.ts'],
+        'three-window-relay': ['tests/cloud-collab-three-window-relay.spec.ts'],
         'reconnect': ['tests/cloud-collab-three-window-reconnect.spec.ts']
     }
 };

@@ -308,7 +308,8 @@ jobs:
                     - deletion
                     - deletion-glyph
                     - sparse-closure
-                    - three-window
+                    - three-window-sync
+                    - three-window-relay
                     - reconnect
         steps:
             - name: Checkout editor
