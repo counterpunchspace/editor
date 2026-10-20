@@ -9,6 +9,7 @@
 
 import * as Y from 'yjs';
 import { assertCompileStamp } from './edit-intent';
+import { rebasePythonExecutionBaseline } from './python-execution-baseline';
 import {
     jsonToYDoc,
     jsonToCoreFontMap,
@@ -5570,6 +5571,17 @@ export class PatchSyncEngine {
             this._reconcileGlyphDocsAfterRemoteEntries(effectiveRemoteEntries);
             this._bindAppliedGlyphDocument(resolvedDocumentId);
             this._syncRemoteJsonFromYDoc(effectiveRemoteEntries);
+            const pythonBaseline = window.pythonExecutionHistoryContext;
+            if (pythonBaseline?.beforeFontDataJson && this._fontJson) {
+                pythonBaseline.beforeFontDataJson =
+                    rebasePythonExecutionBaseline(
+                        pythonBaseline.beforeFontDataJson,
+                        this._fontJson,
+                        effectiveRemoteEntries.map((entry) =>
+                            String(entry.path || '')
+                        )
+                    );
+            }
             this._yjsWorkerCallback?.(
                 update,
                 effectiveRemoteEntries,

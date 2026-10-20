@@ -175,6 +175,14 @@ jobs:
                   path: webapp/test-results/timings.json
                   if-no-files-found: ignore
 
+            - name: Upload Playwright traces
+              if: always()
+              uses: actions/upload-artifact@v4
+              with:
+                  name: chromium-e2e-${{ matrix.group }}
+                  path: webapp/test-results
+                  if-no-files-found: ignore
+
     # Deploys the trio to the staging hostnames, then the shard job runs the
     # suite there. previewrelease and release repeat that suite before cutover.
     cloud-collab-staging-deploy:
@@ -292,10 +300,14 @@ jobs:
                 group:
                     - marketplace
                     - offline-catchup
-                    - compaction-integrity
-                    - seed-quota
-                    - deletion-sparse
+                    - catalog
+                    - integrity
+                    - lifecycle
+                    - quota
+                    - deletion
+                    - sparse-closure
                     - three-window
+                    - reconnect
         steps:
             - name: Checkout editor
               uses: actions/checkout@v4
@@ -336,8 +348,8 @@ jobs:
                   path: webapp/test-results/timings.json
                   if-no-files-found: ignore
 
-            - name: Upload Playwright failure evidence
-              if: failure()
+            - name: Upload Playwright traces
+              if: always()
               uses: actions/upload-artifact@v4
               with:
                   name: cloud-collab-e2e-${{ matrix.group }}

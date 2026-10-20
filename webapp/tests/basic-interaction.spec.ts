@@ -480,6 +480,7 @@ test.describe('Font Editor Basic Workflow', () => {
                         textRunEditor.textBuffer.length
                 );
             },
+            undefined,
             { timeout: 5000 }
         );
 
@@ -794,6 +795,7 @@ test.describe('Font Editor Basic Workflow', () => {
                     !!list
                 );
             },
+            undefined,
             { timeout: 10000 }
         );
         await page.waitForTimeout(200);
@@ -830,6 +832,7 @@ test.describe('Font Editor Basic Workflow', () => {
                     mgr.featuresEditor.getValue().length > 0
                 );
             },
+            undefined,
             { timeout: 10000 }
         );
 
@@ -999,6 +1002,7 @@ test.describe('Font Editor Basic Workflow', () => {
                 !!window.glyphCanvas?.outlineEditor?.active &&
                 (window.glyphCanvas?.textRunEditor?.selectedGlyphIndex ??
                     -1) === 0,
+            undefined,
             { timeout: 3000 }
         );
 
@@ -1009,6 +1013,7 @@ test.describe('Font Editor Basic Workflow', () => {
                 !!window.glyphCanvas?.stackPreviewAnimator?.shouldRenderStackPreview?.() &&
                 window.glyphCanvas?.textRunEditor?.textBuffer === 'Ä' &&
                 window.glyphCanvas?.textRunEditor?.selectedGlyphIndex === 0,
+            undefined,
             { timeout: 5000 }
         );
 

@@ -161,6 +161,7 @@ async function waitForBridgeReady(page: Page) {
         () =>
             !!(window as any).changeBridge &&
             !!(window as any).currentFontModel,
+        undefined,
         { timeout: 15000 }
     );
     await page.waitForTimeout(300);
@@ -169,6 +170,7 @@ async function waitForBridgeReady(page: Page) {
 async function waitForEditingFontCompiled(page: Page) {
     await page.waitForFunction(
         () => !!(window as any).fontManager?.editingFont,
+        undefined,
         { timeout: 30000 }
     );
 }

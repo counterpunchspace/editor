@@ -129,6 +129,15 @@ function resultKey(record: { codepoint?: number; glyph_name: string }): string {
     return `g:${record.glyph_name}`;
 }
 
+/** A new search drops glyphs that left the list and keeps the rest selected. */
+export function selectedKeysStillPresent(
+    selected: Iterable<string>,
+    results: Array<{ codepoint?: number; glyph_name: string }>
+): string[] {
+    const present = new Set(results.map((record) => resultKey(record)));
+    return [...selected].filter((key) => present.has(key));
+}
+
 function characterRecord(
     character: CharacterSetEntry
 ): GlyphDataSearchResult | undefined {
@@ -627,9 +636,16 @@ export class AddGlyphsDialog {
                 })
             );
         }
-        this.selectedKeys.clear();
-        this.activeIndex = this.results.length ? 0 : -1;
-        this.selectionAnchor = this.activeIndex;
+        const kept = selectedKeysStillPresent(this.selectedKeys, this.results);
+        this.selectedKeys = new Set(kept);
+        const active = this.results[this.activeIndex];
+        if (!active || (kept.length > 0 && !kept.includes(resultKey(active)))) {
+            const next = this.results.findIndex((record) =>
+                kept.includes(resultKey(record))
+            );
+            this.activeIndex = next >= 0 ? next : this.results.length ? 0 : -1;
+            this.selectionAnchor = this.activeIndex;
+        }
         this.renderResults();
     }
 

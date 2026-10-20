@@ -702,6 +702,7 @@ export async function focusView(
                     typeof win.focusView === 'function'
                 );
             },
+            undefined,
             { timeout: 15000 }
         );
 
@@ -1186,6 +1187,7 @@ export async function waitForOverviewTilesRendered(page: any) {
 
                 return true;
             },
+            undefined,
             { timeout: 30000 }
         );
 
@@ -1478,6 +1480,7 @@ export async function waitForFeatureCompilationError(
 
                 return sidebarVisible;
             },
+            undefined,
             { timeout }
         );
 

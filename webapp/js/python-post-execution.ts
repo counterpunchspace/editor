@@ -39,6 +39,7 @@ type SyntheticChangeOperation = {
 
 type PythonExecutionCommitContext = {
     beforeFontDataJson: string | null;
+    code?: string | null;
     label?: string | null;
     transactionStarted?: boolean;
     releaseRecordingSuppression?: (() => void) | null;
@@ -213,7 +214,19 @@ export function commitPythonExecutionSyntheticChanges(
                 )
             );
 
-        if (directOperations.length) {
+        const readOnly =
+            window.cloudPlugin?.canMutateCurrentAsset?.() === false;
+        const hostPython = /_cp_/.test(historyContext.code || '');
+        if (directOperations.length && readOnly) {
+            // Host calls such as compile filters snapshot the font and then
+            // wait. A remote update in that gap is not a script edit. A real
+            // script on a read-only font is told it was not saved.
+            if (!hostPython) {
+                window.alert(
+                    'This cloud font is read-only. The Python edit was not saved.'
+                );
+            }
+        } else if (directOperations.length) {
             // Live Python setters remain suppressed, but the canonical diff is
             // the one intentional bridge operation that must be recorded.
             releaseRecordingSuppression();

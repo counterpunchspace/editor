@@ -545,6 +545,7 @@ export async function waitForEditingCompile(page: Page): Promise<void> {
 
                 return !!fm.editingFont && !autoCompileStatus?.isCompiling;
             },
+            undefined,
             { timeout: 5000 }
         );
     } catch {
@@ -1084,6 +1085,7 @@ export async function setInterpolatedEditorState(
             const fm = (window as any).fontManager;
             return fm?.editingFont !== null;
         },
+        undefined,
         { timeout: 20000 }
     );
 
@@ -1304,6 +1306,7 @@ export async function dismissVisibleTippies(page: Page): Promise<void> {
                     rect.height > 0
                 );
             }),
+        undefined,
         { timeout: 5000 }
     );
 }
@@ -1313,6 +1316,7 @@ export async function waitForVisibleLayerRows(page: Page): Promise<void> {
         () =>
             document.querySelectorAll('.editor-layer-item[data-layer-id]')
                 .length > 0,
+        undefined,
         { timeout: 10000 }
     );
 }

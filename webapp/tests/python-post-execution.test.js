@@ -1111,4 +1111,76 @@ describe('Python post-execution synthetic commit alignment', () => {
         sender.destroy();
         receiver.destroy();
     });
+
+    test('does not throw when a script edits a read-only cloud font', () => {
+        const { commitPythonExecutionSyntheticChanges } = loadModule();
+        const alert = jest.spyOn(window, 'alert').mockImplementation(() => {});
+        window.cloudPlugin = { canMutateCurrentAsset: () => false };
+        const currentFont = {
+            babelfontJson: JSON.stringify({
+                glyphs: [{ name: 'a', layers: [{ id: 'default', width: 610 }] }]
+            }),
+            syncJsonFromModel: jest.fn()
+        };
+        const bridge = {
+            applySyntheticChangeSet: jest.fn(() => {
+                throw new Error('Cloud asset is read-only');
+            }),
+            endTransaction: jest.fn()
+        };
+
+        expect(() =>
+            commitPythonExecutionSyntheticChanges(
+                currentFont,
+                {
+                    transactionStarted: true,
+                    beforeFontDataJson: JSON.stringify({
+                        glyphs: [
+                            {
+                                name: 'a',
+                                layers: [{ id: 'default', width: 500 }]
+                            }
+                        ]
+                    }),
+                    code: 'font.glyphs["a"].width = 610',
+                    label: 'Python script'
+                },
+                bridge
+            )
+        ).not.toThrow();
+        expect(bridge.applySyntheticChangeSet).not.toHaveBeenCalled();
+        expect(alert).toHaveBeenCalled();
+        alert.mockRestore();
+        delete window.cloudPlugin;
+    });
+
+    test('drops a host Python diff on a read-only font without telling the user', () => {
+        const { commitPythonExecutionSyntheticChanges } = loadModule();
+        const alert = jest.spyOn(window, 'alert').mockImplementation(() => {});
+        window.cloudPlugin = { canMutateCurrentAsset: () => false };
+        const currentFont = {
+            babelfontJson: JSON.stringify({ upm: 1100 }),
+            syncJsonFromModel: jest.fn()
+        };
+        const bridge = {
+            applySyntheticChangeSet: jest.fn(),
+            endTransaction: jest.fn()
+        };
+
+        commitPythonExecutionSyntheticChanges(
+            currentFont,
+            {
+                transactionStarted: true,
+                beforeFontDataJson: JSON.stringify({ upm: 1000 }),
+                code: '_cp_compile_filters_run("{}")',
+                label: 'Python script'
+            },
+            bridge
+        );
+
+        expect(bridge.applySyntheticChangeSet).not.toHaveBeenCalled();
+        expect(alert).not.toHaveBeenCalled();
+        alert.mockRestore();
+        delete window.cloudPlugin;
+    });
 });

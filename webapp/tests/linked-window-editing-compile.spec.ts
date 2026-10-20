@@ -369,6 +369,7 @@ async function waitForBridgeReady(page: Page): Promise<void> {
             !!(window as any).patchSyncEngine &&
             !!(window as any).currentFontModel &&
             !!(window as any).fontManager?.currentFont,
+        undefined,
         { timeout: 20000 }
     );
     await page.waitForTimeout(500);
@@ -489,6 +490,7 @@ async function waitForFullStateSync(page: Page): Promise<void> {
                 Array.isArray(snapshot?.glyphs) && snapshot.glyphs.length > 0
             );
         },
+        undefined,
         { timeout: 20000 }
     );
     await page.waitForTimeout(500);
@@ -791,6 +793,7 @@ async function setAAdieresisEditingContext(page: Page): Promise<void> {
             const tr = (window as any).glyphCanvas?.textRunEditor;
             return tr?.textBuffer === 'aä' && tr?.shapedGlyphs?.length >= 2;
         },
+        undefined,
         { timeout: 20000 }
     );
 }
@@ -1541,6 +1544,7 @@ async function setEditingContext(
             const fm = (window as any).fontManager;
             return fm?.editingFont !== null;
         },
+        undefined,
         { timeout: 20000 }
     );
 

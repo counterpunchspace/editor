@@ -351,6 +351,7 @@ async function waitForBridgeReady(page: Page) {
                 !!(window as any).currentFontModel
             );
         },
+        undefined,
         { timeout: 15000 }
     );
     await page.waitForTimeout(500);
@@ -364,6 +365,7 @@ async function waitForEditingFontCompiled(page: Page) {
             () => {
                 return !!(window as any).fontManager?.editingFont;
             },
+            undefined,
             { timeout: 30000 }
         );
     } catch (error) {
@@ -648,6 +650,7 @@ async function waitForCompilation(page: Page) {
 
                 return !!fm.editingFont && !autoCompileStatus?.isCompiling;
             },
+            undefined,
             { timeout: 5000 }
         );
     } catch {
@@ -863,6 +866,7 @@ test.describe('Open/Close Path across linked masters', () => {
                     ).__openCloseAdvanceTest?.compilationModes?.includes(
                         'full'
                     ),
+                undefined,
                 { timeout: 15000 }
             );
             const settled = await page.evaluate(() => {
@@ -944,6 +948,7 @@ test.describe('Open/Close Path across linked masters', () => {
                 const tr = (window as any).glyphCanvas?.textRunEditor;
                 return tr?.shapedGlyphs?.length > 0;
             },
+            undefined,
             { timeout: 15000 }
         );
         await page.waitForTimeout(300);

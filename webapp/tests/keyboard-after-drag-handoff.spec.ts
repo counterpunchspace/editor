@@ -581,6 +581,7 @@ test.describe('Keyboard-after-drag stale editing handoff', () => {
                     (gc?.textRunEditor?.selectedGlyphIndex ?? -1) === 0
                 );
             },
+            undefined,
             { timeout: 10000 }
         );
 

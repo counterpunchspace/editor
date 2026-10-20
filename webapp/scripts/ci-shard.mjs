@@ -125,8 +125,9 @@ function pack(tests, shardCount) {
 }
 
 // Named file groups, one CI job each, so a job name says what it covers.
-// Cloud jobs share one staging stack: keep the cloud group count small, and the
-// marketplace test alone.
+// Cloud jobs share one staging stack. Groups are split so each job stays under
+// 10 minutes. The marketplace test stays alone. If more groups start causing
+// staging transport errors, cap the cloud matrix with max-parallel: 6.
 const GROUPS = {
     'chromium': {
         'language-packs': ['tests/latin-language-pack.spec.ts'],
@@ -162,23 +163,17 @@ const GROUPS = {
             'tests/cloud-collab-reliability-offline.spec.ts',
             'tests/cloud-collab-offline-reload.spec.ts'
         ],
-        'compaction-integrity': [
-            'tests/cloud-collab-reliability-catalog.spec.ts',
-            'tests/cloud-collab-p0-integrity.spec.ts'
-        ],
-        'seed-quota': [
-            'tests/cloud-collab-lifecycle.spec.ts',
-            'tests/cloud-collab-quota.spec.ts'
-        ],
-        'deletion-sparse': [
-            'tests/cloud-collab-deletion.spec.ts',
-            'tests/cloud-collab-sparse-closure.spec.ts'
-        ],
+        'catalog': ['tests/cloud-collab-reliability-catalog.spec.ts'],
+        'integrity': ['tests/cloud-collab-p0-integrity.spec.ts'],
+        'lifecycle': ['tests/cloud-collab-lifecycle.spec.ts'],
+        'quota': ['tests/cloud-collab-quota.spec.ts'],
+        'deletion': ['tests/cloud-collab-deletion.spec.ts'],
+        'sparse-closure': ['tests/cloud-collab-sparse-closure.spec.ts'],
         'three-window': [
             'tests/cloud-collab-three-window-sync.spec.ts',
-            'tests/cloud-collab-three-window-relay.spec.ts',
-            'tests/cloud-collab-three-window-reconnect.spec.ts'
-        ]
+            'tests/cloud-collab-three-window-relay.spec.ts'
+        ],
+        'reconnect': ['tests/cloud-collab-three-window-reconnect.spec.ts']
     }
 };
 

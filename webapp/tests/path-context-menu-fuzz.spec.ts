@@ -23,6 +23,7 @@ async function waitForBridgeReady(page: Page): Promise<void> {
         () =>
             !!(window as any).changeBridge &&
             !!(window as any).currentFontModel,
+        undefined,
         { timeout: 15000 }
     );
     await page.waitForTimeout(400);
