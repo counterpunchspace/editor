@@ -10,6 +10,8 @@ The editor owns `plugin-contracts/`. The website copies it with `npm run sync-pl
 
 `counterpunch-plugin.json` at the repository root uses `counterpunch-plugin-manifest:v2`. Listing text, images, and price live on the website. The file is read at the GitHub release tag.
 
+A plugin that uses only these contracts may be under its own license, including a proprietary one, under [GPL-PLUGIN-EXCEPTION](../GPL-PLUGIN-EXCEPTION).
+
 ## Versions
 
 Plugin versions are `MAJOR.MINOR.PATCH` only. Any change to how a host calls a plugin bumps that type's contract. Additive optional hooks do not. The editor keeps an adapter for the previous contract for at least one release.

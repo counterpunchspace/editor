@@ -1,0 +1,14 @@
+Additional permission under GNU GPL version 3, section 7
+
+Copyright (C) 2025 Yanone
+
+Counterpunch is free software. You can redistribute it and modify it under the terms of the GNU General Public License, version 3, as published by the Free Software Foundation. Those terms are in the file LICENSE in this repository. This grant is for version 3 only.
+
+As a special exception to those terms, the copyright holder grants you permission to combine Counterpunch with a plugin that interacts with Counterpunch solely through the published plugin contracts, and to distribute that plugin under terms of your choice, including proprietary terms, provided that:
+
+1. The plugin does not include, modify, or replace any part of Counterpunch.
+2. The plugin does not copy Counterpunch source code into itself.
+
+This additional permission does not apply to a modified version of Counterpunch. Changes to Counterpunch stay under GNU GPL version 3. If you modify Counterpunch, you may extend this exception to your version, but you are not obligated to do so. If you do not wish to do so, delete this exception statement from your version.
+
+This exception is an additional permission under section 7 of the GNU General Public License, version 3.

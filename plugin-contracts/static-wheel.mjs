@@ -1,6 +1,7 @@
 import { inflateRawSync } from "node:zlib";
 import { createHash } from "node:crypto";
 import contractsJson from "./contracts.json" with { type: "json" };
+import { licenseFailure, PROPRIETARY_LICENSE } from "./licenses.mjs";
 
 export const contracts = contractsJson;
 export const manifestSchemaId = "counterpunch-plugin-manifest:v2";
@@ -221,6 +222,24 @@ export function inspectWheel(bytes, filename, options = {}) {
     if (options.manifest.package && name.replaceAll("_", "-") !== options.manifest.package.replaceAll("_", "-")) {
       failures.push("manifest package does not match METADATA Name");
     }
+    const declaredLicense = String(options.manifest.license || "").trim();
+    const licenseError = licenseFailure(declaredLicense, options.listingKind);
+    if (licenseError) failures.push(licenseError);
+    const expression = (metadata["License-Expression"] || [""])[0];
+    if (expression !== declaredLicense) {
+      failures.push(
+        `License-Expression ${expression || "(missing)"} does not match manifest license ${declaredLicense || "(missing)"}`,
+      );
+    }
+    if (declaredLicense === PROPRIETARY_LICENSE) {
+      const packaged = packagedProprietaryLicense(directory, bytes, metadata);
+      if (packaged.error) failures.push(packaged.error);
+      else if (typeof options.proprietaryLicenseText !== "string" || options.proprietaryLicenseText.length === 0) {
+        failures.push("proprietary license text was not provided");
+      } else if (packaged.text !== options.proprietaryLicenseText) {
+        failures.push("packaged proprietary license does not match the Counterpunch proprietary plugin license");
+      }
+    }
   }
   if (options.reservedNames?.some((reserved) => reserved.replaceAll("_", "-").toLowerCase() === name.replaceAll("_", "-").toLowerCase())) {
     failures.push(`distribution name ${name} collides with a reserved package`);
@@ -244,10 +263,24 @@ export function inspectWheel(bytes, filename, options = {}) {
   };
 }
 
+function packagedProprietaryLicense(directory, bytes, metadata) {
+  const names = metadata["License-File"] || [];
+  if (!names.includes("LICENSE")) return { error: "License-File LICENSE missing" };
+  const entry = directory.entries.find(
+    (item) => item.name.endsWith(".dist-info/licenses/LICENSE") || item.name.endsWith(".dist-info/LICENSE"),
+  );
+  if (!entry) return { error: "License-File LICENSE is not in the wheel" };
+  const file = inflateEntry(bytes, entry);
+  if (file.error) return { error: file.error };
+  return { text: file.text };
+}
+
 export function validateManifest(manifest) {
   const failures = [];
   if (!manifest || manifest.schema !== manifestSchemaId) failures.push("manifest schema must be v2");
   if (!manifest?.package) failures.push("manifest package is required");
+  const licenseError = licenseFailure(manifest?.license);
+  if (licenseError) failures.push(licenseError);
   if (!Array.isArray(manifest?.plugins) || manifest.plugins.length === 0) {
     failures.push("manifest plugins must be a non-empty array");
   }

@@ -3,9 +3,25 @@
   "$id": "counterpunch-plugin-manifest:v2",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema", "package", "plugins"],
+  "required": ["schema", "package", "license", "plugins"],
   "properties": {
     "schema": { "const": "counterpunch-plugin-manifest:v2" },
+    "license": {
+      "enum": [
+        "GPL-3.0-only",
+        "GPL-3.0-or-later",
+        "LGPL-3.0-only",
+        "LGPL-3.0-or-later",
+        "MIT",
+        "BSD-2-Clause",
+        "BSD-3-Clause",
+        "ISC",
+        "0BSD",
+        "Apache-2.0",
+        "MPL-2.0",
+        "LicenseRef-Counterpunch-Proprietary"
+      ]
+    },
     "package": {
       "type": "string",
       "pattern": "^[a-z0-9]+(?:[-_][a-z0-9]+)*$"

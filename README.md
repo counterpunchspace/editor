@@ -1,5 +1,13 @@
 ![](title.png)
 
+## License
+
+The Counterpunch editor is licensed under the GNU General Public License, version 3. The terms are in [LICENSE](LICENSE).
+
+A plugin that uses only the published plugin contracts may be under another license, including a proprietary one. That permission is [GPL-PLUGIN-EXCEPTION](GPL-PLUGIN-EXCEPTION). Changes to the editor itself stay under GPL-3.
+
+Plugin authors: the marketplace accepts the license expressions listed in the [plugin creator guide](https://github.com/counterpunchspace/website/blob/main/docs/PLUGIN_CREATOR_GUIDE.md).
+
 ## Develpoment Stage
 
 Development is in **Alpha** stage (features not complete).
