@@ -299,12 +299,14 @@ jobs:
             matrix:
                 group:
                     - marketplace
-                    - offline-catchup
+                    - offline-edits
+                    - offline-reload
                     - catalog
                     - integrity
                     - lifecycle
                     - quota
                     - deletion
+                    - deletion-glyph
                     - sparse-closure
                     - three-window
                     - reconnect

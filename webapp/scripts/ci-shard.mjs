@@ -159,15 +159,14 @@ const GROUPS = {
     },
     'cloud-collab': {
         'marketplace': ['tests/plugin-marketplace.spec.ts'],
-        'offline-catchup': [
-            'tests/cloud-collab-reliability-offline.spec.ts',
-            'tests/cloud-collab-offline-reload.spec.ts'
-        ],
+        'offline-edits': ['tests/cloud-collab-reliability-offline.spec.ts'],
+        'offline-reload': ['tests/cloud-collab-offline-reload.spec.ts'],
         'catalog': ['tests/cloud-collab-reliability-catalog.spec.ts'],
         'integrity': ['tests/cloud-collab-p0-integrity.spec.ts'],
         'lifecycle': ['tests/cloud-collab-lifecycle.spec.ts'],
         'quota': ['tests/cloud-collab-quota.spec.ts'],
         'deletion': ['tests/cloud-collab-deletion.spec.ts'],
+        'deletion-glyph': ['tests/cloud-collab-deletion-glyph.spec.ts'],
         'sparse-closure': ['tests/cloud-collab-sparse-closure.spec.ts'],
         'three-window': [
             'tests/cloud-collab-three-window-sync.spec.ts',
