@@ -76,7 +76,7 @@ deploy_worker "$COLLAB_ROOT/workers/room"
     # The image build is not reproducible, so every deploy would push a new
     # digest and roll every container onto it; the first preflights then wait
     # minutes for the pull. Roll out only when the container sources change.
-    container_tag="container-$(find Dockerfile container -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum | sha256sum | cut -c1-16)"
+    container_tag="container-$(find Dockerfile review.Dockerfile container review -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum | sha256sum | cut -c1-16)"
     deployed_tag=$(npx wrangler versions list --env staging --json 2>/dev/null |
       node -e 'let s="";process.stdin.on("data",(d)=>(s+=d)).on("end",()=>{try{const v=JSON.parse(s);process.stdout.write(v[v.length-1]?.annotations?.["workers/tag"]||"")}catch{}})' || true)
     rollout=()
