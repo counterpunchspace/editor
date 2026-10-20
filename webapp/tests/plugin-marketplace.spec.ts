@@ -129,6 +129,7 @@ test.afterEach(async ({ request }, testInfo) => {
     }
     const emails = cleanupEmails.current;
     cleanupEmails.current = [];
+    // Cleanup deletes security_review_runs before the plugin rows.
     await cleanupCloudCollabUsers(request, emails, FIXTURE_PACKAGES);
 });
 
