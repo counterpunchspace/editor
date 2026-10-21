@@ -580,15 +580,13 @@ test('register, buy, and install the free and commercial plugins', async ({
             : [];
         if (!ownedPackages.includes('counterpunch-harakat')) {
             await expect(
-                editorPage.locator('.plugin-manager-banner')
-            ).toContainText('Add a payment method');
-            await expect(
                 harakatRow.getByRole('button', { name: 'Buy' })
             ).toHaveCount(0);
             const popupPromise = editorContext.waitForEvent('page');
-            await editorPage
-                .locator('.plugin-manager-banner')
-                .getByRole('button', { name: 'Add payment method' })
+            await harakatRow
+                .getByRole('button', {
+                    name: 'Add a payment method to see the price'
+                })
                 .click();
             const accountPage = await popupPromise;
             await accountPage
