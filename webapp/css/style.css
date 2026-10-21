@@ -6445,10 +6445,34 @@ html[data-command-modifier='ctrl'] .shortcut-option-modifier::before {
     font-size: 14px;
 }
 
-.plugin-manager-search {
+.plugin-manager-search-wrap {
     width: 100%;
     margin: 0 0 12px;
-    box-sizing: border-box;
+}
+
+.plugin-manager-actions {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 8px;
+}
+
+.plugin-manager-pay-hint {
+    max-width: 168px;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    background: none;
+    color: var(--accent-lightblue);
+    font: inherit;
+    font-size: 12px;
+    line-height: 1.35;
+    text-align: right;
+    cursor: pointer;
+}
+
+.plugin-manager-pay-hint:hover {
+    text-decoration: underline;
 }
 
 .plugin-manager-banner {

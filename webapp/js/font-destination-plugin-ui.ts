@@ -513,33 +513,18 @@ function renderCatalog(
     const section = document.createElement('section');
     section.className = 'plugin-manager-section';
     section.appendChild(createTextElement('h4', 'Plugins'));
-    if (billing.state === 'payment_method') {
-        const banner = document.createElement('div');
-        banner.className = 'plugin-manager-banner';
-        banner.appendChild(
-            createTextElement(
-                'p',
-                'Add a payment method to see prices and buy plugins in one click.'
-            )
-        );
-        const add = document.createElement('button');
-        add.type = 'button';
-        add.className = 'dialog-button plugin-manager-action';
-        add.textContent = 'Add payment method';
-        add.addEventListener('click', () => {
-            window.open(
-                `${resolveWebsiteURL()}/account/payment?return=editor`,
-                '_blank'
-            );
-        });
-        banner.appendChild(add);
-        section.appendChild(banner);
-    }
-    const search = document.createElement('input');
-    search.type = 'search';
-    search.className = 'plugin-manager-search';
-    search.placeholder = 'Search by name, package, or description';
-    search.setAttribute('aria-label', 'Search plugins');
+    const search = document.createElement('div');
+    search.className =
+        'find-glyph-search overview-search-control plugin-manager-search-wrap';
+    const searchIcon = document.createElement('span');
+    searchIcon.className = 'material-symbols-outlined overview-search-icon';
+    searchIcon.textContent = 'search';
+    const searchInput = document.createElement('input');
+    searchInput.type = 'search';
+    searchInput.className = 'find-glyph-search-input plugin-manager-search';
+    searchInput.placeholder = 'Search by name, package, or description';
+    searchInput.setAttribute('aria-label', 'Search plugins');
+    search.append(searchIcon, searchInput);
     section.appendChild(search);
     if (!plugins.length) {
         section.appendChild(
@@ -573,7 +558,11 @@ function renderCatalog(
         title.appendChild(screenedMark());
         details.appendChild(title);
         details.appendChild(createTextElement('p', plugin.description));
-        if (plugin.kind === 'commercial' && !plugin.purchased) {
+        if (
+            plugin.kind === 'commercial' &&
+            !plugin.purchased &&
+            actionName !== 'payment-method'
+        ) {
             const priceLine =
                 plugin.priceState === 'ready' && plugin.grossCents != null
                     ? `${formatEuro(plugin.grossCents)} incl. ${formatEuro(plugin.taxCents || 0)} VAT (${countryLabel(plugin.country) || plugin.countryName || ''})`
@@ -583,20 +572,26 @@ function renderCatalog(
             details.appendChild(createTextElement('p', priceLine));
         }
         row.appendChild(details);
+        const actions = document.createElement('div');
+        actions.className = 'plugin-manager-actions';
         const action = document.createElement('button');
-        action.className = 'dialog-button plugin-manager-action';
         action.type = 'button';
-        const labels: Record<string, string> = {
-            'buy': 'Buy',
-            'sign-in': 'Sign in',
-            'payment-method': 'Add payment method',
-            'install': 'Install',
-            'update': `Update to ${plugin.version}`,
-            'uninstall': 'Uninstall',
-            'incompatible': 'Incompatible'
-        };
-        action.textContent = labels[actionName];
-        action.disabled = actionName === 'incompatible';
+        if (actionName === 'payment-method') {
+            action.className = 'plugin-manager-pay-hint';
+            action.textContent = 'Add a payment method to see the price';
+        } else {
+            action.className = 'dialog-button plugin-manager-action';
+            const labels: Record<string, string> = {
+                'buy': 'Buy',
+                'sign-in': 'Sign in',
+                'install': 'Install',
+                'update': `Update to ${plugin.version}`,
+                'uninstall': 'Uninstall',
+                'incompatible': 'Incompatible'
+            };
+            action.textContent = labels[actionName];
+            action.disabled = actionName === 'incompatible';
+        }
         action.addEventListener('click', async () => {
             action.disabled = true;
             try {
@@ -648,13 +643,13 @@ function renderCatalog(
             );
             if (reason) await reportPlugin(plugin.package, reason);
         });
-        row.appendChild(action);
-        row.appendChild(report);
+        actions.append(action, report);
+        row.appendChild(actions);
         section.appendChild(row);
         rows.push(row);
     }
-    search.addEventListener('input', () => {
-        const query = search.value.trim().toLowerCase();
+    searchInput.addEventListener('input', () => {
+        const query = searchInput.value.trim().toLowerCase();
         let visible = 0;
         for (const row of rows) {
             const matches =
