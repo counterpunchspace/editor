@@ -27,14 +27,12 @@ describe('plugin purchase request', () => {
     });
 
     test('an already paid plugin is not charged again', async () => {
-        global.fetch = jest
-            .fn()
-            .mockResolvedValueOnce(
-                jsonResponse({
-                    status: 'paid',
-                    invoicePdf: 'https://example.test/invoice.pdf'
-                })
-            );
+        global.fetch = jest.fn().mockResolvedValueOnce(
+            jsonResponse({
+                status: 'paid',
+                invoicePdf: 'https://example.test/invoice.pdf'
+            })
+        );
 
         await expect(
             requestPluginPurchase('counterpunch-harakat', 1190)
