@@ -380,23 +380,19 @@ function openPurchaseSheet(
         pay.disabled = true;
         pay.textContent = 'Paying…';
         error.hidden = true;
-        const response = await fetch(
-            `${resolveWebsiteURL()}/api/plugins/${encodeURIComponent(current.package)}/purchase`,
-            {
-                method: 'POST',
-                credentials: 'include',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ expectedGrossCents: current.grossCents })
-            }
+        const result = await requestPluginPurchase(
+            current.package,
+            current.grossCents || 0
         );
-        const body = (await response.json().catch(() => ({}))) as {
-            status?: string;
-            error?: string;
-            invoicePdf?: string | null;
-            hostedInvoiceUrl?: string | null;
-            quote?: CatalogPlugin;
-        };
-        if (body.status === 'processing') {
+        if (result.outcome === 'unreachable') {
+            error.hidden = false;
+            error.textContent =
+                'Could not reach the store. Check your purchases before trying again.';
+            pay.disabled = false;
+            pay.textContent = `Pay ${formatEuro(current.grossCents || 0)}`;
+            return;
+        }
+        if (result.outcome === 'processing') {
             error.hidden = false;
             error.textContent = 'Payment processing';
             pay.textContent = 'Waiting…';
@@ -410,12 +406,12 @@ function openPurchaseSheet(
             await showPurchased(current, paid, card, host, closeSheet);
             return;
         }
-        if (response.status === 409 && body.quote?.grossCents != null) {
-            renderQuote({ ...current, ...body.quote, priceState: 'ready' });
+        if (result.outcome === 'repriced') {
+            renderQuote({ ...current, ...result.quote, priceState: 'ready' });
             return;
         }
-        if (body.status === 'requires_action' && body.hostedInvoiceUrl) {
-            window.open(body.hostedInvoiceUrl, '_blank');
+        if (result.outcome === 'requires_action') {
+            window.open(result.hostedInvoiceUrl, '_blank');
             pay.textContent = 'Waiting for confirmation…';
             const paid = await pollPluginPurchase(current.package);
             if (!paid) {
@@ -429,10 +425,10 @@ function openPurchaseSheet(
             await showPurchased(current, paid, card, host, closeSheet);
             return;
         }
-        if (!response.ok || body.status !== 'paid') {
+        if (result.outcome === 'failed') {
             error.hidden = false;
             error.textContent =
-                body.error || 'The payment method was declined.';
+                result.error || 'The payment method was declined.';
             const change = document.createElement('button');
             change.type = 'button';
             change.className = 'plugin-purchase-link';
@@ -448,7 +444,76 @@ function openPurchaseSheet(
             pay.textContent = `Pay ${formatEuro(current.grossCents || 0)}`;
             return;
         }
-        await showPurchased(current, body, card, host, closeSheet);
+        await showPurchased(current, result, card, host, closeSheet);
+    }
+}
+
+export type PluginPurchaseRequest =
+    | {
+          outcome: 'paid';
+          invoicePdf?: string | null;
+          hostedInvoiceUrl?: string | null;
+      }
+    | { outcome: 'processing' }
+    | { outcome: 'requires_action'; hostedInvoiceUrl: string }
+    | { outcome: 'repriced'; quote: CatalogPlugin }
+    | { outcome: 'failed'; error?: string }
+    | { outcome: 'unreachable' };
+
+export async function requestPluginPurchase(
+    packageName: string,
+    grossCents: number
+): Promise<PluginPurchaseRequest> {
+    const url = `${resolveWebsiteURL()}/api/plugins/${encodeURIComponent(packageName)}/purchase`;
+    try {
+        const existing = await fetch(url, { credentials: 'include' });
+        if (existing.ok) {
+            const prior = (await existing.json()) as {
+                status?: string;
+                invoicePdf?: string | null;
+                hostedInvoiceUrl?: string | null;
+            };
+            if (prior.status === 'paid') {
+                return {
+                    outcome: 'paid',
+                    invoicePdf: prior.invoicePdf,
+                    hostedInvoiceUrl: prior.hostedInvoiceUrl
+                };
+            }
+        }
+        const response = await fetch(url, {
+            method: 'POST',
+            credentials: 'include',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ expectedGrossCents: grossCents })
+        });
+        const body = (await response.json().catch(() => ({}))) as {
+            status?: string;
+            error?: string;
+            invoicePdf?: string | null;
+            hostedInvoiceUrl?: string | null;
+            quote?: CatalogPlugin;
+        };
+        if (body.status === 'processing') return { outcome: 'processing' };
+        if (response.status === 409 && body.quote?.grossCents != null) {
+            return { outcome: 'repriced', quote: body.quote };
+        }
+        if (body.status === 'requires_action' && body.hostedInvoiceUrl) {
+            return {
+                outcome: 'requires_action',
+                hostedInvoiceUrl: body.hostedInvoiceUrl
+            };
+        }
+        if (!response.ok || body.status !== 'paid') {
+            return { outcome: 'failed', error: body.error };
+        }
+        return {
+            outcome: 'paid',
+            invoicePdf: body.invoicePdf,
+            hostedInvoiceUrl: body.hostedInvoiceUrl
+        };
+    } catch {
+        return { outcome: 'unreachable' };
     }
 }
 
@@ -458,17 +523,21 @@ async function pollPluginPurchase(packageName: string): Promise<{
 } | null> {
     for (let attempt = 0; attempt < 30; attempt += 1) {
         await new Promise((resolve) => setTimeout(resolve, 2000));
-        const response = await fetch(
-            `${resolveWebsiteURL()}/api/plugins/${encodeURIComponent(packageName)}/purchase`,
-            { credentials: 'include' }
-        );
-        if (!response.ok) continue;
-        const body = (await response.json()) as {
-            status?: string;
-            invoicePdf?: string | null;
-            hostedInvoiceUrl?: string | null;
-        };
-        if (body.status === 'paid') return body;
+        try {
+            const response = await fetch(
+                `${resolveWebsiteURL()}/api/plugins/${encodeURIComponent(packageName)}/purchase`,
+                { credentials: 'include' }
+            );
+            if (!response.ok) continue;
+            const body = (await response.json()) as {
+                status?: string;
+                invoicePdf?: string | null;
+                hostedInvoiceUrl?: string | null;
+            };
+            if (body.status === 'paid') return body;
+        } catch {
+            continue;
+        }
     }
     return null;
 }
