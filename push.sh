@@ -3,6 +3,8 @@
 # Push collab, website and editor (in that order) when they have unpushed commits.
 # Siblings go first so the editor CI, which deploys staging and runs the
 # cloud-collab e2e against those hostnames, tests what you just pushed.
+# If the editor itself has nothing to push, this starts that same CI on
+# editor main so the website and collab you just pushed still get deployed.
 # Afterwards it runs ci-watch.sh and exits with its status (0 green, 1 red).
 # Usage: ./push.sh [--dry-run]
 
@@ -61,10 +63,22 @@ if [ "${#TO_PUSH[@]}" -eq 0 ]; then
     exit 0
 fi
 
+EDITOR_PUSHED=0
+for entry in "${TO_PUSH[@]}"; do
+    [ "${entry%%:*}" = "editor" ] && EDITOR_PUSHED=1
+done
+
 if [ "$DRY_RUN" -eq 1 ]; then
     echo "Dry run: nothing pushed."
+    if [ "$EDITOR_PUSHED" -eq 0 ]; then
+        echo "Dry run: would start the editor CI so staging deploys."
+    fi
     exit 0
 fi
+
+# Captured before the pushes so a run that starts immediately is still inside
+# ci-watch's grace window. --since also keeps a workflow_dispatch visible.
+WATCH_SINCE=$(date +%s)
 
 for entry in "${TO_PUSH[@]}"; do
     name="${entry%%:*}"
@@ -73,10 +87,18 @@ for entry in "${TO_PUSH[@]}"; do
     git -C "$dir" push origin main
 done
 
+if [ "$EDITOR_PUSHED" -eq 0 ]; then
+    echo "Editor has no new commit. Starting its CI so staging deploys."
+    (cd "$EDITOR_DIR" && gh workflow run ci.yml --ref main)
+fi
+
 echo ""
 echo "Pushed. Watching CI (the editor run deploys staging and runs the cloud-collab e2e)..."
-WATCH_ARGS=()
+WATCH_ARGS=(--since "$WATCH_SINCE")
 for entry in "${TO_PUSH[@]}"; do
     WATCH_ARGS+=("${entry#*:}")
 done
+if [ "$EDITOR_PUSHED" -eq 0 ]; then
+    WATCH_ARGS+=("$EDITOR_DIR")
+fi
 exec "$EDITOR_DIR/ci-watch.sh" "${WATCH_ARGS[@]}"

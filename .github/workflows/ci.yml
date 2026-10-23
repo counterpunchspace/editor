@@ -7,6 +7,9 @@ on:
     pull_request:
         branches:
             - "**"
+    # push.sh starts this when only collab or website changed, so staging
+    # still deploys. The deploy jobs check out sibling main.
+    workflow_dispatch:
 
 permissions:
     contents: read

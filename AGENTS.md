@@ -182,7 +182,7 @@ npm run test:snapshots
 
 ### Pushing the trio (`push.sh`)
 
-`./push.sh` (editor root) pushes `collab`, `website` and `editor`, in that order, so the editor CI tests the sibling `main` branches you just pushed. Only repos with unpushed commits are pushed. `./push.sh --dry-run` shows what would go out.
+`./push.sh` (editor root) pushes `collab`, `website` and `editor`, in that order, so the editor CI tests the sibling `main` branches you just pushed. Only repos with unpushed commits are pushed. If the editor has nothing to push, `push.sh` starts the editor CI with `workflow_dispatch` on `main` so staging still deploys and the cloud-collab suite still runs. `./push.sh --dry-run` shows what would go out.
 
 - It refuses to run if any of the three repos is not on `main`, is behind `origin/main`, or has uncommitted changes (unstaged, staged or untracked). The human commits first.
 - After pushing it runs `ci-watch.sh`, which shows a colored in-place overview of the CI runs for the pushed commits (refreshing every 20 seconds, `CI_WATCH_INTERVAL` to change). It exits 0 when every run and job is green, 1 on the first red (with the failed job, step, last error lines and links), and 2 on timeout or when no run appears. The run URLs are printed at the end.
