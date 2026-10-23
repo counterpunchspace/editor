@@ -26,7 +26,6 @@ import {
 const console = new Logger('FontDestinationPluginUI');
 
 let pluginManagerEscapeBinding: ModalEscapeBinding | null = null;
-let catalogRefreshBound = false;
 let purchaseSheetOpen = false;
 
 function paymentMethodText(billing: CatalogBilling): string {
@@ -64,15 +63,23 @@ function formatEuro(cents: number): string {
     return `€${(cents / 100).toFixed(2)}`;
 }
 
-function bindCatalogRefresh(content: HTMLElement): void {
-    if (catalogRefreshBound) return;
-    catalogRefreshBound = true;
-    window.addEventListener('focus', () => {
-        if (purchaseSheetOpen) return;
-        const overlay = document.getElementById('plugin-manager-modal');
-        if (!overlay || overlay.style.display === 'none') return;
-        void renderPluginManager(content);
-    });
+async function reloadPluginManager(content: HTMLElement): Promise<void> {
+    const searchValue =
+        content.querySelector<HTMLInputElement>('.plugin-manager-search')
+            ?.value || '';
+    const scroller =
+        (content.closest('.info-popup-content') as HTMLElement | null) ||
+        content;
+    const scrollTop = scroller.scrollTop;
+    await renderPluginManager(content);
+    const input = content.querySelector<HTMLInputElement>(
+        '.plugin-manager-search'
+    );
+    if (input && searchValue) {
+        input.value = searchValue;
+        input.dispatchEvent(new Event('input'));
+    }
+    scroller.scrollTop = scrollTop;
 }
 
 function createTextElement<K extends keyof HTMLElementTagNameMap>(
@@ -157,7 +164,6 @@ async function renderPluginManager(content: HTMLElement): Promise<void> {
                     content
                 )
             );
-            bindCatalogRefresh(content);
             return;
         } catch (catalogError: unknown) {
             console.warn('Website plugin catalog unavailable:', catalogError);
@@ -512,7 +518,18 @@ function renderCatalog(
 ): HTMLElement {
     const section = document.createElement('section');
     section.className = 'plugin-manager-section';
-    section.appendChild(createTextElement('h4', 'Plugins'));
+    const heading = document.createElement('div');
+    heading.className = 'plugin-manager-heading';
+    heading.appendChild(createTextElement('h4', 'Plugins'));
+    const reload = document.createElement('button');
+    reload.type = 'button';
+    reload.className = 'plugin-manager-reload';
+    reload.textContent = 'Reload';
+    reload.addEventListener('click', () => {
+        void reloadPluginManager(content);
+    });
+    heading.appendChild(reload);
+    section.appendChild(heading);
     const search = document.createElement('div');
     search.className =
         'find-glyph-search overview-search-control plugin-manager-search-wrap';
@@ -561,19 +578,31 @@ function renderCatalog(
         if (
             plugin.kind === 'commercial' &&
             !plugin.purchased &&
-            actionName !== 'payment-method'
+            actionName !== 'payment-method' &&
+            plugin.priceState !== 'ready'
         ) {
-            const priceLine =
-                plugin.priceState === 'ready' && plugin.grossCents != null
-                    ? `${formatEuro(plugin.grossCents)} incl. ${formatEuro(plugin.taxCents || 0)} VAT (${countryLabel(plugin.country) || plugin.countryName || ''})`
-                    : actionName === 'sign-in'
-                      ? 'Paid plugin · Sign in to see your price'
-                      : 'Paid plugin · Price appears after you add a payment method';
-            details.appendChild(createTextElement('p', priceLine));
+            details.appendChild(
+                createTextElement(
+                    'p',
+                    actionName === 'sign-in'
+                        ? 'Paid plugin · Sign in to see your price'
+                        : 'Paid plugin · Price appears after you add a payment method'
+                )
+            );
         }
         row.appendChild(details);
         const actions = document.createElement('div');
         actions.className = 'plugin-manager-actions';
+        if (
+            actionName === 'buy' &&
+            plugin.priceState === 'ready' &&
+            plugin.grossCents != null
+        ) {
+            const price = document.createElement('p');
+            price.className = 'plugin-manager-price';
+            price.textContent = `${formatEuro(plugin.grossCents)} incl. ${formatEuro(plugin.taxCents || 0)} VAT`;
+            actions.appendChild(price);
+        }
         const action = document.createElement('button');
         action.type = 'button';
         if (actionName === 'payment-method') {

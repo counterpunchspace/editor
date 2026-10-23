@@ -6439,10 +6439,43 @@ html[data-command-modifier='ctrl'] .shortcut-option-modifier::before {
     font-size: 13px;
 }
 
-.plugin-manager-section h4 {
+.plugin-manager-heading {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
     margin: 0 0 12px;
+}
+
+.plugin-manager-section h4 {
+    margin: 0;
     color: var(--text-primary);
     font-size: 14px;
+}
+
+.plugin-manager-reload {
+    margin: 0;
+    padding: 0;
+    border: 0;
+    background: none;
+    color: var(--accent-lightblue);
+    font: inherit;
+    font-size: 13px;
+    cursor: pointer;
+}
+
+.plugin-manager-reload:hover {
+    text-decoration: underline;
+}
+
+.plugin-manager-price {
+    margin: 0;
+    max-width: 140px;
+    color: var(--text-primary);
+    font-size: 13px;
+    font-weight: 600;
+    line-height: 1.35;
+    text-align: right;
 }
 
 .plugin-manager-search-wrap {
