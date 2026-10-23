@@ -174,12 +174,19 @@
         // Install our hook
         window.beforePythonExecution = async function (code?: string) {
             const hookStartTime = performance.now();
-            let historyContext: Window['pythonExecutionHistoryContext'] | void;
+            let historyContext: Window['pythonExecutionHistoryContext'] = null;
 
             // Call existing hook first. Its context belongs to this run.
             if (typeof existingBeforeHook === 'function') {
                 const existingHookStart = performance.now();
-                historyContext = await existingBeforeHook(code);
+                const returned = await existingBeforeHook(code);
+                if (
+                    returned &&
+                    typeof returned === 'object' &&
+                    'beforeFontDataJson' in returned
+                ) {
+                    historyContext = returned;
+                }
                 const existingHookDuration =
                     performance.now() - existingHookStart;
                 if (existingHookDuration > 10) {

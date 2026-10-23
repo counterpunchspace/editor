@@ -49,10 +49,17 @@
 
             // Call before-execution hook. Keep this run's context: a second
             // overlapping call replaces the global one.
-            let historyContext: Window['pythonExecutionHistoryContext'] | void;
+            let historyContext: Window['pythonExecutionHistoryContext'] = null;
             if (window.beforePythonExecution) {
                 const hookStartTime = performance.now();
-                historyContext = await window.beforePythonExecution(code);
+                const returned = await window.beforePythonExecution(code);
+                if (
+                    returned &&
+                    typeof returned === 'object' &&
+                    'beforeFontDataJson' in returned
+                ) {
+                    historyContext = returned;
+                }
                 const hookDuration = performance.now() - hookStartTime;
                 if (hookDuration > 10) {
                     console.log(
@@ -138,21 +145,24 @@
             const execId = executionCounter;
 
             // Call before-execution hook (sync version - no await)
-            let historyContext: Window['pythonExecutionHistoryContext'] | void;
+            let historyContext: Window['pythonExecutionHistoryContext'] = null;
             if (window.beforePythonExecution) {
                 const hookResult = window.beforePythonExecution(code);
-                // If hook returns a promise, we can't await it in sync context
-                // Log a warning if it seems to be async
                 if (
+                    hookResult &&
+                    typeof hookResult === 'object' &&
+                    'beforeFontDataJson' in hookResult
+                ) {
+                    historyContext = hookResult;
+                } else if (
                     hookResult &&
                     typeof (hookResult as Promise<unknown>).then === 'function'
                 ) {
+                    // Sync Python cannot wait for an async before-hook.
                     console.warn(
                         '[PythonExec]',
                         'beforePythonExecution hook returned a promise in sync context - cannot await'
                     );
-                } else {
-                    historyContext = hookResult;
                 }
             }
 

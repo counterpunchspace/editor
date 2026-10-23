@@ -101,9 +101,15 @@ async function initPyodideConsole() {
 
         async function interpreter(command: string) {
             // Call before-execution hook and keep this command's context.
-            const historyContext = window.beforePythonExecution
+            const startedContext = window.beforePythonExecution
                 ? await window.beforePythonExecution(command)
-                : undefined;
+                : null;
+            const historyContext =
+                startedContext &&
+                typeof startedContext === 'object' &&
+                'beforeFontDataJson' in startedContext
+                    ? startedContext
+                    : null;
 
             // Log command to browser console
             if (command && command.trim()) {
