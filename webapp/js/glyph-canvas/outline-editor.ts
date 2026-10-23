@@ -1594,6 +1594,7 @@ export class OutlineEditor {
         defaultX: number;
     }> = [];
     private _transientAnchorKey = '';
+    private _transientAnchorQueryGeneration = 0;
     private _transientDrag: {
         pluginId: string;
         name: string;
@@ -13700,6 +13701,7 @@ export class OutlineEditor {
             this._hasMoved = false;
             if (drag) {
                 this.selectedTransientAnchor = { ...drag };
+                this.rememberTransientAnchor(drag);
             }
             const layer = this.getCurrentLayerModel();
             const glyph = this.getCurrentGlyphModel();
@@ -13715,8 +13717,7 @@ export class OutlineEditor {
                     y: drag.y,
                     defaultX: drag.defaultX
                 }).then(() => {
-                    this._transientAnchorKey = '';
-                    this.refreshTransientAnchors();
+                    this.reloadTransientAnchors();
                 });
             }
             this.glyphCanvas.render();
@@ -14949,15 +14950,7 @@ export class OutlineEditor {
         }
         selected.x += dx;
         selected.y += dy;
-        const stored = this._transientAnchors.find(
-            (anchor) =>
-                anchor.pluginId === selected.pluginId &&
-                anchor.name === selected.name
-        );
-        if (stored) {
-            stored.x = selected.x;
-            stored.y = selected.y;
-        }
+        this.rememberTransientAnchor(selected);
         this.glyphCanvas.render();
         this.scheduleTransientAnchorKeyboardCommit();
     }
@@ -15012,6 +15005,77 @@ export class OutlineEditor {
         if (generation !== this._transientKeyboardCommitGeneration) {
             return;
         }
+        this.reloadTransientAnchors();
+    }
+
+    private rememberTransientAnchor(anchor: {
+        pluginId: string;
+        name: string;
+        x: number;
+        y: number;
+        defaultX: number;
+    }): void {
+        const stored = this._transientAnchors.find(
+            (item) =>
+                item.pluginId === anchor.pluginId && item.name === anchor.name
+        );
+        if (!stored) {
+            this._transientAnchors = [...this._transientAnchors, { ...anchor }];
+            return;
+        }
+        stored.x = anchor.x;
+        stored.y = anchor.y;
+    }
+
+    private syncTransientAnchorChrome(
+        anchors: Array<{
+            pluginId: string;
+            name: string;
+            x: number;
+            y: number;
+            defaultX: number;
+        }>
+    ): void {
+        const sync = <
+            T extends {
+                pluginId: string;
+                name: string;
+                x: number;
+                y: number;
+                defaultX: number;
+            }
+        >(
+            current: T | null
+        ): T | null => {
+            if (!current) {
+                return null;
+            }
+            const match = anchors.find(
+                (anchor) =>
+                    anchor.pluginId === current.pluginId &&
+                    anchor.name === current.name
+            );
+            if (!match) {
+                return null;
+            }
+            current.x = match.x;
+            current.y = match.y;
+            current.defaultX = match.defaultX;
+            return current;
+        };
+        this.selectedTransientAnchor = sync(this.selectedTransientAnchor);
+        this.hoveredTransientAnchor = sync(this.hoveredTransientAnchor);
+    }
+
+    /**
+     * Drop the glyph/layer cache and query plugin anchors again.
+     * Keeps the current squares until the query returns, so undo does not
+     * blank them and a finished drag does not jump back to the origin.
+     */
+    reloadTransientAnchors(): void {
+        if (this.isDraggingTransientAnchor) {
+            return;
+        }
         this._transientAnchorKey = '';
         this.refreshTransientAnchors();
     }
@@ -15060,9 +15124,13 @@ export class OutlineEditor {
         if (key === this._transientAnchorKey) {
             return;
         }
+        const generation = ++this._transientAnchorQueryGeneration;
         this._transientAnchorKey = key;
         void queryTransientAnchors(glyph.name, layer.id).then((anchors) => {
-            if (this._transientAnchorKey !== key) {
+            if (
+                generation !== this._transientAnchorQueryGeneration ||
+                this._transientAnchorKey !== key
+            ) {
                 return;
             }
             this._transientAnchors = anchors.map((anchor) => ({
@@ -15072,6 +15140,7 @@ export class OutlineEditor {
                 y: anchor.y,
                 defaultX: anchor.defaultX ?? anchor.x
             }));
+            this.syncTransientAnchorChrome(this._transientAnchors);
             this.glyphCanvas.render();
         });
     }

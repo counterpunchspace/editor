@@ -2089,6 +2089,8 @@ function applyLocalUndoRedoVisualSync(
         };
     }
 
+    window.glyphCanvas?.outlineEditor?.reloadTransientAnchors?.();
+
     const historyItem = buildHistoryItemFromCommittedEntries(entries);
     const entryPaths = entries
         .map((entry) => entry.path)
