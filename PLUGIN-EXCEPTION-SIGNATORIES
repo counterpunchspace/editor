@@ -1,0 +1,11 @@
+# Plugin exception signatories
+
+By adding a GitHub login under Signatories, that person licenses their contributions to this repository under the GNU General Public License, version 3, plus the additional permission in GPL-PLUGIN-EXCEPTION.
+
+This does not assign copyright. It does not allow relicensing beyond GPL-3 plus that exception.
+
+Accounts that are AI agents are not signatories and do not need to sign. The agents already covered are google-labs-jules[bot], factory-droid[bot], Copilot, and Cursor. Any later GitHub login ending in [bot] is covered the same way.
+
+## Signatories
+
+yanone
