@@ -639,6 +639,17 @@ describe('FontInfo feature code compilation scheduling', () => {
         expect(
             document.getElementById('fontinfo-search-control').style.display
         ).toBe('');
+        const titleBarRight = document.querySelector(
+            '#view-fontinfo .view-title-right'
+        );
+        expect(
+            titleBarRight.lastElementChild.classList.contains(
+                'fontinfo-section-button'
+            )
+        ).toBe(true);
+        expect(titleBarRight.lastElementChild.previousElementSibling.id).toBe(
+            'fontinfo-search-control'
+        );
     });
 
     test('bridge-backed names commits use a precise names path', () => {

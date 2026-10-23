@@ -1475,10 +1475,7 @@ class FontInfoManager {
             <span class="fontinfo-section-button-label">Names</span>
             <span class="material-symbols-outlined">expand_more</span>
         `;
-        titleBarRight.insertBefore(
-            this.sectionButton,
-            titleBarRight.firstChild
-        );
+        titleBarRight.appendChild(this.sectionButton);
 
         const backdrop = getOrCreateBackdrop('fontinfo-section-menu-backdrop');
         const tippyResult = tippy(this.sectionButton, {
