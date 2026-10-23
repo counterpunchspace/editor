@@ -3285,6 +3285,11 @@ class FontInfoManager {
             return;
         }
 
+        if (this.currentTab === 'compile_filters') {
+            requestAnimationFrame(() => this.reloadCompileFiltersIfVisible());
+            return;
+        }
+
         if (this.currentTab !== 'features') {
             return;
         }
