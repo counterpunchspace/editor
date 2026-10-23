@@ -363,7 +363,7 @@ test('register, buy, and install the free and commercial plugins', async ({
                 await account.locator('#pluginFloor').fill('1.00');
                 await expect(
                     account.locator('#pluginPricePreview')
-                ).toContainText('Cheapest:');
+                ).toContainText('Lowest:');
                 await expect(
                     account.locator('#pluginPricePreview')
                 ).toContainText('Highest:');
