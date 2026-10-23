@@ -9,6 +9,7 @@ jest.mock('../js/logger', () => ({
 const mockConnectDirect = jest.fn().mockResolvedValue();
 const mockConnectWithCredentials = jest.fn().mockResolvedValue();
 const mockDisconnect = jest.fn();
+const glyphConnectControl = { failuresRemaining: 0 };
 
 jest.mock('../js/cloud-adapter', () => {
     const actual = jest.requireActual('../js/cloud-adapter');
@@ -27,6 +28,13 @@ jest.mock('../js/cloud-adapter', () => {
                     adapter.needsVisibleRebaseline = false;
                 }),
                 connectWithCredentials: jest.fn(async (...args) => {
+                    if (
+                        String(options.documentId || '').startsWith('glyph:') &&
+                        glyphConnectControl.failuresRemaining > 0
+                    ) {
+                        glyphConnectControl.failuresRemaining -= 1;
+                        throw new Error('room state unavailable');
+                    }
                     mockConnectWithCredentials(...args, options);
                     mockConnectDirect(...args, options);
                     adapter.status = 'connected';
@@ -210,6 +218,7 @@ describe('CloudLiveSession', () => {
         mockConnectWithCredentials.mockClear();
         mockDisconnect.mockClear();
         CloudAdapter.mockClear();
+        glyphConnectControl.failuresRemaining = 0;
         global.fetch = jest.fn(async () => ({
             ok: false,
             status: 404,
@@ -294,6 +303,75 @@ describe('CloudLiveSession', () => {
         expect(activeEditorGlyphNames()).toEqual(['a']);
         delete window.fontManager;
         delete window.glyphCanvas;
+    });
+
+    test('retries a glyph room after the first connection fails', async () => {
+        glyphConnectControl.failuresRemaining = 1;
+        const random = jest.spyOn(Math, 'random').mockReturnValue(0);
+        jest.useFakeTimers();
+        const socketsReady = jest.fn();
+        const session = new CloudLiveSession({
+            assetId: 'asset-1',
+            websiteBaseUrl: 'https://editor.example',
+            token: 'token',
+            roomUrl: 'wss://rooms.example/room/asset-1',
+            bridge: {},
+            bootstrapMode: 'skip',
+            onSocketsReady: socketsReady
+        });
+        const glyphCalls = () =>
+            CloudAdapter.mock.calls.filter(
+                ([options]) => options.documentId === 'glyph:aaa'
+            ).length;
+        try {
+            const pending = session.syncLiveDocumentIds(['glyph:aaa']);
+            await jest.advanceTimersByTimeAsync(500);
+            await pending;
+            expect(socketsReady).toHaveBeenCalled();
+            expect(glyphCalls()).toBe(1);
+            expect([...session._adapters.keys()]).not.toContain('glyph:aaa');
+            await jest.advanceTimersByTimeAsync(800);
+            expect(glyphCalls()).toBe(2);
+            expect([...session._adapters.keys()]).toContain('glyph:aaa');
+        } finally {
+            session.disconnect();
+            random.mockRestore();
+            jest.useRealTimers();
+            glyphConnectControl.failuresRemaining = 0;
+        }
+    });
+
+    test('does not retry a glyph room the editor has left', async () => {
+        glyphConnectControl.failuresRemaining = 4;
+        const random = jest.spyOn(Math, 'random').mockReturnValue(0);
+        jest.useFakeTimers();
+        const session = new CloudLiveSession({
+            assetId: 'asset-1',
+            websiteBaseUrl: 'https://editor.example',
+            token: 'token',
+            roomUrl: 'wss://rooms.example/room/asset-1',
+            bridge: {},
+            bootstrapMode: 'skip'
+        });
+        const glyphCalls = () =>
+            CloudAdapter.mock.calls.filter(
+                ([options]) => options.documentId === 'glyph:aaa'
+            ).length;
+        try {
+            const pending = session.syncLiveDocumentIds(['glyph:aaa']);
+            await jest.advanceTimersByTimeAsync(500);
+            await pending;
+            const failed = glyphCalls();
+            await session.syncLiveDocumentIds([]);
+            await jest.advanceTimersByTimeAsync(5000);
+            expect(glyphCalls()).toBe(failed);
+            expect([...session._adapters.keys()]).not.toContain('glyph:aaa');
+        } finally {
+            session.disconnect();
+            random.mockRestore();
+            jest.useRealTimers();
+            glyphConnectControl.failuresRemaining = 0;
+        }
     });
 
     test('connects font-core, font-deps, and only the active glyph room', async () => {

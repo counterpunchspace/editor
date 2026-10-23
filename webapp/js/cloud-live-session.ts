@@ -16,7 +16,8 @@ import {
     type CloudAdapterAccessSnapshot,
     type CloudConnectionStatus,
     type CloudTransferActivity,
-    normalizeCloudShardWebSocketUrl
+    normalizeCloudShardWebSocketUrl,
+    cloudReconnectDelayMs
 } from './cloud-adapter';
 import {
     CloudDurableWal,
@@ -61,6 +62,8 @@ export type CloudLiveSessionOptions = {
     refreshCredentials?: () => Promise<{ token: string; roomUrl: string }>;
     keepRequestedGlyphSockets?: boolean;
     generationId?: string | null;
+    /** Fired once the shard sockets exist, before the ready barrier. */
+    onSocketsReady?: () => void;
 };
 
 export type GlyphCatchUpTarget = {
@@ -208,6 +211,12 @@ export class CloudLiveSession {
     private _lifetimeAbort = new AbortController();
     private readonly _timers = new Set<ReturnType<typeof setTimeout>>();
     private _disconnected = false;
+    private readonly _glyphConnectAttempts = new Map<string, number>();
+    private readonly _glyphConnectInFlight = new Set<string>();
+    private readonly _glyphConnectRetryTimers = new Map<
+        string,
+        ReturnType<typeof setTimeout>
+    >();
 
     constructor(options: CloudLiveSessionOptions) {
         this._options = options;
@@ -219,9 +228,12 @@ export class CloudLiveSession {
         void this._ensureWalLoaded();
     }
 
-    private _scheduleTimer(callback: () => void, delayMs: number): void {
+    private _scheduleTimer(
+        callback: () => void,
+        delayMs: number
+    ): ReturnType<typeof setTimeout> | null {
         if (this._disconnected) {
-            return;
+            return null;
         }
         const timer = setTimeout(() => {
             this._timers.delete(timer);
@@ -230,6 +242,7 @@ export class CloudLiveSession {
             }
         }, delayMs);
         this._timers.add(timer);
+        return timer;
     }
 
     private get _abortSignal(): AbortSignal {
@@ -533,6 +546,9 @@ export class CloudLiveSession {
             adapter.disconnect();
         }
         this._adapters.clear();
+        this._glyphConnectAttempts.clear();
+        this._glyphConnectInFlight.clear();
+        this._glyphConnectRetryTimers.clear();
         this._desiredDocumentIds = new Set([FONT_CORE_DOCUMENT_ID]);
         this._reportedConnected = false;
         this._readyOnce = false;
@@ -751,6 +767,7 @@ export class CloudLiveSession {
             if (!desired.has(documentId)) {
                 adapter.disconnect();
                 this._adapters.delete(documentId);
+                this._clearGlyphConnectRetry(documentId);
             }
         }
         if (!this._adapters.has(FONT_CORE_DOCUMENT_ID)) {
@@ -767,6 +784,7 @@ export class CloudLiveSession {
             pending.push(this._connectDocument(documentId));
         }
         await Promise.all(pending);
+        this._options.onSocketsReady?.();
         if (infrastructureAlreadyLive) {
             this._clearNonCoreRebaselineFlags();
             return;
@@ -1051,7 +1069,58 @@ export class CloudLiveSession {
         this._options.onTransferActivityChange?.(next);
     }
 
+    private _cancelGlyphConnectTimer(documentId: string): void {
+        const timer = this._glyphConnectRetryTimers.get(documentId);
+        if (!timer) {
+            return;
+        }
+        clearTimeout(timer);
+        this._timers.delete(timer);
+        this._glyphConnectRetryTimers.delete(documentId);
+    }
+
+    private _clearGlyphConnectRetry(documentId: string): void {
+        this._cancelGlyphConnectTimer(documentId);
+        this._glyphConnectAttempts.delete(documentId);
+    }
+
+    private _scheduleGlyphConnectRetry(documentId: string): void {
+        if (
+            this._disconnected ||
+            !documentId.startsWith('glyph:') ||
+            !this._desiredDocumentIds.has(documentId) ||
+            this._adapters.has(documentId) ||
+            this._glyphConnectRetryTimers.has(documentId)
+        ) {
+            return;
+        }
+        const attempt = this._glyphConnectAttempts.get(documentId) ?? 0;
+        this._glyphConnectAttempts.set(documentId, attempt + 1);
+        const timer = this._scheduleTimer(() => {
+            this._glyphConnectRetryTimers.delete(documentId);
+            if (
+                this._disconnected ||
+                !this._desiredDocumentIds.has(documentId) ||
+                this._adapters.has(documentId)
+            ) {
+                return;
+            }
+            void this._connectDocument(documentId);
+        }, cloudReconnectDelayMs(attempt));
+        if (timer) {
+            this._glyphConnectRetryTimers.set(documentId, timer);
+        }
+    }
+
     private async _connectDocument(documentId: string): Promise<void> {
+        const isGlyph = documentId.startsWith('glyph:');
+        if (isGlyph && this._glyphConnectInFlight.has(documentId)) {
+            return;
+        }
+        if (isGlyph) {
+            this._glyphConnectInFlight.add(documentId);
+            this._cancelGlyphConnectTimer(documentId);
+        }
         const {
             assetId,
             websiteBaseUrl,
@@ -1143,6 +1212,7 @@ export class CloudLiveSession {
             }
             if (this._desiredDocumentIds.has(documentId)) {
                 this._adapters.set(documentId, adapter);
+                this._glyphConnectAttempts.delete(documentId);
                 this._emitPendingSyncCount();
                 this._emitTransferActivity();
             } else {
@@ -1157,6 +1227,17 @@ export class CloudLiveSession {
                 `CloudLiveSession: failed to connect glyph room ${documentId}:`,
                 error
             );
+            if (
+                isGlyph &&
+                !isForbiddenCloudCredentialError(error) &&
+                this._desiredDocumentIds.has(documentId)
+            ) {
+                this._scheduleGlyphConnectRetry(documentId);
+            }
+        } finally {
+            if (isGlyph) {
+                this._glyphConnectInFlight.delete(documentId);
+            }
         }
     }
 

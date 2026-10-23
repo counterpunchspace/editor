@@ -3017,7 +3017,16 @@ export class CloudPlugin extends FilesystemPlugin {
                 );
                 return { token: next.token, roomUrl: next.roomUrl };
             },
-            keepRequestedGlyphSockets: this.getCurrentAssetRole() === 'viewer'
+            keepRequestedGlyphSockets: this.getCurrentAssetRole() === 'viewer',
+            onSocketsReady: () => {
+                if (this._attachingSession !== session) {
+                    return;
+                }
+                // Publish before the ready barrier. A slow font-core catch-up
+                // must not hide a glyph socket that is already open.
+                this._liveSession = session;
+                this._cloudAdapter = session.coreAdapter;
+            }
         });
         this._attachingSession = session;
         const glyphDocumentIds = liveGlyphDocumentIdsFromSubset(
@@ -3028,12 +3037,20 @@ export class CloudPlugin extends FilesystemPlugin {
             await session.syncLiveDocumentIds(glyphDocumentIds);
         } catch (error) {
             session.disconnect();
+            if (this._liveSession === session) {
+                this._liveSession = null;
+                this._cloudAdapter = null;
+            }
             if (this._attachingSession === session) {
                 this._attachingSession = null;
             }
             throw error;
         }
         if (this._attachingSession !== session) {
+            if (this._liveSession === session) {
+                this._liveSession = null;
+                this._cloudAdapter = null;
+            }
             session.disconnect();
             return;
         }
