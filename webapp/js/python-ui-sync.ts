@@ -31,15 +31,18 @@ function beforePythonExecution(code?: string) {
     );
     const assistantExecution = getActiveAssistantPythonExecution();
     const bridge = window.patchSyncEngine;
-    window.pythonExecutionHistoryContext = {
+    // Returned to the caller. A second overlapping run must not replace the
+    // context the first run will close.
+    const historyContext = {
         beforeFontDataJson: createNormalizedFontSnapshot(),
         code: code ?? null,
         label: 'Python script',
         startedAt: Date.now(),
         historySummary: assistantExecution?.historySummary ?? null,
         transactionStarted: false,
-        releaseRecordingSuppression: null
+        releaseRecordingSuppression: null as (() => void) | null
     };
+    window.pythonExecutionHistoryContext = historyContext;
     bridge?.beginTransaction(
         assistantExecution?.historySummary ?? 'Python script',
         null,
@@ -52,8 +55,8 @@ function beforePythonExecution(code?: string) {
         }
     );
     if (bridge) {
-        window.pythonExecutionHistoryContext.transactionStarted = true;
-        window.pythonExecutionHistoryContext.releaseRecordingSuppression =
+        historyContext.transactionStarted = true;
+        historyContext.releaseRecordingSuppression =
             typeof bridge.beginRecordingSuppression === 'function'
                 ? bridge.beginRecordingSuppression()
                 : () => bridge.setRecordingSuppressed(false);
@@ -61,6 +64,7 @@ function beforePythonExecution(code?: string) {
             bridge.setRecordingSuppressed(true);
         }
     }
+    return historyContext;
 }
 
 /**
@@ -99,15 +103,17 @@ window.pythonExecutionHistoryContext = null;
 window.beforePythonExecution = beforePythonExecution;
 {
     const existingAfter = window.afterPythonExecution;
-    window.afterPythonExecution =
-        async function afterPythonExecutionChained(outcome?: {
+    window.afterPythonExecution = async function afterPythonExecutionChained(
+        outcome?: {
             succeeded: boolean;
-        }) {
-            afterPythonExecution();
-            if (typeof existingAfter === 'function') {
-                await existingAfter(outcome);
-            }
-        };
+        },
+        historyContext?: Window['pythonExecutionHistoryContext']
+    ) {
+        afterPythonExecution();
+        if (typeof existingAfter === 'function') {
+            await existingAfter(outcome, historyContext);
+        }
+    };
 }
 
 // Expose flag control for font loading operations

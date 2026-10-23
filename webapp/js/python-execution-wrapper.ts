@@ -47,10 +47,12 @@
             const execId = executionCounter;
             const totalStartTime = performance.now();
 
-            // Call before-execution hook
+            // Call before-execution hook. Keep this run's context: a second
+            // overlapping call replaces the global one.
+            let historyContext: Window['pythonExecutionHistoryContext'] | void;
             if (window.beforePythonExecution) {
                 const hookStartTime = performance.now();
-                await window.beforePythonExecution(code);
+                historyContext = await window.beforePythonExecution(code);
                 const hookDuration = performance.now() - hookStartTime;
                 if (hookDuration > 10) {
                     console.log(
@@ -108,7 +110,10 @@
                 // Call after-execution hook (always, even on error)
                 if (window.afterPythonExecution) {
                     const afterHookStart = performance.now();
-                    await window.afterPythonExecution({ succeeded });
+                    await window.afterPythonExecution(
+                        { succeeded },
+                        historyContext
+                    );
                     const afterHookDuration =
                         performance.now() - afterHookStart;
                     if (afterHookDuration > 10) {
@@ -133,15 +138,21 @@
             const execId = executionCounter;
 
             // Call before-execution hook (sync version - no await)
+            let historyContext: Window['pythonExecutionHistoryContext'] | void;
             if (window.beforePythonExecution) {
                 const hookResult = window.beforePythonExecution(code);
                 // If hook returns a promise, we can't await it in sync context
                 // Log a warning if it seems to be async
-                if (hookResult && typeof hookResult.then === 'function') {
+                if (
+                    hookResult &&
+                    typeof (hookResult as Promise<unknown>).then === 'function'
+                ) {
                     console.warn(
                         '[PythonExec]',
                         'beforePythonExecution hook returned a promise in sync context - cannot await'
                     );
+                } else {
+                    historyContext = hookResult;
                 }
             }
 
@@ -191,9 +202,10 @@
                         '[PythonExec]',
                         `🪝 Calling afterPythonExecution hook for sync #${execId}`
                     );
-                    const hookResult = window.afterPythonExecution({
-                        succeeded
-                    });
+                    const hookResult = window.afterPythonExecution(
+                        { succeeded },
+                        historyContext
+                    );
                     if (hookResult && typeof hookResult.then === 'function') {
                         console.warn(
                             '[PythonExec]',

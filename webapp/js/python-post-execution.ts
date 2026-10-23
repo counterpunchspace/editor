@@ -286,22 +286,27 @@ function setupHooks() {
      * Triggers font recompilation
      */
     window.afterPythonExecution = async function (
-        outcome: PythonExecutionOutcome = { succeeded: true }
+        outcome: PythonExecutionOutcome = { succeeded: true },
+        historyContext?: Window['pythonExecutionHistoryContext']
     ) {
+        const executionContext =
+            historyContext ?? window.pythonExecutionHistoryContext;
         try {
             commitPythonExecutionSyntheticChanges(
                 window.fontManager?.currentFont,
-                window.pythonExecutionHistoryContext,
+                executionContext,
                 window.patchSyncEngine,
                 outcome
             );
         } finally {
-            window.pythonExecutionHistoryContext?.releaseRecordingSuppression?.();
-            window.pythonExecutionHistoryContext = null;
+            executionContext?.releaseRecordingSuppression?.();
+            if (window.pythonExecutionHistoryContext === executionContext) {
+                window.pythonExecutionHistoryContext = null;
+            }
         }
 
         if (typeof existingHook === 'function') {
-            await existingHook(outcome);
+            await existingHook(outcome, executionContext);
         }
     };
     (window as any).__counterpunchPythonPostExecutionHookInstalled = true;

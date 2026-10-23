@@ -7,6 +7,7 @@ import {
     DecomposedAffineTransform,
     writePluginSettingValue
 } from './babelfont-model';
+import { runHostPythonAsync } from './language-packs/host-python';
 
 const { waitForFontEditorReady } = require('./editor-startup-ready.js');
 
@@ -163,7 +164,7 @@ export async function discoverCompileFilters(): Promise<CompileFilterInfo[]> {
     if (!python) {
         return discovered;
     }
-    const raw = await python.runPythonAsync('_cp_compile_filters_discover()');
+    const raw = await runHostPythonAsync('_cp_compile_filters_discover()');
     const parsed = JSON.parse(String(raw)) as CompileFilterInfo[];
     if (!Array.isArray(parsed)) {
         return discoveredCompileFilters();
@@ -366,7 +367,7 @@ export async function onCompileFilterGuideChange(
             if (!ids.includes(info.id) || !info.hasGuide) {
                 continue;
             }
-            const raw = await python.runPythonAsync(
+            const raw = await runHostPythonAsync(
                 `_cp_compile_filter_guide(${pythonString(info.id)}, ${pythonString(JSON.stringify(change))})`
             );
             if (raw === true || String(raw) === 'True') {
@@ -724,7 +725,7 @@ export async function queryTransientAnchors(
     if (discovered.length === 0) {
         await discoverCompileFilters();
     }
-    const raw = await python.runPythonAsync(
+    const raw = await runHostPythonAsync(
         `_cp_compile_filter_transient_anchors(${pythonString(glyphName)}, ${pythonString(layerId)})`
     );
     const parsed = JSON.parse(String(raw)) as TransientAnchor[];
@@ -812,20 +813,9 @@ export async function commitTransientAnchor(change: {
     y: number;
     defaultX: number;
 }): Promise<boolean> {
-    const python = pyodide();
-    if (!python) {
+    if (!pyodide()) {
         return false;
     }
-    const wrote = await python.runPythonAsync(
-        `_cp_compile_filter_transient_anchor(${pythonString(JSON.stringify(change))})`
-    );
-    const decision = JSON.parse(String(wrote)) as {
-        ok?: boolean;
-        y?: number;
-        x?: number;
-        clearX?: boolean;
-        masterId?: string;
-    };
     const bridge = (
         window as unknown as {
             patchSyncEngine?: {
@@ -838,23 +828,25 @@ export async function commitTransientAnchor(change: {
                     }
                 ) => void;
                 endTransaction: () => void;
-                setRecordingSuppressed?: (suppressed: boolean) => void;
-                inTransaction?: boolean;
             };
         }
     ).patchSyncEngine;
-    bridge?.setRecordingSuppressed?.(false);
-    let leaked = 0;
-    while (bridge?.inTransaction && leaked < 4) {
-        bridge.endTransaction();
-        leaked += 1;
-    }
     bridge?.beginTransaction('Move Harakat anchor', null, {
         compileChangeSource: 'compile-filter',
         compileEditType: null
     });
     let wroteResult = false;
     try {
+        const wrote = await runHostPythonAsync(
+            `_cp_compile_filter_transient_anchor(${pythonString(JSON.stringify(change))})`
+        );
+        const decision = JSON.parse(String(wrote)) as {
+            ok?: boolean;
+            y?: number;
+            x?: number;
+            clearX?: boolean;
+            masterId?: string;
+        };
         wroteResult = decision.ok !== false;
         applyTransientAnchorDecision(change, decision);
     } finally {
@@ -1194,7 +1186,7 @@ export async function prepareCompileFilters(
         if (featureKey === cachedFeatureKey) {
             return { layerUpdates: [], features: cachedFeatures };
         }
-        const raw = await pyodide()!.runPythonAsync(
+        const raw = await runHostPythonAsync(
             `_cp_compile_filters_run(${pythonString(JSON.stringify(payload))})`
         );
         const parsed = JSON.parse(String(raw)) as {
@@ -1213,7 +1205,7 @@ export async function prepareCompileFilters(
             features: cachedFeatures
         };
     }
-    const raw = await pyodide()!.runPythonAsync(
+    const raw = await runHostPythonAsync(
         `_cp_compile_filters_run(${pythonString(JSON.stringify(payload))})`
     );
     const parsed = JSON.parse(String(raw)) as {

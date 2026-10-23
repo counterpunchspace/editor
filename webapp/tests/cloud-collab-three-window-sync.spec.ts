@@ -1061,10 +1061,7 @@ test.describe('three-window sync scenarios', () => {
             ).toBeEnabled();
             await mainPage.locator('.editor-layer-add-button').click();
 
-            // The owner applies the new layer locally before the glyph room
-            // acknowledges it. On staging that ack can take the full reconnect
-            // window, so the peer needs longer than the default 30s.
-            await waitForRemoteChange(linkedPage, addLayerLastSyncTime, 90000);
+            await waitForRemoteChange(linkedPage, addLayerLastSyncTime);
             await waitUntilGlyphLayerDataMatches(
                 mainPage,
                 inviteePage,
@@ -1077,8 +1074,7 @@ test.describe('three-window sync scenarios', () => {
             const intermediateLayerId = await waitForNewAssociatedLayerId(
                 mainPage,
                 glyphName,
-                layerIdsBeforeIntermediate,
-                60000
+                layerIdsBeforeIntermediate
             );
             expect(intermediateLayerId).toBeTruthy();
             await linkedPage.waitForFunction(

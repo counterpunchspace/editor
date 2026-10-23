@@ -1183,4 +1183,102 @@ describe('Python post-execution synthetic commit alignment', () => {
         alert.mockRestore();
         delete window.cloudPlugin;
     });
+
+    test('overlapping runPythonAsync calls release their own recording suppression', async () => {
+        jest.resetModules();
+        const readyState = document.readyState;
+        Object.defineProperty(document, 'readyState', {
+            configurable: true,
+            value: 'complete'
+        });
+        let finishFirst;
+        let finishSecond;
+        const originalRunPythonAsync = jest
+            .fn()
+            .mockImplementationOnce(
+                () =>
+                    new Promise((resolve) => {
+                        finishFirst = resolve;
+                    })
+            )
+            .mockImplementationOnce(
+                () =>
+                    new Promise((resolve) => {
+                        finishSecond = resolve;
+                    })
+            );
+        const applyKindStack = ['local'];
+        let transactionDepth = 0;
+        window.pyodide = {
+            runPython: jest.fn(),
+            runPythonAsync: originalRunPythonAsync
+        };
+        window.fontManager = {
+            currentFont: {
+                babelfontJson: '{}',
+                syncJsonFromModel() {
+                    this.babelfontJson = '{}';
+                }
+            },
+            updateDirtyIndicator: jest.fn()
+        };
+        window.patchSyncEngine = {
+            beginTransaction() {
+                transactionDepth += 1;
+            },
+            endTransaction() {
+                if (transactionDepth > 0) {
+                    transactionDepth -= 1;
+                }
+                return null;
+            },
+            beginRecordingSuppression() {
+                applyKindStack.push('silent');
+                let released = false;
+                return () => {
+                    if (released) {
+                        return;
+                    }
+                    released = true;
+                    applyKindStack.pop();
+                };
+            },
+            setRecordingSuppressed: jest.fn(),
+            applySyntheticChangeSet: jest.fn()
+        };
+
+        try {
+            jest.isolateModules(() => {
+                require('../js/python-ui-sync.ts');
+                require('../js/python-package-lazy-loader.ts');
+                require('../js/python-post-execution.ts');
+                require('../js/python-execution-wrapper.ts');
+            });
+
+            const first = window.pyodide.runPythonAsync('first');
+            const second = window.pyodide.runPythonAsync('second');
+            expect(transactionDepth).toBe(2);
+            expect(applyKindStack).toEqual(['local', 'silent', 'silent']);
+            for (let step = 0; step < 8; step += 1) {
+                await Promise.resolve();
+            }
+
+            finishFirst('ok');
+            await first;
+            expect(transactionDepth).toBe(1);
+            expect(applyKindStack).toEqual(['local', 'silent']);
+
+            finishSecond('ok');
+            await second;
+            expect(transactionDepth).toBe(0);
+            expect(applyKindStack).toEqual(['local']);
+            expect(window.pythonExecutionHistoryContext).toBeNull();
+        } finally {
+            Object.defineProperty(document, 'readyState', {
+                configurable: true,
+                value: readyState
+            });
+            delete window.pyodide;
+        }
+    });
 });

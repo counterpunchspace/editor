@@ -577,10 +577,18 @@ declare global {
         unmountDirectory: () => Promise<string>;
 
         // From python-execution-wrapper.js
-        beforePythonExecution?: (code?: string) => void | Promise<void>;
-        afterPythonExecution?: (outcome?: {
-            succeeded: boolean;
-        }) => void | Promise<void>;
+        beforePythonExecution?: (
+            code?: string
+        ) =>
+            | Window['pythonExecutionHistoryContext']
+            | Promise<Window['pythonExecutionHistoryContext'] | void>
+            | void;
+        afterPythonExecution?: (
+            outcome?: {
+                succeeded: boolean;
+            },
+            historyContext?: Window['pythonExecutionHistoryContext']
+        ) => void | Promise<void>;
         __counterpunchPythonPostExecutionHookInstalled?: boolean;
 
         // From example-loader.ts

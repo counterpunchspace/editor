@@ -174,11 +174,12 @@
         // Install our hook
         window.beforePythonExecution = async function (code?: string) {
             const hookStartTime = performance.now();
+            let historyContext: Window['pythonExecutionHistoryContext'] | void;
 
-            // Call existing hook first
+            // Call existing hook first. Its context belongs to this run.
             if (typeof existingBeforeHook === 'function') {
                 const existingHookStart = performance.now();
-                await existingBeforeHook(code);
+                historyContext = await existingBeforeHook(code);
                 const existingHookDuration =
                     performance.now() - existingHookStart;
                 if (existingHookDuration > 10) {
@@ -191,7 +192,7 @@
 
             // Only check if we have code to analyze
             if (!code || typeof code !== 'string') {
-                return;
+                return historyContext;
             }
 
             // Detect and install required packages
@@ -221,6 +222,7 @@
                     `⏱️ Total beforePythonExecution hook: ${totalDuration.toFixed(1)}ms`
                 );
             }
+            return historyContext;
         };
 
         console.log(

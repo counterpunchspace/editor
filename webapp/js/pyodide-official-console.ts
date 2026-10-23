@@ -100,10 +100,10 @@ async function initPyodideConsole() {
         }
 
         async function interpreter(command: string) {
-            // Call before-execution hook
-            if (window.beforePythonExecution) {
-                window.beforePythonExecution();
-            }
+            // Call before-execution hook and keep this command's context.
+            const historyContext = window.beforePythonExecution
+                ? await window.beforePythonExecution(command)
+                : undefined;
 
             // Log command to browser console
             if (command && command.trim()) {
@@ -185,7 +185,10 @@ async function initPyodideConsole() {
 
             // Call after-execution hook (always, after all commands processed)
             if (window.afterPythonExecution) {
-                window.afterPythonExecution();
+                await window.afterPythonExecution(
+                    { succeeded: true },
+                    historyContext
+                );
             }
         }
 
