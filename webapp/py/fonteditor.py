@@ -1035,17 +1035,38 @@ def _cp_compile_filters_discover():
     return json.dumps(described)
 
 
+def _cp_active_compile_filter_ids(stored):
+    """Ids of compile-filter records stored with ``active: true``."""
+    ids = []
+    try:
+        items = list(stored or [])
+    except Exception:
+        return ids
+    for item in items:
+        record = _materialize_py_value(item)
+        if not isinstance(record, dict):
+            continue
+        plugin_id = record.get('id')
+        if (
+            isinstance(plugin_id, str)
+            and plugin_id
+            and record.get('active') is True
+        ):
+            ids.append(plugin_id)
+    return ids
+
+
 def _cp_compile_filter_transient_anchors(glyph_name, layer_id):
     font = Font()
     specific = getattr(font, 'format_specific', None)
     stored = []
     if specific is not None:
         try:
-            stored = list(specific['com.counterpunch.compile-filters'])
+            stored = specific['com.counterpunch.compile-filters']
         except Exception:
             stored = []
     anchors = []
-    for plugin_id in stored:
+    for plugin_id in _cp_active_compile_filter_ids(stored):
         plugin = _CP_COMPILE_FILTERS.get(str(plugin_id))
         method = getattr(plugin, 'transientAnchors', None)
         if not callable(method):

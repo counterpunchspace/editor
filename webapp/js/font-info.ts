@@ -10,7 +10,8 @@ import {
     discoveredCompileFilters,
     invalidateCompileFilterCache,
     linkedCompileFilterIds,
-    setLinkedCompileFilterIds,
+    linkedCompileFilters,
+    setLinkedCompileFilters,
     setupCompileFilter,
     takedownCompileFilter,
     retireLegacyCompileFilterGuides,
@@ -1098,7 +1099,7 @@ class FontInfoManager {
         if (!container || !font) {
             return;
         }
-        const linked = linkedCompileFilterIds(font);
+        const links = linkedCompileFilters(font);
         const byId = new Map(
             discoveredCompileFilters().map((plugin) => [plugin.id, plugin])
         );
@@ -1120,7 +1121,7 @@ class FontInfoManager {
         header.append(intro, add);
         container.appendChild(header);
 
-        if (linked.length === 0) {
+        if (links.length === 0) {
             const empty = document.createElement('p');
             empty.className = 'compile-filter-empty';
             empty.textContent = 'No compile filters in this font.';
@@ -1130,7 +1131,8 @@ class FontInfoManager {
 
         const list = document.createElement('div');
         list.className = 'compile-filter-list';
-        for (const pluginId of linked) {
+        for (const link of links) {
+            const pluginId = link.id;
             const info = byId.get(pluginId);
             const title = info?.name || pluginId;
             const card = document.createElement('article');
@@ -1140,12 +1142,28 @@ class FontInfoManager {
             name.className = 'compile-filter-name';
             name.textContent = title;
             text.appendChild(name);
+            const status = document.createElement('p');
+            status.className = 'compile-filter-status';
+            status.textContent = link.active ? 'Active' : 'Inactive';
+            text.appendChild(status);
             if (info?.description) {
                 const description = document.createElement('p');
                 description.className = 'compile-filter-description';
                 description.textContent = info.description;
                 text.appendChild(description);
             }
+            const actions = document.createElement('div');
+            actions.className = 'compile-filter-actions';
+            const toggle = document.createElement('button');
+            toggle.type = 'button';
+            toggle.className = link.active
+                ? 'dialog-button'
+                : 'dialog-button dialog-button-primary';
+            toggle.textContent = link.active ? 'Deactivate' : 'Activate';
+            toggle.setAttribute('aria-label', `${toggle.textContent} ${title}`);
+            toggle.addEventListener('click', () => {
+                void this.setCompileFilterActive(pluginId, !link.active);
+            });
             const remove = document.createElement('button');
             remove.type = 'button';
             remove.className = 'dialog-button';
@@ -1154,7 +1172,8 @@ class FontInfoManager {
             remove.addEventListener('click', () => {
                 void this.unlinkCompileFilter(pluginId);
             });
-            card.append(text, remove);
+            actions.append(toggle, remove);
+            card.append(text, actions);
             list.appendChild(card);
         }
         container.appendChild(list);
@@ -1286,9 +1305,12 @@ class FontInfoManager {
             compileEditType: null
         });
         try {
-            const ids = linkedCompileFilterIds(font);
-            if (!ids.includes(pluginId)) {
-                setLinkedCompileFilterIds(font, [...ids, pluginId]);
+            const links = linkedCompileFilters(font);
+            if (!links.some((link) => link.id === pluginId)) {
+                setLinkedCompileFilters(font, [
+                    ...links,
+                    { id: pluginId, active: false }
+                ]);
             }
             invalidateCompileFilterCache();
             await this.renderCompileFiltersContent();
@@ -1300,6 +1322,38 @@ class FontInfoManager {
 
     private refreshActiveCanvasTransientAnchors(): void {
         window.glyphCanvas?.outlineEditor?.invalidateTransientAnchors?.();
+    }
+
+    private async setCompileFilterActive(
+        pluginId: string,
+        active: boolean
+    ): Promise<void> {
+        const font = window.currentFontModel;
+        if (!font) {
+            return;
+        }
+        const bridge = window.patchSyncEngine;
+        bridge?.beginTransaction(
+            active ? 'Activate compile filter' : 'Deactivate compile filter',
+            null,
+            {
+                compileChangeSource: 'compile-filter',
+                compileEditType: null
+            }
+        );
+        try {
+            setLinkedCompileFilters(
+                font,
+                linkedCompileFilters(font).map((link) =>
+                    link.id === pluginId ? { ...link, active } : link
+                )
+            );
+            invalidateCompileFilterCache();
+            await this.renderCompileFiltersContent();
+            this.refreshActiveCanvasTransientAnchors();
+        } finally {
+            bridge?.endTransaction();
+        }
     }
 
     private async unlinkCompileFilter(pluginId: string): Promise<void> {
@@ -1314,9 +1368,11 @@ class FontInfoManager {
         });
         try {
             await takedownCompileFilter(pluginId);
-            setLinkedCompileFilterIds(
+            setLinkedCompileFilters(
                 font,
-                linkedCompileFilterIds(font).filter((id) => id !== pluginId)
+                linkedCompileFilters(font).filter(
+                    (link) => link.id !== pluginId
+                )
             );
             invalidateCompileFilterCache();
             await this.renderCompileFiltersContent();

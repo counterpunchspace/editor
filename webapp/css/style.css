@@ -4313,6 +4313,20 @@ html[data-command-modifier='ctrl'] .shortcut-option-modifier::before {
     line-height: 1.5;
 }
 
+.compile-filter-card .compile-filter-status {
+    margin: 4px 0 0;
+    color: var(--text-secondary);
+    font-size: 12px;
+}
+
+.compile-filter-actions {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+    flex-shrink: 0;
+}
+
 .compile-filter-header .dialog-button,
 .compile-filter-card .dialog-button,
 .compile-filter-choice .dialog-button {

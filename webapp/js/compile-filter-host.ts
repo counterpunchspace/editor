@@ -80,6 +80,43 @@ export function canonicalPluginId(id: string): string {
     return previousPluginIds.get(id) || LEGACY_PLUGIN_IDS[id] || id;
 }
 
+export interface CompileFilterLink {
+    id: string;
+    active: boolean;
+}
+
+function isCompileFilterRecord(
+    value: unknown
+): value is { id?: unknown; active?: unknown } {
+    return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+export function linkedCompileFilters(
+    font:
+        | {
+              format_specific?: Record<string, unknown>;
+          }
+        | null
+        | undefined
+): CompileFilterLink[] {
+    const stored = font?.format_specific?.[COMPILE_FILTERS_KEY];
+    if (!Array.isArray(stored)) {
+        return [];
+    }
+    const links: CompileFilterLink[] = [];
+    for (const item of stored) {
+        if (!isCompileFilterRecord(item) || typeof item.id !== 'string') {
+            continue;
+        }
+        const id = canonicalPluginId(item.id);
+        if (!id) {
+            continue;
+        }
+        links.push({ id, active: item.active === true });
+    }
+    return links;
+}
+
 export function linkedCompileFilterIds(
     font:
         | {
@@ -88,25 +125,33 @@ export function linkedCompileFilterIds(
         | null
         | undefined
 ): string[] {
-    const stored = font?.format_specific?.[COMPILE_FILTERS_KEY];
-    if (!Array.isArray(stored)) {
-        return [];
-    }
-    return stored
-        .filter((id): id is string => typeof id === 'string' && id.length > 0)
-        .map((id) => canonicalPluginId(id));
+    return linkedCompileFilters(font).map((link) => link.id);
 }
 
-export function setLinkedCompileFilterIds(
+export function activeCompileFilterIds(
+    font:
+        | {
+              format_specific?: Record<string, unknown>;
+          }
+        | null
+        | undefined
+): string[] {
+    return linkedCompileFilters(font)
+        .filter((link) => link.active)
+        .map((link) => link.id);
+}
+
+export function setLinkedCompileFilters(
     font: { format_specific?: Record<string, unknown> },
-    ids: string[]
+    links: CompileFilterLink[]
 ): void {
     if (!font.format_specific || typeof font.format_specific !== 'object') {
         font.format_specific = {};
     }
-    font.format_specific[COMPILE_FILTERS_KEY] = ids.map((id) =>
-        canonicalPluginId(id)
-    );
+    font.format_specific[COMPILE_FILTERS_KEY] = links.map((link) => ({
+        id: canonicalPluginId(link.id),
+        active: link.active === true
+    }));
 }
 
 export function discoveredCompileFilters(): CompileFilterInfo[] {
@@ -286,7 +331,7 @@ export async function onCompileFilterGuideChange(
             currentFontModel?: { format_specific?: Record<string, unknown> };
         }
     ).currentFontModel;
-    const ids = linkedCompileFilterIds(font);
+    const ids = activeCompileFilterIds(font);
     const python = pyodide();
     if (!python || ids.length === 0) {
         return false;
@@ -1010,7 +1055,7 @@ export async function prepareCompileFilters(
             };
         }
     ).currentFontModel;
-    const ids = linkedCompileFilterIds(font);
+    const ids = activeCompileFilterIds(font);
     if (!font || ids.length === 0 || !pyodide()) {
         return { layerUpdates: [], features: '' };
     }
