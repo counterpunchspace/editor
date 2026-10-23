@@ -339,6 +339,15 @@ if (typeof window === 'undefined') {
 
         const requestURL = request.url;
 
+        // Cloudflare injects /cdn-cgi/ beacons. Proxying them from the
+        // service worker fails the subrequest and surfaces as net::ERR_FAILED.
+        if (
+            requestURL.startsWith(self.location.origin) &&
+            new URL(requestURL).pathname.startsWith('/cdn-cgi/')
+        ) {
+            return;
+        }
+
         // Handle CDN resources with stale-while-revalidate strategy
         if (isCDNResource(requestURL)) {
             event.respondWith(

@@ -60,29 +60,16 @@ async function initFontEditor() {
                     '[FontEditor]',
                     '[COI] iOS detected - SharedArrayBuffer not supported on iOS (all browsers). Some features may be limited.'
                 );
-                // Don't reload on iOS, just continue without SAB
             } else if (!alreadyReloaded) {
                 console.log(
                     '[FontEditor]',
-                    '[COI] SharedArrayBuffer not available - reloading to enable service worker headers...'
+                    '[COI] SharedArrayBuffer not available. The service worker reloads once it can control the page.'
                 );
-                if (window.updateLoadingStatus) {
-                    window.updateLoadingStatus(
-                        'Enabling cross-origin isolation...'
-                    );
-                }
-                // Wait a moment for status to show, then reload
-                setTimeout(() => {
-                    window.sessionStorage.setItem('coiReloadedBySelf', 'true');
-                    window.location.reload();
-                }, 500);
-                return false;
             } else {
                 console.error(
                     '[FontEditor]',
                     '[COI] SharedArrayBuffer still unavailable after reload. Browser may not support it.'
                 );
-                // Already reloaded once, don't try again (prevents infinite loop)
             }
         }
 

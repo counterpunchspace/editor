@@ -115,6 +115,9 @@
 
         <script>
             window.__startFontcWorker = function () {
+                if (typeof SharedArrayBuffer === 'undefined') {
+                    return;
+                }
                 if (window.__fontcWorker || window.__fontcWorkerReadyPromise) {
                     return;
                 }

@@ -177,7 +177,7 @@ module.exports = {
                 { from: 'py', to: 'py' },
                 { from: 'wheels', to: 'wheels' },
                 { from: 'data', to: 'data' },
-                { from: '_headers', to: '_headers' },
+                { from: '_headers', to: '_headers', toType: 'file' },
                 {
                     from: 'worktree-config.json',
                     to: 'worktree-config.json',
