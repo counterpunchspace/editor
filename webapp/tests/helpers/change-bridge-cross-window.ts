@@ -434,9 +434,10 @@ export async function recoverLinkedWindowAfterNavigation(
  */
 export async function waitForRemoteChange(
     linkedPage: Page,
-    previousSyncTime: number
+    previousSyncTime: number,
+    timeoutMs = 30000
 ): Promise<void> {
-    const deadline = Date.now() + 30000;
+    const deadline = Date.now() + timeoutMs;
     let lastError: unknown = null;
 
     while (Date.now() < deadline) {
@@ -1207,7 +1208,8 @@ export async function extractYDocLayerIds(
 export async function waitForNewAssociatedLayerId(
     page: Page,
     glyphName: string,
-    previousLayerIds: string[]
+    previousLayerIds: string[],
+    timeout = 20000
 ): Promise<string> {
     await page.waitForFunction(
         ({ glyphName, previousLayerIds }) => {
@@ -1225,7 +1227,7 @@ export async function waitForNewAssociatedLayerId(
             )?.id;
         },
         { glyphName, previousLayerIds },
-        { timeout: 20000 }
+        { timeout }
     );
 
     return page.evaluate(
