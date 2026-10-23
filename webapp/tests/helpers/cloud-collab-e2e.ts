@@ -337,6 +337,31 @@ export async function requestDebugRoomControl(
     const operatorAuthorization =
         cloudCollabOperatorBrowserHeaders()['X-Counterpunch-E2E-Operator'] ||
         '';
+    let last: { status: number; payload: Record<string, unknown> } = {
+        status: 0,
+        payload: {}
+    };
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+        last = await requestDebugRoomControlOnce(
+            page,
+            assetId,
+            body,
+            operatorAuthorization
+        );
+        if (last.status !== 503) {
+            return last;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 250 * 2 ** attempt));
+    }
+    return last;
+}
+
+async function requestDebugRoomControlOnce(
+    page: Page,
+    assetId: string,
+    body: Record<string, unknown>,
+    operatorAuthorization: string
+): Promise<{ status: number; payload: Record<string, unknown> }> {
     return page.evaluate(
         async ({
             assetId: id,
