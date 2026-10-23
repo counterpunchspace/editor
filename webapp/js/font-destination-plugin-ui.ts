@@ -460,27 +460,32 @@ export type PluginPurchaseRequest =
     | { outcome: 'failed'; error?: string }
     | { outcome: 'unreachable' };
 
+async function readPaidPurchase(
+    url: string
+): Promise<PluginPurchaseRequest | null> {
+    const existing = await fetch(url, { credentials: 'include' });
+    if (!existing.ok) return null;
+    const prior = (await existing.json()) as {
+        status?: string;
+        invoicePdf?: string | null;
+        hostedInvoiceUrl?: string | null;
+    };
+    if (prior.status !== 'paid') return null;
+    return {
+        outcome: 'paid',
+        invoicePdf: prior.invoicePdf,
+        hostedInvoiceUrl: prior.hostedInvoiceUrl
+    };
+}
+
 export async function requestPluginPurchase(
     packageName: string,
     grossCents: number
 ): Promise<PluginPurchaseRequest> {
     const url = `${resolveWebsiteURL()}/api/plugins/${encodeURIComponent(packageName)}/purchase`;
     try {
-        const existing = await fetch(url, { credentials: 'include' });
-        if (existing.ok) {
-            const prior = (await existing.json()) as {
-                status?: string;
-                invoicePdf?: string | null;
-                hostedInvoiceUrl?: string | null;
-            };
-            if (prior.status === 'paid') {
-                return {
-                    outcome: 'paid',
-                    invoicePdf: prior.invoicePdf,
-                    hostedInvoiceUrl: prior.hostedInvoiceUrl
-                };
-            }
-        }
+        const prior = await readPaidPurchase(url);
+        if (prior) return prior;
         const response = await fetch(url, {
             method: 'POST',
             credentials: 'include',
@@ -513,6 +518,12 @@ export async function requestPluginPurchase(
             hostedInvoiceUrl: body.hostedInvoiceUrl
         };
     } catch {
+        try {
+            const paid = await readPaidPurchase(url);
+            if (paid) return paid;
+        } catch {
+            // The store is still unreachable.
+        }
         return { outcome: 'unreachable' };
     }
 }

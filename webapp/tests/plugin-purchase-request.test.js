@@ -15,10 +15,33 @@ describe('plugin purchase request', () => {
         delete global.fetch;
     });
 
-    test('a failed purchase fetch is recoverable and does not throw', async () => {
+    test('a dropped purchase response is paid when the store already recorded it', async () => {
         global.fetch = jest
             .fn()
             .mockResolvedValueOnce(jsonResponse({ status: 'none' }))
+            .mockRejectedValueOnce(new TypeError('Failed to fetch'))
+            .mockResolvedValueOnce(
+                jsonResponse({
+                    status: 'paid',
+                    invoicePdf: 'https://example.test/invoice.pdf'
+                })
+            );
+
+        await expect(
+            requestPluginPurchase('counterpunch-harakat', 1190)
+        ).resolves.toEqual({
+            outcome: 'paid',
+            invoicePdf: 'https://example.test/invoice.pdf',
+            hostedInvoiceUrl: undefined
+        });
+        expect(global.fetch).toHaveBeenCalledTimes(3);
+    });
+
+    test('a failed purchase fetch is unreachable when the purchase was not recorded', async () => {
+        global.fetch = jest
+            .fn()
+            .mockResolvedValueOnce(jsonResponse({ status: 'none' }))
+            .mockRejectedValueOnce(new TypeError('Failed to fetch'))
             .mockRejectedValueOnce(new TypeError('Failed to fetch'));
 
         await expect(
