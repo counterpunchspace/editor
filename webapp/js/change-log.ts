@@ -6,6 +6,11 @@
  * selectively revert changes.
  */
 
+import {
+    CORE_CODEPOINT_INDEX_KEY,
+    CORE_GLYPH_CATALOG_KEY
+} from './filesystem-plugins/cloud-glyph-catalog';
+
 /** Object types that can appear in change log entries */
 export type ChangeObjectType =
     | 'font'
@@ -988,6 +993,16 @@ function isFontStructuralChangePath(path: string): boolean {
     );
 }
 
+/**
+ * Cloud catalog rows are room bookkeeping rewritten on save and open. A
+ * one-glyph undo must never revert them, and replaying the whole catalog
+ * exceeds the room's collaboration metadata limit.
+ */
+function isCloudCatalogPath(path: string): boolean {
+    const root = getPathSegments(path)[0];
+    return root === CORE_GLYPH_CATALOG_KEY || root === CORE_CODEPOINT_INDEX_KEY;
+}
+
 function historyItemHasFontStructuralPath(entries: ChangeLogEntry[]): boolean {
     return entries.some((entry) => isFontStructuralChangePath(entry.path));
 }
@@ -1150,6 +1165,9 @@ function processHistoryEntry(
     const glyphScopeKey = getGlyphScopeKey(entryGlyphName);
 
     if (entry.historyAction === 'change') {
+        if (isCloudCatalogPath(entry.path)) {
+            return;
+        }
         const item = ensureItem(entry);
         item.entries.push(entry);
         item.timestamp = entry.timestamp;

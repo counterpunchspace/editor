@@ -2575,6 +2575,29 @@ describe('ChangeBridge', () => {
         expect(peer.getYValue(['glyphs', 'A', 'name'])).toBe('A');
     });
 
+    test('syncCloudOwnedProjection is not reachable by undo on any surface', () => {
+        const {
+            applyCloudOwnedData
+        } = require('../js/filesystem-plugins/cloud-glyph-catalog');
+        const { buildHistoryStackItems } = require('../js/change-log');
+        const { bridge } = createTestBridge('test-catalog-undo');
+        bridge.syncCloudOwnedProjection(
+            applyCloudOwnedData(bridge.getFontJsonSnapshot())
+        );
+        expect(
+            bridge
+                .getChangeLog()
+                .some((entry) => entry.path.startsWith('glyphCatalog.'))
+        ).toBe(true);
+
+        expect(buildHistoryStackItems(bridge.getChangeLog())).toEqual([]);
+        expect(bridge.canUndo('A', 'layer-1')).toBe(false);
+        expect(bridge.canUndo('A')).toBe(false);
+        expect(bridge.canUndo(undefined, null, null, 'canvas')).toBe(false);
+        expect(bridge.canUndo(undefined, null, null, 'font')).toBe(false);
+        expect(bridge.undo('A', 'layer-1')).toBeNull();
+    });
+
     test('initFromJson normalizes component transforms in the JSON shadow', () => {
         const fontJson = makeMinimalFont();
         fontJson.glyphs[0].layers[0].shapes[1].transform.tCenter = [0, 0];
