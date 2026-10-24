@@ -10,7 +10,10 @@ const attempts = 3;
 
 function analyze() {
     return new Promise((resolve) => {
-        const child = spawn(bin, ["analyze"], { cwd: root, stdio: "inherit" });
+        const child = spawn(bin, ["analyze", "--skip-agents-md"], {
+            cwd: root,
+            stdio: "inherit",
+        });
         child.on("error", () => resolve(false));
         child.on("exit", (code, signal) => {
             resolve(code === 0 && !signal);
