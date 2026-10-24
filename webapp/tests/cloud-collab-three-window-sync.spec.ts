@@ -1144,6 +1144,10 @@ test.describe('three-window sync scenarios', () => {
                 name: 'Delete layer'
             });
             await expect(deleteLayerMenuItem).toBeVisible();
+            // Escape needs focus inside the menu, which a layer-list rebuild
+            // from the delete below can take away.
+            await mainPage.keyboard.press('Escape');
+            await expect(deleteLayerMenuItem).toBeHidden();
             const deleteApplied = await mainPage.evaluate(
                 async ({ glyphName, layerId }) => {
                     const outlineEditor = (window as any).glyphCanvas
@@ -1156,8 +1160,6 @@ test.describe('three-window sync scenarios', () => {
                 { glyphName, layerId: intermediateLayerId }
             );
             expect(deleteApplied).toBe(true);
-            await mainPage.keyboard.press('Escape');
-            await expect(deleteLayerMenuItem).toBeHidden();
 
             await waitForLayerIdToDisappear(
                 mainPage,
@@ -1181,6 +1183,16 @@ test.describe('three-window sync scenarios', () => {
             await alignEditorCanvas(mainPage, 'a', { wght: 200 });
             await alignEditorCanvas(linkedPage, 'a', { wght: 200 });
             await dismissVisibleTippies(mainPage);
+            for (const page of [mainPage, linkedPage]) {
+                await expect
+                    .poll(
+                        async () =>
+                            (await extractActiveLayerSelectionState(page))
+                                .currentLayerExists,
+                        { timeout: 15000 }
+                    )
+                    .toBe(true);
+            }
 
             const mainLayerIdsAfterIntermediateDelete = await getModelLayerIds(
                 mainPage,
@@ -1578,6 +1590,22 @@ test.describe('three-window sync scenarios', () => {
             expect(linkedCanUndoOwnerEdit).toBe(true);
 
             const inviteeBSync = await getLastFontModelSyncTime(mainPage);
+            await expect
+                .poll(
+                    () =>
+                        inviteePage.evaluate(
+                            () =>
+                                (
+                                    window as any
+                                ).cloudPlugin?.canMutateCurrentAsset?.() !==
+                                false
+                        ),
+                    {
+                        timeout: 30000,
+                        message: 'invitee cloud font becomes writable'
+                    }
+                )
+                .toBe(true);
             const inviteeEdit = await inviteePage.evaluate(async () => {
                 const bridge = (window as any).changeBridge;
                 const fontModel = (window as any).currentFontModel;
