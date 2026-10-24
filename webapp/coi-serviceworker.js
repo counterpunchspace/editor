@@ -70,9 +70,14 @@ if (typeof window === 'undefined') {
                         new Request(url, { cache: 'reload' })
                     );
                     const absolute = new URL(url, self.location.href);
+                    // Pages redirects /name.html to /name; a redirected
+                    // response cannot answer a navigation, so store a copy.
+                    const redirectAllowed =
+                        isDocumentPath(absolute.pathname) &&
+                        new URL(response.url).origin === self.location.origin;
                     if (
                         !response.ok ||
-                        response.redirected ||
+                        (response.redirected && !redirectAllowed) ||
                         isHtmlFallback(absolute, response)
                     ) {
                         throw new Error(
@@ -82,7 +87,16 @@ if (typeof window === 'undefined') {
                                 (response.redirected ? ' (redirected)' : '')
                         );
                     }
-                    await cache.put(url, response);
+                    await cache.put(
+                        url,
+                        response.redirected
+                            ? new Response(await response.blob(), {
+                                  status: response.status,
+                                  statusText: response.statusText,
+                                  headers: response.headers
+                              })
+                            : response
+                    );
                 })
             );
         } catch (error) {
@@ -267,9 +281,12 @@ if (typeof window === 'undefined') {
         const url = new URL(request.url);
         url.search = '';
         url.hash = '';
+        const documentUrl = precacheUrls.has(url.href + '.html')
+            ? url.href + '.html'
+            : url.href;
         const precachedDocument =
-            url.href !== shellUrl && precacheUrls.has(url.href)
-                ? await cache.match(url.href)
+            documentUrl !== shellUrl && precacheUrls.has(documentUrl)
+                ? await cache.match(documentUrl)
                 : undefined;
         const cached = precachedDocument || (await cache.match(shellUrl));
         if (cached) {
