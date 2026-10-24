@@ -639,7 +639,9 @@ jobs:
               working-directory: ${{ steps.collab.outputs.root }}
 
             - name: Install website dependencies
-              run: npm ci
+              run: |
+                  npm ci
+                  npm ci --prefix plugins-worker
               working-directory: _cutover/website
 
             - name: Download website build

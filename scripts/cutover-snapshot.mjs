@@ -74,29 +74,35 @@ function isMissingScript(payload) {
   return (payload.errors ?? []).some((error) => error.code === 10007);
 }
 
+async function liveWorker(script) {
+  const { ok, payload } = await cloudflare(
+    "GET",
+    `/workers/scripts/${script}/deployments`,
+  );
+  if (!ok && !isMissingScript(payload)) {
+    throw new Error(`${script}: ${JSON.stringify(payload.errors)}`);
+  }
+  return ok ? liveWorkerVersion(payload.result?.deployments) : null;
+}
+
+async function livePagesDeployment(project) {
+  const { ok, payload } = await cloudflare("GET", `/pages/projects/${project}`);
+  if (!ok) {
+    throw new Error(`${project}: ${JSON.stringify(payload.errors)}`);
+  }
+  return payload.result?.canonical_deployment?.id ?? null;
+}
+
 async function snapshot(target, file) {
   const { workers, pages } = cutoverResources(target, {
     deploysPlugins: process.env.CUTOVER_DEPLOYS_PLUGINS === "1",
   });
   const result = { target, takenAt: new Date().toISOString(), workers: {}, pages: {} };
   for (const script of workers) {
-    const { ok, payload } = await cloudflare(
-      "GET",
-      `/workers/scripts/${script}/deployments`,
-    );
-    if (!ok && !isMissingScript(payload)) {
-      throw new Error(`${script}: ${JSON.stringify(payload.errors)}`);
-    }
-    result.workers[script] = ok
-      ? liveWorkerVersion(payload.result?.deployments)
-      : null;
+    result.workers[script] = await liveWorker(script);
   }
   for (const project of pages) {
-    const { ok, payload } = await cloudflare("GET", `/pages/projects/${project}`);
-    if (!ok) {
-      throw new Error(`${project}: ${JSON.stringify(payload.errors)}`);
-    }
-    result.pages[project] = payload.result?.canonical_deployment?.id ?? null;
+    result.pages[project] = await livePagesDeployment(project);
   }
   writeFileSync(file, JSON.stringify(result, null, 2) + "\n");
   console.log(JSON.stringify(result, null, 2));
@@ -110,9 +116,15 @@ async function rollback(file) {
     lines.push(`- ${name}: ${outcome}`);
     console.log(`${name}: ${outcome}`);
   };
+  // A failed deploy stops before the later resources, which are then still
+  // live on the snapshot; Pages refuses to roll back to its live deployment.
   for (const [script, versionId] of Object.entries(saved.workers)) {
     if (!versionId) {
       record(script, "no previous version, left as deployed");
+      continue;
+    }
+    if ((await liveWorker(script)) === versionId) {
+      record(script, `unchanged, still ${versionId}`);
       continue;
     }
     const { ok, payload } = await cloudflare(
@@ -130,6 +142,10 @@ async function rollback(file) {
   for (const [project, deploymentId] of Object.entries(saved.pages)) {
     if (!deploymentId) {
       record(project, "no previous deployment, left as deployed");
+      continue;
+    }
+    if ((await livePagesDeployment(project)) === deploymentId) {
+      record(project, `unchanged, still ${deploymentId}`);
       continue;
     }
     const { ok, payload } = await cloudflare(
