@@ -1,5 +1,5 @@
 import {
-    EDIT_TOOL_ICONS,
+    POINTER_BADGE_ICONS,
     type EditToolPointerBadge
 } from './glyph-canvas/edit-tools';
 import { Logger } from './logger';
@@ -97,7 +97,7 @@ function showBadge(kind: EditToolPointerBadge): void {
     }
 
     if (badgeIconElement) {
-        badgeIconElement.textContent = EDIT_TOOL_ICONS[kind];
+        badgeIconElement.textContent = POINTER_BADGE_ICONS[kind];
     }
 
     activeBadge = kind;

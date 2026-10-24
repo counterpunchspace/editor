@@ -15,7 +15,8 @@ describe('edit-tools helpers', () => {
                 stickyTool: 'select',
                 cmdKeyPressed: true,
                 altKeyPressed: true,
-                hasAddPointPreview: true
+                hasAddPointPreview: true,
+                hoveringStraightSegment: true
             })
         ).toBe('text');
     });
@@ -27,7 +28,8 @@ describe('edit-tools helpers', () => {
                 stickyTool: 'select',
                 cmdKeyPressed: true,
                 altKeyPressed: false,
-                hasAddPointPreview: false
+                hasAddPointPreview: false,
+                hoveringStraightSegment: false
             })
         ).toBe('pen');
 
@@ -37,7 +39,8 @@ describe('edit-tools helpers', () => {
                 stickyTool: 'select',
                 cmdKeyPressed: true,
                 altKeyPressed: false,
-                hasAddPointPreview: true
+                hasAddPointPreview: true,
+                hoveringStraightSegment: false
             })
         ).toBe('insert');
 
@@ -47,7 +50,30 @@ describe('edit-tools helpers', () => {
                 stickyTool: 'select',
                 cmdKeyPressed: false,
                 altKeyPressed: true,
-                hasAddPointPreview: false
+                hasAddPointPreview: false,
+                hoveringStraightSegment: true
+            })
+        ).toBe('convert');
+
+        expect(
+            resolveHighlightedEditTool({
+                isEditMode: true,
+                stickyTool: 'select',
+                cmdKeyPressed: false,
+                altKeyPressed: true,
+                hasAddPointPreview: false,
+                hoveringStraightSegment: false
+            })
+        ).toBe('select');
+
+        expect(
+            resolveHighlightedEditTool({
+                isEditMode: true,
+                stickyTool: 'convert',
+                cmdKeyPressed: false,
+                altKeyPressed: true,
+                hasAddPointPreview: false,
+                hoveringStraightSegment: false
             })
         ).toBe('convert');
     });
@@ -59,7 +85,8 @@ describe('edit-tools helpers', () => {
                 stickyTool: 'select',
                 cmdKeyPressed: false,
                 altKeyPressed: false,
-                hasAddPointPreview: false
+                hasAddPointPreview: false,
+                hoveringStraightSegment: false
             })
         ).toBe('select');
     });
@@ -79,15 +106,25 @@ describe('edit-tools helpers', () => {
                 stickyTool: 'select',
                 cmdKeyPressed: true,
                 altKeyPressed: false,
-                hasAddPointPreview: false
+                hasAddPointPreview: false,
+                hoveringStraightSegment: false
             })
         ).toBe('pen');
+
+        const idleHover = {
+            hoveringOnCurveNode: false,
+            hoveringCurveSegment: false,
+            hoveringCommandContinueEndpoint: false
+        };
 
         expect(
             resolvePointerBadge({
                 highlightedTool: 'pen',
                 cmdKeyPressed: true,
-                hoveringCuttableNode: true
+                altKeyPressed: false,
+                hoveringCuttableNode: true,
+                hoveringSlideableSmoothNode: false,
+                ...idleHover
             })
         ).toBe('cut');
 
@@ -95,9 +132,77 @@ describe('edit-tools helpers', () => {
             resolvePointerBadge({
                 highlightedTool: 'pen',
                 cmdKeyPressed: true,
-                hoveringCuttableNode: false
+                altKeyPressed: false,
+                hoveringCuttableNode: false,
+                hoveringSlideableSmoothNode: true,
+                ...idleHover
             })
         ).toBeNull();
+
+        expect(
+            resolvePointerBadge({
+                highlightedTool: 'select',
+                cmdKeyPressed: true,
+                altKeyPressed: true,
+                hoveringCuttableNode: true,
+                hoveringSlideableSmoothNode: true,
+                hoveringOnCurveNode: true,
+                hoveringCurveSegment: false,
+                hoveringCommandContinueEndpoint: false
+            })
+        ).toBe('slide');
+
+        expect(
+            resolvePointerBadge({
+                highlightedTool: 'select',
+                cmdKeyPressed: false,
+                altKeyPressed: true,
+                hoveringCuttableNode: false,
+                hoveringSlideableSmoothNode: false,
+                hoveringOnCurveNode: false,
+                hoveringCurveSegment: true,
+                hoveringCommandContinueEndpoint: false
+            })
+        ).toBe('blocked');
+
+        expect(
+            resolvePointerBadge({
+                highlightedTool: 'select',
+                cmdKeyPressed: true,
+                altKeyPressed: false,
+                hoveringCuttableNode: false,
+                hoveringSlideableSmoothNode: false,
+                hoveringOnCurveNode: true,
+                hoveringCurveSegment: false,
+                hoveringCommandContinueEndpoint: false
+            })
+        ).toBe('blocked');
+
+        expect(
+            resolvePointerBadge({
+                highlightedTool: 'pen',
+                cmdKeyPressed: true,
+                altKeyPressed: false,
+                hoveringCuttableNode: false,
+                hoveringSlideableSmoothNode: false,
+                hoveringOnCurveNode: true,
+                hoveringCurveSegment: false,
+                hoveringCommandContinueEndpoint: true
+            })
+        ).toBeNull();
+
+        expect(
+            resolvePointerBadge({
+                highlightedTool: 'select',
+                cmdKeyPressed: true,
+                altKeyPressed: true,
+                hoveringCuttableNode: true,
+                hoveringSlideableSmoothNode: false,
+                hoveringOnCurveNode: true,
+                hoveringCurveSegment: false,
+                hoveringCommandContinueEndpoint: false
+            })
+        ).toBe('blocked');
     });
 
     test('defaults to select even when the layer is empty', () => {

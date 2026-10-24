@@ -987,6 +987,7 @@ describe('Outline Editing canonical behavior', () => {
             syncGlyphFromJson: jest.fn()
         };
 
+        const cutSpy = jest.spyOn(canvas.outlineEditor, 'cutPathAtNode');
         canvas.outlineEditor.onSingleClick({
             clientX: 10,
             clientY: 20,
@@ -997,6 +998,7 @@ describe('Outline Editing canonical behavior', () => {
             ctrlKey: false
         });
 
+        expect(cutSpy).not.toHaveBeenCalled();
         expect(canvas.outlineEditor.isSlidingSmoothPointAlongCurve).toBe(true);
         expect(canvas.outlineEditor.isDraggingPoint).toBe(true);
         expect(window.changeBridge.beginTransaction).toHaveBeenCalledWith(
@@ -1007,6 +1009,77 @@ describe('Outline Editing canonical behavior', () => {
                 compileEditType: null
             })
         );
+        cutSpy.mockRestore();
+    });
+
+    test('tracked Alt blocks cmd cut and slides even when the click omits altKey', () => {
+        activateEditableLayer(canvas, makeOpenTripletLayer({ smooth: true }));
+        canvas.outlineEditor.hoveredPointIndex = {
+            contourIndex: 0,
+            nodeIndex: 3
+        };
+        canvas.outlineEditor.altKeyPressed = true;
+        canvas.outlineEditor.cmdKeyPressed = true;
+        window.changeBridge = {
+            beginTransaction: jest.fn(),
+            endTransaction: jest.fn(),
+            syncGlyphFromJson: jest.fn()
+        };
+        const cutSpy = jest.spyOn(canvas.outlineEditor, 'cutPathAtNode');
+
+        canvas.outlineEditor.onSingleClick({
+            clientX: 10,
+            clientY: 20,
+            detail: 1,
+            shiftKey: false,
+            altKey: false,
+            metaKey: true,
+            ctrlKey: false
+        });
+
+        expect(cutSpy).not.toHaveBeenCalled();
+        expect(canvas.outlineEditor.isSlidingSmoothPointAlongCurve).toBe(true);
+        cutSpy.mockRestore();
+    });
+
+    test('cmd+alt does not cut a corner node', () => {
+        activateEditableLayer(canvas, {
+            width: 520,
+            shapes: [
+                {
+                    nodes: [
+                        { x: 0, y: 0, nodetype: 'Line' },
+                        { x: 80, y: 0, nodetype: 'Line' },
+                        { x: 80, y: 80, nodetype: 'Line' }
+                    ],
+                    closed: true
+                }
+            ],
+            anchors: [],
+            guides: []
+        });
+        canvas.outlineEditor.hoveredPointIndex = {
+            contourIndex: 0,
+            nodeIndex: 1
+        };
+        canvas.outlineEditor.altKeyPressed = true;
+        const cutSpy = jest
+            .spyOn(canvas.outlineEditor, 'cutPathAtNode')
+            .mockReturnValue(true);
+
+        canvas.outlineEditor.onSingleClick({
+            clientX: 0,
+            clientY: 0,
+            detail: 1,
+            shiftKey: false,
+            altKey: true,
+            metaKey: true,
+            ctrlKey: false
+        });
+
+        expect(cutSpy).not.toHaveBeenCalled();
+        expect(canvas.outlineEditor.isSlidingSmoothPointAlongCurve).toBe(false);
+        cutSpy.mockRestore();
     });
 
     test('alt re-press during non-smooth off-curve dragging returns to the original drag-start direction', () => {

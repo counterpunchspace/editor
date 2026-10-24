@@ -74,13 +74,13 @@ Each view title bar shows the same shortcut.
 - `C` — convert tool
 - Cut has no letter shortcut; choose it in the Editor title bar
 - After the tools feel familiar, hold `Cmd/Ctrl` in empty space to draw a contour, or on a selected open end to continue it (same as Pen / Insert without switching tools)
-- `Cmd/Ctrl+Click` on a segment inserts a point; on an on-curve point it cuts the path open. On macOS, `Ctrl+Click` opens the context menu
+- `Cmd/Ctrl+Click` on a segment inserts a point; on an on-curve point it cuts the path open. Those gestures run only when Alt/Option is not also held. On macOS, `Ctrl+Click` opens the context menu
 - `Shift+Click` on a node, segment, anchor, or component adds or removes it from the selection
 - Drag one open end onto another to join or close
-- `Alt/Option+Click` on a straight segment converts it to a curve
+- `Alt/Option+Click` on a straight segment converts it to a curve. Over a curve the pointer shows a blocked badge, because the shortcut is held but cannot convert that segment
 - Double-click an on-curve point to toggle smooth and corner
 - `Alt/Option` slides a smooth on-curve point along its handles; on a corner on-curve point it moves the node freely while handles stay put
-- `Cmd/Ctrl+Alt/Option` drag on a smooth on-curve point slides it along the combined curve
+- `Cmd/Ctrl+Alt/Option` drag on a smooth on-curve point slides it along the combined curve; the slide badge follows the pointer while that point is hovered
 - `Shift` while dragging locks the whole selection to horizontal or vertical from where the drag started, including when `Shift` is pressed mid-drag
 - `Cmd/Ctrl+Alt/Option+S` — stack preview
 - `Cmd/Ctrl+Alt/Option+G` — guidelines

@@ -9958,7 +9958,8 @@ export class OutlineEditor {
             stickyTool,
             cmdKeyPressed: this.cmdKeyPressed,
             altKeyPressed: this.altKeyPressed,
-            hasAddPointPreview: !!this.hoveredAddPointPreview
+            hasAddPointPreview: !!this.hoveredAddPointPreview,
+            hoveringStraightSegment: this.hoveredPathSegment?.type === 'line'
         });
 
         return {
@@ -9969,9 +9970,19 @@ export class OutlineEditor {
             pointerBadge: resolvePointerBadge({
                 highlightedTool,
                 cmdKeyPressed: this.cmdKeyPressed,
+                altKeyPressed: this.altKeyPressed,
                 hoveringCuttableNode: this.isCuttablePoint(
                     this.hoveredPointIndex
-                )
+                ),
+                hoveringSlideableSmoothNode: this.hoveredPointIndex
+                    ? this.canSlideSmoothPointOnCurve(this.hoveredPointIndex)
+                    : false,
+                hoveringOnCurveNode: this.isHoveredOnCurveNode(),
+                hoveringCurveSegment:
+                    this.hoveredPathSegment?.type === 'cubic' ||
+                    this.hoveredPathSegment?.type === 'quadratic',
+                hoveringCommandContinueEndpoint:
+                    this.isHoveredCommandContinueEndpoint()
             })
         };
     }
@@ -10066,10 +10077,40 @@ export class OutlineEditor {
         if (!this.active || this.isPreviewMode) {
             return false;
         }
-        if (this.altKeyPressed && !this.cmdKeyPressed) {
+        if (this.activeEditTool === 'convert') {
             return true;
         }
-        return this.activeEditTool === 'convert';
+        return (
+            this.altKeyPressed &&
+            !this.cmdKeyPressed &&
+            this.hoveredPathSegment?.type === 'line'
+        );
+    }
+
+    private isHoveredOnCurveNode(): boolean {
+        if (!this.hoveredPointIndex) {
+            return false;
+        }
+        const contour = getEditableContour(
+            this.getCurrentLayerDataFromStack()?.shapes?.[
+                this.hoveredPointIndex.contourIndex
+            ]
+        );
+        return isOnCurveNode(
+            contour?.nodes?.[this.hoveredPointIndex.nodeIndex]
+        );
+    }
+
+    private isHoveredCommandContinueEndpoint(): boolean {
+        const hovered = this.hoveredPointIndex;
+        const endpoint = this.getCommandPathPreviewEndpointPoint();
+        if (!hovered || !endpoint) {
+            return false;
+        }
+        return (
+            hovered.contourIndex === endpoint.contourIndex &&
+            hovered.nodeIndex === endpoint.nodeIndex
+        );
     }
 
     isCutArmed(): boolean {
@@ -10526,13 +10567,13 @@ export class OutlineEditor {
             return;
         }
 
-        const isCmdClick =
-            isPointerCommandModifier(e) && !e.altKey && !e.shiftKey;
+        const isCmdClick = this.isPlainCommandPointer(e);
         const isInsertToolClick =
             this.activeEditTool === 'insert' &&
             !e.metaKey &&
             !e.ctrlKey &&
             !e.altKey &&
+            !this.altKeyPressed &&
             !e.shiftKey;
         if ((isCmdClick || isInsertToolClick) && this.hoveredAddPointPreview) {
             void this.commitHoveredAddPointPreview().then(() => {
@@ -10706,16 +10747,11 @@ export class OutlineEditor {
             this.selectedSidebearingHandle = null;
             this.selectedTransientAnchor = null;
             const hoveredPoint = this.hoveredPointIndex;
-            const isCmdCutClick =
-                isPointerCommandModifier(e) && !e.altKey && !e.shiftKey;
-            if (isCmdCutClick && this.cutPathAtNode(hoveredPoint)) {
-                return;
-            }
-
+            // Cmd+Alt slides a smooth node along the combined curve. Cut is
+            // Cmd without Alt, so a held Alt must win even when the click
+            // event itself omits altKey.
             if (
-                isPointerCommandModifier(e) &&
-                e.altKey &&
-                !e.shiftKey &&
+                this.isCommandAltPointer(e) &&
                 this.canSlideSmoothPointOnCurve(hoveredPoint)
             ) {
                 this.selectedPoints = [{ ...hoveredPoint }];
@@ -10743,6 +10779,13 @@ export class OutlineEditor {
                 this._pointDragPreserveHandlePositions = false;
                 this.glyphCanvas.updatePropertyPanel();
                 this.glyphCanvas.render();
+                return;
+            }
+
+            if (
+                this.isPlainCommandPointer(e) &&
+                this.cutPathAtNode(hoveredPoint)
+            ) {
                 return;
             }
 
@@ -14153,8 +14196,10 @@ export class OutlineEditor {
         if (this.glyphCanvas.stackPreviewAnimator.shouldRenderStackPreview()) {
             return;
         }
-        if (e) {
-            this.altKeyPressed = e.altKey;
+        if (e && this.altKeyPressed !== e.altKey) {
+            // Keydown can miss Alt while Cmd is held. The pointer event is
+            // the other source, and it has to refresh the cut badge immediately.
+            this.setAltKeyPressed(e.altKey);
         }
 
         this.updateHoveredGuideHandle();
@@ -14185,7 +14230,11 @@ export class OutlineEditor {
             this.canvas!.style.cursor = this.hoveredResizeHandle.cursor;
             return null;
         }
-        if (this.cmdKeyPressed && this.hoveredAddPointPreview) {
+        if (
+            this.cmdKeyPressed &&
+            !this.altKeyPressed &&
+            this.hoveredAddPointPreview
+        ) {
             this.canvas!.style.cursor = 'crosshair';
             return null;
         }
@@ -14205,7 +14254,7 @@ export class OutlineEditor {
             this.canvas!.style.cursor = 'crosshair';
             return null;
         }
-        if (this.isCutArmed()) {
+        if (this.isCutArmed() && !this.altKeyPressed) {
             this.canvas!.style.cursor = 'crosshair';
             return null;
         }
@@ -14823,7 +14872,7 @@ export class OutlineEditor {
             this.hoveredTransientAnchor = transientHit;
             this.hoveredPathSegment = bestSegment;
             this.glyphCanvas.render();
-            if (this.cmdKeyPressed || this.isCutArmed()) {
+            if (this.cmdKeyPressed || this.altKeyPressed || this.isCutArmed()) {
                 this.notifyEditToolsChanged();
             }
         }
@@ -15761,6 +15810,7 @@ export class OutlineEditor {
             !e.metaKey &&
             !e.ctrlKey &&
             !e.altKey &&
+            !this.altKeyPressed &&
             !e.shiftKey;
         if (!isCutToolClick) {
             return false;
@@ -15811,9 +15861,30 @@ export class OutlineEditor {
         }
     }
 
+    /**
+     * Cmd/Ctrl without Alt: draw, insert, or cut. Alt blocks those gestures
+     * whether it is on the event or already tracked from keydown.
+     */
+    private isPlainCommandPointer(e: MouseEvent): boolean {
+        return (
+            isPointerCommandModifier(e) &&
+            !e.altKey &&
+            !this.altKeyPressed &&
+            !e.shiftKey
+        );
+    }
+
+    /** Cmd/Ctrl+Alt/Option: slide a smooth node along the combined curve. */
+    private isCommandAltPointer(e: MouseEvent): boolean {
+        return (
+            isPointerCommandModifier(e) &&
+            (e.altKey || this.altKeyPressed) &&
+            !e.shiftKey
+        );
+    }
+
     private handleCommandPathGesture(e: MouseEvent): boolean {
-        const isCmdClick =
-            isPointerCommandModifier(e) && !e.altKey && !e.shiftKey;
+        const isCmdClick = this.isPlainCommandPointer(e);
         const isPenToolClick =
             this.activeEditTool === 'pen' &&
             !e.metaKey &&
@@ -17335,7 +17406,7 @@ export class OutlineEditor {
     }
 
     private shouldShowCommandCutCrosshair(): boolean {
-        if (!this.active || this.isPreviewMode) {
+        if (!this.active || this.isPreviewMode || this.altKeyPressed) {
             return false;
         }
 

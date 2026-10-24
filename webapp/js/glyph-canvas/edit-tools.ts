@@ -4,7 +4,8 @@
 
 export type StickyEditTool = 'select' | 'pen' | 'insert' | 'convert' | 'cut';
 export type EditToolId = 'text' | StickyEditTool;
-export type EditToolPointerBadge = 'insert' | 'convert' | 'cut';
+export type EditToolPointerBadge =
+    'insert' | 'convert' | 'cut' | 'slide' | 'blocked';
 
 export type EditToolAvailability = {
     text: true;
@@ -35,6 +36,14 @@ export const EDIT_TOOL_ICONS: Record<
     cut: 'content_cut'
 };
 
+export const POINTER_BADGE_ICONS: Record<EditToolPointerBadge, string> = {
+    insert: EDIT_TOOL_ICONS.insert,
+    convert: EDIT_TOOL_ICONS.convert,
+    cut: EDIT_TOOL_ICONS.cut,
+    slide: 'conversion_path',
+    blocked: 'do_not_disturb_on'
+};
+
 export const STICKY_EDIT_TOOLS: StickyEditTool[] = [
     'select',
     'pen',
@@ -49,12 +58,20 @@ export function resolveHighlightedEditTool(options: {
     cmdKeyPressed: boolean;
     altKeyPressed: boolean;
     hasAddPointPreview: boolean;
+    hoveringStraightSegment: boolean;
 }): EditToolId {
     if (!options.isEditMode) {
         return 'text';
     }
 
-    if (options.altKeyPressed && !options.cmdKeyPressed) {
+    // Alt only borrows Convert while a straight segment is hovered.
+    // The sticky Convert tool stays selected on its own.
+    if (
+        options.altKeyPressed &&
+        !options.cmdKeyPressed &&
+        options.hoveringStraightSegment &&
+        options.stickyTool !== 'convert'
+    ) {
         return 'convert';
     }
 
@@ -81,11 +98,54 @@ export function resolvePointerBadgeTool(
 export function resolvePointerBadge(options: {
     highlightedTool: EditToolId;
     cmdKeyPressed: boolean;
+    altKeyPressed: boolean;
     hoveringCuttableNode: boolean;
+    hoveringSlideableSmoothNode: boolean;
+    hoveringOnCurveNode: boolean;
+    hoveringCurveSegment: boolean;
+    hoveringCommandContinueEndpoint: boolean;
 }): EditToolPointerBadge | null {
-    if (options.cmdKeyPressed && options.hoveringCuttableNode) {
+    // Cmd+Alt slides a smooth node along the combined curve. Cut is Cmd alone.
+    if (
+        options.cmdKeyPressed &&
+        options.altKeyPressed &&
+        options.hoveringSlideableSmoothNode
+    ) {
+        return 'slide';
+    }
+    if (
+        options.cmdKeyPressed &&
+        !options.altKeyPressed &&
+        options.hoveringCuttableNode
+    ) {
         return 'cut';
     }
+
+    // The held shortcut targets this kind of element, but this one cannot take it.
+    if (
+        options.cmdKeyPressed &&
+        options.altKeyPressed &&
+        options.hoveringOnCurveNode &&
+        !options.hoveringCommandContinueEndpoint
+    ) {
+        return 'blocked';
+    }
+    if (
+        options.cmdKeyPressed &&
+        !options.altKeyPressed &&
+        options.hoveringOnCurveNode &&
+        !options.hoveringCommandContinueEndpoint
+    ) {
+        return 'blocked';
+    }
+    if (
+        !options.cmdKeyPressed &&
+        options.altKeyPressed &&
+        options.hoveringCurveSegment
+    ) {
+        return 'blocked';
+    }
+
     return resolvePointerBadgeTool(options.highlightedTool);
 }
 
