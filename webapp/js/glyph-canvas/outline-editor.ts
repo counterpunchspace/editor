@@ -21213,7 +21213,8 @@ export class OutlineEditor {
                 );
             }
 
-            const nextLayerData = shape.layerData || null;
+            const nextLayerData: Babelfont.Layer | null =
+                shape.layerData || null;
             if (!nextLayerData) {
                 console.error(
                     '[GlyphStack] Component at index',

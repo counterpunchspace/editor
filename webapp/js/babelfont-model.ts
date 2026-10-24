@@ -5681,9 +5681,7 @@ function componentShapeResolver(
         let layer = sourceLayer?.getMatchingLayerOnGlyph(reference);
         if (!layer && masterId) {
             layer = componentGlyph.layers.find(
-                (candidate) =>
-                    candidate.data.master &&
-                    (candidate.data.master as Unsafe).master === masterId
+                (candidate) => candidate.master?.master === masterId
             );
         }
         if (!layer) {
