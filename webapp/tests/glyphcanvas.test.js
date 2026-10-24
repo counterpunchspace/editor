@@ -2990,7 +2990,7 @@ describe('GlyphCanvas onMouseUp', () => {
         expect(canvas.outlineEditor.isDraggingPoint).toBe(false);
     });
 
-    test('cmd-click on a point toggles selection instead of cutting when something is already selected', () => {
+    test('cmd-click on a point cuts instead of toggling selection when something is already selected', () => {
         canvas.outlineEditor.active = true;
         canvas.outlineEditor.currentGlyphName = 'A';
         canvas.outlineEditor.selectedLayerId = 'layer-1';
@@ -3002,7 +3002,8 @@ describe('GlyphCanvas onMouseUp', () => {
                 {
                     nodes: [
                         { x: 0, y: 0, nodetype: 'Line', smooth: false },
-                        { x: 100, y: 0, nodetype: 'Line', smooth: false }
+                        { x: 100, y: 0, nodetype: 'Line', smooth: false },
+                        { x: 200, y: 0, nodetype: 'Line', smooth: false }
                     ],
                     closed: false
                 }
@@ -3017,25 +3018,31 @@ describe('GlyphCanvas onMouseUp', () => {
             contourIndex: 0,
             nodeIndex: 1
         };
-        const cutSpy = jest.spyOn(canvas.outlineEditor, 'cutPathAtNode');
+        const cutSpy = jest
+            .spyOn(canvas.outlineEditor, 'cutPathAtNode')
+            .mockReturnValue(true);
 
-        canvas.outlineEditor.onSingleClick({
-            clientX: 10,
-            clientY: 20,
-            detail: 1,
-            shiftKey: false,
-            altKey: false,
-            metaKey: true,
-            ctrlKey: false
-        });
+        try {
+            canvas.outlineEditor.onSingleClick({
+                clientX: 10,
+                clientY: 20,
+                detail: 1,
+                shiftKey: false,
+                altKey: false,
+                metaKey: true,
+                ctrlKey: false
+            });
 
-        expect(cutSpy).not.toHaveBeenCalled();
-        expect(canvas.outlineEditor.selectedPoints).toEqual([
-            { contourIndex: 0, nodeIndex: 0 },
-            { contourIndex: 0, nodeIndex: 1 }
-        ]);
-        expect(canvas.outlineEditor.isDraggingPoint).toBe(false);
-        cutSpy.mockRestore();
+            expect(cutSpy).toHaveBeenCalledWith({
+                contourIndex: 0,
+                nodeIndex: 1
+            });
+            expect(canvas.outlineEditor.selectedPoints).toEqual([
+                { contourIndex: 0, nodeIndex: 0 }
+            ]);
+        } finally {
+            cutSpy.mockRestore();
+        }
     });
 
     test('point drag with metrics-key side change still syncs even if point description matches', async () => {
@@ -4165,33 +4172,6 @@ describe('OutlineEditor marquee selection', () => {
             shiftKey: true,
             altKey: false,
             metaKey: false,
-            ctrlKey: false
-        });
-        pointer = { glyphX: 50, glyphY: 50 };
-        canvas.outlineEditor.onMouseMove({ clientX: 50, clientY: 50 });
-
-        expect(canvas.outlineEditor.selectedPoints).toEqual([
-            { contourIndex: 0, nodeIndex: 2 },
-            { contourIndex: 0, nodeIndex: 1 }
-        ]);
-    });
-
-    test('cmd-drag toggles nodes inside the rectangle when something is already selected', () => {
-        canvas.outlineEditor.selectedPoints = [
-            { contourIndex: 0, nodeIndex: 0 },
-            { contourIndex: 0, nodeIndex: 2 }
-        ];
-
-        let pointer = { glyphX: 0, glyphY: 0 };
-        jest.spyOn(
-            canvas.outlineEditor,
-            'transformMouseToComponentSpace'
-        ).mockImplementation(() => ({ ...pointer }));
-
-        canvas.outlineEditor.onSingleClick({
-            shiftKey: false,
-            altKey: false,
-            metaKey: true,
             ctrlKey: false
         });
         pointer = { glyphX: 50, glyphY: 50 };
@@ -13348,7 +13328,15 @@ describe('GlyphCanvas command path drawing visuals', () => {
         canvas.outlineEditor.setCommandKeyPressed(false);
     });
 
-    test('cmd hover on a point uses the selection cursor instead of the cut crosshair', () => {
+    test('cmd hover on a point uses a crosshair cursor for cut-open', () => {
+        canvas.outlineEditor.layerData.shapes[0].nodes.splice(1, 0, {
+            x: 55,
+            y: 30,
+            nodetype: 'Line'
+        });
+        canvas.outlineEditor.selectedPoints = [
+            { contourIndex: 0, nodeIndex: 0 }
+        ];
         canvas.outlineEditor.setCommandKeyPressed(true);
         canvas.outlineEditor.hoveredPointIndex = {
             contourIndex: 0,
@@ -13357,7 +13345,7 @@ describe('GlyphCanvas command path drawing visuals', () => {
 
         canvas.updateCursorStyle();
 
-        expect(canvas.canvas.style.cursor).toBe('pointer');
+        expect(canvas.canvas.style.cursor).toBe('crosshair');
 
         canvas.outlineEditor.setCommandKeyPressed(false);
     });
@@ -22031,7 +22019,7 @@ describe('OutlineEditor per-layer selection memory', () => {
         ]);
     });
 
-    test('cmd-clicking a path segment toggles selection instead of inserting when something is already selected', async () => {
+    test('cmd-clicking a path segment inserts instead of toggling selection when something is already selected', async () => {
         canvas.outlineEditor.active = true;
         canvas.outlineEditor.selectedLayerId = 'master-layer';
         canvas.outlineEditor.layerData = {
@@ -22066,30 +22054,39 @@ describe('OutlineEditor per-layer selection memory', () => {
             glyphX: 150,
             glyphY: 0
         }));
+        canvas.outlineEditor.hoveredAddPointPreview = {
+            shapeIndex: 0,
+            pathIndex: 0,
+            segmentId: 1,
+            t: 0.5,
+            point: { x: 150, y: 0 },
+            segments: []
+        };
         canvas.updatePropertyPanel = jest.fn();
         canvas.render = jest.fn();
-        const insertSpy = jest.spyOn(
-            canvas.outlineEditor,
-            'commitHoveredAddPointPreview'
-        );
+        const insertSpy = jest
+            .spyOn(canvas.outlineEditor, 'commitHoveredAddPointPreview')
+            .mockResolvedValue(undefined);
 
-        await canvas.outlineEditor.onSingleClick({
-            clientX: 0,
-            clientY: 0,
-            detail: 1,
-            shiftKey: false,
-            altKey: false,
-            metaKey: true,
-            ctrlKey: false
-        });
+        try {
+            await canvas.outlineEditor.onSingleClick({
+                clientX: 0,
+                clientY: 0,
+                detail: 1,
+                shiftKey: false,
+                altKey: false,
+                metaKey: true,
+                ctrlKey: false
+            });
 
-        expect(insertSpy).not.toHaveBeenCalled();
-        expect(canvas.outlineEditor.selectedPoints).toEqual([
-            { contourIndex: 0, nodeIndex: 0 },
-            { contourIndex: 0, nodeIndex: 1 },
-            { contourIndex: 0, nodeIndex: 2 }
-        ]);
-        insertSpy.mockRestore();
+            expect(insertSpy).toHaveBeenCalled();
+            expect(canvas.outlineEditor.selectedPoints).toEqual([
+                { contourIndex: 0, nodeIndex: 0 },
+                { contourIndex: 0, nodeIndex: 1 }
+            ]);
+        } finally {
+            insertSpy.mockRestore();
+        }
     });
 
     test('keyboard glyph switching restores the original glyph selection after switching away and back', async () => {

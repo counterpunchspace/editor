@@ -1809,7 +1809,7 @@ describe('Outline Editing canonical behavior', () => {
         ).toBe(true);
     });
 
-    test('command-click toggles a point when nothing is selected', async () => {
+    test('command-click on an on-curve point cuts the contour open instead of selecting it', async () => {
         activateEditableLayer(canvas, {
             width: 520,
             shapes: [
@@ -1830,21 +1830,28 @@ describe('Outline Editing canonical behavior', () => {
             nodeIndex: 1
         };
         canvas.outlineEditor.cmdKeyPressed = true;
-        await canvas.outlineEditor.onSingleClick({
-            clientX: 0,
-            clientY: 0,
-            detail: 1,
-            shiftKey: false,
-            altKey: false,
-            metaKey: true,
-            ctrlKey: false,
-            button: 0
-        });
-        expect(canvas.outlineEditor.selectedPoints).toEqual([
-            { contourIndex: 0, nodeIndex: 1 }
-        ]);
-        expect(canvas.outlineEditor.layerData.shapes[0].closed).toBe(true);
-        expect(canvas.outlineEditor.layerData.shapes).toHaveLength(1);
+        const cutSpy = jest
+            .spyOn(canvas.outlineEditor, 'cutPathAtNode')
+            .mockReturnValue(true);
+        try {
+            await canvas.outlineEditor.onSingleClick({
+                clientX: 0,
+                clientY: 0,
+                detail: 1,
+                shiftKey: false,
+                altKey: false,
+                metaKey: true,
+                ctrlKey: false,
+                button: 0
+            });
+            expect(cutSpy).toHaveBeenCalledWith({
+                contourIndex: 0,
+                nodeIndex: 1
+            });
+            expect(canvas.outlineEditor.selectedPoints).toEqual([]);
+        } finally {
+            cutSpy.mockRestore();
+        }
     });
 
     test('shift pressed during a drag constrains the node to the drag origin axis', () => {
