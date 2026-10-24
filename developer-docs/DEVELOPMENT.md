@@ -171,12 +171,12 @@ Create and deploy a new release from the repository root:
 
 The script:
 
-- Updates the version in `webapp/coi-serviceworker.js`
-- Extracts release notes from the Unreleased section in `CHANGELOG.md`
-- Commits the version change
-- Creates and pushes a git tag
-- Triggers GitHub Actions **Release**, which certifies the editor then composed-cutover deploys production Cloudflare (workers + website + editor) and tags website + collab. See `developer-docs/COMPOSED_RELEASE.md`.
+- Refuses unless editor, website and collab are on a clean, pushed `main` and the newest preview shipped this editor (only version files changed since)
+- Updates the version in `webapp/coi-serviceworker.js` and the API docs, and turns the Unreleased section of `CHANGELOG.md` into the version section
+- Commits, pushes `main` and starts GitHub Actions **Release** with that version. The composed cutover deploys production Cloudflare (workers + website + editor), smoke-tests it, rolls back on failure, and only then tags all three repos. See `developer-docs/COMPOSED_RELEASE.md`.
 - Stays in the terminal with the same live CI view as `push.sh` until that CI run and the Release workflow finish. A failure prints the failed job, step, and error lines.
+
+`--dry-run` commits nothing and stops the workflow after its preflight checks.
 
 Cut a preview release (GitHub prerelease + matching trio deploy) with:
 
@@ -184,7 +184,7 @@ Cut a preview release (GitHub prerelease + matching trio deploy) with:
 ./previewrelease.sh
 ```
 
-You can start it before editor CI is green. The workflow waits for a green `ci.yml` push run on that SHA, freezes editor/website/collab SHAs, verifies the staging e2e attestation, redeploys that trio to staging and reruns the full cloud-collab suite, then deploys the preview hosts and tags all three repos (`v0.0.N-pre.DATE`). The script then watches that run in the terminal until it finishes, and prints the failed job and error lines if it goes red. Notes are the Unreleased changelog diff since the previous preview. It does not rewrite `CHANGELOG.md`.
+You can start it before editor CI is green. The workflow waits for green CI on that SHA, freezes editor/website/collab SHAs, verifies the staging e2e attestation, reruns the staging suite unless staging still serves that trio, deploys the preview hosts, smoke-tests them (rolling back on failure), and then tags all three repos (`v0.0.N-pre.DATE`). `--dry-run` stops after the preflight checks. The script then watches that run in the terminal until it finishes, and prints the failed job and error lines if it goes red. Notes are the Unreleased changelog diff since the previous preview. It does not rewrite `CHANGELOG.md`.
 
 Users will see an orange notification on the Preferences gear within about 10 minutes. Preferences shows the current version, Check for updates, and an Update control with a changelog link when a new build is ready.
 

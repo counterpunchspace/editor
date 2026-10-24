@@ -5,11 +5,16 @@
 # on HEAD, then composed-cutover (preview workers + websitepreview +
 # editorpreview), tags the trio, and attaches trio.json to the GitHub
 # prerelease. See developer-docs/COMPOSED_RELEASE.md.
-# Usage: ./previewrelease.sh
+# --dry-run runs the cutover up to its preflight checks and deploys nothing
+# to preview.
+# Usage: ./previewrelease.sh [--dry-run]
 
 set -e
 
 cd "$(dirname "$0")"
+
+DRY_RUN=false
+[ "${1:-}" = "--dry-run" ] && DRY_RUN=true
 
 if ! command -v gh >/dev/null 2>&1; then
     echo "Error: GitHub CLI (gh) is required to start the preview release"
@@ -47,7 +52,7 @@ else
 fi
 
 echo "Starting Preview Release workflow on main..."
-gh workflow run preview-release.yml --ref main
+gh workflow run preview-release.yml --ref main -f dry_run="$DRY_RUN"
 
 echo ""
 echo "Preview Release started. Watching until it finishes..."

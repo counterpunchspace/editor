@@ -1,200 +1,142 @@
 #!/bin/bash
 
-# Script to prepare a release
-# Usage: ./release.sh <version-tag>
+# Cut a production release of what the newest preview shipped.
+# Usage: ./release.sh <version-tag> [--dry-run]
 # Example: ./release.sh v1.2.3
+#
+# Sets the version in the service worker and API docs, turns "# Unreleased" in
+# CHANGELOG.md into the version section, pushes main, then starts release.yml
+# and watches it with ci-watch.sh. The workflow creates the tags in all three
+# repos only after the production smoke test passed. A rerun with the same
+# version reuses the version and changelog commits.
+# --dry-run commits nothing and runs the release workflow up to its preflight
+# checks. See developer-docs/COMPOSED_RELEASE.md.
 
-set -e
+set -euo pipefail
 
-if [ -z "$1" ]; then
+cd "$(dirname "$0")"
+EDITOR_DIR="$(pwd)"
+WORKSPACE="$(cd "$EDITOR_DIR/.." && pwd)"
+
+VERSION_TAG="${1:-}"
+DRY_RUN=0
+[ "${2:-}" = "--dry-run" ] && DRY_RUN=1
+
+if [ -z "$VERSION_TAG" ]; then
     echo "Error: Version tag required"
-    echo "Usage: ./release.sh <version-tag>"
+    echo "Usage: ./release.sh <version-tag> [--dry-run]"
     echo "Example: ./release.sh v1.2.3"
     exit 1
 fi
+if ! [[ "$VERSION_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    echo "Error: Version tag must look like v1.2.3"
+    exit 1
+fi
+if ! command -v gh >/dev/null 2>&1; then
+    echo "Error: GitHub CLI (gh) is required to start the release"
+    exit 1
+fi
 
-VERSION_TAG="$1"
 SERVICE_WORKER_FILE="webapp/coi-serviceworker.js"
 CHANGELOG_FILE="CHANGELOG.md"
-RELEASE_NOTES_FILE="release-notes.md"
 API_MD_FILE="API.md"
 HANDBOOK_API_FILE="documentation/python/06-python-api.md"
 
-# Validate version tag format (v followed by number)
-if ! echo "$VERSION_TAG" | grep -qE '^v[0-9]+'; then
-    echo "Error: Version tag must start with 'v' followed by a number (e.g., v1, v10, v1.2.3)"
+# Same checks as push.sh, but nothing may be left to push in the siblings:
+# the release ships the website and collab commits the preview shipped.
+for entry in "editor:$EDITOR_DIR" "website:$WORKSPACE/website" "collab:$WORKSPACE/collab/collab"; do
+    name="${entry%%:*}"
+    dir="${entry#*:}"
+    branch=$(git -C "$dir" rev-parse --abbrev-ref HEAD)
+    if [ "$branch" != "main" ]; then
+        echo "Error: $name is on '$branch', expected main"
+        exit 1
+    fi
+    if [ -n "$(git -C "$dir" status --porcelain)" ]; then
+        echo "Error: $name has uncommitted changes. Commit or stash first."
+        exit 1
+    fi
+    git -C "$dir" fetch --quiet origin main --tags
+    behind=$(git -C "$dir" rev-list --count HEAD..origin/main)
+    if [ "$behind" -gt 0 ]; then
+        echo "Error: $name is $behind commit(s) behind origin/main. Pull first."
+        exit 1
+    fi
+    if [ "$name" != "editor" ] && [ "$(git -C "$dir" rev-list --count origin/main..HEAD)" -gt 0 ]; then
+        echo "Error: $name has unpushed commits. Push them and cut a preview first."
+        exit 1
+    fi
+done
+
+existing=$(git ls-remote origin "refs/tags/${VERSION_TAG}" "refs/tags/${VERSION_TAG}^{}" | tail -1 | cut -f1)
+if [ -n "$existing" ]; then
+    echo "Error: tag $VERSION_TAG already exists on $existing"
     exit 1
 fi
 
-# Check if required files exist
-if [ ! -f "$SERVICE_WORKER_FILE" ]; then
-    echo "Error: $SERVICE_WORKER_FILE not found"
-    exit 1
-fi
+echo "Checking that the newest preview shipped this editor..."
+node scripts/check-preview-first.mjs HEAD
 
-if [ ! -f "$CHANGELOG_FILE" ]; then
-    echo "Error: $CHANGELOG_FILE not found"
-    exit 1
+# Runs created before this are an earlier attempt on the same SHA.
+WATCH_SINCE=$(date +%s)
+: "${CI_WATCH_TIMEOUT:=21600}"
+export CI_WATCH_TIMEOUT
+
+if [ "$DRY_RUN" -eq 1 ]; then
+    if [ "$(git rev-parse HEAD)" != "$(git rev-parse origin/main)" ]; then
+        echo "Error: a dry run needs main pushed, since it commits nothing"
+        exit 1
+    fi
+    echo "Dry run: committing nothing and starting release.yml up to the preflight checks..."
+    gh workflow run release.yml --ref main -f version="$VERSION_TAG" -f dry_run=true
+    exec "$EDITOR_DIR/ci-watch.sh" --since "$WATCH_SINCE" "$EDITOR_DIR"
 fi
 
 echo "Preparing release $VERSION_TAG..."
+sed_inplace() {
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        sed -i '' "$@"
+    else
+        sed -i "$@"
+    fi
+}
 
-# Update version in service worker
-echo "Updating version in $SERVICE_WORKER_FILE..."
-CURRENT_VERSION=$(grep "const VERSION = " "$SERVICE_WORKER_FILE" | sed -E "s/.*'([^']+)'.*/\1/")
-echo "  Current version: $CURRENT_VERSION"
-echo "  New version: $VERSION_TAG"
-
-# Use sed to replace the VERSION and DISPLAY_VERSION constants
-if [[ "$OSTYPE" == "darwin"* ]]; then
-    # macOS
-    sed -i '' "s/const VERSION = '[^']*'/const VERSION = '$VERSION_TAG'/" "$SERVICE_WORKER_FILE"
-    sed -i '' "s/const DISPLAY_VERSION = '[^']*'/const DISPLAY_VERSION = '$VERSION_TAG'/" "$SERVICE_WORKER_FILE"
-else
-    # Linux
-    sed -i "s/const VERSION = '[^']*'/const VERSION = '$VERSION_TAG'/" "$SERVICE_WORKER_FILE"
-    sed -i "s/const DISPLAY_VERSION = '[^']*'/const DISPLAY_VERSION = '$VERSION_TAG'/" "$SERVICE_WORKER_FILE"
-fi
-
-echo "✅ Version updated in $SERVICE_WORKER_FILE"
-
-# Update API.md with version
-echo "Updating version in $API_MD_FILE..."
+sed_inplace "s/const VERSION = '[^']*'/const VERSION = '$VERSION_TAG'/" "$SERVICE_WORKER_FILE"
+sed_inplace "s/const DISPLAY_VERSION = '[^']*'/const DISPLAY_VERSION = '$VERSION_TAG'/" "$SERVICE_WORKER_FILE"
 node scripts/generate-api-docs.mjs "$VERSION_TAG"
-echo "✅ API documentation regenerated with version $VERSION_TAG"
-
-# Commit the version updates to API docs and service worker separately
-echo "Committing API docs and service worker version updates..."
 git add "$SERVICE_WORKER_FILE" "$API_MD_FILE" "$HANDBOOK_API_FILE"
-if git diff --cached --quiet; then
-    echo "  No changes to commit (files already up to date)"
-else
+if ! git diff --cached --quiet; then
     git commit -m "Update version to $VERSION_TAG in API docs and service worker"
-    echo "✅ Version files committed"
-fi
-echo ""
-
-# Check if CHANGELOG already has this version (from previous failed attempt)
-CHANGELOG_ALREADY_UPDATED=false
-if grep -q "^# $VERSION_TAG" "$CHANGELOG_FILE"; then
-    echo "Note: CHANGELOG already contains '# $VERSION_TAG' - will reuse existing release notes"
-    CHANGELOG_ALREADY_UPDATED=true
-    # Extract from the existing version section (not "# Unreleased")
-    awk "/^# $VERSION_TAG/ {flag=1; next} /^# / {flag=0} flag {print}" "$CHANGELOG_FILE" > "$RELEASE_NOTES_FILE"
-else
-    # Extract from "# Unreleased" section (first time release)
-    awk '/^# / {if (++count == 2) exit} count == 1 && !/^# / {print}' "$CHANGELOG_FILE" > "$RELEASE_NOTES_FILE"
 fi
 
-# Extract changelog section
-echo "Extracting release notes from $CHANGELOG_FILE..."
-
-# Trim leading/trailing whitespace
-if [[ "$OSTYPE" == "darwin"* ]]; then
-    # macOS
-    sed -i '' -e :a -e '/^\n*$/{$d;N;ba' -e '}' "$RELEASE_NOTES_FILE"
-else
-    # Linux
-    sed -i -e :a -e '/^\n*$/{$d;N;ba' -e '}' "$RELEASE_NOTES_FILE"
-fi
-
-echo "✅ Release notes extracted to $RELEASE_NOTES_FILE"
-echo ""
-echo "Release notes content:"
-echo "----------------------------------------"
-cat "$RELEASE_NOTES_FILE"
-echo "----------------------------------------"
-echo ""
-
-# Update CHANGELOG.md - replace "# Unreleased" with version tag
-echo "Updating CHANGELOG.md..."
-if [ "$CHANGELOG_ALREADY_UPDATED" = true ]; then
-    echo "  CHANGELOG already has '# $VERSION_TAG' - skipping update"
-    CHANGELOG_UPDATED=false
+if grep -qE "^# $VERSION_TAG( |$)" "$CHANGELOG_FILE"; then
+    echo "CHANGELOG already has '# $VERSION_TAG'; reusing it"
 elif grep -q "^# Unreleased" "$CHANGELOG_FILE"; then
-    echo "  Replacing '# Unreleased' with '# $VERSION_TAG'"
-    if [[ "$OSTYPE" == "darwin"* ]]; then
-        # macOS
-        sed -i '' "s/^# Unreleased/# $VERSION_TAG/" "$CHANGELOG_FILE"
-    else
-        # Linux
-        sed -i "s/^# Unreleased/# $VERSION_TAG/" "$CHANGELOG_FILE"
-    fi
-    
-    # Add new "# Unreleased" section at the top
-    if [[ "$OSTYPE" == "darwin"* ]]; then
-        # macOS
-        sed -i '' '1s/^/# Unreleased\n\n- **Add items here** for the next release (Replace this comment)\n\n/' "$CHANGELOG_FILE"
-    else
-        # Linux
-        sed -i '1s/^/# Unreleased\n\n- **Add items here** for the next release (Replace this comment)\n\n/' "$CHANGELOG_FILE"
-    fi
-    echo "✅ CHANGELOG.md updated"
-    CHANGELOG_UPDATED=true
-else
-    echo "  Warning: '# Unreleased' not found - CHANGELOG may be in invalid format"
-    CHANGELOG_UPDATED=false
-fi
-echo ""
-
-# Check for uncommitted changes (other than the version update and changelog we just made)
-if ! git diff --quiet --exit-code -- . ':!webapp/coi-serviceworker.js' ':!CHANGELOG.md'; then
-    echo "Warning: You have uncommitted changes besides the version update."
-    read -p "Do you want to continue and commit everything? (y/n) " -n 1 -r
-    echo
-    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-        echo "Release cancelled."
-        # Revert version change
-        git checkout -- "$SERVICE_WORKER_FILE"
-        # Revert changelog only if we updated it
-        if [ "$CHANGELOG_UPDATED" = true ]; then
-            git checkout -- "$CHANGELOG_FILE"
-        fi
-        rm -f "$RELEASE_NOTES_FILE"
-        exit 1
-    fi
-fi
-
-# Check if tag already exists - auto-delete for re-release
-if git rev-parse "$VERSION_TAG" >/dev/null 2>&1; then
-    echo "Tag $VERSION_TAG already exists - deleting for re-release..."
-    git tag -d "$VERSION_TAG"
-    echo "Deleting remote tag..."
-    git push origin ":refs/tags/$VERSION_TAG" 2>/dev/null || echo "  Remote tag already deleted or doesn't exist"
-    echo "✅ Tag deleted, will recreate"
-fi
-
-# Commit the CHANGELOG update if needed
-if [ "$CHANGELOG_UPDATED" = true ]; then
-    echo ""
-    echo "Committing CHANGELOG update..."
+    sed_inplace "s/^# Unreleased/# $VERSION_TAG/" "$CHANGELOG_FILE"
+    sed_inplace '1s/^/# Unreleased\n\n- **Add items here** for the next release (Replace this comment)\n\n/' "$CHANGELOG_FILE"
     git add "$CHANGELOG_FILE"
-    if git diff --cached --quiet; then
-        echo "  No changes to commit (CHANGELOG already up to date)"
-    else
-        git commit -m "Update CHANGELOG for release $VERSION_TAG"
-        echo "✅ CHANGELOG committed"
-    fi
+    git commit -m "Update CHANGELOG for release $VERSION_TAG"
+else
+    echo "Error: CHANGELOG.md has neither '# Unreleased' nor '# $VERSION_TAG'"
+    exit 1
 fi
 
-# Create and push tag
-echo "Creating tag $VERSION_TAG..."
-git tag "$VERSION_TAG"
+echo "Release notes:"
+echo "----------------------------------------"
+awk "/^# $VERSION_TAG/ {flag=1; next} /^# / {flag=0} flag {print}" "$CHANGELOG_FILE"
+echo "----------------------------------------"
 
-echo ""
-echo "Pushing to GitHub..."
-EDITOR_DIR="$(cd "$(dirname "$0")" && pwd)"
-# Ignore any earlier run on this commit (for example a deleted tag).
-WATCH_SINCE=$(date +%s)
+if [ -n "$(git status --porcelain)" ]; then
+    echo "Error: the version update left uncommitted changes:"
+    git status --porcelain | head -10
+    exit 1
+fi
+
 git push origin main
-git push origin "$VERSION_TAG" --force
-
-rm -f "$RELEASE_NOTES_FILE"
+echo "Starting release.yml for $VERSION_TAG..."
+gh workflow run release.yml --ref main -f version="$VERSION_TAG"
 
 echo ""
-echo "Release $VERSION_TAG pushed. Watching CI and the Release workflow until they finish..."
+echo "Release $VERSION_TAG started. Watching CI and the Release workflow until they finish..."
 echo "The release will be at: https://github.com/counterpunchspace/editor/releases/tag/$VERSION_TAG"
-# Sibling CI waits inside the workflow can run 90 minutes each.
-: "${CI_WATCH_TIMEOUT:=21600}"
-export CI_WATCH_TIMEOUT
 exec "$EDITOR_DIR/ci-watch.sh" --since "$WATCH_SINCE" "$EDITOR_DIR"

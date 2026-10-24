@@ -173,6 +173,31 @@ const BUILD_HASH_FULL = resolveGitCommit();
 const BUILD_HASH_SHORT =
     process.env.BUILD_HASH_SHORT || BUILD_HASH_FULL.substring(0, 12);
 
+// The composed cutover polls this to see which commit a host serves.
+class BuildInfoPlugin {
+    apply(compiler) {
+        compiler.hooks.thisCompilation.tap('BuildInfoPlugin', (compilation) => {
+            compilation.hooks.processAssets.tap(
+                {
+                    name: 'BuildInfoPlugin',
+                    stage: webpack.Compilation.PROCESS_ASSETS_STAGE_ADDITIONAL
+                },
+                () => {
+                    compilation.emitAsset(
+                        precacheManifest.BUILD_INFO_ASSET,
+                        new webpack.sources.RawSource(
+                            JSON.stringify({
+                                commit: BUILD_HASH_FULL,
+                                version: EDITOR_VERSION
+                            }) + '\n'
+                        )
+                    );
+                }
+            );
+        });
+    }
+}
+
 const isProductionBuild = process.env.NODE_ENV === 'production';
 
 module.exports = {
@@ -216,6 +241,7 @@ module.exports = {
             root: __dirname
         }),
         new GenerateDocsManifestPlugin(),
+        new BuildInfoPlugin(),
         new PrecacheManifestPlugin(),
         new HtmlWebpackPlugin({
             template: './index.html',

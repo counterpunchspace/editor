@@ -56,6 +56,7 @@ function isHtmlFallback(url, response) {
 }
 
 if (typeof window === 'undefined') {
+    const buildInfoUrl = new URL('./build-info.json', self.location.href).href;
     const precacheUrls = new Set(
         PRECACHE_ASSETS.map((url) => new URL(url, self.location.href).href)
     );
@@ -382,7 +383,12 @@ if (typeof window === 'undefined') {
             event.respondWith(handleCdnRequest(request));
             return;
         }
-        if (new URL(request.url).origin !== self.location.origin) {
+        const requestUrl = new URL(request.url);
+        if (requestUrl.origin !== self.location.origin) {
+            return;
+        }
+        // Reports the deployed commit, so it must never come from a cache.
+        if (requestUrl.origin + requestUrl.pathname === buildInfoUrl) {
             return;
         }
         if (

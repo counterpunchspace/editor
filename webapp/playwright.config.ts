@@ -213,7 +213,10 @@ export default defineConfig({
                 '**/cloud-collab*.spec.ts',
                 '**/plugin-marketplace.spec.ts'
             ],
-            testIgnore: ['**/cloud-collab-preview-smoke.spec.ts'],
+            testIgnore: [
+                '**/cloud-collab-preview-smoke.spec.ts',
+                '**/cloud-collab-product-smoke.spec.ts'
+            ],
             timeout: 480000,
             use: {
                 ...devices['Desktop Chrome'],
@@ -236,31 +239,43 @@ export default defineConfig({
                 contextOptions: {}
             }
         },
-        ...(process.env.CLOUD_COLLAB_PREVIEW_SMOKE === '1'
-            ? [
-                  {
-                      name: 'cloud-collab-preview',
-                      testMatch: ['**/cloud-collab-preview-smoke.spec.ts'],
-                      timeout: 300000,
-                      use: {
-                          ...devices['Desktop Chrome'],
-                          launchOptions: {
-                              ...CLOUD_COLLAB_LAUNCH_BROWSER,
-                              args: [
-                                  '--enable-features=SharedArrayBuffer',
-                                  '--disable-extensions',
-                                  '--disable-component-extensions-with-background-pages',
-                                  '--disable-background-networking',
-                                  '--disable-sync',
-                                  '--no-default-browser-check',
-                                  '--no-first-run'
-                              ],
-                              chromiumSandbox: false
-                          }
-                      }
-                  }
-              ]
-            : [])
+        // The smoke specs run once against real accounts: a retry would find
+        // the first attempt's font and fail the free-trial quota.
+        ...[
+            {
+                enabled: process.env.CLOUD_COLLAB_PREVIEW_SMOKE === '1',
+                name: 'cloud-collab-preview',
+                spec: '**/cloud-collab-preview-smoke.spec.ts'
+            },
+            {
+                enabled: process.env.CLOUD_COLLAB_PRODUCT_SMOKE === '1',
+                name: 'cloud-collab-product-smoke',
+                spec: '**/cloud-collab-product-smoke.spec.ts'
+            }
+        ]
+            .filter((smoke) => smoke.enabled)
+            .map((smoke) => ({
+                name: smoke.name,
+                testMatch: [smoke.spec],
+                timeout: 600000,
+                retries: 0,
+                use: {
+                    ...devices['Desktop Chrome'],
+                    launchOptions: {
+                        ...CLOUD_COLLAB_LAUNCH_BROWSER,
+                        args: [
+                            '--enable-features=SharedArrayBuffer',
+                            '--disable-extensions',
+                            '--disable-component-extensions-with-background-pages',
+                            '--disable-background-networking',
+                            '--disable-sync',
+                            '--no-default-browser-check',
+                            '--no-first-run'
+                        ],
+                        chromiumSandbox: false
+                    }
+                }
+            }))
         // {
         //     name: 'webkit',
         //     use: {

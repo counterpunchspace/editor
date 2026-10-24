@@ -26,6 +26,21 @@ on:
                 required: false
                 type: string
                 default: ""
+            dry_run:
+                description: Stop after the preflight checks and deploy nothing to the target
+                required: false
+                type: boolean
+                default: false
+            attested_editor_sha:
+                description: Editor commit whose CI test results cover this cutover (defaults to editor_sha)
+                required: false
+                type: string
+                default: ""
+            smoke_expect_editor:
+                description: Wrong editor commit for the post-deploy wait, to rehearse the rollback
+                required: false
+                type: string
+                default: ""
         outputs:
             editor_sha:
                 description: Frozen editor SHA
@@ -61,6 +76,10 @@ on:
                 description: Editor VERSION string (defaults to release_tag or SHA)
                 type: string
                 required: false
+            dry_run:
+                description: Stop after the preflight checks
+                type: boolean
+                default: false
 
 concurrency:
     group: composed-cutover-${{ inputs.target }}
@@ -78,8 +97,9 @@ jobs:
             editor_sha: ${{ steps.shas.outputs.editor_sha }}
             website_sha: ${{ steps.shas.outputs.website_sha }}
             collab_sha: ${{ steps.shas.outputs.collab_sha }}
-            collab_root: ${{ steps.collab.outputs.root }}
             editor_version: ${{ steps.shas.outputs.editor_version }}
+            website_origin: ${{ steps.shas.outputs.website_origin }}
+            editor_origin: ${{ steps.shas.outputs.editor_origin }}
         steps:
             - name: Checkout editor
               uses: actions/checkout@v4
@@ -105,19 +125,6 @@ jobs:
                   token: ${{ secrets.CLOUD_E2E_PAT }}
                   fetch-depth: 0
 
-            - name: Resolve collab root
-              id: collab
-              run: |
-                  if [ -f _cutover/collab/workers/room/wrangler.toml ]; then
-                    echo "root=${GITHUB_WORKSPACE}/_cutover/collab" >> "$GITHUB_OUTPUT"
-                  elif [ -f _cutover/collab/collab/workers/room/wrangler.toml ]; then
-                    echo "root=${GITHUB_WORKSPACE}/_cutover/collab/collab" >> "$GITHUB_OUTPUT"
-                  else
-                    echo "Could not find collab workers/room/wrangler.toml"
-                    find _cutover/collab -name wrangler.toml | head
-                    exit 1
-                  fi
-
             - name: Record trio
               id: shas
               run: |
@@ -128,6 +135,13 @@ jobs:
                   TAG="${{ inputs.release_tag }}"
                   if [ -z "$VERSION" ]; then
                     VERSION="${TAG:-$EDITOR_SHA}"
+                  fi
+                  if [ "${{ inputs.target }}" = "preview" ]; then
+                    echo "website_origin=https://preview.counterpunch.space" >> "$GITHUB_OUTPUT"
+                    echo "editor_origin=https://preview.editor.counterpunch.space" >> "$GITHUB_OUTPUT"
+                  else
+                    echo "website_origin=https://counterpunch.space" >> "$GITHUB_OUTPUT"
+                    echo "editor_origin=https://editor.counterpunch.space" >> "$GITHUB_OUTPUT"
                   fi
                   echo "editor_sha=$EDITOR_SHA" >> "$GITHUB_OUTPUT"
                   echo "website_sha=$WEBSITE_SHA" >> "$GITHUB_OUTPUT"
@@ -149,6 +163,7 @@ jobs:
               with:
                   name: trio-${{ inputs.target }}
                   path: artifacts/trio.json
+                  overwrite: true
 
     sibling-ci:
         needs: freeze
@@ -170,9 +185,9 @@ jobs:
                   GH_TOKEN: ${{ secrets.CLOUD_E2E_PAT }}
               run: bash scripts/wait-for-green-ci.sh "${{ vars.COLLAB_REPOSITORY || format('{0}/collab', github.repository_owner) }}" "${{ needs.freeze.outputs.collab_sha }}" deploy.yml
 
-    # Push CI already tested these SHAs on staging. Cutover deploys them
-    # again, because a later push can overwrite staging, and reruns the suite
-    # before any product hostname changes.
+    # Production checks the CI results of the preview's editor commit: the
+    # release commit only changes versions, and its own CI may have tested
+    # newer website and collab commits.
     verify-e2e:
         needs: [freeze, sibling-ci]
         runs-on: ubuntu-latest
@@ -186,10 +201,55 @@ jobs:
             - name: Verify cloud-collab e2e attestation
               env:
                   GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-              run: bash scripts/verify-cloud-e2e-attestation.sh "${{ needs.freeze.outputs.editor_sha }}" "${{ needs.freeze.outputs.website_sha }}" "${{ needs.freeze.outputs.collab_sha }}"
+              run: bash scripts/verify-cloud-e2e-attestation.sh "${{ inputs.attested_editor_sha || needs.freeze.outputs.editor_sha }}" "${{ needs.freeze.outputs.website_sha }}" "${{ needs.freeze.outputs.collab_sha }}"
+
+    # CI deploys these exact commits to staging and runs the suite there. If
+    # staging still serves them and that run passed, the cutover does not
+    # repeat it.
+    staging-current:
+        needs: [freeze, verify-e2e]
+        runs-on: ubuntu-latest
+        outputs:
+            skip: ${{ steps.decide.outputs.skip }}
+        steps:
+            - name: Checkout editor
+              uses: actions/checkout@v4
+              with:
+                  ref: ${{ needs.freeze.outputs.editor_sha }}
+
+            - name: Set up Node.js
+              uses: actions/setup-node@v4
+              with:
+                  node-version: "24"
+
+            - name: Check what staging serves
+              id: check
+              run: |
+                  node scripts/wait-for-stack.mjs \
+                    --editor https://staging.editor.counterpunch.space \
+                    --website https://staging.counterpunch.space \
+                    --expect-editor "${{ needs.freeze.outputs.editor_sha }}" \
+                    --expect-website "${{ needs.freeze.outputs.website_sha }}" \
+                    --expect-collab "${{ needs.freeze.outputs.collab_sha }}" \
+                    --check
+
+            - name: Decide whether to rerun staging
+              id: decide
+              env:
+                  MATCH: ${{ steps.check.outputs.match }}
+                  ATTESTED: ${{ inputs.attested_editor_sha }}
+                  EDITOR_SHA: ${{ needs.freeze.outputs.editor_sha }}
+              run: |
+                  skip=false
+                  if [ "$MATCH" = "true" ] && { [ -z "$ATTESTED" ] || [ "$ATTESTED" = "$EDITOR_SHA" ]; }; then
+                    skip=true
+                  fi
+                  echo "skip=$skip" >> "$GITHUB_OUTPUT"
+                  echo "Skip the staging redeploy and suite: $skip"
 
     staging-deploy:
-        needs: [freeze, verify-e2e]
+        needs: [freeze, staging-current]
+        if: ${{ needs.staging-current.outputs.skip != 'true' }}
         runs-on: ubuntu-latest
         timeout-minutes: 90
         steps:
@@ -283,14 +343,38 @@ jobs:
                   EDITOR_ROOT: ${{ github.workspace }}
               run: bash scripts/deploy-cloud-staging.sh editor
 
+            - name: Wait until staging serves these commits
+              run: |
+                  node scripts/wait-for-stack.mjs \
+                    --editor https://staging.editor.counterpunch.space \
+                    --website https://staging.counterpunch.space \
+                    --expect-editor "${{ needs.freeze.outputs.editor_sha }}" \
+                    --expect-website "${{ needs.freeze.outputs.website_sha }}" \
+                    --expect-collab "${{ needs.freeze.outputs.collab_sha }}" \
+                    --wait 300
+
     staging-e2e:
+        name: staging · ${{ matrix.group }}
         needs: [freeze, staging-deploy]
         runs-on: ubuntu-latest
         timeout-minutes: 90
         strategy:
             fail-fast: false
             matrix:
-                shard: [1, 2, 3, 4]
+                group:
+                    - marketplace
+                    - offline-edits
+                    - offline-reload
+                    - catalog
+                    - integrity
+                    - lifecycle
+                    - quota
+                    - deletion
+                    - deletion-glyph
+                    - sparse-closure
+                    - three-window-sync
+                    - three-window-relay
+                    - reconnect
         steps:
             - name: Checkout editor
               uses: actions/checkout@v4
@@ -309,7 +393,7 @@ jobs:
               run: npx --prefix webapp playwright install --with-deps chromium
 
             - name: Run cloud-collab Playwright on staging
-              run: npm run test:cloud-collab --prefix webapp -- --shard=${{ matrix.shard }}/4
+              working-directory: webapp
               env:
                   CLOUD_COLLAB_E2E: "1"
                   CLOUD_COLLAB_REMOTE: "1"
@@ -317,9 +401,67 @@ jobs:
                   CLOUD_COLLAB_WEBSITE_URL: https://staging.counterpunch.space
                   CLOUD_COLLAB_ROOM_URL: https://staging.rooms.counterpunch.space
                   E2E_OPERATOR_TOKEN: ${{ secrets.E2E_OPERATOR_TOKEN }}
+              run: |
+                  mkdir -p test-results
+                  node scripts/ci-shard.mjs --project cloud-collab --group "${{ matrix.group }}" > test-results/filters.txt
+                  mapfile -t filters < test-results/filters.txt
+                  [ "${#filters[@]}" -gt 0 ]
+                  npx playwright test --project=cloud-collab --reporter=list "${filters[@]}"
 
-    deploy:
+            - name: Upload Playwright traces
+              if: always()
+              uses: actions/upload-artifact@v4
+              with:
+                  name: cutover-staging-e2e-${{ matrix.group }}
+                  path: webapp/test-results
+                  if-no-files-found: ignore
+                  overwrite: true
+
+    # Removes the suite's test data, then fails unless staging still serves
+    # the tested commits (a push during the run would overwrite it).
+    staging-check:
         needs: [freeze, staging-e2e]
+        if: ${{ always() && (needs.staging-e2e.result == 'success' || needs.staging-e2e.result == 'failure') }}
+        runs-on: ubuntu-latest
+        steps:
+            - name: Checkout editor
+              uses: actions/checkout@v4
+              with:
+                  ref: ${{ needs.freeze.outputs.editor_sha }}
+
+            - name: Set up Node.js
+              uses: actions/setup-node@v4
+              with:
+                  node-version: "24"
+
+            - name: Remove staging e2e data and fail if any was left
+              env:
+                  CLOUD_COLLAB_WEBSITE_URL: https://staging.counterpunch.space
+                  E2E_OPERATOR_TOKEN: ${{ secrets.E2E_OPERATOR_TOKEN }}
+              run: node scripts/staging-e2e-leftovers.mjs
+
+            - name: Staging still serves the tested commits
+              id: check
+              run: |
+                  node scripts/wait-for-stack.mjs \
+                    --editor https://staging.editor.counterpunch.space \
+                    --website https://staging.counterpunch.space \
+                    --expect-editor "${{ needs.freeze.outputs.editor_sha }}" \
+                    --expect-website "${{ needs.freeze.outputs.website_sha }}" \
+                    --expect-collab "${{ needs.freeze.outputs.collab_sha }}" \
+                    --check
+
+            - name: Fail if staging changed during the suite
+              if: ${{ steps.check.outputs.match != 'true' }}
+              run: |
+                  echo "Staging no longer serves the tested commits. Rerun the cutover."
+                  exit 1
+
+    # Everything that can fail without touching the target: builds, Worker
+    # bundles and secret names. Its builds are what the deploy job ships.
+    preflight:
+        needs: [freeze, staging-current, staging-e2e, staging-check]
+        if: ${{ !failure() && !cancelled() }}
         runs-on: ubuntu-latest
         steps:
             - name: Checkout editor
@@ -366,12 +508,165 @@ jobs:
               run: npm ci
               working-directory: ${{ steps.collab.outputs.root }}
 
+            - name: Install website dependencies
+              run: |
+                  npm ci
+                  npm ci --prefix plugins-worker
+              working-directory: _cutover/website
+
+            - name: Build website
+              run: npm run build
+              working-directory: _cutover/website
+
+            - name: Bundle website functions
+              run: npx wrangler pages functions build --outdir "$RUNNER_TEMP/functions"
+              working-directory: _cutover/website
+
+            - name: Check plugin contract hash
+              run: node scripts/check-plugin-contracts.mjs
+              working-directory: _cutover/website
+              env:
+                  EDITOR_ROOT: ${{ github.workspace }}
+
+            - name: Inject editor version
+              run: |
+                  TAG="${{ needs.freeze.outputs.editor_version }}"
+                  sed -i.bak "s/const VERSION = '[^']*'/const VERSION = '${TAG}'/" webapp/coi-serviceworker.js
+                  sed -i.bak "s/const DISPLAY_VERSION = '[^']*'/const DISPLAY_VERSION = '${TAG}'/" webapp/coi-serviceworker.js
+                  rm webapp/coi-serviceworker.js.bak
+
+            - name: Install editor webapp dependencies
+              run: npm install --prefix webapp
+
+            - name: Build editor
+              run: npm run build --prefix webapp
+              env:
+                  EDITOR_VERSION: ${{ needs.freeze.outputs.editor_version }}
+                  BUILD_HASH_FULL: ${{ needs.freeze.outputs.editor_sha }}
+                  BUILD_HASH_SHORT: ${{ needs.freeze.outputs.editor_sha }}
+
+            - name: Dry-run Worker deploys
+              env:
+                  CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+                  CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+                  COLLAB_ROOT: ${{ steps.collab.outputs.root }}
+                  WEBSITE_ROOT: ${{ github.workspace }}/_cutover/website
+              run: |
+                  set -euo pipefail
+                  env_flag=()
+                  if [ "${{ inputs.target }}" = "preview" ]; then
+                    env_flag=(--env preview)
+                  fi
+                  for worker in validator compactor room; do
+                    echo "::group::$worker"
+                    (cd "$COLLAB_ROOT/workers/$worker" && npx wrangler deploy --dry-run "${env_flag[@]}" --outdir "$RUNNER_TEMP/dry/$worker")
+                    echo "::endgroup::"
+                  done
+                  for worker in plugins-worker cron-worker; do
+                    echo "::group::$worker"
+                    (cd "$WEBSITE_ROOT/$worker" && npx --prefix "$WEBSITE_ROOT" wrangler deploy --dry-run --outdir "$RUNNER_TEMP/dry/$worker")
+                    echo "::endgroup::"
+                  done
+
             - name: Require product secret names
               env:
                   CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
                   CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
                   COLLAB_ROOT: ${{ steps.collab.outputs.root }}
               run: node scripts/probe-product-secrets.mjs check-names "${{ inputs.target }}"
+
+            - name: Upload website build
+              uses: actions/upload-artifact@v4
+              with:
+                  name: cutover-website-dist-${{ inputs.target }}
+                  path: _cutover/website/dist
+                  overwrite: true
+
+            - name: Upload editor build
+              uses: actions/upload-artifact@v4
+              with:
+                  name: cutover-editor-build-${{ inputs.target }}
+                  path: webapp/build
+                  overwrite: true
+
+    deploy:
+        needs: [freeze, preflight]
+        if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && !inputs.dry_run }}
+        runs-on: ubuntu-latest
+        steps:
+            - name: Checkout editor
+              uses: actions/checkout@v4
+              with:
+                  ref: ${{ needs.freeze.outputs.editor_sha }}
+                  fetch-depth: 0
+
+            - name: Checkout website
+              uses: actions/checkout@v4
+              with:
+                  repository: ${{ vars.WEBSITE_REPOSITORY || format('{0}/website', github.repository_owner) }}
+                  ref: ${{ needs.freeze.outputs.website_sha }}
+                  path: _cutover/website
+                  token: ${{ secrets.CLOUD_E2E_PAT }}
+                  fetch-depth: 0
+
+            - name: Checkout collab
+              uses: actions/checkout@v4
+              with:
+                  repository: ${{ vars.COLLAB_REPOSITORY || format('{0}/collab', github.repository_owner) }}
+                  ref: ${{ needs.freeze.outputs.collab_sha }}
+                  path: _cutover/collab
+                  token: ${{ secrets.CLOUD_E2E_PAT }}
+                  fetch-depth: 0
+
+            - name: Resolve collab root
+              id: collab
+              run: |
+                  if [ -f _cutover/collab/workers/room/wrangler.toml ]; then
+                    echo "root=${GITHUB_WORKSPACE}/_cutover/collab" >> "$GITHUB_OUTPUT"
+                  elif [ -f _cutover/collab/collab/workers/room/wrangler.toml ]; then
+                    echo "root=${GITHUB_WORKSPACE}/_cutover/collab/collab" >> "$GITHUB_OUTPUT"
+                  else
+                    exit 1
+                  fi
+
+            - name: Set up Node.js
+              uses: actions/setup-node@v4
+              with:
+                  node-version: "24"
+
+            - name: Install collab dependencies
+              run: npm ci
+              working-directory: ${{ steps.collab.outputs.root }}
+
+            - name: Install website dependencies
+              run: npm ci
+              working-directory: _cutover/website
+
+            - name: Download website build
+              uses: actions/download-artifact@v4
+              with:
+                  name: cutover-website-dist-${{ inputs.target }}
+                  path: _cutover/website/dist
+
+            - name: Download editor build
+              uses: actions/download-artifact@v4
+              with:
+                  name: cutover-editor-build-${{ inputs.target }}
+                  path: webapp/build
+
+            - name: Snapshot live versions
+              env:
+                  CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+                  CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+                  CUTOVER_DEPLOYS_PLUGINS: ${{ (inputs.target == 'production' || vars.PLUGINS_WORKER_LOCKED != 'production') && '1' || '' }}
+              run: node scripts/cutover-snapshot.mjs snapshot "${{ inputs.target }}" cutover-snapshot.json
+
+            - name: Upload snapshot
+              uses: actions/upload-artifact@v4
+              with:
+                  name: cutover-snapshot-${{ inputs.target }}
+                  path: cutover-snapshot.json
+                  overwrite: true
 
             - name: Deploy validator
               uses: cloudflare/wrangler-action@v3
@@ -395,21 +690,13 @@ jobs:
                   command: ${{ inputs.target == 'preview' && 'deploy --env preview' || 'deploy' }}
                   vars: COMMIT_SHA
 
-            - name: Upload room version, pair secrets, then deploy the route
+            - name: Deploy room and check secret pairing
               env:
                   CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
                   CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
                   COLLAB_ROOT: ${{ steps.collab.outputs.root }}
                   COMMIT_SHA: ${{ needs.freeze.outputs.collab_sha }}
-              run: node scripts/probe-product-secrets.mjs promote-room "${{ inputs.target }}"
-
-            - name: Install website dependencies
-              run: npm ci
-              working-directory: _cutover/website
-
-            - name: Build website
-              run: npm run build
-              working-directory: _cutover/website
+              run: node scripts/probe-product-secrets.mjs deploy-room "${{ inputs.target }}"
 
             # Middleware verifies schema and does not migrate. Preview and
             # production Pages share context_users. schema.sql is idempotent
@@ -455,18 +742,6 @@ jobs:
                   }
                   trap restore_config EXIT
                   npx wrangler pages deploy dist --project-name="$project" --branch main --commit-dirty=true
-                  npx wrangler pages secret list --project-name="$project" || true
-
-            # The hourly Worker finishes interrupted font deletes and purges
-            # deleted glyph rooms after the 24h undo window. It is not part
-            # of the Pages deploy, so it needs its own step. Preview has no
-            # cron Worker: its D1 database id is not in the repo, and a
-            # production-bound cron must never run against preview data.
-            - name: Check plugin contract hash
-              run: node scripts/check-plugin-contracts.mjs
-              working-directory: _cutover/website
-              env:
-                  EDITOR_ROOT: ${{ github.workspace }}
 
             - name: Deploy plugins Worker
               if: ${{ inputs.target == 'production' || vars.PLUGINS_WORKER_LOCKED != 'production' }}
@@ -477,6 +752,10 @@ jobs:
                   workingDirectory: _cutover/website/plugins-worker
                   command: deploy
 
+            # The hourly Worker finishes interrupted font deletes and purges
+            # deleted glyph rooms after the 24h undo window. Preview has no
+            # cron Worker: its D1 database id is not in the repo, and a
+            # production-bound cron must never run against preview data.
             - name: Deploy cloud cron Worker
               if: ${{ inputs.target == 'production' }}
               uses: cloudflare/wrangler-action@v3
@@ -486,40 +765,6 @@ jobs:
                   workingDirectory: _cutover/website/cron-worker
                   command: deploy
 
-            - name: Real-email signup gate
-              working-directory: _cutover/website
-              env:
-                  SIGNUP_E2E_ORIGIN: ${{ inputs.target == 'preview' && 'https://preview.counterpunch.space' || 'https://counterpunch.space' }}
-                  SIGNUP_E2E_IMAP_USER: ${{ secrets.SIGNUP_E2E_IMAP_USER }}
-                  SIGNUP_E2E_IMAP_PASS: ${{ secrets.SIGNUP_E2E_IMAP_PASS }}
-                  CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-                  CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-              run: node scripts/e2e-magic-link-signup.mjs
-
-            - name: Require product secret names after website deploy
-              env:
-                  CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-                  CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-                  COLLAB_ROOT: ${{ steps.collab.outputs.root }}
-              run: node scripts/probe-product-secrets.mjs check-names "${{ inputs.target }}"
-
-            - name: Inject editor version
-              run: |
-                  TAG="${{ needs.freeze.outputs.editor_version }}"
-                  sed -i.bak "s/const VERSION = '[^']*'/const VERSION = '${TAG}'/" webapp/coi-serviceworker.js
-                  sed -i.bak "s/const DISPLAY_VERSION = '[^']*'/const DISPLAY_VERSION = '${TAG}'/" webapp/coi-serviceworker.js
-                  rm webapp/coi-serviceworker.js.bak
-
-            - name: Install editor webapp dependencies
-              run: npm install --prefix webapp
-
-            - name: Build editor
-              run: npm run build --prefix webapp
-              env:
-                  EDITOR_VERSION: ${{ needs.freeze.outputs.editor_version }}
-                  BUILD_HASH_FULL: ${{ needs.freeze.outputs.editor_sha }}
-                  BUILD_HASH_SHORT: ${{ needs.freeze.outputs.editor_sha }}
-
             - name: Deploy editor Pages
               uses: cloudflare/wrangler-action@v3
               with:
@@ -528,26 +773,184 @@ jobs:
                   command: ${{ inputs.target == 'preview' && 'pages deploy ./webapp/build --project-name=editorpreview --branch main' || 'pages deploy ./webapp/build --project-name=editor --branch main' }}
                   gitHubToken: ${{ secrets.GITHUB_TOKEN }}
 
+    smoke:
+        needs: [freeze, deploy]
+        if: ${{ !failure() && !cancelled() && needs.deploy.result == 'success' }}
+        runs-on: ubuntu-latest
+        timeout-minutes: 45
+        env:
+            ROLES: ${{ inputs.target == 'preview' && 'owner,invitee' || 'owner' }}
+            SESSIONS_DIR: ${{ github.workspace }}/smoke-sessions
+        steps:
+            - name: Checkout editor
+              uses: actions/checkout@v4
+              with:
+                  ref: ${{ needs.freeze.outputs.editor_sha }}
+
+            - name: Checkout website
+              uses: actions/checkout@v4
+              with:
+                  repository: ${{ vars.WEBSITE_REPOSITORY || format('{0}/website', github.repository_owner) }}
+                  ref: ${{ needs.freeze.outputs.website_sha }}
+                  path: _cutover/website
+                  token: ${{ secrets.CLOUD_E2E_PAT }}
+
+            - name: Set up Node.js
+              uses: actions/setup-node@v4
+              with:
+                  node-version: "24"
+
+            - name: Wait until the real domains serve the new commits
+              run: |
+                  node scripts/wait-for-stack.mjs \
+                    --editor "${{ needs.freeze.outputs.editor_origin }}" \
+                    --website "${{ needs.freeze.outputs.website_origin }}" \
+                    --expect-editor "${{ inputs.smoke_expect_editor || needs.freeze.outputs.editor_sha }}" \
+                    --expect-website "${{ needs.freeze.outputs.website_sha }}" \
+                    --expect-collab "${{ needs.freeze.outputs.collab_sha }}" \
+                    --expect-version "${{ needs.freeze.outputs.editor_version }}" \
+                    --wait 180
+
+            - name: Install website dependencies
+              run: npm ci
+              working-directory: _cutover/website
+
+            - name: Install editor webapp dependencies
+              run: npm install --prefix webapp
+
+            - name: Install Playwright Chromium
+              run: npx --prefix webapp playwright install --with-deps chromium
+
+            - name: Sign in smoke accounts
+              working-directory: _cutover/website
+              env:
+                  SIGNUP_E2E_IMAP_USER: ${{ secrets.SIGNUP_E2E_IMAP_USER }}
+                  SIGNUP_E2E_IMAP_PASS: ${{ secrets.SIGNUP_E2E_IMAP_PASS }}
+              run: node scripts/e2e-product-sessions.mjs sessions --target "${{ inputs.target }}" --roles "$ROLES" --out "$SESSIONS_DIR"
+
+            - name: Smoke test
+              working-directory: webapp
+              env:
+                  CLOUD_COLLAB_E2E: "1"
+                  CLOUD_COLLAB_REMOTE: "1"
+                  CLOUD_COLLAB_PREVIEW_SMOKE: ${{ inputs.target == 'preview' && '1' || '' }}
+                  CLOUD_COLLAB_PRODUCT_SMOKE: ${{ inputs.target == 'production' && '1' || '' }}
+                  CLOUD_E2E_EDITOR_URL: ${{ needs.freeze.outputs.editor_origin }}
+                  CLOUD_SMOKE_EDITOR_URL: ${{ needs.freeze.outputs.editor_origin }}
+                  CLOUD_SMOKE_WEBSITE_URL: ${{ needs.freeze.outputs.website_origin }}
+                  CLOUD_SMOKE_SESSIONS_DIR: ${{ github.workspace }}/smoke-sessions
+              run: npx playwright test --project=${{ inputs.target == 'preview' && 'cloud-collab-preview' || 'cloud-collab-product-smoke' }} --reporter=list
+
+            - name: Remove smoke accounts and their fonts
+              if: always()
+              working-directory: _cutover/website
+              env:
+                  SIGNUP_E2E_IMAP_USER: ${{ secrets.SIGNUP_E2E_IMAP_USER }}
+                  SIGNUP_E2E_IMAP_PASS: ${{ secrets.SIGNUP_E2E_IMAP_PASS }}
+                  CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+                  CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+              run: node scripts/e2e-product-sessions.mjs cleanup --target "${{ inputs.target }}" --roles "$ROLES" --out "$SESSIONS_DIR"
+
+            - name: Upload Playwright traces
+              if: always()
+              uses: actions/upload-artifact@v4
+              with:
+                  name: cutover-smoke-${{ inputs.target }}
+                  path: webapp/test-results
+                  if-no-files-found: ignore
+                  overwrite: true
+
+    # D1 stays as it is: the schema only ever adds tables and columns.
+    rollback:
+        needs: [freeze, deploy, smoke]
+        if: ${{ always() && (needs.deploy.result == 'failure' || needs.deploy.result == 'cancelled' || needs.smoke.result == 'failure' || needs.smoke.result == 'cancelled') }}
+        runs-on: ubuntu-latest
+        steps:
+            - name: Checkout editor
+              uses: actions/checkout@v4
+              with:
+                  ref: ${{ needs.freeze.outputs.editor_sha }}
+
+            - name: Set up Node.js
+              uses: actions/setup-node@v4
+              with:
+                  node-version: "24"
+
+            - name: Download snapshot
+              id: snapshot
+              continue-on-error: true
+              uses: actions/download-artifact@v4
+              with:
+                  name: cutover-snapshot-${{ inputs.target }}
+
+            - name: Roll back to the snapshot
+              env:
+                  CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+                  CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+              run: |
+                  if [ ! -f cutover-snapshot.json ]; then
+                    echo "No snapshot: the deploy failed before changing anything."
+                    exit 0
+                  fi
+                  node scripts/cutover-snapshot.mjs rollback cutover-snapshot.json
+
+    tag:
+        needs: [freeze, smoke]
+        if: ${{ !failure() && !cancelled() && needs.smoke.result == 'success' && inputs.release_tag != '' }}
+        runs-on: ubuntu-latest
+        steps:
+            - name: Checkout editor
+              uses: actions/checkout@v4
+              with:
+                  ref: ${{ needs.freeze.outputs.editor_sha }}
+                  fetch-depth: 0
+
+            - name: Checkout website
+              uses: actions/checkout@v4
+              with:
+                  repository: ${{ vars.WEBSITE_REPOSITORY || format('{0}/website', github.repository_owner) }}
+                  ref: ${{ needs.freeze.outputs.website_sha }}
+                  path: _cutover/website
+                  token: ${{ secrets.CLOUD_E2E_PAT }}
+                  fetch-depth: 0
+
+            - name: Checkout collab
+              uses: actions/checkout@v4
+              with:
+                  repository: ${{ vars.COLLAB_REPOSITORY || format('{0}/collab', github.repository_owner) }}
+                  ref: ${{ needs.freeze.outputs.collab_sha }}
+                  path: _cutover/collab
+                  token: ${{ secrets.CLOUD_E2E_PAT }}
+                  fetch-depth: 0
+
             - name: Tag matching trio
-              if: ${{ inputs.release_tag != '' }}
               env:
                   TAG: ${{ inputs.release_tag }}
                   SIBLING_TOKEN: ${{ secrets.CLOUD_E2E_PAT }}
+                  OWNER: ${{ github.repository_owner }}
               run: |
                   set -euo pipefail
-                  if git ls-remote --exit-code --tags origin "refs/tags/${TAG}" >/dev/null 2>&1; then
-                    echo "Editor tag $TAG already exists"
-                  else
-                    git tag "$TAG"
-                    git push origin "$TAG"
-                  fi
-                  origin_with_token() {
-                    local repo="$1"
-                    echo "https://x-access-token:${SIBLING_TOKEN}@github.com/${{ github.repository_owner }}/${repo}.git"
+                  # A rerun after a partial push skips tags that already point
+                  # at the deployed commit and refuses tags that point elsewhere.
+                  tag_repo() {
+                    local dir="$1"
+                    local commit
+                    commit=$(git -C "$dir" rev-parse HEAD)
+                    local existing
+                    existing=$(git -C "$dir" ls-remote origin "refs/tags/${TAG}" "refs/tags/${TAG}^{}" | tail -1 | cut -f1)
+                    if [ -z "$existing" ]; then
+                      git -C "$dir" tag "$TAG" "$commit"
+                      git -C "$dir" push origin "refs/tags/${TAG}"
+                      echo "Tagged $dir at $commit"
+                    elif [ "$existing" = "$commit" ]; then
+                      echo "$dir already has $TAG at $commit"
+                    else
+                      echo "$dir: $TAG points at $existing, not $commit"
+                      exit 1
+                    fi
                   }
-                  git -C _cutover/website tag "$TAG"
-                  git -C _cutover/website remote set-url origin "$(origin_with_token website)"
-                  git -C _cutover/website push origin "$TAG"
-                  git -C _cutover/collab tag "$TAG"
-                  git -C _cutover/collab remote set-url origin "$(origin_with_token collab)"
-                  git -C _cutover/collab push origin "$TAG"
+                  git -C _cutover/website remote set-url origin "https://x-access-token:${SIBLING_TOKEN}@github.com/${OWNER}/website.git"
+                  git -C _cutover/collab remote set-url origin "https://x-access-token:${SIBLING_TOKEN}@github.com/${OWNER}/collab.git"
+                  tag_repo .
+                  tag_repo _cutover/website
+                  tag_repo _cutover/collab

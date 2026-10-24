@@ -2,6 +2,15 @@ name: Preview Release
 
 on:
     workflow_dispatch:
+        inputs:
+            dry_run:
+                description: Stop after the preflight checks; deploy nothing to preview
+                type: boolean
+                default: false
+            smoke_expect_editor:
+                description: Wrong editor commit for the post-deploy wait, to rehearse the rollback
+                type: string
+                default: ""
 
 concurrency:
     group: preview-release
@@ -41,6 +50,7 @@ jobs:
               with:
                   name: preview-release-notes
                   path: release-notes.md
+                  overwrite: true
 
     cutover:
         needs: prepare
@@ -52,10 +62,13 @@ jobs:
             collab_ref: ${{ vars.COLLAB_SHA != '' && vars.COLLAB_SHA || 'main' }}
             release_tag: ${{ needs.prepare.outputs.TAG }}
             editor_version: ${{ needs.prepare.outputs.TAG }}
+            dry_run: ${{ inputs.dry_run }}
+            smoke_expect_editor: ${{ inputs.smoke_expect_editor }}
         secrets: inherit
 
     github-prerelease:
         needs: [prepare, cutover]
+        if: ${{ !inputs.dry_run }}
         runs-on: ubuntu-latest
         steps:
             - name: Checkout
@@ -77,6 +90,7 @@ jobs:
             - name: Publish GitHub prerelease
               env:
                   GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+                  TAG: ${{ needs.prepare.outputs.TAG }}
               run: |
                   NOTES=$(mktemp)
                   cat release-notes.md > "$NOTES"
@@ -85,12 +99,17 @@ jobs:
                     cat trio.json >> "$NOTES"
                     printf '\n```\n' >> "$NOTES"
                   fi
-                  gh release create "${{ needs.prepare.outputs.TAG }}" \
-                      --target "${{ needs.prepare.outputs.COMMIT_SHA }}" \
-                      --title "${{ needs.prepare.outputs.TAG }}" \
-                      --notes-file "$NOTES" \
-                      --prerelease \
-                      trio.json
+                  if gh release view "$TAG" >/dev/null 2>&1; then
+                    gh release edit "$TAG" --title "$TAG" --notes-file "$NOTES" --prerelease
+                    gh release upload "$TAG" trio.json --clobber
+                  else
+                    gh release create "$TAG" \
+                        --target "${{ needs.prepare.outputs.COMMIT_SHA }}" \
+                        --title "$TAG" \
+                        --notes-file "$NOTES" \
+                        --prerelease \
+                        trio.json
+                  fi
 
             - name: Deployment summary
               run: |

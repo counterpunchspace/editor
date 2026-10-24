@@ -5,11 +5,14 @@ const crypto = require('crypto');
 const SERVICE_WORKER_ASSET = 'coi-serviceworker.js';
 const SHELL_ASSET = 'index.html';
 const SHELL_URL = './';
+// Must always come from the network: the cutover reads it to see what is live.
+const BUILD_INFO_ASSET = 'build-info.json';
 
 const EXCLUDED_ASSET_PATTERNS = [
     /\.map$/,
     /\.LICENSE\.txt$/,
     /^_headers(\/|$)/,
+    /^build-info\.json$/,
     /^worktree-config\.json$/,
     /^debug-sw\.html$/,
     /^wasm-dist\//,
@@ -107,6 +110,7 @@ function injectManifest(source, { precacheUrls, cdnUrls, buildId }) {
 module.exports = {
     SERVICE_WORKER_ASSET,
     SHELL_ASSET,
+    BUILD_INFO_ASSET,
     isPrecachedAsset,
     precacheUrlsFromAssets,
     cdnUrlsFromHtml,

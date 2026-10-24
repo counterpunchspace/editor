@@ -1,6 +1,7 @@
 #!/bin/bash
 
-# Wait until a workflow has a successful push run for a commit.
+# Wait until a workflow has a successful run on main for a commit. Runs from
+# a push and from push.sh's workflow_dispatch both count.
 # No args: this editor repo, ci.yml, HEAD (Preview Release, before cutover).
 # Args: <owner/repo> <sha> <workflow-file>
 
@@ -24,15 +25,15 @@ fi
 LABEL="${REPO:-editor}"
 DEADLINE=$((SECONDS + 5400))
 
-echo "Waiting for a green $WORKFLOW push run on $LABEL $COMMIT_SHA"
+echo "Waiting for a green $WORKFLOW run on $LABEL main $COMMIT_SHA"
 
 latest_push_run() {
     local -a args
-    args=(run list --workflow="$WORKFLOW" --commit="$COMMIT_SHA" --limit 20 --json databaseId,status,conclusion,event)
+    args=(run list --workflow="$WORKFLOW" --commit="$COMMIT_SHA" --limit 20 --json databaseId,status,conclusion,event,headBranch)
     if [ -n "$REPO" ]; then
         args+=(--repo "$REPO")
     fi
-    gh "${args[@]}" --jq '[.[] | select(.event=="push")] | sort_by(.databaseId) | last // empty'
+    gh "${args[@]}" --jq '[.[] | select((.event=="push" or .event=="workflow_dispatch") and .headBranch=="main")] | sort_by(.databaseId) | last // empty'
 }
 
 watch_run() {
@@ -46,7 +47,7 @@ watch_run() {
 while [ "$SECONDS" -lt "$DEADLINE" ]; do
     run_json=$(latest_push_run)
     if [ -z "$run_json" ] || [ "$run_json" = "null" ]; then
-        echo "No CI push run yet for $LABEL; retrying in 20s..."
+        echo "No CI run on main yet for $LABEL; retrying in 20s..."
         sleep 20
         continue
     fi
@@ -77,5 +78,5 @@ while [ "$SECONDS" -lt "$DEADLINE" ]; do
     exit 1
 done
 
-echo "Error: timed out waiting for a green $WORKFLOW push run on $LABEL $COMMIT_SHA"
+echo "Error: timed out waiting for a green $WORKFLOW run on $LABEL $COMMIT_SHA"
 exit 1

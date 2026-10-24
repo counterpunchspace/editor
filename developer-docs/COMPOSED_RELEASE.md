@@ -23,35 +23,79 @@ Editor **Preview Release** and **Release** own preview and production Cloudflare
 
 Emergency production deploys exist as `workflow_dispatch` with confirm text `deploy-production` on the website and collab CI workflows. Do not use those for a normal trio cut.
 
+## What reports which commit
+
+Every service reports what it runs, so the cutover can tell when a deploy reached the edge:
+
+- Editor: `/build-info.json` returns `{ commit, version }`. The service worker never caches it.
+- Website: `/api/health` returns its `commit`, the D1 `schema` check and `room`, the `?deep=1` health of its `ROOM_WORKER_URL`.
+- Room: `/health` returns `commit`; `?deep=1` adds the validator's and compactor's commit through the service bindings.
+
+`scripts/wait-for-stack.mjs` reads both URLs and compares them with the expected commits. `--check` looks once and prints `match=true|false`; `--wait <seconds>` polls until everything matches.
+
+## The cutover
+
+Preview Release and Release both call `.github/workflows/composed-cutover.yml`:
+
+1. **freeze:** records the editor, website and collab commits (`trio.json`).
+2. **sibling-ci:** waits for green website and collab `deploy.yml` push runs on those commits.
+3. **verify-e2e:** waits until no editor CI run on `main` is still running for the editor commit, then needs a successful one (push, or `push.sh`'s workflow_dispatch) whose `cloud-e2e-trio` names exactly the frozen website and collab commits. Production checks the preview's editor commit instead (see below).
+4. **staging-current:** if staging still serves the frozen commits, the staging redeploy and suite are skipped: CI already ran that suite on exactly those commits.
+5. Otherwise **staging-deploy** puts the trio on staging and waits until staging reports it, **staging-e2e** runs the full cloud-collab suite, and **staging-check** removes the suite's data and fails if staging changed during the run.
+6. **preflight:** builds the website and the editor (version already injected), bundles the website functions, runs `wrangler deploy --dry-run` for validator, compactor, room, plugins and cron, and checks the target's secret names. Its builds are what the deploy job ships. A dry run stops here.
+7. **deploy:** records the live Worker versions and Pages deployments (`scripts/cutover-snapshot.mjs`, artifact `cutover-snapshot-<target>`), then deploys validator, compactor, the room (followed by a pairing check on its `workers.dev` URL), the D1 schema, website, plugins, cron (production only) and editor.
+8. **smoke:** waits up to 3 minutes until the real domains report the new commits and version, then signs in real accounts and runs the smoke test (see below).
+9. **rollback:** runs only if deploy or smoke failed, and restores everything in the snapshot. D1 stays as it is.
+10. **tag:** tags all three repos after the smoke test passed. A tag that already points at the deployed commit is kept; one that points elsewhere fails the job.
+
+The GitHub prerelease or release is published after that, and only if the whole cutover succeeded. Rerunning that job edits the existing release instead of failing.
+
 ## How to cut preview
 
 From a clean editor `main` (no uncommitted files):
 
 ```bash
-./previewrelease.sh
+./previewrelease.sh            # or --dry-run to stop after preflight
 ```
 
-Or Actions → **Preview Release**. The local script returns to a live `ci-watch.sh` view and stays there until the workflow finishes. You can start it before editor CI is green. The workflow:
+Or Actions → **Preview Release**. The script pushes unpushed `main` commits, starts the workflow and watches it with `ci-watch.sh` until it finishes. You can start it before editor CI is green: the workflow waits for it. The version is `v0.0.N-pre.DATE` (monotonic N; DATE is the UTC day of the cut). A rolled-back preview creates no tag, so the next run reuses the same N. Notes are the Unreleased changelog diff since the previous preview; `CHANGELOG.md` is not rewritten.
 
-1. Checks out the `main` SHA it was dispatched on.
-2. Waits for a successful editor `ci.yml` **push** run on **that SHA** (up to 90 minutes). If that run fails or is cancelled, it refuses to publish.
-3. Freezes editor / website / collab SHAs (`main`, or `WEBSITE_SHA` / `COLLAB_SHA` if those repo variables are set).
-4. Waits for a successful website and collab `deploy.yml` **push** run on those frozen SHAs (up to 90 minutes each). A failed or missing sibling run refuses to publish.
-5. Verifies the cloud-collab Playwright attestation from that push. The suite runs against the staging hostnames. CI uploads `cloud-e2e-trio` only when all shards pass, and `scripts/verify-cloud-e2e-attestation.sh` fails the cutover if those SHAs differ from the frozen trio. If website or collab `main` moved since the editor CI ran, rerun that CI run.
-6. Deploys that frozen trio to staging again and reruns the full cloud-collab suite there. A later push can overwrite staging, so this run is the one that gates the cutover. A red suite does not move preview or production hostnames.
-7. Checks that the target project's secret names are present, deploys **validator → compactor**, uploads the room as a version, and calls `/internal/cutover-pairing` on that version URL before `versions deploy` attaches the room route. Then applies `schema.sql` to shared D1 `context_users`, deploys **website Pages**, runs the real-email signup gate on that website origin, checks the secret names again, then deploys **editor Pages**.
-8. Tags all three repos with the preview version (`v0.0.N-pre.DATE`, monotonic N; DATE is the UTC day of the cut).
-9. Publishes the GitHub prerelease with Unreleased changelog notes plus `trio.json`.
+Push website and collab `main` first (`push.sh` does) if those commits should be in this cutover.
 
-It does not rewrite `CHANGELOG.md`. Push website and collab `main` first if those SHAs should be in this cutover. Production uses the same sibling CI wait inside composed cutover.
+To rehearse the rollback, start Preview Release by hand with `smoke_expect_editor` set to any wrong commit. The post-deploy wait then times out and the rollback job restores the snapshot.
 
 ## How to cut production
 
+Production may only ship what a preview already shipped:
+
 ```bash
-./release.sh vX.Y.Z
+./release.sh vX.Y.Z            # or --dry-run
 ```
 
-That still bumps the editor version, extracts notes from `CHANGELOG.md`, commits, and pushes tag `vX.Y.Z`. The script then watches with `ci-watch.sh` until the editor CI run and the **Release** workflow finish. That workflow certifies the editor tag (not a `-pre.` tag), then the same composed cutover deploys **production** workers and Pages and tags website + collab with `vX.Y.Z`.
+`release.sh` refuses unless editor, website and collab are on a clean `main` that is not behind `origin/main`, website and collab have nothing unpushed, the tag does not exist yet, and `scripts/check-preview-first.mjs` passes. That check loads `trio.json` from the newest GitHub prerelease, and requires its editor commit to be an ancestor of `HEAD` with only version files changed since (`webapp/coi-serviceworker.js`, `API.md`, `documentation/python/06-python-api.md`, `CHANGELOG.md`).
+
+It then sets the version, turns `# Unreleased` into `# vX.Y.Z`, commits, pushes `main` and starts **Release** with `gh workflow run release.yml -f version=vX.Y.Z`. A rerun with the same version reuses those commits. `--dry-run` commits nothing and starts Release with `dry_run=true`.
+
+The Release workflow repeats the version and preview-first checks, then runs the cutover against the preview's website and collab commits. Its `verify-e2e` uses the CI results of the preview's editor commit, since the release commit only changes versions.
+
+After the first successful production cutover, set the editor repository variable `PLUGINS_WORKER_LOCKED=production` so later preview cutovers do not roll that Worker back.
+
+## Smoke accounts
+
+`website/scripts/e2e-product-sessions.mjs` signs in `<local>+cp-e2e-<run>-<role>@gmail.com` through the real magic-link mail (IMAP secrets below) and writes a Playwright storage state per role. Its `cleanup` mode always runs afterwards: it deletes the fonts those users own through the website (the same purge the app runs), then their D1 rows and the sign-in mail, and fails if any asset row or R2 object is left. Every delete is guarded by the plus-address check.
+
+- **Preview** (`cloud-collab-preview` project, `tests/cloud-collab-preview-smoke.spec.ts`): an owner on the free trial saves a font, invites the invitee, the invitee accepts, and a nudge syncs between both browsers. Then the owner deletes the font.
+- **Production** (`cloud-collab-product-smoke` project): one account loads the editor signed in without page errors. `wait-for-stack.mjs` already checked every commit, the schema and the room wiring.
+
+Neither project is part of `npm run test:cloud-collab`, and neither retries: a second attempt would find the first one's font.
+
+## Rules for changes that ship through the cutover
+
+A rollback restores code, not data. So:
+
+- D1 changes only add tables and columns. Never rename or drop in the same release that stops using them.
+- Room storage, Durable Object storage and R2 layouts stay readable by the previous release.
+- A Durable Object migration (new class, rename, delete) cannot be rolled back by redeploying the previous version. Ship it in a release of its own, preview it, and expect a manual fix if it has to be undone.
 
 ## Preview vs production hosts
 
@@ -64,7 +108,7 @@ That still bumps the editor version, extracts notes from `CHANGELOG.md`, commits
 | Room R2 | `fonts-room-state-staging` | `fonts-room-state-preview` | `fonts-room-state` |
 | D1 | `context_users_staging` | shared `context_users` | shared `context_users` |
 
-Staging is public and exists to run the cloud-collab suite. It does not serve customers. `push.sh` deploys it and runs the suite. Preview Release and Release deploy the frozen SHAs there again, rerun the suite, then cut those bytes over.
+Staging is public and exists to run the cloud-collab suite. It does not serve customers. `push.sh` deploys it and runs the suite. Preview Release and Release deploy the frozen SHAs there again and rerun the suite, unless staging still serves exactly those commits.
 
 Proxied DNS on `counterpunch.space` (the deploy token cannot edit DNS):
 
@@ -82,18 +126,18 @@ Composed cutover deploys Pages with `cloudflare/wrangler-action` (`pages deploy 
 
 - `CLOUD_E2E_PAT` — GitHub PAT with contents **read + write** on private `website` and `collab` (checkout + sibling tags), and **Actions: Read** on those repos so cutover can require a green push run on the frozen SHAs. Contents read-only is not enough.
 - `CLOUDFLARE_API_TOKEN` — one token Wrangler uses for Workers **and** Pages on both preview and production. It must include:
-  - Account: Workers Scripts Edit, Workers R2 Storage Edit, Cloudflare Pages Edit, **D1 Edit** (cutover applies `schema.sql` to `context_users`, and the signup gate deletes the plus-address user from that database)
+  - Account: Workers Scripts Edit (also used to read and restore Worker deployments for the rollback), Workers R2 Storage Edit (the smoke cleanup lists the room bucket), Cloudflare Pages Edit (Pages rollback), **D1 Edit** (cutover applies `schema.sql` to `context_users`, and the smoke cleanup deletes the plus-address users from that database)
   - Zone `counterpunch.space`: Workers Routes Edit (needed to attach `preview.rooms.counterpunch.space` / production room hostname). Account-only Workers Scripts is enough for `*.workers.dev` (validator/compactor) and fails on zone Worker routes with `No access to the specified resource`. DNS Edit is not required for that routes call.
 - `CLOUDFLARE_ACCOUNT_ID`
-- `SIGNUP_E2E_IMAP_USER` — Gmail address used only for the cutover magic-link gate (`…@gmail.com`)
+- `SIGNUP_E2E_IMAP_USER` — Gmail address used only for the staging signup check and the smoke accounts (`…@gmail.com`)
 - `SIGNUP_E2E_IMAP_PASS` — Google **App Password** for that mailbox (not the Google account password)
 - `E2E_OPERATOR_TOKEN` — same value as the `websitestaging` Pages secret. Push CI and both cutovers send it as `Authorization` on the staging dev routes. It is not set on preview or production.
 
 This is not the same as `CLOUD_E2E_PAT`. The PAT never talks to Cloudflare. Missing IMAP secrets fail the cutover closed (no silent skip).
 
-## Real-email signup gate
+## Real-email signup on staging
 
-Push CI and both cutovers `POST` `/api/auth/request-login` to `https://staging.counterpunch.space` before the Playwright suite (`SIGNUP_E2E_D1_NAME=context_users_staging`). After the product website deploy, and before editor Pages, cutover does the same against `https://preview.counterpunch.space` or `https://counterpunch.space`, then deletes the `+cp-e2e-{run_id}` user from shared D1 `context_users`. Local `npm run test:cloud-collab` still uses `AUTH_TOKEN_ALLOW_INSECURE_LOCAL_FALLBACK`.
+Push CI and the cutover's staging deploy `POST` `/api/auth/request-login` to `https://staging.counterpunch.space` before the Playwright suite (`SIGNUP_E2E_D1_NAME=context_users_staging`), then delete the `+cp-e2e-{run_id}` user. On preview and production the smoke accounts cover sign-in. Local `npm run test:cloud-collab` still uses `AUTH_TOKEN_ALLOW_INSECURE_LOCAL_FALLBACK`.
 
 ## Staging secrets you set once
 

@@ -58,7 +58,7 @@ jobs:
               run: sudo apt-get update && sudo apt-get install -y python3-pytest
 
             - name: Preflight bundled plugin wheels
-              run: node plugin-contracts/generate.mjs && node plugin-contracts/preflight-bundled.mjs && node --test plugin-contracts/supervisor.test.mjs scripts/check-plugin-exception-signatories.test.mjs
+              run: node plugin-contracts/generate.mjs && node plugin-contracts/preflight-bundled.mjs && node --test plugin-contracts/supervisor.test.mjs scripts/check-plugin-exception-signatories.test.mjs scripts/wait-for-stack.test.mjs scripts/cutover-snapshot.test.mjs scripts/check-preview-first.test.mjs
 
             - name: Run static checks and jest
               run: npm run test:checks --prefix webapp
@@ -244,6 +244,8 @@ jobs:
 
             - name: Build editor production bundle
               run: npm run build --prefix webapp
+              env:
+                  BUILD_HASH_FULL: ${{ github.sha }}
 
             - name: Install website dependencies
               run: npm ci
@@ -277,8 +279,9 @@ jobs:
                   EDITOR_ROOT: ${{ github.workspace }}
                   WEBSITE_ROOT: ${{ github.workspace }}/_cloud_e2e/website
                   COLLAB_ROOT: ${{ steps.collab.outputs.root }}
-                  COMMIT_SHA: ${{ github.sha }}
-              run: bash scripts/deploy-cloud-staging.sh site
+              run: |
+                  export COMMIT_SHA="$(git -C "$COLLAB_ROOT" rev-parse HEAD)"
+                  bash scripts/deploy-cloud-staging.sh site
 
             - name: Real-email signup on staging
               working-directory: _cloud_e2e/website
@@ -297,6 +300,18 @@ jobs:
                   CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
                   EDITOR_ROOT: ${{ github.workspace }}
               run: bash scripts/deploy-cloud-staging.sh editor
+
+            - name: Wait until staging serves these commits
+              env:
+                  COLLAB_ROOT: ${{ steps.collab.outputs.root }}
+              run: |
+                  node scripts/wait-for-stack.mjs \
+                    --editor https://staging.editor.counterpunch.space \
+                    --website https://staging.counterpunch.space \
+                    --expect-editor "$GITHUB_SHA" \
+                    --expect-website "$(git -C _cloud_e2e/website rev-parse HEAD)" \
+                    --expect-collab "$(git -C "$COLLAB_ROOT" rev-parse HEAD)" \
+                    --wait 300
 
             - name: Record tested SHAs
               run: |

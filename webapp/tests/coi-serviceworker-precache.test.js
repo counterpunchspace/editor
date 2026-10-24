@@ -34,6 +34,7 @@ describe('precache manifest', () => {
             'assets/fonts/Inter.woff2',
             'wasm-dist/babelfont_fontc_web_bg.wasm',
             '_headers',
+            'build-info.json',
             'worktree-config.json'
         ]);
         expect(urls).toEqual([
@@ -129,6 +130,26 @@ describe('precache manifest', () => {
         );
         expect(() => injectManifest('const VERSION = "v1";', manifest)).toThrow(
             /__PRECACHE_ASSETS__/
+        );
+    });
+});
+
+describe('COI service worker fetch routing', () => {
+    test('leaves build-info.json to the network before any cache lookup', () => {
+        const swContent = readWorkerSource();
+        const fetchListener = swContent.match(
+            /self\.addEventListener\('fetch'[\s\S]*?event\.respondWith\(handleAsset\(request\)\);/
+        );
+        expect(fetchListener).not.toBeNull();
+        const buildInfoBypass = fetchListener[0].indexOf(
+            'requestUrl.pathname === buildInfoUrl'
+        );
+        expect(buildInfoBypass).toBeGreaterThan(-1);
+        expect(buildInfoBypass).toBeLessThan(
+            fetchListener[0].indexOf('handleNavigation(request)')
+        );
+        expect(swContent).toMatch(
+            /const buildInfoUrl = new URL\('\.\/build-info\.json', self\.location\.href\)\.href;/
         );
     });
 });

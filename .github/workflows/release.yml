@@ -1,11 +1,23 @@
 name: Release
 
+# Started by release.sh after it pushed the version commit to main. The tag
+# job of the cutover creates the vX.Y.Z tags only after the smoke test passed.
 on:
-    push:
-        tags:
-            - "v*"
+    workflow_dispatch:
+        inputs:
+            version:
+                description: Release version, e.g. v0.1.0
+                required: true
+                type: string
+            dry_run:
+                description: Stop after the preflight checks; deploy nothing to production
+                type: boolean
+                default: false
 
-# Sets permissions
+concurrency:
+    group: release
+    cancel-in-progress: false
+
 permissions:
     actions: read
     contents: write
@@ -13,59 +25,72 @@ permissions:
 
 jobs:
     certify:
-        if: ${{ !contains(github.ref, '-preview') && !contains(github.ref, '-pre.') }}
         runs-on: ubuntu-latest
         outputs:
             VERSION: ${{ steps.version.outputs.VERSION }}
-            COMMIT_SHA: ${{ steps.commit.outputs.COMMIT_SHA }}
-            COMMIT_SHORT: ${{ steps.commit.outputs.COMMIT_SHORT }}
+            COMMIT_SHA: ${{ steps.version.outputs.COMMIT_SHA }}
+            PREVIEW_EDITOR_SHA: ${{ steps.preview.outputs.preview_editor_sha }}
+            WEBSITE_SHA: ${{ steps.preview.outputs.website_sha }}
+            COLLAB_SHA: ${{ steps.preview.outputs.collab_sha }}
         steps:
             - name: Checkout
               uses: actions/checkout@v4
               with:
-                  fetch-depth: 0 # Fetch all history to get the commit for the tag
+                  fetch-depth: 0
 
-            - name: Get commit SHA for tag
-              id: commit
-              run: |
-                  COMMIT_SHA=$(git rev-list -n 1 ${{ github.ref }})
-                  COMMIT_SHORT=$(git rev-parse --short "$COMMIT_SHA")
-                  echo "COMMIT_SHA=$COMMIT_SHA" >> $GITHUB_OUTPUT
-                  echo "COMMIT_SHORT=$COMMIT_SHORT" >> $GITHUB_OUTPUT
-                  echo "Commit SHA for tag: $COMMIT_SHA"
-
-            - name: Extract version tag
+            - name: Validate version and release commit
               id: version
-              run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+              env:
+                  VERSION: ${{ inputs.version }}
+              run: |
+                  set -euo pipefail
+                  if [ "$GITHUB_REF" != "refs/heads/main" ]; then
+                    echo "Run the release from main, not $GITHUB_REF"
+                    exit 1
+                  fi
+                  if ! [[ "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+                    echo "Version must look like v1.2.3, got $VERSION"
+                    exit 1
+                  fi
+                  COMMIT_SHA=$(git rev-parse HEAD)
+                  existing=$(git ls-remote origin "refs/tags/${VERSION}" "refs/tags/${VERSION}^{}" | tail -1 | cut -f1)
+                  if [ -n "$existing" ] && [ "$existing" != "$COMMIT_SHA" ]; then
+                    echo "Tag $VERSION already exists on $existing, not $COMMIT_SHA"
+                    exit 1
+                  fi
+                  if [ "${{ inputs.dry_run }}" != "true" ] && ! grep -qE "^# ${VERSION}( |$)" CHANGELOG.md; then
+                    echo "CHANGELOG.md has no '# ${VERSION}' section. Run release.sh."
+                    exit 1
+                  fi
+                  echo "VERSION=$VERSION" >> "$GITHUB_OUTPUT"
+                  echo "COMMIT_SHA=$COMMIT_SHA" >> "$GITHUB_OUTPUT"
+
+            - name: Require a preview of this release
+              id: preview
+              env:
+                  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+              run: node scripts/check-preview-first.mjs "${{ steps.version.outputs.COMMIT_SHA }}"
 
             - name: Extract release notes from CHANGELOG
-              id: changelog
               run: |
                   # Extract content between second and third # headlines (skipping "# Unreleased")
                   awk '/^# / {if (++count == 3) exit} count == 2 && !/^# / {print}' CHANGELOG.md > release-notes.md
-
-                  # Show extracted content
                   echo "Release notes:"
                   cat release-notes.md
 
-                  # Set output for GitHub release
-                  echo "RELEASE_NOTES<<EOF" >> $GITHUB_OUTPUT
-                  cat release-notes.md >> $GITHUB_OUTPUT
-                  echo "EOF" >> $GITHUB_OUTPUT
-
-            # Editor CI (checks, jest, chromium Playwright, Rust, Prettier and
-            # the sharded cloud-collab e2e) already ran on this commit when main
-            # was pushed. The release does not repeat any of it.
+            # Editor CI already ran on this commit when main was pushed. The
+            # release does not repeat any of it.
             - name: Wait for green CI
               env:
                   GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-              run: bash scripts/wait-for-green-ci.sh "" "${{ steps.commit.outputs.COMMIT_SHA }}" ci.yml
+              run: bash scripts/wait-for-green-ci.sh "" "${{ steps.version.outputs.COMMIT_SHA }}" ci.yml
 
             - name: Upload release notes
               uses: actions/upload-artifact@v4
               with:
                   name: production-release-notes
                   path: release-notes.md
+                  overwrite: true
 
     cutover:
         needs: certify
@@ -73,14 +98,17 @@ jobs:
         with:
             target: production
             editor_sha: ${{ needs.certify.outputs.COMMIT_SHA }}
-            website_ref: ${{ vars.WEBSITE_SHA != '' && vars.WEBSITE_SHA || 'main' }}
-            collab_ref: ${{ vars.COLLAB_SHA != '' && vars.COLLAB_SHA || 'main' }}
+            website_ref: ${{ needs.certify.outputs.WEBSITE_SHA }}
+            collab_ref: ${{ needs.certify.outputs.COLLAB_SHA }}
             release_tag: ${{ needs.certify.outputs.VERSION }}
             editor_version: ${{ needs.certify.outputs.VERSION }}
+            attested_editor_sha: ${{ needs.certify.outputs.PREVIEW_EDITOR_SHA }}
+            dry_run: ${{ inputs.dry_run }}
         secrets: inherit
 
     github-release:
         needs: [certify, cutover]
+        if: ${{ !inputs.dry_run }}
         runs-on: ubuntu-latest
         steps:
             - name: Checkout
@@ -103,6 +131,7 @@ jobs:
             - name: Create GitHub Release
               env:
                   GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+                  VERSION: ${{ needs.certify.outputs.VERSION }}
               run: |
                   NOTES=$(mktemp)
                   cat release-notes.md > "$NOTES"
@@ -111,11 +140,16 @@ jobs:
                     cat trio.json >> "$NOTES"
                     printf '\n```\n' >> "$NOTES"
                   fi
-                  gh release create "${{ needs.certify.outputs.VERSION }}" \
-                      --target "${{ needs.certify.outputs.COMMIT_SHA }}" \
-                      --title "${{ needs.certify.outputs.VERSION }}" \
-                      --notes-file "$NOTES" \
-                      trio.json
+                  if gh release view "$VERSION" >/dev/null 2>&1; then
+                    gh release edit "$VERSION" --title "$VERSION" --notes-file "$NOTES"
+                    gh release upload "$VERSION" trio.json --clobber
+                  else
+                    gh release create "$VERSION" \
+                        --target "${{ needs.certify.outputs.COMMIT_SHA }}" \
+                        --title "$VERSION" \
+                        --notes-file "$NOTES" \
+                        trio.json
+                  fi
 
             - name: Deployment summary
               run: |

@@ -3,11 +3,12 @@
  * Product secret check before a hostname cutover.
  *
  *   node scripts/probe-product-secrets.mjs check-names preview|production
- *   node scripts/probe-product-secrets.mjs promote-room preview|production
+ *   node scripts/probe-product-secrets.mjs deploy-room preview|production
  *
  * check-names fails if a required secret is missing. It does not deploy.
- * promote-room uploads the room as a version, calls /internal/cutover-pairing
- * on that version URL, then sends 100% of the route to that version.
+ * deploy-room deploys the room, then POSTs /internal/cutover-pairing on its
+ * workers.dev URL and exits non-zero if pairing fails, so the cutover rolls
+ * back.
  * Collab root: COLLAB_ROOT. Never prints secret values.
  */
 
@@ -16,8 +17,8 @@ import path from "node:path";
 
 const mode = process.argv[2];
 const target = process.argv[3];
-if (!["check-names", "promote-room"].includes(mode)) {
-  throw new Error("mode must be check-names or promote-room");
+if (!["check-names", "deploy-room"].includes(mode)) {
+  throw new Error("mode must be check-names or deploy-room");
 }
 if (target !== "preview" && target !== "production") {
   throw new Error("target must be preview or production");
@@ -131,31 +132,39 @@ function checkNames() {
   }
 }
 
-function promoteRoom() {
+function workersDevUrlFromDeployOutput(output) {
+  return output.match(/https:\/\/[a-z0-9-]+\.[a-z0-9-]+\.workers\.dev/i)?.[0] ?? null;
+}
+
+function deployRoom() {
   const roomDir = path.join(collabRoot, "workers/room");
   const commit = process.env.COMMIT_SHA || "unknown";
-  const uploaded = wrangler(
-    [
-      "versions",
-      "upload",
-      ...workerArgs(["--var", `COMMIT_SHA:${commit}`]),
-    ],
+  const deployed = wrangler(
+    ["deploy", ...workerArgs(["--var", `COMMIT_SHA:${commit}`])],
     roomDir,
   );
-  process.stdout.write(uploaded);
-  const versionId = uploaded.match(
-    /Worker Version ID:\s*([0-9a-f-]{36})/i,
-  )?.[1];
-  const previewUrl = uploaded.match(/https:\/\/[^\s]+workers\.dev[^\s]*/)?.[0];
-  if (!versionId || !previewUrl) {
-    throw new Error(
-      "versions upload did not report a version id and a workers.dev preview URL",
-    );
+  process.stdout.write(deployed);
+  const workersDevUrl = workersDevUrlFromDeployOutput(deployed);
+  if (!workersDevUrl) {
+    throw new Error("wrangler deploy did not report a workers.dev URL");
   }
-  const pairingUrl = `${previewUrl.replace(/\/$/, "")}/internal/cutover-pairing`;
   const probe = execFileSync(
     "curl",
-    ["--fail-with-body", "--silent", "--show-error", "--max-time", "60", "-X", "POST", pairingUrl],
+    [
+      "--fail-with-body",
+      "--silent",
+      "--show-error",
+      "--max-time",
+      "60",
+      "--retry",
+      "5",
+      "--retry-all-errors",
+      "--retry-delay",
+      "5",
+      "-X",
+      "POST",
+      `${workersDevUrl}/internal/cutover-pairing`,
+    ],
     { encoding: "utf8" },
   );
   const body = JSON.parse(probe);
@@ -163,20 +172,10 @@ function promoteRoom() {
     throw new Error(`cutover pairing failed: ${probe}`);
   }
   console.log("cutover pairing ok");
-  const deployed = wrangler(
-    [
-      "versions",
-      "deploy",
-      `${versionId}@100`,
-      ...workerArgs(["--yes"]),
-    ],
-    roomDir,
-  );
-  process.stdout.write(deployed);
 }
 
 if (mode === "check-names") {
   checkNames();
 } else {
-  promoteRoom();
+  deployRoom();
 }
