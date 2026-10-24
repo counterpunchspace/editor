@@ -35,7 +35,10 @@ export {
     pathHasSubtractionFlag
 };
 import { assertModelMutationAllowed } from './model-mutation-policy';
-import type { FilesystemPlugin } from './filesystem-plugins/filesystem-plugin';
+import type {
+    FilesystemPlugin,
+    MasterTopologyGate
+} from './filesystem-plugins/filesystem-plugin';
 import { applyGlyphRenameUiContext } from './rename-glyphs-ui-context';
 import { assertGlyphRenamePreflight } from './rename-glyphs-preflight';
 import { applyGlyphDeleteUiContext } from './delete-glyphs-ui-context';
@@ -3262,6 +3265,30 @@ export function buildInterpolationRustBatchOperations(
 }
 
 /**
+ * Replace base per-document packets with refined ones by document id. A
+ * refine pass only re-encodes the documents it touched, so every other base
+ * packet must survive.
+ */
+export function mergeDocumentUpdatePackets(
+    base: Array<{ documentId: string; update: Uint8Array }> | undefined,
+    refined: Array<{ documentId: string; update: Uint8Array }>
+): Array<{ documentId: string; update: Uint8Array }> {
+    const refinedById = new Map(
+        refined.map((packet) => [packet.documentId, packet])
+    );
+    const merged = (base ?? []).map(
+        (packet) => refinedById.get(packet.documentId) ?? packet
+    );
+    const baseIds = new Set((base ?? []).map((packet) => packet.documentId));
+    for (const packet of refined) {
+        if (!baseIds.has(packet.documentId)) {
+            merged.push(packet);
+        }
+    }
+    return merged;
+}
+
+/**
  * Apply a worker-authored Yjs update. Trailing history/document args are
  * omitted when there are no per-document packets so callers keep the
  * three-argument contract used for core-only batches.
@@ -3662,6 +3689,34 @@ function assertCanAddGlyphs(additionalGlyphCount: number): void {
     const gate = plugin.getCachedCanAddGlyphs(additionalGlyphCount);
     if (!gate.allowed) {
         throw new Error(gate.reason || 'Glyph limit reached');
+    }
+}
+
+function masterTopologyGateForFont(font: Font): MasterTopologyGate {
+    if (getCurrentWindowFontModel() !== font) {
+        return { allowed: true };
+    }
+    // Not `fontManager.currentFont`: that getter rewrites window.currentFontModel.
+    const openedFonts = (window as Unsafe).fontManager?.openedFonts as
+        Map<string, { fontModel?: unknown; sourcePlugin?: Unsafe }> | undefined;
+    for (const openedFont of openedFonts?.values?.() ?? []) {
+        if (openedFont?.fontModel === font) {
+            const plugin = openedFont.sourcePlugin;
+            return typeof plugin?.getMasterTopologyGate === 'function'
+                ? plugin.getMasterTopologyGate()
+                : { allowed: true };
+        }
+    }
+    return { allowed: true };
+}
+
+function assertMasterTopologyChangeAllowed(font: Font | null): void {
+    if (!font) {
+        return;
+    }
+    const gate = masterTopologyGateForFont(font);
+    if (!gate.allowed) {
+        throw new Error(gate.reason || 'Masters cannot be changed right now');
     }
 }
 
@@ -12659,6 +12714,10 @@ export class Master extends ArrayElementBase {
 
     async reinterpolateLayers(): Promise<void> {
         assertModelMutationAllowed();
+        const parentFont = this.parent();
+        assertMasterTopologyChangeAllowed(
+            parentFont instanceof Font ? parentFont : null
+        );
         const outlineEditor =
             typeof window !== 'undefined'
                 ? (window as Unsafe).glyphCanvas?.outlineEditor
@@ -14905,6 +14964,14 @@ export class Font extends ModelBase {
         return index >= 0 ? masters[index] : undefined;
     }
 
+    /**
+     * Whether masters may be added, removed, or reinterpolated now. Cloud
+     * fonts refuse while some glyphs are not downloaded.
+     */
+    getMasterTopologyGate(): MasterTopologyGate {
+        return masterTopologyGateForFont(this);
+    }
+
     private createModelRecordId(prefix: string): string {
         if (
             typeof crypto !== 'undefined' &&
@@ -15222,6 +15289,7 @@ export class Font extends ModelBase {
         options?: AddMasterOptions
     ): Promise<Master | null> {
         assertModelMutationAllowed();
+        assertMasterTopologyChangeAllowed(this);
         const clonedMaster = this.clonePlainValue(
             master ?? this.buildDefaultMasterRecord(options)
         );
@@ -15299,7 +15367,10 @@ export class Font extends ModelBase {
                         finalUpdate = refined.update;
                     }
                     if (refined.updates?.length) {
-                        documentUpdates = refined.updates;
+                        documentUpdates = mergeDocumentUpdatePackets(
+                            documentUpdates,
+                            refined.updates
+                        );
                     }
                     const overrideByKey = new Map(
                         overrides.map((override) => [
@@ -15371,6 +15442,7 @@ export class Font extends ModelBase {
 
     async removeMastersByIds(masterIds: string[]): Promise<boolean> {
         assertModelMutationAllowed();
+        assertMasterTopologyChangeAllowed(this);
         const normalizedMasterIds = Array.from(
             new Set(
                 masterIds.filter(

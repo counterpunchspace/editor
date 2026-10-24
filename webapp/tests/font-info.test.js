@@ -31,6 +31,7 @@ jest.mock('tippy.js', () =>
         };
 
         props.onCreate?.(instance);
+        (global.__fontInfoTippyInstances ||= []).push(instance);
         return instance;
     })
 );
@@ -1859,6 +1860,177 @@ describe('FontInfo feature code compilation scheduling', () => {
                 '#fontinfo-masters-content .fontinfo-record-item-primary'
             ).textContent
         ).toBe('Bold');
+    });
+
+    test('masters add, remove, and reinterpolate are disabled while the font is partly downloaded', async () => {
+        document.body.innerHTML = `
+                <div id="view-fontinfo" class="view view-fontinfo focused">
+                    <div class="view-title-bar">
+                        <div class="view-title-right">
+                            <div id="fontinfo-search-control" style="display: none;">
+                                <input id="fontinfo-search-input" />
+                            </div>
+                        </div>
+                    </div>
+                    <div class="view-content">
+                        <div id="browser-compat"></div>
+                    </div>
+                </div>
+            `;
+
+        const fontInfoManager = loadFontInfoManager();
+        const reason =
+            'This font is only partly downloaded. Reopen it with all glyphs to add, remove, or reinterpolate masters.';
+        let gate = { allowed: false, reason, canReopenWithAllGlyphs: true };
+        const addMaster = jest.fn();
+        const removeMastersByIds = jest.fn();
+        const reopenWithAllGlyphs = jest.fn().mockResolvedValue(true);
+        const previousCloudPlugin = window.cloudPlugin;
+        window.cloudPlugin = { reopenWithAllGlyphs };
+
+        window.currentFontModel = {
+            axes: [],
+            names: {},
+            features: { features: [] },
+            masters: [
+                {
+                    id: 'M1',
+                    name: { dflt: 'Regular' },
+                    location: {},
+                    metrics: {},
+                    kerning: {}
+                }
+            ],
+            addMaster,
+            removeMastersByIds,
+            getMasterTopologyGate: () => gate
+        };
+
+        try {
+            fontInfoManager.init();
+            jest.runOnlyPendingTimers();
+            fontInfoManager.switchTab('masters');
+
+            const addButton = document.querySelector(
+                '[data-fontinfo-list-action="masters-add"]'
+            );
+            const removeButton = document.querySelector(
+                '[data-fontinfo-list-action="masters-remove"]'
+            );
+            expect(addButton.disabled).toBe(true);
+            expect(removeButton.disabled).toBe(true);
+            expect(addButton.title).toBe(reason);
+            expect(removeButton.title).toBe(reason);
+            addButton.click();
+            removeButton.click();
+            expect(addMaster).not.toHaveBeenCalled();
+            expect(removeMastersByIds).not.toHaveBeenCalled();
+
+            const notice = document.querySelector(
+                '[data-fontinfo-masters-blocked="true"]'
+            );
+            expect(notice.textContent).toContain(reason);
+            const reopenButton = document.querySelector(
+                '[data-fontinfo-list-action="masters-reopen-all-glyphs"]'
+            );
+            expect(reopenButton.textContent).toBe('Reopen with all glyphs');
+            reopenButton.click();
+            await Promise.resolve();
+            expect(reopenWithAllGlyphs).toHaveBeenCalledTimes(1);
+
+            const masterItem = document.querySelector(
+                '#fontinfo-masters-content .fontinfo-record-item'
+            );
+            masterItem.dispatchEvent(
+                new MouseEvent('contextmenu', {
+                    bubbles: true,
+                    cancelable: true
+                })
+            );
+            const menuInstance = (global.__fontInfoTippyInstances || [])
+                .filter((instance) =>
+                    String(instance.props?.content || '').includes(
+                        'data-action="reinterpolate"'
+                    )
+                )
+                .pop();
+            expect(menuInstance.state.isVisible).toBe(true);
+            const reinterpolateItem = menuInstance.popper.querySelector(
+                '.plugin-menu-item[data-action="reinterpolate"]'
+            );
+            expect(reinterpolateItem.title).toBe(reason);
+            reinterpolateItem.click();
+            expect(menuInstance.state.isVisible).toBe(true);
+            expect(
+                reinterpolateItem.classList.contains(
+                    'plugin-menu-item-disabled'
+                )
+            ).toBe(true);
+            expect(reinterpolateItem.getAttribute('aria-disabled')).toBe(
+                'true'
+            );
+
+            gate = { allowed: true };
+            window.dispatchEvent(
+                new CustomEvent('cloudSparseResidencyChanged')
+            );
+            expect(
+                document.querySelector(
+                    '[data-fontinfo-list-action="masters-add"]'
+                ).disabled
+            ).toBe(false);
+            expect(
+                document.querySelector(
+                    '[data-fontinfo-list-action="masters-remove"]'
+                ).disabled
+            ).toBe(false);
+            expect(
+                document.querySelector('[data-fontinfo-masters-blocked="true"]')
+            ).toBeNull();
+        } finally {
+            window.cloudPlugin = previousCloudPlugin;
+        }
+    });
+
+    test('masters header shows no reopen action when reopening cannot help', () => {
+        document.body.innerHTML = `
+                <div id="view-fontinfo" class="view view-fontinfo focused">
+                    <div class="view-content">
+                        <div id="browser-compat"></div>
+                    </div>
+                </div>
+            `;
+
+        const fontInfoManager = loadFontInfoManager();
+        window.currentFontModel = {
+            axes: [],
+            names: {},
+            features: { features: [] },
+            masters: [],
+            getMasterTopologyGate: () => ({
+                allowed: false,
+                reason: 'Masters cannot be added, removed, or reinterpolated while some glyphs stay on the server.',
+                canReopenWithAllGlyphs: false
+            })
+        };
+
+        fontInfoManager.init();
+        jest.runOnlyPendingTimers();
+        fontInfoManager.switchTab('masters');
+
+        expect(
+            document.querySelector('[data-fontinfo-masters-blocked="true"]')
+                .textContent
+        ).toContain('stay on the server');
+        expect(
+            document.querySelector(
+                '[data-fontinfo-list-action="masters-reopen-all-glyphs"]'
+            )
+        ).toBeNull();
+        expect(
+            document.querySelector('[data-fontinfo-list-action="masters-add"]')
+                .disabled
+        ).toBe(true);
     });
 
     test('masters reorder rebuilds the visible list while a detail input remains focused', () => {

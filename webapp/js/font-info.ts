@@ -26,6 +26,7 @@ import type {
 } from './patch-sync-engine';
 import type { Babelfont } from './babelfont';
 import type { Font as BabelfontModelFont } from './babelfont-model';
+import type { MasterTopologyGate } from './filesystem-plugins/filesystem-plugin';
 import {
     getFeatureDescription,
     getFeatureExecutionOrder,
@@ -816,6 +817,7 @@ class FontInfoManager {
     private selectedAxisIndices: Set<number> = new Set([0]);
     private _deleteConfirmationHandler: boolean | null = null;
     private renderedMasterListSignature = '';
+    private renderedMasterTopologyGateSignature = '';
     private renderedInstanceListSignature = '';
     private renderedAxisListSignature = '';
     private draggedMasterIndex: number | null = null;
@@ -896,6 +898,15 @@ class FontInfoManager {
         // Listen for new font models immediately so stale content clears as
         // soon as the replacement font is installed, not after startup gates.
         window.addEventListener('fontModelReady', () => this.onFontLoaded());
+        window.addEventListener('cloudSparseResidencyChanged', () => {
+            if (
+                this.masterTopologyGateSignature(
+                    this.getMasterTopologyGate()
+                ) !== this.renderedMasterTopologyGateSignature
+            ) {
+                this.forceRefreshVisibleMastersContent();
+            }
+        });
         window.addEventListener('fontModelSync', () =>
             this.onFontModelSynced()
         );
@@ -4218,6 +4229,7 @@ class FontInfoManager {
         canRemove: boolean;
         onAdd: () => void;
         onRemove: () => void;
+        disabledReason?: string;
     }): HTMLElement {
         const header = document.createElement('div');
         header.className = 'editor-layers-header';
@@ -4261,7 +4273,12 @@ class FontInfoManager {
             `${options.title.toLowerCase()}-remove`
         );
         removeButton.textContent = '−';
-        removeButton.disabled = !options.canRemove;
+        removeButton.disabled = !options.canRemove || !!options.disabledReason;
+        if (options.disabledReason) {
+            addButton.disabled = true;
+            addButton.title = options.disabledReason;
+            removeButton.title = options.disabledReason;
+        }
         removeButton.addEventListener('mousedown', (event) => {
             event.preventDefault();
         });
@@ -4554,6 +4571,13 @@ class FontInfoManager {
         const layout = document.createElement('div');
         layout.className = 'fontinfo-records-layout';
 
+        const topologyGate = this.getMasterTopologyGate();
+        this.renderedMasterTopologyGateSignature =
+            this.masterTopologyGateSignature(topologyGate);
+        const topologyBlockedReason = topologyGate.allowed
+            ? undefined
+            : topologyGate.reason || 'Masters cannot be changed right now.';
+
         const sidebar = document.createElement('aside');
         sidebar.className =
             'view-sidebar view-sidebar-left fontinfo-records-sidebar';
@@ -4563,9 +4587,18 @@ class FontInfoManager {
                 canRemove:
                     masters.length > 0 && this.selectedMasterIndices.size > 0,
                 onAdd: () => this.addMasterRecord(),
-                onRemove: () => this.removeSelectedMasterRecord()
+                onRemove: () => this.removeSelectedMasterRecord(),
+                disabledReason: topologyBlockedReason
             })
         );
+        if (topologyBlockedReason) {
+            sidebar.appendChild(
+                this.createMasterTopologyBlockedNotice(
+                    topologyBlockedReason,
+                    topologyGate.canReopenWithAllGlyphs === true
+                )
+            );
+        }
         const list = document.createElement('div');
         list.className =
             'sidebar-list editor-layers-list fontinfo-records-list';
@@ -4624,8 +4657,11 @@ class FontInfoManager {
 
             // Context menu — appears on right-click.
             if (masterId) {
+                const reinterpolateDisabled = topologyBlockedReason
+                    ? ' disabled plugin-menu-item-disabled" aria-disabled="true'
+                    : '';
                 const menuHtml = `<div class="plugin-menu" tabindex="0" role="menu">
-                    <div class="plugin-menu-item" data-action="reinterpolate" role="menuitem">
+                    <div class="plugin-menu-item${reinterpolateDisabled}" data-action="reinterpolate" role="menuitem">
                         <span class="material-symbols-outlined">refresh</span>
                         <span>Reinterpolate all layers</span>
                     </div>
@@ -4648,7 +4684,18 @@ class FontInfoManager {
                             (menu as HTMLElement)
                                 .querySelectorAll('.plugin-menu-item')
                                 .forEach((item) => {
+                                    if (topologyBlockedReason) {
+                                        (item as HTMLElement).title =
+                                            topologyBlockedReason;
+                                    }
                                     (item as HTMLElement).onclick = () => {
+                                        if (
+                                            item.classList.contains(
+                                                'plugin-menu-item-disabled'
+                                            )
+                                        ) {
+                                            return;
+                                        }
                                         instance.hide();
                                         if (
                                             item.getAttribute('data-action') ===
@@ -6531,6 +6578,59 @@ class FontInfoManager {
         }
 
         await modelMaster.reinterpolateLayers();
+    }
+
+    private masterTopologyGateSignature(gate: MasterTopologyGate): string {
+        return gate.allowed
+            ? 'allowed'
+            : `${gate.canReopenWithAllGlyphs === true}:${gate.reason || ''}`;
+    }
+
+    private getMasterTopologyGate(): MasterTopologyGate {
+        const font = window.currentFontModel as
+            | { getMasterTopologyGate?: () => MasterTopologyGate }
+            | null
+            | undefined;
+        return font?.getMasterTopologyGate?.() ?? { allowed: true };
+    }
+
+    private createMasterTopologyBlockedNotice(
+        reason: string,
+        canReopenWithAllGlyphs: boolean
+    ): HTMLElement {
+        const notice = document.createElement('div');
+        notice.className = 'fontinfo-masters-blocked-notice';
+        notice.setAttribute('data-fontinfo-masters-blocked', 'true');
+
+        const text = document.createElement('div');
+        text.className = 'localized-string-helper';
+        text.textContent = reason;
+        notice.appendChild(text);
+
+        if (canReopenWithAllGlyphs) {
+            const reopen = document.createElement('button');
+            reopen.type = 'button';
+            reopen.className = 'dialog-button';
+            reopen.setAttribute(
+                'data-fontinfo-list-action',
+                'masters-reopen-all-glyphs'
+            );
+            reopen.textContent = 'Reopen with all glyphs';
+            reopen.addEventListener('click', async () => {
+                reopen.disabled = true;
+                try {
+                    await window.cloudPlugin?.reopenWithAllGlyphs?.();
+                } catch (error) {
+                    console.error('Reopen with all glyphs failed:', error);
+                    text.textContent =
+                        error instanceof Error ? error.message : String(error);
+                    reopen.disabled = false;
+                }
+            });
+            notice.appendChild(reopen);
+        }
+
+        return notice;
     }
 
     private async addMasterRecord() {

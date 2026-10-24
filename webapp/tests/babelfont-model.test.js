@@ -4,6 +4,7 @@ const { Bezier } = require('bezier-js');
 const {
     Font,
     Layer,
+    mergeDocumentUpdatePackets,
     pathHasSubtractionFlag
 } = require('../js/babelfont-model');
 const { PatchSyncEngine } = require('../js/patch-sync-engine');
@@ -904,6 +905,245 @@ describe('Babelfont Object Model', () => {
             window.patchSyncEngine = previousBridge;
             window.fontManager = previousFontManager;
             workerBatchSpy.mockRestore();
+        }
+    });
+
+    test('master topology changes are refused while the source plugin reports partial hydration', async () => {
+        const gatedFont = Font.fromData({
+            upm: 1000,
+            version: [1, 0],
+            axes: [
+                {
+                    name: { dflt: 'Weight' },
+                    tag: 'wght',
+                    min: 400,
+                    default: 400,
+                    max: 700
+                }
+            ],
+            cross_axis_mappings: [],
+            instances: [],
+            masters: [
+                {
+                    name: { dflt: 'Regular' },
+                    id: 'master-1',
+                    location: { wght: 400 },
+                    guides: [],
+                    metrics: {},
+                    kerning: {}
+                },
+                {
+                    name: { dflt: 'Bold' },
+                    id: 'master-2',
+                    location: { wght: 700 },
+                    guides: [],
+                    metrics: {},
+                    kerning: {}
+                }
+            ],
+            glyphs: [
+                {
+                    name: 'A',
+                    category: 'Base',
+                    exported: true,
+                    layers: [
+                        {
+                            width: 500,
+                            id: 'master-1',
+                            master: {
+                                type: 'DefaultForMaster',
+                                master: 'master-1'
+                            }
+                        },
+                        {
+                            width: 600,
+                            id: 'master-2',
+                            master: {
+                                type: 'DefaultForMaster',
+                                master: 'master-2'
+                            }
+                        }
+                    ]
+                }
+            ],
+            note: '',
+            date: new Date('2020-01-01T00:00:00.000Z'),
+            names: {},
+            features: {
+                classes: {},
+                prefixes: {},
+                features: []
+            }
+        });
+        const previousFontModel = window.currentFontModel;
+        const previousBridge = window.patchSyncEngine;
+        const previousFontManager = window.fontManager;
+        const previousGlyphCanvas = window.glyphCanvas;
+        const reason =
+            'This font is only partly downloaded. Reopen it with all glyphs to add, remove, or reinterpolate masters.';
+        const getMasterTopologyGate = jest.fn(() => ({
+            allowed: false,
+            reason
+        }));
+        const applyLocalGeneratedYjsUpdate = jest.fn();
+        const addBatchSpy = jest.spyOn(
+            fontManager,
+            'buildWorkerAddMasterWithInterpolatedLayersBatch'
+        );
+        const removeBatchSpy = jest.spyOn(
+            fontManager,
+            'buildWorkerRemoveMastersBatch'
+        );
+        const reinterpolateBatchSpy = jest.spyOn(
+            fontManager,
+            'buildWorkerReinterpolateMasterLayersBatch'
+        );
+        const reinterpolateAllLayersForMaster = jest.fn();
+        const mastersBefore = JSON.parse(
+            JSON.stringify(gatedFont._data.masters)
+        );
+        const axesBefore = JSON.parse(JSON.stringify(gatedFont._data.axes));
+
+        window.currentFontModel = gatedFont;
+        window.patchSyncEngine = { applyLocalGeneratedYjsUpdate };
+        window.fontManager = Object.create(fontManager, {
+            openedFonts: {
+                value: new Map([
+                    [
+                        'font-1',
+                        {
+                            fontModel: gatedFont,
+                            sourcePlugin: { getMasterTopologyGate }
+                        }
+                    ]
+                ])
+            }
+        });
+        window.glyphCanvas = {
+            outlineEditor: { reinterpolateAllLayersForMaster }
+        };
+
+        try {
+            await expect(
+                gatedFont.addMaster(undefined, { location: { wght: 900 } })
+            ).rejects.toThrow(reason);
+            await expect(
+                gatedFont.removeMastersByIds(['master-2'])
+            ).rejects.toThrow(reason);
+            await expect(
+                gatedFont.findMaster('master-2').delete()
+            ).rejects.toThrow(reason);
+            await expect(
+                gatedFont.findMaster('master-1').reinterpolateLayers()
+            ).rejects.toThrow(reason);
+
+            expect(addBatchSpy).not.toHaveBeenCalled();
+            expect(removeBatchSpy).not.toHaveBeenCalled();
+            expect(reinterpolateBatchSpy).not.toHaveBeenCalled();
+            expect(reinterpolateAllLayersForMaster).not.toHaveBeenCalled();
+            expect(applyLocalGeneratedYjsUpdate).not.toHaveBeenCalled();
+            expect(gatedFont._data.masters).toEqual(mastersBefore);
+            expect(gatedFont._data.axes).toEqual(axesBefore);
+            expect(
+                gatedFont.findGlyph('A').findLayerById('master-2')
+            ).toBeDefined();
+        } finally {
+            window.currentFontModel = previousFontModel;
+            window.patchSyncEngine = previousBridge;
+            window.fontManager = previousFontManager;
+            window.glyphCanvas = previousGlyphCanvas;
+            addBatchSpy.mockRestore();
+            removeBatchSpy.mockRestore();
+            reinterpolateBatchSpy.mockRestore();
+        }
+    });
+
+    test('refined add-master packets replace only the documents they cover', () => {
+        const packet = (documentId, byte) => ({
+            documentId,
+            update: new Uint8Array([byte])
+        });
+        const merged = mergeDocumentUpdatePackets(
+            [
+                packet('core', 1),
+                packet('glyph:a', 2),
+                packet('glyph:adieresis', 3),
+                packet('glyph:dot', 4)
+            ],
+            [packet('core', 11), packet('glyph:adieresis', 13)]
+        );
+
+        expect(
+            merged.map((entry) => [entry.documentId, entry.update[0]])
+        ).toEqual([
+            ['core', 11],
+            ['glyph:a', 2],
+            ['glyph:adieresis', 13],
+            ['glyph:dot', 4]
+        ]);
+        expect(
+            mergeDocumentUpdatePackets(undefined, [packet('core', 5)])
+        ).toEqual([packet('core', 5)]);
+    });
+
+    test('master topology gate ignores fonts that are not the current window font', async () => {
+        const detachedFont = Font.fromData({
+            upm: 1000,
+            version: [1, 0],
+            axes: [],
+            cross_axis_mappings: [],
+            instances: [],
+            masters: [
+                {
+                    name: { dflt: 'Regular' },
+                    id: 'master-1',
+                    location: {},
+                    guides: [],
+                    metrics: {},
+                    kerning: {}
+                },
+                {
+                    name: { dflt: 'Bold' },
+                    id: 'master-2',
+                    location: {},
+                    guides: [],
+                    metrics: {},
+                    kerning: {}
+                }
+            ],
+            glyphs: [],
+            note: '',
+            date: new Date('2020-01-01T00:00:00.000Z'),
+            names: {},
+            features: { classes: {}, prefixes: {}, features: [] }
+        });
+        const previousFontModel = window.currentFontModel;
+        const previousFontManager = window.fontManager;
+        const getMasterTopologyGate = jest.fn(() => ({
+            allowed: false,
+            reason: 'blocked'
+        }));
+        window.currentFontModel = null;
+        window.fontManager = {
+            openedFonts: new Map([
+                [
+                    'font-1',
+                    {
+                        fontModel: detachedFont,
+                        sourcePlugin: { getMasterTopologyGate }
+                    }
+                ]
+            ])
+        };
+
+        try {
+            await expect(
+                detachedFont.removeMastersByIds(['master-2'])
+            ).resolves.toBe(true);
+            expect(getMasterTopologyGate).not.toHaveBeenCalled();
+        } finally {
+            window.currentFontModel = previousFontModel;
+            window.fontManager = previousFontManager;
         }
     });
 

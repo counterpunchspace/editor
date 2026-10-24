@@ -1481,6 +1481,25 @@ export class PatchSyncEngine {
         this._patchGlyphFromYDoc(name, { ignoreExisting: true });
     }
 
+    /** Non-deleted catalog glyph ids, read from font-core without building font JSON. */
+    listLiveCatalogGlyphIds(): string[] {
+        const yCatalog = this.fontMap.get(CORE_GLYPH_CATALOG_KEY);
+        if (!(yCatalog instanceof Y.Map)) {
+            return [];
+        }
+        const ids: string[] = [];
+        yCatalog.forEach((entry, glyphId) => {
+            const deleted =
+                entry instanceof Y.Map
+                    ? entry.get('deleted')
+                    : (entry as { deleted?: unknown } | null)?.deleted;
+            if (glyphId && deleted !== true) {
+                ids.push(glyphId);
+            }
+        });
+        return ids;
+    }
+
     listGlyphRevisionTokens(): Array<{ glyphId: string; revision: string }> {
         const revisions = this.yDoc.getMap(GLYPH_REVISIONS_KEY);
         const tokens: Array<{ glyphId: string; revision: string }> = [];

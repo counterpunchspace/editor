@@ -4520,6 +4520,14 @@ html[data-command-modifier='ctrl'] .shortcut-option-modifier::before {
     margin: 0 -12px;
 }
 
+.fontinfo-masters-blocked-notice {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
+    margin: 6px 0 8px;
+}
+
 .fontinfo-records-detail {
     display: flex;
     flex-direction: column;

@@ -33,6 +33,8 @@ export const GLYPH_REVISIONS_KEY = 'glyphRevisions';
 export const GLYPH_SYNC_MAP_KEY = 'sync';
 export const GLYPH_SYNC_REVISION_KEY = 'revision';
 export const GLYPH_SYNC_GENERATION_KEY = 'generation';
+export const CLOUD_SPARSE_RESIDENCY_CHANGED_EVENT =
+    'cloudSparseResidencyChanged';
 
 export function glyphDocumentId(glyphId: string): string {
     return `glyph:${glyphId}`;

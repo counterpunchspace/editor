@@ -10,6 +10,7 @@ import {
     type CanAddGlyphsResult,
     type FileContextAction,
     type FileContextTarget,
+    type MasterTopologyGate,
     type PluginMessageOptions,
     type TitleBarMenuItem
 } from '../filesystem-plugin';
@@ -48,7 +49,7 @@ import { setCollabIntegritySnapshotProvider } from '../../cloud-collab-integrity
 import { Logger } from '../../logger';
 import { getPathSegments } from '../../change-log';
 import { resolveWebsiteURL } from '../../website-url';
-import { readUrlState } from '../../url-state';
+import { readUrlState, updateUrlState } from '../../url-state';
 import { beginLoadingCursor, endLoadingCursor } from '../../loading-cursor';
 import {
     applyCloudOwnedData,
@@ -69,6 +70,7 @@ import {
     writeCompleteFontDepsIfLoaded
 } from '../cloud-font-deps';
 import {
+    CLOUD_SPARSE_RESIDENCY_CHANGED_EVENT,
     CloudDocumentSet,
     FONT_CORE_DOCUMENT_ID,
     FONT_DEPS_DOCUMENT_ID,
@@ -199,6 +201,7 @@ const console = new Logger('CloudPlugin');
 const CLOUD_PLUGIN_UI_ENABLED = true;
 const CLOUD_ASSET_DELETED_MESSAGE = 'Cloud asset was deleted';
 const CLOUD_ASSET_LOCALIZED_EVENT = 'cloudAssetLocalizedToMemory';
+export { CLOUD_SPARSE_RESIDENCY_CHANGED_EVENT };
 
 type CloudAssetSizeWarningState = {
     visible: boolean;
@@ -1258,6 +1261,7 @@ export class CloudPlugin extends FilesystemPlugin {
             this._catalogClosureListener
         );
         this._recomputeActiveAssetSize();
+        this._catchUpMissingCatalogGlyphs();
     }
 
     private async _ensureCloudSizePolicy(): Promise<{
@@ -1715,6 +1719,74 @@ export class CloudPlugin extends FilesystemPlugin {
         this._pendingSparseHydration = sparse;
     }
 
+    getMasterTopologyGate(): MasterTopologyGate {
+        const bridge = window.patchSyncEngine;
+        if (!bridge?.hasSparseWorkingSet?.()) {
+            const downloading = (
+                bridge?.listLiveCatalogGlyphIds?.() ?? []
+            ).some(
+                (glyphId) =>
+                    bridge?.hasResidentGlyphDocument?.(
+                        glyphDocumentId(glyphId)
+                    ) === false
+            );
+            return downloading
+                ? {
+                      allowed: false,
+                      reason: 'Some glyphs are still downloading. Masters can be added, removed, or reinterpolated once every glyph is loaded.'
+                  }
+                : { allowed: true };
+        }
+        bridge.refreshOwnedCatalogFromYDoc?.();
+        const owned = catalogFromCoreJson(
+            this._currentFontJson() || getCloudFontJsonFromBridge(bridge) || {}
+        );
+        const catalogIds = owned
+            ? liveCatalogGlyphIds(owned.glyphCatalog)
+            : null;
+        const canReopenWithAllGlyphs =
+            !window.windowRole?.isLinkedWindow?.() &&
+            !!catalogIds &&
+            !shouldAutoSparseHydrate(catalogIds.length);
+        const blocked: MasterTopologyGate = {
+            allowed: false,
+            reason: canReopenWithAllGlyphs
+                ? 'This font is only partly downloaded. Reopen it with all glyphs to add, remove, or reinterpolate masters.'
+                : 'This font is only partly downloaded. Masters cannot be added, removed, or reinterpolated while some glyphs stay on the server.',
+            canReopenWithAllGlyphs
+        };
+        if (!catalogIds || this.isHydratingOverviewGlyphs()) {
+            return blocked;
+        }
+        const resident = new Set(
+            (bridge.listLiveGlyphDocumentIds?.() ?? []).map((documentId) =>
+                documentId.startsWith('glyph:')
+                    ? documentId.slice('glyph:'.length)
+                    : documentId
+            )
+        );
+        return catalogIds.every((glyphId) => resident.has(glyphId))
+            ? { allowed: true }
+            : blocked;
+    }
+
+    /** Reopen the current asset with every glyph resident (sparse off). */
+    async reopenWithAllGlyphs(): Promise<boolean> {
+        const assetId = this.getCurrentAssetIdForSharing();
+        if (!assetId || window.windowRole?.isLinkedWindow?.()) {
+            return false;
+        }
+        const durability = await this.waitForCloudGlyphDurability();
+        if (!durability.durable) {
+            throw new Error(
+                'Cloud changes are still syncing. Try again once they are saved.'
+            );
+        }
+        this.setPendingSparseHydration(false);
+        updateUrlState({ sparse: false });
+        return this.handleOpenPath(`cloud://${assetId}`);
+    }
+
     /**
      * After a remote edge, feature, or catalog change, close the glyphs this
      * window already has. Seeds are the resident working set, so a new
@@ -1809,6 +1881,9 @@ export class CloudPlugin extends FilesystemPlugin {
     /** Linked windows mirror the main window's preview-only flag. */
     applyRelayedSparseResidency(residency: { previewOnly: boolean }): void {
         this._sparsePreviewOnly = residency.previewOnly === true;
+        window.dispatchEvent(
+            new CustomEvent(CLOUD_SPARSE_RESIDENCY_CHANGED_EVENT)
+        );
     }
 
     async hydrateOverviewGlyphs(seedNames: string[]): Promise<string[]> {
@@ -1873,6 +1948,9 @@ export class CloudPlugin extends FilesystemPlugin {
         })();
         this._overviewHydrateInFlight = hydrate;
         this._overviewHydrateGeneration = generation;
+        window.dispatchEvent(
+            new CustomEvent(CLOUD_SPARSE_RESIDENCY_CHANGED_EVENT)
+        );
         try {
             return await hydrate;
         } finally {
@@ -1883,6 +1961,9 @@ export class CloudPlugin extends FilesystemPlugin {
             if (generation === this._hydrationGeneration) {
                 window.dispatchEvent(new CustomEvent('fontModelSync'));
             }
+            window.dispatchEvent(
+                new CustomEvent(CLOUD_SPARSE_RESIDENCY_CHANGED_EVENT)
+            );
         }
     }
 
@@ -2452,6 +2533,10 @@ export class CloudPlugin extends FilesystemPlugin {
 
     private _catchUpFromCoreRevisionMap(): void {
         cloudPluginCatchUpMethods._catchUpFromCoreRevisionMap.call(this);
+    }
+
+    private _catchUpMissingCatalogGlyphs(): void {
+        cloudPluginCatchUpMethods._catchUpMissingCatalogGlyphs.call(this);
     }
 
     private _editingSubsetGlyphIdsForCatchUp(

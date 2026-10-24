@@ -4,6 +4,7 @@
  */
 import type { PatchSyncEngine } from '../../patch-sync-engine';
 import {
+    CLOUD_SPARSE_RESIDENCY_CHANGED_EVENT,
     FONT_CORE_DOCUMENT_ID,
     FONT_DEPS_DOCUMENT_ID,
     glyphDocumentId,
@@ -87,6 +88,34 @@ export const cloudPluginCatchUpMethods = {
                 this._glyphIdEligibleForCatchUp(bridge, glyphId, subsetIds)
         );
         this._enqueueGlyphCatchUp([...new Set([...subsetIds, ...staleIds])]);
+        this._catchUpMissingCatalogGlyphs();
+    },
+
+    /**
+     * A full (non-sparse) window must hold every live catalog glyph. Glyphs
+     * the HTTP hydrate missed arrive only as catalog entries in the live
+     * catch-up, which can land before the committed-change listeners exist.
+     */
+    _catchUpMissingCatalogGlyphs(): void {
+        const bridge = this._activeAssetSizeBridge;
+        if (
+            !bridge ||
+            bridge.hasSparseWorkingSet?.() ||
+            window.windowRole?.isLinkedWindow?.() ||
+            typeof bridge.listLiveCatalogGlyphIds !== 'function' ||
+            typeof bridge.hasResidentGlyphDocument !== 'function'
+        ) {
+            return;
+        }
+        const missing = bridge
+            .listLiveCatalogGlyphIds()
+            .filter(
+                (glyphId) =>
+                    !bridge.hasResidentGlyphDocument(glyphDocumentId(glyphId))
+            );
+        if (missing.length) {
+            this._enqueueGlyphCatchUp(missing, { includeUnloaded: true });
+        }
     },
 
     /**
@@ -271,6 +300,9 @@ export const cloudPluginCatchUpMethods = {
                 if (bridge.hasSparseWorkingSet?.()) {
                     this._scheduleResidentClosureHydration();
                 }
+                window.dispatchEvent(
+                    new CustomEvent(CLOUD_SPARSE_RESIDENCY_CHANGED_EVENT)
+                );
                 if (retryIds.length) {
                     this._scheduleGlyphCatchUpRetry(retryIds);
                 }

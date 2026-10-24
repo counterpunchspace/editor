@@ -884,4 +884,40 @@ describe('glyph catch-up for edits outside the receiver subset', () => {
             global.fetch = originalFetch;
         }
     });
+
+    test('live catalog glyph ids come from font-core and skip tombstones', () => {
+        const { bridge } = createEngine('catalog-reader');
+        expect(bridge.listLiveCatalogGlyphIds()).toEqual([]);
+        const entry = (glyphId, name, codepoint) => ({
+            glyphId,
+            name,
+            codepoints: { [codepoint]: true },
+            latestGlyphRevision: '0',
+            exported: true,
+            deleted: false,
+            generation: 0
+        });
+        bridge.syncCloudOwnedProjection({
+            glyphCatalog: {
+                'id-a': entry('id-a', 'A', 65),
+                'id-b': entry('id-b', 'B', 66)
+            },
+            codepointIndex: { 65: 'id-a', 66: 'id-b' }
+        });
+        expect(bridge.listLiveCatalogGlyphIds().sort()).toEqual([
+            'id-a',
+            'id-b'
+        ]);
+
+        const catalog = bridge.fontMap.get('glyphCatalog');
+        const tombstoned = catalog.get('id-b');
+        bridge.yDoc.transact(() => {
+            if (typeof tombstoned?.set === 'function') {
+                tombstoned.set('deleted', true);
+            } else {
+                catalog.set('id-b', { ...tombstoned, deleted: true });
+            }
+        });
+        expect(bridge.listLiveCatalogGlyphIds()).toEqual(['id-a']);
+    });
 });

@@ -235,11 +235,78 @@ fn merge_json_map_entry(
     Ok(())
 }
 
+fn nonzero_number_or(value: Option<&JsonValue>, fallback: i64) -> JsonValue {
+    match value {
+        Some(JsonValue::Number(number)) if number.as_f64().is_some_and(|n| n != 0.0) => {
+            JsonValue::Number(number.clone())
+        }
+        _ => JsonValue::from(fallback),
+    }
+}
+
+fn number_pair_or(value: Option<&JsonValue>, fallback: i64) -> JsonValue {
+    let items = value.and_then(JsonValue::as_array);
+    JsonValue::Array(vec![
+        nonzero_number_or(items.and_then(|items| items.first()), fallback),
+        nonzero_number_or(items.and_then(|items| items.get(1)), fallback),
+    ])
+}
+
+/// Mirrors `normalizeCloudComponentTransform`: cloud open rejects component
+/// transforms that omit any of the five fields serde skips at their defaults.
+fn canonical_component_transform(transform: Option<&JsonValue>) -> JsonValue {
+    let record = transform.and_then(JsonValue::as_object);
+    let skew = match record.and_then(|record| record.get("skew")) {
+        Some(skew @ JsonValue::Array(_)) => number_pair_or(Some(skew), 0),
+        other => JsonValue::Array(vec![nonzero_number_or(other, 0), JsonValue::from(0)]),
+    };
+    let order = match record.and_then(|record| record.get("order")) {
+        Some(JsonValue::String(order)) if order == "Glyphs" || order == "RestOfTheWorld" => {
+            order.clone()
+        }
+        _ => "RestOfTheWorld".to_string(),
+    };
+    let mut canonical = JsonMap::new();
+    canonical.insert(
+        "translation".into(),
+        number_pair_or(record.and_then(|record| record.get("translation")), 0),
+    );
+    canonical.insert(
+        "rotation".into(),
+        nonzero_number_or(record.and_then(|record| record.get("rotation")), 0),
+    );
+    canonical.insert(
+        "scale".into(),
+        number_pair_or(record.and_then(|record| record.get("scale")), 1),
+    );
+    canonical.insert("skew".into(), skew);
+    canonical.insert("order".into(), JsonValue::String(order));
+    JsonValue::Object(canonical)
+}
+
+fn with_canonical_component_transforms(layer_json: &JsonValue) -> JsonValue {
+    let mut layer = layer_json.clone();
+    if let Some(shapes) = layer.get_mut("shapes").and_then(JsonValue::as_array_mut) {
+        for shape in shapes.iter_mut() {
+            let Some(shape) = shape.as_object_mut() else {
+                continue;
+            };
+            if !shape.get("reference").is_some_and(JsonValue::is_string) {
+                continue;
+            }
+            let transform = canonical_component_transform(shape.get("transform"));
+            shape.insert("transform".into(), transform);
+        }
+    }
+    layer
+}
+
 fn upsert_layer_on_glyph_root(
     txn: &mut yrs::TransactionMut,
     layer_id: &str,
     layer_json: &JsonValue,
 ) -> Result<(), JsValue> {
+    let layer_json = &with_canonical_component_transforms(layer_json);
     let (glyph_map, layers_map) = glyph_root_maps(txn)?;
     if let Some(yrs::types::Value::YMap(layer_map)) = layers_map.get(txn, layer_id) {
         if let JsonValue::Object(object) = layer_json {
@@ -481,6 +548,7 @@ fn upsert_layer_json(
     layer_id: &str,
     layer_json: &JsonValue,
 ) -> Result<(), JsValue> {
+    let layer_json = &with_canonical_component_transforms(layer_json);
     let (glyph_map, layers_map) = glyph_maps_for_layer_edit(txn, font_map, glyph_name)?;
     if let Some(yrs::types::Value::YMap(layer_map)) = layers_map.get(txn, layer_id) {
         if let JsonValue::Object(object) = layer_json {
@@ -1637,6 +1705,50 @@ mod tests {
             "glyphs": []
         }))
         .unwrap()
+    }
+
+    #[test]
+    fn written_layers_carry_full_component_transforms() {
+        let layer = with_canonical_component_transforms(&json!({
+            "width": 500,
+            "shapes": [
+                { "reference": "a" },
+                {
+                    "reference": "dieresiscomb",
+                    "transform": { "order": "Glyphs", "scale": [1, 0.87], "translation": [82.5, 66] }
+                },
+                { "reference": "dot", "transform": { "skew": 0.2 } },
+                { "nodes": [], "closed": true }
+            ]
+        }));
+
+        assert_eq!(
+            layer["shapes"],
+            json!([
+                {
+                    "reference": "a",
+                    "transform": {
+                        "translation": [0, 0], "rotation": 0, "scale": [1, 1],
+                        "skew": [0, 0], "order": "RestOfTheWorld"
+                    }
+                },
+                {
+                    "reference": "dieresiscomb",
+                    "transform": {
+                        "translation": [82.5, 66], "rotation": 0, "scale": [1, 0.87],
+                        "skew": [0, 0], "order": "Glyphs"
+                    }
+                },
+                {
+                    "reference": "dot",
+                    "transform": {
+                        "translation": [0, 0], "rotation": 0, "scale": [1, 1],
+                        "skew": [0.2, 0], "order": "RestOfTheWorld"
+                    }
+                },
+                { "nodes": [], "closed": true }
+            ])
+        );
     }
 
     #[test]

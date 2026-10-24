@@ -43,6 +43,13 @@ export interface CanAddGlyphsResult {
     reason?: string;
 }
 
+export interface MasterTopologyGate {
+    allowed: boolean;
+    reason?: string;
+    /** Reopening with every glyph resident would lift the block. */
+    canReopenWithAllGlyphs?: boolean;
+}
+
 export interface FilesystemPluginUICallbacks {
     showOpenFolderUI: () => void;
     hideOpenFolderUI: () => void;
@@ -284,6 +291,14 @@ export abstract class FilesystemPlugin {
      */
     getCachedCanAddGlyphs(additionalGlyphCount: number): CanAddGlyphsResult {
         void additionalGlyphCount;
+        return { allowed: true };
+    }
+
+    /**
+     * Whether masters may be added, removed, or reinterpolated. Those edits
+     * rewrite a layer on every glyph, so every glyph must be resident.
+     */
+    getMasterTopologyGate(): MasterTopologyGate {
         return { allowed: true };
     }
 

@@ -1958,6 +1958,220 @@ describe('CloudPlugin sparse overview hydrate', () => {
     });
 });
 
+describe('CloudPlugin master topology gate', () => {
+    let plugin;
+    let originalBridge;
+    let originalFontManager;
+    let originalWindowRole;
+
+    const catalogFontJson = (glyphIds) => ({
+        glyphs: [],
+        format_specific: {
+            'com.counterpunch.cloud': {
+                glyphCatalog: Object.fromEntries(
+                    glyphIds.map((glyphId) => [
+                        glyphId,
+                        {
+                            glyphId,
+                            name: glyphId,
+                            codepoints: [],
+                            latestGlyphRevision: '1',
+                            generation: 0
+                        }
+                    ])
+                )
+            }
+        }
+    });
+
+    const installSession = ({ sparse, fontJson, residentIds }) => {
+        window.patchSyncEngine = {
+            hasSparseWorkingSet: () => sparse,
+            getFontJsonSnapshot: () => fontJson,
+            listLiveGlyphDocumentIds: () =>
+                residentIds.map((glyphId) => `glyph:${glyphId}`)
+        };
+        window.fontManager = { currentFont: { babelfontData: fontJson } };
+    };
+
+    beforeEach(() => {
+        plugin = new CloudPlugin();
+        originalBridge = window.patchSyncEngine;
+        originalFontManager = window.fontManager;
+        originalWindowRole = window.windowRole;
+        window.windowRole = undefined;
+    });
+
+    afterEach(() => {
+        window.patchSyncEngine = originalBridge;
+        window.fontManager = originalFontManager;
+        window.windowRole = originalWindowRole;
+    });
+
+    test('allows master changes outside a sparse session', () => {
+        installSession({
+            sparse: false,
+            fontJson: catalogFontJson(['id-a', 'id-b']),
+            residentIds: []
+        });
+
+        expect(plugin.getMasterTopologyGate()).toEqual({ allowed: true });
+    });
+
+    test('blocks master changes in a full session until catch-up loads every catalog glyph', () => {
+        const resident = new Set(['id-a']);
+        window.patchSyncEngine = {
+            hasSparseWorkingSet: () => false,
+            listLiveCatalogGlyphIds: () => ['id-a', 'id-b'],
+            hasResidentGlyphDocument: (documentId) =>
+                resident.has(documentId.slice('glyph:'.length))
+        };
+
+        const gate = plugin.getMasterTopologyGate();
+        expect(gate.allowed).toBe(false);
+        expect(gate.reason).toMatch(/still downloading/);
+        expect(gate.canReopenWithAllGlyphs).toBeUndefined();
+
+        resident.add('id-b');
+        expect(plugin.getMasterTopologyGate()).toEqual({ allowed: true });
+    });
+
+    test('a full session fetches catalog glyphs the HTTP hydrate missed', () => {
+        const bridge = {
+            hasSparseWorkingSet: () => false,
+            listLiveCatalogGlyphIds: () => ['id-a', 'id-new'],
+            hasResidentGlyphDocument: (documentId) =>
+                documentId === 'glyph:id-a'
+        };
+        plugin._activeAssetSizeBridge = bridge;
+        const enqueue = jest
+            .spyOn(plugin, '_enqueueGlyphCatchUp')
+            .mockImplementation(() => {});
+
+        plugin._catchUpMissingCatalogGlyphs();
+        expect(enqueue).toHaveBeenCalledWith(['id-new'], {
+            includeUnloaded: true
+        });
+
+        enqueue.mockClear();
+        bridge.hasSparseWorkingSet = () => true;
+        plugin._catchUpMissingCatalogGlyphs();
+        bridge.hasSparseWorkingSet = () => false;
+        window.windowRole = { isLinkedWindow: () => true };
+        plugin._catchUpMissingCatalogGlyphs();
+        expect(enqueue).not.toHaveBeenCalled();
+    });
+
+    test('allows master changes in a sparse session once every catalog glyph is resident', () => {
+        installSession({
+            sparse: true,
+            fontJson: catalogFontJson(['id-a', 'id-b']),
+            residentIds: ['id-a', 'id-b']
+        });
+
+        expect(plugin.getMasterTopologyGate()).toEqual({ allowed: true });
+    });
+
+    test('blocks master changes while one catalog glyph is still on the server', () => {
+        installSession({
+            sparse: true,
+            fontJson: catalogFontJson(['id-a', 'id-b']),
+            residentIds: ['id-a']
+        });
+
+        const gate = plugin.getMasterTopologyGate();
+        expect(gate.allowed).toBe(false);
+        expect(gate.reason).toMatch(/only partly downloaded/);
+        expect(gate.reason).toMatch(/Reopen it with all glyphs/);
+        expect(gate.canReopenWithAllGlyphs).toBe(true);
+    });
+
+    test('fails closed when the sparse session has no catalog', () => {
+        installSession({
+            sparse: true,
+            fontJson: { glyphs: [] },
+            residentIds: []
+        });
+
+        const gate = plugin.getMasterTopologyGate();
+        expect(gate.allowed).toBe(false);
+        expect(gate.canReopenWithAllGlyphs).toBe(false);
+    });
+
+    test('blocks master changes while an overview hydration is in flight', () => {
+        installSession({
+            sparse: true,
+            fontJson: catalogFontJson(['id-a']),
+            residentIds: ['id-a']
+        });
+        plugin._overviewHydrateInFlight = Promise.resolve([]);
+
+        expect(plugin.getMasterTopologyGate().allowed).toBe(false);
+    });
+
+    test('does not offer a reopen at the forced-sparse catalog size', () => {
+        const {
+            AUTO_SPARSE_CATALOG_GLYPHS
+        } = require('../js/filesystem-plugins/cloud-shard-limits');
+        const ids = Array.from(
+            { length: AUTO_SPARSE_CATALOG_GLYPHS },
+            (_, index) => `id-${index}`
+        );
+        installSession({
+            sparse: true,
+            fontJson: catalogFontJson(ids),
+            residentIds: ids.slice(1)
+        });
+
+        const gate = plugin.getMasterTopologyGate();
+        expect(gate.allowed).toBe(false);
+        expect(gate.canReopenWithAllGlyphs).toBe(false);
+        expect(gate.reason).toMatch(/stay on the server/);
+    });
+
+    test('does not offer a reopen from a linked window', () => {
+        installSession({
+            sparse: true,
+            fontJson: catalogFontJson(['id-a', 'id-b']),
+            residentIds: ['id-a']
+        });
+        window.windowRole = { isLinkedWindow: () => true };
+
+        expect(plugin.getMasterTopologyGate().canReopenWithAllGlyphs).toBe(
+            false
+        );
+    });
+
+    test('reopenWithAllGlyphs reopens the asset with sparse hydration off', async () => {
+        plugin.getCurrentAssetIdForSharing = () => 'asset-1';
+        plugin.waitForCloudGlyphDurability = jest
+            .fn()
+            .mockResolvedValue({ durable: true });
+        plugin.handleOpenPath = jest.fn().mockResolvedValue(true);
+        plugin.setPendingSparseHydration(true);
+        window.history.replaceState(null, '', '/?sparse=true');
+
+        await expect(plugin.reopenWithAllGlyphs()).resolves.toBe(true);
+
+        expect(plugin._pendingSparseHydration).toBe(false);
+        expect(window.location.search).not.toContain('sparse');
+        expect(plugin.handleOpenPath).toHaveBeenCalledWith('cloud://asset-1');
+    });
+
+    test('reopenWithAllGlyphs refuses while cloud changes are still syncing', async () => {
+        plugin.getCurrentAssetIdForSharing = () => 'asset-1';
+        plugin.waitForCloudGlyphDurability = jest
+            .fn()
+            .mockResolvedValue({ durable: false, pendingCount: 2 });
+        plugin.handleOpenPath = jest.fn();
+
+        await expect(plugin.reopenWithAllGlyphs()).rejects.toThrow(
+            /still syncing/
+        );
+        expect(plugin.handleOpenPath).not.toHaveBeenCalled();
+    });
+});
+
 describe('CloudPlugin sharing APIs', () => {
     let plugin;
     let originalAuthManager;
