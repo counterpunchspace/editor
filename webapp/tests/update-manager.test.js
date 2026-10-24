@@ -8,7 +8,8 @@ const {
     isAppWindowActive,
     didAppWindowBecomeActive,
     isPreviewReleaseId,
-    shouldForceReinstallFromUrl
+    shouldForceReinstallFromUrl,
+    updateReadiness
 } = require('../js/update-manager.ts');
 
 describe('update-manager version helpers', () => {
@@ -164,6 +165,37 @@ describe('update-manager version helpers', () => {
             displayVersion: 'v0.0.11-pre.20260822',
             isPreview: true
         });
+    });
+
+    test('offers Update only for an installed waiting worker', () => {
+        expect(
+            updateReadiness({
+                hasWaitingWorker: true,
+                hasInstallingWorker: false,
+                publishedIsNewer: false
+            })
+        ).toBe('ready');
+        expect(
+            updateReadiness({
+                hasWaitingWorker: false,
+                hasInstallingWorker: true,
+                publishedIsNewer: true
+            })
+        ).toBe('downloading');
+        expect(
+            updateReadiness({
+                hasWaitingWorker: false,
+                hasInstallingWorker: false,
+                publishedIsNewer: true
+            })
+        ).toBe('downloading');
+        expect(
+            updateReadiness({
+                hasWaitingWorker: false,
+                hasInstallingWorker: false,
+                publishedIsNewer: false
+            })
+        ).toBe('none');
     });
 
     test('treats ?update as a force-reinstall trigger except the reload marker', () => {

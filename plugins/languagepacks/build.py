@@ -134,16 +134,6 @@ def update_manifest(wheel_names: list[str]) -> None:
     wheels.extend(wheel_names)
     manifest["wheels"] = sorted(wheels)
     manifest_path.write_text(json.dumps(manifest, indent=4) + "\n", encoding="utf-8")
-    service_worker = EDITOR / "webapp" / "coi-serviceworker.js"
-    text = service_worker.read_text(encoding="utf-8")
-    for wheel_name in wheel_names:
-        line = f"    './wheels/{wheel_name}',\n"
-        if wheel_name not in text:
-            text = text.replace(
-                "    './wheels/general_filter_plugin-0.1.0-py3-none-any.whl',\n",
-                "    './wheels/general_filter_plugin-0.1.0-py3-none-any.whl',\n" + line,
-            )
-    service_worker.write_text(text, encoding="utf-8")
 
 
 def main() -> None:

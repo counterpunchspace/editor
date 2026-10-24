@@ -1,226 +1,154 @@
 const fs = require('fs');
 const path = require('path');
+const {
+    precacheUrlsFromAssets,
+    cdnUrlsFromHtml,
+    computeBuildId,
+    injectManifest
+} = require('../scripts/precache-manifest');
 
 const SW_PATH = path.resolve(__dirname, '../coi-serviceworker.js');
-const CSS_DIR = path.resolve(__dirname, '../css');
-const JS_DIR = path.resolve(__dirname, '../build/js');
-const WEBPACK_CONFIG_PATH = path.resolve(__dirname, '../webpack.config.js');
-const JS_SOURCE_DIR = path.resolve(__dirname, '../js');
-const PY_DIR = path.resolve(__dirname, '../py');
-const DATA_DIR = path.resolve(__dirname, '../data');
-const WHEELS_DIR = path.resolve(__dirname, '../wheels');
+const INDEX_PATH = path.resolve(__dirname, '../index.html');
 
-function parsePrecacheAssets(fileContent) {
-    const match = fileContent.match(
-        /const PRECACHE_ASSETS\s*=\s*\[([^\]]*?)\];/s
-    );
-    if (!match)
-        throw new Error('Could not find PRECACHE_ASSETS in service worker');
-    const items = [];
-    const re = /['"]([^'"]+)['"]\s*,?\s*(?:\/\/.*)?$/gm;
-    let m;
-    while ((m = re.exec(match[1])) !== null) {
-        items.push(m[1]);
-    }
-    return items;
+function readWorkerSource() {
+    return fs.readFileSync(SW_PATH, 'utf-8');
 }
 
-function scanFiles(dir, prefix) {
-    const files = [];
-    function walk(d, relPrefix) {
-        for (const entry of fs.readdirSync(d, { withFileTypes: true })) {
-            const full = path.join(d, entry.name);
-            if (entry.isDirectory()) {
-                walk(full, `${relPrefix}${entry.name}/`);
-            } else if (entry.isFile()) {
-                files.push(`${relPrefix}${entry.name}`);
-            }
-        }
-    }
-    walk(dir, prefix);
-    return files.sort();
-}
-
-/**
- * Expected webpack JS outputs: entry names + webpackChunkName async chunks.
- * Prefer this over scanning build/js/, which can contain stale leftovers from
- * long-running webpack-dev-server sessions that still hold removed entries.
- */
-function expectedWebpackJsBundles() {
-    const webpackConfig = require(WEBPACK_CONFIG_PATH);
-    const entryBundles = Object.keys(webpackConfig.entry || {}).map(
-        (name) => `./js/${name}.js`
-    );
-
-    const chunkNames = new Set();
-    function walkSource(dir) {
-        for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-            const full = path.join(dir, entry.name);
-            if (entry.isDirectory()) {
-                walkSource(full);
-                continue;
-            }
-            if (!entry.isFile() || !/\.(ts|tsx|js|jsx)$/.test(entry.name)) {
-                continue;
-            }
-            const source = fs.readFileSync(full, 'utf8');
-            const re = /webpackChunkName:\s*["']([^"']+)["']/g;
-            let match;
-            while ((match = re.exec(source)) !== null) {
-                chunkNames.add(match[1]);
-            }
-        }
-    }
-    walkSource(JS_SOURCE_DIR);
-
-    return [
-        ...entryBundles,
-        ...[...chunkNames].map((name) => `./js/${name}.js`)
-    ].sort();
-}
-
-describe('COI ServiceWorker PRECACHE_ASSETS', () => {
-    let precacheAssets;
-    let expectedJsBundles;
-
-    beforeAll(() => {
-        const swContent = fs.readFileSync(SW_PATH, 'utf-8');
-        precacheAssets = parsePrecacheAssets(swContent);
-        expectedJsBundles = expectedWebpackJsBundles();
+describe('precache manifest', () => {
+    test('lists shipped files with the shell first and skips build-only files', () => {
+        const urls = precacheUrlsFromAssets([
+            'index.html',
+            'js/bootstrap.js',
+            'js/bootstrap.js.map',
+            'js/bootstrap.js.LICENSE.txt',
+            'js/482.3f9a1c.js',
+            'ded5c720768338babd75.wasm',
+            'coi-serviceworker.js',
+            'css/style.css',
+            'handbook/manifest.json',
+            'handbook/python/01-intro.md',
+            'examples/examples-manifest.json',
+            'examples/Fustat.glyphs',
+            'assets/screenshots/browser.png',
+            'assets/icons/README.md',
+            'assets/fonts/Inter.woff2',
+            'wasm-dist/babelfont_fontc_web_bg.wasm',
+            '_headers',
+            'worktree-config.json'
+        ]);
+        expect(urls).toEqual([
+            './',
+            './assets/fonts/Inter.woff2',
+            './coi-serviceworker.js',
+            './css/style.css',
+            './ded5c720768338babd75.wasm',
+            './examples/examples-manifest.json',
+            './handbook/manifest.json',
+            './handbook/python/01-intro.md',
+            './js/482.3f9a1c.js',
+            './js/bootstrap.js'
+        ]);
     });
 
-    test('includes every CSS file in the css/ directory', () => {
-        const cssFiles = scanFiles(CSS_DIR, './css/').filter((f) =>
-            f.endsWith('.css')
-        );
-        const missing = cssFiles.filter((f) => !precacheAssets.includes(f));
-        if (missing.length) {
-            console.log(
-                'Missing from PRECACHE_ASSETS:\n' +
-                    missing.map((f) => "    '" + f + "',").join('\n')
+    test('collects every CDN URL from index.html plus the Pyodide core files', () => {
+        const html = fs
+            .readFileSync(INDEX_PATH, 'utf-8')
+            .replace(
+                /<%= htmlWebpackPlugin\.options\.cdnBase %>/g,
+                'https://cdn.jsdelivr.net'
             );
+        const urls = cdnUrlsFromHtml(html);
+        const scriptSrcs = [
+            ...html.matchAll(
+                /(?:src|href)="(https:\/\/cdn\.jsdelivr\.net\/[^"]+)"/g
+            )
+        ].map((match) => match[1]);
+
+        expect(scriptSrcs.length).toBeGreaterThan(0);
+        for (const src of scriptSrcs) {
+            expect(urls).toContain(src);
         }
-        expect(missing).toEqual([]);
+        const pyodideScript = scriptSrcs.find((src) =>
+            /\/pyodide\/[^/]+\/full\/pyodide\.js$/.test(src)
+        );
+        expect(pyodideScript).toBeDefined();
+        const base = pyodideScript.replace(/pyodide\.js$/, '');
+        expect(urls).toEqual(
+            expect.arrayContaining([
+                base + 'pyodide.asm.mjs',
+                base + 'pyodide.asm.wasm',
+                base + 'python_stdlib.zip',
+                base + 'pyodide-lock.json'
+            ])
+        );
+        expect(new Set(urls).size).toBe(urls.length);
     });
 
-    test('includes every webpack JS entry and async chunk', () => {
-        const missing = expectedJsBundles.filter(
-            (f) => !precacheAssets.includes(f)
-        );
-        if (missing.length) {
-            console.log(
-                'Missing from PRECACHE_ASSETS:\n' +
-                    missing.map((f) => "    '" + f + "',").join('\n')
-            );
-        }
-        expect(missing).toEqual([]);
+    test('build id follows file contents but ignores the worker itself', () => {
+        const assets = [
+            { name: 'js/bootstrap.js', content: Buffer.from('a') },
+            { name: 'coi-serviceworker.js', content: Buffer.from('x') }
+        ];
+        const id = computeBuildId(assets);
+        expect(id).toMatch(/^[0-9a-f]{16}$/);
+        expect(
+            computeBuildId([
+                assets[0],
+                { name: 'coi-serviceworker.js', content: Buffer.from('y') }
+            ])
+        ).toBe(id);
+        expect(
+            computeBuildId([
+                { name: 'js/bootstrap.js', content: Buffer.from('b') },
+                assets[1]
+            ])
+        ).not.toBe(id);
     });
 
-    test('no orphaned CSS entries in PRECACHE_ASSETS', () => {
-        const cssFiles = scanFiles(CSS_DIR, './css/').filter((f) =>
-            f.endsWith('.css')
+    test('injects into both source and minified worker text', () => {
+        const manifest = {
+            precacheUrls: ['./', './js/bootstrap.js'],
+            cdnUrls: [
+                'https://cdn.jsdelivr.net/npm/marked@11.1.1/marked.min.js'
+            ],
+            buildId: '0123456789abcdef'
+        };
+        const injected = injectManifest(readWorkerSource(), manifest);
+        expect(injected).toContain(
+            `const PRECACHE_ASSETS = ${JSON.stringify(manifest.precacheUrls)};`
         );
-        const precacheCss = precacheAssets.filter(
-            (f) => f.startsWith('./css/') && f.endsWith('.css')
+        expect(injected).toContain(
+            `const CDN_PRECACHE = ${JSON.stringify(manifest.cdnUrls)};`
         );
-        const orphaned = precacheCss.filter((f) => !cssFiles.includes(f));
-        if (orphaned.length) {
-            console.log(
-                'Orphaned in PRECACHE_ASSETS (file no longer exists):\n' +
-                    orphaned.map((f) => "    '" + f + "',").join('\n')
-            );
-        }
-        expect(orphaned).toEqual([]);
-    });
+        expect(injected).toContain(`const BUILD_ID = "0123456789abcdef";`);
 
-    test('no orphaned JS entries in PRECACHE_ASSETS', () => {
-        const precacheJs = precacheAssets.filter(
-            (f) => f.startsWith('./js/') && f.endsWith('.js')
+        const minified =
+            'const VERSION="v1",BUILD_ID="__BUILD_ID__",PRECACHE_ASSETS="__PRECACHE_ASSETS__",CDN_PRECACHE="__CDN_PRECACHE__";';
+        expect(injectManifest(minified, manifest)).toBe(
+            `const VERSION="v1",BUILD_ID="0123456789abcdef",PRECACHE_ASSETS=${JSON.stringify(manifest.precacheUrls)},CDN_PRECACHE=${JSON.stringify(manifest.cdnUrls)};`
         );
-        const orphaned = precacheJs.filter(
-            (f) => !expectedJsBundles.includes(f)
+        expect(() => injectManifest('const VERSION = "v1";', manifest)).toThrow(
+            /__PRECACHE_ASSETS__/
         );
-        if (orphaned.length) {
-            console.log(
-                'Orphaned in PRECACHE_ASSETS (not a current webpack output):\n' +
-                    orphaned.map((f) => "    '" + f + "',").join('\n')
-            );
-        }
-        expect(orphaned).toEqual([]);
     });
+});
 
-    test('expected webpack JS bundles exist in build/js when present', () => {
-        if (!fs.existsSync(JS_DIR)) {
-            return;
-        }
-        const missingOnDisk = expectedJsBundles.filter(
-            (f) => !fs.existsSync(path.join(JS_DIR, path.basename(f)))
-        );
-        expect(missingOnDisk).toEqual([]);
-    });
-
-    test('includes every runtime Python file in py/', () => {
-        const pyFiles = scanFiles(PY_DIR, './py/').filter(
-            (f) => f.endsWith('.py') && !f.includes('/debug_')
-        );
-        const missing = pyFiles.filter((f) => !precacheAssets.includes(f));
-        if (missing.length) {
-            console.log(
-                'Missing from PRECACHE_ASSETS:\n' +
-                    missing.map((f) => "    '" + f + "',").join('\n')
-            );
-        }
-        expect(missing).toEqual([]);
-    });
-
-    test('includes glyph-data catalog and every shipped wheel', () => {
-        const required = ['./data/glyph-data.json.gz'];
-        if (fs.existsSync(DATA_DIR)) {
-            required.push(
-                ...scanFiles(DATA_DIR, './data/').filter((f) =>
-                    f.endsWith('.json.gz')
-                )
-            );
-        }
-        if (fs.existsSync(WHEELS_DIR)) {
-            required.push(...scanFiles(WHEELS_DIR, './wheels/'));
-        }
-        const missing = [...new Set(required)].filter(
-            (f) => !precacheAssets.includes(f)
-        );
-        if (missing.length) {
-            console.log(
-                'Missing from PRECACHE_ASSETS:\n' +
-                    missing.map((f) => "    '" + f + "',").join('\n')
-            );
-        }
-        expect(missing).toEqual([]);
-    });
-
-    test('no orphaned Python entries in PRECACHE_ASSETS', () => {
-        const pyFiles = fs.existsSync(PY_DIR)
-            ? scanFiles(PY_DIR, './py/').filter((f) => f.endsWith('.py'))
-            : [];
-        const precachePy = precacheAssets.filter(
-            (f) => f.startsWith('./py/') && f.endsWith('.py')
-        );
-        const orphaned = precachePy.filter((f) => !pyFiles.includes(f));
-        expect(orphaned).toEqual([]);
-    });
-
-    test('replacement install calls skipWaiting so a waiting worker can activate', () => {
-        const swContent = fs.readFileSync(SW_PATH, 'utf-8');
+describe('COI service worker lifecycle', () => {
+    test('a new worker waits for SKIP_WAITING instead of activating on install', () => {
+        const swContent = readWorkerSource();
         const installBlock = swContent.match(
             /self\.addEventListener\(\s*'install'[\s\S]*?self\.addEventListener\(\s*'activate'/
         );
         expect(installBlock).not.toBeNull();
-        expect(installBlock[0]).toMatch(/skipWaiting\s*\(/);
-        expect(swContent).toMatch(/['"]SKIP_WAITING['"]/);
+        expect(installBlock[0]).not.toMatch(/skipWaiting\s*\(/);
+        expect(swContent).toMatch(
+            /ev\.data\.type === 'SKIP_WAITING'\) \{\s*self\.skipWaiting\(\);/
+        );
         expect(swContent).toMatch(/includeUncontrolled:\s*true/);
     });
 
     test('skips COI reload when a service worker is already controlling', () => {
-        const swContent = fs.readFileSync(SW_PATH, 'utf-8');
+        const swContent = readWorkerSource();
         expect(swContent).toMatch(
             /Service worker activated while already controlling - skipping reload/
         );

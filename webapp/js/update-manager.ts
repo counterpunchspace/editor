@@ -1,11 +1,12 @@
 /**
  * PWA update state and Preferences version UI.
  *
- * The inline script in index.html sets window.__pendingUpdate and dispatches
- * 'counterpunch:update-available' when a new service worker activates.
- * Scheduled checks compare the running EDITOR_VERSION to the published
- * service-worker file and GitHub releases so the Preferences gear can notify
- * even before a new worker activates.
+ * A new service worker installs in the background and then waits. The
+ * Update button appears only once it is installed; clicking it sends
+ * SKIP_WAITING and reloads on controllerchange. The inline script in
+ * index.html also sets window.__pendingUpdate when another tab activated a
+ * newer worker, so this tab offers a reload. Published service-worker and
+ * GitHub versions only drive the "Downloading" and status text.
  */
 
 import { Logger } from './logger';
@@ -18,6 +19,8 @@ const CHANGELOG_RELEASES_URL =
 export const AUTO_CHECK_THROTTLE_MS = 60 * 1000;
 export const AUTO_CHECK_INTERVAL_MS = 10 * 60 * 1000;
 export const FOCUS_POLL_MS = 1000;
+const APPLY_UPDATE_TIMEOUT_MS = 10 * 1000;
+const WORKER_VERSION_TIMEOUT_MS = 2000;
 
 let lastAutoCheckAt = 0;
 let checkInFlight = false;
@@ -25,6 +28,13 @@ let scheduledChecksInitialized = false;
 let preferencesUiInitialized = false;
 let forceUpdateOffered = false;
 let forceReinstallInFlight = false;
+let updateDownloading = false;
+let applyUpdateInFlight = false;
+const trackedInstallingWorkers = new WeakSet<ServiceWorker>();
+
+export type UpdateReadiness = 'ready' | 'downloading' | 'none';
+
+const DOWNLOADING_STATUS = 'Downloading update…';
 
 export const UPDATE_QUERY = 'update';
 const UPDATE_RELOAD_MARKER = /^\d{13}$/;
@@ -85,6 +95,25 @@ export function parseSwVersions(text: string): SwVersionInfo | null {
         displayVersion,
         isPreview: isPreviewReleaseId(tag, displayVersion)
     };
+}
+
+/**
+ * Only an installed, waiting worker can be applied. A newer published
+ * version without one is still downloading (or not deployed yet), and
+ * reloading then would serve the old build from cache again.
+ */
+export function updateReadiness(state: {
+    hasWaitingWorker: boolean;
+    hasInstallingWorker: boolean;
+    publishedIsNewer: boolean;
+}): UpdateReadiness {
+    if (state.hasWaitingWorker) {
+        return 'ready';
+    }
+    if (state.hasInstallingWorker || state.publishedIsNewer) {
+        return 'downloading';
+    }
+    return 'none';
 }
 
 export function shouldShowForceUpdate(
@@ -232,8 +261,16 @@ function refreshPreferencesVersionUi(): void {
         setHidden(updateBtn, true);
         setHidden(
             forceBtn,
-            !shouldShowForceUpdate(pending, forceUpdateOffered)
+            updateDownloading ||
+                !shouldShowForceUpdate(pending, forceUpdateOffered)
         );
+        const statusEl = document.getElementById('settings-update-status');
+        if (statusEl && updateDownloading) {
+            statusEl.textContent = DOWNLOADING_STATUS;
+        }
+    }
+    if (updateBtn) {
+        updateBtn.disabled = applyUpdateInFlight;
     }
 
     const settingsBtn = document.getElementById('settings-btn');
@@ -250,6 +287,105 @@ async function fetchPublishedSwVersion(): Promise<SwVersionInfo | null> {
         throw new Error(`Could not fetch service worker (${response.status})`);
     }
     return parseSwVersions(await response.text());
+}
+
+function askWorkerVersion(
+    worker: ServiceWorker
+): Promise<SwVersionInfo | null> {
+    return new Promise((resolve) => {
+        const channel = new MessageChannel();
+        const timeoutId = window.setTimeout(
+            () => resolve(null),
+            WORKER_VERSION_TIMEOUT_MS
+        );
+        channel.port1.onmessage = (event: MessageEvent) => {
+            window.clearTimeout(timeoutId);
+            const data: unknown = event.data;
+            if (
+                data &&
+                typeof data === 'object' &&
+                'version' in data &&
+                typeof data.version === 'string'
+            ) {
+                const displayVersion =
+                    'displayVersion' in data &&
+                    typeof data.displayVersion === 'string'
+                        ? data.displayVersion
+                        : data.version;
+                resolve({
+                    tag: data.version,
+                    displayVersion,
+                    isPreview: isPreviewReleaseId(data.version, displayVersion)
+                });
+                return;
+            }
+            resolve(null);
+        };
+        worker.postMessage({ type: 'GET_VERSION' }, [channel.port2]);
+    });
+}
+
+function setUpdateDownloading(downloading: boolean): void {
+    if (updateDownloading === downloading) {
+        return;
+    }
+    updateDownloading = downloading;
+    const statusEl = document.getElementById('settings-update-status');
+    if (!downloading && statusEl?.textContent === DOWNLOADING_STATUS) {
+        statusEl.textContent = '';
+    }
+    refreshPreferencesVersionUi();
+}
+
+async function markUpdateReady(worker: ServiceWorker): Promise<void> {
+    setUpdateDownloading(false);
+    const info =
+        (await askWorkerVersion(worker)) ??
+        (await fetchPublishedSwVersion().catch(() => null));
+    setPendingUpdate(
+        info
+            ? pendingUpdateFromSw(info)
+            : { version: 'new version', isPreview: prefersPreviewReleases() }
+    );
+}
+
+function trackInstallingWorker(
+    registration: ServiceWorkerRegistration,
+    worker: ServiceWorker
+): void {
+    // The very first install has no controller to replace.
+    if (!navigator.serviceWorker.controller) {
+        return;
+    }
+    if (trackedInstallingWorkers.has(worker)) {
+        return;
+    }
+    trackedInstallingWorkers.add(worker);
+    setUpdateDownloading(true);
+    worker.addEventListener('statechange', () => {
+        if (worker.state === 'installed') {
+            void markUpdateReady(registration.waiting ?? worker);
+        } else if (worker.state === 'redundant') {
+            setUpdateDownloading(!!registration.installing);
+        }
+    });
+}
+
+async function watchServiceWorkerRegistration(): Promise<void> {
+    const registration = await navigator.serviceWorker.getRegistration();
+    if (!registration) {
+        return;
+    }
+    registration.addEventListener('updatefound', () => {
+        if (registration.installing) {
+            trackInstallingWorker(registration, registration.installing);
+        }
+    });
+    if (registration.waiting && navigator.serviceWorker.controller) {
+        await markUpdateReady(registration.waiting);
+    } else if (registration.installing) {
+        trackInstallingWorker(registration, registration.installing);
+    }
 }
 
 function prefersPreviewReleases(): boolean {
@@ -388,17 +524,30 @@ async function checkForUpdates(userInitiated = false): Promise<void> {
         const published = await publishedPromise;
         const runningDisplay = getRunningDisplayVersion();
         const runningTag = getRunningTag();
-        const waitingWorker = !!registration?.waiting;
+        const readiness = updateReadiness({
+            hasWaitingWorker:
+                !!registration?.waiting &&
+                !!navigator.serviceWorker?.controller,
+            hasInstallingWorker: !!registration?.installing,
+            publishedIsNewer:
+                !!published &&
+                !isDevBuild(runningDisplay) &&
+                hasAvailableUpdate(published, runningDisplay, runningTag)
+        });
 
-        if (
-            published &&
-            !isDevBuild(runningDisplay) &&
-            (hasAvailableUpdate(published, runningDisplay, runningTag) ||
-                waitingWorker)
-        ) {
-            setPendingUpdate(pendingUpdateFromSw(published));
+        if (readiness === 'ready' && registration?.waiting) {
             if (statusEl) {
                 statusEl.textContent = '';
+            }
+            await markUpdateReady(registration.waiting);
+            return;
+        }
+
+        if (readiness === 'downloading') {
+            if (registration?.installing) {
+                trackInstallingWorker(registration, registration.installing);
+            } else if (userInitiated && statusEl && published) {
+                statusEl.textContent = `${published.displayVersion} is being published. Check again in a few minutes.`;
             }
             return;
         }
@@ -451,6 +600,12 @@ function initScheduledUpdateChecks(): void {
     }
     scheduledChecksInitialized = true;
 
+    void watchServiceWorkerRegistration().catch((error) => {
+        console.warn(
+            'Service worker registration watch failed:',
+            error instanceof Error ? error.message : String(error)
+        );
+    });
     runScheduledUpdateCheck(false);
 
     // macOS and installed PWAs often skip window `focus` / visibilitychange on
@@ -481,25 +636,47 @@ function initScheduledUpdateChecks(): void {
     }, AUTO_CHECK_INTERVAL_MS);
 }
 
-function applyPendingUpdate(): void {
+async function applyPendingUpdate(): Promise<void> {
     const reload = () => {
         window.location.reload();
     };
-    if (!navigator.serviceWorker) {
+    if (applyUpdateInFlight) {
+        return;
+    }
+    const registration = navigator.serviceWorker
+        ? await navigator.serviceWorker.getRegistration()
+        : undefined;
+    const waiting = registration?.waiting;
+    // No waiting worker: another tab already activated the new build and
+    // this tab is controlled by it, so a reload loads it.
+    if (!waiting) {
         reload();
         return;
     }
-    void navigator.serviceWorker.getRegistration().then((registration) => {
-        if (!registration?.waiting) {
+
+    applyUpdateInFlight = true;
+    refreshPreferencesVersionUi();
+    const statusEl = document.getElementById('settings-update-status');
+    if (statusEl) {
+        statusEl.textContent = 'Updating…';
+    }
+    const previousController = navigator.serviceWorker.controller;
+    navigator.serviceWorker.addEventListener('controllerchange', reload, {
+        once: true
+    });
+    waiting.postMessage({ type: 'SKIP_WAITING' });
+    window.setTimeout(() => {
+        if (navigator.serviceWorker.controller !== previousController) {
             reload();
             return;
         }
-        navigator.serviceWorker.addEventListener('controllerchange', reload, {
-            once: true
-        });
-        registration.waiting.postMessage({ type: 'SKIP_WAITING' });
-        window.setTimeout(reload, 2000);
-    });
+        applyUpdateInFlight = false;
+        if (statusEl) {
+            statusEl.textContent =
+                'The update has not activated yet. Try again in a moment.';
+        }
+        refreshPreferencesVersionUi();
+    }, APPLY_UPDATE_TIMEOUT_MS);
 }
 
 function stripUpdateQuery(): void {
@@ -585,7 +762,7 @@ export function initPreferencesVersionUi(): void {
     document
         .getElementById('settings-apply-update-btn')
         ?.addEventListener('click', () => {
-            applyPendingUpdate();
+            void applyPendingUpdate();
         });
     document
         .getElementById('settings-force-update-btn')

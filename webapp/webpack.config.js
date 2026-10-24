@@ -5,6 +5,7 @@ const CopyWebpackPlugin = require('copy-webpack-plugin');
 const UnusedWebpackPlugin = require('unused-webpack-plugin');
 const webpack = require('webpack');
 const { execSync } = require('child_process');
+const precacheManifest = require('./scripts/precache-manifest');
 
 class GenerateDocsManifestPlugin {
     apply(compiler) {
@@ -41,6 +42,73 @@ class GenerateDocsManifestPlugin {
                 if (documentationSourcesChanged(watchingCompiler)) {
                     generate();
                 }
+            }
+        );
+    }
+}
+
+// Emits coi-serviceworker.js with the precache manifest filled in. It is
+// emitted unminified: Terser folds the placeholder constants into other
+// strings, which would hide them from the replacement.
+class PrecacheManifestPlugin {
+    apply(compiler) {
+        const workerPath = path.join(
+            __dirname,
+            precacheManifest.SERVICE_WORKER_ASSET
+        );
+        compiler.hooks.thisCompilation.tap(
+            'PrecacheManifestPlugin',
+            (compilation) => {
+                compilation.fileDependencies.add(workerPath);
+                compilation.hooks.processAssets.tap(
+                    {
+                        name: 'PrecacheManifestPlugin',
+                        // After minification and real-content hashing, so
+                        // the manifest lists final file names and bytes.
+                        stage: webpack.Compilation.PROCESS_ASSETS_STAGE_REPORT
+                    },
+                    () => {
+                        const precacheAssets = compilation
+                            .getAssets()
+                            .filter((asset) =>
+                                precacheManifest.isPrecachedAsset(asset.name)
+                            );
+                        const shell = compilation.getAsset(
+                            precacheManifest.SHELL_ASSET
+                        );
+                        if (!shell) {
+                            throw new Error(
+                                'PrecacheManifestPlugin needs index.html in the build'
+                            );
+                        }
+                        const workerSource = precacheManifest.injectManifest(
+                            fs.readFileSync(workerPath, 'utf8'),
+                            {
+                                precacheUrls:
+                                    precacheManifest.precacheUrlsFromAssets([
+                                        ...precacheAssets.map(
+                                            (asset) => asset.name
+                                        ),
+                                        precacheManifest.SERVICE_WORKER_ASSET
+                                    ]),
+                                cdnUrls: precacheManifest.cdnUrlsFromHtml(
+                                    shell.source.source().toString()
+                                ),
+                                buildId: precacheManifest.computeBuildId(
+                                    precacheAssets.map((asset) => ({
+                                        name: asset.name,
+                                        content: asset.source.buffer()
+                                    }))
+                                )
+                            }
+                        );
+                        compilation.emitAsset(
+                            precacheManifest.SERVICE_WORKER_ASSET,
+                            new webpack.sources.RawSource(workerSource),
+                            { minimized: true }
+                        );
+                    }
+                );
             }
         );
     }
@@ -126,6 +194,9 @@ module.exports = {
     output: {
         path: path.resolve(__dirname, 'build'),
         filename: 'js/[name].js',
+        // Hashed so a session on an older build can still load its own
+        // lazy chunks from the previous cache after another tab updates.
+        chunkFilename: 'js/[name].[contenthash].js',
         clean: true
     },
     plugins: [
@@ -145,6 +216,7 @@ module.exports = {
             root: __dirname
         }),
         new GenerateDocsManifestPlugin(),
+        new PrecacheManifestPlugin(),
         new HtmlWebpackPlugin({
             template: './index.html',
             inject: 'body',
@@ -166,8 +238,6 @@ module.exports = {
             patterns: [
                 { from: 'css', to: 'css' },
                 { from: 'assets', to: 'assets' },
-                { from: 'wasm-dist', to: 'wasm-dist' },
-                { from: 'coi-serviceworker.js', to: 'coi-serviceworker.js' },
                 {
                     from: 'font-destination-bridge.html',
                     to: 'font-destination-bridge.html'

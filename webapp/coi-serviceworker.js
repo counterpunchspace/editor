@@ -2,107 +2,23 @@
 // Enhanced with PWA caching for offline support
 let coepCredentialless = false;
 
-// PWA Cache configuration
+// VERSION and DISPLAY_VERSION are rewritten by release and CI scripts.
 const VERSION = 'v0.3';
 const DISPLAY_VERSION = 'v0.3';
-const CACHE_NAME = 'counterpunch-pwa-' + VERSION;
-const CDN_CACHE_NAME = 'counterpunch-cdn-cache-' + VERSION;
-const OFFLINE_URL = '/index.html';
+// Filled in at build time by PrecacheManifestPlugin (webpack.config.js).
+const BUILD_ID = '__BUILD_ID__';
+const PRECACHE_ASSETS = '__PRECACHE_ASSETS__';
+const CDN_PRECACHE = '__CDN_PRECACHE__';
 
-// Assets to cache on install
-const PRECACHE_ASSETS = [
-    './',
-    './index.html',
-    './manifest.json',
+const CACHE_PREFIX = 'counterpunch-';
+const APP_CACHE_PREFIX = CACHE_PREFIX + 'pwa-';
+const CACHE_NAME = APP_CACHE_PREFIX + VERSION + '-' + BUILD_ID;
+// CDN URLs are version-pinned, so their cache survives app updates.
+const CDN_CACHE_NAME = CACHE_PREFIX + 'cdn-v1';
+// Records which app caches belong to the active and the outgoing build.
+const STATE_CACHE_NAME = CACHE_PREFIX + 'sw-state';
+const SHELL_URL = './';
 
-    // CSS (style.css @imports tokens.css, glyph-overview.css, features-editor.css, editor-left-sidebar.css, editor-right-sidebar.css, ui/dialogs.css, ui/tour.css, docs-viewer.css)
-    './css/style.css',
-    './css/file-dialog.css',
-    './css/tokens.css',
-    './css/glyph-overview.css',
-    './css/features-editor.css',
-    './css/editor-left-sidebar.css',
-    './css/editor-right-sidebar.css',
-    './css/ui/dialogs.css',
-    './css/ui/tour.css',
-    './css/docs-viewer.css',
-
-    // JavaScript bundles (webpack output)
-    './js/bootstrap.js',
-    './js/fontc-worker.js',
-    './js/glyph-overview.js',
-    './js/find-glyph-dialog.js',
-    './js/translations.js',
-    './js/overview-view.js',
-
-    // Python files
-    './py/fonteditor.py',
-    './py/plugin_contracts_generated.py',
-    './py/matplotlib_patch.py',
-
-    // Glyph catalog and plugin wheels (runtime fetches)
-    './data/glyph-data.json.gz',
-    './data/qa-corpus.json.gz',
-    './wheels/wheels.json',
-    './wheels/base_canvas_plugin-0.1.0-py3-none-any.whl',
-    './wheels/base_glyph_filter_plugin-0.1.0-py3-none-any.whl',
-    './wheels/counterpunch_hyperglot-0.8.1-py3-none-any.whl',
-    './wheels/curvature_comb_plugin-0.1.1-py3-none-any.whl',
-    './wheels/example_canvas_plugin-0.1.1-py3-none-any.whl',
-    './wheels/general_filter_plugin-0.1.0-py3-none-any.whl',
-    './wheels/counterpunch_features-1.0.0-py3-none-any.whl',
-    './wheels/counterpunch_arabic-1.3.0-py3-none-any.whl',
-    './wheels/counterpunch_ccmp-1.0.0-py3-none-any.whl',
-    './wheels/counterpunch_latin-1.0.0-py3-none-any.whl',
-
-    './examples/examples-manifest.json',
-    './handbook/manifest.json',
-    './font-destination-bridge.html',
-
-    // WASM files (critical for font compilation)
-    './wasm-dist/babelfont_fontc_web.js',
-    './wasm-dist/babelfont_fontc_web_bg.wasm',
-
-    // Icons
-    './assets/icons/icon-72x72.png',
-    './assets/icons/icon-96x96.png',
-    './assets/icons/icon-128x128.png',
-    './assets/icons/icon-144x144.png',
-    './assets/icons/icon-152x152.png',
-    './assets/icons/icon-192x192.png',
-    './assets/icons/icon-384x384.png',
-    './assets/icons/icon-512x512.png',
-    './assets/icons/icon.svg',
-
-    // Service worker itself
-    './coi-serviceworker.js'
-];
-
-// CDN resources to precache for offline support
-const CDN_PRECACHE = [
-    // Critical CDN resources for offline functionality
-    'https://cdn.jsdelivr.net/pyodide/v314.0.5/full/pyodide.js',
-    'https://cdn.jsdelivr.net/npm/jquery',
-    'https://cdn.jsdelivr.net/npm/jquery.terminal@2.35.2/js/jquery.terminal.min.js',
-    'https://cdn.jsdelivr.net/npm/jquery.terminal@2.35.2/js/unix_formatting.min.js',
-    'https://cdn.jsdelivr.net/npm/jquery.terminal@2.35.2/css/jquery.terminal.min.css',
-    'https://cdn.jsdelivr.net/npm/opentype.js@1.3.4/dist/opentype.min.js',
-    'https://cdn.jsdelivr.net/npm/harfbuzzjs@0.8.0/hb.js',
-    'https://cdn.jsdelivr.net/npm/harfbuzzjs@0.8.0/hbjs.js',
-    'https://cdn.jsdelivr.net/npm/ace-builds@1.32.2/src-min-noconflict/ace.js',
-    'https://cdn.jsdelivr.net/npm/ace-builds@1.32.2/src-min-noconflict/ext-language_tools.js',
-    'https://cdn.jsdelivr.net/npm/ace-builds@1.32.2/src-min-noconflict/mode-python.js',
-    'https://cdn.jsdelivr.net/npm/ace-builds@1.32.2/src-min-noconflict/theme-monokai.js',
-    'https://cdn.jsdelivr.net/npm/ace-builds@1.32.2/src-min-noconflict/theme-tomorrow.js',
-    'https://cdn.jsdelivr.net/npm/ace-builds@1.32.2/src-min-noconflict/theme-tomorrow_night.js',
-    'https://cdn.jsdelivr.net/npm/ace-builds@1.32.2/src-min-noconflict/ext-static_highlight.js',
-    'https://cdn.jsdelivr.net/npm/diff@5.1.0/dist/diff.min.js',
-    'https://cdn.jsdelivr.net/npm/diff2html@3.4.47/bundles/css/diff2html.min.css',
-    'https://cdn.jsdelivr.net/npm/diff2html@3.4.47/bundles/js/diff2html-ui.min.js',
-    'https://cdn.jsdelivr.net/npm/marked@11.1.1/marked.min.js'
-];
-
-// Helper function to check if URL is a CDN resource
 function isCDNResource(url) {
     return url.includes('cdn.jsdelivr.net');
 }
@@ -124,184 +40,188 @@ function applyIsolationHeaders(sourceResponse) {
     });
 }
 
-function matchAppCache(request) {
-    return caches.match(request).then((cachedResponse) => {
-        if (cachedResponse) {
-            return cachedResponse;
-        }
-        if (request.mode !== 'navigate') {
-            return undefined;
-        }
-        return caches
-            .match(request, { ignoreSearch: true })
-            .then(
-                (withoutSearch) =>
-                    withoutSearch ||
-                    caches
-                        .match('./index.html')
-                        .then((html) => html || caches.match(OFFLINE_URL))
-            );
-    });
+function isDocumentPath(pathname) {
+    const lastSegment = pathname.slice(pathname.lastIndexOf('/') + 1);
+    return (
+        lastSegment === '' ||
+        lastSegment.endsWith('.html') ||
+        !lastSegment.includes('.')
+    );
+}
+
+// Cloudflare Pages answers unknown paths with index.html and status 200.
+function isHtmlFallback(url, response) {
+    const contentType = response.headers.get('Content-Type') || '';
+    return contentType.includes('text/html') && !isDocumentPath(url.pathname);
 }
 
 if (typeof window === 'undefined') {
-    // Install event - cache essential assets
+    const precacheUrls = new Set(
+        PRECACHE_ASSETS.map((url) => new URL(url, self.location.href).href)
+    );
+    const shellUrl = new URL(SHELL_URL, self.location.href).href;
+
+    async function precacheApp() {
+        const cache = await caches.open(CACHE_NAME);
+        try {
+            await Promise.all(
+                PRECACHE_ASSETS.map(async (url) => {
+                    const response = await fetch(
+                        new Request(url, { cache: 'reload' })
+                    );
+                    const absolute = new URL(url, self.location.href);
+                    if (
+                        !response.ok ||
+                        response.redirected ||
+                        isHtmlFallback(absolute, response)
+                    ) {
+                        throw new Error(
+                            url +
+                                ' returned ' +
+                                response.status +
+                                (response.redirected ? ' (redirected)' : '')
+                        );
+                    }
+                    await cache.put(url, response);
+                })
+            );
+        } catch (error) {
+            await caches.delete(CACHE_NAME);
+            throw error;
+        }
+        console.log(
+            '[SW] App shell cached: ' + PRECACHE_ASSETS.length + ' files'
+        );
+    }
+
+    // Best effort: a third-party CDN outage must not block app updates.
+    async function precacheCdn() {
+        const cache = await caches.open(CDN_CACHE_NAME);
+        await Promise.all(
+            CDN_PRECACHE.map(async (url) => {
+                if (await cache.match(url)) {
+                    return;
+                }
+                try {
+                    const response = await fetch(url, { mode: 'cors' });
+                    if (response.ok) {
+                        await cache.put(url, response);
+                    } else {
+                        console.warn(
+                            '[SW] CDN precache failed (' +
+                                response.status +
+                                '):',
+                            url
+                        );
+                    }
+                } catch (error) {
+                    console.warn(
+                        '[SW] CDN precache failed:',
+                        url,
+                        error.message
+                    );
+                }
+            })
+        );
+    }
+
+    const stateUrl = new URL('./__sw-state', self.location.href).href;
+    let previousCacheName;
+
+    async function readState() {
+        const cache = await caches.open(STATE_CACHE_NAME);
+        const response = await cache.match(stateUrl);
+        return response ? response.json() : null;
+    }
+
+    async function writeState(state) {
+        const cache = await caches.open(STATE_CACHE_NAME);
+        await cache.put(
+            stateUrl,
+            new Response(JSON.stringify(state), {
+                headers: { 'Content-Type': 'application/json' }
+            })
+        );
+    }
+
+    async function previousAppCacheName() {
+        if (previousCacheName === undefined) {
+            const state = await readState();
+            previousCacheName = (state && state.previous) || null;
+        }
+        return previousCacheName;
+    }
+
+    // The build that was active until now. Workers from before the state
+    // record existed are recognised by their newest app cache.
+    async function outgoingAppCacheName(state) {
+        if (state && state.active) {
+            return state.active === CACHE_NAME ? state.previous : state.active;
+        }
+        const names = await caches.keys();
+        return names
+            .filter(
+                (name) =>
+                    name.startsWith(APP_CACHE_PREFIX) && name !== CACHE_NAME
+            )
+            .pop();
+    }
+
+    // The new worker waits until a client sends SKIP_WAITING (Preferences →
+    // Update) or every tab of the old build has closed.
     self.addEventListener('install', (event) => {
-        console.log('[ServiceWorker]', '[SW] Installing...');
+        console.log('[SW] Installing ' + VERSION + ' (' + BUILD_ID + ')');
         event.waitUntil(
-            // Cache local assets first (critical)
-            caches
-                .open(CACHE_NAME)
-                .then((cache) => {
-                    console.log(
-                        '[SW] Caching app shell - ' +
-                            PRECACHE_ASSETS.length +
-                            ' files'
-                    );
-                    // Cache files individually to see which ones fail
-                    return Promise.allSettled(
-                        PRECACHE_ASSETS.map((url) =>
-                            fetch(new Request(url, { cache: 'reload' }))
-                                .then((response) => {
-                                    if (response.ok) {
-                                        return cache.put(url, response);
-                                    } else {
-                                        console.error(
-                                            '[SW] ✗ Failed to fetch:',
-                                            url,
-                                            'Status:',
-                                            response.status
-                                        );
-                                    }
-                                })
-                                .catch((error) => {
-                                    console.error(
-                                        '[SW] ✗ Error fetching:',
-                                        url,
-                                        error.message
-                                    );
-                                })
-                        )
-                    ).then((results) => {
-                        const failed = results.filter(
-                            (r) => r.status === 'rejected'
-                        ).length;
-                        console.log(
-                            '[SW] App shell: ' +
-                                (PRECACHE_ASSETS.length - failed) +
-                                '/' +
-                                PRECACHE_ASSETS.length +
-                                ' cached'
-                        );
+            precacheApp()
+                .then(precacheCdn)
+                .then(() => self.clients.matchAll())
+                .then((clients) => {
+                    clients.forEach((client) => {
+                        client.postMessage({ type: 'OFFLINE_READY' });
                     });
-                })
-                .then(() => {
-                    console.log('[ServiceWorker]', '[SW] ✅ App shell cached');
-                    // Cache CDN resources (non-blocking)
-                    return caches.open(CDN_CACHE_NAME).then((cache) => {
-                        console.log(
-                            '[SW] Caching CDN resources for offline - ' +
-                                CDN_PRECACHE.length +
-                                ' files'
-                        );
-                        // Cache each CDN resource individually so one failure doesn't break all
-                        return Promise.allSettled(
-                            CDN_PRECACHE.map((url) =>
-                                fetch(url, { mode: 'cors' })
-                                    .then((response) => {
-                                        if (response.ok) {
-                                            console.log(
-                                                '[SW] ✓ Cached:',
-                                                url.substring(0, 60)
-                                            );
-                                            return cache.put(url, response);
-                                        } else {
-                                            console.warn(
-                                                '[SW] ✗ Failed (status ' +
-                                                    response.status +
-                                                    '):',
-                                                url
-                                            );
-                                        }
-                                    })
-                                    .catch((error) => {
-                                        console.warn(
-                                            '[SW] ✗ Failed to cache:',
-                                            url.substring(0, 60),
-                                            error.message
-                                        );
-                                    })
-                            )
-                        );
-                    });
-                })
-                .then(() => {
-                    console.log(
-                        '[SW] ✅ All resources cached - app ready for offline use'
-                    );
-                    return self.clients.matchAll().then((clients) => {
-                        clients.forEach((client) => {
-                            client.postMessage({ type: 'OFFLINE_READY' });
-                        });
-                    });
-                })
-                .then(() => {
-                    // Activate immediately so clients still running the broken
-                    // update detector (which never shows Preferences → Update)
-                    // can receive SW_UPDATED and load this cut.
-                    return self.skipWaiting();
-                })
-                .catch((error) => {
-                    console.error(
-                        '[ServiceWorker]',
-                        '[SW] ❌ Cache failed:',
-                        error
-                    );
-                    return self.skipWaiting();
                 })
         );
     });
 
     self.addEventListener('activate', (event) => {
         event.waitUntil(
-            caches
-                .keys()
-                .then((cacheNames) => {
-                    return Promise.all(
-                        cacheNames.map((cacheName) => {
-                            if (
-                                cacheName !== CACHE_NAME &&
-                                cacheName !== CDN_CACHE_NAME
-                            ) {
-                                console.log(
-                                    '[SW] Deleting old cache:',
-                                    cacheName
-                                );
-                                return caches.delete(cacheName);
-                            }
+            (async () => {
+                // Keep the outgoing build's cache so tabs still running it
+                // can load their own hashed lazy files.
+                const previous =
+                    (await outgoingAppCacheName(await readState())) || null;
+                await writeState({ active: CACHE_NAME, previous });
+                previousCacheName = previous;
+                const names = await caches.keys();
+                await Promise.all(
+                    names
+                        .filter(
+                            (name) =>
+                                name.startsWith(CACHE_PREFIX) &&
+                                name !== CACHE_NAME &&
+                                name !== CDN_CACHE_NAME &&
+                                name !== STATE_CACHE_NAME &&
+                                name !== previous
+                        )
+                        .map((name) => {
+                            console.log('[SW] Deleting old cache:', name);
+                            return caches.delete(name);
                         })
-                    );
-                })
-                .then(() => self.clients.claim())
-                .then(() => {
-                    // Notify all clients that a new version is available
-                    console.log('[SW] 🔄 Notifying clients of update');
-                    return self.clients
-                        .matchAll({
-                            includeUncontrolled: true,
-                            type: 'window'
-                        })
-                        .then((clients) => {
-                            clients.forEach((client) => {
-                                client.postMessage({
-                                    type: 'SW_UPDATED',
-                                    cacheName: CACHE_NAME,
-                                    version: VERSION,
-                                    displayVersion: DISPLAY_VERSION
-                                });
-                            });
-                        });
-                })
+                );
+                await self.clients.claim();
+                const clients = await self.clients.matchAll({
+                    includeUncontrolled: true,
+                    type: 'window'
+                });
+                clients.forEach((client) => {
+                    client.postMessage({
+                        type: 'SW_UPDATED',
+                        cacheName: CACHE_NAME,
+                        version: VERSION,
+                        displayVersion: DISPLAY_VERSION
+                    });
+                });
+            })()
         );
     });
 
@@ -321,12 +241,116 @@ if (typeof window === 'undefined') {
             coepCredentialless = ev.data.value;
         } else if (ev.data.type === 'SKIP_WAITING') {
             self.skipWaiting();
+        } else if (ev.data.type === 'GET_VERSION' && ev.ports[0]) {
+            ev.ports[0].postMessage({
+                version: VERSION,
+                displayVersion: DISPLAY_VERSION
+            });
         }
     });
+
+    async function handleCdnRequest(request) {
+        const cache = await caches.open(CDN_CACHE_NAME);
+        const cached = await cache.match(request);
+        if (cached) {
+            return cached;
+        }
+        const response = await fetch(request);
+        if (response.status === 200) {
+            await cache.put(request, response.clone());
+        }
+        return response;
+    }
+
+    async function handleNavigation(request) {
+        const cache = await caches.open(CACHE_NAME);
+        const url = new URL(request.url);
+        url.search = '';
+        url.hash = '';
+        const precachedDocument =
+            url.href !== shellUrl && precacheUrls.has(url.href)
+                ? await cache.match(url.href)
+                : undefined;
+        const cached = precachedDocument || (await cache.match(shellUrl));
+        if (cached) {
+            return applyIsolationHeaders(cached);
+        }
+        return applyIsolationHeaders(await fetch(request));
+    }
+
+    async function matchPreviousBuild(url) {
+        const previous = await previousAppCacheName();
+        if (!previous) {
+            return undefined;
+        }
+        const cache = await caches.open(previous);
+        return cache.match(url);
+    }
+
+    async function handleAsset(request) {
+        const url = new URL(request.url);
+        const cache = await caches.open(CACHE_NAME);
+        const cacheable = !url.search && !request.headers.has('Range');
+
+        if (cacheable) {
+            const cached = await cache.match(url.href);
+            if (cached) {
+                return applyIsolationHeaders(cached);
+            }
+        }
+        if (cacheable && precacheUrls.has(url.href)) {
+            console.warn('[SW] Precached file missing from cache:', url.href);
+        }
+
+        let response;
+        try {
+            // Revalidate instead of trusting the 4 h HTTP cache, which can
+            // hold an older build's copy of an unhashed file.
+            response = await fetch(
+                request.cache === 'default' && request.mode !== 'navigate'
+                    ? new Request(request, { cache: 'no-cache' })
+                    : request
+            );
+        } catch (error) {
+            const previous = cacheable
+                ? await matchPreviousBuild(url.href)
+                : undefined;
+            if (previous) {
+                return applyIsolationHeaders(previous);
+            }
+            throw error;
+        }
+
+        if (response.status === 0) {
+            return response;
+        }
+        if (response.status === 404 || isHtmlFallback(url, response)) {
+            const previous = cacheable
+                ? await matchPreviousBuild(url.href)
+                : undefined;
+            if (previous) {
+                return applyIsolationHeaders(previous);
+            }
+            if (isHtmlFallback(url, response)) {
+                return new Response('Not found', {
+                    status: 404,
+                    statusText: 'Not Found'
+                });
+            }
+            return applyIsolationHeaders(response);
+        }
+        if (cacheable && response.status === 200) {
+            await cache.put(url.href, response.clone());
+        }
+        return applyIsolationHeaders(response);
+    }
 
     self.addEventListener('fetch', function (event) {
         const r = event.request;
         if (r.cache === 'only-if-cached' && r.mode !== 'same-origin') {
+            return;
+        }
+        if (r.method !== 'GET') {
             return;
         }
 
@@ -337,92 +361,21 @@ if (typeof window === 'undefined') {
                   })
                 : r;
 
-        const requestURL = request.url;
-
-        // Handle CDN resources with stale-while-revalidate strategy
-        if (isCDNResource(requestURL)) {
-            event.respondWith(
-                caches.open(CDN_CACHE_NAME).then((cache) => {
-                    return cache.match(request).then((cachedResponse) => {
-                        const fetchPromise = fetch(request)
-                            .then((response) => {
-                                if (response.status === 0) {
-                                    return response;
-                                }
-
-                                // Cache successful CDN responses
-                                if (response && response.status === 200) {
-                                    cache.put(request, response.clone());
-                                }
-                                return response;
-                            })
-                            .catch(() => {
-                                // Network failed, return cached version if available
-                                return cachedResponse;
-                            });
-
-                        // Return cached response immediately if available, fetch in background
-                        return cachedResponse || fetchPromise;
-                    });
-                })
-            );
+        if (isCDNResource(request.url)) {
+            event.respondWith(handleCdnRequest(request));
             return;
         }
-
-        // Handle local resources with COI headers
-        event.respondWith(
-            matchAppCache(request).then((cachedResponse) => {
-                const fetchPromise = fetch(request)
-                    .then((response) => {
-                        if (response.status === 0) {
-                            return response;
-                        }
-
-                        const responseToCache = response.clone();
-                        const modifiedResponse =
-                            applyIsolationHeaders(response);
-
-                        if (
-                            response.status === 200 &&
-                            request.url.startsWith(self.location.origin)
-                        ) {
-                            caches.open(CACHE_NAME).then((cache) => {
-                                cache.put(request, responseToCache);
-                            });
-                        }
-
-                        return modifiedResponse;
-                    })
-                    .catch((error) => {
-                        console.log(
-                            '[ServiceWorker]',
-                            '[SW] Fetch failed, using cache:',
-                            error
-                        );
-                        if (cachedResponse) {
-                            return applyIsolationHeaders(cachedResponse);
-                        }
-                        if (request.mode === 'navigate') {
-                            return caches
-                                .match(OFFLINE_URL)
-                                .then((offlineResponse) => {
-                                    if (offlineResponse) {
-                                        return applyIsolationHeaders(
-                                            offlineResponse
-                                        );
-                                    }
-                                });
-                        }
-                        throw error;
-                    });
-
-                if (cachedResponse) {
-                    return applyIsolationHeaders(cachedResponse);
-                }
-
-                return fetchPromise;
-            })
-        );
+        if (new URL(request.url).origin !== self.location.origin) {
+            return;
+        }
+        if (
+            request.mode === 'navigate' &&
+            isDocumentPath(new URL(request.url).pathname)
+        ) {
+            event.respondWith(handleNavigation(request));
+            return;
+        }
+        event.respondWith(handleAsset(request));
     });
 } else {
     (() => {

@@ -2433,126 +2433,90 @@
             });
 
             // Service Worker Registration
-            if ('serviceWorker' in navigator) {
-                window.addEventListener('load', () => {
-                    // Check service worker status
-                    if (navigator.serviceWorker.controller) {
+            // A newer worker only activates when some tab clicks Update. In
+            // every other tab that was already controlled, the running code
+            // is now older than its worker, so offer a reload. The first
+            // install (no controller at load) is not an update.
+            if (
+                'serviceWorker' in navigator &&
+                navigator.serviceWorker.controller
+            ) {
+                console.log(
+                    '[PWA] Service worker active - offline mode available'
+                );
+
+                const setPendingUpdate = (version, displayVersion) => {
+                    if (window.__pendingUpdate) {
+                        return;
+                    }
+                    console.log(
+                        '[PWA] 🔄 New version active in another tab:',
+                        displayVersion
+                    );
+                    window.__pendingUpdate = {
+                        version: displayVersion,
+                        tag: version,
+                        isPreview:
+                            /preview|-pre\./.test(version) ||
+                            /preview|-pre\./.test(displayVersion) ||
+                            /^\d+-build-\d+$/.test(displayVersion)
+                    };
+                    document.dispatchEvent(
+                        new CustomEvent('counterpunch:update-available', {
+                            detail: window.__pendingUpdate
+                        })
+                    );
+                };
+
+                navigator.serviceWorker.addEventListener('message', (event) => {
+                    if (event.data && event.data.type === 'OFFLINE_READY') {
                         console.log(
-                            '[PWA] Service worker active - offline mode available'
+                            '[PWA] ✅ App fully cached and ready for offline use'
                         );
-
-                        // Listen for service worker updates
-                        navigator.serviceWorker.addEventListener(
-                            'message',
-                            (event) => {
-                                if (
-                                    event.data &&
-                                    event.data.type === 'OFFLINE_READY'
-                                ) {
-                                    console.log(
-                                        '[PWA] ✅ App fully cached and ready for offline use'
-                                    );
-                                } else if (
-                                    event.data &&
-                                    event.data.type === 'SW_UPDATED'
-                                ) {
-                                    const newVersion = event.data.version;
-                                    const displayVersion =
-                                        event.data.displayVersion || newVersion;
-                                    console.log(
-                                        '[PWA] 🔄 New version available:',
-                                        displayVersion
-                                    );
-                                    window.__pendingUpdate = {
-                                        version: displayVersion,
-                                        tag: newVersion,
-                                        isPreview:
-                                            /preview|-pre\./.test(newVersion) ||
-                                            /preview|-pre\./.test(
-                                                displayVersion
-                                            ) ||
-                                            /^\d+-build-\d+$/.test(
-                                                displayVersion
-                                            )
-                                    };
-                                    document.dispatchEvent(
-                                        new CustomEvent(
-                                            'counterpunch:update-available',
-                                            { detail: window.__pendingUpdate }
-                                        )
-                                    );
-                                }
-                            }
+                    } else if (
+                        event.data &&
+                        event.data.type === 'SW_UPDATED'
+                    ) {
+                        setPendingUpdate(
+                            event.data.version,
+                            event.data.displayVersion || event.data.version
                         );
-
-                        // Listen for controller change (new SW taking control).
-                        // The authoritative new version arrives via the
-                        // SW_UPDATED message (posted in the new SW's activate
-                        // handler). This fallback only fires when that message
-                        // hasn't arrived yet; re-fetch the SW script to read
-                        // its current VERSION rather than the value captured
-                        // at page-load time, which is the OLD version.
-                        navigator.serviceWorker.addEventListener(
-                            'controllerchange',
-                            () => {
-                                console.log(
-                                    '[PWA] 🔄 New service worker activated'
-                                );
-                                if (window.__pendingUpdate) {
-                                    return; // SW_UPDATED message already handled it
-                                }
-                                fetch('coi-serviceworker.js')
-                                    .then((response) => response.text())
-                                    .then((text) => {
-                                        if (window.__pendingUpdate) {
-                                            return; // message arrived in the meantime
-                                        }
-                                        const match = text.match(
-                                            /\bVERSION\s*=\s*['"](v[^'"]+)['"]/
-                                        );
-                                        const displayMatch = text.match(
-                                            /\bDISPLAY_VERSION\s*=\s*['"]([^'"]+)['"]/
-                                        );
-                                        const version =
-                                            (match && match[1]) || 'unknown';
-                                        const displayVersion =
-                                            (displayMatch && displayMatch[1]) ||
-                                            version;
-                                        window.__pendingUpdate = {
-                                            version: displayVersion,
-                                            tag: version,
-                                            isPreview:
-                                                /preview|-pre\./.test(
-                                                    version
-                                                ) ||
-                                                /preview|-pre\./.test(
-                                                    displayVersion
-                                                ) ||
-                                                /^\d+-build-\d+$/.test(
-                                                    displayVersion
-                                                )
-                                        };
-                                        document.dispatchEvent(
-                                            new CustomEvent(
-                                                'counterpunch:update-available',
-                                                {
-                                                    detail: window.__pendingUpdate
-                                                }
-                                            )
-                                        );
-                                    })
-                                    .catch((err) => {
-                                        console.warn(
-                                            '[PWA] Could not read updated version:',
-                                            err
-                                        );
-                                    });
-                            }
-                        );
-                    } else {
-                        console.log('[PWA] Service worker registering...');
                     }
                 });
+
+                // Fallback when SW_UPDATED was missed: the new worker serves
+                // its own precached copy of the script.
+                navigator.serviceWorker.addEventListener(
+                    'controllerchange',
+                    () => {
+                        if (window.__pendingUpdate) {
+                            return;
+                        }
+                        fetch('coi-serviceworker.js')
+                            .then((response) => response.text())
+                            .then((text) => {
+                                const match = text.match(
+                                    /\bVERSION\s*=\s*['"](v[^'"]+)['"]/
+                                );
+                                const displayMatch = text.match(
+                                    /\bDISPLAY_VERSION\s*=\s*['"]([^'"]+)['"]/
+                                );
+                                const version =
+                                    (match && match[1]) || 'unknown';
+                                setPendingUpdate(
+                                    version,
+                                    (displayMatch && displayMatch[1]) ||
+                                        version
+                                );
+                            })
+                            .catch((err) => {
+                                console.warn(
+                                    '[PWA] Could not read updated version:',
+                                    err
+                                );
+                            });
+                    }
+                );
             }
         </script>
 

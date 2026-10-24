@@ -2,7 +2,7 @@
 
 If Preferences already shows the version you expect, but switching glyphs does not load outlines and the glyph stack says `(none)`, that is a stuck **editing session**, not a stuck version. Use `developer-docs/STUCK_EDITING_RECOVERY.md`.
 
-The editor keeps a copy of itself on your computer so it can start quickly and work offline. That copy is separate from your fonts. Reloading the page, or quitting and reopening the window, often **does not** load a newly published version. The browser keeps serving the old copy until it is removed.
+The editor keeps a copy of itself on your computer so it can start quickly and work offline. That copy is separate from your fonts. A newly published version downloads in the background and then waits: reloading the page keeps the version you have until you click **Update** in Preferences, or until every window of the editor has been closed. If the old copy is stuck and no update is offered, work through the methods below.
 
 Work through the methods in order. Stop when Preferences shows the version you expect.
 
@@ -31,8 +31,9 @@ A copy from before this parameter existed will ignore it. Use method 2 or 3.
 1. Open Preferences: the gear in the title bar, or `Cmd/Ctrl+,`.
 2. Look at the version line. If it already matches the build you want, you are done.
 3. Click **Check for updates**.
-4. If the app offers **Update**, click it and wait for the reload.
-5. If it says you are already on the latest published build, it may show **Force update**. Click that. Same cleanup as `?update`.
+4. If it says **Downloading update…**, the new version is being stored for offline use. Wait until **Update** appears. If it says a version "is being published", the release exists but is not deployed yet; check again in a few minutes.
+5. If the app offers **Update**, click it and wait for the reload. Other open windows of the same address then show **Update** too; clicking it there just reloads them.
+6. If it says you are already on the latest published build, it may show **Force update**. Click that. Same cleanup as `?update`.
 
 If Preferences has no Check for updates / Force update, or clicking them does nothing, use method 3. The running copy may predate those controls.
 
